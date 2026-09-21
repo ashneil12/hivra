@@ -1,0 +1,64 @@
+.surface {
+  --loading-bg: var(--bg-primary, #0d0d0d);
+  --loading-ink: var(--text-primary, #fdfcf9);
+  --loading-muted: var(--text-secondary, #aaa);
+  --loading-line: var(--etched-border, #292929);
+  --loading-accent: var(--hivra-red, #ff3a3b);
+  display: grid;
+  place-items: center;
+  flex: 1;
+  width: 100%;
+  min-height: min(60vh, 480px);
+  height: 100%;
+  padding: 32px 24px;
+  background: radial-gradient(ellipse at 50% 45%, var(--hivra-red-soft, #ff3a3b16), transparent 55%), var(--loading-bg);
+  color: var(--loading-ink);
+  text-align: center;
+  overflow: hidden;
+}
+.dark {
+  --loading-bg: #090909;
+  --loading-ink: #fdfcf9;
+  --loading-muted: #aaa;
+  --loading-line: #292929;
+  --loading-accent: #ff3a3b;
+  color-scheme: dark;
+}
+.compact { min-height: 220px; background: transparent; }
+.content { width: min(100%, 380px); animation: reveal 240ms ease-out 100ms both; }
+.mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 28px;
+  border: 1px solid var(--loading-line);
+  font-family: var(--font-outfit), system-ui, sans-serif;
+  font-size: 38px;
+  font-weight: 600;
+  letter-spacing: -3px;
+  line-height: 1;
+}
+.mark::before, .mark::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: var(--loading-accent);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.mark::before { inset: -1px auto auto -1px; border-left: 1px solid; border-top: 1px solid; border-color: var(--loading-accent); }
+.mark::after { inset: auto -1px -1px auto; border-right: 1px solid; border-bottom: 1px solid; border-color: var(--loading-accent); animation-delay: -1.2s; }
+.dot { color: var(--loading-accent); }
+.label { margin: 0; font-size: clamp(18px, 2.5vw, 23px); font-weight: 450; line-height: 1.4; overflow-wrap: anywhere; }
+.detail { margin: 10px 0 0; color: var(--loading-muted); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.track { width: 112px; height: 2px; margin: 28px auto 0; overflow: hidden; background: var(--loading-line); }
+.track span { display: block; width: 40%; height: 100%; background: var(--loading-accent); animation: travel 1.8s ease-in-out infinite; }
+@keyframes travel { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+@keyframes breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@keyframes reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .content, .mark::before, .mark::after, .track span { animation: none; }
+  .track span { margin-inline: auto; }
+}

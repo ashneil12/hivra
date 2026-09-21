@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { UserButton } from '@clerk/nextjs';
 import { AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import Link from 'next/link';
+import Link from '@/components/ui/NavigationLink';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { useLocale } from '@/components/i18n/LocaleProvider';

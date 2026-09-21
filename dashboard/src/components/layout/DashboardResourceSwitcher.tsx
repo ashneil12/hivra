@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import Link from "@/components/ui/NavigationLink";
 import { createPortal } from "react-dom";
 import { Bot, Monitor, Search, X } from "lucide-react";
 import { filterDashboardResources, resourceStatusLabel, type DashboardResource, type DashboardResourceSource } from "./dashboard-resources";
