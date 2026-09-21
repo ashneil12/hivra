@@ -67,7 +67,6 @@
   padding: 8px 0;
   color: var(--text-secondary);
 }
-.coverageButton,
 .warning {
   color: var(--yellow);
 }
@@ -328,4 +327,24 @@
   .toolbar select {
     font-size: 16px;
   }
+}
+
+.technical {
+  margin-top: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.technical summary {
+  cursor: pointer;
+  padding: 8px 0;
+  color: var(--text-secondary);
+}
+.technical summary:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+.viewHelp {
+  margin-top: 18px !important;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
