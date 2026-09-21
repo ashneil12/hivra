@@ -34,7 +34,7 @@ export default function HeroSection({ agentsCounter, liveStat }: HeroSectionProp
     </div>
     <div className={styles.heroQuickLinks}>
       <Link href="#founder"><span>Why I&apos;m building Hivra<small>AI, faith and the future</small></span><ArrowRight size={18} aria-hidden="true" /></Link>
-      <Link href="/tokenomics"><span>The tokenomics<small>Access, useful work and what comes next</small></span><ArrowRight size={16} aria-hidden="true" /></Link>
+      <Link href="/ecosystem"><span>Explore the ecosystem<small>What is available, next, later and still research</small></span><ArrowRight size={16} aria-hidden="true" /></Link>
     </div>
   </section>;
 }

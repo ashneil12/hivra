@@ -61,7 +61,7 @@ describe("HeroSection", () => {
     ).toHaveAttribute("href", "#founder");
     expect(screen.getByRole("link", { name: /Download the app/i })).toHaveAttribute("href", "/download");
     expect(screen.getByText(/Mac and Windows apps are coming soon/)).toBeVisible();
-    expect(screen.getByRole("link", { name: /The tokenomics/i })).toHaveAttribute("href", "/tokenomics");
+    expect(screen.getByRole("link", { name: /Explore the ecosystem/i })).toHaveAttribute("href", "/ecosystem");
 
     expect(screen.queryByRole("link", { name: /launch a computer/i })).not.toBeInTheDocument();
     expect(screen.getByText(/Ubuntu, Windows or Omarchy/)).toBeInTheDocument();
