@@ -313,6 +313,8 @@ they are not automatic installation steps.
 - Source-export, SBOM and notice review passed for the initial public source
   release. Separately distributed images and installers need their own
   dependency, notice and source-obligation review.
+- Fresh provider desktop admission and the staged cursor/profile update need
+  the coordinated release work described in [staged desktop changes](../release/staged-patches/README.md).
 - Provider-agent restart and model login/inference were not exercised by the
   source-checkout acceptance run.
 - Hivra Cloud account linking from an independent local control plane is still a
