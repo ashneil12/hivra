@@ -1,0 +1,20 @@
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    restart: unless-stopped
+    environment:
+      HIVRA_ACTIVITY_INGEST_BASE_URL: ${HIVRA_ACTIVITY_INGEST_BASE_URL:?required}
+      HIVRA_ACTIVITY_COLLECTOR_TOKEN: ${HIVRA_ACTIVITY_COLLECTOR_TOKEN:?required}
+      HIVRA_ACTIVITY_RESOURCE_ID: ${HIVRA_ACTIVITY_RESOURCE_ID:?required}
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:13133:13133"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
