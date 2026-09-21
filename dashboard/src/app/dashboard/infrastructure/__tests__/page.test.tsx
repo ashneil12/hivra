@@ -328,8 +328,9 @@ describe("InfrastructureConnectionsPage", () => {
     (listInfrastructureTargets as jest.Mock).mockResolvedValue([]);
     render(<InfrastructureConnectionsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Create a Hetzner cloud computer." }))
-      .toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Choose cloud provider/i }));
+    expect(screen.getByRole("button", { name: /Start with Hetzner/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Use an existing server/i }));
     fireEvent.click(screen.getByRole("button", { name: /Connect existing host/i }));
 
     expect(screen.getByRole("dialog", { name: "Connect a host" })).toBeInTheDocument();
