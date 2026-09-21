@@ -6,8 +6,6 @@ on:
     paths:
       - '.gitleaks.toml'
       - '.gitleaksignore'
-      - '.agents/product-marketing-context.md'
-      - '.agents/skills/**'
       - 'CONTRIBUTING.md'
       - 'LICENSE'
       - 'NOTICE'
@@ -34,8 +32,6 @@ on:
     paths:
       - '.gitleaks.toml'
       - '.gitleaksignore'
-      - '.agents/product-marketing-context.md'
-      - '.agents/skills/**'
       - 'CONTRIBUTING.md'
       - 'LICENSE'
       - 'NOTICE'

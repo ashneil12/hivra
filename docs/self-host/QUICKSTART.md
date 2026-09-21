@@ -300,8 +300,8 @@ credential flow, not in source control or a URL.
 ## What is not yet a completed release claim
 
 Reusable operator procedures are included for
-[Proxmox storage and existing-VM repair](../operations/proxmox-fleet-storage.md)
-and [state-preserving Workspace migration](../operations/workspace-migration.md).
+[Proxmox storage and existing-VM repair](PROXMOX-STORAGE.md)
+and [state-preserving Workspace migration](WORKSPACE-MIGRATION.md).
 These maintenance procedures require an explicitly selected target and backups;
 they are not automatic installation steps.
 

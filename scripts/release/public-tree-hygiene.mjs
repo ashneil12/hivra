@@ -25,6 +25,20 @@ const generatedPaths = [
   /^(?:FEATURE_TRACKER\.csv|FEATURE_TRACKER\.md)$/,
 ];
 
+const internalWorkingPaths = [
+  /^\.agents(\/|$)/,
+  /^[^/]*_PLAN\.md$/i,
+  /^(?:BENCHMARK_AFTER|HERMES_FORK_CHANGELOG|HIVRA_DOMAIN_CUTOVER|PATCHES|gemini|writelikeahuman)\.md$/i,
+  /^missed-call-demo\.html$/,
+  /^tests\/(?:missed_call_demo\.browser\.cjs|test_missed_call_demo\.py)$/,
+  /^(?:dashboard\/)?docs\/superpowers\/plans(\/|$)/,
+  /^docs\/(?:designs|design-reviews|operations|verification)(\/|$)/,
+  /^docs\/litepaper\/review(\/|$)/,
+  /^docs\/release\/\d{4}-\d{2}-\d{2}[^/]*\.md$/,
+  /^docs\/(?:chat-durability-sidecar-plan|sprint-2-resource-discipline-brief)\.md$/,
+  /^docs\/release\/PREPARATION-2026-09-21\.md$/,
+];
+
 const uuidExemptPaths = new Set([
   // Upstream/artifact identities with separately reviewed provenance.
   'dashboard/scripts/omarchy-proxmox-lab.ts',
@@ -131,6 +145,10 @@ export function inspectPublicTree(root) {
     const normalized = file.replaceAll('\\', '/');
     if (generatedPaths.some((pattern) => pattern.test(normalized))) {
       findings.push({ category: 'generated-output', path: normalized });
+      continue;
+    }
+    if (internalWorkingPaths.some((pattern) => pattern.test(normalized))) {
+      findings.push({ category: 'internal-working-material', path: normalized });
       continue;
     }
     if (isEnvironmentFile(normalized) || sensitivePaths.some((pattern) => pattern.test(normalized))) {

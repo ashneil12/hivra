@@ -10,12 +10,10 @@ It does not grant rights to third-party names, logos, services, or software.
 The Solidity sources under contracts/ carry SPDX-License-Identifier: MIT and
 remain available under the MIT License stated in those files.
 
-The marketing skills under .agents/skills/ include material from Marketing
-Skills by Corey Haines and contributors (https://github.com/coreyhaines31/marketingskills),
-used under the MIT License. Their exact upstream commits and Git blob identities
-are recorded in docs/release/source-third-party-provenance.json, and the complete
-upstream MIT notice is retained at .agents/skills/LICENSE. The Hivra-specific
-upstream-audit skill is first-party material covered by the root license.
+A historical attribution copy for Marketing Skills by Corey Haines and contributors
+(https://github.com/coreyhaines31/marketingskills) is retained at
+THIRD_PARTY_LICENSES/marketing-skills.txt. The current source tree no longer
+distributes that internal tooling bundle.
 
 The App Store verification build acquires four Apple root CA certificates
 directly from Apple's public certificate-authority pages. Their official source

@@ -7,13 +7,14 @@ const PLATFORMS = [
   { id: "windows", name: "Windows", icon: Monitor },
 ] as const;
 
-export default function DownloadsSection({ downloads = PUBLIC_PROJECT_LINKS.desktop }: { downloads?: DesktopDownloads }) {
+export default function DownloadsSection({ downloads = PUBLIC_PROJECT_LINKS.desktop, headingLevel = 2 }: { downloads?: DesktopDownloads; headingLevel?: 1 | 2 }) {
+  const Heading = headingLevel === 1 ? "h1" : "h2";
   const hasRelease = PLATFORMS.some(platform => downloads[platform.id].status === "published");
 
   return <section id="downloads" className={styles.section} aria-labelledby="downloads-heading">
     <div className={styles.intro}>
       <span className={styles.eyebrow}>Desktop apps</span>
-      <h2 id="downloads-heading">Hivra on<br /><em>your desktop.</em></h2>
+      <Heading id="downloads-heading">Hivra on<br /><em>your desktop.</em></Heading>
       <p>{hasRelease ? "Choose the app for your computer, or open Hivra in your browser." : "Desktop downloads are on the way. You can use Hivra in your browser today."}</p>
       <a className={styles.browserLink} href={PUBLIC_PROJECT_LINKS.browser}>Open Hivra in your browser<ArrowRight size={17} aria-hidden="true" /></a>
     </div>

@@ -13,8 +13,8 @@ gates still govern enabling any new integration.
 
 **Core-experience update:** 2026-09-04 — Agent and Computer are approved as
 sibling entry choices in one resumable Launch journey. The
-[core-experience reset](../plans/2026-09-04-hivra-core-experience-reset.md)
-defines the accepted implementation crosswalk while preserving the original
+[core-experience direction](../../CORE-EXPERIENCE.md)
+describes the accepted product direction while preserving the original
 portable-agent acceptance unchanged.
 
 **Execution authority:** Code implementation, Canary deployment, and bounded

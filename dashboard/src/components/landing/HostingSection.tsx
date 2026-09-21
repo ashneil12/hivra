@@ -5,7 +5,7 @@ import styles from "./product.module.css";
 const OPTIONS = [
   { name: "Hivra Cloud", icon: Cloud, sub: "Let us run it", body: "We handle the machines, updates, monitoring and recovery. You choose the work and what it can reach.", href: "/dashboard/launch?start=1", cta: "Explore Hivra Cloud" },
   { name: "Your infrastructure", icon: Server, sub: "Use what you already have", body: "Connect your own cloud account or a server. Put capacity you're already paying for to work, with you in control of where the computer lives.", href: "/dashboard/launch?start=1", cta: "Bring your capacity" },
-  { name: "Self-host Hivra", icon: Unplug, sub: "Run the whole platform", body: "Your hardware, your sign-in, no Hivra account. Run the platform yourself and choose how to maintain it.", href: "#open-source", cta: "About the open-source release" },
+  { name: "Self-host Hivra", icon: Unplug, sub: "Run the whole platform", body: "Your hardware, your sign-in, no Hivra account. Run the platform yourself and choose how to maintain it.", href: "/docs/litepaper/index.html#platform", cta: "Read about self-hosting" },
 ];
 
 export default function HostingSection() {

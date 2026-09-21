@@ -80,7 +80,7 @@ describe("LandingHeader", () => {
   it("makes computers and open source first-class navigation choices", () => {
     render(<LandingHeader />);
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
-    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute("href", "/#open-source");
+    expect(screen.queryByRole("link", { name: "Open source" })).not.toBeInTheDocument();
   });
 
   it("includes an Agents link in the public navigation", () => {
@@ -102,7 +102,7 @@ describe("LandingHeader", () => {
     expect(screen.queryByRole("link", { name: /features/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /compare/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/blog");
-    expect(screen.getByRole("link", { name: "Tokenomics" })).toHaveAttribute("href", "/#tokenomics");
+    expect(screen.getByRole("link", { name: "Tokenomics" })).toHaveAttribute("href", "/tokenomics");
     expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
     expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
@@ -235,7 +235,7 @@ describe("LandingHeader", () => {
     );
 
     expect(screen.getAllByRole("link", { name: "Precios" })[0]).toHaveAttribute("href", "/#pricing");
-    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute("href", "/#open-source");
+    expect(screen.queryByRole("link", { name: "Open source" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: "Agents" })[0]).toHaveAttribute("href", "/#agents");
     expect(screen.getAllByRole("link", { name: /Iniciar sesión/i })[0]).toHaveAttribute("href", "/sign-in");
     expect(screen.getAllByRole("button", { name: "Idioma" })[0]).toHaveTextContent("Español");

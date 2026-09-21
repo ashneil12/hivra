@@ -29,7 +29,7 @@ test("hosting choices explain independent computers, own capacity and model keys
   ["Hivra Cloud", "Your infrastructure", "Self-host Hivra"].forEach(name => expect(screen.getByRole("heading", { name })).toBeVisible());
   expect(screen.getByText(/Your hardware, your sign-in, no Hivra account/)).toBeVisible();
   expect(screen.getByText("Bring your own model connection.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "About the open-source release" })).toHaveAttribute("href", "#open-source");
+  expect(screen.getByRole("link", { name: "Read about self-hosting" })).toHaveAttribute("href", "/docs/litepaper/index.html#platform");
 });
 
 test("open source links to the published source repository", () => {
