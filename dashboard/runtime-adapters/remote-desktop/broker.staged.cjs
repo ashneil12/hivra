@@ -140,12 +140,11 @@ function validGrant(data, expected) {
     && expiresAt <= Date.now() + 5 * 60_000;
 }
 
-function handoffHtml(controlOrigin, capturedCursor = false) {
+function handoffHtml(controlOrigin) {
   const origin = JSON.stringify(controlOrigin);
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening desktop</title><style>html,body,#desktop{width:100%;height:100%;margin:0;border:0;background:#090909}body{overflow:hidden;color:#bbb;font:14px system-ui,sans-serif}#status{position:absolute;inset:0;display:grid;place-items:center;margin:0}#status[hidden],#desktop[hidden]{display:none}</style></head><body><p id="status">Connecting securely…</p><iframe id="desktop" title="Remote desktop stream" hidden></iframe><script>
   'use strict';
   const CONTROL_ORIGIN=${origin};
-  const CAPTURED_CURSOR=${capturedCursor === true};
   const desktop=document.getElementById('desktop');
   const status=document.getElementById('status');
   let used=false;
@@ -158,7 +157,6 @@ function handoffHtml(controlOrigin, capturedCursor = false) {
   let sequence=0;
   let pending=false;
   let boundDocument=null;
-  let cursorObserver=null;
   let resizeTimer=null;
   let resizeMonitoring=false;
   let dprQuery=null;
@@ -175,7 +173,6 @@ function handoffHtml(controlOrigin, capturedCursor = false) {
   const endStream=(reason)=>{
     if(ended||!sessionId)return;
     ended=true;
-    if(cursorObserver){cursorObserver.disconnect();cursorObserver=null;}
     if(bindingTimer!==null)clearTimeout(bindingTimer);
     bindingTimer=null;
     stopResizeMonitoring();
@@ -239,28 +236,6 @@ function handoffHtml(controlOrigin, capturedCursor = false) {
       if(app.videoBitRate!==profile.videoBitRate)app.videoBitRate=profile.videoBitRate;
       return true;
     }catch{return false;}
-  };
-  const bindCapturedCursor=()=>{
-    if(!CAPTURED_CURSOR||cursorObserver)return true;
-    if(ended)return false;
-    try{
-      const overlay=desktop.contentDocument.getElementById('overlayInput');
-      if(!overlay||!transport||transport.readyState!==1||typeof transport.send!=='function')throw new Error('cursor-transport-unavailable');
-      // Cursor capture defaults off for every new Selkies session, independent
-      // of its cursor-metadata setting. Enable it explicitly before hiding CSS.
-      transport.send('SET_NATIVE_CURSOR_RENDERING,1');
-      // Host-compositor capture provides the real cursor in the video. The
-      // external Wayland path does not deliver its changing sprite metadata.
-      const hide=()=>{
-        if(ended)return;
-        if(overlay.style.getPropertyValue('cursor')!=='none'||overlay.style.getPropertyPriority('cursor')!=='important')
-          overlay.style.setProperty('cursor','none','important');
-      };
-      hide();
-      cursorObserver=new MutationObserver(hide);
-      cursorObserver.observe(overlay,{attributes:true,attributeFilter:['style']});
-      return true;
-    }catch{endStream('cursor-unavailable');return false;}
   };
   const resizeObserver=typeof ResizeObserver==='function'?new ResizeObserver(scheduleResize):null;
   const visualViewport=window.visualViewport;
@@ -374,7 +349,6 @@ function handoffHtml(controlOrigin, capturedCursor = false) {
       bindingTimer=setTimeout(bindTelemetry,250);return;
     }
     applyStreamingMode();
-    if(!bindCapturedCursor())return;
     boundDocument=document;
     const onInput=(event)=>{
       if(!event.isTrusted)return;
@@ -390,8 +364,9 @@ function handoffHtml(controlOrigin, capturedCursor = false) {
     if(!sessionId||ended)return;
     if(loaded){endStream('document-reloaded');return;}
     loaded=true;bindingStartedAt=performance.now();boundDocument=null;
-    // Browser mode disables the separate Selkies cursor canvas. Ordinary
-    // clients retain guest CSS sprites; captured-cursor hosts hide CSS too.
+    // Render the guest cursor shape locally, including hand/text/resize and
+    // hidden cursors. Browser-cursor mode disables the separate cursor canvas;
+    // the Omarchy capture policy independently prevents a baked video cursor.
     try{desktop.contentWindow.postMessage({type:'setUseBrowserCursors',value:true},'*');}catch{}
     applyStreamingMode();
     scheduleResize();bindingTimer=setTimeout(bindTelemetry,0);
@@ -796,7 +771,7 @@ function createRemoteDesktopBroker(options) {
       jsonResponse(res, 200, { status: 'ok', protocol: 'hivra-remote-desktop-guest-v1' }); return;
     }
     if (req.method === 'GET' && target.pathname === '/desktop/handoff' && !target.search) {
-      const body = handoffHtml(control.origin, options.capturedCursor === true);
+      const body = handoffHtml(control.origin);
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'content-length': Buffer.byteLength(body),
