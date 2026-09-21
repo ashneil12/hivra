@@ -34,18 +34,18 @@ test.describe("Activity observatory (deployed canary)", () => {
       activity.getByRole("heading", { name: "Activity", exact: true }),
     ).toBeVisible();
     await expect(
-      activity.getByRole("button", { name: "Timeline", exact: true }),
+      activity.getByRole("button", { name: "History", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await expect(activity).not.toContainText(
       /total tokens|percent complete|stop requested/i,
     );
     if (data.degraded)
       await expect(activity).toContainText(
-        "absence of events does not mean no activity occurred",
+        "This history may be incomplete",
       );
     if (data.truncated)
       await expect(activity).toContainText(
-        "Filters search only these loaded events",
+        "Search and filters only cover these records",
       );
     if (data.events.length) {
       const first = data.events[0];
@@ -57,7 +57,15 @@ test.describe("Activity observatory (deployed canary)", () => {
       const inspector = activity.getByRole("complementary", {
         name: "Event inspector",
       });
-      await expect(inspector).toContainText(first.id);
+      const technical = inspector.locator("details");
+      await expect(technical).not.toHaveAttribute("open", "");
+      await expect(inspector.getByText(first.id, { exact: true })).not.toBeVisible();
+      if (first.kind === "desktop_session") {
+        await expect(inspector.getByRole("heading", { name: "Desktop access allowed" })).toBeVisible();
+        await expect(inspector).toContainText("does not confirm that anyone connected");
+      }
+      await inspector.getByText("Technical details", { exact: true }).click();
+      await expect(inspector.getByText(first.id, { exact: true })).toBeVisible();
       await expect(inspector).toContainText(first.source.label);
       for (const evidence of first.evidence)
         await expect(inspector).toContainText(evidence.value);
@@ -78,7 +86,7 @@ test.describe("Activity observatory (deployed canary)", () => {
     } else {
       await expect(activity).toContainText(
         data.degraded
-          ? "No events are available from the sources"
+          ? "No activity was returned by the available history"
           : "No activity was recorded in the last 30 days",
       );
     }
@@ -91,7 +99,7 @@ test.describe("Activity observatory (deployed canary)", () => {
         .getByRole("button"),
     ).toHaveCount(data.events.filter((event) => event.needsAttention).length);
     await activity
-      .getByRole("button", { name: "Coverage", exact: true })
+      .getByRole("button", { name: "What is monitored", exact: true })
       .click();
     const coverage = activity.getByRole("region", {
       name: "Monitoring coverage",
@@ -100,12 +108,12 @@ test.describe("Activity observatory (deployed canary)", () => {
       await expect(coverage).toContainText(source.label);
       await expect(coverage).toContainText(source.detail);
     }
+    if (data.sources.some((source) => source.state === "missing"))
+      await expect(coverage.getByText("No records yet", { exact: true }).first()).toBeVisible();
+    if (data.sources.some((source) => source.state === "degraded"))
+      await expect(coverage.getByText("Unable to load", { exact: true }).first()).toBeVisible();
     for (const resource of data.resources)
-      for (const capability of resource.capabilities) {
-        await expect(coverage).toContainText(
-          `${capability.label} · ${capability.state}`,
-        );
-      }
+      await expect(coverage).toContainText(resource.name);
     const refreshed = page.waitForResponse(
       (res) =>
         res.url().includes("/api/activity?") &&
