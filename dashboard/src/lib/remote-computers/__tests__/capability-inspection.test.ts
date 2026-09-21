@@ -94,7 +94,7 @@ function omarchyDescriptor(overrides: Record<string, unknown> = {}) {
     observedBoottimeNs: "1234567890",
     compositor: "wayland-hyprland",
     webBrokerOrigin: OMARCHY_WEB_BROKER_ORIGIN,
-    webSelkiesImage: "ghcr.io/selkies-project/selkies/desktop@sha256:395336daf8a8552949da12a969e0d7a0893309a01e65c81fb75bb0cbab3e3756",
+    webSelkiesImage: "ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b",
     webNodeImage: "node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32",
     route: {
       status: "configured-proven",
@@ -165,10 +165,11 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("remote desktop capability inspection", () => {
-  it("pairs captured guest cursors with hidden local cursors only for Omarchy", () => {
+  it("keeps Omarchy cursor pixels out of video while preserving local guest shapes", () => {
     const source = (name: string) => readFileSync(path.join(process.cwd(), "provisioner/remote-desktop", name), "utf8");
     expect(source("install-omarchy-web.py")).toContain("SELKIES_ENABLE_CURSORS=true");
-    expect(source("omarchy-web-server.cjs")).toContain("capturedCursor: true");
+    expect(source("install-omarchy-web.py")).toContain("original_native_cursor(self, False)");
+    expect(source("omarchy-web-server.cjs")).not.toContain("capturedCursor");
     expect(source("server.cjs")).not.toContain("capturedCursor");
   });
   it("pins the native guardian sources used by session revision admission", () => {
