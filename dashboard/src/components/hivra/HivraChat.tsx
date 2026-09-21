@@ -305,7 +305,7 @@ function ToolHistory({ message }: { message: ChatMessage }) {
  </button>
  <div id={id} hidden={!open}>
  <div className="hivra-chat-tool-history-list">
- {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped" || message.outcome === "error"} />)}
+ {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped"} />)}
  </div>
  </div>
  </div>
@@ -875,7 +875,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const starters = (goalDef ?? getGoal(undefined)).starters;
 
  return (
- <div style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)" }}>
+ <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)" }}>
  {/* Sessions sidebar */}
  {showRail ? (
  <div className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">

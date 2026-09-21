@@ -404,6 +404,11 @@ select,
 .boost-shine { animation: boost-cta-shine 4.8s ease-in-out 1.6s infinite; }
 
 @media (prefers-reduced-motion: reduce) {
+  .hivra-chat-root *, .hivra-chat-root *::before, .hivra-chat-root *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
   .animate-fade-up { animation: none; filter: none; transform: none; opacity: 1; }
   .boost-card, .boost-glow, .boost-iconwrap, .boost-zap, .boost-shine { animation: none; }
   .boost-card { opacity: 1; transform: none; }
