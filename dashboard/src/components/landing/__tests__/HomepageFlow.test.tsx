@@ -10,7 +10,7 @@ jest.mock("next/headers",()=>({cookies:async()=>({get:()=>undefined}),headers:as
 jest.mock("@/components/landing/home.module.css",()=>({}));
 jest.mock("@/components/public-site/PublicSite",()=>({__esModule:true,default:({children}:{children:ReactNode})=><>{children}</>}));
 
-test("the homepage tells the product story once and keeps the transition with tokenomics",async()=>{
+test("the homepage leads with the product and keeps token details in the optional ecosystem",async()=>{
  render(await LandingPage({}));
  expect(screen.getByRole("link",{name:"Download the app"})).toHaveAttribute("href","/download");
  expect(screen.getByRole("tablist",{name:"Choose your starting point"})).toBeVisible();
@@ -20,7 +20,9 @@ test("the homepage tells the product story once and keeps the transition with to
   expect(screen.queryByRole("heading",{name:title})).not.toBeInTheDocument();
  }
  expect(screen.getAllByRole("heading",{name:"Start with an agent. Or a computer."})).toHaveLength(1);
- expect(screen.getByRole("heading",{name:"What happened to HermesOS?"}).closest("section")).toHaveAttribute("id","tokenomics");
+ expect(screen.queryByRole("heading",{name:"What happened to HermesOS?"})).not.toBeInTheDocument();
+ expect(document.querySelector("#tokenomics")).not.toBeInTheDocument();
+ expect(screen.getByRole("link",{name:/Explore the ecosystem/})).toHaveAttribute("href","/ecosystem");
  expect(screen.getByRole("heading",{name:"Built to be open. Yours to run."}).compareDocumentPosition(screen.getByRole("article",{name:"Free"})) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
 });
 
