@@ -4,8 +4,11 @@ const config = {
   testEnvironment: "node",
   cacheDirectory: "<rootDir>/.jest-cache",
   moduleNameMapper: {
-    "^@/(.*)$": "<rootDir>/src/$1",
-    "\\.(css|less|scss|sass)$": "<rootDir>/__mocks__/styleMock.js"
+    // Keep asset aliases ahead of the @/ source alias. Otherwise an imported
+    // @/components/foo.module.css path is resolved to the raw stylesheet
+    // before Jest gets a chance to apply the style mock.
+    "\\.(css|less|scss|sass)$": "<rootDir>/__mocks__/styleMock.js",
+    "^@/(.*)$": "<rootDir>/src/$1"
   },
   testMatch: [
     "**/__tests__/**/*.test.ts",

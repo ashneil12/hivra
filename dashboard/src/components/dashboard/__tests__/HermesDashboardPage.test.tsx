@@ -8,7 +8,6 @@ import { HermesDashboardPage as DashboardPage } from "@/components/dashboard/Her
 
 const pushMock = jest.fn();
 const replaceMock = jest.fn();
-let hivraEnabledMock = false;
 let mockClerkUser = {
   id: "user_123",
   primaryEmailAddress: { emailAddress: "person@example.com" },
@@ -73,11 +72,6 @@ jest.mock("framer-motion", () => {
   };
 });
 
-jest.mock("../welcome/page", () => ({
-  __esModule: true,
-  default: () => <div>Welcome</div>,
-}));
-
 jest.mock("@/components/InteractiveBackground", () => ({
   __esModule: true,
   default: () => null,
@@ -101,10 +95,6 @@ jest.mock("@/lib/client/logger", () => ({
   },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraEnabled: () => hivraEnabledMock,
-}));
-
 function commandCenterV2FlagResponse(enabled = false) {
   return Promise.resolve({
     ok: true,
@@ -119,7 +109,6 @@ function commandCenterV2FlagResponse(enabled = false) {
 describe("DashboardPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    hivraEnabledMock = false;
     mockClerkUser = {
       id: "user_123",
       primaryEmailAddress: { emailAddress: "person@example.com" },
@@ -265,8 +254,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("203.0.113.10")).toBeInTheDocument();
   });
 
-  it("does not send Hivra users back to welcome when legacy instances are empty", async () => {
-    hivraEnabledMock = true;
+  it("sends an empty legacy dashboard to the current welcome flow", async () => {
     global.fetch = jest.fn((input: RequestInfo | URL) => {
       const url = String(input);
 
@@ -334,9 +322,9 @@ describe("DashboardPage", () => {
     render(<DashboardPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Claude Code")).toBeInTheDocument();
+      expect(replaceMock).toHaveBeenCalledWith("/dashboard/welcome");
     });
-    expect(replaceMock).not.toHaveBeenCalledWith("/dashboard/welcome");
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/hivra/agents");
   });
 
   it("renders the Command Center dashboard chrome in Chinese", async () => {
