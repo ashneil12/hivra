@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import HivraMacCore
@@ -30,6 +31,9 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
     @Published var query = ""
     @Published var statusFilter = "All"
     @Published private var showingWebDestination = false
+    weak var workspaceWindow: NSWindow?
+    var onReturnToWorkspace: (() -> Void)?
+    @Published private(set) var detachedWindows: [UUID: HivraResourceWindowController] = [:]
     private var subscriptions = Set<AnyCancellable>()
     private var tabSubscriptions: [UUID: AnyCancellable] = [:]
     private var lastConnectionURL: URL?
@@ -90,9 +94,36 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
         append(resource, browser: HivraBrowserModel(initialURL: url, nativeWorkspace: true))
     }
 
+    func detach(_ tab: HivraWorkspaceTab) {
+        guard tabs.contains(where: { $0.id == tab.id }) else { return }
+        if let existing = detachedWindows[tab.id] {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let controller = HivraResourceWindowController(tab: tab, profile: profile) { [weak self] in
+            self?.reattach(tab.id)
+        }
+        detachedWindows[tab.id] = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func reattach(_ tabID: UUID) {
+        guard let controller = detachedWindows.removeValue(forKey: tabID) else { return }
+        controller.finish()
+        if tabs.contains(where: { $0.id == tabID }) {
+            selectedTabID = tabID
+            onReturnToWorkspace?()
+            workspaceWindow?.deminiaturize(nil)
+            workspaceWindow?.makeKeyAndOrderFront(nil)
+        }
+    }
+
     func close(_ tab: HivraWorkspaceTab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         let nextSelection = HivraWorkspacePolicy.selectionAfterClosing(tabID: tab.id, tabs: tabs.map(\.id), selected: selectedTabID)
+        detachedWindows.removeValue(forKey: tab.id)?.finish()
         tab.browser.handleWorkspaceNavigation = nil
         tabs.remove(at: index)
         tabSubscriptions.removeValue(forKey: tab.id)
@@ -104,6 +135,9 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
     func refresh() { connectionBrowser.refreshWorkspace() }
 
     func clearOwnedViews() {
+        let windows = detachedWindows.values
+        detachedWindows.removeAll()
+        for window in windows { window.finish() }
         for tab in tabs { tab.browser.handleWorkspaceNavigation = nil }
         tabs.removeAll()
         tabSubscriptions.removeAll()
@@ -266,6 +300,7 @@ final class HivraWorkspaceStore: ObservableObject {
 
     func reconcile(profiles: [HivraConnectionProfile]) {
         let remaining = Set(profiles.map(\.id))
+        for (id, session) in sessions where !remaining.contains(id) { session.clearOwnedViews() }
         sessions = sessions.filter { remaining.contains($0.key) }
     }
 }
