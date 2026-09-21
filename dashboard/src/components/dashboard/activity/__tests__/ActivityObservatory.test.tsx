@@ -83,6 +83,8 @@ it("inspects real evidence and source provenance and filters without inventing c
   const inspector = within(
     screen.getByRole("complementary", { name: "Event inspector" }),
   );
+  expect(inspector.getByText("trace-123")).not.toBeVisible();
+  fireEvent.click(inspector.getByText("Technical details"));
   expect(inspector.getByText("trace-123")).toBeVisible();
   expect(inspector.getByText("Agent-reported trace")).toBeVisible();
   expect(inspector.getByText("npm test")).toBeVisible();
@@ -112,7 +114,7 @@ it("combines attention, agent, and kind filters and clears stale inspector conte
   });
   expect(screen.getByText(/No recorded events match/)).toBeVisible();
   expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  fireEvent.click(screen.getByRole("button", { name: "History" }));
   fireEvent.change(screen.getByLabelText("Filter by agent"), {
     target: { value: "all" },
   });
@@ -128,10 +130,15 @@ it("combines attention, agent, and kind filters and clears stale inspector conte
 });
 it("shows missing coverage explicitly and keeps usage opt-in", async () => {
   render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "1 source with gaps" });
+  await screen.findByRole("button", { name: "Monitoring limits" });
   expect(screen.queryByText("Metered usage panel")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
-  expect(screen.getByText("Processes · missing")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
+  expect(screen.getByText("Processes · No records yet")).toBeVisible();
+  expect(screen.getByText(/Missing reports do not tell us/)).toBeVisible();
+  expect(
+    screen.getByText("Independent process monitoring is not connected."),
+  ).not.toBeVisible();
+  fireEvent.click(screen.getAllByText("Technical source details")[1]);
   expect(
     screen.getByText("Independent process monitoring is not connected."),
   ).toBeVisible();
@@ -142,13 +149,11 @@ it("does not interpret degraded empty results as no activity", async () => {
   respond({ ...snapshot, events: [], degraded: true, truncated: true });
   render(<ActivityObservatory showUsage={false} />);
   expect(
-    await screen.findByText(/absence of events does not mean/),
+    await screen.findByText(/This history may be incomplete/),
   ).toBeVisible();
+  expect(screen.getByText(/No activity was returned/)).toBeVisible();
   expect(
-    screen.getByText(/No events are available from the sources/),
-  ).toBeVisible();
-  expect(
-    screen.getByText(/Filters search only these loaded events/),
+    screen.getByText(/Search and filters only cover these records/),
   ).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "Usage" }),
@@ -172,7 +177,7 @@ it("preserves the previous snapshot with a freshness warning when refresh fails"
   (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 503 });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "freshness is unverified",
+    "It may be out of date",
   );
   expect(screen.getByRole("button", { name: /Agent started/ })).toBeVisible();
 });
@@ -187,8 +192,13 @@ it("brings selected evidence into view on a narrow screen", async () => {
     render(<ActivityObservatory />);
     await screen.findByRole("button", { name: /Agent started/ });
     expect(scroll).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /Test command failed/ }));
-    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "instant" });
+    fireEvent.click(
+      screen.getByRole("button", { name: /Test command failed/ }),
+    );
+    expect(scroll).toHaveBeenCalledWith({
+      block: "nearest",
+      behavior: "instant",
+    });
   } finally {
     window.matchMedia = originalMedia;
     HTMLElement.prototype.scrollIntoView = originalScroll;
@@ -196,51 +206,183 @@ it("brings selected evidence into view on a narrow screen", async () => {
 });
 
 it("appends older events once, preserves selection and coverage, and refresh resets history", async () => {
-  respond({ ...snapshot, truncated: true, nextCursor: "page/2" } as typeof snapshot);
+  respond({
+    ...snapshot,
+    truncated: true,
+    nextCursor: "page/2",
+  } as typeof snapshot);
   render(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   fireEvent.click(screen.getByRole("button", { name: /Test command failed/ }));
   const older = { ...snapshot.events[0], id: "older-1", title: "Older launch" };
-  respond({ ...snapshot, events: [snapshot.events[1], older, older], resources: [], sources: [], truncated: false });
+  respond({
+    ...snapshot,
+    events: [snapshot.events[1], older, older],
+    resources: [],
+    sources: [],
+    truncated: false,
+  });
   fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
   await screen.findByRole("button", { name: /Older launch/ });
-  expect(global.fetch).toHaveBeenLastCalledWith("/api/activity?days=30&limit=100&cursor=page%2F2", expect.any(Object));
-  expect(screen.getAllByRole("button", { name: /Older launch/ })).toHaveLength(1);
-  expect(within(screen.getByRole("complementary")).getByText("event-2")).toBeVisible();
+  expect(global.fetch).toHaveBeenLastCalledWith(
+    "/api/activity?days=30&limit=100&cursor=page%2F2",
+    expect.any(Object),
+  );
+  expect(screen.getAllByRole("button", { name: /Older launch/ })).toHaveLength(
+    1,
+  );
+  fireEvent.click(screen.getByText("Technical details"));
+  expect(
+    within(screen.getByRole("complementary")).getByText("event-2"),
+  ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: /Older launch/ }));
-  expect(within(screen.getByRole("complementary")).getByText("older-1")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Load older events" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
-  expect(screen.getByText("Processes · missing")).toBeVisible();
+  expect(
+    within(screen.getByRole("complementary")).getByText("older-1"),
+  ).not.toBeVisible();
+  fireEvent.click(screen.getByText("Technical details"));
+  expect(
+    within(screen.getByRole("complementary")).getByText("older-1"),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Load older events" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
+  expect(screen.getByText("Processes · No records yet")).toBeVisible();
   respond(snapshot);
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await screen.findByRole("button", { name: "Refresh" });
-  fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-  expect(screen.queryByRole("button", { name: /Older launch/ })).not.toBeInTheDocument();
-  expect(global.fetch).toHaveBeenLastCalledWith("/api/activity?days=30&limit=100", expect.any(Object));
+  fireEvent.click(screen.getByRole("button", { name: "History" }));
+  expect(
+    screen.queryByRole("button", { name: /Older launch/ }),
+  ).not.toBeInTheDocument();
+  expect(global.fetch).toHaveBeenLastCalledWith(
+    "/api/activity?days=30&limit=100",
+    expect.any(Object),
+  );
 });
 
 it("preserves loaded events and cursor after a pagination error", async () => {
-  respond({ ...snapshot, truncated: true, nextCursor: "retry-cursor" } as typeof snapshot);
+  respond({
+    ...snapshot,
+    truncated: true,
+    nextCursor: "retry-cursor",
+  } as typeof snapshot);
   render(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 503 });
   fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Your loaded events are preserved");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your loaded events are preserved",
+  );
   expect(screen.getByRole("button", { name: /Agent started/ })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Load older events" })).toBeEnabled();
-  expect(screen.getByText(/Filters search only these loaded events/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Load older events" }),
+  ).toBeEnabled();
+  expect(
+    screen.getByText(/Search and filters only cover these records/),
+  ).toBeVisible();
 });
 
 it("retains a failed source and retry cursor when an older page is degraded", async () => {
-  respond({ ...snapshot, truncated: true, nextCursor: "retry-cursor" } as typeof snapshot);
+  respond({
+    ...snapshot,
+    truncated: true,
+    nextCursor: "retry-cursor",
+  } as typeof snapshot);
   render(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
-  respond({ ...snapshot, events: [], degraded: true, sources: [{ ...snapshot.sources[0], state: "degraded", detail: "Read failed." }] });
+  respond({
+    ...snapshot,
+    events: [],
+    degraded: true,
+    sources: [
+      { ...snapshot.sources[0], state: "degraded", detail: "Read failed." },
+    ],
+  });
   fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("retry this page to fill the gap");
-  expect(screen.getByRole("button", { name: "Load older events" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
-  expect(screen.getByText("degraded")).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "retry this page to fill the gap",
+  );
+  expect(
+    screen.getByRole("button", { name: "Load older events" }),
+  ).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
+  expect(screen.getByText("Unable to load")).toBeVisible();
+  fireEvent.click(screen.getAllByText("Technical source details")[0]);
   expect(screen.getByText("Read failed.")).toBeVisible();
+});
+
+it("explains desktop authorization without inventing a connection or actor", async () => {
+  respond({
+    ...snapshot,
+    events: [
+      {
+        ...snapshot.events[0],
+        kind: "desktop_session",
+        title: "Desktop control session",
+        computerId: "computer-123",
+      },
+    ],
+  } as typeof snapshot);
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: /Desktop access allowed/ });
+  const inspector = within(screen.getByRole("complementary"));
+  expect(
+    inspector.getByText(/does not confirm that anyone connected/),
+  ).toBeVisible();
+  expect(
+    inspector.getByText(/routine access history, not an alert/),
+  ).toBeVisible();
+  expect(inspector.getByText("Recorded", { exact: true })).toBeVisible();
+  expect(inspector.getByText("unknown", { exact: true })).not.toBeVisible();
+  expect(inspector.getByText("computer-123")).not.toBeVisible();
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "Desktop access allowed" },
+  });
+  expect(
+    screen.getByRole("button", { name: /Desktop access allowed/ }),
+  ).toBeVisible();
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "computer-123" },
+  });
+  expect(
+    screen.getByRole("button", { name: /Desktop access allowed/ }),
+  ).toBeVisible();
+});
+
+it("provides failure guidance and scopes the attention count to loaded records", async () => {
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: /Test command failed/ });
+  fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+  const inspector = within(screen.getByRole("complementary"));
+  expect(inspector.getByText("What to do")).toBeVisible();
+  expect(
+    inspector.getByText(
+      /Open the agent or computer to check its current state/,
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/count covers loaded records/)).toBeVisible();
+  expect(inspector.getByText("Reported a problem")).toBeVisible();
+});
+
+it("distinguishes a reported successful action from overall task completion", async () => {
+  respond({
+    ...snapshot,
+    events: [
+      {
+        ...snapshot.events[1],
+        outcome: "success",
+        severity: "info",
+        needsAttention: false,
+      },
+    ],
+  });
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: /Reported successful/ });
+  expect(
+    within(screen.getByRole("complementary")).getByText("Reported successful"),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/does not confirm that its overall task is complete/),
+  ).toBeVisible();
 });

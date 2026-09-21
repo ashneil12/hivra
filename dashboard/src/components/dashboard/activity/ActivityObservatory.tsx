@@ -7,15 +7,17 @@ import type {
   ActivitySnapshot,
   ActivityEvent,
 } from "@/lib/activity-observability/types";
+import {
+  kindLabels,
+  sourceNames,
+  capabilityNames,
+  monitoringStates,
+  presentEvent,
+  sourceExplanation,
+} from "./presentation";
 import styles from "./ActivityObservatory.module.css";
 
 type View = "timeline" | "attention" | "coverage" | "usage";
-const kindLabels: Record<string, string> = {
-  lifecycle: "Lifecycle",
-  desktop_session: "Desktop session",
-  trace_span: "Trace span",
-  tool_activity: "Tool activity",
-};
 const label = (value: string) => value.replaceAll("_", " ");
 function timestamp(value?: string) {
   if (!value) return "Not recorded";
@@ -40,13 +42,17 @@ function Inspector({
       panel.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
     }
   }, [event.id, selected]);
+  const presentation = presentEvent(event);
   const facts = [
-    ["Agent", event.agentName],
+    ["Original title", event.title],
+    ["Original summary", event.summary],
     ["Observed by", event.source.label],
     ["Source type", label(event.source.kind)],
-    ["Recorded at", timestamp(event.occurredAt)],
+    ["Outcome", event.outcome],
+    ["Severity", event.severity],
     ["Event ID", event.id],
-    ["Computer", event.computerId],
+    ["Agent ID", event.agentId],
+    ["Computer ID", event.computerId],
     ["Run", event.runId],
     ["Trace", event.traceId],
     ["Span", event.spanId],
@@ -59,41 +65,55 @@ function Inspector({
       aria-label="Event inspector"
       aria-live="polite"
     >
-      <p className={styles.kicker}>Event inspector</p>
-      <h2>{event.title}</h2>
-      <span className={event.needsAttention ? styles.warning : styles.muted}>
-        {label(event.outcome)} · {label(event.severity)}
-      </span>
-      <p className={styles.summary}>{event.summary}</p>
-      <dl className={styles.facts}>
-        {facts
-          .filter(([, value]) => value)
-          .map(([key, value]) => (
-            <div key={key}>
-              <dt>{key}</dt>
-              <dd>{value}</dd>
-            </div>
-          ))}
-      </dl>
-      <h3 className={styles.kicker}>Recorded evidence</h3>
-      {event.evidence.length ? (
-        <dl className={styles.evidence}>
-          {event.evidence.map((item, index) => (
-            <div key={`${item.label}-${index}`}>
-              <dt>{item.label}</dt>
-              <dd>{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className={styles.muted}>
-          No additional evidence was retained for this event.
-        </p>
-      )}
-      <p className={styles.footnote}>
-        A recorded event describes what its source observed. It does not
-        establish task completion or independent computer monitoring.
+      <p className={styles.kicker}>
+        {event.needsAttention ? "Worth checking" : "History record"}
       </p>
+      <h2>{presentation.title}</h2>
+      <span className={event.needsAttention ? styles.warning : styles.muted}>
+        {presentation.status}
+      </span>
+      <h3>What happened</h3>
+      <p className={styles.muted}>{presentation.happened}</p>
+      <h3>{event.needsAttention ? "What to do" : "Why this is here"}</h3>
+      <p className={styles.muted}>{presentation.guidance}</p>
+      <dl className={styles.facts}>
+        <div>
+          <dt>{event.computerId ? "Computer" : "Agent"}</dt>
+          <dd>{event.agentName}</dd>
+        </div>
+        <div>
+          <dt>When</dt>
+          <dd>{timestamp(event.occurredAt)}</dd>
+        </div>
+      </dl>
+      <details key={event.id} className={styles.technical}>
+        <summary>Technical details</summary>
+        <dl className={styles.facts}>
+          {facts
+            .filter(([, value]) => value)
+            .map(([key, value]) => (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+        </dl>
+        <h3 className={styles.kicker}>Recorded evidence</h3>
+        {event.evidence.length ? (
+          <dl className={styles.evidence}>
+            {event.evidence.map((item, index) => (
+              <div key={`${item.label}-${index}`}>
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className={styles.muted}>
+            No additional evidence was retained for this event.
+          </p>
+        )}
+      </details>
     </aside>
   );
 }
@@ -209,7 +229,11 @@ export function ActivityObservatory({
       (agent === "all" || event.agentId === agent) &&
       (kind === "all" || event.kind === kind) &&
       [
+        presentEvent(event).title,
         event.title,
+        event.id,
+        event.computerId,
+        event.spanId,
         event.summary,
         event.agentName,
         event.runId,
@@ -224,12 +248,13 @@ export function ActivityObservatory({
   const agents = Array.from(
     new Map(events.map((event) => [event.agentId, event.agentName])).entries(),
   );
-  const gaps =
-    data?.sources.filter((source) => source.state !== "active").length ?? 0;
+  const monitoringFailed =
+    data?.degraded ||
+    data?.sources.some((source) => source.state === "degraded");
   const views: [View, string][] = [
-    ["timeline", "Timeline"],
+    ["timeline", "History"],
     ["attention", "Needs attention"],
-    ["coverage", "Coverage"],
+    ["coverage", "What is monitored"],
     ...(showUsage ? [["usage", "Usage"] as [View, string]] : []),
   ];
   return (
@@ -239,19 +264,22 @@ export function ActivityObservatory({
           <p className={styles.kicker}>Your agents, in the open</p>
           <h1>Activity</h1>
           <p className={styles.muted}>
-            Follow the work. Inspect the unexpected.
+            See what your agents and computers reported. Routine history appears
+            here too.
           </p>
         </div>
         <div className={styles.actions}>
           {data && (
             <button
-              className={styles.coverageButton}
+              className={`${styles.coverageButton} ${monitoringFailed ? styles.warning : ""}`}
               onClick={() => setView("coverage")}
             >
-              <AlertTriangle size={15} aria-hidden="true" />
-              {gaps
-                ? `${gaps} source${gaps === 1 ? "" : "s"} with gaps`
-                : "Inspect coverage"}
+              {monitoringFailed && (
+                <AlertTriangle size={15} aria-hidden="true" />
+              )}
+              {monitoringFailed
+                ? "Some records could not be loaded"
+                : "Monitoring limits"}
             </button>
           )}
           <button
@@ -272,7 +300,7 @@ export function ActivityObservatory({
             onClick={() => setView(key)}
           >
             {title}
-            {key === "attention" && data && (
+            {key === "attention" && events.some(event => event.needsAttention) && (
               <span className={styles.count}>
                 {events.filter((event) => event.needsAttention).length}
               </span>
@@ -283,13 +311,12 @@ export function ActivityObservatory({
       {error && (
         <p className={styles.notice} role="alert">
           {error}
-          {data && " Showing the previous snapshot; freshness is unverified."}
+          {data && " Showing previously loaded history. It may be out of date."}
         </p>
       )}
       {data?.degraded && (
         <p className={styles.notice} role="status">
-          Some activity sources could not be read. This snapshot is incomplete;
-          absence of events does not mean no activity occurred.
+          Some activity could not be loaded. This history may be incomplete.
         </p>
       )}
       {loading && !data && (
@@ -305,44 +332,55 @@ export function ActivityObservatory({
         data &&
         (view === "coverage" ? (
           <section className={styles.coverage} aria-label="Monitoring coverage">
-            <p className={styles.kicker}>Visibility by resource</p>
-            <h2>Know what you can see.</h2>
+            <p className={styles.kicker}>What Hivra can see</p>
+            <h2>What is recorded, and what is missing.</h2>
             <p className={styles.muted}>
-              Recorded activity and independent computer monitoring are
-              different kinds of evidence.
+              Hivra shows saved computer changes and reports sent by agents. It
+              does not see every command, file change, or network connection.
             </p>
-            <h3>Sources</h3>
+            <h3>Types of history</h3>
             {data.sources.map((source) => (
               <div className={styles.coverRow} key={source.id}>
-                <strong>{source.label}</strong>
+                <strong>{sourceNames[source.id] ?? source.label}</strong>
                 <div>
                   <span
                     className={
-                      source.state === "active" ? styles.muted : styles.warning
+                      source.state === "degraded"
+                        ? styles.warning
+                        : styles.muted
                     }
                   >
-                    {label(source.state)}
+                    {monitoringStates[source.state]}
                   </span>
-                  <p className={styles.muted}>{source.detail}</p>
+                  <p className={styles.muted}>{sourceExplanation(source)}</p>
+                  <details className={styles.technical}>
+                    <summary>Technical source details</summary>
+                    <p>{source.label}</p>
+                    <p>{source.detail}</p>
+                  </details>
                 </div>
               </div>
             ))}
-            <h3>Resources</h3>
+            <h3>Your computers and agents</h3>
             {data.resources.length ? (
               data.resources.map((resource) => (
                 <div className={styles.coverRow} key={resource.id}>
                   <div>
                     <strong>{resource.name}</strong>
-                    <p className={styles.resourceId}>{resource.id}</p>
+                    <details className={styles.technical}>
+                      <summary>Technical identifier</summary>
+                      <p className={styles.resourceId}>{resource.id}</p>
+                    </details>
                   </div>
                   <div>
                     <p className={styles.muted}>
-                      Last recorded signal: {timestamp(resource.lastSeenAt)}
+                      Last agent report: {timestamp(resource.lastSeenAt)}
                     </p>
                     <div className={styles.capabilities}>
                       {resource.capabilities.map((capability) => (
                         <span key={capability.key}>
-                          {capability.label} · {label(capability.state)}
+                          {capabilityNames[capability.key] ?? capability.label}{" "}
+                          · {monitoringStates[capability.state]}
                           {capability.lastSeenAt && (
                             <small>
                               Last seen {timestamp(capability.lastSeenAt)}
@@ -356,17 +394,22 @@ export function ActivityObservatory({
               ))
             ) : (
               <p className={styles.empty}>
-                No resources were returned by the available sources.
+                No computers or agents were returned by the available history.
               </p>
             )}
           </section>
         ) : (
           <>
+            <p className={styles.viewHelp}>
+              {view === "attention"
+                ? "Only records marked for review appear here. The count covers loaded records, not all activity or a guarantee that everything is fine."
+                : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems."}
+            </p>
             <div className={styles.toolbar}>
               <input
                 type="search"
                 aria-label="Search recorded events"
-                placeholder="Search events, evidence, trace IDs…"
+                placeholder="Search activity…"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -387,7 +430,7 @@ export function ActivityObservatory({
                 value={kind}
                 onChange={(event) => setKind(event.target.value)}
               >
-                <option value="all">All kinds</option>
+                <option value="all">All activity types</option>
                 {Array.from(new Set(events.map((event) => event.kind))).map(
                   (value) => (
                     <option key={value} value={value}>
@@ -400,7 +443,7 @@ export function ActivityObservatory({
             <div className={styles.work}>
               <section aria-label="Recorded events">
                 <div className={styles.listLabel}>
-                  <span>Last 30 days · loaded snapshot</span>
+                  <span>Last 30 days · loaded records</span>
                   <span role="status">{filtered.length} events</span>
                 </div>
                 {filtered.length ? (
@@ -421,7 +464,7 @@ export function ActivityObservatory({
                         <Activity size={16} aria-hidden="true" />
                       )}
                       <span>
-                        <strong>{event.title}</strong>
+                        <strong>{presentEvent(event).title}</strong>
                         <span className={styles.meta}>
                           {event.agentName} ·{" "}
                           {kindLabels[event.kind] ?? label(event.kind)}
@@ -432,7 +475,7 @@ export function ActivityObservatory({
                               event.needsAttention ? styles.warning : undefined
                             }
                           >
-                            {label(event.outcome)}
+                            {presentEvent(event).status}
                           </span>
                           <time dateTime={event.occurredAt}>
                             {timestamp(event.occurredAt)}
@@ -446,9 +489,10 @@ export function ActivityObservatory({
                     {events.length
                       ? "No recorded events match this view and its filters."
                       : data.degraded
-                        ? "No events are available from the sources that responded."
+                        ? "No activity was returned by the available history."
                         : "No activity was recorded in the last 30 days."}{" "}
-                    Check Coverage to see which sources are available.
+                    See What is monitored to understand which records are
+                    available.
                   </p>
                 )}
               </section>
@@ -472,8 +516,8 @@ export function ActivityObservatory({
             )}
             {data.truncated && (
               <p className={styles.notice}>
-                This is a limited snapshot of the latest events. Filters search
-                only these loaded events; older activity may not be shown.
+                Showing the records loaded so far. Search and filters only cover
+                these records.
               </p>
             )}
           </>
@@ -482,7 +526,7 @@ export function ActivityObservatory({
       {data && (
         <footer className={styles.footer}>
           <span>
-            Snapshot fetched {timestamp(data.generatedAt)} · refresh for updates
+            Last updated {timestamp(data.generatedAt)} · refresh for updates
           </span>
           <span>Evidence before assumptions.</span>
         </footer>
