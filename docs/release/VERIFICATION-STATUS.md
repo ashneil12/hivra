@@ -18,9 +18,10 @@ and other environment-specific operational data.
   loopback binding, operator login, persistence, infrastructure registration,
   hosted-billing guard, encrypted backup/restore, key rotation, recovery, and
   unconditional cleanup checks.
-- Publication still requires a fresh independent review of the exact immutable
-  export and the final release-approval combiner. A separately built runtime,
-  image, desktop bundle, or mirror remains its own artifact class.
+- The initial reviewed source export is published, as recorded in
+  [the public transition](PUBLIC-TRANSITION.md). Future source candidates require
+  review of their exact revision. A separately built runtime, image, desktop
+  bundle, or mirror remains its own artifact class.
 
 ## Portable infrastructure
 

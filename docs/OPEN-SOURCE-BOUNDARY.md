@@ -1,16 +1,18 @@
 # Hivra Open-Source and Hosted Boundary
 
-**Status:** Approved boundary and Apache-2.0 root license; public release remains blocked on the remaining Phase 0 audit gates
+**Status:** Current public-source boundary. The initial reviewed source export is published; runtime images, desktop installers, and managed deployments have separate acceptance gates.
 
 ## Decision
 
-Hivra intends to release the complete functional agent-computer platform under a genuine OSI-approved open-source license.
+Hivra publishes its functional platform source under Apache-2.0. The complete
+agent-computer platform remains the target; publication does not establish
+acceptance of every capability described below.
 
 The intended model is not “open core.” An independent operator should be able to provision, operate, observe, repair, update, back up, restore, and offer the same functional agent-computer platform without private Hivra infrastructure or code.
 
 Hivra Cloud is the managed operating mode of the public platform. Customers pay Hivra to take responsibility for infrastructure credentials, provisioning, updates, monitoring, security response, backup, recovery, and support.
 
-## Intended public platform
+## Public platform scope
 
 - web application and control-plane services;
 - domain and database schemas;
@@ -71,10 +73,12 @@ Apache-2.0 permits forks and competing hosted operators and includes an explicit
 patent grant. The separate trademark policy prevents source confusion without
 restricting those code rights.
 
-The license milestone does not complete Phase 0. Until the remaining gates pass:
+The initial source publication is recorded in [the public transition](release/PUBLIC-TRANSITION.md).
+That source-only milestone does not approve every runtime, image, installer, or
+future revision. For each new release:
 
-- do not present a built artifact or repository history as a completed public
-  release candidate;
+- review the exact source or built artifact and its release evidence before
+  presenting it as an accepted release;
 - do not assume the root license grants redistribution rights for third-party
   runtimes, images, dependencies, assets, names, or services;
 - do not publish history that has not passed sensitive-data review and confirmed
@@ -97,10 +101,25 @@ receive appropriate legal review; repository analysis is not legal advice.
 
 ## Public-release decision
 
-The reachable `main` history through audit target `8308da55c1a2` (3,243
-commits) was scanned and the release will use a
+The original private `main` history through audit target `8308da55c1a2` (3,243
+commits) was scanned and the initial release used a
 [fresh public repository from an exact reviewed current-tree export](release/PUBLIC-REPOSITORY-DECISION.md).
-The existing private history will not be published or rewritten. This is a
-security decision, not a product boundary: it must not be used to hide functional
+The original private history was not included in the public export and remains
+private. This is a security decision, not a product boundary: it must not be used to hide functional
 code. Every discovered credential is remediated whether history is preserved or
 restarted.
+
+## Commercial website and content
+
+The repository includes the hosted website and blog alongside the application.
+Their inclusion does not make them a prerequisite for self-hosting. Local-auth
+builds redirect the homepage and commercial blog, feature, comparison, token,
+and founder pages to the dashboard, emit noindex headers, disallow crawling,
+and return an empty sitemap. Authentication and functional application routes
+remain available. These crawler directives are not access controls.
+
+The existing Apache-2.0 scope in `NOTICE` remains unchanged, including existing
+Hivra-owned article content without a separate license. Hivra branding remains
+subject to `TRADEMARKS.md`. A future separately licensed editorial collection
+must state its terms explicitly; moving existing files does not revoke previously
+granted permissions.
