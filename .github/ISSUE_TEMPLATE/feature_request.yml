@@ -1,0 +1,22 @@
+name: Feature request
+description: Explain a user need or propose an improvement.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the workflow and what currently gets in your way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe the outcome and any alternatives you have considered.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Relevant setup
+      description: Mention applicable runtimes, providers or self-hosting needs without private infrastructure details.

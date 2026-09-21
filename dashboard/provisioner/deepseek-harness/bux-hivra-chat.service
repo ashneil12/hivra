@@ -1,0 +1,31 @@
+[Unit]
+Description=Hivra DeepSeek native gateway and runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bux
+Group=bux
+WorkingDirectory=/opt/hivra/deepseek-gateway
+Environment=HOME=/home/bux
+Environment=HIVRA_CHAT_PORT=8080
+Environment=HIVRA_AGENT_KIND=deepseek-harness
+Environment=BUX_LOCAL_CDP_PORT=9222
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /opt/hivra/deepseek-gateway/server.js
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+Delegate=no
+ProtectControlGroups=yes
+LimitCORE=0
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

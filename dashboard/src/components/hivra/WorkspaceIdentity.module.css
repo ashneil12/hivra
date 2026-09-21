@@ -1,0 +1,7 @@
+.switcher { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; max-width: 100%; padding: 5px 8px; border: 1px solid transparent; background: transparent; color: var(--ink-black); cursor: pointer; text-align: left; }
+.switcher:hover, .switcher[aria-expanded="true"] { background: var(--bg-elevated); border-color: var(--etched-border); }
+.switcher:focus-visible { outline: 2px solid var(--hivra-red); outline-offset: 2px; }
+.switcher > svg { flex-shrink: 0; color: var(--text-secondary); }
+.copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.copy small { font-size: 11px; color: var(--text-secondary); text-transform: capitalize; }

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run while /run/lock/hivra-allocation.lock is held. The caller supplies the
+# candidate active envelope; this script derives every other active guest from
+# the host itself and fails closed when that evidence cannot be read.
+TARGET_VMID="${1:--}"
+REQUEST_FLOOR_MB="${2:?requested floor MB is required}"
+REQUEST_MAX_MB="${3:?requested maximum MB is required}"
+REQUEST_MAX_CPU="${4:?requested maximum CPU is required}"
+HOST_RESERVE_MB="${5:?host reserve MB is required}"
+ENFORCE_CEILINGS="${6:?ceiling policy is required}"
+CPU_DENSITY_MILLI="${7:?CPU density is required}"
+MEMORY_DENSITY_MILLI="${8:?memory density is required}"
+ALLOW_REDUCTION="${9:-0}"
+
+integer() { [[ "$1" =~ ^[0-9]+$ ]]; }
+positive_decimal() { [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v v="$1" 'BEGIN { exit !(v > 0) }'; }
+cpu_milli() { awk -v v="$1" 'BEGIN { printf "%d\n", (v * 1000) + 0.5 }'; }
+qemu_floor_mb() {
+  local config="$1" floor
+  floor="$(printf '%s\n' "$config" | awk '$1=="balloon:" {print $2; exit}')"
+  if ! integer "${floor:-}" || [ "$floor" -le 0 ]; then
+    floor="$(printf '%s\n' "$config" | awk '$1=="memory:" {print $2; exit}')"
+  fi
+  integer "${floor:-}" && [ "$floor" -gt 0 ] || return 1
+  printf '%s\n' "$floor"
+}
+qemu_max_mb() {
+  local value
+  value="$(printf '%s\n' "$1" | awk '$1=="memory:" {print $2; exit}')"
+  integer "${value:-}" && [ "$value" -gt 0 ] || return 1
+  printf '%s\n' "$value"
+}
+qemu_max_cpu_milli() {
+  local config="$1" value cores sockets
+  value="$(printf '%s\n' "$config" | awk '$1=="cpulimit:" {print $2; exit}')"
+  if ! positive_decimal "${value:-}"; then
+    cores="$(printf '%s\n' "$config" | awk '$1=="cores:" {print $2; exit}')"
+    sockets="$(printf '%s\n' "$config" | awk '$1=="sockets:" {print $2; exit}')"
+    [ -n "${sockets:-}" ] || sockets=1
+    integer "${cores:-}" && [ "$cores" -gt 0 ] || return 1
+    integer "$sockets" && [ "$sockets" -gt 0 ] || return 1
+    value="$((cores * sockets))"
+  fi
+  positive_decimal "${value:-}" || return 1
+  cpu_milli "$value"
+}
+
+integer "$REQUEST_FLOOR_MB" && [ "$REQUEST_FLOOR_MB" -gt 0 ] || { echo "invalid requested memory floor" >&2; exit 1; }
+integer "$REQUEST_MAX_MB" && [ "$REQUEST_MAX_MB" -ge "$REQUEST_FLOOR_MB" ] || { echo "invalid requested memory maximum" >&2; exit 1; }
+positive_decimal "$REQUEST_MAX_CPU" || { echo "invalid requested CPU maximum" >&2; exit 1; }
+integer "$HOST_RESERVE_MB" && [ "$HOST_RESERVE_MB" -ge 512 ] || { echo "invalid host memory reserve" >&2; exit 1; }
+case "$ENFORCE_CEILINGS:$ALLOW_REDUCTION" in 0:0|0:1|1:0|1:1) ;; *) echo "invalid capacity policy" >&2; exit 1 ;; esac
+integer "$CPU_DENSITY_MILLI" && [ "$CPU_DENSITY_MILLI" -ge 1000 ] && [ "$CPU_DENSITY_MILLI" -le 4000 ] || { echo "invalid CPU density" >&2; exit 1; }
+integer "$MEMORY_DENSITY_MILLI" && [ "$MEMORY_DENSITY_MILLI" -ge 1000 ] && [ "$MEMORY_DENSITY_MILLI" -le 4000 ] || { echo "invalid memory density" >&2; exit 1; }
+case "$TARGET_VMID" in -) ;; *[!0-9]*|'') echo "invalid target VMID" >&2; exit 1 ;; esac
+
+MEMINFO_PATH="${HIVRA_CAPACITY_MEMINFO_PATH:-/proc/meminfo}"
+HOST_TOTAL_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' "$MEMINFO_PATH")"
+HOST_CPU="$(nproc)"
+integer "${HOST_TOTAL_MB:-}" && [ "$HOST_TOTAL_MB" -gt "$HOST_RESERVE_MB" ] || { echo "could not measure host memory capacity" >&2; exit 1; }
+integer "${HOST_CPU:-}" && [ "$HOST_CPU" -gt 0 ] || { echo "could not measure host CPU capacity" >&2; exit 1; }
+[ "$REQUEST_MAX_MB" -le "$HOST_TOTAL_MB" ] || { echo "requested memory maximum exceeds physical host memory" >&2; exit 1; }
+REQUEST_CPU_MILLI="$(cpu_milli "$REQUEST_MAX_CPU")"
+[ "$REQUEST_CPU_MILLI" -le $((HOST_CPU * 1000)) ] || { echo "requested CPU maximum exceeds physical host CPU" >&2; exit 1; }
+
+ACTIVE_FLOOR_MB=0
+ACTIVE_MAX_MB=0
+ACTIVE_MAX_CPU_MILLI=0
+OLD_ACTIVE_FLOOR_MB=0
+OLD_ACTIVE_MAX_MB=0
+OLD_ACTIVE_MAX_CPU_MILLI=0
+
+QEMU_INVENTORY="$(qm list 2>/dev/null)" || { echo "could not read QEMU inventory" >&2; exit 1; }
+QEMU_CANDIDATES="$(printf '%s\n' "$QEMU_INVENTORY" | awk '
+  NF > 0 && !header { header=1; if ($1 != "VMID") exit 2; next }
+  NF > 0 { if ($1 !~ /^[0-9]+$/) exit 3; print $1 }
+')" || { echo "invalid QEMU inventory" >&2; exit 1; }
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  config="$(qm config "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU capacity" >&2; exit 1; }
+  template="$(printf '%s\n' "$config" | awk '$1=="template:" {print $2; exit}')"
+  [ "${template:-0}" = "1" ] && continue
+  status_output="$(qm status "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU status" >&2; exit 1; }
+  status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && ($2=="running" || $2=="stopped") {print $2}')"
+  [ -n "$status" ] || { echo "invalid QEMU status" >&2; exit 1; }
+  [ "$status" = "running" ] || continue
+  floor="$(qemu_floor_mb "$config")" || { echo "invalid QEMU memory floor" >&2; exit 1; }
+  maximum="$(qemu_max_mb "$config")" || { echo "invalid QEMU memory maximum" >&2; exit 1; }
+  cpu="$(qemu_max_cpu_milli "$config")" || { echo "invalid QEMU CPU maximum" >&2; exit 1; }
+  if [ "$TARGET_VMID" != "-" ] && [ "$candidate" = "$TARGET_VMID" ]; then
+    OLD_ACTIVE_FLOOR_MB="$floor"
+    OLD_ACTIVE_MAX_MB="$maximum"
+    OLD_ACTIVE_MAX_CPU_MILLI="$cpu"
+    continue
+  fi
+  ACTIVE_FLOOR_MB=$((ACTIVE_FLOOR_MB + floor))
+  ACTIVE_MAX_MB=$((ACTIVE_MAX_MB + maximum))
+  ACTIVE_MAX_CPU_MILLI=$((ACTIVE_MAX_CPU_MILLI + cpu))
+done <<EOF
+$QEMU_CANDIDATES
+EOF
+
+if command -v pct >/dev/null 2>&1; then
+  PCT_INVENTORY="$(pct list 2>/dev/null)" || { echo "could not read container inventory" >&2; exit 1; }
+  PCT_CANDIDATES="$(printf '%s\n' "$PCT_INVENTORY" | awk '
+    NF > 0 && !header { header=1; if ($1 != "VMID") exit 2; next }
+    NF > 0 { if ($1 !~ /^[0-9]+$/) exit 3; print $1 }
+  ')" || { echo "invalid container inventory" >&2; exit 1; }
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    status_output="$(pct status "$candidate" 2>/dev/null)" || { echo "could not inspect container status" >&2; exit 1; }
+    status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && ($2=="running" || $2=="stopped") {print $2}')"
+    [ -n "$status" ] || { echo "invalid container status" >&2; exit 1; }
+    [ "$status" = "running" ] || continue
+    config="$(pct config "$candidate" 2>/dev/null)" || { echo "could not inspect container capacity" >&2; exit 1; }
+    memory="$(printf '%s\n' "$config" | awk '$1=="memory:" {print $2; exit}')"
+    integer "${memory:-}" && [ "$memory" -gt 0 ] || { echo "invalid container memory" >&2; exit 1; }
+    cpu_value="$(printf '%s\n' "$config" | awk '$1=="cpulimit:" {print $2; exit}')"
+    if ! positive_decimal "${cpu_value:-}"; then cpu_value="$(printf '%s\n' "$config" | awk '$1=="cores:" {print $2; exit}')"; fi
+    positive_decimal "${cpu_value:-}" || { echo "invalid container CPU maximum" >&2; exit 1; }
+    ACTIVE_FLOOR_MB=$((ACTIVE_FLOOR_MB + memory))
+    ACTIVE_MAX_MB=$((ACTIVE_MAX_MB + memory))
+    ACTIVE_MAX_CPU_MILLI=$((ACTIVE_MAX_CPU_MILLI + $(cpu_milli "$cpu_value")))
+  done <<EOF
+$PCT_CANDIDATES
+EOF
+fi
+
+NEXT_FLOOR_MB=$((ACTIVE_FLOOR_MB + REQUEST_FLOOR_MB + HOST_RESERVE_MB))
+if [ "$NEXT_FLOOR_MB" -gt "$HOST_TOTAL_MB" ]; then
+  [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_FLOOR_MB" -gt "$REQUEST_FLOOR_MB" ] \
+    || { echo "active memory floors plus host reserve exceed physical memory" >&2; exit 1; }
+fi
+
+if [ "$ENFORCE_CEILINGS" = "1" ]; then
+  MEMORY_LIMIT_MB=$((HOST_TOTAL_MB * MEMORY_DENSITY_MILLI / 1000))
+  CPU_LIMIT_MILLI=$((HOST_CPU * CPU_DENSITY_MILLI))
+  if [ $((ACTIVE_MAX_MB + REQUEST_MAX_MB)) -gt "$MEMORY_LIMIT_MB" ]; then
+    [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_MAX_MB" -gt "$REQUEST_MAX_MB" ] \
+      || { echo "active memory ceilings exceed the configured density" >&2; exit 1; }
+  fi
+  if [ $((ACTIVE_MAX_CPU_MILLI + REQUEST_CPU_MILLI)) -gt "$CPU_LIMIT_MILLI" ]; then
+    [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_MAX_CPU_MILLI" -gt "$REQUEST_CPU_MILLI" ] \
+      || { echo "active CPU ceilings exceed the configured density" >&2; exit 1; }
+  fi
+fi
+
+printf 'HIVRA_CAPACITY_ADMITTED floor_headroom_mb=%s active_floor_mb=%s active_max_mb=%s active_max_cpu_milli=%s\n' \
+  "$((HOST_TOTAL_MB - NEXT_FLOOR_MB))" "$ACTIVE_FLOOR_MB" "$ACTIVE_MAX_MB" "$ACTIVE_MAX_CPU_MILLI"

@@ -1,0 +1,33 @@
+# Native Omarchy repair: retain the distro package name and SONAME.
+pkgname=aquamarine
+pkgver=0.14.0
+pkgrel=2.1
+pkgdesc='Aquamarine with virtual DRM atomic cursor hotspot support'
+arch=(x86_64)
+url='https://github.com/hyprwm/aquamarine'
+license=(BSD-3-Clause)
+depends=(glibc libgcc libstdc++ hyprutils hyprwayland-scanner libdisplay-info libdrm
+         libglvnd libinput mesa pixman seatd systemd-libs wayland wayland-protocols)
+makedepends=(cmake git)
+provides=('libaquamarine.so')
+source=('aquamarine::git+https://github.com/hyprwm/aquamarine.git#commit=a79fb21b2e2a82dd061a6d071802bcf38bd5c383'
+        '0001-virtio-cursor-hotspot.patch')
+# Git source is pinned by its complete content-addressed commit above.
+sha256sums=('SKIP' 'a4689e85a99c36ad1ef7b3478a83e07b2cfd2b7487d68852cd5a06b8a15c4301')
+
+prepare() {
+    cd "$srcdir/aquamarine"
+    patch --batch --forward -p1 < "$srcdir/0001-virtio-cursor-hotspot.patch"
+}
+
+build() {
+    cmake -S "$srcdir/aquamarine" -B build \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_TESTING=OFF
+    cmake --build build --parallel 2
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+    install -Dm644 "$srcdir/aquamarine/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,63 @@
+{
+  "format": "hivra-npm-license-overrides-v1",
+  "releaseApproved": false,
+  "reviewBasis": "Exact npm tarball identities and packaged license metadata reviewed for the lock entries whose registry metadata is undeclared.",
+  "packages": [
+    {
+      "name": "buildcheck",
+      "version": "0.0.7",
+      "licenseExpression": "MIT",
+      "distributionUrl": "https://registry.npmjs.org/buildcheck/-/buildcheck-0.0.7.tgz",
+      "distributionSha512": "9476e5cf86a16a6c694e69ec93e30d4d15ac8d82aff7ae4cc0ead2272783e7cf2b47725cbbbb3013ed3037917e3db2f972382effd39b9217f310fba87c43302c",
+      "licenseFiles": [{ "name": "LICENSE", "sha256": "d06b5d27bbbbe22c36b1fd88406b1208876e2d37d795f5b8eaed951a459a3111", "bytes": 1067 }]
+    },
+    {
+      "name": "cpu-features",
+      "version": "0.0.10",
+      "licenseExpression": "MIT",
+      "distributionUrl": "https://registry.npmjs.org/cpu-features/-/cpu-features-0.0.10.tgz",
+      "distributionSha512": "f48918aad5f76073c2ce8560d4fcbea3dd39edade2d1fa7b4b9df4516a2409268555373b0b05cf4623a3463050435f1908d69fc7bf187e71be1c02f1b5598e18",
+      "licenseFiles": [{ "name": "LICENSE", "sha256": "7c28463b739e2e73a49bf127d0bda427f8c55f0b37365a044c3c3f254716118b", "bytes": 1085 }]
+    },
+    {
+      "name": "duck",
+      "version": "0.1.12",
+      "licenseExpression": "BSD-3-Clause",
+      "distributionUrl": "https://registry.npmjs.org/duck/-/duck-0.1.12.tgz",
+      "distributionSha512": "c2472d95ad4ee957cff3d810f89ff20deb0cd12ec1ed72d78ca1b35f130354583bb849fbd3a9e202dc98a2f29bcaad684fd6300dc972ef6d7f8945a873c31546",
+      "licenseFiles": [{ "name": "LICENSE", "sha256": "6663bbd049205d38a496ccacb412a151980b444627d38de218b3b809aef330f1", "bytes": 1307 }]
+    },
+    {
+      "name": "exit",
+      "version": "0.1.2",
+      "licenseExpression": "MIT",
+      "distributionUrl": "https://registry.npmjs.org/exit/-/exit-0.1.2.tgz",
+      "distributionSha512": "664fde34a576cdb8e92b3aec43e9f51baa6855b12b4312742c13895da299d445622f31fe86b2eef5c757238cf0f5d05026c970044a5b4363f5a12ee70f1b3a8d",
+      "licenseFiles": [{ "name": "LICENSE-MIT", "sha256": "65bd93f75d6c0cdc1c9e1a39bd1814e2e34355c665e1564a1517f27c1523ab7e", "bytes": 1062 }]
+    },
+    {
+      "name": "format",
+      "version": "0.2.2",
+      "licenseExpression": "MIT",
+      "distributionUrl": "https://registry.npmjs.org/format/-/format-0.2.2.tgz",
+      "distributionSha512": "c33b2003a58eabed3dc2b535b6c274f6e75e47f61945a780acbf5ed703db160dc61b6c839c2da574aa71b38c6e9e9145f4382a0aa388adaddb7351d6ac9dfb5b",
+      "licenseFiles": [{ "name": "Readme.md", "sha256": "e078ab4217332db9ac446cdf23e932eabd21d6db7c239a6495df4d3802251f20", "bytes": 1053 }]
+    },
+    {
+      "name": "posthog-js",
+      "version": "1.318.2",
+      "licenseExpression": "Apache-2.0",
+      "distributionUrl": "https://registry.npmjs.org/posthog-js/-/posthog-js-1.318.2.tgz",
+      "distributionSha512": "3390bfdc7625c8d6aa98223080692624b706b79311130b2597018b00e3b79cc621ad64a312e2671337a7a651f16bfe14830be1478d76d44af344780aebbaaad4",
+      "licenseFiles": [{ "name": "LICENSE", "sha256": "cca1cfff1da6fb80722d4ebc5a1d71827d93a35ef5b21af1070af7a2bb17d59a", "bytes": 15965 }]
+    },
+    {
+      "name": "ssh2",
+      "version": "1.17.0",
+      "licenseExpression": "MIT",
+      "distributionUrl": "https://registry.npmjs.org/ssh2/-/ssh2-1.17.0.tgz",
+      "distributionSha512": "c0f95d0a4ddab226c08d0fe4ce259042dd568773e00c5a42d17a70725cca71d4f5bea97a29e6317f92c8b789e516451e47c5aea6160c2aa500e7a5f8ae36df81",
+      "licenseFiles": [{ "name": "LICENSE", "sha256": "d06b5d27bbbbe22c36b1fd88406b1208876e2d37d795f5b8eaed951a459a3111", "bytes": 1067 }]
+    }
+  ]
+}

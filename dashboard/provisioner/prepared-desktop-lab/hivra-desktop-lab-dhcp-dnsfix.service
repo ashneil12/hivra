@@ -1,0 +1,15 @@
+[Unit]
+Description=Hivra prepared desktop Canary DHCP and DNS
+Wants=network-online.target
+After=network-online.target
+Before=pve-guests.service
+ConditionPathExists=/usr/sbin/dnsmasq
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --interface=vmbr1 --bind-interfaces --except-interface=lo --dhcp-authoritative --dhcp-range=198.51.100.98,198.51.100.99,255.255.255.0,12h --dhcp-host=BC:24:11:74:68:7B,198.51.100.99,hivra-omarchy,12h --dhcp-host=BC:24:11:57:49:98,198.51.100.98,hivra-windows,12h --dhcp-option=3,198.51.100.1 --dhcp-option=6,185.12.64.2,185.12.64.1 --log-dhcp
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target

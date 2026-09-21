@@ -1,0 +1,236 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/purge-expired",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/sync-connectors",
+      "schedule": "0 */12 * * *"
+    },
+    {
+      "path": "/api/cron/seed-standing-tasks",
+      "schedule": "30 8 * * *"
+    },
+    {
+      "path": "/api/cron/seed-daily-brief",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/managed-venice-reconciliation",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/managed-venice-token-reconciliation",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-provider-models",
+      "schedule": "0 11,23 * * *"
+    },
+    {
+      "path": "/api/cron/resend-announcement-audience",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-token-holdings",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-active-deposit-quotes",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-token-tiers",
+      "schedule": "30 */6 * * *"
+    },
+    {
+      "path": "/api/cron/apply-pending-resizes",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-crypto-topups",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/bill-compute-usage",
+      "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/cron/sample-instance-metrics",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/probe-instance-health",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/recover-stuck-instances",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/expire-pending-prompts",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/recover-orphan-provisioning",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/recover-stuck-hivra-agents",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/purge-error-hivra-agents",
+      "schedule": "40 4 * * *"
+    },
+    {
+      "path": "/api/cron/recover-missing-vm-instances",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/recover-unhealthy-active-instances",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/autoheal-llm-transport-failures",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/probe-instance-egress",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/yearly-token-sweep",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/yearly-token-expiry",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-subscription-grace",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-subscription-state",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/check-orphaned-instances",
+      "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/api/cron/warn-stale-suspended-instances",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/cron/inactivity-sweep",
+      "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/cron/capacity-pressure-sweep",
+      "schedule": "25 * * * *"
+    },
+    {
+      "path": "/api/cron/reclaim-dormant-instances",
+      "schedule": "45 3 * * *"
+    },
+    {
+      "path": "/api/cron/resource-watchdog",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/redeploy-webui-instances",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/monitor-managed-venice-usage",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/managed-venice-health",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/detect-proxmox-orphans",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/fleet-status-reconcile",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/migration-drift-check",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/venice-pricing-drift-check",
+      "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/cron/daily-vm-backups",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/cron/daily-instance-backups",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/daily-config-snapshot",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/archive-stopped-vms",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/cold-retention-sweep",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/cold-storage-notifications",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/cold-storage-audit",
+      "schedule": "0 5 * * 0"
+    },
+    {
+      "path": "/api/cron/lifecycle-emails",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-cloudflare-dns",
+      "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/rollup-platform-stats",
+      "schedule": "50 * * * *"
+    },
+    {
+      "path": "/api/cron/harvest-agent-usage",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-user-geo",
+      "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/aeon-tick",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/reservation-claim-expiry",
+      "schedule": "23 */2 * * *"
+    },
+    {
+      "path": "/api/cron/park-idle-hivra-agents",
+      "schedule": "15 5 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-soul-seeds",
+      "schedule": "*/20 * * * *"
+    }
+  ]
+}

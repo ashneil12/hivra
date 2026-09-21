@@ -1,0 +1,56 @@
+{
+  "format": "hivra-self-host-recovery-e2e-v1",
+  "status": "pass",
+  "startedAt": "2026-09-15T19:32:24.022Z",
+  "finishedAt": "2026-09-15T19:42:00.691Z",
+  "sourceRevision": "a6570be35b8bc9fe16a6df9aed27cefc76aebf3e",
+  "backupSha256": "fbaa68f40dc9af7fcc3354f98c6bdf617790d96457d07bcd29211c9710d571f3",
+  "backupBytes": 255168,
+  "rotationBackupSha256": "bb18fc94facef46b78d3eb101f85a5059068d15a4f16352da5f12d8e46137664",
+  "rotationBackupBytes": 255680,
+  "checks": {
+    "health": "pass",
+    "operatorLogin": "pass",
+    "recoveredMarker": "pass",
+    "infrastructureRegistry": "pass",
+    "hostedBillingGuard": "pass",
+    "databaseCrashRecovery": {
+      "target": "supabase_db_hivra-70342d14df",
+      "startedAt": "2026-09-15T19:35:09.670Z",
+      "finishedAt": "2026-09-15T19:35:21.352Z",
+      "interruption": "SIGKILL with owned automatic restart disabled",
+      "recovery": "explicit docker start (manual)",
+      "apiInterruptionObserved": "pass",
+      "exactMarkerRecovered": "pass",
+      "volumeIdentitiesPreserved": "pass",
+      "restartPolicyRestored": "pass"
+    },
+    "originalLoopbackBindings": "pass",
+    "restoredLoopbackBindings": "pass",
+    "recoveredStorageBytes": "pass",
+    "dashboardRestartRecovery": {
+      "interruption": "owned launcher SIGTERM and explicit start",
+      "interruptionObserved": "pass",
+      "health": "pass",
+      "operatorLogin": "pass",
+      "recoveredMarker": "pass",
+      "infrastructureRegistry": "pass",
+      "hostedBillingGuard": "pass",
+      "recoveredStorageBytes": "pass"
+    },
+    "masterKeyRotation": {
+      "secretCiphertextRewrapped": "pass",
+      "oldSecretKeyRejected": "pass",
+      "launchFingerprintKeyPreserved": "pass"
+    }
+  },
+  "cleanup": {
+    "originalUninstall": "pass",
+    "restoredUninstall": "pass",
+    "retainedComputerGuard": "pass",
+    "encryptedTestBackupRemoved": "pass",
+    "encryptedRotationBackupRemoved": "pass"
+  },
+  "secretsPrinted": false,
+  "resourcesRetainedForInspection": []
+}

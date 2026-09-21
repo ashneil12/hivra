@@ -1,0 +1,22 @@
+[Unit]
+Description=bux local browser-keeper (real Chrome on this box, replaces BU Cloud)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bux
+Group=bux
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Must be a NON-default user-data-dir: Chrome 136+ refuses to open the
+# remote-debugging port on the default profile (~/.config/google-chrome).
+# The harness connects via { profileDir: "/home/bux/.browser-profile" }.
+Environment=BUX_LOCAL_PROFILE_DIR=/home/bux/.browser-profile
+ExecStart=/opt/bux/venv/bin/python /opt/bux/local-browser-keeper.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/bux/local-browser.log
+StandardError=append:/var/log/bux/local-browser.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=Hivra chat surface (web frontend to the official claude CLI)
+After=network-online.target bux-local-browser.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bux
+Group=bux
+WorkingDirectory=/opt/bux/hivra-chat
+Environment=HOME=/home/bux
+Environment=HIVRA_CHAT_PORT=8080
+Environment=BUX_LOCAL_CDP_PORT=9222
+Environment=PATH=/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /opt/bux/hivra-chat/server.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/bux/hivra-chat.log
+StandardError=append:/var/log/bux/hivra-chat.log
+
+[Install]
+WantedBy=multi-user.target

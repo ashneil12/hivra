@@ -1,0 +1,26 @@
+# Local development compose. Production deployment pulls the built image and
+# wires it into the per-user WebUI VM's compose stack via webui-instance-builder.ts;
+# do not use this file as the production config.
+
+services:
+  browser-sidecar:
+    build: .
+    image: hermesdeploy/browser-sidecar:dev
+    container_name: hermes-browser-sidecar
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      # SEED_MODE off by default; flip to true and re-up to expose noVNC.
+      SEED_MODE: "false"
+    ports:
+      # Internal port — bound to localhost only in real deploys.
+      - "127.0.0.1:8789:8789"
+      # noVNC entrypoint via Caddy. Only useful when SEED_MODE=true.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - browser-state:/var/lib/hermes-browser
+    restart: unless-stopped
+
+volumes:
+  browser-state:

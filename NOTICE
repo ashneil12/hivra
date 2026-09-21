@@ -1,0 +1,46 @@
+Hivra
+Copyright 2026 Hivra contributors
+
+This product includes software developed for Hivra.
+
+The Apache License, Version 2.0 in the root LICENSE file applies to
+Hivra-owned material unless a file or directory carries a different license.
+It does not grant rights to third-party names, logos, services, or software.
+
+The Solidity sources under contracts/ carry SPDX-License-Identifier: MIT and
+remain available under the MIT License stated in those files.
+
+The marketing skills under .agents/skills/ include material from Marketing
+Skills by Corey Haines and contributors (https://github.com/coreyhaines31/marketingskills),
+used under the MIT License. Their exact upstream commits and Git blob identities
+are recorded in docs/release/source-third-party-provenance.json, and the complete
+upstream MIT notice is retained at .agents/skills/LICENSE. The Hivra-specific
+upstream-audit skill is first-party material covered by the root license.
+
+The App Store verification build acquires four Apple root CA certificates
+directly from Apple's public certificate-authority pages. Their official source
+URLs, exact hashes, and byte lengths are recorded in
+docs/release/source-third-party-provenance.json. The certificate bytes are not
+redistributed in this source tree. Apple Inc. retains all rights in those
+certificate bytes and Apple names and marks; Hivra's Apache-2.0 license does
+not apply to or grant rights in that third-party material.
+
+Hivra installers and adapters can download or connect to third-party software.
+Those runtimes are not part of the Hivra Work and remain governed by their own
+licenses and terms. Audited portable-installer identities, current decisions,
+and unresolved runtime lanes are recorded in
+docs/release/RUNTIME-DISTRIBUTION.md.
+
+The Hivra-owned Buzz and DeepSeek Harness adapters refer to the upstream
+`block/buzz` project under Apache-2.0 and `deepseek-ai/deepseek-harness` under
+MIT. The source archive does not embed those upstream runtime packages, images,
+desktop artifacts, or optional proprietary payloads. Exact reviewed identities
+and the distribution boundary are recorded in
+docs/release/RUNTIME-DISTRIBUTION.md.
+
+The initial reviewed artifact class is source-only: package locks name exact
+downloaded dependencies, but npm packages, operating-system packages, agent
+runtimes, and VM/container images are not embedded in the source archive.
+Dependency and software-bill-of-materials evidence is reproducible through
+docs/release/DEPENDENCIES.md. Any later binary or image artifact must carry the
+notices and corresponding source material required by the exact bytes it embeds.

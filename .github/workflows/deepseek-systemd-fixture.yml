@@ -1,0 +1,37 @@
+name: Offline DeepSeek systemd fixture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-deepseek-systemd-fixture
+  cancel-in-progress: false
+
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact revision without repository credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify offline fixture contract
+        run: python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py
+      - name: Install VM tools on disposable CI worker
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils genisoimage
+      - name: Run offline Ubuntu native service lifecycle
+        env:
+          HIVRA_DISPOSABLE_CI: offline-native-systemd
+        run: sudo --preserve-env=GITHUB_ACTIONS,GITHUB_REPOSITORY,GITHUB_WORKSPACE,GITHUB_SHA,RUNNER_ENVIRONMENT,RUNNER_TEMP,HIVRA_DISPOSABLE_CI python3 -I -B dashboard/scripts/test-deepseek-systemd-vm.py
+      - name: Retain immutable verdict including failures and cleanup
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: offline-deepseek-systemd-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/deepseek-systemd-result/
+          if-no-files-found: error
+          retention-days: 14

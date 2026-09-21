@@ -1,0 +1,128 @@
+name: Public release safety
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-release-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  current-tree:
+    name: Current tree safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Reject tracked secrets, generated output, and scan bypasses
+        run: node --test scripts/release/asset-provenance-evidence.test.mjs scripts/release/check-dashboard-public-artifact.test.mjs scripts/release/credential-reconciliation-evidence.test.mjs scripts/release/notice-source-offer-evidence.test.mjs scripts/release/public-release-metadata.test.mjs scripts/release/public-source-approval.test.mjs scripts/release/public-source-candidate.test.mjs scripts/release/public-tree-hygiene.test.mjs scripts/release/runtime-distribution-boundary.test.mjs scripts/release/source-third-party-provenance.test.mjs dashboard/scripts/test-public-source-bootstrap-e2e.test.mjs dashboard/scripts/test-self-host-recovery-e2e.test.mjs && python3 -I -B dashboard/scripts/test-runtime-receipt.py && node scripts/release/public-tree-hygiene.mjs
+
+      - name: Guard standalone database bindings and recovery helpers
+        run: node --test dashboard/scripts/hivra-self-host.test.mjs dashboard/scripts/hivra-self-host-docker.test.mjs dashboard/scripts/hivra-self-host-backup.test.mjs dashboard/scripts/hivra-self-host-storage.test.mjs
+
+      - name: Guard staged native adapter boundaries and disposable test ownership
+        run: node --test --test-timeout=15000 dashboard/runtime-adapters/deepseek-harness/native-broker.test.cjs dashboard/runtime-adapters/deepseek-harness/gateway-policy.test.cjs dashboard/runtime-adapters/deepseek-harness/guarded-files.test.cjs dashboard/runtime-adapters/deepseek-harness/guest-file-access.test.cjs dashboard/runtime-adapters/deepseek-harness/recipe.test.cjs dashboard/scripts/test-deepseek-native-runtime.test.mjs
+
+      - name: Guard staged native package publication with owned filesystem fixtures
+        run: sudo python3 -I -B dashboard/scripts/test-deepseek-package-install.py && sudo python3 -I -B dashboard/scripts/test-deepseek-service-owner.py && sudo python3 -I -B dashboard/scripts/test-deepseek-guest-install.py && python3 -I -B dashboard/scripts/test-guest-install.py
+
+      - name: Guard offline native systemd fixture boundaries
+        run: python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py
+
+      - name: Preserve exact portable release bytes including bundled documentation
+        run: node --test scripts/release/portable-bundle-immutability.test.mjs
+
+      - name: Export exact tracked tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hivra-public-tree"
+          git archive "$GITHUB_SHA" | tar -x -C "$RUNNER_TEMP/hivra-public-tree"
+
+      - name: Install verified Gitleaks 8.29.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location \
+            --output "$archive" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.29.1/gitleaks_8.29.1_linux_x64.tar.gz
+          echo 'e4eb209d04e20339d77122a3bdf9cd41351255cfb27ebcb75e85325e04f88924  '"$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+
+      - name: Scan exact current tree with reviewed fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/hivra-public-tree"
+          tree_config="$PWD/.gitleaks.toml"
+          tree_ignore="$PWD/.gitleaksignore"
+          scan() {
+            target="$1"
+            report="$2"
+            errors="$3"
+            shift 3
+            code=0
+            "$RUNNER_TEMP/gitleaks/gitleaks" dir "$target" \
+              --config "$tree_config" \
+              --gitleaks-ignore-path "$tree_ignore" \
+              --redact=100 \
+              --no-banner \
+              --no-color \
+              --log-level error \
+              --report-format json \
+              --report-path "$report" \
+              "$@" 2>"$errors" || code=$?
+            if [ -s "$errors" ]; then
+              echo '::error::Gitleaks reported a scan/parsing error; refusing a partial scan.'
+              return 2
+            fi
+            return "$code"
+          }
+
+          # Prove this binary detects the repository's deliberately synthetic
+          # credential fixture when it is presented as ordinary text. This is a
+          # fail-closed detector self-test, not an allowlisted scan result.
+          mkdir -p "$RUNNER_TEMP/gitleaks-detector-probe"
+          cp dashboard/src/lib/__tests__/crypto.test.ts \
+            "$RUNNER_TEMP/gitleaks-detector-probe/synthetic-credential.txt"
+          probe_code=0
+          scan "$RUNNER_TEMP/gitleaks-detector-probe" \
+            "$RUNNER_TEMP/gitleaks-detector-probe.json" \
+            "$RUNNER_TEMP/gitleaks-detector-probe.err" || probe_code=$?
+          test "$probe_code" -eq 1
+          node -e 'const fs=require("fs"); const v=JSON.parse(fs.readFileSync(process.argv[1])); if (!Array.isArray(v) || v.length < 1) process.exit(1)' \
+            "$RUNNER_TEMP/gitleaks-detector-probe.json"
+
+          # Gitleaks 8.29.1 misclassifies this exact JS suffix as Brotli even in
+          # the raw pass. Force the bytes through the proven text detector before
+          # removing the original only from the archive/decode pass.
+          test -f tests/missed_call_demo.browser.cjs
+          mkdir -p "$RUNNER_TEMP/gitleaks-forced-text"
+          cp tests/missed_call_demo.browser.cjs \
+            "$RUNNER_TEMP/gitleaks-forced-text/forced-text.txt"
+          scan "$RUNNER_TEMP/gitleaks-forced-text" \
+            "$RUNNER_TEMP/gitleaks-forced-text.json" \
+            "$RUNNER_TEMP/gitleaks-forced-text.err"
+
+          # Raw scan covers every other ordinary tracked byte.
+          scan . "$RUNNER_TEMP/gitleaks-current-tree.json" "$RUNNER_TEMP/gitleaks-current-tree.err"
+          mv tests/missed_call_demo.browser.cjs "$RUNNER_TEMP/missed_call_demo.browser.cjs.raw-scan-complete"
+
+          # Second pass expands real nested archives and decoded payloads. Any
+          # parser warning is a hard failure rather than a silently skipped file.
+          scan . "$RUNNER_TEMP/gitleaks-expanded-tree.json" "$RUNNER_TEMP/gitleaks-expanded-tree.err" \
+            --max-archive-depth 2 \
+            --max-decode-depth 3

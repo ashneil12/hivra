@@ -1,0 +1,25 @@
+.viewport { height: var(--workspace-viewport-height, 100dvh); }
+.mobileHeader { display: none; }
+
+@media (max-width: 767px) {
+  .withMobileHeader { padding-top: calc(56px + env(safe-area-inset-top, 0px)); --dashboard-mobile-header-height: calc(56px + env(safe-area-inset-top, 0px)); }
+  .mobileHeader { position: absolute; inset: 0 0 auto; z-index: 60; display: flex; align-items: center; justify-content: space-between; height: calc(56px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 12px 0 18px; background: var(--vellum-bg); border-bottom: 1px solid var(--etched-border); }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--ink-black); text-decoration: none; }
+  .brandMark { font-family: var(--font-grotesk), 'Space Grotesk', sans-serif; font-size: 25px; font-weight: 700; font-style: italic; letter-spacing: -2px; }
+  .brandName { font-family: var(--font-mono), 'Space Mono', monospace; font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+  .mobileHeader :is(a, button):focus-visible { outline: 2px solid var(--hivra-red, #ff3a3b); outline-offset: 3px; }
+}
+.nativeAccount {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  gap: 16px;
+  padding: 12px clamp(16px, 3vw, 32px);
+  border-bottom: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+}
+.nativeAccount > div:first-child { min-width: 0; }
+.accountLabel { font-family: var(--font-mono), monospace; font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+.accountName { margin: 3px 0 0; font-size: 14px; color: var(--text-secondary); overflow-wrap: anywhere; }

@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "version": "2026.09.05.4",
+  "files": [
+    {
+      "path": ".gitignore",
+      "bytes": 42,
+      "sha256": "f5ae987b50d896136e4f50780b59a980d1c91ef18c9258759a20e86658a8ace6"
+    },
+    {
+      "path": "PROVENANCE.md",
+      "bytes": 30935,
+      "sha256": "cf9f3bc86e451023b1a0257be8de3e09ceaf0a9419410d8eababe4bd0bc18588"
+    },
+    {
+      "path": "README.md",
+      "bytes": 16536,
+      "sha256": "597a1d20ab15a55d85ccc1f56ae5d27cb21b1d080fc152d2bea92b75d08603c5"
+    },
+    {
+      "path": "VERSION",
+      "bytes": 13,
+      "sha256": "dce4d685e89ee8a91b448cfbb4934b3de14ce36b3c7338549ab730df18a6b1bc"
+    },
+    {
+      "path": "bux-hivra-chat.service",
+      "bytes": 668,
+      "sha256": "0f0dfe688c7e973d44d31912d191b72c4a0721096e8ca58c03aeb827fd67c37f"
+    },
+    {
+      "path": "bux-local-browser.service",
+      "bytes": 752,
+      "sha256": "98e3ef97d6d3b179b5a81493e066bd86aace6c49845a91fa7a59131322594e95"
+    },
+    {
+      "path": "bux-box-ttyd.service",
+      "bytes": 421,
+      "sha256": "3a402165b76a4728f591553a22e67d7bb915e5a554b0e29e7a00556e6c665d69"
+    },
+    {
+      "path": "bux-ttyd-base-path.conf",
+      "bytes": 299,
+      "sha256": "bee9d491bc75d090d56d574c44119233f94b37dba9d5e98c7a4b358eee908e70"
+    },
+    {
+      "path": "deepseek-harness/native-broker.cjs",
+      "bytes": 13308,
+      "sha256": "e51f31b82e10ea05dca24205a3d99ca40e8651ec2efede7ac7a3f652a9ae4c52"
+    },
+    {
+      "path": "deepseek-harness/gateway-policy.cjs",
+      "bytes": 4401,
+      "sha256": "7f9bb4baebf71e7dd9c321e9ae908ba0cd8484506db7e16f22dec1cc3977cb58"
+    },
+    {
+      "path": "deepseek-harness/runtime-process.cjs",
+      "bytes": 9356,
+      "sha256": "a3a7d0ad4e541e679ffd4a01ae6a71b57a27d32cecd1b4e97119e2d6e9cf85cb"
+    },
+    {
+      "path": "deepseek-harness/package.json",
+      "bytes": 293,
+      "sha256": "d881c21f3ed5b42dffb5d5d951c527304b86ba52d8b41ee66ad007d0157f3381"
+    },
+    {
+      "path": "deepseek-harness/package-lock.json",
+      "bytes": 353859,
+      "sha256": "1e0c3ad2505f33eedb2f1cbb2cb4cc7aea70cdfdf4e92e6ac6ba0741598446bf"
+    },
+    {
+      "path": "deepseek-harness/install-native.py",
+      "bytes": 10897,
+      "sha256": "36abc9f5bb46920ae87510aacecd7b2316915a5ca07b4a082b4779b9f7f88568"
+    },
+    {
+      "path": "deepseek-harness/service-owner.py",
+      "bytes": 8835,
+      "sha256": "2d6d62e677beaa221ddd679c44307f38d3b19ef782d709e6c6899b72ab711006"
+    },
+    {
+      "path": "deepseek-harness/install-guest.py",
+      "bytes": 11069,
+      "sha256": "ec4a7fbb56a301d515dc2f7901a1af07556f5fd2a61ed11165acca34f261f4a7"
+    },
+    {
+      "path": "deepseek-harness/bux-hivra-chat.service",
+      "bytes": 706,
+      "sha256": "8cd720b2ac4fa2850d8102f1259fda66d825d64314dcfd2f7d9e95a8ae2a8e02"
+    },
+    {
+      "path": "hivra-agent-shell",
+      "bytes": 1343,
+      "sha256": "1a2de1e0b16b26dedcf6bd9a7dde992027f1ec57ab7b4f134291d95baa0c5118"
+    },
+    {
+      "path": "hivra-guest-ssh-known-hosts",
+      "bytes": 2553,
+      "sha256": "061a359294acfa2317a08a37ac8803d47bf23002ed9c1b5f914ea547dae795a8"
+    },
+    {
+      "path": "hivra-install-agent.py",
+      "bytes": 20150,
+      "sha256": "8b3a4b90d387a2bfa711ee1ad965c6dbe09e6c33b205c362a4a53cc645655f8e"
+    },
+    {
+      "path": "hivra-provider-worker.py",
+      "bytes": 27894,
+      "sha256": "77e03fec7702990792c4210f9e8ca4f701780b62e71aa3b736c938912f7cb0ae"
+    },
+    {
+      "path": "hivra-browser-apply",
+      "bytes": 722,
+      "sha256": "6c90d319afbdbeaf9d4f569628cabcb2aa30743b46f0bf7703348261462aaaca"
+    },
+    {
+      "path": "hivra-network-preflight",
+      "bytes": 4534,
+      "sha256": "8fe90fd2f7f300358effa4fd9460e6797bdb5391391c82fd794c0c0532fa3a1c"
+    },
+    {
+      "path": "hivra-runtime-receipt.py",
+      "bytes": 34850,
+      "sha256": "5439462d3cd58a00347436e726e19bff8e71ba945c8d29f89af1cd010f45ccb0"
+    },
+    {
+      "path": "hivra-chat/app.js",
+      "bytes": 5510,
+      "sha256": "787205f96cf016a069a8e3b009b9db517507b1eb713be21d756f348cdb52fc73"
+    },
+    {
+      "path": "hivra-chat/index.html",
+      "bytes": 5204,
+      "sha256": "137ff1af16554ee9c09731c15b6c0834a67494faf8df75dddfe15c199dff6276"
+    },
+    {
+      "path": "hivra-chat/llm-application.js",
+      "bytes": 11714,
+      "sha256": "5d75be3baf6b9d3cf200de0a9444d81c94d5fa1d9725fb2a9d8a653a37993521"
+    },
+    {
+      "path": "hivra-chat/guarded-files.cjs",
+      "bytes": 6143,
+      "sha256": "5deb81cd01e13139f5cc181f04cc264db5243deaa1694d865796bad17817dabf"
+    },
+    {
+      "path": "hivra-chat/server.js",
+      "bytes": 123727,
+      "sha256": "51e1a7b6fe06d0c94830237fe05bbda6766b1d2382cc0b98c107f5849851d721"
+    },
+    {
+      "path": "hivra-provision-on-host.sh",
+      "bytes": 25556,
+      "sha256": "77c85b33b5607958a88531799bf09060a9faa463e6f15f407775a5b809cf0ff7"
+    },
+    {
+      "path": "hivra-start-on-host.sh",
+      "bytes": 9852,
+      "sha256": "83674a7cba56f2107a3015bd59b73bb346945a8428d0f410a00a4f8bcdbc67dd"
+    },
+    {
+      "path": "hivra-update-guest-runtime.sh",
+      "bytes": 6993,
+      "sha256": "7094a58f419d69ef58777a2a9d519685a826685f4fe7eb5491006f60729b3fd9"
+    },
+    {
+      "path": "hivra-tg-apply",
+      "bytes": 743,
+      "sha256": "c194162fca483fe14e4e0369fefae5b884ae97755bf94811d117cc07922b3f18"
+    },
+    {
+      "path": "local-browser-keeper.py",
+      "bytes": 4492,
+      "sha256": "b32453992b5ab3807a8a0b1b7a04d58ba358eaa982189de39f0d718d3482442b"
+    },
+    {
+      "path": "prepare-proxmox-host.sh",
+      "bytes": 14433,
+      "sha256": "083c1a35b09249b0671a8a2f4c568fe72424acae3b41c899935cd8791a8bf430"
+    },
+    {
+      "path": "provision-claude-code-box.sh",
+      "bytes": 70665,
+      "sha256": "1db601482f48592e411b9d148b7da135e2584bf4f7edb43d99d8c475bb53ef4b"
+    },
+    {
+      "path": "remote-desktop/broker.cjs",
+      "bytes": 35138,
+      "sha256": "6c7f3b56e4643bf3039c9ea68cdd18e1e3f3a298812e9b384656b10abc264d41"
+    },
+    {
+      "path": "remote-desktop/install-guest.py",
+      "bytes": 42473,
+      "sha256": "f9db991e451352047ab6c54d4cfc0e05f478b16489a113708c4513d2c10c179d"
+    },
+    {
+      "path": "remote-desktop/server.cjs",
+      "bytes": 2621,
+      "sha256": "f67d189ca4e330af38d5607af816119cceb8eba279292bc3bfd9989a4abd866b"
+    },
+    {
+      "path": "system-prompt-codex.md",
+      "bytes": 6400,
+      "sha256": "531cfeec956886c0e1a130090caa80d43276169eac63d49afe37ecac46f53c35"
+    },
+    {
+      "path": "system-prompt.md",
+      "bytes": 6331,
+      "sha256": "265dc8fcadc97dceb3d18fdbe361c0a976b3d8a4a350732c4d3fc7cd33906887"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "format": "hivra-asset-owner-assertions-v1",
+  "recordedAt": "2026-09-21",
+  "assertions": [
+    {
+      "path": "dashboard/public/images/computers/omarchy-workspace.webp",
+      "sha256": "4256e8336fee29c3e7a785f214e9150c6a2d63539857a6238b27a42aca6db5e7",
+      "assertedBy": "repository-owner",
+      "assertion": "The artwork was not taken from anybody.",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "The exact bytes first appear in repository commit f7475fa2b583b37b831688bbaf1c5be8aaf5b03a; no embedded author, source, prompt, generation receipt, or upstream-origin metadata was found."
+    },
+    {
+      "path": "dashboard/public/images/computers/ubuntu-workspace.webp",
+      "sha256": "ab85e7d5438042c079119e583b9da925d6f00d7b43b5b7d965f27b2d2caf854c",
+      "assertedBy": "repository-owner",
+      "assertion": "The artwork was not taken from anybody.",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "The exact bytes first appear in repository commit f7475fa2b583b37b831688bbaf1c5be8aaf5b03a; no embedded author, source, prompt, generation receipt, or upstream-origin metadata was found."
+    },
+    {
+      "path": "dashboard/public/images/computers/windows-workspace.webp",
+      "sha256": "360bff5bd1bb52f2877bd7a60d24dea8abfe3051a57b2d334699222f08c525a3",
+      "assertedBy": "repository-owner",
+      "assertion": "The artwork was not taken from anybody.",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "The exact bytes first appear in repository commit f7475fa2b583b37b831688bbaf1c5be8aaf5b03a; no embedded author, source, prompt, generation receipt, or upstream-origin metadata was found."
+    },
+    {
+      "path": "docs/brand/hivra-logo.jpg",
+      "sha256": "9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4",
+      "assertedBy": "repository-owner",
+      "assertion": "The artwork was not taken from anybody.",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "owner-supplied-original-byte-match",
+      "independentEvidence": "The committed bytes are identical to the owner-selected original file Generated Image April 18, 2026 - 6_34AM.jpg; both SHA-256 values are 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4. No prompt or generation receipt was supplied."
+    },
+    {
+      "path": "docs/litepaper/assets/boundary-monolith-v5.png",
+      "sha256": "cebb1ae84c23f7eaae8fdc9825c0fc028e90eb66c968e77d11fd9e844ebb5ee2",
+      "assertedBy": "repository-owner",
+      "assertion": "The artwork was not taken from anybody.",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "The exact bytes first appear in repository commit 00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d; no embedded author, source, prompt, generation receipt, or upstream-origin metadata was found."
+    }
+  ],
+  "boundary": "These are owner assertions, not independent proof of a creation tool, prompt, generation terms, or upstream origin. The repository history and exact logo source-file match are recorded separately as independent evidence."
+}

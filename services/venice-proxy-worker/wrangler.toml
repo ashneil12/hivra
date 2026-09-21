@@ -1,0 +1,19 @@
+# Managed-Venice chat proxy — Cloudflare Worker (CANARY).
+#
+# Deploy:  CLOUDFLARE_API_TOKEN=<workers-scoped-token> npx wrangler deploy
+# Secret:  npx wrangler secret put MANAGED_VENICE_INTERNAL_SECRET
+#
+# VERCEL_BASE_URL must point at the CANARY control-plane (same origin the box's
+# managed-Venice base URL used before cutover, minus /api/managed-venice/v1).
+name = "venice-proxy-canary"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+workers_dev = true
+
+[vars]
+# Canary control-plane origin (confirmed from a canary box's HERMES_AEON_GATE_URL).
+VERCEL_BASE_URL = "https://canary.hermesos.cloud"
+
+# MANAGED_VENICE_INTERNAL_SECRET is a SECRET, never a [vars] entry:
+#   npx wrangler secret put MANAGED_VENICE_INTERNAL_SECRET
+# It must match the same env var set on the Vercel canary project.

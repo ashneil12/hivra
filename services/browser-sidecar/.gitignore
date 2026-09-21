@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+coverage/
+.tsbuildinfo
+.DS_Store
+# Local profile data — never commit cookies/auth state
+profiles/
+screenshots/

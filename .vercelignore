@@ -1,0 +1,52 @@
+/.claude/
+/.codex/
+/.cursor/
+/.agents/
+/.git/
+/.github/
+/.hivra-data/
+/.worktrees/
+/services/
+# Keep documentation private except the exact inputs consumed by litepaper staging.
+# Reopen parent directories explicitly: negating a file inside an ignored parent
+# cannot restore it under Vercel's gitignore-compatible filtering.
+# The CLI checks directory paths without trailing slashes; match those exact
+# parents as well as their descendants before applying the child allowlist.
+/docs/*
+!/docs/litepaper
+/docs/litepaper/*
+!/docs/litepaper/index.html
+!/docs/litepaper/litepaper.css
+!/docs/litepaper/litepaper.js
+!/docs/litepaper/experience-motion.js
+!/docs/litepaper/assets
+/docs/litepaper/assets/*
+!/docs/litepaper/assets/agent-computer-hero-v2.png
+!/docs/litepaper/assets/agent-computer-opportunity-v2.png
+!/docs/litepaper/assets/observable-run-v2.png
+!/docs/litepaper/assets/boundary-monolith-v5.png
+!/docs/litepaper/assets/fonts
+/docs/litepaper/assets/fonts/*
+!/docs/litepaper/assets/fonts/Manrope-Variable.ttf
+!/docs/litepaper/assets/fonts/Manrope-OFL.txt
+!/docs/litepaper/assets/fonts/IBMPlexMono-Regular.ttf
+!/docs/litepaper/assets/fonts/IBMPlexMono-OFL.txt
+!/docs/litepaper/vendor
+/docs/litepaper/vendor/*
+!/docs/litepaper/vendor/gsap-3.15.0.min.js
+!/docs/litepaper/vendor/ScrollTrigger-3.15.0.min.js
+!/docs/litepaper/vendor/NOTICE.md
+/scripts/
+/tmp/
+/supabase/
+*.log
+.next/
+node_modules/
+dashboard/.jest-cache/
+dashboard/.next.nosync/
+dashboard/tmp/
+dashboard/runbooks/
+.env.local
+.env*.local
+# Required immutable bundle asset; Vercel CLI ignores .gitignore by default.
+!/dashboard/provisioner/.gitignore

@@ -1,0 +1,17 @@
+.home { width: 100%; max-width: 1080px; margin-inline: auto; padding: clamp(24px, 5vw, 64px) clamp(20px, 4vw, 48px); display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 28px; }
+.eyebrow { color: var(--text-secondary); font: 10px var(--font-mono), monospace; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 12px; }
+.title { font-family: var(--font-playfair), Georgia, serif; color: var(--ink-black); font-weight: 400; font-size: clamp(28px, 4vw, 38px); line-height: 1.15; margin: 0 0 10px; }
+.start { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.startChoice { background: var(--bg-surface); border: 1px solid var(--etched-border); padding: 28px; color: var(--ink-black); text-decoration: none; }
+.startChoice:hover { border-color: var(--hivra-red-line); }
+.startChoice:focus-visible { outline: 2px solid var(--hivra-red); outline-offset: 3px; }
+.startChoice > svg { color: var(--hivra-red); margin-bottom: 28px; }
+.startChoice h2 { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+.startChoice p { color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.startChoice > span { display: block; margin-top: 28px; font-size: 13px; }
+.resourceIcon { display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; flex-shrink: 0; background: var(--bg-elevated); color: var(--text-secondary); }
+@media (max-width: 600px) { .start { grid-template-columns: 1fr; } .home { gap: 22px; } }
+
+.opening { display: flex; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: 16px; padding: 24px; color: var(--text-secondary); font-size: 14px; }
+.opening a { color: var(--text-secondary); font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+.opening a:focus-visible { outline: 2px solid var(--hivra-red); outline-offset: 4px; }

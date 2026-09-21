@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible problem with Hivra.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For vulnerabilities, follow SECURITY.md instead of opening a public issue.
+        Remove credentials, customer data, private host addresses and access links from all examples.
+  - type: input
+    id: revision
+    attributes:
+      label: Version or commit
+      description: Include the release or commit and whether this is self-hosted or hosted.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Describe the smallest sequence that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and sanitized evidence
+      description: Relevant OS, browser, runtime, provider and redacted logs or screenshots. No secret values.

@@ -1,0 +1,257 @@
+{
+  "format": "hivra-asset-provenance-policy-v1",
+  "releaseApproved": false,
+  "rightsReview": {
+    "checkedAt": "2026-09-21",
+    "generationRecords": "docs/release/asset-generation-records.json",
+    "generationRecordsSha256": "0fb925051b1c4e00aae5f1aa04b094ca6c28fcdc1ea64736a9f823ccc3c05a06",
+    "fontLicenseEvidence": "docs/release/font-license-evidence.json",
+    "fontLicenseEvidenceSha256": "02be866338d7409f45a55b1cc361d589b707c50ac3df4c20c00ce9bf4b9e42ed",
+    "ownerAssertions": "docs/release/asset-owner-assertions.json",
+    "ownerAssertionsSha256": "22646e5e1e3b521d3d6c1997a80016e7505d7b79cdaf4c5f6bf7a5a2ba4bbc37",
+    "openAiTermsUrl": "https://openai.com/policies/terms-of-use/",
+    "finding": "The earlier generated-asset review remains byte-bound. Twelve tracked font files now have exact official-upstream byte matches and adjacent OFL-1.1 evidence. Five artwork files have repository-owner originality assertions recorded separately from independent evidence; only the selected Hivra logo has an independently verified owner-supplied original byte match. No missing prompts, generation tools, or receipts are inferred."
+  },
+  "assets": [
+    {
+      "path": "dashboard/e2e/targeted-surfaces.vrt.spec.ts-snapshots/vrt-dashboard-shell-vrt-linux.png",
+      "sha256": "f70fa5daa5b71b8677cff447fd87b71dc9a51aa3edc74fb04821f555947aea70",
+      "bytes": 513347,
+      "class": "first-party-ui-test-baseline",
+      "origin": "Playwright visual-regression capture of the Hivra dashboard shell.",
+      "provenanceCommit": "b697a5d26df10d8c126b1e8c2c50b1e7b96a84df",
+      "rightsStatus": "documented-first-party",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/e2e/targeted-surfaces.vrt.spec.ts-snapshots/vrt-pricing-plans-vrt-linux.png",
+      "sha256": "201bf79d18bda113727e2ea58c5386508ba461281e7976bc1090b8257903038c",
+      "bytes": 476723,
+      "class": "first-party-ui-test-baseline",
+      "origin": "Playwright visual-regression capture of the Hivra pricing surface.",
+      "provenanceCommit": "b697a5d26df10d8c126b1e8c2c50b1e7b96a84df",
+      "rightsStatus": "documented-first-party",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/e2e/targeted-surfaces.vrt.spec.ts-snapshots/vrt-welcome-deploy-card-vrt-linux.png",
+      "sha256": "46a1e5434c35cbf7ddb53f6ebd6d0c4ddf08f6f8870ed430b15fae8d0451a1fc",
+      "bytes": 513238,
+      "class": "first-party-ui-test-baseline",
+      "origin": "Playwright visual-regression capture of the Hivra welcome deployment card.",
+      "provenanceCommit": "b697a5d26df10d8c126b1e8c2c50b1e7b96a84df",
+      "rightsStatus": "documented-first-party",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/fonts/IBMPlexMono-Regular.ttf",
+      "sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46",
+      "bytes": 135580,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts IBM Plex Mono artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/fonts/Manrope-Variable.ttf",
+      "sha256": "d0639be45d0af36e798172419d7bd173c4bd4f29e2b76cbb69db1d11bf8b0a40",
+      "bytes": 165420,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Manrope project variable-font artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/images/computers/omarchy-workspace.webp",
+      "sha256": "4256e8336fee29c3e7a785f214e9150c6a2d63539857a6238b27a42aca6db5e7",
+      "bytes": 60950,
+      "class": "owner-asserted-original-artwork",
+      "origin": "Repository-owner originality assertion and the separate repository-history evidence boundary are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "f7475fa2b583b37b831688bbaf1c5be8aaf5b03a",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/images/computers/ubuntu-workspace.webp",
+      "sha256": "ab85e7d5438042c079119e583b9da925d6f00d7b43b5b7d965f27b2d2caf854c",
+      "bytes": 82596,
+      "class": "owner-asserted-original-artwork",
+      "origin": "Repository-owner originality assertion and the separate repository-history evidence boundary are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "f7475fa2b583b37b831688bbaf1c5be8aaf5b03a",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/images/computers/windows-workspace.webp",
+      "sha256": "360bff5bd1bb52f2877bd7a60d24dea8abfe3051a57b2d334699222f08c525a3",
+      "bytes": 87316,
+      "class": "owner-asserted-original-artwork",
+      "origin": "Repository-owner originality assertion and the separate repository-history evidence boundary are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "f7475fa2b583b37b831688bbaf1c5be8aaf5b03a",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/brand/hivra-logo.jpg",
+      "sha256": "9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4",
+      "bytes": 6437029,
+      "class": "owner-asserted-original-brand-artwork",
+      "origin": "Repository-owner originality assertion plus a byte-identical match to the owner-selected original file are recorded separately in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "35fceff4b8b11085b13dee5b902c5b7c39882850",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-08-hivra-workspace/assets/outfit-latin.woff2",
+      "sha256": "92684e4acde79ef07758cd09380b7e01e9824d8b061eddeda046f78c166d7b12",
+      "bytes": 32228,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Outfit v15 Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "cc1b66ac390b8754c0bcae40c15dc2d28544cc54",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-08-hivra-workspace/assets/space-grotesk-latin.woff2",
+      "sha256": "a0d054c4af557de20afd6ca59f47ab353bcaec49c63ff04b6c9d39d0f8910557",
+      "bytes": 22320,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Space Grotesk v22 Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "3a32230525dc545905280961749ed9bcf3ebca3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-08-hivra-workspace/assets/space-mono-bold-latin.woff2",
+      "sha256": "af7cf6d2b897ec453acdcdacde4e9bcc8410718af5914de865b453e09f10eebc",
+      "bytes": 9552,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Space Mono v17 bold Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "3a32230525dc545905280961749ed9bcf3ebca3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-08-hivra-workspace/assets/space-mono-latin.woff2",
+      "sha256": "e0c8e616bda27642f4c3cebaecff6525d901e73afc8a227cbbb0f2af4810f300",
+      "bytes": 9464,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Space Mono v17 regular Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "3a32230525dc545905280961749ed9bcf3ebca3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-17-hivra-usability-overhaul/assets/outfit-latin.woff2",
+      "sha256": "92684e4acde79ef07758cd09380b7e01e9824d8b061eddeda046f78c166d7b12",
+      "bytes": 32228,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Outfit v15 Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "835be1e864d6640c6e3ceb2360db6b0dc3310013",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-17-hivra-usability-overhaul/assets/space-grotesk-latin.woff2",
+      "sha256": "a0d054c4af557de20afd6ca59f47ab353bcaec49c63ff04b6c9d39d0f8910557",
+      "bytes": 22320,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Space Grotesk v22 Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "835be1e864d6640c6e3ceb2360db6b0dc3310013",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-17-hivra-usability-overhaul/assets/space-mono-bold-latin.woff2",
+      "sha256": "af7cf6d2b897ec453acdcdacde4e9bcc8410718af5914de865b453e09f10eebc",
+      "bytes": 9552,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Space Mono v17 bold Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "835be1e864d6640c6e3ceb2360db6b0dc3310013",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/designs/2026-09-17-hivra-usability-overhaul/assets/space-mono-latin.woff2",
+      "sha256": "e0c8e616bda27642f4c3cebaecff6525d901e73afc8a227cbbb0f2af4810f300",
+      "bytes": 9464,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts Space Mono v17 regular Latin WOFF2 artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "835be1e864d6640c6e3ceb2360db6b0dc3310013",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/boundary-monolith-v5.png",
+      "sha256": "cebb1ae84c23f7eaae8fdc9825c0fc028e90eb66c968e77d11fd9e844ebb5ee2",
+      "bytes": 1839707,
+      "class": "owner-asserted-original-artwork",
+      "origin": "Repository-owner originality assertion and the separate repository-history evidence boundary are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/fonts/IBMPlexMono-Regular.ttf",
+      "sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46",
+      "bytes": 135580,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Google Fonts IBM Plex Mono artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/fonts/Manrope-Variable.ttf",
+      "sha256": "d0639be45d0af36e798172419d7bd173c4bd4f29e2b76cbb69db1d11bf8b0a40",
+      "bytes": 165420,
+      "class": "licensed-third-party-font",
+      "origin": "Byte-identical to the official Manrope project variable-font artifact; adjacent OFL-1.1 evidence is bound in docs/release/font-license-evidence.json.",
+      "provenanceCommit": "00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d",
+      "rightsStatus": "documented-third-party-font",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/src/app/icon.svg",
+      "sha256": "70a6c710ed5d07f882ba10c6fe275a3d4cf33e276a63980dfa35c186b51fa0e0",
+      "bytes": 349,
+      "class": "hivra-brand-asset",
+      "origin": "Hivra project-authored SVG geometry recorded in docs/release/asset-generation-records.json.",
+      "provenanceCommit": "b7951cbc5874fcd0fbb2081cd6a544abd973c7e8",
+      "rightsStatus": "documented-first-party",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-hero-v2.png",
+      "sha256": "ff789243915db5325495d364a27cb4e7b4cb30b431879a17eb370eae888dd173",
+      "bytes": 1868417,
+      "class": "project-generated-editorial-illustration",
+      "origin": "Prompt, built-in-tool output receipt, terms review and visual acceptance are recorded in docs/release/asset-generation-records.json.",
+      "provenanceCommit": "b7951cbc5874fcd0fbb2081cd6a544abd973c7e8",
+      "rightsStatus": "documented-project-generated",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-opportunity-v2.png",
+      "sha256": "df38e76c121b85560343da49fb0e19069be2426280e35c76198ba4bc97bece25",
+      "bytes": 1640105,
+      "class": "project-generated-editorial-illustration",
+      "origin": "Prompt, built-in-tool output receipt, terms review and visual acceptance are recorded in docs/release/asset-generation-records.json.",
+      "provenanceCommit": "b7951cbc5874fcd0fbb2081cd6a544abd973c7e8",
+      "rightsStatus": "documented-project-generated",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/observable-run-v2.png",
+      "sha256": "e38ee51e5b2eeb3e71f9e5458719a76ec501418e8dd646f68343531d15b3d2fe",
+      "bytes": 1899495,
+      "class": "project-generated-editorial-illustration",
+      "origin": "Base prompt, corrective edit prompt, built-in-tool output receipt, terms review and visual acceptance are recorded in docs/release/asset-generation-records.json.",
+      "provenanceCommit": "b7951cbc5874fcd0fbb2081cd6a544abd973c7e8",
+      "rightsStatus": "documented-project-generated",
+      "redistributionDecision": "include"
+    }
+  ]
+}

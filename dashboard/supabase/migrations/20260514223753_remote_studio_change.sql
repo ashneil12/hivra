@@ -1,0 +1,6 @@
+-- Stub for a change applied via the Supabase Studio web UI (or another
+-- out-of-band path) before the local migrations directory was wired
+-- end-to-end. The actual DB change is already live on the remote project;
+-- this empty file exists only so the `supabase` CLI's local↔remote
+-- migration tracking can be reconciled. Safe to delete once a future
+-- migration captures whatever DDL this was.

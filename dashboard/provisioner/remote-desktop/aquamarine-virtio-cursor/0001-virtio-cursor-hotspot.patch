@@ -1,0 +1,35 @@
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -550,6 +550,12 @@
+         backend->log(AQ_LOG_DEBUG, "drm: Atomic supported, using atomic for modesetting");
+         impl                         = makeShared<CDRMAtomicImpl>(self.lock());
+         drmProps.supportsAsyncCommit = drmGetCap(gpu->fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap) == 0 && cap == 1;
++        // Virtual DRM drivers hide cursor planes from atomic clients unless
++        // the client promises to provide the cursor hotspot properties.
++        // Physical drivers may return EOPNOTSUPP; their planes stay available.
++        if (drmSetClientCap(gpu->fd, DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT, 1))
++            backend->log(AQ_LOG_DEBUG, "drm: Cursor hotspot capability unavailable");
++
+         atomic                       = true;
+     }
+ 
+diff --git a/src/backend/drm/impl/Atomic.cpp b/src/backend/drm/impl/Atomic.cpp
+--- a/src/backend/drm/impl/Atomic.cpp
++++ b/src/backend/drm/impl/Atomic.cpp
+@@ -270,8 +270,14 @@
+             if (data.committed & COutputState::AQ_OUTPUT_STATE_CURSOR_SHAPE) {
+                 if (!connector->output->cursorVisible)
+                     planeProps(connector->crtc->cursor, nullptr, 0, {});
+-                else
++                else {
+                     planeProps(connector->crtc->cursor, data.cursorFB, connector->crtc->id, connector->output->cursorPos - connector->output->cursorHotspot);
++                    const auto& props = connector->crtc->cursor->props.values;
++                    if (props.hotspot_x)
++                        add(connector->crtc->cursor->id, props.hotspot_x, static_cast<int32_t>(connector->output->cursorHotspot.x));
++                    if (props.hotspot_y)
++                        add(connector->crtc->cursor->id, props.hotspot_y, static_cast<int32_t>(connector->output->cursorHotspot.y));
++                }
+             } else if (connector->output->cursorVisible)
+                 planePropsPos(connector->crtc->cursor, connector->output->cursorPos - connector->output->cursorHotspot);
+         }

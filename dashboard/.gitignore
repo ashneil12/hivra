@@ -1,0 +1,99 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+/.jest-cache
+# playwright auth + test artifacts (never commit live session cookies)
+/e2e/.auth/
+/test-results/
+/playwright-report/
+
+# next.js
+/.next/
+/.next.nosync/
+/out/
+/.hivra-data/
+/.generated/apple-certs/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+id_rsa
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# compiled JS artifacts that should not be tracked (TS source is canonical)
+src/**/*.js
+!src/**/*.config.js
+
+# one-off debug / test scripts at the project root
+patch.js
+test-*.js
+check_*.ts
+decrypt.py
+fix_*.js
+fix_*.py
+fix_*.ts
+replace-text.js
+get_key.py
+scratch.js
+scratch.py
+test-db.js
+test-db.ts
+test-sidecar.js
+test_db.ts
+test_decrypt.ts
+test_script.ts
+deploy_key
+temp_key
+eslint-errors.txt
+eslint_output.txt
+eslint_report.json
+lint-results.json
+lint_output.txt
+test_failures.txt
+*.bak
+
+# local docker-compose overrides
+docker-compose-remote.yml
+docker-compose.override.yml
+.env*.local
+
+# first-run audit verdicts (per-run JSON, uploaded as CI artifacts)
+e2e/.first-run-audit/
+e2e/.remote-desktop-audit/
+
+# Generated from the approved root litepaper source by predev/prebuild.
+/public/docs/litepaper/
+/public/LITEPAPER.md
+/public/THOUGHTS.md
+/public/TOKENOMICS.md
+/public/WHITEPAPER.md
+/public/WHY.md

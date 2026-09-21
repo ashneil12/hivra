@@ -1,0 +1,113 @@
+import { randomUUID } from "node:crypto";
+import { NextRequest } from "next/server";
+
+import { apiError } from "@/lib/api-response";
+import { log } from "@/lib/logger";
+import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
+import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+
+// SCRIPTURE_ANCHOR: venice-image-edit | Jeremiah 18:6 | Verse: As the clay is in the potter's hand, so are ye in mine hand.
+const VENICE_IMAGES_EDIT_URL = "https://api.venice.ai/api/v1/image/edit";
+const ENDPOINT_LABEL = "/api/v1/image/edit";
+
+function readBearerKey(req: NextRequest) {
+  const header = req.headers.get("authorization")?.trim() || "";
+  if (!header.toLowerCase().startsWith("bearer ")) return null;
+  return header.slice(7).trim() || null;
+}
+
+export async function POST(req: NextRequest) {
+  const plaintextKey = readBearerKey(req);
+  if (!plaintextKey) return apiError("Unauthorized", 401);
+
+  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey });
+  if (!verifiedKey) return apiError("Unauthorized", 401);
+
+  let formData: FormData;
+  try {
+    formData = await req.formData();
+  } catch {
+    return apiError("Expected multipart/form-data body.", 400);
+  }
+
+  const modelField = formData.get("model");
+  const model = typeof modelField === "string" && modelField.trim()
+    ? modelField.trim()
+    : "firered-image-edit";
+  const promptField = formData.get("prompt");
+  if (typeof promptField !== "string" || !promptField.trim()) {
+    return apiError("prompt is required.", 400);
+  }
+  if (!formData.get("image")) {
+    return apiError("image is required.", 400);
+  }
+
+  const referenceId = randomUUID();
+  const serverKey = resolveManagedVeniceUpstreamKey({
+    referenceId,
+    proxyKeyId: verifiedKey.id,
+    model,
+    endpoint: ENDPOINT_LABEL,
+  })?.key;
+  if (!serverKey) {
+    return apiError("Managed Venice is not configured.", 503, {
+      failureType: "managed_venice_server_key_missing",
+    });
+  }
+
+  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
+
+  let upstreamResponse: Response;
+  try {
+    upstreamResponse = await fetch(VENICE_IMAGES_EDIT_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serverKey}` },
+      body: formData,
+    });
+  } catch (error) {
+    return apiError(
+      "Venice upstream request failed.",
+      502,
+      { failureType: "managed_venice_image_edit_upstream_fetch_failed" },
+      undefined,
+      { cause: error }
+    );
+  }
+
+  if (upstreamResponse.ok) {
+    try {
+      await recordManagedVeniceMultimodalUsage({
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        walletType,
+        referenceId,
+        endpoint: ENDPOINT_LABEL,
+        model,
+        upstreamStatus: upstreamResponse.status,
+        metadata: {
+          aspectRatio: formData.get("aspect_ratio")?.toString() ?? null,
+          resolution: formData.get("resolution")?.toString() ?? null,
+          outputFormat: formData.get("output_format")?.toString() ?? null,
+        },
+      });
+    } catch (error) {
+      log.error("Managed Venice image-edit usage record failed", error, {
+        source: "managed-venice-image-edit",
+        route: ENDPOINT_LABEL,
+        method: "POST",
+        failureType: "managed_venice_image_edit_usage_record_failed",
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        model,
+        referenceId,
+      });
+    }
+  }
+
+  const contentType = upstreamResponse.headers.get("content-type") || "image/png";
+  return new Response(upstreamResponse.body, {
+    status: upstreamResponse.status,
+    headers: { "Content-Type": contentType },
+  });
+}

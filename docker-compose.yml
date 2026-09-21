@@ -1,0 +1,75 @@
+services:
+  agent:
+    image: ghcr.io/ashneil12/vanilla-hermes-agent:latest
+    container_name: hivra-local-agent
+    command: "gateway run"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - HERMES_HOME=/root/.hermes
+    networks:
+      - hermes_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: '4096M'
+    privileged: true
+    volumes:
+      - ./.env:/root/.hermes/.env
+      - ./config.yaml:/root/.hermes/config.yaml
+      - ./SOUL.md:/root/.hermes/SOUL.md
+      - ./honcho.json:/root/.hermes/honcho.json
+      - ./.env:/opt/data/.env
+      - ./config.yaml:/opt/data/config.yaml
+      - ./SOUL.md:/opt/data/SOUL.md
+      - ./honcho.json:/opt/data/honcho.json
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-memories:/root/.hermes/memories
+      - agent-sessions:/root/.hermes/sessions
+      - agent-logs:/root/.hermes/logs
+      - agent-audio:/root/.hermes/audio_cache
+      - agent-image:/root/.hermes/image_cache
+      - agent-profiles:/root/.hermes/profiles
+    expose:
+      - "8642"
+      - "8650-8670"
+    init: true
+
+  sidecar:
+    image: node:22-alpine
+    container_name: hivra-local-agent-sidecar
+    command: >
+      sh -c "
+      apk add --no-cache docker-cli ca-certificates 2>/dev/null;
+      cd /opt/data && npm install --prefer-offline --no-audit --no-fund express 2>/dev/null && node server.js
+      "
+    restart: unless-stopped
+    environment:
+      - INSTANCE_ID=local-development
+      - API_SERVER_KEY=${API_SERVER_KEY:?Set API_SERVER_KEY before starting the sidecar}
+      - HOST_PROFILES_DIR=/profiles
+      - MAIN_ENV_FILE=/opt/data/.env
+    networks:
+      - hermes_net
+    volumes:
+      - ./sidecar_server.js:/opt/data/server.js
+      - ./.env:/opt/data/.env
+      - agent-profiles:/profiles
+      - sidecar-node-modules:/opt/data/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "9090"
+
+volumes:
+  agent-memories:
+  agent-sessions:
+  agent-logs:
+  agent-audio:
+  agent-image:
+  agent-profiles:
+  sidecar-node-modules:
+
+networks:
+  hermes_net:
+    external: true

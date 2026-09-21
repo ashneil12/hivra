@@ -1,0 +1,228 @@
+/* One strip for the desktop surface.
+   Previously this was a 48px header plus a 45px evidence grid, on top of the
+   page's own surface bar — two and a half rows of chrome above the thing the
+   user actually came for. Everything that is not an everyday action now lives
+   behind the settings disclosure, and the row is sized like a toolbar rather
+   than a panel. */
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 34px;
+  padding: 2px clamp(8px, 2vw, 14px);
+  border-bottom: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  min-width: 0;
+}
+
+.stripStatus {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* The status is one short word. The full sentence is the title tooltip, so a
+   long message cannot push the controls off the row or wrap it to two lines. */
+.stripLabel {
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* The explanation, clamped to one line. Present and readable, but it cannot
+   wrap the toolbar to two rows however long a broker error is. */
+.stripMessage {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stripSpacer {
+  flex: 1;
+  min-width: 4px;
+}
+
+.stripField {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.stripFieldLabel {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* A native select rather than four segmented buttons: the same choice, a
+   quarter of the width, and it scales if a profile ever adds a mode. */
+.stripSelect {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-black);
+  background: var(--bg-surface);
+  border: 1px solid var(--etched-border);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.stripAction,
+.stripIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex-shrink: 0;
+  min-height: 24px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.stripAction {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.stripIcon {
+  width: 26px;
+  padding: 0;
+}
+
+.stripAction:hover,
+.stripIcon:hover {
+  color: var(--ink-black);
+  border-color: var(--hivra-red-line);
+}
+
+.stripAction:focus-visible,
+.stripIcon:focus-visible,
+.stripSelect:focus-visible,
+.stripMenu button:focus-visible,
+.stripMenu input:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 1px;
+}
+
+.stripDetails {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.stripDetails > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.stripDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.stripMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: min(320px, calc(100vw - 24px));
+  padding: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--etched-border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.stripToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.stripToggle input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.stripToggle small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.stripMenuAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 5px 9px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--ink-black);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.stripMenuNote {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+/* The evidence grid, folded in rather than sitting above the desktop. */
+.stripEvidence {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--etched-border);
+  display: grid;
+  gap: 4px;
+}
+
+.stripEvidence p {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  min-width: 0;
+}
+
+.stripEvidence span {
+  font-family: var(--font-mono), monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.stripEvidence strong {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-black);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

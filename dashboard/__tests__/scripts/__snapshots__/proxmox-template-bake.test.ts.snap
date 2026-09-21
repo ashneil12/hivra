@@ -1,0 +1,108 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`proxmox template bake script --thin-base buildBakeScript with thinBase: false is byte-identical to legacy output 1`] = `
+"#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_TEMPLATE='9005'
+NEW_TEMPLATE='9006'
+NEW_NAME='hermes-template-baked-main-9006'
+TEMP_IP='10.250.22.248'
+DISK_SIZE_GB='30'
+CIDR='24'
+GATEWAY='10.250.22.1'
+NAMESERVER='185.12.64.1 185.12.64.2 1.1.1.1 8.8.8.8'
+VM_SSH_USER='hermes'
+VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'
+DASHBOARD_COMMIT='dashboard-main'
+AGENT_IMAGE='ghcr.io/ashneil12/vanilla-hermes-agent:stable'
+WEBUI_IMAGE='ghcr.io/ashneil12/hermes-webui:stable'
+CADDY_IMAGE='caddy:2'
+HELPER_IMAGES='busybox:latest node:22-alpine'
+KNOWN_HOSTS="/tmp/hermes-template-$NEW_TEMPLATE-known-hosts"
+GUEST_B64='IyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLWV1byBwaXBlZmFpbAoKbWtkaXIgLXAgL2V0Yy9oZXJtZXMKCmVjaG8gIltiYWtlXSByb290IGZpbGVzeXN0ZW0gYmVmb3JlIGltYWdlIHJlZnJlc2giCmRmIC1oIC8KCmVjaG8gIltiYWtlXSBxdWllc2NpbmcgYmFja2dyb3VuZCBhcHQvcGFja2FnZWtpdCBiZWZvcmUgRG9ja2VyIGltYWdlIHJlZnJlc2giCmZvciB1bml0IGluIGFwdC1kYWlseS50aW1lciBhcHQtZGFpbHktdXBncmFkZS50aW1lciBhcHQtZGFpbHkuc2VydmljZSBhcHQtZGFpbHktdXBncmFkZS5zZXJ2aWNlIHVuYXR0ZW5kZWQtdXBncmFkZXMuc2VydmljZSBwYWNrYWdla2l0LnNlcnZpY2U7IGRvCiAgc3lzdGVtY3RsIHN0b3AgIiR1bml0IiA+L2Rldi9udWxsIDI+JjEgfHwgdHJ1ZQogIHN5c3RlbWN0bCBtYXNrICIkdW5pdCIgPi9kZXYvbnVsbCAyPiYxIHx8IHRydWUKZG9uZQpmb3IgXyBpbiAkKHNlcSAxIDYwKTsgZG8KICBpZiAhIHBncmVwIC1hZiAnYXB0LnN5c3RlbWQuZGFpbHl8dW5hdHRlbmRlZC11cGdyYWRlfHBhY2thZ2VraXRkfGFwdC1nZXR8ZHBrZ3xhcHRpdHVkZScgPi9kZXYvbnVsbCAyPiYxOyB0aGVuCiAgICBicmVhawogIGZpCiAgc2xlZXAgMgpkb25lCmFwdC1tYXJrIGhvbGQgZG9ja2VyLWNlIGRvY2tlci1jZS1jbGkgY29udGFpbmVyZC5pbyBkb2NrZXItYnVpbGR4LXBsdWdpbiBkb2NrZXItY29tcG9zZS1wbHVnaW4gPi9kZXYvbnVsbCAyPiYxIHx8IHRydWUKCnJvb3Rfc291cmNlPSIkKGZpbmRtbnQgLW4gLW8gU09VUkNFIC8gfHwgdHJ1ZSkiCmlmIFsgLW4gIiRyb290X3NvdXJjZSIgXTsgdGhlbgogIGlmIGNvbW1hbmQgLXYgZ3Jvd3BhcnQgPi9kZXYvbnVsbCAyPiYxOyB0aGVuCiAgICByb290X2Rpc2s9IiQobHNibGsgLW5vIFBLTkFNRSAiJHJvb3Rfc291cmNlIiAyPi9kZXYvbnVsbCB8IGhlYWQgLW4xIHx8IHRydWUpIgogICAgcm9vdF9wYXJ0PSIkKGxzYmxrIC1ubyBQQVJUTiAiJHJvb3Rfc291cmNlIiAyPi9kZXYvbnVsbCB8IGhlYWQgLW4xIHx8IHRydWUpIgogICAgaWYgWyAtbiAiJHJvb3RfZGlzayIgXSAmJiBbIC1uICIkcm9vdF9wYXJ0IiBdOyB0aGVuCiAgICAgIGdyb3dwYXJ0ICIvZGV2LyRyb290X2Rpc2siICIkcm9vdF9wYXJ0IiB8fCB0cnVlCiAgICBmaQogIGZpCiAgcmVzaXplMmZzICIkcm9vdF9zb3VyY2UiID4vZGV2L251bGwgMj4mMSB8fCB4ZnNfZ3Jvd2ZzIC8gPi9kZXYvbnVsbCAyPiYxIHx8IHRydWUKZmkKCmVjaG8gIltiYWtlXSBwcnVuaW5nIHN0YWxlIERvY2tlciBjYWNoZSBiZWZvcmUgcHVsbGluZyBmcmVzaCBydW50aW1lIGltYWdlcyIKZG9ja2VyIHN5c3RlbSBkZiB8fCB0cnVlCmRvY2tlciBzeXN0ZW0gcHJ1bmUgLWFmIHx8IHRydWUKZG9ja2VyIGJ1aWxkZXIgcHJ1bmUgLWFmIHx8IHRydWUKZG9ja2VyIHN5c3RlbSBkZiB8fCB0cnVlCgpmb3IgaW1hZ2UgaW4gIiRBR0VOVF9JTUFHRSIgIiRXRUJVSV9JTUFHRSIgIiRDQUREWV9JTUFHRSI7IGRvCiAgZG9ja2VyIHB1bGwgIiRpbWFnZSIKZG9uZQppZiBbIC1uICIke0hFTFBFUl9JTUFHRVM6LX0iIF07IHRoZW4KICBmb3IgaW1hZ2UgaW4gJEhFTFBFUl9JTUFHRVM7IGRvCiAgICBkb2NrZXIgcHVsbCAiJGltYWdlIgogIGRvbmUKZmkKCmFnZW50X2RpZ2VzdD0iJChkb2NrZXIgaW1hZ2UgaW5zcGVjdCAtLWZvcm1hdCAne3tpbmRleCAuUmVwb0RpZ2VzdHMgMH19JyAiJEFHRU5UX0lNQUdFIiAyPi9kZXYvbnVsbCB8fCB0cnVlKSIKd2VidWlfZGlnZXN0PSIkKGRvY2tlciBpbWFnZSBpbnNwZWN0IC0tZm9ybWF0ICd7e2luZGV4IC5SZXBvRGlnZXN0cyAwfX0nICIkV0VCVUlfSU1BR0UiIDI+L2Rldi9udWxsIHx8IHRydWUpIgpjYWRkeV9kaWdlc3Q9IiQoZG9ja2VyIGltYWdlIGluc3BlY3QgLS1mb3JtYXQgJ3t7aW5kZXggLlJlcG9EaWdlc3RzIDB9fScgIiRDQUREWV9JTUFHRSIgMj4vZGV2L251bGwgfHwgdHJ1ZSkiCgpjYXQgPiAvZXRjL2hlcm1lcy90ZW1wbGF0ZS12ZXJzaW9uLmpzb24gPDxKU09OCnsKICAidGVtcGxhdGVWbWlkIjogJE5FV19URU1QTEFURSwKICAidGVtcGxhdGVOYW1lIjogIiRORVdfTkFNRSIsCiAgImJha2VkQXQiOiAiJChkYXRlIC11ICslWS0lbS0lZFQlSDolTTolU1opIiwKICAiZGFzaGJvYXJkQ29tbWl0IjogIiREQVNIQk9BUkRfQ09NTUlUIiwKICAiYWdlbnRJbWFnZSI6ICIkQUdFTlRfSU1BR0UiLAogICJhZ2VudERpZ2VzdCI6ICIkYWdlbnRfZGlnZXN0IiwKICAid2VidWlJbWFnZSI6ICIkV0VCVUlfSU1BR0UiLAogICJ3ZWJ1aURpZ2VzdCI6ICIkd2VidWlfZGlnZXN0IiwKICAiY2FkZHlJbWFnZSI6ICIkQ0FERFlfSU1BR0UiLAogICJjYWRkeURpZ2VzdCI6ICIkY2FkZHlfZGlnZXN0IiwKICAiaGVscGVySW1hZ2VzIjogIiRIRUxQRVJfSU1BR0VTIiwKICAiYmFua3JSdW50aW1lIjogdHJ1ZQp9CkpTT04KY2htb2QgMDY0NCAvZXRjL2hlcm1lcy90ZW1wbGF0ZS12ZXJzaW9uLmpzb24KY2F0IC9ldGMvaGVybWVzL3RlbXBsYXRlLXZlcnNpb24uanNvbgoKIyBLZWVwIHRoZSBEb2NrZXIgaW1hZ2UgY2FjaGUsIGJ1dCByZXNldCBpZGVudGl0eSBhbmQgZmlyc3QtYm9vdCBzdGF0ZSBiZWZvcmUKIyB0aGlzIFZNIGJlY29tZXMgYSB0ZW1wbGF0ZS4KY2xvdWQtaW5pdCBjbGVhbiAtLWxvZ3MgLS1tYWNoaW5lLWlkIHx8IHRydWUKcm0gLWYgL2V0Yy9zc2gvc3NoX2hvc3RfKgp0cnVuY2F0ZSAtcyAwIC9ldGMvbWFjaGluZS1pZCB8fCB0cnVlCnJtIC1mIC92YXIvbGliL2RidXMvbWFjaGluZS1pZCB8fCB0cnVlCnN5bmMK'
+
+if qm status "$NEW_TEMPLATE" >/dev/null 2>&1; then
+  echo "Template/VMID $NEW_TEMPLATE already exists; refusing to overwrite." >&2
+  exit 2
+fi
+
+if ! qm config "$SOURCE_TEMPLATE" | grep -q "^template: 1$"; then
+  echo "Source $SOURCE_TEMPLATE is not a template." >&2
+  exit 3
+fi
+
+cleanup_failed() {
+  status="$?"
+  if [ "$status" != "0" ]; then
+    echo "[bake] failed; cleaning up VMID $NEW_TEMPLATE" >&2
+    qm stop "$NEW_TEMPLATE" --skiplock 1 >/dev/null 2>&1 || true
+    qm destroy "$NEW_TEMPLATE" --purge 1 >/dev/null 2>&1 || true
+  fi
+  rm -f "$KNOWN_HOSTS"
+  exit "$status"
+}
+trap cleanup_failed EXIT
+
+echo "[bake] full-cloning $SOURCE_TEMPLATE -> $NEW_TEMPLATE"
+qm clone "$SOURCE_TEMPLATE" "$NEW_TEMPLATE" --name "$NEW_NAME" --full 1
+current_disk_size_gb="$(qm config "$NEW_TEMPLATE" | awk -F 'size=' '/^scsi0:/ { split($2, parts, ","); gsub(/G/, "", parts[1]); print int(parts[1]); exit }')"
+if [ -z "$current_disk_size_gb" ]; then
+  echo "Could not determine cloned scsi0 disk size for $NEW_TEMPLATE." >&2
+  exit 6
+fi
+if [ "$current_disk_size_gb" -lt "$DISK_SIZE_GB" ]; then
+  echo "[bake] expanding scsi0 from \${current_disk_size_gb}G to \${DISK_SIZE_GB}G"
+  qm resize "$NEW_TEMPLATE" scsi0 "\${DISK_SIZE_GB}G"
+else
+  echo "[bake] scsi0 is \${current_disk_size_gb}G; no disk expansion needed"
+fi
+# Stamp aio=threads on the template so linked clones inherit it. Proxmox's
+# io_uring default silently swallows guest UNMAP, leaving fstrim a no-op
+# at the host thin-pool layer (verified on a disposable template-bake VM).
+SCSI0_DISK="$(qm config "$NEW_TEMPLATE" | sed -n 's/^scsi0: \\([^,]*\\).*/\\1/p' | head -n1)"
+if [ -n "$SCSI0_DISK" ]; then
+  qm set "$NEW_TEMPLATE" --scsi0 "$SCSI0_DISK,discard=on,aio=threads"
+fi
+qm set "$NEW_TEMPLATE" --cores 2 --memory 4096 --ipconfig0 "ip=$TEMP_IP/$CIDR,gw=$GATEWAY" --nameserver "$NAMESERVER" --onboot 0
+qm start "$NEW_TEMPLATE"
+
+echo "[bake] waiting for SSH at $TEMP_IP"
+rm -f "$KNOWN_HOSTS"
+for attempt in $(seq 1 90); do
+  if ssh -n -i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=5 "$VM_SSH_USER@$TEMP_IP" "sudo -n true" >/dev/null 2>&1; then
+    break
+  fi
+  if [ "$attempt" = "90" ]; then
+    echo "SSH never became ready" >&2
+    exit 4
+  fi
+  sleep 5
+done
+
+echo "[bake] pulling runtime images inside template guest"
+printf "%s" "$GUEST_B64" | base64 -d | ssh -i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS" "$VM_SSH_USER@$TEMP_IP" \\
+  "sudo env NEW_TEMPLATE='$NEW_TEMPLATE' NEW_NAME='$NEW_NAME' DASHBOARD_COMMIT='$DASHBOARD_COMMIT' AGENT_IMAGE='$AGENT_IMAGE' WEBUI_IMAGE='$WEBUI_IMAGE' CADDY_IMAGE='$CADDY_IMAGE' HELPER_IMAGES='$HELPER_IMAGES' bash -s"
+
+echo "[bake] shutting down guest"
+qm shutdown "$NEW_TEMPLATE" --timeout 180 || qm stop "$NEW_TEMPLATE" --skiplock 1
+for attempt in $(seq 1 60); do
+  status="$(qm status "$NEW_TEMPLATE" | awk '{print $2}')"
+  [ "$status" = "stopped" ] && break
+  sleep 2
+done
+if [ "$(qm status "$NEW_TEMPLATE" | awk '{print $2}')" != "stopped" ]; then
+  echo "VM did not stop cleanly" >&2
+  exit 5
+fi
+
+echo "[bake] converting $NEW_TEMPLATE to template"
+qm template "$NEW_TEMPLATE"
+qm set "$NEW_TEMPLATE" --name "$NEW_NAME" --onboot 0
+qm config "$NEW_TEMPLATE" | sed -n "s/^name:.*/&/p; s/^template:.*/&/p; s/^scsi0:.*/&/p; s/^ipconfig0:.*/&/p"
+echo "[bake] complete template $NEW_TEMPLATE"
+
+trap - EXIT
+rm -f "$KNOWN_HOSTS"
+"
+`;

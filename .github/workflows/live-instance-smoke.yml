@@ -1,0 +1,64 @@
+name: Live Instance Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Smoke mode to run
+        required: false
+        type: choice
+        options:
+          - dashboard
+          - direct
+      dashboard_url:
+        description: Dashboard base URL for dashboard mode
+        required: false
+        type: string
+      instance_id:
+        description: Instance ID for dashboard mode
+        required: false
+        type: string
+      gateway_url:
+        description: Gateway base URL for direct mode
+        required: false
+        type: string
+  schedule:
+    - cron: '41 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-live-instance:
+    name: Smoke Live Instance
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.SMOKE_MODE != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      SMOKE_MODE: ${{ github.event.inputs.mode || vars.SMOKE_MODE }}
+      SMOKE_DASHBOARD_URL: ${{ github.event.inputs.dashboard_url || vars.SMOKE_DASHBOARD_URL }}
+      SMOKE_INSTANCE_ID: ${{ github.event.inputs.instance_id || vars.SMOKE_INSTANCE_ID }}
+      SMOKE_GATEWAY_URL: ${{ github.event.inputs.gateway_url || vars.SMOKE_GATEWAY_URL }}
+      SMOKE_COOKIE_HEADER: ${{ secrets.SMOKE_COOKIE_HEADER }}
+      SMOKE_SESSION_COOKIE: ${{ secrets.SMOKE_SESSION_COOKIE }}
+      SMOKE_API_SERVER_KEY: ${{ secrets.SMOKE_API_SERVER_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run live instance smoke
+        run: npm run smoke:live-instance

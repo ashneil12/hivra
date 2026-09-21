@@ -1,0 +1,825 @@
+{
+  "$comment": [
+    "Route table of the pinned upstream agent image. This is the ONLY HTTP surface a",
+    "dashboard instance route may call. Anything absent here 404s with",
+    "{\"detail\":\"No such API endpoint: <path>\"} because hermes_cli/web_server.py serves an",
+    "/api/* -aware SPA catch-all (serve_spa).",
+    "",
+    "Regenerate with: node dashboard/scripts/generate-agent-endpoints.cjs (see script header).",
+    "Enforced by dashboard/src/lib/webui/__tests__/agent-endpoint-contract.test.ts."
+  ],
+  "provenance": {
+    "capturedAt": "2026-07-08",
+    "image": "ghcr.io/ashneil12/vanilla-hermes-agent:stable",
+    "agentVersion": "0.17.0",
+    "source": "docker exec agent-<id>-official-dashboard grep -oE '^@app\\.(get|post|put|delete|patch)(\"[^\"]+\")' /opt/hermes/hermes_cli/web_server.py",
+    "probedInstance": "disposable release-verification computer (identity withheld)",
+    "routeCount": 201
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/actions/{name}/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/models"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/usage"
+    },
+    {
+      "method": "POST",
+      "path": "/api/attachments/upload"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audio/elevenlabs/voices"
+    },
+    {
+      "method": "POST",
+      "path": "/api/audio/speak"
+    },
+    {
+      "method": "POST",
+      "path": "/api/audio/transcribe"
+    },
+    {
+      "method": "GET",
+      "path": "/api/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/config"
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/defaults"
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/raw"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/config/raw"
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/schema"
+    },
+    {
+      "method": "GET",
+      "path": "/api/credentials/pool"
+    },
+    {
+      "method": "POST",
+      "path": "/api/credentials/pool"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/credentials/pool/{provider}/{index}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cron/blueprints"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/blueprints/instantiate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cron/delivery-targets"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/fire"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cron/jobs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/jobs"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/cron/jobs/{job_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cron/jobs/{job_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/cron/jobs/{job_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/jobs/{job_id}/pause"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/jobs/{job_id}/resume"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cron/jobs/{job_id}/runs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cron/jobs/{job_id}/trigger"
+    },
+    {
+      "method": "GET",
+      "path": "/api/curator"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/curator/paused"
+    },
+    {
+      "method": "POST",
+      "path": "/api/curator/run"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/dashboard/agent-plugins/{name:path}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dashboard/agent-plugins/{name:path}/disable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dashboard/agent-plugins/{name:path}/enable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dashboard/agent-plugins/{name:path}/update"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dashboard/agent-plugins/install"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/font"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/dashboard/font"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/dashboard/plugin-providers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/plugins"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dashboard/plugins/{name:path}/visibility"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/plugins/hub"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/plugins/rescan"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/dashboard/theme"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/themes"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/env"
+    },
+    {
+      "method": "GET",
+      "path": "/api/env"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/env"
+    },
+    {
+      "method": "POST",
+      "path": "/api/env/reveal"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/files"
+    },
+    {
+      "method": "GET",
+      "path": "/api/files"
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/download"
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/mkdir"
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/upload"
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/upload-stream"
+    },
+    {
+      "method": "GET",
+      "path": "/api/fs/default-cwd"
+    },
+    {
+      "method": "GET",
+      "path": "/api/fs/git-root"
+    },
+    {
+      "method": "GET",
+      "path": "/api/fs/list"
+    },
+    {
+      "method": "GET",
+      "path": "/api/fs/read-data-url"
+    },
+    {
+      "method": "GET",
+      "path": "/api/fs/read-text"
+    },
+    {
+      "method": "POST",
+      "path": "/api/fs/write-text"
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/drain"
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/restart"
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/branch/switch"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/branches"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/file-diff"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/review/commit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/review/commit-context"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/review/create-pr"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/review/diff"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/review/list"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/review/push"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/review/rev-parse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/review/revert"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/review/ship-info"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/review/stage"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/review/unstage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/worktree/add"
+    },
+    {
+      "method": "POST",
+      "path": "/api/git/worktree/remove"
+    },
+    {
+      "method": "GET",
+      "path": "/api/git/worktrees"
+    },
+    {
+      "method": "POST",
+      "path": "/api/hermes/update"
+    },
+    {
+      "method": "GET",
+      "path": "/api/hermes/update/check"
+    },
+    {
+      "method": "GET",
+      "path": "/api/learning/graph"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/learning/node"
+    },
+    {
+      "method": "GET",
+      "path": "/api/learning/node"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/learning/node"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/catalog"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/catalog/install"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/servers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/mcp/servers/{name}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/mcp/servers/{name}/enabled"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers/{name}/test"
+    },
+    {
+      "method": "GET",
+      "path": "/api/media"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/memory/provider"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/providers/{name}/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/memory/providers/{name}/config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/memory/reset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/messaging/platforms"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/messaging/platforms/{platform_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/messaging/platforms/{platform_id}/test"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/messaging/telegram/onboarding/{pairing_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/messaging/telegram/onboarding/{pairing_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/messaging/telegram/onboarding/{pairing_id}/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/messaging/telegram/onboarding/start"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model/auxiliary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model/info"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model/moa"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/model/moa"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model/options"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model/recommended-default"
+    },
+    {
+      "method": "POST",
+      "path": "/api/model/set"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/backup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ops/backup/download"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ops/checkpoints"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/checkpoints/prune"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/config-migrate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/debug-share"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/dump"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/ops/hooks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ops/hooks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/hooks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/import"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/import-upload"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/prompt-size"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ops/security-audit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pairing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pairing/approve"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pairing/clear-pending"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pairing/revoke"
+    },
+    {
+      "method": "GET",
+      "path": "/api/portal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/profiles"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/profiles/{name}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/profiles/{name}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/profiles/{name}/describe-auto"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/profiles/{name}/description"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/profiles/{name}/model"
+    },
+    {
+      "method": "POST",
+      "path": "/api/profiles/{name}/open-terminal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/profiles/{name}/setup-command"
+    },
+    {
+      "method": "GET",
+      "path": "/api/profiles/{name}/soul"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/profiles/{name}/soul"
+    },
+    {
+      "method": "GET",
+      "path": "/api/profiles/active"
+    },
+    {
+      "method": "POST",
+      "path": "/api/profiles/active"
+    },
+    {
+      "method": "GET",
+      "path": "/api/profiles/sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/oauth"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/providers/oauth/{provider_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/oauth/{provider_id}/poll/{session_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/oauth/{provider_id}/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/oauth/{provider_id}/submit"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/providers/oauth/sessions/{session_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/validate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/sessions/{session_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/{session_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/sessions/{session_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/{session_id}/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/{session_id}/latest-descendant"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/{session_id}/messages"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sessions/bulk-delete"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/sessions/empty"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/empty/count"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sessions/prune"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions/stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills"
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/content"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/content"
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/hub/install"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/hub/preview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/hub/scan"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/hub/search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skills/hub/sources"
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/hub/uninstall"
+    },
+    {
+      "method": "POST",
+      "path": "/api/skills/hub/update"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/skills/toggle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/stats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tools/computer-use/permissions/grant"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/computer-use/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/toolsets"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/tools/toolsets/{name}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tools/toolsets/{name}/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/tools/toolsets/{name}/env"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tools/toolsets/{name}/post-setup"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/tools/toolsets/{name}/provider"
+    },
+    {
+      "method": "GET",
+      "path": "/api/webhooks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/webhooks"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/webhooks/{name}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/webhooks/{name}/enabled"
+    },
+    {
+      "method": "POST",
+      "path": "/api/webhooks/enable"
+    },
+    {
+      "method": "GET",
+      "path": "/dashboard-plugins/{plugin_name}/{file_path:path}"
+    }
+  ]
+}

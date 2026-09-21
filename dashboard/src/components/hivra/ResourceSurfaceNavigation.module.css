@@ -1,0 +1,48 @@
+.navigation { display: flex; align-items: center; gap: 8px; padding: 10px clamp(12px, 3vw, 20px); border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); position: relative; z-index: 30; flex-shrink: 0; min-width: 0; }
+.primary { flex: 1; display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.surface { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-height: 36px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; padding: 7px 10px; cursor: pointer; white-space: nowrap; }
+.surface:hover { color: var(--ink-black); background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
+.surface[aria-pressed="true"] { color: var(--ink-black); border-color: var(--etched-border); box-shadow: inset 0 -2px var(--red); }
+.surface:focus-visible, .popover button:focus-visible, .popover a:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.tools { margin-left: auto; flex-shrink: 0; position: relative; }
+/* Actions lifted from the active surface. Sits between the pills and the
+   overflow, and never inside .primary — the pill row scrolls horizontally when
+   it runs out of room, and an action must not be able to scroll out of sight
+   with it. Sized like the desktop strip's own icons rather than the pills. */
+.actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin-left: auto; }
+.actions + .tools, .actions + .manage { margin-left: 0; }
+.actionIcon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; min-height: 30px; padding: 0; border: 1px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.actionIcon:hover { color: var(--ink-black); background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
+.actionIcon:disabled { opacity: .5; cursor: default; }
+.actionIcon:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.manage { margin-left: auto; }
+.tools + .manage { margin-left: 0; }
+.popover { position: absolute; right: 0; top: calc(100% + 8px); width: min(245px, calc(100vw - 32px)); max-height: 420px; overscroll-behavior: contain; overflow-y: auto; padding: 6px; border: 1px solid var(--etched-border); background: var(--bg-surface); box-shadow: 0 12px 35px #0003; }
+.label { display: block; padding: 8px; font-family: var(--font-mono), monospace; text-transform: uppercase; letter-spacing: .1em; font-size: 9px; color: var(--text-muted); }
+.popover button, .popover a { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; min-height: 44px; padding: 9px; background: transparent; color: var(--text-secondary); text-align: left; text-decoration: none; font-size: 13px; cursor: pointer; }
+.popover button:hover, .popover a:hover, .popover button[aria-pressed="true"] { color: var(--ink-black); background: color-mix(in srgb, var(--ink-black) 6%, transparent); }
+ .toolsIcon { display: none; }
+@container (max-width: 600px) {
+  .navigation { gap: 2px; padding: 4px 8px; }
+  .primary { flex-wrap: nowrap; gap: 0; }
+  .surface { min-width: 44px; min-height: 44px; padding: 6px 4px; }
+  .primary .surface svg, .toolsLabel, .toolsChevron, .manage > span { display: none; }
+  .toolsIcon { display: block; }
+  .tools .surface, .manage { width: 44px; }
+  /* Mobile has no spare width for another slot — the pill row already scrolls
+     on a 3-pill computer. Lift the action's accessible name instead of dropping
+     it, and keep the 44px tap target. */
+  .actionIcon { width: 44px; min-height: 44px; }
+}
+.nativeActions {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+@container (max-width: 900px) {
+  .navigation { flex-wrap: wrap; row-gap: 8px; }
+  .primary { flex-basis: 0; }
+}

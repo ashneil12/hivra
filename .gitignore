@@ -1,0 +1,87 @@
+# OS
+.DS_Store
+
+# Dependencies — never commit node_modules anywhere
+node_modules
+
+# Legacy qwen-proxy data dir
+qwen_data/
+
+# Agents / AI tooling dirs
+.agents/
+
+# Logs (root and nested)
+*.log
+*.err
+*.out
+.dev-log.txt
+
+# Test/lint output dumps
+*results.txt
+*output.txt
+lint_current.txt
+test_plan.md
+all_users.json
+
+# One-off dev/debug scripts (never belong in repo)
+sim.py
+fix_models.py
+query.ts
+query_instances.cjs
+query_instances.js
+patch_dashboard.py
+patch_message.py
+patch_stream.py
+purge.ts
+
+# Assets that live only in dashboard/public
+logo.png
+og-image.png
+
+# TypeScript build artifacts
+*.tsbuildinfo
+next-env.d.ts
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
+# Private keys and secrets — NEVER commit these
+id_rsa
+*.pem
+*.key
+user_token.json
+oauth_creds.json
+config.yaml
+deploy_key
+temp_key
+
+# Extra temporary scripts and deploy tools
+scratch.*
+*/scratch.*
+test_gen.*
+deploy_fix*
+fix_*
+get_vault.py
+parse_agent.py
+query.py
+force_redeploy.*
+get_ip.js
+rollout_sidecar.ts
+deploy.py
+.vercel
+.claude/worktrees/
+.worktrees/
+.env*.local
+.env
+.env.*
+contracts/.env
+contracts/.env.*
+supabase/.temp/
+.memdb/
+.hivra-data/
+
+# Native Mac alpha build output
+apps/macos/HivraMac/.build/
+apps/macos/HivraMac/.swiftpm/
+apps/macos/HivraMac/dist/

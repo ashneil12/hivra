@@ -1,0 +1,87 @@
+{
+  "format": "hivra-runtime-distribution-boundary-v1",
+  "artifactClass": "source-only-current-tree",
+  "releaseApproved": false,
+  "sourceOnlyBoundaryApproved": true,
+  "policy": "The public source archive contains Hivra source and reviewed source-tree notices only. Third-party operating systems, runtimes, packages, and container images are fetched from their named upstreams by an operator-selected install or build and are never embedded in the source archive.",
+  "externalInputs": [
+    {
+      "id": "ubuntu-jammy-cloud-image",
+      "decision": "download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "ff271290a23279ce764561dbe2e9c3ec29da899535b571a987c37b47970c2ad9"
+    },
+    {
+      "id": "browser-use-bux",
+      "decision": "download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "f17c1b31d6688dd92e745ade650e00d46b4dc4da"
+    },
+    {
+      "id": "aeon",
+      "decision": "download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "8b8d719715ec9bb68fb858a1e334d23209047d82"
+    },
+    {
+      "id": "cloudflared",
+      "decision": "download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2"
+    },
+    {
+      "id": "google-chrome",
+      "decision": "operator-opt-in-download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7"
+    },
+    {
+      "id": "github-cli",
+      "decision": "download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6"
+    },
+    {
+      "id": "claude-code",
+      "decision": "operator-selected-download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "@anthropic-ai/claude-code@2.1.246"
+    },
+    {
+      "id": "openai-codex",
+      "decision": "operator-selected-download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "@openai/codex@0.149.1"
+    },
+    {
+      "id": "openclaw",
+      "decision": "operator-selected-download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "openclaw@2026.6.10"
+    },
+    {
+      "id": "agent-zero",
+      "decision": "operator-selected-download",
+      "evidencePath": "dashboard/provisioner/PROVENANCE.md",
+      "identity": "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0"
+    },
+    {
+      "id": "browser-sidecar-node-base",
+      "decision": "build-time-download",
+      "evidencePath": "services/browser-sidecar/Dockerfile",
+      "identity": "node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
+    },
+    {
+      "id": "browser-sidecar-playwright-base",
+      "decision": "build-time-download",
+      "evidencePath": "services/browser-sidecar/Dockerfile",
+      "identity": "mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53"
+    }
+  ],
+  "installedEvidence": {
+    "receipt": "/var/lib/hivra/runtime-receipt.json",
+    "sbom": "/var/lib/hivra/runtime-sbom.cdx.json",
+    "noticeReview": "/var/lib/hivra/runtime-notices.json",
+    "scope": "Generated on the installed computer from its observed OS and runtime bytes; not represented as a source-archive SBOM."
+  }
+}

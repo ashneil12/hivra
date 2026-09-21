@@ -1,0 +1,51 @@
+{
+  "name": "@hermesdeploy/browser-sidecar",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Deterministic Playwright-driven browser sidecar for HermesOS QA agents (Vex). Pro-tier-gated, persistent-session, opinionated tool surface.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "hermes-browser": "./dist/cli/seed.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "seed": "tsx src/cli/seed.ts",
+    "test": "vitest run --reporter=verbose",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint": "tsc --noEmit",
+    "playwright:install": "playwright install chromium --with-deps"
+  },
+  "dependencies": {
+    "@fastify/sensible": "^6.0.1",
+    "commander": "^12.1.0",
+    "fastify": "^5.12.1",
+    "imapflow": "^1.0.180",
+    "mailparser": "^3.7.2",
+    "pino": "^9.5.0",
+    "playwright": "^1.49.0",
+    "yaml": "^2.6.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.5",
+    "@types/node": "^22.10.0",
+    "pino-pretty": "^11.3.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.6"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "fast-uri@^3": "3.1.6",
+    "fast-uri@^4": "4.1.3",
+    "html-to-text": "10.0.1",
+    "nanoid@^3": "3.3.18"
+  }
+}

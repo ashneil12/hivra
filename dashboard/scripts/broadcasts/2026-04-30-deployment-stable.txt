@@ -1,0 +1,16 @@
+Hey,
+
+Quick update and a proper thank you for your patience over the past couple of weeks.
+
+Deployment and provisioning are now working reliably again, and the platform is back to a stable state. The core issues around instances, chat, and setup have been resolved.
+
+Under the hood, I’ve rebuilt a large part of the infrastructure to make sure this doesn’t happen again. Everything is now running on a more solid foundation, with more reliable provisioning and improved overall performance.
+
+You should notice things working the way they were meant to.
+
+If anything still isn’t right on your end, just reply to this email and I’ll take a look personally.
+
+Appreciate you sticking through it.
+
+Ash
+Founder, HermesOS

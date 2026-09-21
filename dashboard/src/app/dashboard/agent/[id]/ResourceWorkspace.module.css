@@ -1,0 +1,43 @@
+.workspace { min-width: 0; container-type: inline-size; container-name: resource-workspace; }
+/* Legacy full-width header. The identity it carried now lives inside the
+   surface bar (.identity), because the two rows named the same resource and
+   cost 56px of every session. Kept for the native-shell path, which suppresses
+   the bar and therefore has nowhere else to show the name or the way back. */
+.header { display: flex; align-items: center; flex-shrink: 0; gap: 12px; min-height: 56px; padding: 8px clamp(12px, 2cqi, 24px); border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); min-width: 0; }
+.identity { display: flex; align-items: center; flex: 0 1 280px; min-width: 140px; max-width: 32%; margin-right: 16px; padding-right: 16px; border-right: 1px solid var(--etched-border); }
+.backButton, .newTabButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--etched-border); background: transparent; color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+.name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; font-weight: 400; color: var(--ink-black); }
+/* Inside the bar the name runs at UI size, not the display-serif 18px the
+   standalone header used — that header had a whole row to itself. */
+.identity .name { flex: 0 1 auto; font-size: 13px; font-weight: 600; }
+.identity .backButton { min-height: 30px; padding: 4px 8px; border-color: transparent; }
+.identity .status { font-size: 11px; }
+.metadata { flex-shrink: 0; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.status { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; text-transform: capitalize; flex-shrink: 0; }
+.status > span { width: 6px; height: 6px; border-radius: 50%; }
+.workPane { overflow: auto; overscroll-behavior: contain; }
+.surfaceToolbar { display: flex; align-items: center; flex-shrink: 0; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); min-width: 0; }
+.surfaceDescription { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; }
+.newTabButton:disabled { opacity: .5; cursor: default; }
+.statusPanel { flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: clamp(20px, 5cqi, 48px) clamp(16px, 4cqi, 32px); text-align: center; color: var(--text-muted); overflow-wrap: anywhere; }
+.statusPanel > h3 { color: var(--ink-black); font-size: 22px; font-weight: 400; }
+.statusPanel > p { max-width: 480px; margin-inline: auto; }
+.statusPanel button { min-height: 44px; font-size: 13px; }
+.backButton:focus-visible, .newTabButton:focus-visible, .statusPanel button:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+@container resource-workspace (max-width: 760px) { .metadata { display: none; } }
+/* Preserve the resource name on narrow screens; surfaces get their own row. */
+@container resource-workspace (max-width: 900px) {
+  .identity { flex-basis: 100%; max-width: none; border-right: 0; margin: 0; padding: 0; }
+  .identity .name { display: none; }
+}
+@container resource-workspace (max-width: 600px) {
+  .header { min-height: 52px; padding: 4px 10px; gap: 8px; }
+  .backButton { width: 44px; min-height: 44px; padding: 0; border-color: transparent; }
+  .backButton > span { display: none; }
+  .name { font-size: 16px; }
+  .status { font-size: 11px; max-width: 90px; }
+  .surfaceToolbar { padding: 4px 10px; }
+  .surfaceDescription { font-size: 10px; }
+  .newTabButton { min-height: 44px; padding-inline: 8px; font-size: 10px; }
+  .statusPanel { padding: 20px 16px; }
+}

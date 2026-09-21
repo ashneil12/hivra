@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Attest one guest's Ed25519 SSH host key through the VMID-bound QEMU Guest
+# Agent channel, then write a root-only known_hosts entry for that exact VM.
+
+set -euo pipefail
+umask 077
+
+VMID="${1:?usage: hivra-guest-ssh-known-hosts VMID IP OUTPUT_DIR}"
+IP="${2:?usage: hivra-guest-ssh-known-hosts VMID IP OUTPUT_DIR}"
+OUTPUT_DIR="${3:?usage: hivra-guest-ssh-known-hosts VMID IP OUTPUT_DIR}"
+
+[[ "$VMID" =~ ^[0-9]+$ ]] && [ "$VMID" -ge 100 ] || { echo "invalid VMID" >&2; exit 1; }
+[[ "$IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { echo "invalid guest IP" >&2; exit 1; }
+case "$OUTPUT_DIR" in
+  /run/hivra-guest-ssh-identity."${VMID}".*) ;;
+  *) echo "invalid guest SSH identity directory" >&2; exit 1 ;;
+esac
+[ -d "$OUTPUT_DIR" ] && [ ! -L "$OUTPUT_DIR" ] \
+  && [ "$(stat -Lc '%a:%u:%g' "$OUTPUT_DIR")" = "700:0:0" ] \
+  || { echo "unsafe guest SSH identity directory" >&2; exit 1; }
+qm status "$VMID" >/dev/null 2>&1 || { echo "VMID $VMID does not exist" >&2; exit 1; }
+qm config "$VMID" 2>/dev/null | grep -Eq "^ipconfig0: .*ip=${IP}/24([,]|$)" \
+  || { echo "VM private IP does not match VMID $VMID" >&2; exit 1; }
+
+started="$(awk '{print int($1)}' /proc/uptime)"
+deadline=$((started + 600))
+host_key=""
+for _ in $(seq 1 120); do
+  now="$(awk '{print int($1)}' /proc/uptime)"
+  [ "$now" -lt "$deadline" ] || break
+  qga_document="$(qm guest exec "$VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null || true)"
+  if [ -n "$qga_document" ]; then
+    host_key="$(printf '%s' "$qga_document" | /usr/bin/python3 -c '
+import base64, binascii, json, sys
+try:
+    document = json.load(sys.stdin)
+    fields = document.get("out-data", "").strip().split()
+    raw = base64.b64decode(fields[1], validate=True)
+    expected = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"
+    if (document.get("exited") != 1 or document.get("exitcode") != 0 or
+            len(fields) < 2 or fields[0] != "ssh-ed25519" or
+            len(raw) != 51 or not raw.startswith(expected)):
+        raise ValueError("invalid VMID-bound SSH host key")
+except (IndexError, KeyError, TypeError, ValueError, binascii.Error, json.JSONDecodeError):
+    raise SystemExit(1)
+print("ssh-ed25519 " + fields[1])
+' 2>/dev/null || true)"
+    [ -z "$host_key" ] || break
+  fi
+  sleep 5
+done
+[ -n "$host_key" ] || { echo "guest SSH host identity could not be attested through QEMU Guest Agent" >&2; exit 1; }
+
+known_hosts="$OUTPUT_DIR/known_hosts"
+install -o root -g root -m 0600 /dev/null "$known_hosts"
+printf 'hivra-vmid-%s %s\n' "$VMID" "$host_key" > "$known_hosts"
+

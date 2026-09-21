@@ -1,0 +1,89 @@
+id: login_clerk
+description: |
+  Idempotent Clerk login. Navigates to the login URL; if already authed, returns
+  immediately. Otherwise enters email + password, polls IMAP for the verification
+  code (60s hard cap enforced in code), and waits for the post-login URL.
+
+  Credentials come from env (CLERK_EMAIL, CLERK_PASSWORD, IMAP_*). Never put
+  secrets in this file.
+
+steps:
+  - id: navigate_to_login
+    type: goto
+    args:
+      url: ${env:CLERK_LOGIN_URL}
+
+  # Idempotency: if Clerk already redirected us to the post-login path, we're in.
+  - id: already_logged_in_check
+    type: check_url
+    args:
+      contains: ${env:CLERK_POST_LOGIN_PATH}
+    on_match: return_ok
+
+  - id: wait_for_email_input
+    type: wait_for
+    args:
+      selector: input[name="identifier"]
+      timeout_ms: 15000
+
+  - id: enter_email
+    type: fill
+    args:
+      selector: input[name="identifier"]
+      value: ${env:CLERK_EMAIL}
+
+  - id: submit_email
+    type: click_selector
+    args:
+      selector: button[type="submit"]
+
+  - id: wait_for_password_input
+    type: wait_for
+    args:
+      selector: input[name="password"]
+      timeout_ms: 15000
+
+  - id: enter_password
+    type: fill
+    args:
+      selector: input[name="password"]
+      value: ${env:CLERK_PASSWORD}
+
+  - id: submit_password
+    type: click_selector
+    args:
+      selector: button[type="submit"]
+
+  # Clerk may or may not require an email verification code depending on the
+  # account's MFA config. If a code field appears, we poll IMAP. If not, the
+  # wait_for below times out and we proceed straight to the URL check.
+  - id: wait_for_code_input_or_dashboard
+    type: wait_for
+    args:
+      selector: 'input[name="code"], [data-localization-key*="dashboard"]'
+      timeout_ms: 15000
+
+  - id: maybe_fill_code
+    type: imap_wait_code
+    args:
+      since_ms: 120000
+      into: clerk_code
+
+  - id: enter_code
+    type: fill
+    args:
+      selector: input[name="code"]
+      value: ${state:clerk_code}
+
+  - id: confirm_post_login
+    type: wait_for
+    args:
+      selector: body
+      state: visible
+      timeout_ms: 15000
+
+  - id: assert_logged_in
+    type: check_url
+    args:
+      contains: ${env:CLERK_POST_LOGIN_PATH}
+      required: true

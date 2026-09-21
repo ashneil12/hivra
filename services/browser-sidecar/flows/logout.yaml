@@ -1,0 +1,14 @@
+id: logout
+description: |
+  Wipes the persistent context for the current identity. After this runs, the
+  next session start will see a fresh, unauthenticated profile.
+
+  This is implemented as a single internal step (logout is run via the dedicated
+  /session/end + resetIdentity path in the flow handler — see routes/flows.ts).
+  The YAML exists so /run_named_flow flow_id=logout has a definition to load.
+
+steps:
+  - id: noop
+    type: log
+    args:
+      message: "logout flow invoked; routes/flows.ts handles the actual wipe"

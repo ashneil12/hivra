@@ -1,0 +1,19 @@
+console-canary.hermesos.cloud {
+  tls /etc/caddy/wildcards/hermesos.cloud.crt /etc/caddy/wildcards/hermesos.cloud.key
+
+  # Proxmox console tickets are short-lived credentials. Never retain their
+  # query strings in the host access log.
+  log {
+    output discard
+  }
+
+  route {
+    @windows path /console/2098
+    reverse_proxy @windows 127.0.0.1:6088
+
+    @omarchy path /console/2099
+    reverse_proxy @omarchy 127.0.0.1:6089
+
+    respond 404
+  }
+}

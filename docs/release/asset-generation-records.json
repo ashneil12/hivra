@@ -1,0 +1,47 @@
+{
+  "format": "hivra-asset-generation-records-v1",
+  "recordedAt": "2026-08-29",
+  "termsReview": {
+    "url": "https://openai.com/policies/terms-of-use/",
+    "checkedAt": "2026-08-29",
+    "finding": "The UK and Europe terms state that, as between the user and OpenAI and to the extent permitted by law, the user owns Output and OpenAI assigns any right, title and interest it has in Output to the user. The terms also require the user to evaluate Output before sharing it. These records preserve that evaluation boundary and do not assert that AI output is unique or independently copyrightable."
+  },
+  "codeAuthoredAssets": [
+    {
+      "path": "dashboard/src/app/icon.svg",
+      "creator": "Hivra project",
+      "method": "Hand-authored SVG geometry in the repository; no external image, font, logo or generator input.",
+      "sha256": "70a6c710ed5d07f882ba10c6fe275a3d4cf33e276a63980dfa35c186b51fa0e0"
+    }
+  ],
+  "generatedAssets": [
+    {
+      "path": "docs/litepaper/assets/agent-computer-opportunity-v2.png",
+      "sha256": "df38e76c121b85560343da49fb0e19069be2426280e35c76198ba4bc97bece25",
+      "tool": "OpenAI built-in image generation tool",
+      "modelDisclosure": "The product-managed built-in tool did not expose an exact model identifier.",
+      "outputReceipt": "exec-00000000-0000-4000-8000-000000001175.png",
+      "prompt": "Use case: stylized-concept\nAsset type: Hivra litepaper section illustration\nPrimary request: A premium conceptual visualization of one persistent cloud Agent Computer serving the same workspace to a laptop, tablet, and phone.\nScene/backdrop: Vast matte-black architectural studio with restrained negative space.\nSubject: A precise modular cloud computer/control surface elevated at center-right, connected by thin white signal lines to three separate personal devices below. The devices show the same abstract workspace structure without readable interface text.\nStyle/medium: Photorealistic high-end industrial 3D product visualization, sober and technically credible.\nComposition/framing: Wide landscape 3:2 composition; visual cluster centered-right; clear open space around it.\nLighting/mood: Warm white edge lighting, deep black shadows, calm and trustworthy.\nColor palette: Black, graphite, warm white, with one restrained Hivra red accent.\nMaterials/textures: Anodized black metal, smoked glass, soft-touch device surfaces.\nConstraints: Entirely original visual; no words, letters, numerals, logos, trademarks, watermarks, people, clouds made of cotton, fantasy effects, or decorative clutter. Connections must visibly link one persistent compute workspace to all three devices.",
+      "review": "Accepted after visual inspection: the single workspace, three device clients, one-to-many connections, absence of text/logos/watermarks and Hivra visual fit are visible."
+    },
+    {
+      "path": "docs/litepaper/assets/observable-run-v2.png",
+      "sha256": "e38ee51e5b2eeb3e71f9e5458719a76ec501418e8dd646f68343531d15b3d2fe",
+      "tool": "OpenAI built-in image generation tool",
+      "modelDisclosure": "The product-managed built-in tool did not expose an exact model identifier.",
+      "outputReceipt": "exec-00000000-0000-4000-8000-000000001176.png",
+      "basePrompt": "Use case: stylized-concept\nAsset type: Hivra litepaper section illustration\nPrimary request: A technically credible visualization of an observable agent run: request, plan, tool action, containment checkpoint, observed result, and completion.\nScene/backdrop: Matte-black architectural studio surface with generous negative space.\nSubject: A left-to-right sequence of six distinct precision-made modules connected by a continuous warm-white path. Use universal abstract forms rather than text: incoming signal, plan sheet, tool/network node, visible containment gate, observed output object, confirmed result. A separate narrow red control line branches from the containment gate to a physical stop control, clearly separate from the successful path.\nStyle/medium: Photorealistic high-end industrial 3D product visualization, sober and technical.\nComposition/framing: Wide landscape 3:2, clean left-to-right flow, consistent spacing, no ambiguity about the main path versus the red control path.\nLighting/mood: Warm white edge lighting, deep controlled shadows, trustworthy and observable.\nColor palette: Black, graphite, warm white, restrained Hivra red only for the independent control path.\nMaterials/textures: Anodized black metal, smoked glass, frosted acrylic, tactile controls.\nConstraints: Entirely original visual; no words, letters, numerals, logos, trademarks, watermarks, people, fantasy effects, floating illegible UI, or decorative clutter.",
+      "finalEditPrompt": "Use case: precise-object-edit\nAsset type: Hivra litepaper section illustration\nPrimary request: Remove every tiny label, word-like mark, pseudo-letter, or illegible text from the second module's plan plate. Replace them only with clean unlabeled geometric nodes and connecting lines.\nConstraints: Change only the second module's plan-plate graphics. Preserve the exact composition, six-module flow, materials, lighting, containment gate, output object, completion symbol, red independent control line, stop control, framing, and black studio background. No words, letters, numerals, pseudo-text, logos, trademarks, or watermarks anywhere.",
+      "review": "The first output was rejected because it contained pseudo-text. The edited output was accepted after visual inspection: six stages, the independent red containment control and the absence of text/logos/watermarks are visible."
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-hero-v2.png",
+      "sha256": "ff789243915db5325495d364a27cb4e7b4cb30b431879a17eb370eae888dd173",
+      "tool": "OpenAI built-in image generation tool",
+      "modelDisclosure": "The product-managed built-in tool did not expose an exact model identifier.",
+      "outputReceipt": "exec-00000000-0000-4000-8000-000000001177.png",
+      "prompt": "Use case: stylized-concept\nAsset type: Hivra litepaper section illustration\nPrimary request: A technically credible visualization of a personal laptop kept separate from a bounded Agent Computer, with one narrow controlled connection between them.\nScene/backdrop: Matte-black architectural studio with tiered surfaces and generous negative space.\nSubject: A closed personal laptop on a lower-left platform. A distinct high-security Agent Computer on a raised right platform, enclosed inside a transparent rigid containment shell. One slim physical data bridge crosses the gap; the bridge includes a visible red isolation segment and no other connection.\nStyle/medium: Photorealistic high-end industrial 3D product visualization, sober, secure, and physically plausible.\nComposition/framing: Wide landscape 3:2; strong spatial separation; laptop lower-left, contained compute system right; containment boundary and narrow bridge instantly readable.\nLighting/mood: Warm white edge lighting, deep controlled shadows, serious and trustworthy.\nColor palette: Black, graphite, warm white, restrained Hivra red only at the isolation control.\nMaterials/textures: Anodized metal, smoked glass, braided data fibers, matte device surfaces.\nConstraints: Entirely original visual; no words, letters, numerals, logos, trademarks, watermarks, people, fantasy effects, floating UI, or decorative clutter. The laptop must remain visibly outside the containment shell. The connection must be narrow and singular.",
+      "review": "Accepted after visual inspection: the personal laptop is outside the rigid boundary, the Agent Computer is visibly contained, only one narrow controlled bridge exists and no text/logos/watermarks are present."
+    }
+  ]
+}

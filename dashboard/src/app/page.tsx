@@ -1,0 +1,182 @@
+import type { Metadata } from "next";
+import { auth } from "@clerk/nextjs/server";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
+
+import PublicSite from "@/components/public-site/PublicSite";
+import styles from "@/components/landing/home.module.css";
+import StructuredData from "@/components/StructuredData";
+import { LocaleProvider } from "@/components/i18n/LocaleProvider";
+import { buildWebsiteMetadata } from "@/lib/metadata";
+import { OG_IMAGE } from "@/lib/og-meta";
+import { SITE_URL } from "@/lib/seo-urls";
+import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
+
+import HeroSection from "@/components/landing/HeroSection";
+import TickerStrip from "@/components/landing/TickerStrip";
+import ComputerScene from "@/components/landing/ComputerScene";
+import ComputersSection from "@/components/landing/ComputersSection";
+import HostingSection from "@/components/landing/HostingSection";
+import OpenSourceSection from "@/components/landing/OpenSourceSection";
+import { HOMEPAGE_FAQ } from "@/components/landing/public-home-content";
+import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
+import ChooseAgentSection from "@/components/landing/ChooseAgentSection";
+import FeaturesSection from "@/components/landing/FeaturesSection";
+import DashboardShowcaseSection from "@/components/landing/DashboardShowcaseSection";
+import HowItWorksSection from "@/components/landing/HowItWorksSection";
+import UseCasesSection from "@/components/landing/UseCasesSection";
+import PricingSection from "@/components/landing/PricingSection";
+import WhatsComingSection from "@/components/landing/WhatsComingSection";
+import FounderSection from "@/components/landing/FounderSection";
+import TokenomicsSection from "@/components/landing/TokenomicsSection";
+import DownloadsSection from "@/components/landing/DownloadsSection";
+import FAQSection from "@/components/landing/FAQSection";
+import TransitionFAQCard from "@/components/landing/TransitionFAQCard";
+
+const homepageTitle = "Hivra | A computer for you and your agents";
+const homepageDescription = "Launch Ubuntu, Windows or Omarchy. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
+
+export const metadata: Metadata = {
+  title: homepageTitle,
+  description: homepageDescription,
+  ...buildWebsiteMetadata({
+    path: "/",
+    title: homepageTitle,
+    description: homepageDescription,
+    twitterTitle: homepageTitle,
+    twitterDescription: homepageDescription,
+    images: [OG_IMAGE.home],
+  }),
+};
+
+const homepageSchema = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#organization`,
+      name: "Hivra",
+      alternateName: ["HermesOS", "Hermes Agent OS"],
+      url: SITE_URL,
+      logo: {
+        "@type": "ImageObject",
+        url: `${SITE_URL}/icon.svg`,
+        width: 128,
+        height: 128,
+      },
+      sameAs: [],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}/#website`,
+      url: SITE_URL,
+      name: "Hivra",
+      alternateName: "HermesOS",
+      description:
+        homepageDescription,
+      publisher: { "@id": `${SITE_URL}/#organization` },
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${SITE_URL}/#softwareapp`,
+      name: "Hivra",
+      alternateName: "HermesOS",
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Ubuntu, Windows, Omarchy",
+      description:
+        homepageDescription,
+      url: SITE_URL,
+      offers: {
+        "@type": "Offer",
+        name: "Free platform with your own infrastructure",
+        price: "0",
+        priceCurrency: "USD",
+        description: "Use Hivra with your own server or cloud. Hosted compute and model-provider usage are paid separately.",
+        url: `${SITE_URL}/#pricing`,
+      },
+      featureList: [
+        "Launch a computer with or without an agent",
+        "Ubuntu, Windows and Omarchy",
+        "Terminal and graphical interfaces",
+        "Persistent files, tools and settings",
+        "Use Hivra Cloud or your own infrastructure",
+        "Bring your own model API key",
+      ],
+    },
+    {
+      "@type": "FAQPage",
+      mainEntity: HOMEPAGE_FAQ.map(({ q, a }) => ({
+        "@type": "Question",
+        name: q,
+        acceptedAnswer: { "@type": "Answer", text: a },
+      })),
+    },
+    {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Home",
+          item: SITE_URL,
+        },
+      ],
+    },
+  ],
+};
+
+async function getLandingLocale(explicitLocale?: string | null) {
+  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
+  return resolveRequestLocale({
+    explicitLocale,
+    cookieLocale: cookieStore.get(LOCALE_COOKIE_NAME)?.value,
+    acceptLanguage: headerStore.get("accept-language"),
+  });
+}
+
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ lang?: string | string[]; locale?: string | string[] }>;
+}) {
+  const { userId } = await auth();
+  const resolvedSearchParams = await searchParams;
+  const explicitLocale =
+    typeof resolvedSearchParams?.lang === "string"
+      ? resolvedSearchParams.lang
+      : typeof resolvedSearchParams?.locale === "string"
+        ? resolvedSearchParams.locale
+        : null;
+  const locale = await getLandingLocale(explicitLocale);
+
+  if (userId) {
+    redirect("/dashboard");
+  }
+
+  return (
+    <LocaleProvider initialLocale={locale}>
+      <PublicSite variant="home" isSignedIn={Boolean(userId)}>
+        <StructuredData schema={homepageSchema} />
+        <main id="main-content" className={styles.home}>
+          <HeroSection agentsCounter={<ComputerScene />} liveStat={<AgentsDeployedStat />} />
+          <TickerStrip />
+          <ChooseAgentSection />
+          <ComputersSection />
+          <HostingSection />
+          <OpenSourceSection />
+          <DownloadsSection />
+          <FeaturesSection />
+          <DashboardShowcaseSection />
+          <HowItWorksSection />
+          <UseCasesSection />
+          <div className={styles.pricingWrap}><PricingSection /></div>
+          <div className={styles.comingWrap}><WhatsComingSection /></div>
+          <TokenomicsSection />
+          <FounderSection />
+          <FAQSection />
+          <div className={styles.transitionWrap}><TransitionFAQCard /></div>
+        </main>
+      </PublicSite>
+    </LocaleProvider>
+  );
+}

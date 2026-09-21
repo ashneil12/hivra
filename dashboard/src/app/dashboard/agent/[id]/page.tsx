@@ -1,0 +1,1069 @@
+"use client";
+
+// Hivra per-agent view — Chat (live) · <Agent> Terminal · Box Terminal ·
+// Manage. Server-backed: polls the agent until provisioning finishes, then the
+// Chat tab connects to its runtime. Styled in the Command Center vocabulary
+// (serif names, mono labels, theme-aware tokens). Flag-gated.
+
+import styles from "./ResourceWorkspace.module.css";
+
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock } from "lucide-react";
+
+import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
+import { useChatReadiness } from "@/components/hivra/useChatReadiness";
+import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
+import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
+import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
+import { useNativeWorkspace } from "@/components/layout/NativeWorkspaceBridge";
+import { HivraChat } from "@/components/hivra/HivraChat";
+import { HivraLogin } from "@/components/hivra/HivraLogin";
+import { HivraGitHubConnect } from "@/components/hivra/HivraGitHubConnect";
+import { HivraFiles } from "@/components/hivra/HivraFiles";
+import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
+import { HivraGit } from "@/components/hivra/HivraGit";
+import { HivraSkills } from "@/components/hivra/HivraSkills";
+import { HivraTelegram } from "@/components/hivra/HivraTelegram";
+import { HivraManage } from "@/components/hivra/HivraManage";
+import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
+import { HivraRemoteDesktop } from "@/components/hivra/HivraRemoteDesktop";
+import { HivraConsoleDesktop } from "@/components/hivra/HivraConsoleDesktop";
+import { HivraOmarchyDesktop } from "@/components/hivra/HivraOmarchyDesktop";
+import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
+import {
+  SurfaceActionProvider,
+  useSurfaceAction,
+  useSurfaceActionStoreInstance,
+} from "@/components/hivra/SurfaceActionContext";
+import {
+  agentTabSurface,
+  hivraRuntimeUid,
+} from "@/lib/workspace/runtime-selection";
+import { persistWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
+import { TasksPanel } from "@/components/scheduled-tasks/TasksPanel";
+import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
+import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
+import { clientLog } from "@/lib/client/logger";
+import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
+import { GOALS } from "@/lib/hivra/agent-identity";
+import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
+import {
+  buildWelcomePersonalizationContext,
+  parseWelcomePersonalizationContext,
+} from "@/lib/welcome-personalization";
+
+const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
+
+type Tab = "chat" | "aeon" | "desktop" | "files" | "git" | "skills" | "telegram" | "tasks" | "terminal" | "box" | "browser" | "manage";
+
+// Tabs shown for dashboard-surface agents (Aeon): the embedded dashboard + the
+// box shell + files + manage. No chat/browser/skills/telegram.
+const DASHBOARD_TABS: Tab[] = ["aeon", "desktop", "files", "box", "manage"];
+const COMPUTER_TABS: Tab[] = ["desktop", "files", "box", "manage"];
+
+const labelStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono), monospace",
+  fontSize: 10,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.16em",
+  color: "var(--text-muted)",
+};
+
+const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: "chat", label: "Chat", icon: <MessageSquareText size={14} /> },
+  { id: "aeon", label: "Dashboard", icon: <LayoutDashboard size={14} /> },
+  { id: "desktop", label: "Desktop", icon: <Monitor size={14} /> },
+  { id: "terminal", label: "Claude Code Terminal", icon: <TerminalSquare size={14} /> },
+  { id: "browser", label: "Browser", icon: <Monitor size={14} /> },
+  { id: "box", label: "Box Terminal", icon: <SquareTerminal size={14} /> },
+  { id: "files", label: "Files", icon: <FolderTree size={14} /> },
+  { id: "git", label: "Git", icon: <GitBranch size={14} /> },
+  { id: "skills", label: "Skills", icon: <Sparkles size={14} /> },
+  { id: "telegram", label: "Telegram", icon: <Send size={14} /> },
+  { id: "tasks", label: "Tasks", icon: <CalendarClock size={14} /> },
+  { id: "manage", label: "Manage", icon: <Settings2 size={14} /> },
+];
+
+// The chat/terminal pick is remembered (global) — whichever the user looked at
+// last sticks across refreshes and navigating away. Other tabs don't persist.
+const LAST_VIEW_KEY = "hivra:agent-last-view";
+
+function Stub({ title, body }: { title: string; body: string }) {
+  return (
+    <div className={styles.statusPanel}>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>{body}</div>
+    </div>
+  );
+}
+
+function WindowsWorkspaceGuidance({ surface, onDesktop }: { surface: "files" | "terminal"; onDesktop: () => void }) {
+  return (
+    <div className={styles.statusPanel}>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
+        {surface === "files" ? "Use Windows File Explorer" : "Use Windows PowerShell"}
+      </div>
+      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>
+        {surface === "files"
+          ? "Dedicated web file browsing and upload/download are not available for this Windows computer yet. Open Desktop, then click Start inside the remote Windows desktop and search for File Explorer to manage files in Windows."
+          : "A dedicated web terminal is not available for this Windows computer yet. Open Desktop, then click Start inside the remote Windows desktop, type PowerShell, and open Windows PowerShell. Run Get-Location to check your working folder."}
+      </div>
+      <button type="button" onClick={onDesktop}>Open Desktop</button>
+    </div>
+  );
+}
+
+function DisconnectedComputerWorkspaceGuidance({ surface, onDesktop }: { surface: "files" | "terminal"; onDesktop: () => void }) {
+  return (
+    <div className={styles.statusPanel}>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
+        {surface === "files" ? "Use Files inside Desktop" : "Use Terminal inside Desktop"}
+      </div>
+      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>
+        {surface === "files"
+          ? "The dedicated web file tool is not connected for this computer. Open Desktop, then use Files inside the remote computer to browse or manage files."
+          : "The dedicated web terminal is not connected for this computer. Open Desktop, then use Terminal inside the remote computer to run commands."}
+      </div>
+      <button type="button" onClick={onDesktop}>Open Desktop</button>
+    </div>
+  );
+}
+
+type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
+
+function AuthenticatedSurface({
+  url,
+  token,
+  label,
+  description,
+  background,
+  permissions,
+  onManage,
+  surfaceId,
+  active = true,
+}: {
+  url: string;
+  token: string;
+  label: string;
+  description?: string;
+  background: string;
+  permissions?: readonly SurfacePermission[];
+  onManage: () => void;
+  /** Slot this surface publishes under, and whether it is the visible one. */
+  surfaceId?: string;
+  active?: boolean;
+}) {
+  const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+  const formRef = useRef<HTMLFormElement>(null);
+  const newTabFormRef = useRef<HTMLFormElement>(null);
+  const [probeVersion, setProbeVersion] = useState(0);
+  const [access, setAccess] = useState<{
+    key: string;
+    token: string;
+    status: "ready" | "upgrade-required" | "unavailable";
+  } | null>(null);
+  let bootstrapUrl = "";
+  let metadataUrl = "";
+  let destination = "";
+  let surfaceOrigin = "";
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
+      /[\s;*'"]/.test(parsed.origin)
+    ) {
+      throw new Error("A clean HTTPS surface endpoint is required.");
+    }
+    surfaceOrigin = parsed.origin;
+    bootstrapUrl = `${parsed.origin}/auth/bootstrap`;
+    metadataUrl = `${parsed.origin}/api/meta`;
+    destination = `${parsed.pathname}${parsed.search}`;
+  } catch {
+    // A malformed stored surface URL must fail closed instead of navigating.
+  }
+  // With no src attribute, bare feature names target the initial document's
+  // origin, not the guest reached by POST. Scope each permission to the same
+  // validated guest origin used for bootstrap, never a wildcard or legacy
+  // allowfullscreen grant that could follow navigation to another origin.
+  const permissionsPolicy = surfaceOrigin && permissions?.length
+    ? permissions.map((feature) => `${feature} ${surfaceOrigin}`).join("; ")
+    : undefined;
+  const probeKey = `${metadataUrl}:${probeVersion}`;
+  const missingToken = !token;
+  const accessStatus = !metadataUrl || missingToken
+    ? "unavailable"
+    : access?.key === probeKey && access.token === token ? access.status : "checking";
+
+  useEffect(() => {
+    if (!metadataUrl || !token) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    // Provider ownership says nothing about the installed gateway protocol.
+    // Probe nonsecret runtime metadata before sending any bearer. An old or
+    // unreachable runtime must never fall back to putting it in a URL.
+    void fetch(metadataUrl, { cache: "no-store", credentials: "omit", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Runtime metadata is unavailable.");
+        const metadata: unknown = await response.json();
+        if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+          throw new Error("Runtime metadata is invalid.");
+        }
+        const record = metadata as Record<string, unknown>;
+        const status = record.surfaceAuth === "post-cookie-v1"
+          ? "ready"
+          : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
+        if (!cancelled) setAccess({ key: probeKey, token, status });
+      })
+      .catch(() => {
+        if (!cancelled) setAccess({ key: probeKey, token, status: "unavailable" });
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [metadataUrl, probeKey, token]);
+
+  useEffect(() => {
+    if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
+    formRef.current?.requestSubmit();
+  }, [accessStatus, bootstrapUrl, destination, token]);
+
+  const openInNewTab = useCallback(() => {
+    const form = newTabFormRef.current;
+    if (accessStatus !== "ready" || !form || !bootstrapUrl || !destination || !token) return;
+    form.requestSubmit();
+  }, [accessStatus, bootstrapUrl, destination, token]);
+
+  // "Open in new tab" is the everyday action of this surface, so it belongs in
+  // the bar with the rest of the chrome rather than in a strip of its own. The
+  // button below still drives the same hidden form — the behaviour does not
+  // move, only which row draws it. It renders inline when nothing received the
+  // publish (a standalone render, or this surface not being the active one).
+  const openInNewTabActions = useMemo(
+    () => [
+      {
+        id: "open-in-new-tab",
+        label: "Open in new tab",
+        icon: "external-link" as const,
+        onSelect: openInNewTab,
+        disabled: accessStatus !== "ready",
+      },
+    ],
+    [openInNewTab, accessStatus],
+  );
+  const { published: actionsLifted } = useSurfaceAction(
+    surfaceId,
+    active,
+    openInNewTabActions,
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      {accessStatus === "ready" ? (
+        <>
+          <form ref={formRef} action={bootstrapUrl} method="POST" target={frameName} style={{ display: "none" }}>
+            <input type="hidden" name="token" value={token} />
+            <input type="hidden" name="destination" value={destination} />
+          </form>
+          <form ref={newTabFormRef} action={bootstrapUrl} method="POST" target="_blank" rel="noopener noreferrer" style={{ display: "none" }}>
+            <input type="hidden" name="token" value={token} />
+            <input type="hidden" name="destination" value={destination} />
+          </form>
+        </>
+      ) : null}
+      {/* No strip when there is nothing of its own to say.
+          `{description || label}` restated the agent name (already in the bar's
+          identity cluster) and the surface name (already the active tab), so on
+          the terminal and dashboard tabs this row was pure echo. It still
+          renders when the host passes a real `description` — the live browser's
+          read-only note is information, not decoration — and whenever the action
+          was not lifted, because then the button needs somewhere to live. */}
+      {description || !actionsLifted ? (
+        <div className={styles.surfaceToolbar}>
+          {description ? <span className={`mono ${styles.surfaceDescription}`}>{description}</span> : null}
+          <div style={{ flex: 1 }} />
+          {actionsLifted ? null : (
+            <button type="button" onClick={openInNewTab} disabled={accessStatus !== "ready"} aria-label="Open in new tab" className={`mono ${styles.newTabButton}`}>
+              <span>Open in new tab</span><ExternalLink size={13} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      ) : null}
+      {accessStatus === "ready" ? (
+        <iframe name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
+      ) : (
+        <div className={styles.statusPanel} role="status">
+          {accessStatus === "checking" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
+          <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 8 }}>
+            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
+          </div>
+          <p style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
+            {accessStatus === "checking"
+              ? "Checking this computer’s connection service."
+              : accessStatus === "upgrade-required"
+                ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
+                : missingToken
+                  ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update & restart, then try Terminal or Files again. Your computer and its files are unchanged."
+                  : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
+          </p>
+          {accessStatus === "upgrade-required" ? (
+            <p style={{ fontSize: 13, maxWidth: 460, margin: "12px auto 0", lineHeight: 1.6 }}>
+              Open Manage and choose <strong>Update &amp; restart</strong>. Hivra refreshes the connection service without deleting your computer, files, or agent login.
+            </p>
+          ) : null}
+          {accessStatus !== "checking" ? (
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+              <button type="button" onClick={onManage} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
+                Open Manage
+              </button>
+              <button type="button" onClick={() => setProbeVersion((version) => version + 1)} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
+                {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TerminalView({ url, token, label, onManage, surfaceId, active = true }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
+  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} />;
+}
+
+function RetainedTerminal({ active, surfaceId, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
+  const [opened, setOpened] = useState(active);
+  // Lazily open once, then preserve this browsing context between tab changes.
+  // Navigating an active ttyd frame can be cancelled by its beforeunload guard;
+  // reusing it would show one shell under the other terminal's heading.
+  if (active && !opened) setOpened(true);
+  if (!opened && !active) return null;
+  return (
+    <div hidden={!active} inert={!active} style={{ height: "100%", minHeight: 0 }}>
+      <TerminalView {...surface} surfaceId={surfaceId} active={active} />
+    </div>
+  );
+}
+
+// Embedded web dashboard (Aeon) — the box hosts a Next.js app on a loopback
+// port; the box's token-gated proxy fronts it under /aeon. Rendered in an iframe
+// just like the terminal/browser surfaces.
+function DashboardView({ url, token, label, onManage, surfaceId, active = true }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
+  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+}
+
+// Live browser — the agent's real Chrome (headful on the box's Xvfb), streamed
+// over noVNC through the box tunnel. This legacy surface has no shared session
+// input fence, so default its viewer to read-only instead of implying that the
+// agent has paused or that conflict-free takeover is available.
+function BrowserView({ url, token, onManage, surfaceId, active = true }: { url: string; token: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
+  return <AuthenticatedSurface url={url} token={token} label="Live browser" description="Live browser · read-only view of the agent's Chrome. Conflict-free human takeover isn't available on this legacy surface." background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+}
+
+function BrowserDisabledView({
+  isFreePlan,
+  onManage,
+  onUpgrade,
+}: {
+  isFreePlan: boolean;
+  onManage: () => void;
+  onUpgrade: () => void;
+}) {
+  const body = isFreePlan
+    ? "Upgrade to Pro or above to enable the live browser."
+    : "Turn it on in Manage to open the live browser.";
+  const button = isFreePlan ? (
+    <button
+      type="button"
+      onClick={onUpgrade}
+      className="mono"
+      style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
+    >
+      <Settings2 size={14} /> Upgrade to Pro
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={onManage}
+      className="mono"
+      style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
+    >
+      <Settings2 size={14} /> Open Manage
+    </button>
+  );
+
+  return (
+    <div className={styles.statusPanel}>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
+        Browser automation is off
+      </div>
+      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto 16px", lineHeight: 1.6 }}>
+        {body}
+      </div>
+      {button}
+    </div>
+  );
+}
+
+function ProvisioningPersonalizationPanel({ agent }: { agent: HivraAgent }) {
+  const storedDraft = parseWelcomePersonalizationContext(agent.context);
+  const [draft, setDraft] = useState<WelcomePersonalizationDraft>({
+    goal: agent.goal || (agent.type === "claude-code" ? "build" : "assist"),
+    context: storedDraft.context,
+    firstTask: agent.first_task || storedDraft.firstTask,
+    who: storedDraft.who,
+    business: storedDraft.business,
+    goals: storedDraft.goals,
+  });
+  const saveTimerRef = useRef<number | null>(null);
+  const dirtyRef = useRef(false);
+
+  const updateDraft = (update: (current: WelcomePersonalizationDraft) => WelcomePersonalizationDraft) => {
+    dirtyRef.current = true;
+    setDraft(update);
+  };
+
+  useEffect(() => {
+    if (!dirtyRef.current) return;
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      void fetch(`/api/hivra/agents/${agent.id}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "onboarding",
+          goal: draft.goal,
+          context: buildWelcomePersonalizationContext(draft),
+          firstTask: draft.firstTask,
+        }),
+      }).catch((error) => {
+        clientLog.warn("Hivra provisioning personalization save failed", {
+          source: "hivra-agent-page",
+          route: "/api/hivra/agents/[id]/action",
+          failureType: "hivra_provisioning_personalization_save_failed",
+          agentId: agent.id,
+          agentType: agent.type,
+        }, error);
+      });
+    }, 500);
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
+  }, [agent.id, agent.type, draft]);
+
+  return (
+    <div style={{ maxWidth: 560, margin: "22px auto 0", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", padding: 16, display: "grid", gap: 12, textAlign: "left" }}>
+      <div>
+        <span className="mono" style={{ ...labelStyle, color: "var(--text-secondary)" }}>While you wait</span>
+        <p style={{ margin: "4px 0 0", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+          Shape the first conversation so {agent.name} can get useful faster.
+        </p>
+      </div>
+      <label style={{ display: "grid", gap: 6 }}>
+        <span className="mono" style={labelStyle}>Focus</span>
+        <select
+          value={draft.goal || "assist"}
+          onChange={(event) => updateDraft((current) => ({ ...current, goal: event.target.value }))}
+          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "9px 10px", fontSize: 13 }}
+        >
+          {GOALS.map((goal) => (
+            <option key={goal.id} value={goal.id}>{goal.label}</option>
+          ))}
+        </select>
+      </label>
+      <label style={{ display: "grid", gap: 6 }}>
+        <span className="mono" style={labelStyle}>Context</span>
+        <textarea
+          value={draft.context || ""}
+          onChange={(event) => updateDraft((current) => ({ ...current, context: event.target.value }))}
+          placeholder="What should it know about you, your work, or this project?"
+          rows={3}
+          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: 10, fontSize: 13, resize: "vertical" }}
+        />
+      </label>
+      <label style={{ display: "grid", gap: 6 }}>
+        <span className="mono" style={labelStyle}>First task</span>
+        <input
+          value={draft.firstTask || ""}
+          onChange={(event) => updateDraft((current) => ({ ...current, firstTask: event.target.value }))}
+          placeholder="What should it help you do first?"
+          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "9px 10px", fontSize: 13 }}
+        />
+      </label>
+    </div>
+  );
+}
+
+export default function AgentPage() {
+  const { enabled: nativeWorkspace } = useNativeWorkspace();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const params = useParams();
+  // One registry per agent page. Never a module singleton: a route change or a
+  // reused module in a test must not carry another page's actions over.
+  const actionStore = useSurfaceActionStoreInstance();
+  const id = (params?.id as string) || "";
+  const launchWelcome = searchParams?.get("welcome") === "1";
+  const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
+  const [agent, setAgent] = useState<HivraAgent | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [statusObservation, setStatusObservation] = useState<{
+    agentId: string;
+    receivedAt: number;
+    unavailable: boolean;
+  } | null>(null);
+  // Start on whichever of chat/terminal the user looked at last (sticks across
+  // refreshes and navigating away). Lazy initializer keeps it SSR-safe — the tab
+  // value doesn't affect the loading render, so there's no hydration flash.
+  // A ?tab= deep link (e.g. the dashboard checklist's "connect Telegram" item)
+  // wins over both the welcome default and the remembered view.
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = searchParams?.get("tab");
+    if (requested && TABS.some((t) => t.id === requested)) return requested as Tab;
+    try {
+      if (launchWelcome) {
+        window.localStorage.setItem(LAST_VIEW_KEY, "chat");
+        return "chat";
+      }
+      const saved = window.localStorage.getItem(LAST_VIEW_KEY);
+      if (saved === "chat" || saved === "terminal") return saved;
+    } catch {
+      /* SSR / storage disabled */
+    }
+    return "chat";
+  });
+  // A desktop session is expensive to establish and is deliberately revoked
+  // when this page actually closes. Mount it only after the owner first opens
+  // Desktop, then retain the authenticated iframe while they switch among the
+  // local Hivra surfaces so returning does not force another media handshake.
+  const [desktopOpened, setDesktopOpened] = useState(
+    () => searchParams?.get("tab") === "desktop",
+  );
+  const requestedTab = searchParams?.get("tab");
+  const [lastRequestedTab, setLastRequestedTab] = useState(requestedTab);
+  // Reconcile a changed deep link before committing a stale surface. Keep the
+  // opened-session flag monotonic so history navigation cannot remount it.
+  if (requestedTab !== lastRequestedTab) {
+    setLastRequestedTab(requestedTab);
+    if (requestedTab && TABS.some((candidate) => candidate.id === requestedTab)) {
+      setTab(requestedTab as Tab);
+      if (requestedTab === "desktop") setDesktopOpened(true);
+    }
+  }
+  const [browserOn, setBrowserOn] = useState<boolean | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
+  const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
+  const [planResult, setPlanResult] = useState<{ value: PlanInfo | null; agentId: string; version: number } | null>(null);
+  const plan = planResult?.agentId === id && planResult.version === reloadKey ? planResult.value : null;
+  // Free-plan browser lock → the shared upgrade paywall (instead of a dead-end button).
+  const [paywallOpen, setPaywallOpen] = useState(false);
+  const timerRef = useRef<number | null>(null);
+  const loggedFailureRef = useRef<string | null>(null);
+  // Latest agent for the poll loop, so a transient fetch failure can tell
+  // "never loaded" apart from "loaded fine before this blip".
+  const agentRef = useRef<HivraAgent | null>(null);
+  const capabilityPrefetchRef = useRef<string | null>(null);
+  useEffect(() => {
+    agentRef.current = agent;
+  }, [agent]);
+  useEffect(() => {
+    capabilityPrefetchRef.current = null;
+  }, [id]);
+
+  // Read the window-based Hivra flag only after hydration. A build-time true is
+  // already authoritative; otherwise server and client both start unresolved
+  // and render neutral feedback until the live hostname / ?hivra=1 check runs.
+  // Reading the hostname in a lazy initializer would make preview deployments
+  // render differently on the server and client and cause a hydration mismatch.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate post-hydration flip of a render-gating flag; see comment above.
+    setFlagOn(isHivraEnabled());
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchPlanStrict().then((value) => {
+      if (alive) setPlanResult({ value, agentId: id, version: reloadKey });
+    });
+    return () => { alive = false; };
+  }, [id, reloadKey]);
+
+  // For browser-capable agents, learn the box's live browser-automation state
+  // (drives the Browser tab visibility + the Manage toggle + the resize floor).
+  useEffect(() => {
+    if (agent?.status === "running" && agent.chat_url && catalogAgent(agent.type)?.browser && browserOn === null) {
+      void browserStatus(agent.chat_url, agent.api_token).then((s) => {
+        if (s.error) {
+          clientLog.warn("Browser status probe failed", {
+            source: "hivra-agent-page",
+            route: "/dashboard/agent/[id]",
+            instanceId: agent.id,
+            agentType: agent.type,
+            status: agent.status,
+            error: s.error,
+          });
+        }
+        setBrowserOn(s.enabled);
+      });
+    }
+  }, [agent, browserOn]);
+
+  useEffect(() => {
+    if (agent?.status !== "error") return;
+    const logKey = `${agent.id}:${agent.error || ""}`;
+    if (loggedFailureRef.current === logKey) return;
+    loggedFailureRef.current = logKey;
+    clientLog.warn("Hivra agent provisioning failed", {
+      source: "hivra-agent-page",
+      route: "/dashboard/agent/[id]",
+      instanceId: agent.id,
+      agentType: agent.type,
+      status: agent.status,
+      vmid: agent.vmid ?? null,
+      proxmoxHost: agent.proxmox_host ?? null,
+      hasChatUrl: Boolean(agent.chat_url),
+      error: agent.error || null,
+    });
+  }, [agent]);
+
+  // Load + poll while provisioning. getAgent returns null for BOTH "not found"
+  // and transient failures (network blip, cold start, auth hiccup) — a single
+  // null used to wipe the agent to "Agent not found" AND stop the poll loop,
+  // stranding the row in "provisioning" with the box already converged. Keep
+  // the last known agent on a blip and keep polling; only show "not found"
+  // after the initial load fails repeatedly.
+  useEffect(() => {
+    let alive = true;
+    let initialFailures = 0;
+    const tick = async () => {
+      const a = await getAgent(id);
+      if (!alive) return;
+      if (a) {
+        initialFailures = 0;
+        setAgent(a);
+        setStatusObservation({ agentId: id, receivedAt: Date.now(), unavailable: false });
+        setLoaded(true);
+        if (a.status === "provisioning") {
+          timerRef.current = window.setTimeout(tick, 5000);
+        }
+        return;
+      }
+      const last = agentRef.current;
+      if (last?.id === id) {
+        setStatusObservation((previous) => previous?.agentId === id
+          ? { ...previous, unavailable: true }
+          : null);
+        // Transient blip: keep the stale agent rendered; keep polling if the
+        // flip is what we're waiting on.
+        if (last.status === "provisioning") {
+          timerRef.current = window.setTimeout(tick, 5000);
+        }
+        return;
+      }
+      initialFailures += 1;
+      if (initialFailures < 3) {
+        timerRef.current = window.setTimeout(tick, 2000);
+        return;
+      }
+      setAgent(null);
+      setLoaded(true);
+    };
+    void tick();
+    return () => {
+      alive = false;
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, [id, reloadKey]);
+
+  const go = useCallback(
+    (path: string) => router.push(`${path}${ENV_FLAG ? "" : "?hivra=1"}`),
+    [router],
+  );
+
+  // Keep the current surface in the shareable URL without reloading its
+  // retained sessions or adding a Back entry for every local tab click.
+  // Chat/terminal also retain their cross-computer sticky preference.
+  const selectTab = useCallback((t: Tab) => {
+    if (t === "desktop") setDesktopOpened(true);
+    setTab(t);
+    const nextURL = new URL(window.location.href);
+    nextURL.searchParams.set("tab", t);
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+    if (t === "chat" || t === "terminal") {
+      try {
+        window.localStorage.setItem(LAST_VIEW_KEY, t);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  // Remember this runtime, so Home can offer it back as "Continue <name>".
+  //
+  // The reader for this lived on the fleet pane from the start and never had a
+  // writer once the workspace route became a door — the only one was
+  // `UnifiedWorkspace`, which stopped being imported. This route is where the
+  // visit actually happens, so it is where the record belongs. Recording is
+  // fire-and-forget and cannot navigate: a stored selection is offered on Home,
+  // never followed.
+  useEffect(() => {
+    if (!id) return;
+    persistWorkspaceSelection({
+      uid: hivraRuntimeUid(id),
+      surface: agentTabSurface(tab),
+    });
+  }, [id, tab]);
+
+  // Read-only capability refresh once per computer id/session.
+  // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).
+  // Never prepare — Omarchy autoPrepare stays prepare=1 only.
+  useEffect(() => {
+    if (!agent || agent.status !== "running" || agent.id !== id) return;
+    if (catalogAgent(agent.type)?.surface !== "computer") return;
+    if (agent.computer_substrate === "gvisor") return;
+    if (capabilityPrefetchRef.current === agent.id) return;
+    capabilityPrefetchRef.current = agent.id;
+    const controller = new AbortController();
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/remote-desktop`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "refresh" }),
+      signal: controller.signal,
+      keepalive: true,
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [agent, id]);
+
+  if (flagOn === null) {
+    return (
+      <div role="status" aria-live="polite" style={{ padding: 48, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-muted)" }}>
+        <Loader2 aria-hidden="true" size={16} style={{ animation: "spin 1s linear infinite" }} />
+        <span>Checking availability…</span>
+      </div>
+    );
+  }
+  if (!flagOn) {
+    return <div className={styles.statusPanel}>This preview isn&apos;t enabled here.</div>;
+  }
+  if (loaded && !agent) {
+    return (
+      <div className={styles.statusPanel}>
+        <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 14 }}>Agent not found.</div>
+        <button type="button" onClick={() => go("/dashboard")} className="mono" style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 16px", cursor: "pointer" }}>
+          Back to Home
+        </button>
+      </div>
+    );
+  }
+  if (!agent || agent.id !== id) {
+    return <div className={styles.statusPanel}><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /></div>;
+  }
+
+  const def = catalogAgent(agent.type);
+  const accent = def?.accent || "var(--gold-leaf)";
+  const cliKind = def?.cliKind ?? "claude";
+  const isDashboard = def?.surface === "dashboard";
+  const isComputer = def?.surface === "computer";
+  const isGvisorComputer = isComputer && agent.computer_substrate === "gvisor";
+  const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
+    && agent.computer_profile === "ubuntu-desktop";
+  const termLabel = `${def?.name || "Agent"} Terminal`;
+  const tabs = TABS
+    .filter((t) =>
+      isComputer
+        ? isGvisorComputer ? t.id === "manage" : COMPUTER_TABS.includes(t.id)
+        : isDashboard
+        // Dashboard-surface agents (Aeon, OpenClaw) get the embedded dashboard +
+        // box shell + files, plus the live Browser tab for browser-capable ones
+        // (OpenClaw drives the box's CDP Chrome shown there).
+        ? DASHBOARD_TABS.includes(t.id) || (t.id === "browser" && Boolean(def?.browser))
+        // CLI-chat agents: no dashboard tab; keep Browser discoverable for
+        // browser-capable agents even when the runtime has it toggled off.
+        : t.id !== "aeon" && (t.id !== "browser" || Boolean(def?.browser)),
+    )
+    .map((t) => (t.id === "terminal" ? { ...t, label: termLabel } : t));
+  // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
+  // falls back to the dashboard surface.
+  // One shared decision with the workspace: resource-landing owns "what does
+  // this resource open on", so the two routes cannot drift apart again.
+  const landing = resolveResourceLanding({
+    source: "hivra",
+    type: agent.type,
+    computerProfile: agent.computer_profile,
+    status: agent.status,
+    chatUrl: agent.chat_url,
+    surfaceKind: def?.surface,
+    resourceKind: def?.resourceKind,
+  });
+  const effectiveTab: Tab = isComputer
+    // gVisor sandboxes are terminal-only: they have no desktop to land on, so
+    // they open on Manage. Every other computer defers to the shared landing
+    // decision rather than hardcoding "desktop" a second time.
+    ? isGvisorComputer
+      ? "manage"
+      : (COMPUTER_TABS.includes(tab) ? tab : (landing.landing as Tab))
+    : isDashboard
+      ? ((DASHBOARD_TABS.includes(tab) || (tab === "browser" && Boolean(def?.browser))) ? tab : "aeon")
+      : tab;
+  const provisioning = agent.status === "provisioning";
+  const activity = agentActivityPresentation(agent, def?.name || "the agent");
+  // Every surface verifies the running gateway's auth capability, then POSTs
+  // its bearer in the body for an opaque HttpOnly cookie and clean URL.
+  // Provider ownership is not a proxy for the installed runtime protocol.
+  const tok = agent.api_token || "";
+  const isFreePlan = agent.deployment_mode !== "self-managed" && Boolean(plan && (!plan.subscribed || plan.key === "free"));
+  const managePanel = (
+    <HivraManage
+      agent={agent}
+      def={def}
+      plan={plan}
+      onChanged={() => setReloadKey((k) => k + 1)}
+      onDestroyed={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}
+      browserOn={browserOn}
+      onBrowserChange={(e) => setBrowserOn(e)}
+    />
+  );
+
+  return (
+    <SurfaceActionProvider store={actionStore}>
+    <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
+      {/* Keep identity, switching and work surfaces together. Native chrome owns
+          identity on native clients; the existing session components stay below. */}
+      <ResourceSurfaceNavigation
+        surfaces={tabs}
+        active={effectiveTab}
+        onSelect={selectTab}
+        exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+        identity={
+          nativeWorkspace ? undefined : (
+            <div className={styles.identity}>
+              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={isComputer ? "computer" : "agent"} status={provisioning ? activity.label : agent.status} />
+            </div>
+          )
+        }
+      />
+
+      {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
+          connected get a one-line pointer to the Telegram tab (the component
+          gates itself on ?welcome=1 + probe + per-box dismiss). Hidden while
+          already on the Telegram tab and for dashboard-surface agents (no
+          Telegram tab to point at). */}
+      {agent.status === "running" && agent.chat_url && !isDashboard && !isComputer && effectiveTab !== "telegram" ? (
+        <ChannelConnectNudge
+          boxUrl={agent.chat_url}
+          token={agent.api_token}
+          boxId={agent.id}
+          onConnect={() => selectTab("telegram")}
+        />
+      ) : null}
+
+      <div className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        {(desktopOpened || isComputer) && agent.status === "running" ? (
+          agent.computer_profile === "omarchy" ? (
+            <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
+              active={effectiveTab === "desktop"}
+              autoPrepare={isComputer && searchParams?.get("prepare") === "1"}
+              handoffWarmOrigin={(() => { try { return agent.chat_url ? new URL(agent.chat_url).origin : null; } catch { return null; } })()} />
+          ) : agent.computer_profile === "windows" ? (
+            <HivraConsoleDesktop computerId={agent.id} name={agent.name}
+              profile={agent.computer_profile} active={effectiveTab === "desktop"}
+              autoOpenFast={landing.desktopAutoOpen || searchParams?.get("open") === "fast"} />
+          ) : (
+            <HivraRemoteDesktop
+              computerId={agent.id}
+              name={agent.name}
+              active={effectiveTab === "desktop"}
+              // When the box tunnel is already up, auto-prepare can leave Desktop
+              // stuck on "Repairing…" and disrupt Terminal/Files attach needed for
+              // cross-path proof. Only auto-prepare computers that cannot attach yet.
+              autoPrepare={isComputer && !agent.chat_url}
+              handoffWarmOrigin={(() => { try { return agent.chat_url ? new URL(agent.chat_url).origin : null; } catch { return null; } })()}
+            />
+          )
+        ) : null}
+        {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
+          <>
+            {!isDashboard && !isComputer ? (
+              <RetainedTerminal
+                key={`${agent.id}:${agent.chat_url}:terminal`}
+                active={effectiveTab === "terminal"}
+                surfaceId="terminal"
+                url={`${agent.chat_url.replace(/\/$/, "")}/terminal/`}
+                token={tok}
+                label={`${def?.name || "Agent"} · terminal`}
+                onManage={() => selectTab("manage")}
+              />
+            ) : null}
+            {providerWorkspace ? <>
+              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-box`} computerId={agent.id}
+                boxOrigin={agent.chat_url} surface="box-terminal" active={effectiveTab === "box"} />
+              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-files`} computerId={agent.id}
+                boxOrigin={agent.chat_url} surface="files" active={effectiveTab === "files"} />
+            </> : <RetainedTerminal
+              key={`${agent.id}:${agent.chat_url}:box`}
+              active={effectiveTab === "box"}
+              surfaceId="box"
+              url={`${agent.chat_url.replace(/\/$/, "")}/box-terminal/`}
+              token={tok}
+              label="Box · shell"
+              onManage={() => selectTab("manage")}
+            />}
+          </>
+        ) : null}
+        {provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
+          <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
+            <div role="status" aria-live="polite">
+              <div className="serif" style={{ fontSize: 24, color: "var(--ink-black)", marginBottom: 10 }}>Finish Windows setup on your Proxmox host</div>
+              <p style={{ fontSize: 13, maxWidth: 560, margin: "0 auto", lineHeight: 1.65 }}>
+                Hivra created and started {agent.vmid ? `VM ${agent.vmid}` : "the Windows setup VM"} with your selected ISO. Open that VM&apos;s Proxmox console to complete Windows installation. Hivra will not collect a product key or bypass activation.
+              </p>
+              <p style={{ fontSize: 13, maxWidth: 560, margin: "16px auto 0", padding: "14px 16px", border: "1px solid var(--etched-border)", lineHeight: 1.65 }}>
+                Automatic guest readiness and customer-host RDP enrolment are not implemented yet. The fast Guacamole/RDP button remains unavailable until that exact guest is separately prepared and verified.
+              </p>
+            </div>
+          </div>
+        ) : provisioning && agent.computer_substrate === "provider-vm" && effectiveTab === "manage" ? managePanel : provisioning ? (
+          <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
+            <div role="status" aria-live="polite">
+              <Loader2 aria-hidden="true" size={20} style={{ display: "block", margin: "0 auto", animation: "spin 1s linear infinite", color: "var(--gold-leaf)" }} />
+              <div className="serif" style={{ fontSize: 24, fontWeight: 400, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
+              <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>{activity.body}</div>
+              {statusObservation?.agentId === id ? <div
+                aria-live="off"
+                style={{ fontSize: 12, maxWidth: 460, margin: "16px auto 0", lineHeight: 1.6 }}
+              >
+                Last status response: <time dateTime={new Date(statusObservation.receivedAt).toISOString()}>
+                  {new Date(statusObservation.receivedAt).toLocaleTimeString()}
+                </time>. This is a status check, not installation progress.
+              </div> : null}
+              {statusObservation?.agentId === id && statusObservation.unavailable ? <p
+                role="alert"
+                style={{ fontSize: 13, maxWidth: 460, margin: "12px auto 0", color: "var(--ink-black)", lineHeight: 1.6 }}
+              >Couldn’t get the latest status. Showing the last response and checking again automatically. This does not mean setup failed.</p> : null}
+              {agent.computer_substrate === "provider-vm" && providerReadinessMessage(agent.readiness_stage) ? <p
+                role={agent.readiness_stage === "verification_unavailable" ? "alert" : undefined}
+                style={{ fontSize: 13, maxWidth: 480, margin: "18px auto 0", padding: "14px 16px", border: "1px solid var(--etched-border)", lineHeight: 1.6 }}
+              >{providerReadinessMessage(agent.readiness_stage)}</p> : null}
+              {agent.computer_substrate === "provider-vm" && providerPowerMessage(agent.power_stage) ? <p
+                role={["verification_unavailable", "request_uncertain", "failed"].includes(String(agent.power_stage)) ? "alert" : undefined}
+                style={{ fontSize: 13, maxWidth: 480, margin: "18px auto 0", padding: "14px 16px", border: "1px solid var(--etched-border)", lineHeight: 1.6 }}
+              >{providerPowerMessage(agent.power_stage)}</p> : null}
+            </div>
+            {agent.computer_substrate === "provider-vm" ? <button
+              type="button"
+              onClick={() => selectTab("manage")}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 18, padding: "10px 16px", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", fontSize: 13, cursor: "pointer" }}
+            ><Settings2 size={14} /> Open Manage</button> : null}
+            {activity.freshLaunch && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
+          </div>
+        ) : effectiveTab === "manage" ? (
+          managePanel
+        ) : agent.status === "error" ? (
+          <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the box. Destroy it and try again."} />
+        ) : effectiveTab === "aeon" ? (
+          !agent.chat_url ? (
+            <Stub title="Dashboard not reachable" body="The box is up but its dashboard endpoint isn't connected yet. Give it a moment." />
+          ) : loggedIn === null && def?.connect === "github" ? (
+            <div style={{ padding: 56, textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+          ) : loggedIn || def?.connect !== "github" ? (
+            // No GitHub connect step (OpenClaw, Agent Zero — they run ON the box, not
+            // on the user's GitHub) → go straight to the embedded dashboard; the box's
+            // own gate + auto-login handle access. ONLY Aeon (connect:"github") ever
+            // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
+            <DashboardView url={def?.id === "deepseek-harness"
+              ? `${agent.chat_url.replace(/\/$/, "")}/`
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : "aeon"}/`}
+              token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
+          ) : (
+            <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
+          )
+        ) : effectiveTab === "chat" ? (
+          !agent.chat_url ? (
+            <Stub title="Runtime not reachable" body="The box is up but its chat endpoint isn't connected yet. Give it a moment." />
+          ) : chatReadiness === "upgrade_required" ? (
+            <div className={styles.statusPanel} role="status">
+              <h3>This computer needs a Chat update</h3>
+              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update &amp; restart; you can still use native sign-in in the Codex terminal.</p>
+              <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
+            </div>
+          ) : chatReadiness === "unavailable" ? (
+            <div className={styles.statusPanel} role="status">
+              <h3>Couldn’t check the model connection</h3>
+              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>The computer hasn’t confirmed its connection yet. Check Inference in Manage, or check again. Your saved settings haven’t changed.</p>
+              <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
+            </div>
+          ) : loggedIn === null ? (
+            <div style={{ padding: 56, textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+          ) : loggedIn ? (
+            <HivraChat boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
+          ) : (
+            <HivraLogin boxUrl={agent.chat_url} onDone={() => setReloadKey(k => k + 1)} agentKind={cliKind} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} />
+          )
+        ) : effectiveTab === "desktop" ? (
+          agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
+        ) : effectiveTab === "git" ? (
+          agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+        ) : effectiveTab === "files" ? (
+          agent.computer_profile === "windows" && agent.status === "running"
+            ? <WindowsWorkspaceGuidance surface="files" onDesktop={() => selectTab("desktop")} />
+            : isComputer && agent.status === "running" && !agent.chat_url
+              ? <DisconnectedComputerWorkspaceGuidance surface="files" onDesktop={() => selectTab("desktop")} />
+            : providerWorkspace && agent.status === "running" && agent.chat_url ? null
+            : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+        ) : effectiveTab === "skills" ? (
+          agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+        ) : effectiveTab === "telegram" ? (
+          agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+        ) : effectiveTab === "tasks" ? (
+          agent.status === "running" ? (
+            <TasksPanel
+              instanceId={agent.id}
+              agentName={agent.name}
+              agentStatus={agent.status}
+              isFreePlan={isFreePlan}
+              currentPlan={plan?.key ?? null}
+            />
+          ) : (
+            <Stub title="Not ready" body="The box isn't running yet — scheduled tasks become available once it's online." />
+          )
+        ) : effectiveTab === "terminal" || effectiveTab === "box" ? (
+          agent.computer_profile === "windows" && agent.status === "running"
+            ? <WindowsWorkspaceGuidance surface="terminal" onDesktop={() => selectTab("desktop")} />
+            : isComputer && agent.status === "running" && !agent.chat_url
+              ? <DisconnectedComputerWorkspaceGuidance surface="terminal" onDesktop={() => selectTab("desktop")} />
+            : agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The box isn't reachable yet." />
+        ) : effectiveTab === "browser" ? (
+          browserOn === false ? (
+            <BrowserDisabledView
+              isFreePlan={isFreePlan}
+              onManage={() => selectTab("manage")}
+              onUpgrade={() => setPaywallOpen(true)}
+            />
+          ) : agent.chat_url ? (
+            <BrowserView url={`${agent.chat_url.replace(/\/$/, "")}/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true`} token={tok} surfaceId="browser" active={effectiveTab === "browser"} onManage={() => selectTab("manage")} />
+          ) : (
+            <Stub title="Not ready" body="The box isn't reachable yet." />
+          )
+        ) : managePanel}
+      </div>
+
+      {paywallOpen ? (
+        <UpgradePaywallModal
+          feature="browser"
+          currentPlan={plan?.key ?? null}
+          onClose={() => setPaywallOpen(false)}
+        />
+      ) : null}
+    </div>
+    </SurfaceActionProvider>
+  );
+}

@@ -1,0 +1,30 @@
+# Caddy front for the noVNC seed viewer.
+#
+# Static assets are public so noVNC's CSS/JS loads work; the entry HTML and
+# the websocket are gated on a signed URL (HMAC, 10-min TTL).
+#
+# This Caddyfile is only loaded when the container starts in SEED_MODE=true.
+# In normal operation, Node serves /health and the tool API directly on :8789
+# and Caddy is not running.
+
+# SCRIPTURE_ANCHOR: caddy-wall | Nehemiah 4:6 | Verse: So we built the wall; and all the wall was joined together to half its height.
+:8080 {
+	@gated path /browser-sidecar/novnc/vnc.html /browser-sidecar/novnc/websockify
+
+	handle @gated {
+		forward_auth localhost:8789 {
+			uri /internal/verify-novnc-url
+			copy_headers X-Original-URI
+		}
+		reverse_proxy localhost:6080
+	}
+
+	# Static assets fall through — noVNC needs them to load without auth or
+	# its CSS/JS won't fetch.
+	handle_path /browser-sidecar/novnc/* {
+		header Access-Control-Allow-Origin "*"
+		header Access-Control-Allow-Methods "GET, OPTIONS"
+		header Access-Control-Allow-Headers "Content-Type"
+		reverse_proxy localhost:6080
+	}
+}

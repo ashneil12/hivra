@@ -1,0 +1,103 @@
+.spacer { flex-shrink: 0; height: 100%; transition: width 180ms ease, min-width 180ms ease; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 50; height: var(--workspace-viewport-height, 100dvh); display: flex; flex-direction: column; width: 248px; padding: max(14px, env(safe-area-inset-top)) 12px 12px; color: var(--ink-black); background: var(--vellum-bg); border-right: 1px solid var(--etched-border); font-family: var(--font-outfit), Outfit, sans-serif; }
+.expanded { width: 248px; }
+.collapsed { width: 72px; }
+.header { display: flex; min-height: 42px; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 0 7px; }
+.brand { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; }
+.brandMark { font-family: var(--font-grotesk), 'Space Grotesk', sans-serif; font-size: 25px; font-weight: 700; font-style: italic; letter-spacing: -2px; }
+.brandName { font-family: var(--font-mono), 'Space Mono', monospace; font-size: 12px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+.collapseButton { display: flex; align-items: center; justify-content: center; flex: 0 0 32px; width: 32px; height: 32px; cursor: pointer; }
+.collapsed .collapseButton { position: absolute; right: -16px; top: 20px; }
+/* Row metrics: 38px rows at 13.5px, square corners. Hivra chrome is boxy —
+   rounding on nav rows, cards and buttons is off-identity, so rounds are
+   reserved for genuinely circular things (status dots, avatars). */
+.navItem, .launch, .searchButton { display: flex; align-items: center; gap: 10px; min-height: 38px; width: 100%; padding: 0 10px; color: var(--text-secondary); text-decoration: none; font-size: 13.5px; text-align: left; border: 1px solid transparent; transition: background 120ms ease, color 120ms ease; }
+.navigation { display: grid; gap: 1px; }
+.navItem svg, .launch svg, .searchButton svg { flex-shrink: 0; }
+.navItem:hover, .searchButton:hover { color: var(--ink-black); background: var(--hover-bg, rgba(128,128,128,.08)); }
+.active { color: var(--ink-black); background: var(--hivra-red-soft, rgba(255,58,59,.16)); border-color: transparent; font-weight: 500; }
+.searchButton { cursor: pointer; color: var(--text-muted); border-color: var(--etched-border); margin-bottom: 8px; }
+.searchButton span { flex: 1; }
+.searchButton kbd { font-family: var(--font-mono), monospace; font-size: 10px; white-space: nowrap; }
+.launch { color: var(--ink-black); background: var(--hivra-red-soft, rgba(255,58,59,.08)); border-color: rgba(255,58,59,.4); margin-bottom: 12px; font-weight: 600; }
+.launch:hover { background: rgba(255,58,59,.16); }
+.collapsed .navItem, .collapsed .launch, .collapsed .searchButton { justify-content: center; padding: 9px; }
+.groupHeading { margin: 0 0 7px; padding: 0 10px; color: var(--text-muted); font-family: var(--font-mono), monospace; font-size: 10px; font-weight: 400; letter-spacing: .025em; text-transform: capitalize; }
+.resourceCopy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
+.resourceCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.resourceCopy small { color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusDot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--text-muted); }
+.statusDot[data-state='running'] { background: #53b57b; }
+.statusDot[data-state='provisioning'], .statusDot[data-state='updating'], .statusDot[data-state='redeploying'] { background: #c89c55; }
+.statusDot[data-state='error'], .statusDot[data-state='failed'] { background: #e05d5e; }
+.switcherNotice button, .switcherFooter button { color: var(--ink-black); text-decoration: underline; text-underline-offset: 3px; padding: 3px 0; }
+/* The manage/utility groups and the account block ride the bottom edge. The rail
+   is a flex column whose only grow child (the resource list) was removed, so
+   without this the content packs under the header and the rest of the sidebar
+   goes blank at any window taller than the content. */
+.footer { flex-shrink: 0; margin-top: auto; border-top: 1px solid var(--etched-border); padding-top: 8px; }
+/* Keep the infrequent destinations a tier apart from day-to-day management. The
+   approved prototype divides them; without it all four rows read as one block. */
+.footer > .navigation + .navigation { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--etched-border); }
+.footer .navItem { min-height: 31px; padding-block: 6px; font-size: 12px; }
+.account { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--etched-border); margin-top: 8px; padding: 12px 4px 0; }
+.accountName { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.accountName strong, .accountName small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accountName strong { font-size: 12px; font-weight: 500; }
+.accountName small { font-size: 10px; color: var(--text-muted); }
+.collapsed .account { flex-direction: column; padding-top: 8px; }
+.userPlaceholder { width: 28px; height: 28px; border-radius: 50%; background: var(--etched-border); }
+.sidebar :is(a, button, [tabindex]):focus-visible, .switcher :is(button, input):focus-visible { outline: 2px solid var(--hivra-red, #e34647); outline-offset: 3px; }
+.iconButton { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; color: var(--text-muted); }
+.switcher { width: min(660px, calc(100vw - 32px)); --switcher-margin: clamp(12px, 8dvh, 64px); max-height: min(640px, calc(var(--workspace-viewport-height, 100dvh) - var(--switcher-margin) - var(--switcher-margin))); margin: var(--switcher-margin) auto auto; padding: 0; color: var(--ink-black); background: var(--bg-surface, var(--vellum-bg)); border: 1px solid var(--etched-border); box-shadow: 0 24px 80px #0006; overflow: hidden; font-family: var(--font-outfit), Outfit, sans-serif; }
+.switcher[open] { display: flex; flex-direction: column; }
+.switcher::backdrop { background: #0008; backdrop-filter: blur(3px); }
+.switcherSearch { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--etched-border); }
+.switcherSearch input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--ink-black); font-family: inherit; font-size: 16px; padding: 5px 0; }
+.switcherSearch input::placeholder { color: var(--text-muted); }
+.switcherResults { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 8px 0; overscroll-behavior: contain; }
+.switcherResults .groupHeading { margin-top: 5px; }
+.switcherResult { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 10px; color: var(--ink-black); text-align: left; margin-bottom: 2px; }
+.switcherResult[aria-selected='true'], .switcherResult:hover { background: var(--hivra-red-soft, rgba(255,58,59,.08)); }
+.switcherResult svg { flex-shrink: 0; }
+.switcherResult .resourceCopy small { font-size: 11px; }
+.resultStatus { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.switcherNotice { border-bottom: 1px solid var(--etched-border); padding: 10px 18px; font-size: 12px; color: var(--text-secondary); }
+.switcherNotice p { margin: 3px 0; }
+.switcherEmpty { margin: 0; padding: 16px 18px; color: var(--text-muted); font-size: 13px; }
+.switcherFooter { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--etched-border); padding: 10px 18px; color: var(--text-muted); font-size: 11px; }
+.srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+@media (max-width: 767px) {
+  .spacer { display: none; }
+  .sidebar { display: none; top: var(--dashboard-mobile-header-height, 0px); width: min(280px, calc(100vw - 48px)); height: calc(var(--workspace-viewport-height, 100dvh) - var(--dashboard-mobile-header-height, 0px)); padding-top: 12px; padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
+  .mobileOpen { display: flex; }
+  .collapseButton { display: none; }
+  .header { display: none; }
+  .navItem, .launch, .searchButton, .footer .navItem { min-height: 44px; }
+
+  .account { padding-top: 8px; }
+  .resultStatus { display: none; }
+  .switcher { width: calc(100vw - 20px); --switcher-margin: 12px; max-height: calc(var(--workspace-viewport-height, 100dvh) - 24px); margin-top: 12px; }
+  .switcherSearch { padding: 12px; gap: 8px; }
+  .switcherFooter { padding: 8px 12px; }
+  .switcherFooter span { max-width: 190px; line-height: 1.5; }
+}
+@media (max-height: 640px) {
+  .sidebar { overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spacer, .navItem, .searchButton { transition: none; }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .spacer { width: 72px !important; min-width: 72px !important; }
+  .compactOpen { box-shadow: 16px 0 40px #0005; }
+}
+@media (pointer: coarse) {
+  .collapseButton { min-width: 44px; min-height: 44px; }
+}
+
+.switcherFooter a { color: var(--ink-black); text-decoration: underline; text-underline-offset: 3px; }
+
+.attention { color: var(--yellow); margin-top: 12px; }
+.attentionCount { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }

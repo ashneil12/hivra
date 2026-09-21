@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# hivra-tg-apply — narrow root helper for the Hivra chat server to (de)activate
+# the bux Telegram bot. Granted to the bux user via a SCOPED NOPASSWD sudoers
+# rule (/etc/sudoers.d/hivra-tg) — bux has no general sudo. The tg.env content
+# (which contains the secret TG_BOT_TOKEN) is read from STDIN, never from argv.
+set -euo pipefail
+case "${1:-}" in
+  apply)
+    umask 027
+    install -d -m 2775 -g bux /etc/bux
+    cat > /etc/bux/tg.env
+    chgrp bux /etc/bux/tg.env
+    chmod 640 /etc/bux/tg.env
+    systemctl enable --now bux-tg
+    ;;
+  disable)
+    systemctl disable --now bux-tg 2>/dev/null || true
+    rm -f /etc/bux/tg.env
+    ;;
+  *)
+    echo "usage: hivra-tg-apply apply|disable" >&2
+    exit 2
+    ;;
+esac

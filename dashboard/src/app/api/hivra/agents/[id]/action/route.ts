@@ -1,0 +1,1171 @@
+// Hivra agent lifecycle: stop / start / restart / update_runtime / resize /
+// snapshot / restore / rename.
+// stop: qm shutdown -> status=stopped. start/restart/resize: re-run the host
+// start helper (qm start + re-establish the box tunnel + rewrite the prov log)
+// and set status=provisioning so the existing [id] poll captures the (new)
+// chat_url. rename: metadata only (no host call).
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+import type { NextRequest } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { randomUUID } from "node:crypto";
+import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
+import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
+import { claimProviderAgentPowerOperation } from "@/lib/hivra/provider-agent-power-store";
+import type { ProviderAgentPowerStage } from "@/lib/hivra/provider-power-contract";
+
+import { supabaseAdmin } from "@/lib/supabase";
+import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
+import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
+import { log } from "@/lib/logger";
+import {
+  resolveProxmoxTargetConfiguration,
+  runProxmoxHostScript,
+  buildAgentContainerCgroupScript,
+  type HostScriptResult,
+} from "@/lib/services/proxmox-instance-service";
+import { resizeFloor, getAgent, MAX_CPU, MAX_RAM } from "@/lib/hivra/agent-catalog";
+import { validateAgentResources } from "@/lib/hivra/resource-gate";
+import { GOALS } from "@/lib/hivra/agent-identity";
+import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
+import { getPersonaSoul } from "@/lib/persona-souls-accessor";
+import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
+import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
+import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
+import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
+import { resolveRamBurst } from "@/lib/services/ram-burst";
+import { buildHostCapacityAdmissionCommand, resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
+import { buildHivraRestoreIfMissingScript } from "@/lib/hivra/archive-agent";
+import {
+  resolveHivraIpLastOctetStart,
+  resolveHivraSubnetPrefix,
+  resolveHivraVmidStart,
+  shellQuote,
+} from "@/lib/hivra/proxmox-target";
+import {
+  describeHivraAgentExecutionContextError,
+  hivraAgentProvisionLogPath,
+  hivraAgentStartLogPath,
+  resolveHivraAgentExecutionContext,
+  type HivraAgentExecutionContext,
+} from "@/lib/hivra/agent-execution-context";
+import { checkManagedHivraHostReadiness } from "@/lib/hivra/managed-provisioner-readiness";
+import {
+  buildHivraSnapshotCreateScript,
+  buildHivraSnapshotRestoreScript,
+  parseHivraSnapshotCreateEvidence,
+  parseHivraSnapshotRestoreEvidence,
+} from "@/lib/hivra/agent-snapshots";
+import {
+  beginHivraAgentSnapshot,
+  beginHivraAgentSnapshotRestore,
+  claimHivraAgentOperation,
+  completeHivraAgentSnapshot,
+  completeHivraAgentSnapshotRestore,
+  completeHivraAgentOperation,
+  continueHivraAgentOperation,
+  continueHivraAgentResizeOperation,
+  recordHivraAgentOperationFailure,
+  releaseHivraAgentOperation,
+} from "@/lib/hivra/agent-operation-store";
+import type {
+  HivraAgentDesiredState,
+  HivraAgentOperationKind,
+} from "@/lib/hivra/agent-authority";
+import {
+  matchPreparedCanaryComputer,
+  preparedCanaryLifecycleScript,
+} from "@/lib/hivra/prepared-canary-computers";
+import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
+import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+
+function clampInt(v: unknown, def: number, min: number, max: number): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, n));
+}
+
+function providerFailureDetail(result: HostScriptResult, fallback: string): string {
+  return result.stderr.trim() || result.error?.trim() || fallback;
+}
+
+function clampCpu(v: unknown, def: number, min: number, max: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return def;
+  const halfStep = Math.round(n * 2) / 2;
+  return Math.min(max, Math.max(min, halfStep));
+}
+
+function clampStr(v: unknown, max: number): string | null {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s ? s.slice(0, max) : null;
+}
+
+function lifecycleBindingVerificationBody(): string {
+  return `if [ -n "$EXPECTED_BINDING_TAG" ]; then
+  TAGS="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')"
+  printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG" \
+    || { echo "refusing to mutate VMID $VMID without its exact Hivra binding tag" >&2; exit 1; }
+fi`;
+}
+
+function lifecycleVmAuthorityBody(): string {
+  return `qm status "$VMID" >/dev/null
+${lifecycleBindingVerificationBody()}`;
+}
+
+function lifecycleMutationPrelude(
+  vmid: number,
+  bindingTag: string | null,
+  allowMissingForManagedRestore = false,
+): string {
+  const vmAuthority = allowMissingForManagedRestore
+    ? `if qm status "$VMID" >/dev/null 2>&1; then
+  ${lifecycleBindingVerificationBody().replaceAll("\n", "\n  ")}
+fi`
+    : lifecycleVmAuthorityBody();
+  return `set -euo pipefail
+VMID=${vmid}
+EXPECTED_BINDING_TAG=${shellQuote(bindingTag ?? "")}
+install -d -m 0755 /run/lock
+exec 8>/run/lock/hivra-allocation.lock
+flock -w 60 8 || { echo "timed out waiting for the Hivra lifecycle lock" >&2; exit 1; }
+${vmAuthority}`;
+}
+
+function verifiedStopVmBody(vmid: number, timeoutSeconds: number): string {
+  return `VMID=${vmid}
+CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
+if [ "$CURRENT_STATUS" != "stopped" ]; then
+  if ! qm shutdown "$VMID" --timeout ${timeoutSeconds}; then
+    qm stop "$VMID"
+  fi
+fi
+FINAL_STATUS="$(qm status "$VMID" | awk '{print $2}')"
+if [ "$FINAL_STATUS" != "stopped" ]; then
+  echo "VMID $VMID did not stop (status=$FINAL_STATUS)" >&2
+  exit 1
+fi
+echo "stopped $VMID"`;
+}
+
+function verifiedStopVmScript(vmid: number, timeoutSeconds: number, bindingTag: string | null): string {
+  return `${lifecycleMutationPrelude(vmid, bindingTag)}
+${verifiedStopVmBody(vmid, timeoutSeconds)}`;
+}
+
+// Live browser-automation state for a box, read from the same source the UI uses
+// (the box's /api/browser/status keeper probe — `enabled` is the real runtime
+// state). There is no DB column for this, so the authoritative resize gate has to
+// ask the box. Fail SAFE: if the box can't be reached (or no URL), assume browser
+// ON so the higher 2/4 floor is enforced and a resize can't brick the Chrome stack.
+async function probeBoxBrowserEnabled(chatUrl: string | null, token: string | null): Promise<boolean> {
+  if (!chatUrl) return true;
+  try {
+    const r = await fetch(`${chatUrl.replace(/\/$/, "")}/api/browser/status`, {
+      cache: "no-store",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!r.ok) return true;
+    const j = (await r.json().catch(() => ({}))) as { enabled?: boolean };
+    return Boolean(j.enabled);
+  } catch {
+    return true;
+  }
+}
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
+    const { id } = await params;
+    const { userId } = await auth();
+    if (!userId) return apiError("Unauthorized", 401);
+    if (!supabaseAdmin) return apiError("Database not configured", 500);
+
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const action = String(body.action || "");
+
+    const { data: agent } = await supabaseAdmin
+      .from("hivra_agents")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .single();
+    if (!agent) return apiError("Agent not found", 404);
+
+    // rename is metadata-only — no box required.
+    if (action === "rename") {
+      const name = String(body.name ?? "").trim();
+      if (name.length < 1 || name.length > 60) return apiError("Name must be 1–60 characters", 400);
+      const { data: updated } = await supabaseAdmin
+        .from("hivra_agents")
+        .update({ name })
+        .eq("id", agent.id)
+        .select()
+        .single();
+      return apiSuccess({ name, agent: sanitizeHivraAgentRow(updated || { ...agent, name }) });
+    }
+
+    if (action === "onboarding") {
+      const goalRaw = clampStr(body.goal, 32);
+      const goal = goalRaw && GOALS.some((g) => g.id === goalRaw) ? goalRaw : null;
+      const context = clampStr(body.context, MAX_CONTEXT_LEN);
+      const firstTask = clampStr(body.firstTask, 700);
+      // Onboarding is also used by the provisioning-page autosave, which only
+      // owns goal/context/firstTask. Treat persona fields as partial updates so
+      // that omitting them cannot erase the persona chosen in the welcome flow.
+      // An explicitly supplied empty/null value still clears the field.
+      const personalityProvided = Object.prototype.hasOwnProperty.call(body, "personality");
+      const emojiProvided = Object.prototype.hasOwnProperty.call(body, "emoji");
+      const personality = personalityProvided ? clampStr(body.personality, 48) : null;
+      const emoji = emojiProvided ? clampStr(body.emoji, 16) : null;
+      // Persona-souls upgrade: only persist a soulPromptId that resolves to an
+      // authored soul; anything else (custom persona, unknown/stale id, absent)
+      // stays null so the box keeps the generic SOUL.md path (zero-regression).
+      const soulPromptRaw = clampStr(body.soulPromptId, 32);
+      const soulPromptId = getPersonaSoul(soulPromptRaw) ? soulPromptRaw : null;
+      const patch: Record<string, unknown> = {
+        goal,
+        context,
+        first_task: firstTask || null,
+        bootstrapped_at: null,
+      };
+      if (personalityProvided) patch.personality = personality;
+      if (emojiProvided) patch.emoji = emoji;
+      const { data: updated, error: updateError } = await supabaseAdmin
+        .from("hivra_agents")
+        .update(patch)
+        .eq("id", agent.id)
+        .eq("user_id", userId)
+        .select()
+        .single();
+      if (updateError) return apiError("Failed to save onboarding answers", 500, updateError);
+      // Best-effort, separate write so a not-yet-applied migration (the soul_prompt_id
+      // column) can never break the onboarding critical path. If the column is missing,
+      // this no-ops and the box keeps the generic SOUL.md until the migration lands.
+      if (soulPromptId) {
+        const { error: soulError } = await supabaseAdmin
+          .from("hivra_agents")
+          .update({ soul_prompt_id: soulPromptId })
+          .eq("id", agent.id)
+          .eq("user_id", userId);
+        if (soulError) {
+          log.info("hivra agent soul_prompt_id write skipped (migration pending?)", {
+            source: "hivra/agents/[id]/action",
+            failureType: "hivra_agent_soul_prompt_id_write_skipped",
+            userId,
+            agentId: agent.id,
+            error: soulError.message,
+          });
+        }
+      }
+      log.info("hivra agent onboarding answers saved", {
+        source: "hivra/agents/[id]/action",
+        failureType: "hivra_agent_onboarding_saved",
+        userId,
+        agentId: agent.id,
+        agentType: agent.type,
+        goal,
+        hasContext: Boolean(context),
+        hasFirstTask: Boolean(firstTask),
+        hasPersonality: personalityProvided ? Boolean(personality) : Boolean(agent.personality),
+        hasEmoji: emojiProvided ? Boolean(emoji) : Boolean(agent.emoji),
+        soulPromptId: soulPromptId ?? null,
+      });
+      return apiSuccess({ agent: sanitizeHivraAgentRow(updated || { ...agent, ...patch }) });
+    }
+
+    if (agent.computer_substrate === "gvisor") {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      if (!['start', 'stop', 'resize', 'delete'].includes(action)) {
+        return apiError("This Linux terminal sandbox does not support that lifecycle operation.", 400);
+      }
+      let cpu: number | undefined;
+      let ramGb: number | undefined;
+      if (action === "resize") {
+        cpu = Number(body.cpu);
+        ramGb = Number(body.ram);
+        const maximumCpu = body.maximumCpu === undefined ? cpu : Number(body.maximumCpu);
+        const maximumRam = body.maximumRam === undefined ? ramGb : Number(body.maximumRam);
+        if (!Number.isFinite(cpu) || cpu < 0.5 || cpu > 32 || Math.round(cpu * 2) !== cpu * 2
+          || !Number.isInteger(ramGb) || ramGb < 1 || ramGb > 128
+          || maximumCpu !== cpu || maximumRam !== ramGb) {
+          return apiError("gVisor computers reserve their full CPU and memory limit; reserved and maximum values must match.", 400);
+        }
+      }
+      try {
+        const updated = await mutateGvisorComputer(userId, String(agent.id), {
+          action: action as "start" | "stop" | "resize" | "delete",
+          ...(action === "resize" ? { cpu, ramGb } : {}),
+        });
+        return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
+      } catch (error) {
+        if (error instanceof GvisorComputerError) {
+          const status = error.code === "not_found" ? 404
+            : error.code === "conflict" || error.code === "not_ready" ? 409 : 503;
+          return apiError(error.message, status);
+        }
+        throw error;
+      }
+    }
+
+    if (!["stop", "start", "restart", "update_runtime", "resize", "snapshot", "restore"].includes(action)) {
+      return apiError("Unknown action", 400);
+    }
+    if (["update_runtime", "snapshot", "restore"].includes(action) && !isSameOriginMutationRequest(req)) {
+      return apiError("Same-origin request required.", 403);
+    }
+
+    const invalidateDesktopBeforePower = async (operationId: string) => {
+      // Fence the previous boot's attestation under the claimed power operation.
+      // The existing revocation contract preserves controller release ACKs.
+      const revoked = await revokeRemoteDesktopCapability({
+        userId, computerKind: "hivra-agent", computerId: String(agent.id),
+      });
+      if (revoked.ok) return true;
+      await releaseHivraAgentOperation({
+        userId, agentId: String(agent.id), operationId,
+        error: "Desktop capability invalidation failed before a lifecycle command was sent.",
+        markError: false,
+      }).catch(() => false);
+      return false;
+    };
+    const desktopInvalidationFailure = () => apiError("The desktop capability could not be invalidated. No lifecycle command was sent.", 503);
+
+    const preparedProfile = agent.computer_profile === "omarchy" || agent.computer_profile === "windows";
+    const preparedComputer = matchPreparedCanaryComputer(agent);
+    // A prepared-profile row must never fall through to the general Ubuntu
+    // provisioner merely because its server-side slot configuration is stale.
+    if (preparedProfile && !preparedComputer) {
+      return apiError("This prepared computer no longer matches its admitted Canary slot. No lifecycle command was sent.", 409);
+    }
+    if (preparedComputer) {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      if (action !== "start" && action !== "stop" && action !== "restart") {
+        return apiError("This prepared Canary computer does not support that lifecycle operation yet. Its machine and data are unchanged.", 400);
+      }
+      const limited = enforceAuthenticatedRouteRateLimit(req, {
+        routeKey: "prepared_computer_lifecycle",
+        userId,
+        limit: 12,
+        windowMs: 15 * 60_000,
+      });
+      if (limited) return limited;
+      const env = resolveProxmoxTargetConfiguration(process.env, preparedComputer.slot.host).env;
+      if (action === "start") {
+        const cap = await checkHostWakeCapacity(Number(agent.ram) * 1024, env);
+        if (!cap.ok) return apiError("Host is at capacity — try again shortly", 503);
+      }
+      const operationId = randomUUID();
+      const desiredState = action === "stop" ? "stopped" : "running";
+      const claimed = await claimHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        operationKind: action,
+        desiredState,
+        operationPayload: null,
+      });
+      if (!claimed) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
+      const result = await runProxmoxHostScript(
+        preparedCanaryLifecycleScript(preparedComputer.profile, preparedComputer.slot, action),
+        env,
+        { timeoutMs: 120_000, maxOutputBytes: 16_384 },
+      );
+      const expectedReceipt = `HIVRA_PREPARED_LIFECYCLE ${preparedComputer.profile} ${action} ${desiredState}`;
+      if (!result.ok || !result.stdout.split(/\r?\n/).includes(expectedReceipt)) {
+        await recordHivraAgentOperationFailure({
+          userId,
+          agentId: String(agent.id),
+          operationId,
+          error: providerFailureDetail(result, "Prepared computer lifecycle outcome is unknown").slice(0, 300),
+        }).catch(() => false);
+        return apiError("The prepared computer lifecycle outcome could not be verified. Its operation is retained for inspection before another command is sent.", 502);
+      }
+      const completed = await completeHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: desiredState,
+        status: desiredState,
+      });
+      if (!completed) {
+        await recordHivraAgentOperationFailure({
+          userId,
+          agentId: String(agent.id),
+          operationId,
+          error: "Prepared lifecycle completion was superseded before durable evidence was saved.",
+        }).catch(() => false);
+        return apiError("The computer reached its requested power state, but its durable status was superseded. Refresh before trying another action.", 409);
+      }
+      await logHivraAgentEvent({
+        userId,
+        event: action === "stop" ? "stopped" : action === "restart" ? "restarted" : "started",
+        agentId: agent.id,
+        agentType: agent.type,
+      });
+      return apiSuccess({ status: desiredState });
+    }
+    if (agent.computer_substrate === "provider-vm") {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      if (action === "update_runtime") {
+        return apiError("Runtime updates for allocated provider computers are not supported yet. Your computer and data are unchanged.", 400);
+      }
+      if (action === "resize") return apiError("Resizing an allocated Hetzner computer is not supported yet. Its original size and data are retained.", 400);
+      if (action === "snapshot" || action === "restore") {
+        return apiError("Restore points for allocated provider computers are not supported yet. The original computer and data are unchanged.", 400);
+      }
+      const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_power", userId, limit: 30, windowMs: 5 * 60_000 });
+      if (limited) return limited;
+      const operation = { userId, agentId: String(agent.id), operationId: randomUUID() };
+      if (!await claimProviderAgentPowerOperation(operation, action as "start" | "stop" | "restart")) {
+        return apiError("This computer cannot accept that power request in its current state. Refresh its status before trying again.", 409);
+      }
+      let stage: ProviderAgentPowerStage;
+      try { stage = await advanceProviderAgentPower(operation, "dispatch"); }
+      catch {
+        stage = "verification_unavailable";
+        log.warn("provider power operation is unverified", { source: "hivra/agents/[id]/action",
+          failureType: "provider_agent_power_unverified", userId, agentId: agent.id, action });
+      }
+      const { data: current, error: reloadError } = await supabaseAdmin.from("hivra_agents").select("*")
+        .eq("id", agent.id).eq("user_id", userId).eq("computer_substrate", "provider-vm").single();
+      if (reloadError || !current) return apiError("The original power request is retained, but its current status could not be refreshed. Check status before sending another action.", 503);
+      const response = apiSuccess({ agent: { ...sanitizeHivraAgentRow(current),
+        ...(current.status === "provisioning" && current.operation_id === operation.operationId ? { power_stage: stage } : {}) } }, current.status === "provisioning" ? 202 : 200);
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
+    if (!agent.vmid) return apiError("Agent has no box yet", 400);
+
+    let executionContext: HivraAgentExecutionContext;
+    try {
+      executionContext = await resolveHivraAgentExecutionContext(userId, agent);
+    } catch (contextError) {
+      const safeError = describeHivraAgentExecutionContextError(contextError);
+      if (safeError) return apiError(safeError.message, safeError.status);
+      throw contextError;
+    }
+    // Self-managed unenforced rows fail during context resolution. Managed
+    // N-1 rows are the one narrow compatibility exception: migration cannot
+    // safely stamp a provider tag without touching live hosts. Every new row is
+    // enforced, and the legacy path remains exact managed host + persisted VMID.
+    const lifecycleBindingTag = executionContext.infrastructureBindingTagEnforced
+      ? executionContext.infrastructureBindingTag
+      : null;
+    const env = executionContext.env;
+
+    // start/restart/resize all invoke the versioned start helper after crossing
+    // a provider mutation boundary. Existing managed agents may still live on
+    // hosts with an older compatible bundle, so prove the exact selected host
+    // and persisted channel have an admitted VERSION, intact manifest, and
+    // exact-result-path capability before claiming an operation lease or issuing
+    // any VM command. Explicit runtime updates require the current version. Stop
+    // does not call the helper and deliberately remains available for stale hosts.
+    if (executionContext.kind === "managed" && action !== "stop") {
+      const readiness = await checkManagedHivraHostReadiness({
+        targetId: executionContext.host,
+        env,
+        channel: executionContext.provisionerChannel,
+        purpose: action === "update_runtime" ? "runtime-update" : "lifecycle",
+      });
+      if (!readiness.ok) {
+        log.warn("hivra managed lifecycle blocked by stale host provisioner", {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_lifecycle_host_readiness_failed",
+          userId,
+          agentId: agent.id,
+          proxmoxHost: executionContext.host,
+          action,
+          readinessError: readiness.error,
+        });
+        return apiError(readiness.message, readiness.status);
+      }
+    }
+
+    const vmid = Number(agent.vmid);
+    const vmidStart = resolveHivraVmidStart(env);
+    // The IP we stored at provision time is the source of truth. The octet is no
+    // longer a fixed function of VMID (the allocator now skips in-use IPs to avoid
+    // collisions) and legacy boxes use an older vmid->octet scheme — so recomputing
+    // from VMID would ssh to the wrong guest (or a negative octet for legacy boxes,
+    // 500ing their lifecycle ops). Fall back to the VMID-derived octet only when
+    // the row predates ip persistence.
+    const storedOctet =
+      typeof agent.ip === "string"
+        ? Number.parseInt(String(agent.ip).split(".").pop() ?? "", 10)
+        : NaN;
+    const octet = Number.isInteger(storedOctet)
+      ? storedOctet
+      : resolveHivraIpLastOctetStart(env) + (vmid - vmidStart);
+    if (!Number.isInteger(vmid) || !Number.isInteger(octet) || octet < 2 || octet > 254) {
+      log.error("hivra agent lifecycle IP octet is outside the host range", new Error("Invalid Hivra IP octet"), {
+        source: "hivra/agents/[id]/action",
+        failureType: "hivra_agent_lifecycle_invalid_ip_octet",
+        userId,
+        agentId: agent.id,
+        proxmoxHost: agent.proxmox_host ?? null,
+        vmid,
+        vmidStart,
+        octet,
+      });
+      return apiError("Hivra host IP range is not configured for this box", 500);
+    }
+    const subnetPrefix = resolveHivraSubnetPrefix(env);
+    // Named-tunnel boxes have a stable URL; pass it so the start helper keeps it
+    // (reconnects the systemd tunnel) instead of minting a fresh quick-tunnel URL.
+    const tunnelEnv = agent.cf_hostname ? `HIVRA_TUNNEL_URL='https://${String(agent.cf_hostname).replace(/[^a-zA-Z0-9.-]/g, "")}' ` : "";
+    // Self-healing wake: a COLD-ARCHIVED box has had its disk reclaimed and no
+    // longer exists on the host, but its row still says status='stopped' (the
+    // Hivra lane has no archive state machine — see lib/hivra/archive-agent.ts).
+    // Restore it from the Storage Box first when it is missing; a no-op for a
+    // merely-parked box. Runs SYNCHRONOUSLY before the backgrounded start helper
+    // so a failed restore surfaces as "Start failed" instead of kicking a start
+    // against a VM that isn't there. Coordinate-preserving: same vmid, same IP
+    // octet, same named tunnel, so the start helper below is unchanged.
+    // FAIL-SOFT on purpose. The restore prefix is an ENHANCEMENT to start; it
+    // must never be able to break it. buildHivraRestoreIfMissingScript throws on
+    // an id/host it would otherwise interpolate into shell, so an unexpected
+    // shape (legacy row, fixture, hand-inserted record) would 500 the whole
+    // Start action rather than just skipping the restore. Degrade to today's
+    // behaviour — plain start — and log it, since the only cost is that a box
+    // whose disk was archived won't self-heal.
+    let restorePrefix = "";
+    if (executionContext.kind === "managed" && agent.proxmox_host) {
+      try {
+        restorePrefix = `${buildHivraRestoreIfMissingScript(
+          vmid,
+          String(agent.proxmox_host),
+          String(agent.id),
+        )}\n`;
+      } catch (e) {
+        log.info("hivra restore-on-start prefix skipped", {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_restore_prefix_skipped",
+          userId,
+          agentId: agent.id,
+          proxmoxHost: agent.proxmox_host ?? null,
+          vmid,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    const provisionLog = hivraAgentProvisionLogPath(executionContext, vmid);
+    const startLog = hivraAgentStartLogPath(executionContext, vmid);
+    const startEnvironment = [
+      `HIVRA_LOG_DIR=${shellQuote(executionContext.paths.logDirectory)}`,
+      `HIVRA_RESULT_LOG_PATH=${shellQuote(startLog)}`,
+      executionContext.paths.vmSshKeyPath
+        ? `HIVRA_VM_SSH_KEY_PATH=${shellQuote(executionContext.paths.vmSshKeyPath)}`
+        : null,
+    ].filter((value): value is string => Boolean(value)).join(" ") + " ";
+    const startHelper = `${executionContext.paths.provisionerDirectory}/hivra-start-on-host.sh`;
+    const capacityPolicy = resolveProxmoxHostCapacityPolicy(executionContext.capacityPolicy);
+    const runtimeUpdateHelper = `${executionContext.paths.provisionerDirectory}/hivra-update-guest-runtime.sh`;
+    const lifecyclePrelude = lifecycleMutationPrelude(
+      vmid,
+      lifecycleBindingTag,
+    );
+    // Managed cold restore is itself a provider mutation. Hold the same FD8
+    // lease before checking/restoring a missing VM, then require the restored
+    // config to carry the stable binding tag for every enforced row before the
+    // start helper inherits that lock. Backfilled managed rows retain only the
+    // narrow exact-host/VMID compatibility path (empty binding tag).
+    const startLifecyclePrelude = restorePrefix
+      ? `${lifecycleMutationPrelude(vmid, lifecycleBindingTag, true)}
+${restorePrefix}${lifecycleVmAuthorityBody()}`
+      : lifecyclePrelude;
+    const startKickoff = (operationId: string) =>
+      `umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
+
+    const claimProviderOperation = async (
+      operationKind: Exclude<HivraAgentOperationKind, "provision" | "delete">,
+      desiredState: Exclude<HivraAgentDesiredState, "deleted">,
+      operationPayload:
+        | { cpu: number; ram: number; maximumCpu?: number; maximumRam?: number }
+        | { snapshotId: string; providerSnapshotId: string }
+        | null = null,
+    ): Promise<string | null> => {
+      const operationId = randomUUID();
+      const claimed = await claimHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        operationKind,
+        desiredState,
+        operationPayload,
+      });
+      return claimed ? operationId : null;
+    };
+
+    const releaseProviderOperation = async (
+      operationId: string,
+      error: string,
+      markError: boolean,
+    ) => {
+      await releaseHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        error,
+        markError,
+      }).catch(() => false);
+    };
+
+    // Once a provider command has been submitted, a failed SSH result is an
+    // unknown outcome: the remote shell or detached lifecycle helper may still
+    // have crossed the mutation boundary. Preserve the exact lease so the
+    // bounded reconciler can acquire FD8 and inspect provider evidence before
+    // allowing a retry or delete to proceed.
+    const retainUnknownProviderOperation = async (
+      operationId: string,
+      error: string,
+    ) => {
+      await recordHivraAgentOperationFailure({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        error: error.slice(0, 300),
+      }).catch(() => false);
+    };
+
+    if (action === "snapshot") {
+      if (!executionContext.infrastructureBindingTagEnforced) {
+        return apiError("This legacy computer must be re-bound with current ownership evidence before creating restore points.", 409);
+      }
+      if (agent.status !== "running" && agent.status !== "stopped") {
+        return apiError("Wait for the current computer operation to finish before creating a restore point.", 409);
+      }
+      const limited = enforceAuthenticatedRouteRateLimit(req, {
+        routeKey: "hivra_agent_snapshot",
+        userId,
+        limit: 8,
+        windowMs: 10 * 60_000,
+      });
+      if (limited) return limited;
+
+      const operationId = randomUUID();
+      const snapshotId = randomUUID();
+      const providerSnapshotId = `hivra_${snapshotId.replaceAll("-", "")}`;
+      const claimed = await beginHivraAgentSnapshot({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        snapshotId,
+        providerSnapshotId,
+      });
+      if (!claimed) {
+        return apiError("This computer cannot create another restore point right now. Finish its current operation or remove an older restore point first.", 409);
+      }
+
+      const result = await runProxmoxHostScript(
+        buildHivraSnapshotCreateScript({
+          vmid,
+          bindingTag: executionContext.infrastructureBindingTag,
+          providerSnapshotId,
+          snapshotId,
+          agentId: String(agent.id),
+        }),
+        env,
+        { timeoutMs: 180_000 },
+      );
+      const evidence = result.ok
+        ? parseHivraSnapshotCreateEvidence(result.stdout || "", providerSnapshotId)
+        : null;
+      if (!evidence) {
+        await retainUnknownProviderOperation(
+          operationId,
+          providerFailureDetail(result, "Snapshot outcome is unknown"),
+        );
+        return apiError("The restore point outcome could not be verified yet. Its operation is saved and will be reconciled before another lifecycle change is allowed.", 502);
+      }
+      const completed = await completeHivraAgentSnapshot({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        snapshotId,
+        providerStatus: evidence.providerStatus,
+        snapshotConfigSha256: evidence.snapshotConfigSha256,
+      });
+      if (!completed) {
+        await retainUnknownProviderOperation(operationId, "Snapshot completion was superseded before durable evidence was saved.");
+        return apiError("The restore point exists, but its durable receipt could not be finalized safely. Refresh before trying another action.", 409);
+      }
+      await logHivraAgentEvent({
+        userId,
+        event: "snapshot_created",
+        agentId: String(agent.id),
+        agentType: String(agent.type),
+        detail: { snapshotId },
+      });
+      return apiSuccess({ snapshotId, status: "ready" });
+    }
+
+    if (action === "restore") {
+      if (!executionContext.infrastructureBindingTagEnforced) {
+        return apiError("This legacy computer must be re-bound with current ownership evidence before restoring it.", 409);
+      }
+      const snapshotId = typeof body.snapshotId === "string" ? body.snapshotId.trim() : "";
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(snapshotId)) {
+        return apiError("Choose a valid restore point.", 400);
+      }
+      const limited = enforceAuthenticatedRouteRateLimit(req, {
+        routeKey: "hivra_agent_restore",
+        userId,
+        limit: 5,
+        windowMs: 10 * 60_000,
+      });
+      if (limited) return limited;
+      const { data: snapshot, error: snapshotError } = await supabaseAdmin
+        .from("hivra_agent_snapshots")
+        .select("id, provider_snapshot_id, status, snapshot_config_sha256")
+        .eq("id", snapshotId)
+        .eq("agent_id", agent.id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (snapshotError) return apiError("Could not load that restore point.", 503);
+      if (!snapshot || snapshot.status !== "ready" || typeof snapshot.snapshot_config_sha256 !== "string") {
+        return apiError("That restore point is not ready to restore.", 409);
+      }
+      const operationId = randomUUID();
+      const claimed = await beginHivraAgentSnapshotRestore({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        snapshotId,
+      });
+      if (!claimed) {
+        return apiError("This restore point no longer matches the computer or another lifecycle operation is already in progress.", 409);
+      }
+      const result = await runProxmoxHostScript(
+        buildHivraSnapshotRestoreScript({
+          vmid,
+          bindingTag: executionContext.infrastructureBindingTag,
+          providerSnapshotId: String(snapshot.provider_snapshot_id),
+          snapshotConfigSha256: snapshot.snapshot_config_sha256,
+          operationId,
+        }),
+        env,
+        { timeoutMs: 240_000 },
+      );
+      const evidence = result.ok
+        ? parseHivraSnapshotRestoreEvidence(
+            result.stdout || "",
+            String(snapshot.provider_snapshot_id),
+            snapshot.snapshot_config_sha256,
+          )
+        : null;
+      if (!evidence) {
+        await retainUnknownProviderOperation(
+          operationId,
+          providerFailureDetail(result, "Restore outcome is unknown"),
+        );
+        return apiError("The restore outcome could not be verified yet. The computer stays locked from conflicting changes while Hivra reconciles the exact restore point.", 502);
+      }
+      const completed = await completeHivraAgentSnapshotRestore({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        snapshotId,
+        snapshotConfigSha256: evidence.snapshotConfigSha256,
+      });
+      if (!completed) {
+        await retainUnknownProviderOperation(operationId, "Restore completion was superseded before durable evidence was saved.");
+        return apiError("The provider restore completed, but its durable receipt could not be finalized safely. Refresh before trying another action.", 409);
+      }
+      await logHivraAgentEvent({
+        userId,
+        event: "snapshot_restored",
+        agentId: String(agent.id),
+        agentType: String(agent.type),
+        detail: { snapshotId },
+      });
+      return apiSuccess({ snapshotId, status: "stopped" });
+    }
+
+    if (action === "stop") {
+      const operationId = await claimProviderOperation("stop", "stopped");
+      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
+      const r = await runProxmoxHostScript(
+        verifiedStopVmScript(vmid, 50, lifecycleBindingTag),
+        env,
+      );
+      if (!r.ok) {
+        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Stop outcome is unknown"));
+        return apiError("Stop failed", 502);
+      }
+      const completed = await completeHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "stopped",
+        status: "stopped",
+      });
+      if (!completed) {
+        await releaseProviderOperation(operationId, "Stop completion was superseded.", false);
+        log.error("hivra agent stopped but operation completion was superseded", new Error("Operation CAS failed"), {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_stop_status_persist_failed",
+          userId,
+          agentId: agent.id,
+          vmid,
+        });
+        return apiError("The VM stopped, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
+      }
+      await logHivraAgentEvent({ userId, event: "stopped", agentId: agent.id, agentType: agent.type });
+      return apiSuccess({ status: "stopped" });
+    }
+
+    if (action === "start") {
+      // Wake-admission: don't wake onto a host without headroom (OOM guard).
+      const cap = await checkHostWakeCapacity(Number(agent.ram) * 1024, env);
+      if (!cap.ok) return apiError("Host is at capacity — try again shortly", 503);
+      if (executionContext.kind === "self-managed" && cap.freeMb == null) {
+        return apiError(
+          "Hivra could not verify live memory headroom on this computer. Check the connection and try again.",
+          503,
+        );
+      }
+      const operationId = await claimProviderOperation("start", "running");
+      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
+      const r = await runProxmoxHostScript(
+        `${startLifecyclePrelude}\n${startKickoff(operationId)}`,
+        env,
+      );
+      if (!r.ok) {
+        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Start outcome is unknown"));
+        return apiError("Start failed", 502);
+      }
+      const continued = await continueHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "running",
+        status: "provisioning",
+      });
+      if (!continued) {
+        await retainUnknownProviderOperation(operationId, "Start convergence was superseded before its provider outcome was verified.");
+        log.error("hivra agent start kicked off but operation completion was superseded", new Error("Operation CAS failed"), {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_start_status_persist_failed",
+          userId,
+          agentId: agent.id,
+          vmid,
+        });
+        return apiError("The VM start began, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
+      }
+      await logHivraAgentEvent({ userId, event: "started", agentId: agent.id, agentType: agent.type });
+      return apiSuccess({ status: "provisioning" });
+    }
+
+    if (action === "restart") {
+      const operationId = await claimProviderOperation("restart", "running");
+      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
+      const r = await runProxmoxHostScript(
+        `${lifecyclePrelude}\n${verifiedStopVmBody(vmid, 40)}\nsleep 2\n${startKickoff(operationId)}`,
+        env,
+      );
+      if (!r.ok) {
+        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Restart outcome is unknown"));
+        return apiError("Restart failed", 502);
+      }
+      const continued = await continueHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "running",
+        status: "provisioning",
+      });
+      if (!continued) {
+        await retainUnknownProviderOperation(operationId, "Restart convergence was superseded before its provider outcome was verified.");
+        log.error("hivra agent restart kicked off but operation completion was superseded", new Error("Operation CAS failed"), {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_restart_status_persist_failed",
+          userId,
+          agentId: agent.id,
+          vmid,
+        });
+        return apiError("The VM restart began, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
+      }
+      await logHivraAgentEvent({ userId, event: "restarted", agentId: agent.id, agentType: agent.type });
+      return apiSuccess({ status: "provisioning" });
+    }
+
+    if (action === "update_runtime") {
+      if (agent.status !== "running") {
+        return apiError("Start this computer before updating its runtime.", 409);
+      }
+      if (executionContext.kind === "self-managed") {
+        const readiness = await runProxmoxHostScript(
+          `set -euo pipefail
+PROVISIONER_DIR=${shellQuote(executionContext.paths.provisionerDirectory)}
+test "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(PORTABLE_HIVRA_PROVISIONER_VERSION)}
+(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256)
+test -x "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"
+bash -n "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"
+printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
+          env,
+          { timeoutMs: 20_000 },
+        );
+        if (!readiness.ok || !readiness.stdout.includes("HIVRA_RUNTIME_UPDATE_READY")) {
+          return apiError("Prepare this infrastructure target with the current Hivra runtime bundle before updating the computer.", 503);
+        }
+      }
+      const operationId = await claimProviderOperation("restart", "running");
+      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      const guestIp = `${subnetPrefix}.${octet}`;
+      const updateCommand = `HIVRA_VM_SSH_KEY_PATH=${shellQuote(executionContext.paths.vmSshKeyPath ?? "")} bash ${shellQuote(runtimeUpdateHelper)} ${vmid} ${shellQuote(guestIp)}`;
+      const r = await runProxmoxHostScript(
+        `${lifecyclePrelude}\n${updateCommand}\n${verifiedStopVmBody(vmid, 40)}\nsleep 2\n${startKickoff(operationId)}`,
+        env,
+      );
+      if (!r.ok) {
+        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Runtime update outcome is unknown"));
+        return apiError("Runtime update could not be verified. Refresh this computer before trying again.", 502);
+      }
+      const continued = await continueHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "running",
+        status: "provisioning",
+      });
+      if (!continued) {
+        await retainUnknownProviderOperation(operationId, "Runtime update restart was superseded before its provider outcome was verified.");
+        return apiError("The runtime update began, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
+      }
+      await logHivraAgentEvent({
+        userId,
+        event: "restarted",
+        agentId: agent.id,
+        agentType: agent.type,
+        detail: { runtimeUpdated: true },
+      });
+      return apiSuccess({ status: "provisioning" });
+    }
+
+    if (action === "resize") {
+      // Authoritative floor. The browser-on surcharge (+1 CPU / +2 GB) only applies
+      // to agent types that actually ship a browser, so we only probe those; for the
+      // rest the live state is irrelevant and the base floor stands. We read the box's
+      // REAL browser state (the same /api/browser/status source the UI's `bOn` uses)
+      // instead of assuming OFF — resizing below the 2/4 browser floor can brick the
+      // Chrome/Xvfb/VNC stack. probeBoxBrowserEnabled fails safe to ON if unreachable.
+      const browserOn =
+        Boolean(getAgent(String(agent.type))?.browser) &&
+        (await probeBoxBrowserEnabled(
+          (agent.chat_url as string | null) ?? null,
+          (agent.api_token as string | null) ?? null,
+        ));
+      const floor = resizeFloor(String(agent.type), browserOn);
+      const cpu = clampCpu(body.cpu, agent.cpu, floor.cpu, MAX_CPU);
+      const ram = clampInt(body.ram, agent.ram, floor.ram, MAX_RAM);
+      const maximumCpu = body.maximumCpu === undefined
+        ? Math.max(cpu, clampCpu(agent.cpu_max, cpu, 0.5, MAX_CPU))
+        : clampCpu(body.maximumCpu, Number(agent.cpu_max) || cpu, 0.5, MAX_CPU);
+      const maximumRam = body.maximumRam === undefined
+        ? Math.max(ram, clampInt(agent.ram_max, ram, 1, MAX_RAM))
+        : clampInt(body.maximumRam, Number(agent.ram_max) || ram, 1, MAX_RAM);
+      if (maximumCpu < cpu || maximumRam < ram) {
+        return apiError("A computer's maximum cannot be lower than its reserved allocation.", 400);
+      }
+      const ramEnvelope = resolveRamBurst(ram * 1024, env, maximumRam * 1024);
+      // Same authority as launch: a resize must fit the plan's per-agent cap AND
+      // the shared pool. Exclude THIS box from the pool tally so it isn't counted
+      // against its own new size. (Previously resize only clamped to the hard
+      // 8 CPU / 16 GB ceiling, letting a box grow past the plan it's paying for.)
+      if (executionContext.kind === "managed") {
+        const gate = await validateAgentResources({
+          userId,
+          type: String(agent.type),
+          cpu,
+          ram,
+          maximumCpu,
+          maximumRam,
+          browser: browserOn,
+          mode: "resize",
+          excludeAgentId: agent.id as string,
+          poolExempt: Boolean(getAgent(String(agent.type))?.poolExempt),
+          floor,
+          agentLabel: getAgent(String(agent.type))?.name,
+        });
+        if (!gate.ok) return apiError(gate.message, gate.status);
+      } else {
+        // BYO targets are not governed by Hivra Cloud's subscription pool. Keep
+        // the catalog safety floor/ceiling above, then fail before mutation if
+        // the requested VM alone exceeds the target's measured physical total.
+        const capacity = executionContext.target.capacity;
+        if (
+          (capacity.cpu.totalCores !== null && maximumCpu > capacity.cpu.totalCores) ||
+          (capacity.memoryBytes.total !== null && maximumRam * 1024 * 1024 * 1024 > capacity.memoryBytes.total)
+        ) {
+          return apiError("This infrastructure target cannot fit the requested agent size.", 409);
+        }
+      }
+      const currentRam = Number(agent.ram);
+      const currentMaximumRam = Math.max(Number(agent.ram_max) || currentRam, currentRam);
+      const currentMaximumCpu = Math.max(Number(agent.cpu_max) || Number(agent.cpu), Number(agent.cpu));
+      const cores = Math.max(1, Math.ceil(maximumCpu));
+      // Phase 5: apply per-VM scheduling priority (cgroup CPU weight) from the pool tier.
+      const { data: pool } = agent.pool_id
+        ? await supabaseAdmin.from("pools").select("priority").eq("id", agent.pool_id).maybeSingle()
+        : { data: null };
+      const cpuunits = priorityToCpuUnits((pool as { priority?: number } | null)?.priority);
+      const operationId = await claimProviderOperation("resize", "running", { cpu, ram, maximumCpu, maximumRam });
+      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      const reductionOnly = Number.isFinite(currentRam)
+        && ram <= currentRam
+        && maximumRam <= currentMaximumRam
+        && maximumCpu <= currentMaximumCpu
+        && (ram < currentRam || maximumRam < currentMaximumRam || maximumCpu < currentMaximumCpu);
+      const serializedAdmission = buildHostCapacityAdmissionCommand({
+        provisionerDirectory: executionContext.paths.provisionerDirectory,
+        targetVmid: vmid,
+        floorMemoryMb: ram * 1024,
+        maximumMemoryMb: ramEnvelope.ceilingMb,
+        maximumCpu,
+        policy: capacityPolicy,
+        allowReduction: reductionOnly,
+      });
+      const strictContainerCgroup = String(agent.type) !== "linux-desktop"
+        ? Buffer.from(buildAgentContainerCgroupScript({
+            memoryMb: ramEnvelope.ceilingMb,
+            cpus: maximumCpu,
+            strict: true,
+          }), "utf8").toString("base64")
+        : null;
+      const previousContainerCgroup = strictContainerCgroup
+        ? Buffer.from(buildAgentContainerCgroupScript({
+            memoryMb: Math.max(Number(agent.ram_max) || Number(agent.ram), Number(agent.ram)) * 1024,
+            cpus: Math.max(Number(agent.cpu_max) || Number(agent.cpu), Number(agent.cpu)),
+            strict: true,
+          }), "utf8").toString("base64")
+        : null;
+      const containerCgroupEnforcement = strictContainerCgroup ? `
+CGROUP_SCRIPT_B64=${shellQuote(strictContainerCgroup)}
+PREVIOUS_CGROUP_SCRIPT_B64=${shellQuote(previousContainerCgroup ?? "")}
+GUEST_IP=${shellQuote(`${subnetPrefix}.${octet}`)}
+GUEST_SSH_USER=${shellQuote(env.PROXMOX_VM_SSH_USER || "hermes")}
+GUEST_SSH_KEY=${shellQuote(executionContext.paths.vmSshKeyPath ?? "")}
+apply_guest_cgroup() {
+  local script_b64="$1"
+  local known_hosts
+  [ -r "$GUEST_SSH_KEY" ] || { echo "guest SSH key is unavailable for container ceiling enforcement" >&2; return 1; }
+  known_hosts="$(mktemp /tmp/hivra-envelope-known-hosts.XXXXXX)" || return 1
+  for _ in $(seq 1 24); do
+    if printf '%s' "$script_b64" | base64 -d | ssh -i "$GUEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$known_hosts" -o ConnectTimeout=5 "$GUEST_SSH_USER@$GUEST_IP" "sudo bash -s"; then
+      rm -f -- "$known_hosts"
+      return 0
+    fi
+    sleep 5
+  done
+  rm -f -- "$known_hosts"
+  return 1
+}
+` : "";
+      const r = await runProxmoxHostScript(
+        `${lifecyclePrelude}
+HOST_CPU="$(nproc)"
+HOST_RAM_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' /proc/meminfo)"
+[[ "$HOST_CPU" =~ ^[0-9]+$ && "$HOST_RAM_MB" =~ ^[0-9]+$ ]] \
+  || { echo "could not measure selected host totals" >&2; exit 1; }
+if [ "$HOST_CPU" -lt ${Math.ceil(maximumCpu)} ] || [ "$HOST_RAM_MB" -lt ${maximumRam * 1024} ]; then
+  echo "HIVRA_RESOURCE_MAXIMUM_REJECTED"
+  exit 1
+fi
+OLD_CONFIG="$(qm config ${vmid})"
+OLD_CORES="$(printf '%s\\n' "$OLD_CONFIG" | awk '$1=="cores:" {print $2; exit}')"
+OLD_CPULIMIT="$(printf '%s\\n' "$OLD_CONFIG" | awk '$1=="cpulimit:" {print $2; exit}')"
+OLD_MEMORY="$(printf '%s\\n' "$OLD_CONFIG" | awk '$1=="memory:" {print $2; exit}')"
+OLD_BALLOON="$(printf '%s\\n' "$OLD_CONFIG" | awk '$1=="balloon:" {print $2; exit}')"
+OLD_CPUUNITS="$(printf '%s\\n' "$OLD_CONFIG" | awk '$1=="cpuunits:" {print $2; exit}')"
+[ -n "$OLD_CPULIMIT" ] || OLD_CPULIMIT=0
+[ -n "$OLD_CPUUNITS" ] || OLD_CPUUNITS=1000
+[ -n "$OLD_BALLOON" ] || OLD_BALLOON="$OLD_MEMORY"
+[[ "$OLD_CORES" =~ ^[0-9]+$ && "$OLD_MEMORY" =~ ^[0-9]+$ ]] \
+  || { echo "could not snapshot prior VM sizing" >&2; exit 1; }
+${serializedAdmission}
+${verifiedStopVmBody(vmid, 40)}
+sleep 2
+${containerCgroupEnforcement}
+restore_previous_size() {
+  qm set ${vmid} --cores "$OLD_CORES" --cpulimit "$OLD_CPULIMIT" --memory "$OLD_MEMORY" --balloon "$OLD_BALLOON" --cpuunits "$OLD_CPUUNITS"
+}
+restore_previous_size_and_restart() {
+  local restore_container="\${1:-0}"
+  ${verifiedStopVmBody(vmid, 40)}
+  restore_previous_size || return 1
+  qm start ${vmid} >/dev/null || return 1
+  ${strictContainerCgroup ? '[ "$restore_container" = 0 ] || apply_guest_cgroup "$PREVIOUS_CGROUP_SCRIPT_B64" || return 1' : ""}
+}
+if ! qm set ${vmid} --cores ${cores} --cpulimit ${maximumCpu} --memory ${ramEnvelope.ceilingMb} --balloon ${ramEnvelope.baselineMb} --cpuunits ${cpuunits}; then
+  restore_previous_size_and_restart 0 || { echo "resize failed and prior config could not be restored" >&2; exit 1; }
+  echo "HIVRA_RESIZE_ROLLED_BACK"
+  exit 1
+fi
+if ! qm start ${vmid} >/dev/null; then
+  restore_previous_size_and_restart 0 || { echo "new size failed to start and prior config could not be restored" >&2; exit 1; }
+  echo "HIVRA_RESIZE_ROLLED_BACK"
+  exit 1
+fi
+${strictContainerCgroup ? `if ! apply_guest_cgroup "$CGROUP_SCRIPT_B64"; then
+  echo "agent container ceiling could not be enforced" >&2
+  restore_previous_size_and_restart 1 || { echo "container ceiling failed and prior config could not be restored" >&2; exit 1; }
+  echo "HIVRA_RESIZE_ROLLED_BACK"
+  exit 1
+fi` : ""}
+${startKickoff(operationId)}`,
+        env,
+      );
+      if (!r.ok) {
+        if (r.stdout.split(/\r?\n/).includes("HIVRA_RESOURCE_MAXIMUM_REJECTED")) {
+          await releaseProviderOperation(operationId, "Resize was rejected because its maximum exceeds the selected host's physical capacity.", false);
+          return apiError("The selected host cannot enforce that CPU and memory maximum.", 409);
+        } else if (r.stdout.split(/\r?\n/).includes("HIVRA_RESIZE_ROLLED_BACK")) {
+          await releaseProviderOperation(operationId, "Resize failed and the previous resource envelope was restored.", false);
+        } else {
+          await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Resize outcome is unknown"));
+        }
+        return apiError("Resize failed", 502);
+      }
+      const continued = await continueHivraAgentResizeOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "running",
+        status: "provisioning",
+        cpu,
+        ram,
+        maximumCpu,
+        maximumRam,
+      });
+      if (!continued) {
+        await retainUnknownProviderOperation(operationId, "Resize convergence was superseded before its provider outcome was verified.");
+        log.error("hivra agent resized but operation completion was superseded", new Error("Operation CAS failed"), {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_resize_status_persist_failed",
+          userId,
+          agentId: agent.id,
+          vmid,
+          cpu,
+          ram,
+        });
+        return apiError("The VM resized, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
+      }
+      await logHivraAgentEvent({ userId, event: "resized", agentId: agent.id, agentType: agent.type, detail: { cpu, ram, maximumCpu, maximumRam } });
+      return apiSuccess({ status: "provisioning", cpu, ram, maximumCpu, maximumRam });
+    }
+
+    return apiError("Unknown action", 400);
+  } catch (err) {
+    return handleApiError(err);
+  }
+}

@@ -1,0 +1,11 @@
+* @ashneil12
+
+/.github/ @ashneil12
+/dashboard/src/app/api/billing/ @ashneil12
+/dashboard/src/app/api/conversations/ @ashneil12
+/dashboard/src/components/chat/ @ashneil12
+/dashboard/src/lib/gateway-probe.ts @ashneil12
+/dashboard/src/lib/hetzner/ @ashneil12
+/dashboard/src/lib/services/ @ashneil12
+/dashboard/scripts/check-risk-surface-coverage.cjs @ashneil12
+/docs/regression-lockdown.md @ashneil12

@@ -1,0 +1,22 @@
+Hey,
+
+Quick update and a proper thank you for your patience over the past couple of weeks.
+
+Deployment and provisioning are now working reliably again, and the platform is back to a stable state. The core issues around instances, chat, and setup have been resolved.
+
+Under the hood, a large part of the infrastructure has been rebuilt to make sure this holds as usage scales.
+
+Commander:
+
+Commander has now been deprecated.
+
+If you’re currently using it, you can continue on your existing subscription as is.
+
+⸻
+
+If anything still isn’t working properly on your end, just reply to this email and I’ll take a look personally.
+
+Appreciate you sticking through it.
+
+Ash
+Founder, HermesOS

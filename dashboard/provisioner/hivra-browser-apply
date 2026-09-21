@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Narrow root helper so the chat server (runs as the agent user, no general sudo)
+# can turn the browser-automation + live-view stack on/off. Scoped via a NOPASSWD
+# sudoers rule to ONLY this script + the two verbs below.
+set -euo pipefail
+case "${1:-}" in
+  enable)
+    systemctl enable --now hivra-xvfb.service hivra-x11vnc.service hivra-novnc.service bux-local-browser.service
+    ;;
+  disable)
+    # Stop Chrome first, then the view stack. Tolerate already-stopped units.
+    systemctl disable --now bux-local-browser.service hivra-novnc.service hivra-x11vnc.service hivra-xvfb.service 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: hivra-browser-apply enable|disable" >&2
+    exit 2
+    ;;
+esac

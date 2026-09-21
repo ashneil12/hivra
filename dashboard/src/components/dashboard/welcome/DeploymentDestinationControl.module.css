@@ -1,0 +1,279 @@
+.panel {
+  --destination-muted: color-mix(in srgb, var(--ink-black) 62%, transparent);
+  container: launch-destination / inline-size;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--etched-border);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.header > div { min-width: 0; }
+
+.label {
+  display: block;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  color: var(--ink-black);
+}
+
+.hint {
+  display: block;
+  margin-top: 3px;
+  color: var(--destination-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.refreshButton {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--destination-muted);
+  cursor: pointer;
+}
+
+.refreshButton:hover:not(:disabled),
+.refreshButton:focus-visible {
+  color: var(--ink-black);
+  border-color: var(--ink-black);
+}
+
+.refreshButton:focus-visible,
+.option:focus-visible,
+.targetSelect:focus-visible,
+.manageLink:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.refreshButton:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.option {
+  min-width: 0;
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ink-black) 44%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+}
+
+.optionActive {
+  border-color: var(--ink-black);
+  background: var(--bg-elevated);
+  color: var(--ink-black);
+  box-shadow: inset 2px 0 0 var(--hivra-red);
+}
+
+.option:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.option > svg {
+  margin-top: 1px;
+  color: var(--hivra-red);
+}
+
+.option strong,
+.option small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.option > span { min-width: 0; }
+
+.option strong {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.option small {
+  margin-top: 4px;
+  color: var(--destination-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.check {
+  color: var(--hivra-red);
+}
+
+.targetPanel {
+  min-width: 0;
+  display: grid;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--hivra-red) 24%, var(--etched-border));
+  background: color-mix(in srgb, var(--hivra-red-soft) 45%, transparent);
+}
+
+.targetLabel {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--destination-muted);
+}
+
+.targetSelect {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 9px 34px 9px 11px;
+  border: 1px solid var(--etched-border);
+  border-radius: 0;
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  font: 500 16px/1.35 var(--font-grotesk), sans-serif;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.fact {
+  min-width: 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.fact span,
+.fact strong {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.fact span {
+  color: var(--destination-muted);
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.fact strong {
+  margin-top: 3px;
+  color: var(--ink-black);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notice,
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--etched-border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.notice > span, .error > span { min-width: 0; }
+
+.notice svg,
+.error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.error {
+  border-color: color-mix(in srgb, var(--red) 36%, transparent);
+  color: color-mix(in srgb, var(--red) 82%, var(--ink-black));
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+
+.manageLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: inherit;
+  font-weight: 800;
+  text-underline-offset: 3px;
+}
+
+.spin {
+  animation: destinationSpin 900ms linear infinite;
+}
+
+@keyframes destinationSpin {
+  to { transform: rotate(360deg); }
+}
+
+@container launch-destination (max-width: 540px) {
+  .options {
+    grid-template-columns: 1fr;
+  }
+
+  .option {
+    min-height: 72px;
+  }
+}
+
+@container launch-destination (max-width: 400px) {
+  .facts { grid-template-columns: 1fr; }
+  .fact { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
+  .fact strong { text-align: right; margin-top: 0; }
+  .targetPanel { padding: 0.75rem; }
+}
+
+@media (max-height: 820px) and (min-width: 721px) {
+  .panel { gap: 8px; padding: 10px 12px; }
+  .hint { margin-top: 1px; font-size: 12px; line-height: 1.3; }
+  .refreshButton { width: 38px; height: 38px; }
+  .options { gap: 7px; }
+  .option { min-height: 66px; gap: 8px; padding: 9px 10px; }
+  .option small { margin-top: 2px; line-height: 1.3; }
+  .notice, .error { padding: 8px 10px; line-height: 1.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

@@ -1,0 +1,3 @@
+-- The public self-host baseline intentionally creates no accounts, agents, hosts,
+-- provider credentials, or billing records. The installation-owned operator is
+-- configured outside the database and its metadata row is created on first use.

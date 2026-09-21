@@ -1,0 +1,28 @@
+# PostHog analytics proxy — Cloudflare Worker.
+#
+# Off-loads the PostHog reverse-proxy from Vercel (events + session replay +
+# feature flags + the recorder bundles) onto Cloudflare, keeping a first-party
+# origin so ad-blockers can't trivially drop analytics. See README.md.
+#
+# Deploy:  CLOUDFLARE_API_TOKEN=<workers-scoped-token> npx wrangler deploy
+# (Workers-scoped token = Account → Workers Scripts:Edit + Account Settings:Read.
+#  The DNS/zone token used by reconcile-cloudflare-dns is NOT sufficient.)
+name = "posthog-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+
+# workers_dev gives an instant https://posthog-proxy.<subdomain>.workers.dev URL
+# (no DNS needed) — fine to validate with. For full ad-block resistance, serve
+# it on a first-party subdomain instead by uncommenting the `routes` block below
+# (requires the hivra.cloud zone on this Cloudflare account) and setting the
+# dashboard env NEXT_PUBLIC_POSTHOG_API_HOST to https://ph.hivra.cloud.
+workers_dev = true
+
+# routes = [
+#   { pattern = "ph.hivra.cloud/*", zone_name = "hivra.cloud" },
+# ]
+
+[vars]
+# PostHog US cloud. No secrets here — the project token is public (client-side).
+POSTHOG_API_HOST = "us.i.posthog.com"
+POSTHOG_ASSET_HOST = "us-assets.i.posthog.com"

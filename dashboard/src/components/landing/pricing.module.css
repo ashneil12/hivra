@@ -1,0 +1,68 @@
+/* Core offer content is visible in server HTML, with CSS and JavaScript disabled.
+   Keep motion limited to interaction feedback; never gate pricing behind scroll. */
+.pricing {
+  width: min(100%, 1480px);
+  margin-inline: auto;
+  padding: 110px var(--public-gutter, 24px);
+  border-top: 1px solid var(--public-line, var(--etched-border));
+  color: var(--public-text, var(--ink-black));
+}
+.heading { max-width: 960px; margin-bottom: 54px; }
+.eyebrow { display: block; font: 11px var(--public-mono, monospace); color: var(--public-accent, var(--gold-leaf)); margin-bottom: 25px; }
+.heading h2 { font: 550 clamp(38px, 4.8vw, 70px)/1.09 var(--public-font, sans-serif); letter-spacing: -.055em; margin: 0 0 28px; text-wrap: balance; }
+.heading h2 span { display: block; color: var(--public-muted, var(--text-secondary)); }
+.heading > p { max-width: 610px; font-size: 16px; line-height: 1.8; color: var(--public-muted, var(--text-secondary)); }
+.offers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--public-line, var(--etched-border)); }
+.offer { position: relative; min-width: 0; display: flex; flex-direction: column; padding: 34px 38px 38px; }
+.offer + .offer { border-left: 1px solid var(--public-line, var(--etched-border)); }
+.offer[data-offer="hosted"] { background: var(--public-surface, var(--bg-surface)); }
+.offer[data-offer="hosted"]::before { content: ""; position: absolute; top: -1px; left: 0; right: 0; height: 2px; background: var(--public-accent, var(--gold-leaf)); }
+.offerLabel { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 40px; font: 11px/1.6 var(--public-mono, monospace); color: var(--public-muted, var(--text-secondary)); }
+.offerLabel svg { flex: none; color: var(--public-accent, var(--gold-leaf)); }
+.offer h3 { font: 550 clamp(27px, 3vw, 40px)/1.18 var(--public-font, sans-serif); letter-spacing: -.05em; margin: 0; overflow-wrap: break-word; }
+.priceBlock { margin-block: 30px 24px; }
+.price { display: flex; align-items: baseline; flex-wrap: wrap; gap: 9px 14px; margin: 0; }
+.price strong { font: 500 clamp(52px, 6.7vw, 92px)/1 var(--public-font, sans-serif); letter-spacing: -.065em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.price > span { font: 12px/1.6 var(--public-mono, monospace); color: var(--public-muted, var(--text-secondary)); }
+.description { max-width: 40ch; font-size: 15px; line-height: 1.85; color: var(--public-muted, var(--text-secondary)); margin: 0 0 34px; }
+.costs { margin: auto 0 30px; border-top: 1px solid var(--public-line, var(--etched-border)); }
+.costs > div { min-height: 52px; display: grid; grid-template-columns: minmax(0, .65fr) minmax(0, 1fr); align-items: baseline; gap: 15px; padding-block: 16px; border-bottom: 1px solid var(--public-line, var(--etched-border)); }
+.costs dt { font-size: 12px; line-height: 1.6; color: var(--public-muted, var(--text-secondary)); }
+.costs dd { font-size: 13px; line-height: 1.6; margin: 0; text-align: right; }
+.action { display: flex; justify-content: space-between; align-items: center; gap: 18px; min-height: 54px; padding: 15px 19px; border: 1px solid var(--public-line, var(--etched-border)); color: var(--public-text, var(--ink-black)); font-size: 13px; line-height: 1.6; font-weight: 650; text-decoration: none; transition: background .2s, color .2s, border-color .2s; }
+.action svg { flex: none; color: var(--public-accent, var(--gold-leaf)); transition: transform .35s cubic-bezier(.16, 1, .3, 1); }
+.offer[data-offer="hosted"] .action { background: var(--public-accent, var(--gold-leaf)); border-color: var(--public-accent, var(--gold-leaf)); color: var(--public-accent-ink, var(--vellum-bg)); }
+.offer[data-offer="hosted"] .action svg { color: inherit; }
+.action:hover, .action:focus-visible { background: var(--public-text, var(--ink-black)); color: var(--public-bg, var(--vellum-bg)); border-color: var(--public-text, var(--ink-black)); }
+.action:hover svg, .action:focus-visible svg { transform: translateX(4px); color: inherit; }
+.action:active { transform: translateY(1px); }
+.action:focus-visible { outline: 2px solid var(--public-accent, var(--gold-leaf)); outline-offset: 5px; }
+.footnote { max-width: 740px; margin: 27px 0 0; font-size: 12px; line-height: 1.85; color: var(--public-muted, var(--text-secondary)); }
+@media (max-width: 1000px) {
+  .offer { padding: 28px 26px 30px; }
+  .offerLabel { margin-bottom: 30px; }
+  .price strong { font-size: clamp(50px, 7vw, 70px); }
+  .description { font-size: 14px; }
+  .costs > div { grid-template-columns: minmax(0, .55fr) minmax(0, 1fr); gap: 10px; }
+}
+@media (max-width: 700px) {
+  .pricing { padding-block: 72px; }
+  .heading { margin-bottom: 35px; }
+  .eyebrow { margin-bottom: 22px; }
+  .heading h2 { font-size: clamp(34px, 7.8vw, 49px); margin-bottom: 24px; }
+  .heading > p { font-size: 15px; }
+  .offers { grid-template-columns: 1fr; gap: 22px; border: 0; }
+  .offer, .offer + .offer { border: 1px solid var(--public-line, var(--etched-border)); padding: 26px 24px 28px; }
+  .offerLabel { font-size: 10px; margin-bottom: 27px; }
+  .offer h3 { font-size: clamp(28px, 6vw, 37px); }
+  .priceBlock { margin-block: 26px 22px; }
+  .price strong { font-size: clamp(57px, 14vw, 77px); }
+  .price > span { font-size: 11px; }
+  .description { max-width: none; margin-bottom: 27px; }
+  .costs { margin-bottom: 25px; }
+  .action { font-size: 13px; padding-inline: 16px; }
+  .footnote { margin-top: 23px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pricing *, .pricing *::before, .pricing *::after { transition: none !important; animation: none !important; }
+}

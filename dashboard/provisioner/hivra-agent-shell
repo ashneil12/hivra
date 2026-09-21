@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Native terminal entrypoint. Its systemd unit supplies the agent's HOME/PATH.
+# Never replace a missing or unconfigured runtime with a different agent.
+set -euo pipefail
+
+kind_file="${HOME:?HOME is required}/.hivra/agent-kind"
+if [ ! -f "$kind_file" ] || [ ! -r "$kind_file" ] || ! kind="$(< "$kind_file")"; then
+  printf '%s\n' 'The agent runtime is not configured. Open the box terminal to inspect the installation.' >&2
+  exit 78
+fi
+case "$kind" in
+  claude|codex)
+    if ! command -v "$kind" >/dev/null 2>&1; then
+      printf '%s\n' 'The selected agent runtime is unavailable. Open the box terminal to repair its installation.' >&2
+      exit 127
+    fi
+    exec "$kind" "$@"
+    ;;
+  aeon|openclaw|agent-zero|linux-desktop)
+    # Dashboard runtimes and Linux computers do not impersonate a coding-agent
+    # CLI. Their agent terminal is an ordinary owner shell.
+    exec /bin/bash -l
+    ;;
+  deepseek-harness)
+    # The native web profile owns the active session. Opening a second CLI
+    # owner of its private state is not an attach operation.
+    printf '%s\n' 'Use the DeepSeek native desktop for sessions. This is your computer shell.'
+    exec /bin/bash -l
+    ;;
+  *)
+    printf '%s\n' 'The agent runtime selection is invalid. Open the box terminal to inspect the installation.' >&2
+    exit 78
+    ;;
+esac

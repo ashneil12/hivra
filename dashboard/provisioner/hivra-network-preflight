@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Read-only collision/ownership check for the fixed Hivra bridge contract.
+set -euo pipefail
+
+BRIDGE="${1:?bridge is required}"
+SUBNET_PREFIX="${2:?subnet prefix is required}"
+GATEWAY="${3:?gateway is required}"
+OWNER_MARKER="${4:?owner marker is required}"
+SERVICE_FILE="${5:?service file is required}"
+
+fail() { echo "[hivra-network-preflight] $*" >&2; exit 1; }
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+file_owner_ids() { stat -c '%u:%g' "$1" 2>/dev/null || stat -f '%u:%g' "$1" 2>/dev/null; }
+
+case "$BRIDGE" in *[!A-Za-z0-9_.:-]*|'') fail "invalid bridge name" ;; esac
+[[ "$SUBNET_PREFIX" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] \
+  || fail "invalid subnet prefix"
+[[ "$GATEWAY" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] \
+  || fail "invalid gateway"
+
+EXPECTED_OWNER="$(printf 'schema=1\nowner=hivra\nbridge=%s\nsubnet=%s.0/24\ngateway=%s\nservice=%s' \
+  "$BRIDGE" "$SUBNET_PREFIX" "$GATEWAY" "$SERVICE_FILE")"
+OWNED=0
+if [ -e "$OWNER_MARKER" ] || [ -L "$OWNER_MARKER" ]; then
+  [ -f "$OWNER_MARKER" ] && [ ! -L "$OWNER_MARKER" ] \
+    || fail "network ownership marker is not a regular file"
+  [ "$(file_mode "$OWNER_MARKER")" = "644" ] \
+    || fail "network ownership marker has an unsafe mode"
+  if [ "$(id -u)" -eq 0 ]; then
+    [ "$(file_owner_ids "$OWNER_MARKER")" = "0:0" ] \
+      || fail "network ownership marker is not owned by root"
+  fi
+  [ "$(cat "$OWNER_MARKER")" = "$EXPECTED_OWNER" ] \
+    || fail "network ownership marker does not match the requested bridge contract"
+  OWNED=1
+fi
+
+if [ -e "$SERVICE_FILE" ] || [ -L "$SERVICE_FILE" ]; then
+  [ "$OWNED" = "1" ] \
+    || fail "refusing to overwrite an unowned network service"
+  [ -f "$SERVICE_FILE" ] && [ ! -L "$SERVICE_FILE" ] \
+    || fail "owned network service is not a regular file"
+fi
+
+if ip link show "$BRIDGE" >/dev/null 2>&1; then
+  [ "$OWNED" = "1" ] \
+    || fail "refusing to adopt an existing unowned bridge"
+  ip -d link show "$BRIDGE" | grep -q 'bridge' \
+    || fail "owned interface exists but is not a bridge"
+  while IFS= read -r address; do
+    [ -z "$address" ] && continue
+    [ "$address" = "${GATEWAY}/24" ] \
+      || fail "owned bridge has an unexpected IPv4 address: $address"
+  done < <(ip -o -4 address show dev "$BRIDGE" 2>/dev/null | awk '{print $4}')
+fi
+
+ipv4_u32() {
+  local value="$1" a b c d extra
+  IFS=. read -r a b c d extra <<< "$value"
+  [ -z "${extra:-}" ] || return 1
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]{1,3}$ ]] && [ "$((10#$octet))" -le 255 ] || return 1
+  done
+  printf '%u\n' "$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))"
+}
+
+cidr_bounds() {
+  local cidr="$1" address bits value mask
+  if [[ "$cidr" == */* ]]; then
+    address="${cidr%/*}"
+    bits="${cidr#*/}"
+  else
+    address="$cidr"
+    bits=32
+  fi
+  [[ "$bits" =~ ^[0-9]+$ ]] && [ "$bits" -ge 0 ] && [ "$bits" -le 32 ] || return 1
+  value="$(ipv4_u32 "$address")" || return 1
+  if [ "$bits" -eq 0 ]; then
+    mask=0
+  else
+    mask=$(( (0xffffffff << (32 - bits)) & 0xffffffff ))
+  fi
+  CIDR_START=$((value & mask))
+  CIDR_END=$((CIDR_START | ((~mask) & 0xffffffff)))
+}
+
+cidr_bounds "${SUBNET_PREFIX}.0/24" || fail "invalid target subnet"
+TARGET_START="$CIDR_START"
+TARGET_END="$CIDR_END"
+
+# Reject a route/address collision before creating a bridge or writing a unit.
+# An already-owned bridge may naturally contribute link/local/broadcast routes,
+# but even it may not claim a broader prefix than Hivra's selected /24.
+while IFS= read -r route_line; do
+  [ -z "$route_line" ] && continue
+  read -r -a fields <<< "$route_line"
+  destination="${fields[0]:-}"
+  case "$destination" in
+    local|broadcast|unicast|unreachable|prohibit|blackhole|throw|nat)
+      destination="${fields[1]:-}"
+      ;;
+  esac
+  case "$destination" in ''|default|*:* ) continue ;; esac
+  cidr_bounds "$destination" || continue
+  [ "$CIDR_START" -le "$TARGET_END" ] && [ "$TARGET_START" -le "$CIDR_END" ] || continue
+  route_device=""
+  for ((index=0; index < ${#fields[@]}; index++)); do
+    if [ "${fields[$index]}" = "dev" ] && [ $((index + 1)) -lt "${#fields[@]}" ]; then
+      route_device="${fields[$((index + 1))]}"
+      break
+    fi
+  done
+  if [ "$OWNED" = "1" ] && [ "$route_device" = "$BRIDGE" ] \
+     && [ "$CIDR_START" -ge "$TARGET_START" ] && [ "$CIDR_END" -le "$TARGET_END" ]; then
+    continue
+  fi
+  fail "selected subnet overlaps existing route: $route_line"
+done < <(ip -4 route show table all)
+
+printf 'HIVRA_NETWORK_PREFLIGHT_OK\n'

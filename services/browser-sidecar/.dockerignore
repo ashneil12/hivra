@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.local
+.git
+.gitignore
+*.log
+coverage
+profiles
+screenshots
+tests
+README.md
+vex-soul-snippet.md
+.dockerignore
+Dockerfile
+docker-compose.yml
