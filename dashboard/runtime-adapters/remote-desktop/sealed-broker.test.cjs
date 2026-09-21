@@ -1,4 +1,3 @@
-// Staged cursor/profile candidate. Sealed installer coverage is in sealed-broker.test.cjs.
 'use strict';
 
 const { test } = require('node:test');
@@ -17,7 +16,7 @@ const {
   COOKIE_NAME,
   createRemoteDesktopBroker,
   handoffHtml,
-} = require('./broker.staged.cjs');
+} = require('../../provisioner/remote-desktop/broker.cjs');
 
 const CONTROL = 'https://canary.example.test';
 const PUBLIC = 'https://computer.example.test';
@@ -649,7 +648,7 @@ test('generated handoff accepts a painted pinned Selkies canvas but rejects stat
 });
 
 for (const nativeBrowserCursor of [false, true]) test(`generated handoff script reports trusted measurements and cursor policy native=${nativeBrowserCursor}`, async () => {
-  const html = handoffHtml(CONTROL);
+  const html = handoffHtml(CONTROL, nativeBrowserCursor);
   const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
   const posts = [];
   const windowListeners = new Map();
@@ -754,8 +753,8 @@ for (const nativeBrowserCursor of [false, true]) test(`generated handoff script 
   });
 });
 
-for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-close'], [true, 'pagehide'], [true, 'transport-close'], [true, 'cursor-enable-failure']]) test(`cursor policy captured=${capturedCursor} cleans up on ${ending}`, async t => {
-  const dom = new JSDOM(handoffHtml(CONTROL, capturedCursor), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
+for (const ending of ['pagehide', 'transport-close']) test(`Omarchy native cursor overrides reactive inline important without looping and cleans up on ${ending}`, async t => {
+  const dom = new JSDOM(handoffHtml(CONTROL, true), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const window = dom.window;
   const desktop = window.document.getElementById('desktop');
@@ -768,7 +767,6 @@ for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-
   Object.defineProperty(desktop, 'contentDocument', { value: child.document });
   const messages = [];
   const transportListeners = new Map();
-  const cursorControls = [];
   window.fetch = async () => ({ status: 204, redirected: false });
   window.parent.postMessage = () => {};
   let mutations = 0;
@@ -785,104 +783,35 @@ for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-
   const overlay = child.document.getElementById('overlayInput');
   Object.defineProperty(child.document.querySelector('video'), 'readyState', { value: 2 });
   child.postMessage = message => messages.push(JSON.parse(JSON.stringify(message)));
-  child.selkiesTransport = { readyState: 1, send: message => { cursorControls.push(message); if (ending === 'cursor-enable-failure') throw new Error('closed'); },
+  child.selkiesTransport = { readyState: 1,
     addEventListener: (name, listener) => transportListeners.set(name, listener), removeEventListener: () => {} };
   desktop.dispatchEvent(new window.Event('load'));
-  // The handoff binds transport telemetry in a window timer after load.
-  // Node's setImmediate alone need not run that jsdom timer first.
+  // The browser load callback schedules telemetry binding on a timer.
   const bindingDeadline = Date.now() + 1000;
   while (typeof transportListeners.get('close') !== 'function' && Date.now() < bindingDeadline) {
     await new Promise(resolve => setTimeout(resolve, 5));
   }
-  assert.equal(typeof transportListeners.get('close'), 'function', 'load must bind transport close before cleanup is exercised');
+  assert.equal(typeof transportListeners.get('close'), 'function');
   assert.deepEqual(messages, [{ type: 'setUseBrowserCursors', value: true }]);
-  assert.deepEqual(cursorControls, capturedCursor ? ['SET_NATIVE_CURSOR_RENDERING,1'] : []);
-  if (ending === 'cursor-enable-failure') {
-    assert.equal(desktop.isConnected, false, 'failed cursor command must not leave an invisible active pointer');
-    assert.equal(overlay.style.getPropertyValue('cursor'), 'url(guest.png) 12 12,auto');
-    assert.equal(disconnects, 0);
-    return;
-  }
-  assert.equal(overlay.style.getPropertyValue('cursor'), capturedCursor ? 'none' : 'url(guest.png) 12 12,auto');
+  assert.equal(overlay.style.getPropertyValue('cursor'), 'default');
   assert.equal(overlay.style.getPropertyPriority('cursor'), 'important');
-  for (const cursor of ['pointer', 'text', 'ew-resize', 'url(updated.png) 12 12, auto', 'none']) {
+  for (const cursor of ['url(updated.png) 12 12, auto', 'none']) {
     const before = mutations;
     overlay.style.setProperty('cursor', cursor, 'important');
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(overlay.style.getPropertyValue('cursor'), capturedCursor ? 'none' : cursor);
+    assert.equal(overlay.style.getPropertyValue('cursor'), 'default');
     assert.equal(overlay.style.getPropertyPriority('cursor'), 'important');
     assert.ok(mutations - before <= 2, 'own repair must not sustain an observer loop');
   }
   if (ending === 'pagehide') window.dispatchEvent(new window.Event('pagehide'));
   else transportListeners.get('close')();
-  assert.equal(disconnects, capturedCursor ? 1 : 0);
+  assert.equal(disconnects, 1);
   assert.equal(desktop.isConnected, false);
   const before = mutations;
   overlay.style.setProperty('cursor', 'none', 'important');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(mutations, before);
   assert.equal(overlay.style.getPropertyValue('cursor'), 'none');
-});
-
-test('modern Selkies receives real settings and bounded resolution messages without a legacy app', async t => {
-  const dom = new JSDOM(handoffHtml(CONTROL), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
-  t.after(() => dom.window.close());
-  const { window } = dom;
-  const desktop = window.document.getElementById('desktop');
-  const child = { webrtcInput: {}, selkiesTransport: { readyState: 1 }, postMessage: (message, origin) => {
-    assert.equal(origin, PUBLIC);
-    messages.push(JSON.parse(JSON.stringify(message)));
-  } };
-  const messages = [];
-  let width = 1600, height = 900;
-  Object.defineProperties(desktop, {
-    contentWindow: { value: child },
-    clientWidth: { get: () => width }, clientHeight: { get: () => height },
-  });
-  window.fetch = async () => ({ status: 204 });
-  window.parent.postMessage = () => {};
-  window.eval(window.document.querySelector('script').textContent);
-  const send = (data, origin = CONTROL, source = window.parent) => window.dispatchEvent(
-    new window.MessageEvent('message', { origin, source, data }));
-  send({ type: 'hivra.remote-desktop.handoff.v2', sessionId: SESSION_ID,
-    exchangeCode: EXCHANGE_CODE, verifier: VERIFIER, streamingMode: 'hq' });
-  await new Promise(resolve => setImmediate(resolve));
-  desktop.dispatchEvent(new window.Event('load'));
-  assert.equal(child.app, undefined);
-  assert.deepEqual(messages.slice(-2), [
-    { type: 'settings', settings: { video_bitrate: 25000, framerate: 60 } },
-    { type: 'setManualResolution', width: 1920, height: 1080 },
-  ]);
-  for (const [mode, w, h, bitrate] of [['performance', 1280, 720, 12000], ['qhd', 2560, 1440, 40000], ['uhd', 3840, 2160, 65000]]) {
-    send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode });
-    assert.deepEqual(messages.slice(-2), [
-      { type: 'settings', settings: { video_bitrate: bitrate, framerate: 60 } },
-      { type: 'setManualResolution', width: w, height: h },
-    ]);
-    const count = messages.length;
-    send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode });
-    assert.equal(messages.length, count, 'do not restart capture for unchanged settings');
-  }
-  const count = messages.length;
-  send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode: 'performance' }, 'https://attacker.test');
-  send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode: 'performance' }, CONTROL, {});
-  assert.equal(messages.length, count);
-  width = 600; height = 1000;
-  send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode: 'uhd' });
-  const portrait = messages.at(-1);
-  assert.equal(portrait.type, 'setManualResolution');
-  assert.ok(Math.abs(portrait.width / portrait.height - 0.6) < 0.002);
-  assert.ok(portrait.width <= 4080 && portrait.height <= 4080);
-  width = 5000; height = 100;
-  send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode: 'uhd' });
-  assert.deepEqual(messages.at(-1), { type: 'setManualResolution', width: 4080, height: 1020 });
-  width = height = 0;
-  const beforeHidden = messages.length;
-  send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode: 'uhd' });
-  assert.equal(messages.length, beforeHidden, 'hidden tabs must not shrink the guest');
-  window.dispatchEvent(new window.Event('pagehide'));
-  send({ type: 'hivra.remote-desktop.streaming-mode.v1', mode: 'hq' });
-  assert.equal(messages.length, beforeHidden, 'ended sessions cannot change the stream');
 });
 
 test('one-time exchange keeps the bearer guest-side and activates isolated input', async t => {

@@ -14,8 +14,9 @@ and end-of-support dates explicitly.
 
 ## Report a vulnerability privately
 
-Do not open a public issue for an unpatched vulnerability. Email
-info@hermesos.cloud with the subject `[Hivra security]` and include:
+Do not open a public issue for an unpatched vulnerability. Use
+[GitHub private vulnerability reporting](https://github.com/ashneil12/hivra/security/advisories/new),
+or email info@hermesos.cloud with the subject `[Hivra security]`. Include:
 
 - the affected revision, release, URL, component, or provisioner version;
 - a minimal reproduction and the expected versus observed boundary;
@@ -34,5 +35,5 @@ fix and verification plan, and publish credit when requested after affected
 users can be protected. No response-time promise is made until a staffed public
 security-response rotation is documented.
 
-Repository publication remains gated on enabling and testing a private GitHub
-vulnerability-reporting path in addition to this existing contact channel.
+GitHub private vulnerability reporting is enabled for this repository. The email
+contact remains available if you cannot use GitHub.

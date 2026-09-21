@@ -15,7 +15,7 @@ const COLUMNS = [
   ] },
   { title: "Explore", links: [
     { label: "Open source", href: "/#open-source" },
-    { label: "GitHub (coming soon)", href: "/#github-release" },
+    { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "Litepaper", href: "/docs/litepaper/" },
     { label: "Blog", href: "/blog" },
     { label: "Tokenomics", href: "/#tokenomics" },

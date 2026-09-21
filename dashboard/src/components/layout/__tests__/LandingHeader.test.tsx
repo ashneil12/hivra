@@ -104,7 +104,7 @@ describe("LandingHeader", () => {
     expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/blog");
     expect(screen.getByRole("link", { name: "Tokenomics" })).toHaveAttribute("href", "/#tokenomics");
     expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
-    expect(screen.getByRole("button", { name: "GitHub public repository coming soon" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
   // ── Auth-aware CTAs ───────────────────────────────────────────────────────
