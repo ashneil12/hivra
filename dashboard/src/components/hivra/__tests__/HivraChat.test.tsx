@@ -740,7 +740,9 @@ describe("HivraChat", () => {
     try {
       const { unmount } = render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
       await screen.findByText("Atlas here, ready to grow the SaaS.");
-      expect(request).toHaveBeenCalledTimes(1);
+      // Session hydration cancels its old frame; welcome updates reuse the pending one.
+      expect(request.mock.calls.length - cancel.mock.calls.length).toBe(1);
+      const pendingFrame = frames.length - 1;
       const pane = screen.getByRole("region", { name: "Conversation" });
       Object.defineProperties(pane, {
         scrollHeight: { configurable: true, value: 1500 },
@@ -749,11 +751,11 @@ describe("HivraChat", () => {
       });
       fireEvent.scroll(pane);
       expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
-      act(() => frames[0](0));
+      act(() => frames[pendingFrame](0));
       expect(pane.scrollTop).toBe(200);
       fireEvent.click(screen.getByRole("button", { name: "Return to latest" }));
-      expect(request).toHaveBeenCalledTimes(2);
-      act(() => frames[1](16));
+      expect(request).toHaveBeenCalledTimes(pendingFrame + 2);
+      act(() => frames[pendingFrame + 1](16));
       expect(pane.scrollTop).toBe(1500);
       expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
       pane.scrollTop = 200;
