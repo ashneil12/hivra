@@ -263,8 +263,8 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  <Check size={13} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
  )}
       </button>
-      {open && hasResult ? (
-        <div id={disclosureId} style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "#c0392b" : "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
+      {hasResult ? (
+        <div id={disclosureId} hidden={!open} style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "#c0392b" : "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
           {tool.result}
         </div>
  ) : null}
@@ -272,17 +272,17 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  );
 }
 
-function AssistantActivity({ tools, streaming, outcome }: { tools: ToolChip[]; streaming?: boolean; outcome?: ChatMessage["outcome"] }) {
-  if (tools.length === 0) return null;
+function AssistantActivity({ tools, streaming, outcome, text }: { tools: ToolChip[]; streaming?: boolean; outcome?: ChatMessage["outcome"]; text: string }) {
+  if (!streaming && tools.length === 0) return null;
   const runningTools = streaming ? tools.filter((tool) => tool.status === "running") : [];
   const running = runningTools[runningTools.length - 1];
   const failed = tools.some((tool) => tool.status === "error");
   const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
-  const summary = streaming ? (running ? "Working" : "Responding")
+  const summary = streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
     : outcome === "stopped" ? "Activity stopped"
     : outcome === "error" ? "Response failed"
     : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
-  const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : `${tools.length} action${tools.length === 1 ? "" : "s"}`;
+  const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? `${tools.length} action${tools.length === 1 ? "" : "s"}` : "";
   const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" ? "is-muted" : "is-done";
   return (
     <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
@@ -291,6 +291,25 @@ function AssistantActivity({ tools, streaming, outcome }: { tools: ToolChip[]; s
       <span className="hivra-chat-activity-detail">{detail}</span>
     </div>
   );
+}
+
+function ToolHistory({ message }: { message: ChatMessage }) {
+ const [open, setOpen] = useState(false);
+ const id = useId();
+ if (!message.tools.length) return null;
+ return (
+ <div className="hivra-chat-tool-history">
+ <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)}>
+ <ChevronRight size={12} aria-hidden style={{ transform: open ? "rotate(90deg)" : undefined }} />
+ {message.tools.length} action{message.tools.length === 1 ? "" : "s"}
+ </button>
+ <div id={id} hidden={!open}>
+ <div className="hivra-chat-tool-history-list">
+ {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped" || message.outcome === "error"} />)}
+ </div>
+ </div>
+ </div>
+ );
 }
 
 export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--gold-leaf)", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
@@ -485,18 +504,36 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // bottom. Scrolling up to re-read mid-stream pins the view; returning to the
  // bottom re-engages following. `force` is for user-initiated sends.
  const stickToBottomRef = useRef(true);
+ const scrollFrameRef = useRef<number | null>(null);
+ const [showLatest, setShowLatest] = useState(false);
  const onScrollPane = useCallback(() => {
  const el = scrollRef.current;
  if (!el) return;
- stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+ const following = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+ stickToBottomRef.current = following;
+ setShowLatest(!following);
  }, []);
  const scrollDown = useCallback((force?: boolean) => {
- if (!force && !stickToBottomRef.current) return;
- requestAnimationFrame(() => {
+ if (force) {
+ stickToBottomRef.current = true;
+ setShowLatest(false);
+ }
+ if (!stickToBottomRef.current || scrollFrameRef.current !== null) return;
+ scrollFrameRef.current = requestAnimationFrame(() => {
+ scrollFrameRef.current = null;
+ // A scroll-up between the stream event and this frame must win.
+ if (!stickToBottomRef.current) return;
  const el = scrollRef.current;
  if (el) el.scrollTop = el.scrollHeight;
  });
  }, []);
+ useEffect(() => {
+ scrollDown(true);
+ return () => {
+ if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+ scrollFrameRef.current = null;
+ };
+ }, [activeId, scrollDown]);
 
  const updateActive = useCallback((fn: (s: Session) => Session) => {
  setSessions((prev) => prev.map((s) => (s.id === activeIdRef.current ? fn(s) : s)));
@@ -915,7 +952,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
+ <div ref={scrollRef} role="region" aria-label="Conversation" onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
@@ -948,9 +985,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  ) : null}
  {messages.map((m, i) => {
  const isUser = m.role === "user";
- const currentTools = m.streaming ? m.tools.filter((tool) => tool.status === "running") : [];
- const historyTools = currentTools.length > 0 ? m.tools.filter((tool) => !currentTools.includes(tool)) : m.tools;
- const interrupted = m.outcome === "stopped" || m.outcome === "error";
  return (
  <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
  <div
@@ -973,35 +1007,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
- {m.tools.length > 0 ? (
- <div className="hivra-chat-activity-wrap">
- <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} />
- {currentTools.map((tool, j) => <ToolCard key={tool.id || j} tool={tool} streaming={m.streaming} interrupted={interrupted} />)}
- {historyTools.length > 0 ? (
- <details className="hivra-chat-tool-history">
- <summary>{historyTools.length} {currentTools.length > 0 ? "previous action" : "action"}{historyTools.length === 1 ? "" : "s"}</summary>
- <div className="hivra-chat-tool-history-list">
- {historyTools.map((t, j) => <ToolCard key={t.id || j} tool={t} streaming={m.streaming} interrupted={interrupted} />)}
- </div>
- </details>
- ) : null}
- </div>
- ) : null}
+ {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
  <div className="hivra-md" style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
- {m.role === "assistant" && !m.text && m.streaming && m.tools.length === 0 ? (
- <span className="inline-flex items-center gap-1.5 py-1" aria-label="Thinking">
- <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)] [animation-duration:1s]" />
- <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)] [animation-delay:0.15s] [animation-duration:1s]" />
- <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)] [animation-delay:0.3s] [animation-duration:1s]" />
- <span className="sr-only">Thinking…</span>
- </span>
-
- ) : m.role === "assistant" ? (
+ {m.role === "assistant" ? (
  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
  ) : (
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
  </div>
+ {m.role === "assistant" ? <ToolHistory message={m} /> : null}
  {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error") ? (
  <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : "Response failed"}>
  {m.outcome === "stopped" ? "Stopped" : "Could not complete response"}
@@ -1020,7 +1034,12 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  </div>
 
- <div className="border-t border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 pb-3 pt-3">
+ <div className="relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 pb-3 pt-3">
+ {showLatest ? (
+ <button type="button" onClick={() => scrollDown(true)} className="hivra-chat-latest">
+ <ChevronDown size={14} aria-hidden /> Return to latest
+ </button>
+ ) : null}
  {lastFailed && !busy ? (
  <div className="mx-auto mb-2 w-full max-w-[760px]">
  <button
@@ -1065,7 +1084,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[14px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
  style={{ minHeight: 44, maxHeight: 160, fontFamily: "inherit" }}
  />
- <div className="flex items-center gap-1.5 px-2 pb-2">
+ <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
  {token ? (
  <>
  <input
@@ -1092,10 +1111,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </>
  ) : null}
  <span
- className="mono inline-flex items-center gap-1.5 rounded-full border border-[var(--etched-border)] px-2.5 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)]"
+ className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-[var(--etched-border)] px-2.5 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)]"
  title="The model this agent is currently running"
  >
- <Cpu size={11} /> {shownModel}
+ <Cpu size={11} className="shrink-0" /> <span className="truncate">{shownModel}</span>
  </span>
  <button
  type="button"
