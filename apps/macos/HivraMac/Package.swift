@@ -22,7 +22,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HivraMacTests",
-            dependencies: ["HivraMacCore"]
+            dependencies: ["HivraMacCore", "HivraMac"]
         ),
     ]
 )

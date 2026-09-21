@@ -20,6 +20,9 @@ struct HivraRootView: View {
             activateConnection()
             localRuntime.reconcile()
         }
+        .onDisappear {
+            for session in workspaces.sessions.values { session.clearOwnedViews() }
+        }
         .onChange(of: profileStore.selectedProfileID) { _, _ in activateConnection() }
         .onChange(of: profileStore.profiles) { _, profiles in
             workspaces.reconcile(profiles: profiles)
@@ -41,6 +44,7 @@ struct HivraRootView: View {
         guard let profile = profileStore.selectedProfile else { session = nil; return }
         let alreadyOpen = workspaces.sessions[profile.id] != nil
         session = workspaces.session(for: profile)
+        session?.onReturnToWorkspace = { [weak profileStore] in profileStore?.select(profile) }
         if !alreadyOpen && profile.isBuiltInLocal { signInLocalConnection() }
     }
 
@@ -80,6 +84,15 @@ private struct HivraWorkspaceView: View {
                         HivraNativeOverview(session: session)
                     } else {
                         HivraNativeInventory(session: session, kind: session.destination == .agents ? .agent : .computer)
+                    }
+                } else if let tab = session.activeTab, session.detachedWindows[tab.id] != nil {
+                    ContentUnavailableView {
+                        Label(tab.displayName, systemImage: "macwindow.on.rectangle")
+                    } description: {
+                        Text("This workspace is open in a separate window.")
+                    } actions: {
+                        Button("Show Window") { session.detach(tab) }
+                        Button("Return to Hivra") { session.reattach(tab.id) }
                     }
                 } else {
                     HivraFocusedWorkPane(
@@ -142,7 +155,7 @@ private struct HivraWorkspaceView: View {
             }
             .padding(.horizontal, 12)
             .frame(height: HivraWindowChrome.headerHeight)
-            .background(HivraWindowDragRegion(title: windowTitle))
+            .background(HivraWindowDragRegion(title: windowTitle, onWindow: { session.workspaceWindow = $0 }))
             VStack(alignment: .leading, spacing: 19) {
                 HivraWordmark().foregroundStyle(HivraDesign.foreground(for: scheme))
                 connectionMenu
@@ -263,8 +276,9 @@ private struct HivraWorkspaceView: View {
                         Button("Open in Separate Window") {
                             if let tab = session.tabs.first(where: { $0.resourceUID == resource.uid }) {
                                 detach(tab)
-                            } else if let url = HivraWorkspaceRoute.url(for: resource.href, profile: session.profile) {
-                                detach(url, title: resource.name)
+                            } else {
+                                session.open(resource)
+                                if let tab = session.activeTab { detach(tab) }
                             }
                         }
                     }
@@ -376,18 +390,21 @@ private struct HivraWorkspaceView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: HivraWindowChrome.headerHeight)
-        .background(HivraWindowDragRegion(title: windowTitle))
+        .background(HivraWindowDragRegion(title: windowTitle, onWindow: { session.workspaceWindow = $0 }))
         .background(HivraDesign.surface(for: scheme))
         .accessibilityIdentifier("native-workspace-header")
     }
 
     private func detach(_ tab: HivraWorkspaceTab) {
-        guard let url = tab.browser.currentURL ?? HivraWorkspaceRoute.url(for: tab.resource.href, profile: session.profile) else { return }
-        detach(url, title: tab.displayName)
+        session.detach(tab)
     }
 
     private func detach(_ url: URL) {
-        detach(url, title: session.activeTab?.displayName ?? session.destination.label)
+        if let tab = session.activeTab, url == tab.browser.currentURL {
+            session.detach(tab)
+        } else {
+            detach(url, title: session.destination.label)
+        }
     }
 
     private func detach(_ url: URL, title: String) {

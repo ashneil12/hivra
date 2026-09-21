@@ -1,4 +1,5 @@
 /** @jest-environment jsdom */
+import "@testing-library/jest-dom";
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -227,6 +228,32 @@ describe("HivraConsoleDesktop", () => {
     expect(screen.getByRole("status").closest("header")).toBe(retry.closest("header"));
     fireEvent.click(retry);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("replaces the idle prompt during handoff and keeps loading until the gateway frame loads", async () => {
+    let finish!: (value: Response) => void;
+    fetchMock.mockImplementation(() => new Promise<Response>(resolve => { finish = resolve; }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Windows" profile="windows" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    expect(screen.getByText("Opening Windows…")).toBeInTheDocument();
+    expect(screen.queryByText("Open Windows desktop here")).not.toBeInTheDocument();
+    await act(async () => finish(await response(201, { success: true, data: {
+      launchUrl: "https://windows-canary.hermesos.cloud/guacamole/#/client/loading-test",
+    } })));
+    const frame = await screen.findByTitle("Windows Windows desktop");
+    expect(screen.getByText("Opening Windows…")).toBeInTheDocument();
+    fireEvent.load(frame);
+    expect(screen.queryByText("Opening Windows…")).not.toBeInTheDocument();
+    expect(screen.getByTitle("Windows Windows desktop")).toBe(frame);
+  });
+
+  it("clears the loading screen on handoff failure and leaves retry available", async () => {
+    fetchMock.mockImplementation(() => response(503, { error: "Gateway unavailable" }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Windows" profile="windows" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    await screen.findByText("Gateway unavailable");
+    expect(screen.queryByText("Opening Windows…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
   it("opens Windows inline without navigation and retains the same frame through fullscreen exit and tab changes", async () => {

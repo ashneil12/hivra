@@ -277,6 +277,10 @@ describe("TerminalPanel", () => {
     });
     expect(MockWebSocket.instances[0].url).toContain("wss://agent.example.com/_sidecar/api/terminal/ws");
     expect(MockWebSocket.instances[0].url).toContain("includeScrollback=1");
+    expect(screen.getByText("Opening terminal…")).toBeInTheDocument();
+    act(() => MockWebSocket.instances[0].onopen?.());
+    expect(screen.queryByText("Opening terminal…")).not.toBeInTheDocument();
+    expect(mockTerminal.dispose).not.toHaveBeenCalled();
   });
 
   it("falls back to the SSE bridge when start does not return a websocket url", async () => {

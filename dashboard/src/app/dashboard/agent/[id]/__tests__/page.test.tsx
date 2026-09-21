@@ -889,7 +889,8 @@ describe("AgentPage", () => {
       activity, provisioned_at: "2026-08-27T10:00:00Z", cpu: 2, ram: 4,
     });
     render(<AgentPage />);
-    const status = await screen.findByRole("status");
+    await screen.findByText(`${verb} EXISTING_AGENT…`);
+    const status = screen.getByRole("status");
     expect(status).toHaveTextContent(`${verb} EXISTING_AGENT…`);
     expect(status).toHaveTextContent(body);
     expect(status.querySelector("svg")).toHaveStyle({ display: "block", margin: "0 auto" });
@@ -904,7 +905,8 @@ describe("AgentPage", () => {
       activity: "cancelling", provisioned_at: null, cpu: 2, ram: 4,
     });
     render(<AgentPage />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Cancelling CANCELLED_AGENT…");
+    await screen.findByText("Cancelling CANCELLED_AGENT…");
+    expect(screen.getByRole("status")).toHaveTextContent("Cancelling CANCELLED_AGENT…");
     expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
     expect(screen.queryByText(/Once it is ready/)).not.toBeInTheDocument();
   });
@@ -916,7 +918,8 @@ describe("AgentPage", () => {
       provisioned_at: null, cpu: 2, ram: 4,
     });
     render(<AgentPage />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Updating UNKNOWN_AGENT…");
+    await screen.findByText("Updating UNKNOWN_AGENT…");
+    expect(screen.getByRole("status")).toHaveTextContent("Updating UNKNOWN_AGENT…");
     expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
   });
 

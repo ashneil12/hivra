@@ -4,6 +4,7 @@ import SwiftUI
 struct HivraFocusedWorkPane: View {
     @ObservedObject var browser: HivraBrowserModel
     let profile: HivraConnectionProfile
+    let onReturn: (() -> Void)?
     let onDetach: (URL) -> Void
     let onOpenLocalControls: (() -> Void)?
     let onUseHivraCanary: (() -> Void)?
@@ -16,8 +17,10 @@ struct HivraFocusedWorkPane: View {
         onDetach: @escaping (URL) -> Void,
         onOpenLocalControls: (() -> Void)? = nil,
         onUseHivraCanary: (() -> Void)? = nil,
-        onAddConnection: (() -> Void)? = nil
+        onAddConnection: (() -> Void)? = nil,
+        onReturn: (() -> Void)? = nil
     ) {
+        self.onReturn = onReturn
         self.browser = browser
         self.profile = profile
         self.onDetach = onDetach
@@ -59,12 +62,12 @@ struct HivraFocusedWorkPane: View {
                     ProgressView().controlSize(.small)
                         .accessibilityLabel("Loading work pane")
                 }
-                Button { onDetach(browser.currentURL ?? profile.url) } label: {
-                    Image(systemName: "macwindow.on.rectangle")
+                Button { if let onReturn { onReturn() } else { onDetach(browser.currentURL ?? profile.url) } } label: {
+                    Image(systemName: onReturn == nil ? "macwindow.on.rectangle" : "arrow.down.right.and.arrow.up.left")
                 }
                 .buttonStyle(HivraChromeButtonStyle())
-                .help("Open in Separate Window (⌥⌘O)")
-                .accessibilityLabel("Open in Separate Window")
+                .help(onReturn == nil ? "Open in Separate Window (⌥⌘O)" : "Return to Hivra")
+                .accessibilityLabel(onReturn == nil ? "Open in Separate Window" : "Return to Hivra")
                 navigationMenu
             }
             .frame(height: 38)
@@ -122,7 +125,11 @@ struct HivraFocusedWorkPane: View {
             Button("Forward", action: browser.goForward).disabled(!browser.canGoForward)
             Divider()
             Button(browser.isLoading ? "Stop loading" : "Reload", action: browser.toggleLoading)
-            Button("Open in Separate Window") { onDetach(browser.currentURL ?? profile.url) }
+            if let onReturn {
+                Button("Return to Hivra", action: onReturn)
+            } else {
+                Button("Open in Separate Window") { onDetach(browser.currentURL ?? profile.url) }
+            }
             if let onOpenLocalControls {
                 Divider()
                 Button("Local Hivra…", action: onOpenLocalControls)

@@ -1,5 +1,6 @@
 import ast
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -64,18 +65,30 @@ class ImagePreparationTests(unittest.TestCase):
             self.assertNotEqual(broken.returncode, 0)
             self.assertIn('ordering cycle', broken.stderr.lower())
 
-    def test_stream_defaults_capture_guest_cursor_without_stale_frame_backlog(self):
+    def test_stream_defaults_keep_cursor_local_without_stale_frame_backlog(self):
         source = SCRIPT.read_text()
         self.assertIn('SELKIES_ENABLE_CURSORS=true', source)
         self.assertIn('SELKIES_BACKPRESSURE_QUEUE_SIZE=4', source)
 
-    def test_uses_verified_local_pinned_image_when_registry_digest_is_gone(self):
+    def test_uses_verified_local_config_digest_when_registry_digest_is_gone(self):
         image = 'ghcr.io/example/selkies@sha256:' + 'a' * 64
-        result = subprocess.CompletedProcess([], 0, stdout=('sha256:' + 'a' * 64 + '\n').encode())
+        result = subprocess.CompletedProcess([], 0, stdout=json.dumps({
+            'id': 'sha256:' + 'a' * 64, 'repoDigests': [],
+        }).encode())
         with patch.object(installer.subprocess, 'run', return_value=result) as run:
             installer.ensure_image(image)
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0][1:3], ['image', 'inspect'])
+
+    def test_uses_verified_local_repository_manifest_digest(self):
+        image = 'ghcr.io/example/selkies@sha256:' + 'a' * 64
+        result = subprocess.CompletedProcess([], 0, stdout=json.dumps({
+            'id': 'sha256:' + 'b' * 64,
+            'repoDigests': ['ghcr.io/example/selkies@sha256:' + 'a' * 64],
+        }).encode())
+        with patch.object(installer.subprocess, 'run', return_value=result) as run:
+            installer.ensure_image(image)
+        run.assert_called_once()
 
     def test_pulls_when_pinned_image_is_not_local(self):
         image = 'node@sha256:' + 'b' * 64
@@ -83,6 +96,12 @@ class ImagePreparationTests(unittest.TestCase):
         with patch.object(installer.subprocess, 'run', side_effect=[missing, None]) as run:
             installer.ensure_image(image)
         self.assertEqual(run.call_args_list[1].args[0], ['/usr/bin/docker', 'pull', image])
+
+    def test_pins_selkies_release_with_host_wayland_cursor_delivery(self):
+        source = SCRIPT.read_text()
+        self.assertIn('selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b', source)
+        self.assertIn('from selkies.websockets_mode import DataStreamingServer', source)
+        self.assertIn('from selkies.display_utils import wayland_output_id', source)
 
 
 if __name__ == '__main__':

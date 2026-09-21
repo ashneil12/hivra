@@ -25,7 +25,7 @@ const descriptor: PreparedOmarchyNativeDescriptor = {
   preparedSha256: "d".repeat(64), guestBootId: "55555555-5555-4555-8555-555555555555",
   observedBoottimeNs: "1000000000000", compositor: "wayland-hyprland",
   webBrokerOrigin: "https://omarchy-canary.hermesos.cloud",
-  webSelkiesImage: "ghcr.io/selkies-project/selkies/desktop@sha256:395336daf8a8552949da12a969e0d7a0893309a01e65c81fb75bb0cbab3e3756",
+  webSelkiesImage: "ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b",
   webNodeImage: "node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32",
   route: { status: "configured-proven", publicIpv4: "198.51.100.11", tcpPorts: [47984, 47989, 48010],
     udpPorts: [5353, 47998, 47999, 48000, 48002, 48010], sourceCidrs: ["10.240.20.1/32"] },
