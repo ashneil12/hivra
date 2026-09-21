@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { mintActivityCollectorToken } from "@/lib/activity-observability/auth";
 import { buildActivitySnapshot, type ActivityEventRow } from "@/lib/activity-observability/feed";
@@ -6,7 +7,7 @@ import { POST } from "../route";
 
 jest.mock("@/lib/supabase",()=>({supabaseAdmin:{from:jest.fn()}}));
 const A="00000000-0000-4000-8000-000000000001",B="00000000-0000-4000-8000-000000000002";
-const SECRET="test-signing-secret-with-at-least-32-characters"; const ORIGINAL_ENV=process.env;
+const SECRET=randomBytes(32).toString("hex"); const ORIGINAL_ENV=process.env;
 const ns=()=>String(BigInt(Date.now())*1_000_000n);
 const attr=(key:string,stringValue:string)=>({key,value:{stringValue}});
 const payload=()=>({resourceLogs:[{scopeLogs:[{logRecords:[{timeUnixNano:ns(),traceId:"a".repeat(32),spanId:"b".repeat(16),eventName:"private prompt",body:{stringValue:"raw-secret"},attributes:[attr("tool_name","Read"),attr("success","true"),attr("command","raw-secret")]}]}]}]});
