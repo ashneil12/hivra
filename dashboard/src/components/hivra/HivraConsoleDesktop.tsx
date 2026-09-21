@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { Loader2, Maximize2, MonitorUp, RefreshCw, ShieldCheck } from "lucide-react";
 
 import {
@@ -124,6 +125,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   const [windowsPreparationMessage, setWindowsPreparationMessage] = useState("");
   const [windowsLaunchState, setWindowsLaunchState] = useState<WindowsLaunchState>("idle");
   const [windowsLaunchUrl, setWindowsLaunchUrl] = useState<string | null>(null);
+  const [windowsFrameLoading, setWindowsFrameLoading] = useState(false);
   const windowsFrameRef = useRef<HTMLIFrameElement>(null);
   const windowsAttemptRef = useRef(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -136,6 +138,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   useEffect(() => {
     windowsAttemptRef.current += 1;
     setWindowsLaunchUrl(null);
+    setWindowsFrameLoading(false);
     setWindowsLaunchState("idle");
     setWindowsPreparationState("idle");
     setWindowsPreparationMessage("");
@@ -659,6 +662,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
     }
     // Keep the authenticated handoff only in memory. The same frame survives
     // tab changes and browser fullscreen exit without reconnecting the guest.
+    setWindowsFrameLoading(true);
     setWindowsLaunchUrl(launchUrl.toString());
     setWindowsLaunchState("idle");
     setMessage("Windows desktop is opening inline");
@@ -774,15 +778,17 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
           {windowsPreparationMessage}
         </div>
       ) : null}
-      <div ref={viewportRef} aria-label={`${name} interactive desktop`} style={{ flex: 1, minHeight: 0, overflow: "hidden", background: "#000" }}>
+      <div ref={viewportRef} aria-label={`${name} interactive desktop`} style={{ flex: 1, minHeight: 0, overflow: "hidden", background: "#000", position: "relative" }}>
         {profile === "windows" ? windowsLaunchUrl ? (
           <iframe ref={windowsFrameRef} title={`${name} Windows desktop`} src={windowsLaunchUrl}
             sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads"
             allow="clipboard-read https://windows-canary.hermesos.cloud; clipboard-write https://windows-canary.hermesos.cloud"
             referrerPolicy="no-referrer"
-            onLoad={() => { setMessage("Windows desktop gateway loaded · Full screen is optional"); windowsFrameRef.current?.focus(); }}
-            onError={() => { setWindowsLaunchState("failed"); setMessage("Windows desktop could not load. Reconnect Windows to request a fresh session."); }}
+            onLoad={() => { setWindowsFrameLoading(false); setMessage("Windows desktop gateway loaded · Full screen is optional"); windowsFrameRef.current?.focus(); }}
+            onError={() => { setWindowsFrameLoading(false); setWindowsLaunchState("failed"); setMessage("Windows desktop could not load. Reconnect Windows to request a fresh session."); }}
             style={{ display: "block", width: "100%", height: "100%", border: 0, background: "#000" }} />
+        ) : windowsLaunchState === "opening" ? (
+          <LoadingState dark label={windowsPreparationState === "preparing" ? "Preparing Windows…" : "Opening Windows…"} detail={name} />
         ) : (
           <div style={{ height: "100%", display: "grid", placeItems: "center", padding: 32, textAlign: "center", color: "#eee" }}>
             <div style={{ maxWidth: 520 }}>
@@ -792,7 +798,12 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
             </div>
           </div>
         ) : null}
-        {profile === "omarchy" ? (
+        {profile === "windows" && windowsLaunchUrl && (windowsFrameLoading || windowsLaunchState === "opening") ? (
+          <div style={{ position: "absolute", inset: 0 }}><LoadingState dark label="Opening Windows…" detail={name} /></div>
+        ) : null}
+        {profile === "omarchy" && (nativeState === "opening" || nativeState === "switching") ? (
+          <LoadingState dark label={nativeState === "switching" ? "Switching desktop quality…" : "Opening Omarchy…"} detail={name} />
+        ) : profile === "omarchy" ? (
           <div style={{ height: "100%", display: "grid", placeItems: "center", padding: 32, textAlign: "center", color: "#eee" }}>
             <div style={{ maxWidth: 520 }}>
               <MonitorUp size={34} style={{ margin: "0 auto 16px" }} />

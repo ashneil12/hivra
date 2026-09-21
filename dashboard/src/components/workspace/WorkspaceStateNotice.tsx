@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/ui/LoadingState";
 import type { AgentComputer } from "@/lib/agent-computers/contracts";
 
 export type WorkspaceNoticeState =
@@ -147,6 +148,7 @@ function noticeContent({
 }
 
 export function WorkspaceStateNotice(props: WorkspaceStateNoticeProps) {
+  if (props.state === "loading") return <LoadingState label={`Opening ${props.surfaceLabel}…`} />;
   const content = noticeContent(props);
   const alert = props.state === "revoked" || props.blocking === true;
   const updatedRelative = relativeTime(props.updatedAt, props.now);

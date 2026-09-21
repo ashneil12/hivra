@@ -9,6 +9,7 @@ import styles from "./ResourceWorkspace.module.css";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
@@ -744,12 +745,7 @@ export default function AgentPage() {
   }, [agent, id]);
 
   if (flagOn === null) {
-    return (
-      <div role="status" aria-live="polite" style={{ padding: 48, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-muted)" }}>
-        <Loader2 aria-hidden="true" size={16} style={{ animation: "spin 1s linear infinite" }} />
-        <span>Checking availability…</span>
-      </div>
-    );
+    return <LoadingState label="Checking availability…" />;
   }
   if (!flagOn) {
     return <div className={styles.statusPanel}>This preview isn&apos;t enabled here.</div>;
@@ -765,7 +761,7 @@ export default function AgentPage() {
     );
   }
   if (!agent || agent.id !== id) {
-    return <div className={styles.statusPanel}><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /></div>;
+    return <LoadingState label="Opening your workspace…" />;
   }
 
   const def = catalogAgent(agent.type);
@@ -973,7 +969,7 @@ export default function AgentPage() {
           !agent.chat_url ? (
             <Stub title="Dashboard not reachable" body="The box is up but its dashboard endpoint isn't connected yet. Give it a moment." />
           ) : loggedIn === null && def?.connect === "github" ? (
-            <div style={{ padding: 56, textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+            <LoadingState compact label="Checking access…" />
           ) : loggedIn || def?.connect !== "github" ? (
             // No GitHub connect step (OpenClaw, Agent Zero — they run ON the box, not
             // on the user's GitHub) → go straight to the embedded dashboard; the box's
@@ -1002,7 +998,7 @@ export default function AgentPage() {
               <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
             </div>
           ) : loggedIn === null ? (
-            <div style={{ padding: 56, textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+            <LoadingState compact label="Checking access…" />
           ) : loggedIn ? (
             <HivraChat boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
           ) : (

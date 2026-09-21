@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import Link from 'next/link';
+import Link from '@/components/ui/NavigationLink';
 import { UserButton } from '@clerk/nextjs';
 import styles from './ClientLayoutWrapper.module.css';
 import { DashboardSidebar } from './DashboardSidebar';

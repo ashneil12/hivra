@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { Loader2, Maximize2, Monitor, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 
 import styles from "./HivraRemoteDesktop.module.css";
@@ -1176,16 +1177,14 @@ export function HivraRemoteDesktop({
             style={{ display: "block", height: "100%", width: "100%", border: 0, background: "#090909" }}
           />
         </HivraDesktopViewport>
+      ) : state === "connecting" || state === "preparing" ? (
+        <LoadingState dark label="Opening your computer…" detail={message} />
       ) : (
         <div role="status" style={{ flex: 1, display: "grid", placeItems: "center", padding: 24, textAlign: "center", color: "var(--text-muted)" }}>
           <div style={{ maxWidth: 520 }}>
-            {state === "connecting" || state === "preparing" ? <Loader2 size={22} className="animate-spin" style={{ margin: "0 auto 14px" }} /> : <Monitor size={24} style={{ margin: "0 auto 14px" }} />}
+            <Monitor size={24} style={{ margin: "0 auto 14px" }} />
             <h2 className="serif" style={{ color: "var(--ink-black)", fontWeight: 400, fontSize: 24, marginBottom: 8 }}>
-              {state === "connecting"
-                ? "Opening your computer…"
-                : state === "preparing"
-                  ? "Opening your computer…"
-                  : state === "disconnected" ? "This desktop session has ended"
+              {state === "disconnected" ? "This desktop session has ended"
                   : state === "prepare-paused" ? "Desktop couldn’t open right now"
                     : state === "prepare-pending" ? "Desktop is still opening"
                     : state === "prepare-failed" ? "Desktop couldn’t open"
