@@ -2,7 +2,7 @@ name: Public release safety
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, canary]
   pull_request:
   workflow_dispatch:
 
