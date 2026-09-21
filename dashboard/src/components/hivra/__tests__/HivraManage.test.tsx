@@ -39,8 +39,8 @@ jest.mock("@/lib/hivra/agent-model-settings-api", () => ({
 }));
 
 jest.mock("@/components/instances/CookieImportModal", () => ({ CookieImportModal: () => null }));
-jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => null }));
-jest.mock("../HivraPrivateAccessPanel", () => ({ HivraPrivateAccessPanel: () => <div>Private access panel</div> }));
+jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => <div role="dialog" aria-label="Install tools" /> }));
+jest.mock("../HivraPrivateAccessPanel", () => ({ HivraPrivateAccessPanel: () => <div>Private access panel<input aria-label="Access draft" defaultValue="" /></div> }));
 jest.mock("@/components/billing/UpgradePaywallModal", () => ({ UpgradePaywallModal: () => null }));
 
 describe("HivraManage lifecycle guidance", () => {
@@ -63,6 +63,7 @@ describe("HivraManage lifecycle guidance", () => {
   const plan: PlanInfo = { key: "command", name: "Command", subscribed: true, maxAgents: 8, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128, usage: { agentCount: 3, usedCpu: 22, usedRam: 124 } };
 
   function confirmDeletion() {
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced" }));
     fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /I understand this is irreversible/ }));
     fireEvent.change(screen.getByPlaceholderText("TEST"), { target: { value: "TEST" } });
@@ -118,12 +119,14 @@ describe("HivraManage lifecycle guidance", () => {
   it("pauses managed browser enable while the plan is unknown", async () => {
     const onChanged = jest.fn();
     render(<HivraManage agent={{ ...agent, chat_url: "https://box.example.com", api_token: "test-token" }} def={getAgent("codex")} plan={null} browserOn={false} onChanged={onChanged} onDestroyed={jest.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Agent settings" }));
     const toggle = screen.getByRole("switch", { name: "Enable browser automation" });
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
     expect(mockBrowserToggle).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Check plan" }));
     expect(onChanged).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("tab", { name: "Agent settings" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Default" })).toBeInTheDocument());
   });
 
@@ -137,6 +140,7 @@ describe("HivraManage lifecycle guidance", () => {
     render(<HivraManage agent={{ ...agent, chat_url: "https://box.test", computer_substrate: "provider-vm", deployment_mode: "self-managed" }} def={getAgent("codex")} plan={null} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
     expect(screen.getByText(/Hivra does not become the host operator/)).toBeInTheDocument();
     expect(screen.queryByText(/Hivra administrators retain infrastructure access/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Agent settings" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Default" })).toBeInTheDocument());
   });
 
@@ -145,24 +149,33 @@ describe("HivraManage lifecycle guidance", () => {
     { deployment_mode: "hivra-managed", browserOn: true, next: false, name: "Disable browser automation" },
   ] as const)("allows $name for $deployment_mode without managed plan evidence", async ({ deployment_mode, browserOn, next, name }) => {
     render(<HivraManage agent={{ ...agent, deployment_mode, chat_url: "https://box.example.com", api_token: "test-token" }} def={getAgent("codex")} plan={null} browserOn={browserOn} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Agent settings" }));
     fireEvent.click(screen.getByRole("switch", { name }));
     await waitFor(() => expect(mockBrowserToggle).toHaveBeenCalledWith("https://box.example.com", next, "test-token"));
   });
 
   it("limits resize using account-wide usage", () => {
     render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "4 CPU" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "8 CPU" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "16 GB" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "8 CPU" })).toBeEnabled();
   });
 
   it("loads saved maxima and sends a maxima-only resize", async () => {
     const onChanged = jest.fn();
     render(<HivraManage agent={{ ...agent, cpu_max: 4, ram_max: 8 }} plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "4 CPU" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Maximum memory")).getByRole("button", { name: "8 GB" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     fireEvent.click(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "6 CPU" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     fireEvent.click(screen.getByRole("button", { name: /Apply · 2 CPU \/ 4 GB reserved · 6 CPU \/ 8 GB max/ }));
     await waitFor(() => expect(mockResizeAgent).toHaveBeenCalledWith("test-agent", 2, 4, 6, 8));
     expect(onChanged).toHaveBeenCalledTimes(1);
@@ -170,38 +183,25 @@ describe("HivraManage lifecycle guidance", () => {
 
   it("keeps saved fractional CPU and 3 GB memory visible as selected resource choices", () => {
     render(<HivraManage agent={{ ...agent, cpu: 1.5, ram: 3, cpu_max: 2, ram_max: 4 }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "1.5 CPU" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "3 GB" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("link", { name: "Resources" })).toHaveAttribute("href", "#resources");
+    expect(screen.getByRole("tab", { name: "Resources" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("scrolls to Resources after a hash-linked Manage surface mounts", async () => {
+  it("opens Resources after a hash-linked Manage surface mounts", () => {
     window.history.replaceState(null, "", "/dashboard/agent/test-agent?tab=manage#resources");
-    const scrollIntoView = jest.fn();
-    const original = HTMLElement.prototype.scrollIntoView;
-    HTMLElement.prototype.scrollIntoView = scrollIntoView;
-    try {
-      render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
-      expect(document.getElementById("resources")).toBeInTheDocument();
-    } finally {
-      HTMLElement.prototype.scrollIntoView = original;
-    }
+    render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("tabpanel", { name: "Resources" })).toBeVisible();
   });
 
-  it("canonicalizes a duplicated Resources fragment before scrolling", async () => {
+  it("canonicalizes a duplicated Resources fragment before selecting the panel", () => {
     window.history.replaceState(null, "", "/dashboard/agent/test-agent?tab=manage#resources#resources");
-    const scrollIntoView = jest.fn();
-    const original = HTMLElement.prototype.scrollIntoView;
-    HTMLElement.prototype.scrollIntoView = scrollIntoView;
-    try {
-      render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
-      expect(window.location.hash).toBe("#resources");
-      expect(new URLSearchParams(window.location.search).get("tab")).toBe("manage");
-    } finally {
-      HTMLElement.prototype.scrollIntoView = original;
-    }
+    render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("tabpanel", { name: "Resources" })).toBeVisible();
+    expect(window.location.hash).toBe("#resources");
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("manage");
   });
 
   it("allows removal but not conflicting power or resize actions during provisioning", () => {
@@ -210,12 +210,16 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "4" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced" }));
     expect(screen.getByRole("button", { name: "Destroy" })).toBeEnabled();
   });
   it("shows the saved resource envelope but prevents edits during a pending Proxmox lifecycle", () => {
     render(<HivraManage agent={{ ...agent, status: "provisioning", computer_substrate: "proxmox-kvm", cpu_max: 4, ram_max: 8 }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(screen.getByLabelText("Reserved CPU")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "4 CPU" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
   });
   it("hides an unsupported provider resize while provider power controls remain available", async () => {
@@ -262,7 +266,7 @@ describe("HivraManage lifecycle guidance", () => {
       onDestroyed={jest.fn()}
       browserOn={false}
     />);
-    expect(screen.getByText("Computer")).toBeInTheDocument();
+    expect(screen.getByText("Computer settings")).toBeInTheDocument();
     expect(screen.getByText(/your files and local logins remain on the computer/)).toBeInTheDocument();
     expect(screen.getByText(/Permanently deletes this computer and everything on it/)).toBeInTheDocument();
     expect(screen.queryByText(/Permanently deletes the agent and everything on it/)).not.toBeInTheDocument();
@@ -280,7 +284,10 @@ describe("HivraManage lifecycle guidance", () => {
       browserOn={false}
     />);
 
-    expect(screen.getByText(`${name} · Operating system`)).toBeInTheDocument();
+    expect(screen.getByText(name)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View resources" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Adjust resources" })).not.toBeInTheDocument();
+    expect(screen.getByText("View the fixed allocation for this prepared preview computer.")).toBeInTheDocument();
     expect(screen.getByText(new RegExp(`prepared ${name} computer`, "i"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
@@ -294,6 +301,7 @@ describe("HivraManage lifecycle guidance", () => {
     render(<HivraManage agent={{ ...agent, computer_substrate: "proxmox-kvm" }} plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
     expect(await screen.findByText("Same-host recovery")).toBeInTheDocument();
     expect(screen.getByText(/they are not an off-host backup/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Recovery" }));
     fireEvent.click(screen.getByRole("button", { name: "Create restore point" }));
     await waitFor(() => expect(mockSnapshotAgent).toHaveBeenCalledWith("test-agent"));
     expect(mockListAgentSnapshots).toHaveBeenCalledTimes(2);
@@ -316,6 +324,7 @@ describe("HivraManage lifecycle guidance", () => {
     });
     const onChanged = jest.fn();
     render(<HivraManage agent={{ ...agent, computer_substrate: "proxmox-kvm" }} plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Recovery" }));
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     expect(screen.getByText(/permanently removes changes made afterward/i)).toHaveTextContent("left stopped");
     expect(mockRestoreAgentSnapshot).not.toHaveBeenCalled();
@@ -345,12 +354,15 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.queryByText(/agent has a live, self-hosted Chrome/)).not.toBeInTheDocument();
     view.rerender(<HivraManage {...props} browserOn={false} />);
     expect(screen.queryByText("Not verified yet")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Agent settings" }));
     expect(screen.getByRole("switch", { name: "Enable browser automation" })).toBeDisabled();
   });
 
   it("keeps managed slot-only dashboard sizing fixed", () => {
     render(<HivraManage agent={{ ...agent, type: "aeon", cpu: 0.5, ram: 1 }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "4 CPU" })).toBeDisabled();
     expect(screen.getByText(/fixed 0.5 CPU \/ 1 GB allocation/)).toBeInTheDocument();
   });
@@ -359,9 +371,12 @@ describe("HivraManage lifecycle guidance", () => {
     const onChanged = jest.fn();
     const props = { agent, onChanged, onDestroyed: jest.fn(), browserOn: false };
     const view = render(<HivraManage {...props} plan={plan} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "4 CPU" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(screen.getByRole("button", { name: /Apply · 4 CPU \/ 4 GB reserved/ })).toBeEnabled();
     view.rerender(<HivraManage {...props} plan={null} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(screen.getByRole("button", { name: /Apply · 4 CPU \/ 4 GB reserved/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Refresh capacity" }));
     expect(onChanged).toHaveBeenCalledTimes(1);
@@ -369,6 +384,7 @@ describe("HivraManage lifecycle guidance", () => {
 
   it("keeps self-managed resizing available without managed billing data", () => {
     render(<HivraManage agent={{ ...agent, deployment_mode: "self-managed" }} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "8 CPU" })).toBeEnabled();
     expect(screen.getByText(/Host capacity is checked before applying/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Refresh capacity" })).not.toBeInTheDocument();
@@ -393,5 +409,76 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.queryByText(/no compute charges/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
+  });
+
+  it("navigates settings with the keyboard and exposes only the selected panel", () => {
+    render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    const overview = screen.getByRole("tab", { name: "Overview" });
+    expect(overview).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(overview, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Resources" })).toHaveFocus();
+    expect(screen.getByRole("tabpanel", { name: "Resources" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Resources" }), { key: "End" });
+    expect(screen.getByRole("tabpanel", { name: "Advanced" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Advanced" }), { key: "Home" });
+    expect(overview).toHaveFocus();
+  });
+
+  it("preserves resource and nested access drafts when navigating away and back", () => {
+    render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
+    fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "4 CPU" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Access" }));
+    const draft = screen.getByRole("textbox", { name: "Access draft" });
+    fireEvent.change(draft, { target: { value: "my private connection" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "4 CPU" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Unsaved allocation")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Access" }));
+    expect(screen.getByRole("textbox", { name: "Access draft" })).toBe(draft);
+    expect(draft).toHaveValue("my private connection");
+  });
+
+  it("follows hash changes and history traversal, with a safe invalid-section fallback", () => {
+    render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Access" }));
+    expect(window.location.hash).toBe("#access");
+    act(() => {
+      window.history.replaceState(null, "", "?tab=manage#resources");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(screen.getByRole("tabpanel", { name: "Resources" })).toBeVisible();
+    act(() => {
+      window.history.replaceState(null, "", "?tab=manage#not-a-panel");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(screen.getByRole("tabpanel", { name: "Overview" })).toBeVisible();
+  });
+
+  it("opens the agent tools deep link and retains unrelated URL parameters", async () => {
+    window.history.replaceState(null, "", "?tab=manage&tools=1");
+    render(<HivraManage agent={{ ...agent, chat_url: "https://box.test" }} def={getAgent("codex")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("tabpanel", { name: "Agent settings" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Install tools" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("manage");
+    await waitFor(() => expect(mockListAgentSnapshots).not.toHaveBeenCalled());
+  });
+
+  it("keeps operation errors visible after leaving the originating panel", async () => {
+    mockRestartAgent.mockRejectedValue(new Error("Restart could not be verified"));
+    render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Access" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Restart could not be verified");
+  });
+
+  it("hides agent-only settings on computers and falls back from an agent fragment", () => {
+    window.history.replaceState(null, "", "?tab=manage#agent");
+    render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop" }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.queryByRole("tab", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Overview" })).toBeVisible();
   });
 });

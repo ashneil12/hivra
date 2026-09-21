@@ -8,6 +8,8 @@ import { AgentModelSettingsError, cancelAgentLaunchModel, continueAgentLaunchMod
 import styles from "./AgentModelSettings.module.css";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
+import type { ManageFeedback } from "./ManageLayout";
+
 function description(config: Settings["llm"]) {
   if (!config) return "Native sign-in";
   return `Venice · ${config.mode === "byok" ? "your API key" : "managed gateway"}${config.model ? ` · ${config.model}` : ""}${config.mode === "managed" && config.keyPrefix ? ` · ${config.keyPrefix}…` : ""}`;
@@ -15,9 +17,10 @@ function description(config: Settings["llm"]) {
 
 /** Key this component by agent ID: drafts and in-flight response handlers must
  * never move between computers when the owner switches selection. */
-export function AgentModelSettings({ agentId, agentName, ready, disabled, onChanged, onBusyChange }: {
+export function AgentModelSettings({ agentId, agentName, ready, disabled, onChanged, onBusyChange, onFeedbackChange }: {
   agentId: string; agentName: string; ready: boolean; disabled: boolean; onChanged: () => void;
   onBusyChange: (busy: boolean) => void;
+  onFeedbackChange?: (feedback: ManageFeedback) => void;
 }) {
   const allowManaged = !isLocalAuthMode();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -25,6 +28,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeIsError, setNoticeIsError] = useState(false);
   const [upgradeRequired, setUpgradeRequired] = useState(false);
   const [mode, setMode] = useState<"byok" | "managed">("byok");
   const [apiKey, setApiKey] = useState("");
@@ -72,7 +76,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
       // says ready_to_apply. The server also durably permits only one attempt.
       automaticallyAttempted.current.add(launch.requestId);
     }
-    busyRef.current = true; setActing(true); onBusyChange(true); setError(null); setNotice(null);
+    busyRef.current = true; setActing(true); onBusyChange(true); setError(null); setNotice(null); setNoticeIsError(false);
     let message: string | null = null;
     try {
       if (action === "cancel") {
@@ -86,6 +90,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
     } catch (cause) {
       if (!signal.aborted) {
         message = (cause as Error).message;
+        setNoticeIsError(true);
         if (cause instanceof AgentModelSettingsError && cause.code === "guest_upgrade_required") setUpgradeRequired(true);
       }
     } finally {
@@ -108,7 +113,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
     const signal = lifetime.current?.signal;
     if (!signal || signal.aborted || busyRef.current || disabled || !ready || !settings || loading) return;
     if ((settings.pending || settings.launch) && !resumeId) return;
-    busyRef.current = true; setActing(true); onBusyChange(true); setError(null); setNotice(null);
+    busyRef.current = true; setActing(true); onBusyChange(true); setError(null); setNotice(null); setNoticeIsError(false);
     let message: string | null = null;
     try {
       const result = resumeId ? await resumeAgentModelSettings(agentId, resumeId, { signal })
@@ -118,6 +123,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
     } catch (cause) {
       if (!signal.aborted) {
         message = (cause as Error).message;
+        setNoticeIsError(true);
         if (cause instanceof AgentModelSettingsError && cause.code === "guest_upgrade_required") setUpgradeRequired(true);
       }
     } finally {
@@ -130,6 +136,14 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
       busyRef.current = false;
     }
   };
+
+  const pendingModel = Boolean(settings?.pending || settings?.launch);
+  useEffect(() => {
+    onFeedbackChange?.(error ? { kind: "alert", message: error }
+      : acting ? { kind: "status", message: "Applying model settings…" }
+        : notice ? { kind: noticeIsError ? "alert" : "status", message: notice }
+          : pendingModel ? { kind: "status", message: "A model connection is pending. Review its saved state in Agent settings." } : null);
+  }, [error, acting, notice, noticeIsError, pendingModel, onFeedbackChange]);
 
   const blocked = disabled || !ready || loading || acting || !settings || !!settings.pending || !!settings.launch || upgradeRequired;
   const launch = settings?.launch;

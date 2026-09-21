@@ -15,6 +15,8 @@ import {
   type ProviderResizeQuote,
 } from "@/lib/hivra/provider-agent-resize-contract";
 
+import type { ManageFeedback } from "./ManageLayout";
+
 const label: React.CSSProperties = {
   fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 700,
   textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--text-muted)",
@@ -45,7 +47,7 @@ function operationNeedsObservation(operation: ProviderResizeOperationView): bool
   return ["request_uncertain", "action_pending", "provider_pending"].includes(operation.stage);
 }
 
-export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; onChanged: () => void }) {
+export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: { agent: HivraAgent; onChanged: () => void; onFeedbackChange?: (feedback: ManageFeedback) => void }) {
   const [catalog, setCatalog] = useState<ProviderResizeCatalog | null>(null);
   const [operation, setOperation] = useState<ProviderResizeOperationView | null>(null);
   const [quote, setQuote] = useState<ProviderResizeQuote | null>(null);
@@ -195,6 +197,14 @@ export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; o
       setError(cause instanceof Error ? cause.message : "The saved Hetzner resize could not be confirmed.");
     } finally { setBusy(false); }
   };
+
+  const feedbackStage = operation?.stage;
+  const feedbackMessage = operation?.message;
+  useEffect(() => {
+    onFeedbackChange?.(unsupported ? null : error ? { kind: "alert", message: error }
+      : busy ? { kind: "status", message: "Checking the saved server-plan change…" }
+        : feedbackStage && feedbackMessage ? { kind: ["failed", "manual_attention", "request_uncertain"].includes(feedbackStage) ? "alert" : "status", message: feedbackMessage } : null);
+  }, [unsupported, error, busy, feedbackStage, feedbackMessage, onFeedbackChange]);
 
   if (loading || unsupported) return null;
 

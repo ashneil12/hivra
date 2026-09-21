@@ -8,13 +8,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Power, RefreshCw, Trash2, Pencil, Check, X, Copy, ExternalLink, Loader2,
-  AlertTriangle, Cpu, MemoryStick, Globe, Hash, Server, Clock, ShieldCheck, KeyRound, Wrench,
+  AlertTriangle, Cpu, MemoryStick, Globe, Hash, Clock, ShieldCheck, KeyRound, Wrench,
 } from "lucide-react";
 import { CookieImportModal } from "@/components/instances/CookieImportModal";
 import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
+import { ManageLayout, ManagePanel, useManageSection, manageStyles, type ManageSection, type ManageFeedback } from "./ManageLayout";
 import { GvisorComputerManage } from "./GvisorComputerManage";
 
 import {
@@ -131,7 +132,11 @@ function Row({ icon, k, children }: { icon: React.ReactNode; k: string; children
   );
 }
 
-export function HivraManage({
+export function HivraManage(props: Parameters<typeof HivraManageContent>[0]) {
+  return <HivraManageContent key={props.agent.id} {...props} />;
+}
+
+function HivraManageContent({
   agent, def, onChanged, onDestroyed, browserOn, onBrowserChange, plan,
 }: {
   agent: HivraAgent;
@@ -144,6 +149,9 @@ export function HivraManage({
   /** The user's plan (pool budget + per-agent caps). null = loading/unsubscribed. */
   plan?: PlanInfo | null;
 }) {
+  const [accessFeedback, setAccessFeedback] = useState<ManageFeedback>(null);
+  const [resizeFeedback, setResizeFeedback] = useState<ManageFeedback>(null);
+  const [modelFeedback, setModelFeedback] = useState<ManageFeedback>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Locked-feature paywall (browser automation on Free). null = closed.
@@ -241,19 +249,6 @@ export function HivraManage({
     setMaximumCpu(Math.max(agent.cpu_max ?? agent.cpu, nextCpu));
     setMaximumRam(Math.max(agent.ram_max ?? agent.ram, nextRam));
   }, [agent.cpu, agent.ram, agent.cpu_max, agent.ram_max, floor.cpu, floor.ram]);
-  useEffect(() => {
-    if (window.location.hash === "#resources#resources") {
-      const canonical = new URL(window.location.href);
-      canonical.hash = "resources";
-      window.history.replaceState(window.history.state, "", `${canonical.pathname}${canonical.search}${canonical.hash}`);
-    }
-    if (window.location.hash !== "#resources") return;
-    const frame = window.requestAnimationFrame(() => {
-      const resources = document.getElementById("resources");
-      if (resources && typeof resources.scrollIntoView === "function") resources.scrollIntoView({ block: "start" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [agent.id]);
 
   const budget = resizeBudget(agent, plan);
   const hasPlan = budget.showPool;
@@ -422,6 +417,9 @@ export function HivraManage({
     && maximumCpu >= rcpu && maximumRam >= rram
     && maximumCpu <= maximumCapCpu && maximumRam <= maximumCapRam;
 
+  const sections: ManageSection[] = ["overview", "resources", "access", ...(!isComputerOnly ? ["agent" as const] : []), ...(snapshotComputer || (agent.type === "linux-desktop" && agent.computer_profile === "ubuntu-desktop" && !providerComputer) ? ["recovery" as const] : []), "advanced"];
+  const { selected, select } = useManageSection(sections);
+
   const btnDark: React.CSSProperties = {
     border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)",
     fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800,
@@ -436,27 +434,13 @@ export function HivraManage({
   if (gvisorComputer) return <GvisorComputerManage agent={agent} onChanged={onChanged} onDestroyed={onDestroyed} />;
 
   return (
-    <div style={{ width: "100%", maxWidth: 620, margin: "0 auto", padding: "clamp(20px, 5vw, 36px) clamp(14px, 4vw, 20px)", height: "100%", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box" }}>
-      {err ? (
-        <div style={{ border: "1px solid #c0392b", background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 12.5, padding: "9px 13px", marginBottom: 16, fontFamily: "var(--font-mono), monospace" }}>{err}</div>
-      ) : null}
-
-      {paywallFeature ? (
-        <UpgradePaywallModal
-          feature={paywallFeature}
-          currentPlan={plan?.key ?? null}
-          onClose={() => setPaywallFeature(null)}
-        />
-      ) : null}
-
-      {/* OVERVIEW */}
-      <div className="mono" style={{ ...label, marginBottom: 10 }}>Overview</div>
-      <div style={{ ...card, marginBottom: 20 }}>
+    <ManageLayout sections={sections} selected={selected} onSelect={select} header={<><span className={manageStyles.eyebrow}>{isComputerOnly ? "Computer settings" : "Agent settings"}</span>
         {/* name + rename */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           {editing ? (
             <>
               <input
+                aria-label="Name"
                 value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 maxLength={60}
@@ -477,26 +461,41 @@ export function HivraManage({
             </>
           )}
         </div>
+<div className={manageStyles.identity}>
+<span className={manageStyles.status}><span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: STATUS_COLOR[agent.status] || "var(--text-muted)" }} />{lifecyclePending ? agentActivityPresentation(agent, computerTemplate?.name || def?.name || "the agent").label : agent.status}</span>
+<span>{computerTemplate?.name || def?.name || agent.type}</span><span>·</span><span>{agent.deployment_mode === "self-managed" ? "Your infrastructure" : "Hivra Cloud"}</span>
+</div></>} notice={<>      {err ? (
+        <div role="alert" style={{ border: "1px solid #c0392b", background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 12.5, padding: "9px 13px", marginBottom: 16, fontFamily: "var(--font-mono), monospace" }}>{err}</div>
+      ) : null}
 
-        <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 14, display: "grid", gap: 9, gridTemplateColumns: "minmax(0, 1fr)" }}>
-          <Row icon={<Server size={14} />} k={isComputerOnly ? "Computer" : "Agent"}><span style={valStyle}>{computerTemplate ? `${computerTemplate.name} · Operating system` : `${def?.name || agent.type} · ${def?.vendor || "—"}`}</span></Row>
-          <Row icon={<span style={{ width: 9, height: 9, borderRadius: "50%", background: STATUS_COLOR[agent.status] || "var(--text-muted)", display: "inline-block" }} />} k="Status"><span style={{ ...valStyle, textTransform: "capitalize" }}>{lifecyclePending ? agentActivityPresentation(agent, computerTemplate?.name || def?.name || "the agent").label : agent.status}</span></Row>
-          <Row icon={<Cpu size={14} />} k="Size"><span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><span style={valStyle}>{agent.cpu} CPU · {agent.ram} GB reserved · up to {agent.cpu_max ?? agent.cpu} CPU · {agent.ram_max ?? agent.ram} GB</span><a href="#resources" style={{ ...label, color: "var(--ink-black)" }}>Resources</a></span></Row>
-          <Row icon={<Globe size={14} />} k="Region"><span style={valStyle}>{providerComputer ? "See your provider project" : "EU"}</span></Row>
-          {agent.ip ? <Row icon={<Globe size={14} />} k="IP"><span style={valStyle}>{agent.ip}</span></Row> : null}
-          {agent.vmid ? <Row icon={<Hash size={14} />} k="Box"><span style={valStyle}>{agent.vmid}</span></Row> : null}
-          <Row icon={<Clock size={14} />} k="Created"><span style={valStyle}>{fmtDate(agent.created_at)}</span></Row>
-          {agent.chat_url ? (
-            <Row icon={<Globe size={14} />} k="Endpoint">
-              <span style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
-                <span style={{ ...valStyle, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{agent.chat_url.replace(/^https?:\/\//, "")}</span>
-                <button type="button" onClick={() => void copyEndpoint()} title="Copy URL" className="mono" style={{ ...label, border: "1px solid var(--etched-border)", padding: "4px 7px", cursor: "pointer", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>{copied ? <Check size={11} /> : <Copy size={11} />}{copied ? "Copied" : "Copy"}</button>
-                <a href={agent.chat_url} target="_blank" rel="noopener noreferrer" title="Open" style={{ color: "var(--text-secondary)", display: "inline-flex", flexShrink: 0 }}><ExternalLink size={13} /></a>
-              </span>
-            </Row>
-          ) : null}
+      {paywallFeature ? (
+        <UpgradePaywallModal
+          feature={paywallFeature}
+          currentPlan={plan?.key ?? null}
+          onClose={() => setPaywallFeature(null)}
+        />
+      ) : null}
+
+        {providerComputer && providerPowerMessage(agent.power_stage) ? <p
+          role={["verification_unavailable", "request_uncertain", "failed"].includes(String(agent.power_stage)) ? "alert" : "status"}
+          style={{ margin: 0, padding: "12px 14px", border: "1px solid var(--etched-border)", fontSize: 12, lineHeight: 1.6 }}
+        >{providerPowerMessage(agent.power_stage)}</p> : null}
+{selected !== "overview" && acting && LIFECYCLE_PROGRESS[acting] ? <p role="status">{LIFECYCLE_PROGRESS[acting].title} {LIFECYCLE_PROGRESS[acting].detail}</p> : null}
+{selected !== "advanced" && acting === "destroy" && deletionProgress ? <p role="status">{deletionProgress}</p> : null}
+{acting && !LIFECYCLE_PROGRESS[acting] && acting !== "destroy" && acting !== "llm" ? <p role="status" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}><Loader2 size={13} aria-hidden="true" /> {acting === "snapshot" ? "Creating restore point…" : acting === "restore" ? "Restoring the computer…" : acting === "resize" ? "Applying resources…" : "Saving changes…"}</p> : null}
+{([{ section: "access", title: "Access", feedback: accessFeedback }, { section: "resources", title: "Resources", feedback: resizeFeedback }, { section: "agent", title: "Agent settings", feedback: modelFeedback }] as const).map(({ section, title, feedback }) => feedback && selected !== section ? (
+  <div key={section} role={feedback.kind} className={manageStyles.feedback}>
+    <span>{feedback.message}</span><button type="button" onClick={() => select(section)}>Open {title}</button>
+  </div>
+) : null)}
+</>}>
+      <ManagePanel section="overview" selected={selected}>
+        <h2 className={manageStyles.title}>Your {isComputerOnly ? "computer" : "agent"}, at a glance</h2>
+        <p className={manageStyles.description}>Power controls and the resources assigned to this box.</p>
+        <div className={manageStyles.metrics}>
+          <div className={manageStyles.metric}><span className={manageStyles.eyebrow}>{providerComputer || preparedComputer ? "Allocated CPU" : "CPU reservation"}</span><strong>{agent.cpu} <small>CPU</small></strong><small>{providerComputer || preparedComputer ? "Assigned to this computer" : `Up to ${agent.cpu_max ?? agent.cpu} CPU when available`}</small></div>
+          <div className={manageStyles.metric}><span className={manageStyles.eyebrow}>{providerComputer || preparedComputer ? "Allocated memory" : "Memory reservation"}</span><strong>{agent.ram} <small>GB</small></strong><small>{providerComputer || preparedComputer ? "Assigned to this computer" : `Up to ${agent.ram_max ?? agent.ram} GB when available`}</small></div>
         </div>
-      </div>
 
       {/* POWER */}
       <div className="mono" style={{ ...label, marginBottom: 10 }}>Power</div>
@@ -534,112 +533,120 @@ export function HivraManage({
             </div>
           </div>
         ) : null}
-        {providerComputer && providerPowerMessage(agent.power_stage) ? <p
-          role={["verification_unavailable", "request_uncertain", "failed"].includes(String(agent.power_stage)) ? "alert" : "status"}
-          style={{ margin: 0, padding: "12px 14px", border: "1px solid var(--etched-border)", fontSize: 12, lineHeight: 1.6 }}
-        >{providerPowerMessage(agent.power_stage)}</p> : null}
+
       </div>
-
-      {snapshotComputer ? (
+<button type="button" style={btnGhost} onClick={() => select("resources")}>{preparedComputer || budget.fixedSize ? "View resources" : providerComputer ? "View server plans" : "Adjust resources"}</button>
+        <details className={manageStyles.details}><summary>Technical details</summary>
+        <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 14, display: "grid", gap: 9, gridTemplateColumns: "minmax(0, 1fr)" }}>
+          <Row icon={<Globe size={14} />} k="Region"><span style={valStyle}>{providerComputer ? "See your provider project" : "EU"}</span></Row>
+          {agent.ip ? <Row icon={<Globe size={14} />} k="IP"><span style={valStyle}>{agent.ip}</span></Row> : null}
+          {agent.vmid ? <Row icon={<Hash size={14} />} k="Box"><span style={valStyle}>{agent.vmid}</span></Row> : null}
+          <Row icon={<Clock size={14} />} k="Created"><span style={valStyle}>{fmtDate(agent.created_at)}</span></Row>
+          {agent.chat_url ? (
+            <Row icon={<Globe size={14} />} k="Endpoint">
+              <span style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
+                <span style={{ ...valStyle, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{agent.chat_url.replace(/^https?:\/\//, "")}</span>
+                <button type="button" onClick={() => void copyEndpoint()} title="Copy URL" className="mono" style={{ ...label, border: "1px solid var(--etched-border)", padding: "4px 7px", cursor: "pointer", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>{copied ? <Check size={11} /> : <Copy size={11} />}{copied ? "Copied" : "Copy"}</button>
+                <a href={agent.chat_url} target="_blank" rel="noopener noreferrer" title="Open" style={{ color: "var(--text-secondary)", display: "inline-flex", flexShrink: 0 }}><ExternalLink size={13} /></a>
+              </span>
+            </Row>
+          ) : null}
+        </div></details>
+      </ManagePanel>
+      <ManagePanel section="resources" selected={selected}><h2 className={manageStyles.title}>{providerComputer ? "Server plan" : "Resource allocation"}</h2><p className={manageStyles.description}>{preparedComputer ? "View the fixed allocation for this prepared preview computer." : providerComputer ? "Review your cloud server plan and the resize options available from your provider." : budget.fixedSize ? "View the fixed allocation included with this managed dashboard." : "Choose what this box reserves and how much it can use."}</p>      {/* RESIZE */}
+      <section id="resources" style={{ scrollMarginTop: 24 }}>
+      {providerComputer ? <ProviderResizePanel agent={agent} onChanged={onChanged} onFeedbackChange={setResizeFeedback} /> : preparedComputer ? (
         <>
-          <div className="mono" style={{ ...label, marginBottom: 10 }}>Restore points</div>
+          <div className="mono" style={{ ...label, marginBottom: 10 }}>Size</div>
           <div style={{ ...card, marginBottom: 20 }}>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Same-host recovery</div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55, marginTop: 3 }}>
-                  Capture this Proxmox computer in place. Restore points stay on the same host until you destroy the computer; they are not an off-host backup.
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={busy || lifecyclePending || !["running", "stopped"].includes(agent.status) || snapshots.length >= snapshotMaximum}
-                onClick={() => void run("snapshot", async () => {
-                  await snapshotAgent(agent.id);
-                  await refreshSnapshots();
-                })}
-                style={{ ...btnDark, cursor: busy || lifecyclePending || snapshots.length >= snapshotMaximum ? "default" : "pointer", opacity: busy || lifecyclePending || snapshots.length >= snapshotMaximum ? 0.5 : 1 }}
-              >
-                {acting === "snapshot" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <ShieldCheck size={14} />}
-                Create restore point
-              </button>
-            </div>
-
-            {snapshotsLoading && snapshots.length === 0 ? (
-              <div role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading restore points…</div>
-            ) : snapshotsError ? (
-              <div role="alert" style={{ fontSize: 12, color: "#e06c5a", lineHeight: 1.5 }}>
-                {snapshotsError} <button type="button" onClick={() => void refreshSnapshots()} style={{ ...btnGhost, marginLeft: 8 }}>Retry</button>
-              </div>
-            ) : snapshots.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No restore points yet.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 9 }}>
-                {snapshots.map((snapshot, index) => (
-                  <div key={snapshot.id} style={{ border: "1px solid var(--etched-border)", padding: 12, display: "grid", gap: 9 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ flex: 1, minWidth: 180 }}>
-                        <div className="mono" style={{ fontSize: 11.5, color: "var(--ink-black)" }}>Restore point {snapshots.length - index}</div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
-                          {fmtDate(snapshot.createdAt)} · {snapshot.status === "ready" ? "Ready" : snapshot.status === "creating" ? "Verifying" : snapshot.status === "restoring" ? "Restoring" : "Needs attention"}
-                          {snapshot.restoreCount > 0 ? ` · restored ${snapshot.restoreCount}×` : ""}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={busy || lifecyclePending || snapshot.status !== "ready"}
-                        onClick={() => setRestoreConfirmId(snapshot.id)}
-                        style={{ ...btnGhost, cursor: busy || lifecyclePending || snapshot.status !== "ready" ? "default" : "pointer", opacity: busy || lifecyclePending || snapshot.status !== "ready" ? 0.5 : 1 }}
-                      >
-                        <RefreshCw size={13} /> Restore
-                      </button>
-                    </div>
-                    {snapshot.error ? <div role="alert" style={{ color: "#e06c5a", fontSize: 11.5 }}>{snapshot.error}</div> : null}
-                    {restoreConfirmId === snapshot.id ? (
-                      <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 10, display: "grid", gap: 9 }}>
-                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)" }}>
-                          <AlertTriangle size={15} style={{ color: "#e06c5a", flexShrink: 0, marginTop: 2 }} />
-                          Restoring rolls the disk back to this point and permanently removes changes made afterward. The computer will be left stopped; start it after you review the result.
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button
-                            type="button"
-                            disabled={busy || lifecyclePending}
-                            onClick={() => void run("restore", async () => {
-                              await restoreAgentSnapshot(agent.id, snapshot.id);
-                              setRestoreConfirmId(null);
-                              await refreshSnapshots();
-                            })}
-                            style={{ ...btnDark, cursor: busy || lifecyclePending ? "default" : "pointer" }}
-                          >
-                            {acting === "restore" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />}
-                            Confirm restore
-                          </button>
-                          <button type="button" disabled={busy} onClick={() => setRestoreConfirmId(null)} style={{ ...btnGhost, cursor: busy ? "default" : "pointer" }}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              Up to {snapshotMaximum} restore points per computer. Destroying the computer removes its restore points too.
+            <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Fixed preview size</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
+              This prepared {computerTemplate.name} computer uses {fmtNum(agent.cpu)} CPU / {fmtNum(agent.ram)} GB. Resize is not available for this retained preview, so Hivra will not offer a control that cannot be completed safely.
             </div>
           </div>
         </>
-      ) : null}
-
-      {agent.type === "linux-desktop" && agent.computer_profile === "ubuntu-desktop" && !providerComputer ? (
-        <div style={{ ...card, marginBottom: 20 }}>
-          <a href={`/dashboard/computers/recovery?source=${encodeURIComponent(agent.id)}`} style={{ color: "var(--ink-black)", fontSize: 14, textDecoration: "underline" }}>Hivra folder recovery</a>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-            Export an encrypted copy of your Hivra folder and restore it into a different empty Ubuntu computer. Folder only: 2 MiB total, up to 512 files and folders. The original computer is preserved.
-          </div>
+      ) : <>
+      <div className="mono" style={{ ...label, marginBottom: 10 }}>Resources</div>
+      <div style={{ ...card, marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
+          Reserved CPU counts against your pool, but shared CPU scheduling does not provide dedicated physical cores or guaranteed performance. Reserved memory is the VM&apos;s protected balloon floor. Maximums are hard ceilings available only while the host has spare capacity.
         </div>
-      ) : null}
+        {hasPlan ? (
+          <PoolMeter
+            planName={plan?.name}
+            cpu={{ othersUsed: usedOtherCpu, selected: rcpu, total: poolCpu }}
+            ram={{ othersUsed: usedOtherRam, selected: rram, total: poolRam }}
+          />
+        ) : null}
+        <div className={manageStyles.resourceGrid}>
+          <fieldset aria-label="Reserved CPU" style={{ margin: 0, padding: 0, border: 0 }}>
+            <legend className="mono" style={{ ...label, marginBottom: 7 }}><Cpu size={12} /> Reserved CPU</legend>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {cpuOptions.map((n) => {
+              const disabled = providerComputer || lifecyclePending || n < floor.cpu || n > capCpu;
+              return (
+                <button key={`c${n}`} type="button" disabled={disabled} aria-pressed={rcpu === n} onClick={() => { setRcpu(n); setMaximumCpu(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rcpu === n ? "var(--gold-leaf)" : "transparent", color: rcpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>
+              );
+            })}
+            </div>
+          </fieldset>
+          <fieldset aria-label="Maximum CPU" style={{ margin: 0, padding: 0, border: 0 }}>
+            <legend className="mono" style={{ ...label, marginBottom: 7 }}><Cpu size={12} /> Maximum CPU</legend>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {cpuOptions.filter(n => n >= rcpu).map((n) => {
+                const disabled = lifecyclePending || n > maximumCapCpu;
+                return <button key={`mc${n}`} type="button" disabled={disabled} aria-pressed={maximumCpu === n} onClick={() => setMaximumCpu(n)} style={{ border: "1px solid var(--etched-border)", background: maximumCpu === n ? "var(--gold-leaf)" : "transparent", color: maximumCpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>;
+              })}
+            </div>
+          </fieldset>
+          <fieldset aria-label="Reserved memory" style={{ margin: 0, padding: 0, border: 0 }}>
+            <legend className="mono" style={{ ...label, marginBottom: 7 }}><MemoryStick size={12} /> Reserved memory</legend>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {ramOptions.map((n) => {
+              const disabled = providerComputer || lifecyclePending || n < floor.ram || n > capRam;
+              return (
+                <button key={`r${n}`} type="button" disabled={disabled} aria-pressed={rram === n} onClick={() => { setRram(n); setMaximumRam(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rram === n ? "var(--gold-leaf)" : "transparent", color: rram === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>
+              );
+            })}
+            </div>
+          </fieldset>
+          <fieldset aria-label="Maximum memory" style={{ margin: 0, padding: 0, border: 0 }}>
+            <legend className="mono" style={{ ...label, marginBottom: 7 }}><MemoryStick size={12} /> Maximum memory</legend>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {ramOptions.filter(n => n >= rram).map((n) => {
+                const disabled = lifecyclePending || n > maximumCapRam;
+                return <button key={`mr${n}`} type="button" disabled={disabled} aria-pressed={maximumRam === n} onClick={() => setMaximumRam(n)} style={{ border: "1px solid var(--etched-border)", background: maximumRam === n ? "var(--gold-leaf)" : "transparent", color: maximumRam === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>;
+              })}
+            </div>
+          </fieldset>
+        </div>
+        <div className={manageStyles.savebar}>
+          <span className={manageStyles.eyebrow}>{dirty ? "Unsaved allocation" : "Current allocation"}</span>
+          <button type="button" disabled={busy || !canResize} onClick={() => { if (canResize) void run("resize", () => resizeAgent(agent.id, rcpu, rram, maximumCpu, maximumRam)); }} style={{ ...btnDark, background: canResize ? "var(--ink-black)" : "transparent", color: canResize ? "var(--bg-surface)" : "var(--text-muted)", cursor: busy || !canResize ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+            {acting === "resize" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : null}
+            {dirty ? `Apply · ${fmtNum(rcpu)} CPU / ${fmtNum(rram)} GB reserved · ${fmtNum(maximumCpu)} CPU / ${fmtNum(maximumRam)} GB max` : "Apply"}
+          </button>
+          <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+            {providerComputer ? `This agent uses its whole ${fmtNum(agent.cpu)} CPU / ${fmtNum(agent.ram)} GB cloud computer. Resizing allocated Hetzner computers through Hivra is not supported yet; the original size and data are retained.`
+              : !budget.ready ? "Couldn’t verify your available Hivra Cloud capacity. Refresh before resizing."
+              : budget.selfManaged ? `Your infrastructure — choose a size up to ${MAX_CPU} CPU / ${MAX_RAM} GB. Host capacity is checked before applying; your Hivra Cloud plan does not limit this computer.`
+              : budget.fixedSize ? `This managed dashboard has a fixed ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB allocation. It uses an agent slot, not your compute pool.`
+              : hasPlan
+              ? poolFull
+                ? `Your ${plan?.name} pool is fully used by your other agents — shrink another box to grow this one.`
+                : `Min ${fmtNum(floor.cpu)} CPU / ${fmtNum(floor.ram)} GB · up to ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB for this box on ${plan?.name}.`
+              : `Min for ${def?.name || "this agent"}: ${floor.cpu} CPU / ${floor.ram} GB · max ${MAX_CPU} / ${MAX_RAM} GB.`}
+          </span>
+          {!budget.ready ? <button type="button" style={btnGhost} onClick={onChanged}>Refresh capacity</button> : null}
+        </div>
+        {!providerComputer ? <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Resizing reboots the box (a brief reconnect; the chat reattaches automatically).</div> : null}
+      </div>
+      </>}
+      </section>
 
-      {/* BROWSER AUTOMATION (browser-capable agents only) */}
+</ManagePanel>
+      <ManagePanel section="access" selected={selected}><h2 className={manageStyles.title}>Access</h2><p className={manageStyles.description}>Manage private connections to this box.</p><HivraPrivateAccessPanel agentId={agent.id} onFeedbackChange={setAccessFeedback} /></ManagePanel>
+      {!isComputerOnly ? <ManagePanel section="agent" selected={selected}><h2 className={manageStyles.title}>Agent settings</h2><p className={manageStyles.description}>Models, permissions and tools for your agent.</p>      {/* BROWSER AUTOMATION (browser-capable agents only) */}
       {def?.browser ? (
         <>
           <div className="mono" style={{ ...label, marginBottom: 10 }}>Browser automation</div>
@@ -766,7 +773,7 @@ export function HivraManage({
       {def?.llm?.providers.includes("venice") ? (
         <AgentModelSettings key={agent.id} agentId={agent.id} agentName={def.name}
           ready={agent.status === "running" && !agent.activity} disabled={busy} onChanged={onChanged}
-          onBusyChange={setModelSettingsBusy} />
+          onBusyChange={setModelSettingsBusy} onFeedbackChange={setModelFeedback} />
       ) : null}
 
       {/* PERMISSIONS (chat-CLI agents with a new-enough box) */}
@@ -902,99 +909,109 @@ export function HivraManage({
         </>
       ) : null}
 
-      <HivraPrivateAccessPanel agentId={agent.id} />
-
-      {/* RESIZE */}
-      <section id="resources" style={{ scrollMarginTop: 24 }}>
-      {providerComputer ? <ProviderResizePanel agent={agent} onChanged={onChanged} /> : preparedComputer ? (
+</ManagePanel> : null}
+      {sections.includes("recovery") ? <ManagePanel section="recovery" selected={selected}><h2 className={manageStyles.title}>Recovery</h2><p className={manageStyles.description}>Restore points and the recovery options supported by this computer.</p>
+      {snapshotComputer ? (
         <>
-          <div className="mono" style={{ ...label, marginBottom: 10 }}>Size</div>
+          <div className="mono" style={{ ...label, marginBottom: 10 }}>Restore points</div>
           <div style={{ ...card, marginBottom: 20 }}>
-            <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Fixed preview size</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-              This prepared {computerTemplate.name} computer uses {fmtNum(agent.cpu)} CPU / {fmtNum(agent.ram)} GB. Resize is not available for this retained preview, so Hivra will not offer a control that cannot be completed safely.
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Same-host recovery</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55, marginTop: 3 }}>
+                  Capture this Proxmox computer in place. Restore points stay on the same host until you destroy the computer; they are not an off-host backup.
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={busy || lifecyclePending || !["running", "stopped"].includes(agent.status) || snapshots.length >= snapshotMaximum}
+                onClick={() => void run("snapshot", async () => {
+                  await snapshotAgent(agent.id);
+                  await refreshSnapshots();
+                })}
+                style={{ ...btnDark, cursor: busy || lifecyclePending || snapshots.length >= snapshotMaximum ? "default" : "pointer", opacity: busy || lifecyclePending || snapshots.length >= snapshotMaximum ? 0.5 : 1 }}
+              >
+                {acting === "snapshot" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <ShieldCheck size={14} />}
+                Create restore point
+              </button>
+            </div>
+
+            {snapshotsLoading && snapshots.length === 0 ? (
+              <div role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading restore points…</div>
+            ) : snapshotsError ? (
+              <div role="alert" style={{ fontSize: 12, color: "#e06c5a", lineHeight: 1.5 }}>
+                {snapshotsError} <button type="button" onClick={() => void refreshSnapshots()} style={{ ...btnGhost, marginLeft: 8 }}>Retry</button>
+              </div>
+            ) : snapshots.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No restore points yet.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 9 }}>
+                {snapshots.map((snapshot, index) => (
+                  <div key={snapshot.id} style={{ border: "1px solid var(--etched-border)", padding: 12, display: "grid", gap: 9 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 180 }}>
+                        <div className="mono" style={{ fontSize: 11.5, color: "var(--ink-black)" }}>Restore point {snapshots.length - index}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
+                          {fmtDate(snapshot.createdAt)} · {snapshot.status === "ready" ? "Ready" : snapshot.status === "creating" ? "Verifying" : snapshot.status === "restoring" ? "Restoring" : "Needs attention"}
+                          {snapshot.restoreCount > 0 ? ` · restored ${snapshot.restoreCount}×` : ""}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy || lifecyclePending || snapshot.status !== "ready"}
+                        onClick={() => setRestoreConfirmId(snapshot.id)}
+                        style={{ ...btnGhost, cursor: busy || lifecyclePending || snapshot.status !== "ready" ? "default" : "pointer", opacity: busy || lifecyclePending || snapshot.status !== "ready" ? 0.5 : 1 }}
+                      >
+                        <RefreshCw size={13} /> Restore
+                      </button>
+                    </div>
+                    {snapshot.error ? <div role="alert" style={{ color: "#e06c5a", fontSize: 11.5 }}>{snapshot.error}</div> : null}
+                    {restoreConfirmId === snapshot.id ? (
+                      <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 10, display: "grid", gap: 9 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)" }}>
+                          <AlertTriangle size={15} style={{ color: "#e06c5a", flexShrink: 0, marginTop: 2 }} />
+                          Restoring rolls the disk back to this point and permanently removes changes made afterward. The computer will be left stopped; start it after you review the result.
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            disabled={busy || lifecyclePending}
+                            onClick={() => void run("restore", async () => {
+                              await restoreAgentSnapshot(agent.id, snapshot.id);
+                              setRestoreConfirmId(null);
+                              await refreshSnapshots();
+                            })}
+                            style={{ ...btnDark, cursor: busy || lifecyclePending ? "default" : "pointer" }}
+                          >
+                            {acting === "restore" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />}
+                            Confirm restore
+                          </button>
+                          <button type="button" disabled={busy} onClick={() => setRestoreConfirmId(null)} style={{ ...btnGhost, cursor: busy ? "default" : "pointer" }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              Up to {snapshotMaximum} restore points per computer. Destroying the computer removes its restore points too.
             </div>
           </div>
         </>
-      ) : <>
-      <div className="mono" style={{ ...label, marginBottom: 10 }}>Resources</div>
-      <div style={{ ...card, marginBottom: 20 }}>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-          Reserved CPU counts against your pool, but shared CPU scheduling does not provide dedicated physical cores or guaranteed performance. Reserved memory is the VM&apos;s protected balloon floor. Maximums are hard ceilings available only while the host has spare capacity.
-        </div>
-        {hasPlan ? (
-          <PoolMeter
-            planName={plan?.name}
-            cpu={{ othersUsed: usedOtherCpu, selected: rcpu, total: poolCpu }}
-            ram={{ othersUsed: usedOtherRam, selected: rram, total: poolRam }}
-          />
-        ) : null}
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1fr)" }}>
-          <fieldset aria-label="Reserved CPU" style={{ margin: 0, padding: 0, border: 0 }}>
-            <legend className="mono" style={{ ...label, marginBottom: 7 }}><Cpu size={12} /> Reserved CPU</legend>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            {cpuOptions.map((n) => {
-              const disabled = providerComputer || lifecyclePending || n < floor.cpu || n > capCpu;
-              return (
-                <button key={`c${n}`} type="button" disabled={disabled} aria-pressed={rcpu === n} onClick={() => { setRcpu(n); setMaximumCpu(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rcpu === n ? "var(--gold-leaf)" : "transparent", color: rcpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>
-              );
-            })}
-            </div>
-          </fieldset>
-          <fieldset aria-label="Maximum CPU" style={{ margin: 0, padding: 0, border: 0 }}>
-            <legend className="mono" style={{ ...label, marginBottom: 7 }}><Cpu size={12} /> Maximum CPU</legend>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {cpuOptions.filter(n => n >= rcpu).map((n) => {
-                const disabled = lifecyclePending || n > maximumCapCpu;
-                return <button key={`mc${n}`} type="button" disabled={disabled} aria-pressed={maximumCpu === n} onClick={() => setMaximumCpu(n)} style={{ border: "1px solid var(--etched-border)", background: maximumCpu === n ? "var(--gold-leaf)" : "transparent", color: maximumCpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>;
-              })}
-            </div>
-          </fieldset>
-          <fieldset aria-label="Reserved memory" style={{ margin: 0, padding: 0, border: 0 }}>
-            <legend className="mono" style={{ ...label, marginBottom: 7 }}><MemoryStick size={12} /> Reserved memory</legend>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            {ramOptions.map((n) => {
-              const disabled = providerComputer || lifecyclePending || n < floor.ram || n > capRam;
-              return (
-                <button key={`r${n}`} type="button" disabled={disabled} aria-pressed={rram === n} onClick={() => { setRram(n); setMaximumRam(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rram === n ? "var(--gold-leaf)" : "transparent", color: rram === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>
-              );
-            })}
-            </div>
-          </fieldset>
-          <fieldset aria-label="Maximum memory" style={{ margin: 0, padding: 0, border: 0 }}>
-            <legend className="mono" style={{ ...label, marginBottom: 7 }}><MemoryStick size={12} /> Maximum memory</legend>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {ramOptions.filter(n => n >= rram).map((n) => {
-                const disabled = lifecyclePending || n > maximumCapRam;
-                return <button key={`mr${n}`} type="button" disabled={disabled} aria-pressed={maximumRam === n} onClick={() => setMaximumRam(n)} style={{ border: "1px solid var(--etched-border)", background: maximumRam === n ? "var(--gold-leaf)" : "transparent", color: maximumRam === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>;
-              })}
-            </div>
-          </fieldset>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <button type="button" disabled={busy || !canResize} onClick={() => { if (canResize) void run("resize", () => resizeAgent(agent.id, rcpu, rram, maximumCpu, maximumRam)); }} style={{ ...btnDark, background: canResize ? "var(--ink-black)" : "transparent", color: canResize ? "var(--bg-surface)" : "var(--text-muted)", cursor: busy || !canResize ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
-            {acting === "resize" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : null}
-            {dirty ? `Apply · ${fmtNum(rcpu)} CPU / ${fmtNum(rram)} GB reserved · ${fmtNum(maximumCpu)} CPU / ${fmtNum(maximumRam)} GB max` : "Apply"}
-          </button>
-          <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-            {providerComputer ? `This agent uses its whole ${fmtNum(agent.cpu)} CPU / ${fmtNum(agent.ram)} GB cloud computer. Resizing allocated Hetzner computers through Hivra is not supported yet; the original size and data are retained.`
-              : !budget.ready ? "Couldn’t verify your available Hivra Cloud capacity. Refresh before resizing."
-              : budget.selfManaged ? `Your infrastructure — choose a size up to ${MAX_CPU} CPU / ${MAX_RAM} GB. Host capacity is checked before applying; your Hivra Cloud plan does not limit this computer.`
-              : budget.fixedSize ? `This managed dashboard has a fixed ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB allocation. It uses an agent slot, not your compute pool.`
-              : hasPlan
-              ? poolFull
-                ? `Your ${plan?.name} pool is fully used by your other agents — shrink another box to grow this one.`
-                : `Min ${fmtNum(floor.cpu)} CPU / ${fmtNum(floor.ram)} GB · up to ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB for this box on ${plan?.name}.`
-              : `Min for ${def?.name || "this agent"}: ${floor.cpu} CPU / ${floor.ram} GB · max ${MAX_CPU} / ${MAX_RAM} GB.`}
-          </span>
-          {!budget.ready ? <button type="button" style={btnGhost} onClick={onChanged}>Refresh capacity</button> : null}
-        </div>
-        {!providerComputer ? <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Resizing reboots the box (a brief reconnect; the chat reattaches automatically).</div> : null}
-      </div>
-      </>}
-      </section>
+      ) : null}
 
-      {/* DANGER ZONE */}
+      {agent.type === "linux-desktop" && agent.computer_profile === "ubuntu-desktop" && !providerComputer ? (
+        <div style={{ ...card, marginBottom: 20 }}>
+          <a href={`/dashboard/computers/recovery?source=${encodeURIComponent(agent.id)}`} style={{ color: "var(--ink-black)", fontSize: 14, textDecoration: "underline" }}>Hivra folder recovery</a>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
+            Export an encrypted copy of your Hivra folder and restore it into a different empty Ubuntu computer. Folder only: 2 MiB total, up to 512 files and folders. The original computer is preserved.
+          </div>
+        </div>
+      ) : null}
+
+</ManagePanel> : null}
+      <ManagePanel section="advanced" selected={selected}><h2 className={manageStyles.title}>Advanced</h2><p className={manageStyles.description}>Hosting details and permanent removal.</p>      {/* DANGER ZONE */}
       <div className="mono" style={{ ...label, marginBottom: 10, color: "#c0623f" }}>Danger zone</div>
       <div style={{ border: "1px solid rgba(192,57,43,0.4)", background: "rgba(192,57,43,0.04)", padding: 18, display: "grid", gap: 14, gridTemplateColumns: "minmax(0, 1fr)" }}>
         {!confirming ? (
@@ -1062,7 +1079,7 @@ export function HivraManage({
             <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6, minWidth: 0 }}>{computerTemplate ? computerHostingDisclaimer(computerTemplate) : hostingDisclaimer(def!, agent.deployment_mode === "self-managed" ? "self-managed" : "hivra-managed")}</div>
           </div>
         </>
-      ) : null}
-    </div>
+      ) : null}</ManagePanel>
+    </ManageLayout>
   );
 }
