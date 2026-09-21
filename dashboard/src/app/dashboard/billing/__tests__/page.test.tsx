@@ -708,13 +708,28 @@ describe("BillingPage", () => {
       expect(screen.getByText("2,450")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/token access/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Optional token access and payments")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "About optional token access" })).toHaveAttribute("href", "/token");
     expect(screen.queryByText(/crypto credits/i)).not.toBeInTheDocument();
+
     expect(fetchMock).not.toHaveBeenCalledWith("/api/billing/token-holding");
+  });
+
+  it("keeps card billing first and optional holder controls collapsed", async () => {
+    render(<BillingPage />);
+    const disclosure = await screen.findByText("Optional token access and payments");
+    expect(disclosure.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("button", { name: /top up by card/i })).toBeVisible();
+    expect(screen.getByText("Optional token top-ups").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(/Verified wallet:/)).toBeVisible();
+    expect(screen.getByText(/Verified wallet:/)).toHaveTextContent(/Balance:.*Access:/);
+    const plan = screen.getByText("Current Plan");
+    expect(plan.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows token holding status and refreshes the snapshot", async () => {
     render(<BillingPage />);
+    fireEvent.click(await screen.findByText("Optional token access and payments"));
 
     await waitFor(() => {
       expect(screen.getByText(/base tier ready/i)).toBeInTheDocument();
@@ -736,6 +751,7 @@ describe("BillingPage", () => {
 
   it("creates a pending USDC crypto top-up intent from billing", async () => {
     render(<BillingPage />);
+    fireEvent.click(await screen.findByText("Optional token access and payments"));
 
     await waitFor(() => {
       expect(screen.getByText(/crypto credits/i)).toBeInTheDocument();
@@ -921,6 +937,7 @@ describe("BillingPage", () => {
     };
 
     render(<BillingPage />);
+    fireEvent.click(await screen.findByText("Optional token access and payments"));
 
     await waitFor(() => {
       expect(screen.getByText(/no verified wallet/i)).toBeInTheDocument();
@@ -1003,6 +1020,7 @@ describe("BillingPage", () => {
     };
 
     render(<BillingPage />);
+    fireEvent.click(await screen.findByText("Optional token access and payments"));
 
     await waitFor(() => {
       expect(screen.getByText(/no verified wallet/i)).toBeInTheDocument();
@@ -1071,8 +1089,10 @@ describe("BillingPage", () => {
     // Card/Crypto tab split changed it to "Subscribe · $X/mo|/yr".
     expect(screen.getAllByRole("button", { name: /subscribe ·/i }).length).toBeGreaterThan(0);
     expect(screen.queryByText(/compute access comes from an active subscription/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/token access/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Optional token access and payments")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "About optional token access" })).toHaveAttribute("href", "/token");
     expect(screen.queryByText(/crypto credits/i)).not.toBeInTheDocument();
+
   });
 
   it("opens Stripe checkout when a Free plan user upgrades from the plan switcher", async () => {
@@ -1274,6 +1294,7 @@ describe("BillingPage", () => {
     };
 
     render(<BillingPage />);
+    fireEvent.click(await screen.findByText("Optional token access and payments"));
 
     await waitFor(() => {
       expect(screen.getByText(/no verified wallet/i)).toBeInTheDocument();
