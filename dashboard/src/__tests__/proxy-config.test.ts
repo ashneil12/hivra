@@ -80,7 +80,15 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate", "infrastructure/first-boot/enroll$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate", "infrastructure/first-boot/enroll$", "activity/ingest$"]);
+  });
+
+  it("lets the scoped collector receiver authenticate OTLP without exempting Activity reads", async () => {
+    const { config } = await import("@/proxy");
+    expect(unstable_doesMiddlewareMatch({ config, url: "/api/activity/ingest" })).toBe(false);
+    for (const url of ["/api/activity", "/api/activity/ingest/extra", "/api/activity/ingest-other", "/dashboard/activity"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
   });
 
   it("splits exclusions without shredding the dynamic-segment token", () => {
