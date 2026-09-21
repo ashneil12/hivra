@@ -754,8 +754,8 @@ for (const nativeBrowserCursor of [false, true]) test(`generated handoff script 
   });
 });
 
-for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-close'], [true, 'pagehide'], [true, 'transport-close'], [true, 'cursor-enable-failure']]) test(`cursor policy captured=${capturedCursor} cleans up on ${ending}`, async t => {
-  const dom = new JSDOM(handoffHtml(CONTROL, capturedCursor), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
+for (const ending of ['pagehide', 'transport-close']) test(`Omarchy preserves local guest cursor shapes with one renderer on ${ending}`, async t => {
+  const dom = new JSDOM(handoffHtml(CONTROL), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const window = dom.window;
   const desktop = window.document.getElementById('desktop');
@@ -768,7 +768,6 @@ for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-
   Object.defineProperty(desktop, 'contentDocument', { value: child.document });
   const messages = [];
   const transportListeners = new Map();
-  const cursorControls = [];
   window.fetch = async () => ({ status: 204, redirected: false });
   window.parent.postMessage = () => {};
   let mutations = 0;
@@ -785,7 +784,7 @@ for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-
   const overlay = child.document.getElementById('overlayInput');
   Object.defineProperty(child.document.querySelector('video'), 'readyState', { value: 2 });
   child.postMessage = message => messages.push(JSON.parse(JSON.stringify(message)));
-  child.selkiesTransport = { readyState: 1, send: message => { cursorControls.push(message); if (ending === 'cursor-enable-failure') throw new Error('closed'); },
+  child.selkiesTransport = { readyState: 1,
     addEventListener: (name, listener) => transportListeners.set(name, listener), removeEventListener: () => {} };
   desktop.dispatchEvent(new window.Event('load'));
   // The handoff binds transport telemetry in a window timer after load.
@@ -796,26 +795,19 @@ for (const [capturedCursor, ending] of [[false, 'pagehide'], [false, 'transport-
   }
   assert.equal(typeof transportListeners.get('close'), 'function', 'load must bind transport close before cleanup is exercised');
   assert.deepEqual(messages, [{ type: 'setUseBrowserCursors', value: true }]);
-  assert.deepEqual(cursorControls, capturedCursor ? ['SET_NATIVE_CURSOR_RENDERING,1'] : []);
-  if (ending === 'cursor-enable-failure') {
-    assert.equal(desktop.isConnected, false, 'failed cursor command must not leave an invisible active pointer');
-    assert.equal(overlay.style.getPropertyValue('cursor'), 'url(guest.png) 12 12,auto');
-    assert.equal(disconnects, 0);
-    return;
-  }
-  assert.equal(overlay.style.getPropertyValue('cursor'), capturedCursor ? 'none' : 'url(guest.png) 12 12,auto');
+  assert.equal(overlay.style.getPropertyValue('cursor'), 'url(guest.png) 12 12,auto');
   assert.equal(overlay.style.getPropertyPriority('cursor'), 'important');
   for (const cursor of ['pointer', 'text', 'ew-resize', 'url(updated.png) 12 12, auto', 'none']) {
     const before = mutations;
     overlay.style.setProperty('cursor', cursor, 'important');
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(overlay.style.getPropertyValue('cursor'), capturedCursor ? 'none' : cursor);
+    assert.equal(overlay.style.getPropertyValue('cursor'), cursor);
     assert.equal(overlay.style.getPropertyPriority('cursor'), 'important');
     assert.ok(mutations - before <= 2, 'own repair must not sustain an observer loop');
   }
   if (ending === 'pagehide') window.dispatchEvent(new window.Event('pagehide'));
   else transportListeners.get('close')();
-  assert.equal(disconnects, capturedCursor ? 1 : 0);
+  assert.equal(disconnects, 0);
   assert.equal(desktop.isConnected, false);
   const before = mutations;
   overlay.style.setProperty('cursor', 'none', 'important');
