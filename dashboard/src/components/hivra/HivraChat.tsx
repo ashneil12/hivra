@@ -5,7 +5,7 @@
 // CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
 // box in localStorage; each session resumes its own Claude session_id.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -96,15 +96,16 @@ interface ToolChip {
  id?: string;
  name: string;
  detail: string;
- status: ToolStatus;
+ status: ToolStatus | "unknown";
  result?: string;
 }
 
 interface ChatMessage {
- role: "user" | "assistant";
- text: string;
- tools: ToolChip[];
- streaming?: boolean;
+  role: "user" | "assistant";
+  text: string;
+  tools: ToolChip[];
+  streaming?: boolean;
+  outcome?: "complete" | "error" | "stopped";
 }
 
 interface Session {
@@ -149,7 +150,7 @@ function boxMsgToChat(m: BoxMessage): ChatMessage {
  return {
  role: m.role,
  text: m.text || "",
- tools: (m.tools || []).map((name) => ({ name, detail: "", status: "done" as ToolStatus })),
+ tools: (m.tools || []).map((name) => ({ name, detail: "", status: "unknown" as const })),
  };
 }
 
@@ -222,15 +223,24 @@ function toolIcon(name: string): string {
 }
 // A single tool card. Collapsed by default — header shows ⚙ name + command +
 // status; click to expand the output (when there is one).
-function ToolCard({ tool }: { tool: ToolChip }) {
- const [open, setOpen] = useState(false);
- const hasResult = Boolean(tool.result);
- return (
- <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
- <div
- onClick={() => hasResult && setOpen((o) => !o)}
- style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, padding: "5px 9px", cursor: hasResult ? "pointer" : "default" }}
- >
+function ToolCard({ tool, streaming = false, interrupted = false }: { tool: ToolChip; streaming?: boolean; interrupted?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const hasResult = Boolean(tool.result);
+  const disclosureId = `tool-result-${useId().replace(/:/g, "")}`;
+  const unconfirmed = tool.status === "unknown" || (!streaming && tool.status === "running");
+  const statusLabel = unconfirmed ? (interrupted ? "Interrupted" : "Unconfirmed") : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
+  return (
+    <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
+      <button
+        type="button"
+        className="hivra-chat-tool-toggle"
+        aria-label={`${tool.name}${tool.detail ? ` · ${tool.detail}` : ""} — ${statusLabel}`}
+        disabled={!hasResult}
+        aria-expanded={hasResult ? open : undefined}
+        aria-controls={hasResult ? disclosureId : undefined}
+        onClick={() => hasResult && setOpen((o) => !o)}
+        style={{ display: "flex", width: "100%", alignItems: "center", gap: 7, minWidth: 0, padding: "5px 9px", border: 0, background: "transparent", color: "inherit", textAlign: "left", cursor: hasResult ? "pointer" : "default" }}
+      >
  {hasResult ? (
  open ? <ChevronDown size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} /> : <ChevronRight size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
  ) : (
@@ -243,21 +253,44 @@ function ToolCard({ tool }: { tool: ToolChip }) {
  ) : (
  <span style={{ flex: 1 }} />
  )}
- {tool.status === "running" ? (
- <Loader2 size={12} style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)", flexShrink: 0 }} />
+        {unconfirmed ? (
+          <span style={{ color: "var(--text-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{statusLabel}</span>
+        ) : tool.status === "running" ? (
+          <Loader2 className="hivra-chat-spinner" size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
  ) : tool.status === "error" ? (
  <X size={13} style={{ color: "#c0392b", flexShrink: 0 }} />
  ) : (
  <Check size={13} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
  )}
- </div>
- {open && hasResult ? (
- <div style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "#c0392b" : "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
- {tool.result}
- </div>
+      </button>
+      {open && hasResult ? (
+        <div id={disclosureId} style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "#c0392b" : "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
+          {tool.result}
+        </div>
  ) : null}
  </div>
  );
+}
+
+function AssistantActivity({ tools, streaming, outcome }: { tools: ToolChip[]; streaming?: boolean; outcome?: ChatMessage["outcome"] }) {
+  if (tools.length === 0) return null;
+  const runningTools = streaming ? tools.filter((tool) => tool.status === "running") : [];
+  const running = runningTools[runningTools.length - 1];
+  const failed = tools.some((tool) => tool.status === "error");
+  const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
+  const summary = streaming ? (running ? "Working" : "Responding")
+    : outcome === "stopped" ? "Activity stopped"
+    : outcome === "error" ? "Response failed"
+    : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
+  const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : `${tools.length} action${tools.length === 1 ? "" : "s"}`;
+  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" ? "is-muted" : "is-done";
+  return (
+    <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
+      <span className={`hivra-chat-activity-dot ${dot}`} aria-hidden />
+      <span className="hivra-chat-activity-label">{summary}</span>
+      <span className="hivra-chat-activity-detail">{detail}</span>
+    </div>
+  );
 }
 
 export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--gold-leaf)", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
@@ -294,7 +327,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const turnStateRef = useRef<Record<string, unknown>>({});
  // Aborts the in-flight turn. The box kills the CLI when the client disconnects,
  // so aborting the fetch genuinely stops the agent (not just the UI).
- const abortRef = useRef<AbortController | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
  // Every async turn captures the current generation. Changing the backing box
  // or stable storage identity invalidates that generation before aborting so a
  // late fetch result or reader callback cannot target the replacement chat.
@@ -311,6 +344,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
  const [uploading, setUploading] = useState(false);
  const fileInputRef = useRef<HTMLInputElement>(null);
+ const composerRef = useRef<HTMLTextAreaElement>(null);
+ useEffect(() => {
+   const textarea = composerRef.current;
+   if (!textarea) return;
+   textarea.style.height = "auto";
+   textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, 160))}px`;
+   textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
+ }, [input]);
  // Sessions rail visibility — collapsed by default on narrow screens.
  const [showRail, setShowRail] = useState(false);
  useEffect(() => {
@@ -574,7 +615,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  appendText: (t) => updateAssistant((m) => ({ ...m, text: m.text + t })),
  setText: (t) => updateAssistant((m) => ({ ...m, text: t })),
  upsertTool: (id, patch) => upsertTool(id, patch),
- appendWarning: (t) => updateAssistant((m) => ({ ...m, text: m.text + "\n\n⚠ " + t })),
+ appendWarning: (t) => updateAssistant((m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
  };
  getAdapter(agentKind).parseEvent(ev, sink, turnStateRef.current);
  },
@@ -592,8 +633,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setInput("");
  setAttachments([]);
  try { window.localStorage.removeItem(draftKey(skey, activeIdRef.current)); } catch { /* ignore */ }
- setBusy(true);
- setLastFailed(null);
+    setBusy(true);
+    setLastFailed(null);
  const controller = new AbortController();
  const requestGeneration = ++requestGenerationRef.current;
  const isCurrentRequest = () =>
@@ -633,12 +674,12 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  } catch (e) {
  if (!isCurrentRequest()) return;
  abortRef.current = null;
- // User-initiated stop before the response opened — leave the turn as-is,
- // no scary error.
+ // User stops invalidate this request before aborting. Any current failure
+ // here is an unexpected transport error.
  if ((e as Error).name === "AbortError") {
- updateAssistant((m) => ({ ...m, streaming: false }));
- } else {
- updateAssistant((m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false }));
+      updateAssistant((m) => ({ ...m, streaming: false, outcome: "error" }));
+    } else {
+      updateAssistant((m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
  setLastFailed(text);
  }
  setBusy(false);
@@ -647,7 +688,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (!isCurrentRequest()) return;
  if (!resp.ok || !resp.body) {
  abortRef.current = null;
- updateAssistant((m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false }));
+    updateAssistant((m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
  setLastFailed(text);
  setBusy(false);
  return;
@@ -708,14 +749,17 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  buf = "";
  break;
  }
- } catch {
- if (!isCurrentRequest()) return;
- /* stream ended (incl. user-initiated abort) */
- }
- if (!isCurrentRequest()) return;
- abortRef.current = null;
- updateAssistant((m) => ({ ...m, streaming: false }));
- updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false } : m)) }));
+  } catch {
+    if (!isCurrentRequest()) return;
+    abortRef.current = null;
+    updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "error" } : m)) }));
+    setBusy(false);
+    return;
+  }
+  if (!isCurrentRequest()) return;
+  abortRef.current = null;
+  updateAssistant((m) => ({ ...m, streaming: false, outcome: m.outcome || "complete" }));
+  updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: m.outcome || "complete" } : m)) }));
  setBusy(false);
  scrollDown();
  },
@@ -724,9 +768,18 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
 
  // Stop the in-flight turn. Aborting the fetch disconnects from the box, which
  // kills the underlying CLI process — a real interrupt, not just a UI reset.
- const stop = useCallback(() => {
- abortRef.current?.abort();
- }, []);
+  const stop = useCallback(() => {
+    const controller = abortRef.current;
+    if (!controller) return;
+    requestGenerationRef.current += 1;
+    abortRef.current = null;
+    controller.abort();
+    updateActive((s) => ({
+      ...s,
+      messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
+    }));
+    setBusy(false);
+  }, [updateActive]);
 
  // Record a thumbs up/down on an assistant message and fire the funnel event.
  // Toggling the same thumb clears it (and emits rating "none"); the capture goes
@@ -895,8 +948,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  ) : null}
  {messages.map((m, i) => {
  const isUser = m.role === "user";
+ const currentTools = m.streaming ? m.tools.filter((tool) => tool.status === "running") : [];
+ const historyTools = currentTools.length > 0 ? m.tools.filter((tool) => !currentTools.includes(tool)) : m.tools;
+ const interrupted = m.outcome === "stopped" || m.outcome === "error";
  return (
- <div key={i} style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
+ <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
  <div
  style={{
  width: 26,
@@ -918,26 +974,39 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
  {m.tools.length > 0 ? (
- <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
- {m.tools.map((t, j) => (
- <ToolCard key={t.id || j} tool={t} />
- ))}
+ <div className="hivra-chat-activity-wrap">
+ <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} />
+ {currentTools.map((tool, j) => <ToolCard key={tool.id || j} tool={tool} streaming={m.streaming} interrupted={interrupted} />)}
+ {historyTools.length > 0 ? (
+ <details className="hivra-chat-tool-history">
+ <summary>{historyTools.length} {currentTools.length > 0 ? "previous action" : "action"}{historyTools.length === 1 ? "" : "s"}</summary>
+ <div className="hivra-chat-tool-history-list">
+ {historyTools.map((t, j) => <ToolCard key={t.id || j} tool={t} streaming={m.streaming} interrupted={interrupted} />)}
+ </div>
+ </details>
+ ) : null}
  </div>
  ) : null}
  <div className="hivra-md" style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
- {m.role === "assistant" && !m.text && m.streaming ? (
+ {m.role === "assistant" && !m.text && m.streaming && m.tools.length === 0 ? (
  <span className="inline-flex items-center gap-1.5 py-1" aria-label="Thinking">
  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)] [animation-duration:1s]" />
  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)] [animation-delay:0.15s] [animation-duration:1s]" />
  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)] [animation-delay:0.3s] [animation-duration:1s]" />
  <span className="sr-only">Thinking…</span>
  </span>
+
  ) : m.role === "assistant" ? (
  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
  ) : (
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
  </div>
+ {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error") ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : "Response failed"}>
+ {m.outcome === "stopped" ? "Stopped" : "Could not complete response"}
+ </div>
+ ) : null}
  {m.role === "assistant" && m.text && !m.streaming ? (
  <span style={{ display: "inline-flex", alignItems: "center" }}>
  <MessageCopy text={m.text} />
@@ -975,10 +1044,12 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  className="mx-auto w-full max-w-[760px] border border-[var(--etched-border)] transition-colors focus-within:border-[var(--hivra-red-line)]"
  >
  <textarea
+ ref={composerRef}
+ aria-label={`Message ${agentName}`}
  value={input}
  onChange={(e) => setInput(e.target.value)}
  onKeyDown={(e) => {
- if (e.key === "Enter" && !e.shiftKey) {
+ if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
  e.preventDefault();
  void send(input);
  }
@@ -991,7 +1062,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }}
  rows={1}
  placeholder={`Message ${agentName}…`}
- className="block w-full resize-none bg-transparent px-3.5 pt-3 text-[14px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
+ className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[14px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
  style={{ minHeight: 44, maxHeight: 160, fontFamily: "inherit" }}
  />
  <div className="flex items-center gap-1.5 px-2 pb-2">
@@ -1016,7 +1087,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  onClick={() => fileInputRef.current?.click()}
  className="inline-flex min-h-[34px] items-center px-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] disabled:opacity-40"
  >
- {uploading ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Paperclip size={15} />}
+ {uploading ? <Loader2 size={15} className="hivra-chat-spinner" /> : <Paperclip size={15} />}
  </button>
  </>
  ) : null}
