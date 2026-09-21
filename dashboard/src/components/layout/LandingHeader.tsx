@@ -27,7 +27,8 @@ export default function LandingHeader({ isSignedIn = false }: LandingHeaderProps
     { label: "Computers", href: "/#computers" },
     { label: copy.nav.pricing, href: "/#pricing" },
     { label: "Blog", href: "/blog" },
-    { label: "Tokenomics", href: "/tokenomics" },
+    { label: "Ecosystem", href: "/ecosystem" },
+    { label: "Token", href: "/token" },
     { label: "Litepaper", href: "/docs/litepaper/" },
   ];
 

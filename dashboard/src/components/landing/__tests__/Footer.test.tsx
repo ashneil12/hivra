@@ -36,7 +36,8 @@ describe("Footer", () => {
   it("links the product, token, status, and stats entries and credits HermesOS", () => {
     render(<Footer />);
 
-    expect(screen.getByRole("link", { name: "Tokenomics" })).toHaveAttribute("href", "/tokenomics");
+    expect(screen.getByRole("link", { name: "Ecosystem" })).toHaveAttribute("href", "/ecosystem");
+    expect(screen.getByRole("link", { name: "Token" })).toHaveAttribute("href", "/token");
     // Operational status page lives at /status; the live deploy counter is /stats.
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Stats" })).toHaveAttribute("href", "/stats");

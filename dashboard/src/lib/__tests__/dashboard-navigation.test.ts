@@ -25,6 +25,7 @@ describe("dashboard navigation", () => {
     expect(DASHBOARD_SECONDARY_NAVIGATION.map((item) => item.id)).toEqual([
       "infrastructure",
       "settings",
+      "billing",
     ]);
     expect(DASHBOARD_LAUNCH_NAVIGATION).toMatchObject({
       id: "launch",
@@ -75,14 +76,17 @@ describe("dashboard navigation", () => {
     const agents = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "agents");
     const activity = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "activity");
     const settings = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "settings");
+    const billing = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing");
 
     expect(agents).toBeDefined();
     expect(activity).toBeDefined();
     expect(settings).toBeDefined();
+    expect(billing).toBeDefined();
     expect(isDashboardNavigationItemActive(agents!, "/dashboard/instances/inst_123/tui")).toBe(true);
     expect(isDashboardNavigationItemActive(agents!, "/dashboard/agents-not-real")).toBe(false);
     expect(isDashboardNavigationItemActive(activity!, "/dashboard/usage")).toBe(true);
     expect(isDashboardNavigationItemActive(settings!, "/dashboard/vault")).toBe(true);
+    expect(isDashboardNavigationItemActive(billing!, "/dashboard/billing")).toBe(true);
     expect(isDashboardNavigationItemActive(settings!, "/dashboard/settings-not-real")).toBe(false);
   });
 

@@ -20,6 +20,7 @@ type DashboardNavigationId =
   | "infrastructure"
   | "collaboration"
   | "settings"
+  | "billing"
   | "applications"
   | "help"
   | "launch";
@@ -88,13 +89,19 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     icon: Settings,
     routePrefixes: [
       "/dashboard/settings",
-      "/dashboard/billing",
       "/dashboard/wallet",
       "/dashboard/vault",
       "/dashboard/tools",
       "/dashboard/library",
       "/dashboard/templates",
     ],
+  },
+  {
+    id: "billing",
+    label: "Billing & Access",
+    href: "/dashboard/billing",
+    icon: Settings,
+    routePrefixes: ["/dashboard/billing"],
   },
 ];
 
