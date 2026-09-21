@@ -97,7 +97,8 @@ class LayoutTests(unittest.TestCase):
             async def _sync_wayland_realized_geometry(self, display_id, broadcast=True):
                 order.append(('publish', display_id, broadcast))
         modules = {'selkies.input_handler': types.SimpleNamespace(WebRTCInput=Input),
-                   'selkies.selkies': types.SimpleNamespace(DataStreamingServer=Server, wayland_output_id=lambda display: 1)}
+                   'selkies.websockets_mode': types.SimpleNamespace(DataStreamingServer=Server),
+                   'selkies.display_utils': types.SimpleNamespace(wayland_output_id=lambda display: 1)}
         adapter = {}
         with patch.dict('sys.modules', modules):
             exec(DERIVED['LAYOUT_ADAPTER'], adapter)
@@ -143,7 +144,7 @@ class LayoutTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'omarchy_initial_density_invalid'):
                     server._parse_settings_payload(json.dumps(raw))
 
-    def test_native_cursor_control_keeps_guest_cursor_captured_and_preserves_input(self):
+    def test_native_cursor_control_keeps_video_cursor_free_and_preserves_input(self):
         class Input:
             def _size_session_screen(self, display, index, scale, size):
                 pass
@@ -175,16 +176,23 @@ class LayoutTests(unittest.TestCase):
         original_key = Input.send_key
         original_cursor = Input.send_cursor
         modules = {'selkies.input_handler': types.SimpleNamespace(WebRTCInput=Input),
-                   'selkies.selkies': types.SimpleNamespace(DataStreamingServer=Server, wayland_output_id=lambda display: 1)}
+                   'selkies.websockets_mode': types.SimpleNamespace(DataStreamingServer=Server),
+                   'selkies.display_utils': types.SimpleNamespace(wayland_output_id=lambda display: 1)}
         with patch.dict('sys.modules', modules):
             exec(DERIVED['LAYOUT_ADAPTER'], {})
         server = Server()
-        # Both protocol controls must retain capture even when clients request
-        # a local pointer. Only the transition from disabled rebuilds capture.
+        # Both direct websocket control and the shared pointer callback keep
+        # capture cursor-free while leaving cursor metadata and input intact.
         for control in (server.set_native_cursor_rendering, server.input_handler.on_mouse_pointer_visible):
-            for enabled in (False, True, False):
-                asyncio.run(control(enabled))
-                self.assertTrue(server.capture_cursor)
+            asyncio.run(control(True))
+            self.assertFalse(server.capture_cursor)
+            server.reconfigure_displays.assert_not_called()
+        # Disable a previously enabled capture through upstream reconfiguration.
+        server.capture_cursor = True
+        asyncio.run(server.input_handler.on_mouse_pointer_visible(True))
+        self.assertFalse(server.capture_cursor)
+        server.reconfigure_displays.assert_called_once_with()
+        asyncio.run(server.set_native_cursor_rendering(False))
         server.reconfigure_displays.assert_called_once_with()
         self.assertIs(Input.send_key, original_key)
         self.assertIs(Input.send_cursor, original_cursor)

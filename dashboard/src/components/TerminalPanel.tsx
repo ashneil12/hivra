@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { AlertTriangle, Clipboard, Eraser, Loader2, RefreshCw, RotateCcw, Terminal as TerminalIcon, Wifi } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import styles from './TerminalPanel.module.css';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { clientLog } from '@/lib/client/logger';
 import { getHermesTuiTheme, resolveHermesTuiColorMode, type HermesTuiColorMode } from '@/lib/tui-theme';
 interface TerminalPanelProps {
@@ -815,12 +816,19 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
                     )}
                 </div>
             </div>
-            <div
-                ref={containerRef}
-                id={terminalSurfaceId}
-                onPointerDownCapture={focusTerminal}
-                className={styles.viewport}
-            />
+            <div style={{ position: "relative", minHeight: 0 }}>
+                <div
+                    ref={containerRef}
+                    id={terminalSurfaceId}
+                    onPointerDownCapture={focusTerminal}
+                    className={styles.viewport}
+                />
+                {isActive && (connState === "init" || connState === "connecting") && (
+                    <div style={{ position: "absolute", inset: 0, background: "var(--terminal-xterm-bg)" }}>
+                        <LoadingState compact dark={resolvedColorMode === "dark"} label="Opening terminal…" />
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

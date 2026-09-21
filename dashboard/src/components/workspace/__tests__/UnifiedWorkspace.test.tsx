@@ -430,7 +430,7 @@ describe("UnifiedWorkspace", () => {
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [], loading: true }));
     const view = render(<UnifiedWorkspace />);
     expect(
-      screen.getByRole("heading", { name: "Loading your agents…" }),
+      screen.getByText("Loading your agents…"),
     ).toBeInTheDocument();
 
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
