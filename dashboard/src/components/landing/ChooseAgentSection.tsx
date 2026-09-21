@@ -16,13 +16,14 @@ const AGENTS = [
   { id: "aeon", name: "Aeon", role: "Project automation", description: "Run Aeon's dashboard and connect your GitHub workflows to the projects you want it working on.", icon: Triangle, href: buildLaunchSetupHref("aeon") },
 ] as const;
 
-export default function ChooseAgentSection() {
-  return <section id="agents" className={styles.section}>
-    <div className={styles.sectionHeading}>
+export default function ChooseAgentSection({ embedded = false }: { embedded?: boolean }) {
+  return <section id={embedded ? undefined : "agents"} className={embedded ? refresh.embedded : styles.section}>
+    {!embedded && <div className={styles.sectionHeading}>
       <span className={styles.eyebrow}>Launch an agent</span>
       <h2>Pick the agent.<br /><em>Give it a workspace.</em></h2>
       <p>Connect the account or key it uses. Its tools and files live on that computer, so you can leave your personal machine out of the job.</p>
-    </div>
+    </div>}
+    {embedded && <p className={refresh.agentIntro}>Choose an agent and connect the account or key it uses. Its tools and files live on a separate computer.</p>}
     <p className={refresh.agentIntro}>Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it.</p>
     <div className={styles.agentList}>{AGENTS.filter(agent => agent.id === "deepseek-harness" || getAgent(agent.id)?.available).map(agent => {
       const Icon = agent.icon;

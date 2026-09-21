@@ -16,16 +16,17 @@ export function computerLaunchHref(profile: string) {
   return `/dashboard/launch?kind=computer&start=1&profile=${profile}`;
 }
 
-export default function ComputersSection() {
+export default function ComputersSection({ embedded = false }: { embedded?: boolean }) {
   const [selected, setSelected] = useState<(typeof COMPUTER_OPTIONS)[number]["id"]>("ubuntu-desktop");
   const computer = COMPUTER_OPTIONS.find(option => option.id === selected)!;
 
-  return <section id="computers" className={styles.section} aria-labelledby="computers-heading">
-    <div className={styles.heading}>
+  return <section id={embedded ? undefined : "computers"} className={embedded ? styles.embedded : styles.section} aria-labelledby={embedded ? undefined : "computers-heading"}>
+    {!embedded && <div className={styles.heading}>
       <span className={styles.eyebrow}>Launch a computer</span>
       <h2 id="computers-heading">Sometimes you just need<br /><em>another computer.</em></h2>
       <p>Ubuntu, Windows or Omarchy. Install apps, browse, write code, run services. You don&apos;t have to attach an agent at all. It&apos;s a computer.</p>
-    </div>
+    </div>}
+    {embedded && <p className={styles.embeddedIntro}>Ubuntu, Windows or Omarchy. Install apps, browse, write code or run services. You don&apos;t have to attach an agent.</p>}
     <div className={styles.computerChoices} aria-label="Choose an operating system">
       {COMPUTER_OPTIONS.map(option => { const Icon = option.icon; return <article key={option.id} data-selected={selected === option.id}>
         <button type="button" aria-pressed={selected === option.id} aria-controls="computer-description" onClick={() => setSelected(option.id)}>

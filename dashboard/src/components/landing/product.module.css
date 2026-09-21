@@ -69,3 +69,6 @@
 @media (max-width:520px) { .computerChoices .inspect { display:flex; margin:4px 0 0; font-size:8px; }.computerChoices .inspect svg { width:11px; }.comingComputers { gap:20px; }.comingComputers > div { align-items:flex-start; gap:9px; }.comingComputers small { width:fit-content; }.comingComputers strong { font-size:14px; }.computerArt figcaption { padding:35px 18px 14px; font-size:8px; }.computerArt figcaption small { font-size:8px; } }
 @media (prefers-reduced-motion:no-preference) { .computerArt img { animation:os-image-enter .65s cubic-bezier(.16,1,.3,1) both; }.computerChoices button > svg { transition:transform .5s cubic-bezier(.16,1,.3,1); }.computerChoices button:hover > svg { transform:translateY(-4px) rotate(-6deg); } }
 @keyframes os-image-enter { from { opacity:.7; transform:scale(1.06); filter:saturate(.7); } to { opacity:1; transform:scale(1); filter:saturate(1); } }
+
+.embedded { padding:0; border:0; width:100%; }
+.embeddedIntro { max-width:760px; font-size:16px; line-height:1.8; color:var(--public-muted); margin:0 0 28px; }

@@ -43,7 +43,7 @@ export default function TransitionFAQCard() {
           HermesOS is evolving into Hivra as the platform expands beyond a single agent ecosystem. Existing deployments, accounts, and $HermesOS continue to operate normally.
         </p>
         <Link
-          href="/why-hivra"
+          href="/why-hivra/evolution"
           className="mono"
           style={{
             width: "max-content",

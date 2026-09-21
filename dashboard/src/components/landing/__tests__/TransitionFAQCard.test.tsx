@@ -24,7 +24,7 @@ jest.mock("next/link", () => {
 });
 
 describe("TransitionFAQCard", () => {
-  it("answers the Hivra transition question and links to /why-hivra", () => {
+  it("answers the Hivra transition question and links to /why-hivra/evolution", () => {
     render(<TransitionFAQCard />);
 
     expect(screen.getByRole("heading", { name: "What happened to HermesOS?" })).toBeInTheDocument();
@@ -33,6 +33,6 @@ describe("TransitionFAQCard", () => {
         "HermesOS is evolving into Hivra as the platform expands beyond a single agent ecosystem. Existing deployments, accounts, and $HermesOS continue to operate normally."
       )
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /read the transition note/i })).toHaveAttribute("href", "/why-hivra");
+    expect(screen.getByRole("link", { name: /read the transition note/i })).toHaveAttribute("href", "/why-hivra/evolution");
   });
 });

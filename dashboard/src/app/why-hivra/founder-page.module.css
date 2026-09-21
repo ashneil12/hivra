@@ -1,0 +1,3 @@
+.article { max-width:800px; margin:58px auto 0; }
+.article h1 { color:var(--ink-black); font:500 clamp(38px,5.6vw,70px)/1.1 var(--public-font,sans-serif); letter-spacing:-.06em; margin:0 0 48px; text-wrap:balance; }
+.article p { margin-bottom:28px; }

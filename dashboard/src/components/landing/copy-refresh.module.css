@@ -16,3 +16,5 @@
 .moreAgents p { font-size:12px; margin:0; }
 .moreAgents a { margin-left:auto; display:flex; align-items:center; gap:15px; font-size:12px; color:var(--public-text); text-decoration:none; border-bottom:1px solid var(--public-line); padding-block:12px; }
 @media(max-width:760px) { .moreAgents { flex-wrap:wrap; gap:12px; }.moreAgents p { width:100%; }.moreAgents a { margin-left:0; } }
+
+.embedded { padding:0; border:0; width:100%; }
