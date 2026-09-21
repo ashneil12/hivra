@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Network, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 
+import type { ManageFeedback } from "./ManageLayout";
+
 type Connection = {
   state: "connected" | "disconnected" | "unknown" | "error";
   machineName?: string | null;
@@ -24,7 +26,7 @@ async function readResponse(response: Response): Promise<{
   try { return await response.json(); } catch { return {}; }
 }
 
-export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
+export function HivraPrivateAccessPanel({ agentId, onFeedbackChange }: { agentId: string; onFeedbackChange?: (feedback: ManageFeedback) => void }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [supported, setSupported] = useState(true);
   const [pending, setPending] = useState(false);
@@ -79,6 +81,12 @@ export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
       setError(caught instanceof Error ? caught.message : "Private access could not be changed.");
     } finally { setAction(null); }
   }
+
+  useEffect(() => {
+    onFeedbackChange?.(error ? { kind: "alert", message: error }
+      : action ? { kind: "status", message: "Updating private access…" }
+        : pending ? { kind: "status", message: "Private access needs a fresh guest observation before another change." } : null);
+  }, [error, action, pending, onFeedbackChange]);
 
   const busy = action !== null;
   const connected = connection?.state === "connected";
