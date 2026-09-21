@@ -426,7 +426,7 @@ it("does not present an unconfirmed resource list as a healthy empty list", asyn
   fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
   expect(
     screen.getByText(
-      "The list of computers and agents could not be confirmed. Refresh to try again.",
+      "No computers or agents are shown. Some information could not be loaded; refresh to try again.",
     ),
   ).toBeVisible();
   expect(

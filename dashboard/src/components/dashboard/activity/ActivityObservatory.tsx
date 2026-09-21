@@ -396,7 +396,7 @@ export function ActivityObservatory({
             ) : (
               <p className={styles.empty}>
                 {data.degraded
-                  ? "The list of computers and agents could not be confirmed. Refresh to try again."
+                  ? "No computers or agents are shown. Some information could not be loaded; refresh to try again."
                   : "No computers or agents were returned by the available history."}
               </p>
             )}
