@@ -78,7 +78,6 @@ import {
   CreditsPanel,
   CryptoModeToggle,
   CryptoTopUpPanel,
-  PaymentPathTabs,
   ResourceBar,
   StatusBadge,
   TokenHoldingPanel,
@@ -191,7 +190,7 @@ function BillingPageContent() {
   const [cryptoToppingUp, setCryptoToppingUp] = useState<CreditTopUpPackageCredits | null>(null);
   const [managedVeniceDepositOpen, setManagedVeniceDepositOpen] = useState(false);
   const [managedVeniceDepositWallet, setManagedVeniceDepositWallet] =
-    useState<ManagedVeniceWalletType>("hermesos");
+    useState<ManagedVeniceWalletType>("card");
   const [managedVeniceDepositAmountUsd, setManagedVeniceDepositAmountUsd] = useState(
     MANAGED_VENICE_DEFAULT_TOP_UP_USD
   );
@@ -472,7 +471,7 @@ function BillingPageContent() {
     if (searchParams?.get("managedVenice") === "deposit") {
       const walletParam = searchParams?.get("wallet");
       const amountParam = Number(searchParams?.get("amountUsd"));
-      const walletType: ManagedVeniceWalletType = walletParam === "card" ? "card" : "hermesos";
+      const walletType: ManagedVeniceWalletType = billingV2Enabled && walletParam === "hermesos" ? "hermesos" : "card";
       const amountUsd = normalizeManagedVeniceTopUpAmount(amountParam);
       if (typeof window !== "undefined") {
         const url = new URL(window.location.href);
@@ -497,7 +496,7 @@ function BillingPageContent() {
     } else if (linkYearlyToken) {
       setCadence("yearly");
     }
-    if (linkYearlyToken && (linkPlan === "operator" || linkPlan === "fleet" || linkPlan === "pro" || linkPlan === "power")) {
+    if (cryptoBillingEnabled && linkYearlyToken && (linkPlan === "operator" || linkPlan === "fleet" || linkPlan === "pro" || linkPlan === "power")) {
       const tier: "pro" | "power" =
         linkPlan === "operator" || linkPlan === "pro" ? "pro" : "power";
       // Strip the deep-link params from the URL FIRST so a refresh /
@@ -1059,6 +1058,7 @@ function BillingPageContent() {
         <h1 className="serif" style={{ fontSize: "clamp(2.5rem, 8vw, 3.5rem)", fontWeight: 300, lineHeight: 1.1 }}>
           {billingCopy.titlePrefix}{billingCopy.titleSeparator}<em>{billingCopy.titleEmphasis}</em>{billingCopy.titleSuffix}
         </h1>
+        <p style={{ marginTop: 16, color: "var(--text-secondary)", fontSize: 14 }}>Manage your plan and pay by card. No wallet required.</p>
       </motion.header>
 
       {/* Success Banner */}
@@ -1180,60 +1180,6 @@ function BillingPageContent() {
 
       {data?.subscribed && data.plan && data.usage ? (
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants}>
-          {billingV2Enabled && (
-            <CreditsPanel
-              balance={creditBalance}
-              topUpsEnabled={creditTopUpsEnabled}
-              toppingUp={toppingUp}
-              variants={sectionVariants}
-              onTopUp={handleCreditTopUp}
-            />
-          )}
-
-          {billingV2Enabled && managedVeniceSummary && (
-            <>
-              <ManagedVeniceWalletPanel
-                summary={managedVeniceSummary}
-                onDeposit={(walletType) => openManagedVeniceDeposit(walletType)}
-              />
-              <ManagedVeniceKeysPanel keys={managedVeniceSummary.keys} />
-              <ManagedVeniceByokSwitchPanel />
-            </>
-          )}
-
-          {billingV2Enabled && (
-            <BillingActivityPanel
-              activity={activity}
-              loading={activityLoading}
-              error={activityError}
-              variants={sectionVariants}
-              managedVeniceBriefLimit={5}
-            />
-          )}
-
-          {cryptoBillingEnabled && (
-            <>
-              <TokenHoldingPanel
-                tokenHolding={tokenHolding}
-                loading={tokenLoading}
-                refreshing={tokenRefreshing}
-                connectingWallet={walletConnecting}
-                error={tokenError}
-                variants={sectionVariants}
-                onRefresh={handleRefreshTokenHolding}
-                onConnectWallet={handleConnectWallet}
-              />
-
-              <CryptoTopUpPanel
-                intent={cryptoTopUpIntent}
-                error={cryptoTopUpError}
-                toppingUp={cryptoToppingUp}
-                variants={sectionVariants}
-                onTopUp={handleCryptoTopUp}
-              />
-            </>
-          )}
-
           {/* ── Active Plan Panel ─────────────────────────────────────────── */}
           <motion.div variants={sectionVariants} style={{
             border: "1px solid var(--ink-black)", background: "var(--bg-surface)",
@@ -1683,60 +1629,6 @@ function BillingPageContent() {
         </motion.div>
       ) : (
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants}>
-          {billingV2Enabled && (
-            <CreditsPanel
-              balance={creditBalance}
-              topUpsEnabled={creditTopUpsEnabled}
-              toppingUp={toppingUp}
-              variants={sectionVariants}
-              onTopUp={handleCreditTopUp}
-            />
-          )}
-
-          {billingV2Enabled && managedVeniceSummary && (
-            <>
-              <ManagedVeniceWalletPanel
-                summary={managedVeniceSummary}
-                onDeposit={(walletType) => openManagedVeniceDeposit(walletType)}
-              />
-              <ManagedVeniceKeysPanel keys={managedVeniceSummary.keys} />
-              <ManagedVeniceByokSwitchPanel />
-            </>
-          )}
-
-          {billingV2Enabled && (
-            <BillingActivityPanel
-              activity={activity}
-              loading={activityLoading}
-              error={activityError}
-              variants={sectionVariants}
-              managedVeniceBriefLimit={5}
-            />
-          )}
-
-          {cryptoBillingEnabled && (
-            <>
-              <TokenHoldingPanel
-                tokenHolding={tokenHolding}
-                loading={tokenLoading}
-                refreshing={tokenRefreshing}
-                connectingWallet={walletConnecting}
-                error={tokenError}
-                variants={sectionVariants}
-                onRefresh={handleRefreshTokenHolding}
-                onConnectWallet={handleConnectWallet}
-              />
-
-              <CryptoTopUpPanel
-                intent={cryptoTopUpIntent}
-                error={cryptoTopUpError}
-                toppingUp={cryptoToppingUp}
-                variants={sectionVariants}
-                onTopUp={handleCryptoTopUp}
-              />
-            </>
-          )}
-
           {/* ── Active yearly $HermesOS quote (durable across reload) ─── */}
           {(() => {
             // Resolve the most-relevant tier to surface in the banner.
@@ -1794,7 +1686,13 @@ function BillingPageContent() {
               Each path swaps the inner sub-toggle and re-renders the
               cards with the right prices + CTAs. */}
           <motion.div variants={sectionVariants} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, marginBottom: "2rem" }}>
-            <PaymentPathTabs paidPath={paidPath} onChange={setPaidPath} />
+            {cryptoBillingEnabled && <details onToggle={(event) => { if (!event.currentTarget.open) setPaidPath("card"); }}>
+              <summary style={{ cursor: "pointer", fontSize: 13 }}>Other payment options</summary>
+              <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                <button type="button" aria-pressed={paidPath === "card"} onClick={() => setPaidPath("card")}>Card</button>
+                <button type="button" aria-pressed={paidPath === "crypto"} onClick={() => setPaidPath("crypto")}>$HermesOS</button>
+              </div>
+            </details>}
             {paidPath === "card" ? (
               <CadenceToggle cadence={cadence} onChange={setCadence} />
             ) : (
@@ -2089,18 +1987,75 @@ function BillingPageContent() {
                   48-hr refund on card payments
                 </span>
               </span>
-              <span style={{ width: 1, height: 12, background: "var(--etched-border)" }} />
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {paidPath === "crypto" && <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <Coins size={13} style={{ color: "var(--gold-leaf)", opacity: 0.85 }} />
                 <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.6, fontWeight: 600 }}>
                   Token payments are non-refundable
                 </span>
-              </span>
+              </span>}
             </div>
           </motion.div>
         </motion.div>
       )}
 
+
+      {tokenHolding?.wallet && <p style={{ marginBottom: 16, overflowWrap: "anywhere" }}>Verified wallet: {tokenHolding.wallet.address}. Balance: {tokenHolding.snapshot?.balanceDisplay ?? "Not checked"} {tokenHolding.token.tokenSymbol}. Access: {tokenHolding.entitlement.qualifiesBaseTier ? "Qualified" : "Not qualified"}.</p>}
+          {billingV2Enabled && (
+            <CreditsPanel
+              balance={creditBalance}
+              topUpsEnabled={creditTopUpsEnabled}
+              toppingUp={toppingUp}
+              variants={sectionVariants}
+              onTopUp={handleCreditTopUp}
+            />
+          )}
+
+          {billingV2Enabled && managedVeniceSummary && (
+            <>
+              <ManagedVeniceWalletPanel
+                summary={managedVeniceSummary}
+                tokenPaymentsEnabled={billingV2Enabled}
+                onDeposit={(walletType) => openManagedVeniceDeposit(walletType)}
+              />
+              <ManagedVeniceKeysPanel keys={managedVeniceSummary.keys} />
+              <ManagedVeniceByokSwitchPanel />
+            </>
+          )}
+
+          {billingV2Enabled && (
+            <BillingActivityPanel
+              activity={activity}
+              loading={activityLoading}
+              error={activityError}
+              variants={sectionVariants}
+              managedVeniceBriefLimit={5}
+            />
+          )}
+
+          {cryptoBillingEnabled && (
+            <details style={{ marginBottom: 24 }}><summary style={{ cursor: "pointer", marginBottom: 16 }}>Optional token access and payments</summary>
+              <TokenHoldingPanel
+                tokenHolding={tokenHolding}
+                loading={tokenLoading}
+                refreshing={tokenRefreshing}
+                connectingWallet={walletConnecting}
+                error={tokenError}
+                variants={sectionVariants}
+                onRefresh={handleRefreshTokenHolding}
+                onConnectWallet={handleConnectWallet}
+              />
+
+              <CryptoTopUpPanel
+                intent={cryptoTopUpIntent}
+                error={cryptoTopUpError}
+                toppingUp={cryptoToppingUp}
+                variants={sectionVariants}
+                onTopUp={handleCryptoTopUp}
+              />
+            </details>
+          )}
+
+      <p style={{ fontSize: 13, marginBottom: 24 }}><a href="/token">About optional token access</a></p>
 
       <ChangePlanModal
         isOpen={!!confirmingPlan}
@@ -2114,6 +2069,7 @@ function BillingPageContent() {
 
       <ManagedVeniceDepositModal
         isOpen={managedVeniceDepositOpen}
+        tokenPaymentsEnabled={billingV2Enabled}
         walletType={managedVeniceDepositWallet}
         amountUsd={managedVeniceDepositAmountUsd}
         loading={managedVeniceDepositLoading}

@@ -26,7 +26,6 @@ import DashboardShowcaseSection from "@/components/landing/DashboardShowcaseSect
 import PricingSection from "@/components/landing/PricingSection";
 import WhatsComingSection from "@/components/landing/WhatsComingSection";
 import FounderSection from "@/components/landing/FounderSection";
-import TokenomicsSection from "@/components/landing/TokenomicsSection";
 import FAQSection from "@/components/landing/FAQSection";
 
 const homepageTitle = "Hivra | A computer for you and your agents";
@@ -162,7 +161,6 @@ export default async function LandingPage({
           <div className={styles.pricingWrap}><PricingSection /></div>
           <OpenSourceSection />
           <div className={styles.comingWrap}><WhatsComingSection /></div>
-          <TokenomicsSection />
           <FounderSection />
           <FAQSection />
         </main>

@@ -95,14 +95,15 @@ describe("LandingHeader", () => {
     expect(links[0]).toHaveAttribute("href", "/get-started?plan=free");
   });
 
-  it("keeps navigation focused with tokenomics and a real GitHub placement", () => {
+  it("keeps ecosystem discoverable without a primary token pitch", () => {
     render(<LandingHeader />);
     expect(screen.queryByRole("link", { name: /how it works/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /use cases/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /features/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /compare/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/blog");
-    expect(screen.getByRole("link", { name: "Tokenomics" })).toHaveAttribute("href", "/tokenomics");
+    expect(screen.getByRole("link", { name: "Ecosystem" })).toHaveAttribute("href", "/ecosystem");
+    expect(screen.queryByRole("link", { name: "Token" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
     expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
