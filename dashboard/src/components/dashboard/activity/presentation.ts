@@ -22,7 +22,7 @@ export const capabilityNames: Record<string, string> = {
   tool_activity: "Agent tool use",
 };
 export const monitoringStates: Record<string, string> = {
-  active: "Records available",
+  active: "Available to read",
   observed: "Records available",
   configured: "Ready to receive records",
   missing: "No records yet",
@@ -34,14 +34,18 @@ export function presentEvent(event: ActivityEvent) {
   const failed = event.outcome === "failure" || event.severity === "error";
   const title = desktop
     ? "Desktop access allowed"
-    : ((
-        {
-          "Computer provisioned": "Computer created",
-          "Launch requested": "Computer launch requested",
-          "Instrumented operation": "Agent reported an action",
-          "Agent activity": "Agent reported an action",
-        } as Record<string, string>
-      )[event.title] ?? event.title);
+    : event.kind === "trace_span"
+      ? "Agent action reported"
+      : event.kind === "tool_activity"
+        ? "Agent tool used"
+        : ((
+            {
+              "Computer provisioned": "Computer created",
+              "Launch requested": "Computer launch requested",
+              "Instrumented operation": "Agent reported an action",
+              "Agent activity": "Agent reported an action",
+            } as Record<string, string>
+          )[event.title] ?? event.title);
   const status = failed
     ? "Reported a problem"
     : event.needsAttention
@@ -77,5 +81,5 @@ export function sourceExplanation(source: ActivitySource) {
     return "No reports of this kind have arrived in the last 30 days. Reporting may not be set up, or there may have been nothing to report. Missing reports do not tell us whether the computer is working.";
   if (source.state === "stale")
     return "Reports arrived before, but none recently. A quiet agent does not necessarily mean monitoring has stopped.";
-  return "Hivra can read this history. It records reported actions, not everything happening on the computer.";
+  return "Hivra can read saved history, but there may be no records in the last 30 days. This does not cover everything happening on the computer.";
 }

@@ -300,11 +300,12 @@ export function ActivityObservatory({
             onClick={() => setView(key)}
           >
             {title}
-            {key === "attention" && events.some(event => event.needsAttention) && (
-              <span className={styles.count}>
-                {events.filter((event) => event.needsAttention).length}
-              </span>
-            )}
+            {key === "attention" &&
+              events.some((event) => event.needsAttention) && (
+                <span className={styles.count}>
+                  {events.filter((event) => event.needsAttention).length}
+                </span>
+              )}
           </button>
         ))}
       </nav>
@@ -394,7 +395,9 @@ export function ActivityObservatory({
               ))
             ) : (
               <p className={styles.empty}>
-                No computers or agents were returned by the available history.
+                {data.degraded
+                  ? "The list of computers and agents could not be confirmed. Refresh to try again."
+                  : "No computers or agents were returned by the available history."}
               </p>
             )}
           </section>
