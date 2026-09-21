@@ -109,20 +109,8 @@ jobs:
           node -e 'const fs=require("fs"); const v=JSON.parse(fs.readFileSync(process.argv[1])); if (!Array.isArray(v) || v.length < 1) process.exit(1)' \
             "$RUNNER_TEMP/gitleaks-detector-probe.json"
 
-          # Gitleaks 8.29.1 misclassifies this exact JS suffix as Brotli even in
-          # the raw pass. Force the bytes through the proven text detector before
-          # removing the original only from the archive/decode pass.
-          test -f tests/missed_call_demo.browser.cjs
-          mkdir -p "$RUNNER_TEMP/gitleaks-forced-text"
-          cp tests/missed_call_demo.browser.cjs \
-            "$RUNNER_TEMP/gitleaks-forced-text/forced-text.txt"
-          scan "$RUNNER_TEMP/gitleaks-forced-text" \
-            "$RUNNER_TEMP/gitleaks-forced-text.json" \
-            "$RUNNER_TEMP/gitleaks-forced-text.err"
-
-          # Raw scan covers every other ordinary tracked byte.
+          # Raw scan covers every ordinary tracked byte.
           scan . "$RUNNER_TEMP/gitleaks-current-tree.json" "$RUNNER_TEMP/gitleaks-current-tree.err"
-          mv tests/missed_call_demo.browser.cjs "$RUNNER_TEMP/missed_call_demo.browser.cjs.raw-scan-complete"
 
           # Second pass expands real nested archives and decoded payloads. Any
           # parser warning is a hard failure rather than a silently skipped file.

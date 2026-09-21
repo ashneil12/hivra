@@ -190,3 +190,20 @@ test('a caller cannot narrow inspection to a repository subdirectory', (t) => {
   f.add();
   assert.throws(() => inspectPublicTree(path.join(f.root, 'safe')), /repository root/);
 });
+
+
+test('internal plans, personal skills and unrelated demos cannot return to public source', (t) => {
+  const f = fixture(t);
+  const paths = ['BUILD_PLAN.md', 'COMMAND_PANEL_OVERHAUL_PLAN.md', 'CONVERSION_PLAN.md',
+    'STICKINESS_PLAN.md', 'HERMES_FORK_CHANGELOG.md', 'HIVRA_DOMAIN_CUTOVER.md',
+    'writelikeahuman.md', 'gemini.md', 'missed-call-demo.html',
+    'tests/missed_call_demo.browser.cjs', '.agents/skills/copywriting/SKILL.md',
+    'docs/superpowers/plans/old-plan.md', 'dashboard/docs/superpowers/plans/old-plan.md',
+    'docs/designs/prototype/index.html', 'docs/release/2026-01-01-internal-handoff.md'];
+  for (const file of paths) f.write(file);
+  f.write('README.md'); f.write('CHANGELOG.md'); f.write('docs/self-host/QUICKSTART.md');
+  f.add();
+  const findings = inspectPublicTree(f.root);
+  assert.deepEqual(findings.map(v => v.path).sort(), paths.sort());
+  assert.ok(findings.every(v => v.category === 'internal-working-material'));
+});

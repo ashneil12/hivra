@@ -8,7 +8,7 @@ Hivra is building an open, self-hostable cloud-computing layer for AI agents: on
 
 This is the public source repository for Hivra. Hivra-owned source is licensed under Apache-2.0. The initial source release passed an independent export review, secret scanning, and an exact exported-source installation and recovery rehearsal. Separately distributed runtime images and desktop installers require their own release checks.
 
-Use `main` for reviewed releases and `canary` for development. Hosted deployments use private configuration outside this repository.
+Contributions target `main`; `canary` selects the revision being tested. Managed production requires a separate explicit promotion. Hosted credentials stay outside this repository. See the [managed release process](docs/release/MANAGED-HOSTING-RELEASES.md).
 
 Today the codebase contains:
 
@@ -24,13 +24,14 @@ The approved target is to consolidate those capabilities behind canonical agent-
 
 ## Start here
 
+See the [documentation index](docs/README.md) for setup, architecture, contribution, and release guides.
+
 - [Product vision](VISION.md)
 - [Approved platform design](docs/superpowers/specs/2026-08-24-hivra-agent-computers-design.md)
 - [Product architecture](docs/PRODUCT-ARCHITECTURE.md)
 - [Open-source and hosted boundary](docs/OPEN-SOURCE-BOUNDARY.md)
 - [Security model](docs/SECURITY-MODEL.md)
 - [Active roadmap](ROADMAP.md)
-- [Phase 0 implementation plan](docs/superpowers/plans/2026-08-24-hivra-agent-computers-phase-0.md)
 - [Dependency inventory and runtime-distribution gaps](docs/release/DEPENDENCIES.md)
 - [Runtime distribution decisions](docs/release/RUNTIME-DISTRIBUTION.md)
 - [Dashboard development guide](dashboard/README.md)

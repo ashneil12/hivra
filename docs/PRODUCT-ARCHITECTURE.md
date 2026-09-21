@@ -677,4 +677,4 @@ The runtime used for this acceptance test does not become the product's preferre
 - [Open-source boundary](OPEN-SOURCE-BOUNDARY.md)
 - [Security model](SECURITY-MODEL.md)
 - [`../ROADMAP.md`](../ROADMAP.md)
-- [Approved core-experience reset](superpowers/plans/2026-09-04-hivra-core-experience-reset.md)
+- [Core experience direction](CORE-EXPERIENCE.md)

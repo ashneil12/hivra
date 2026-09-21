@@ -128,7 +128,6 @@ test('release policies preserve third-party and incomplete-release boundaries', 
 
   for (const relative of [
     'docs/SECURITY-MODEL.md',
-    '.agents/product-marketing-context.md',
   ]) {
     assert.doesNotMatch(read(relative), /current (?:unlicensed )?repository[^\n]*(?:no root|does not grant)|(?:the )?repository has no root open-source license|no committed root license/i,
       `${relative} must not contradict the root license`);
@@ -178,11 +177,11 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.match(credentialEvidenceBuilder, /current-authorization-boundary-reconciled/);
   assert.equal(assetPolicy.format, 'hivra-asset-provenance-policy-v1');
   assert.equal(assetPolicy.releaseApproved, false);
-  assert.equal(assetPolicy.assets.length, 24);
-  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 24);
+  assert.equal(assetPolicy.assets.length, 16);
+  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 16);
   assert.ok(assetPolicy.assets.every((entry) => entry.redistributionDecision === 'include'));
   assert.ok(assetPolicy.assets.some((entry) => entry.rightsStatus === 'documented-project-generated'));
-  assert.equal(assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-third-party-font').length, 12);
+  assert.equal(assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-third-party-font').length, 4);
   assert.equal(assetPolicy.assets.filter(
     (entry) => entry.rightsStatus === 'documented-owner-asserted-original-artwork',
   ).length, 5);
@@ -190,7 +189,7 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.equal(assetRecords.generatedAssets.length, 3);
   assert.equal(assetPolicy.rightsReview.generationRecordsSha256, sha256('docs/release/asset-generation-records.json'));
   assert.equal(fontEvidence.format, 'hivra-font-license-evidence-v1');
-  assert.equal(fontEvidence.fonts.length, 12);
+  assert.equal(fontEvidence.fonts.length, 4);
   assert.ok(fontEvidence.fonts.every((entry) => entry.licenseSpdx === 'OFL-1.1'));
   assert.ok(fontEvidence.fonts.every((entry) => entry.sha256 === entry.upstreamDownloadedSha256));
   assert.equal(assetPolicy.rightsReview.fontLicenseEvidenceSha256, sha256('docs/release/font-license-evidence.json'));
@@ -205,8 +204,8 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.equal(sourceProvenance.format, 'hivra-source-third-party-provenance-v1');
   assert.equal(sourceProvenance.artifactClass, 'source-only-current-tree');
   assert.equal(sourceProvenance.releaseApproved, false);
-  assert.equal(sourceProvenance.components.length, 1);
-  assert.equal(sourceProvenance.components[0].files.length, 124);
+  assert.equal(sourceProvenance.components.length, 0);
+  assert.equal(sourceProvenance.firstPartyFiles.length, 0);
   assert.equal(sourceProvenance.acquiredArtifacts.length, 4);
   assert.ok(sourceProvenance.acquiredArtifacts.every(
     (entry) => entry.acquisitionDecision === 'download-at-build-hash-verified',
@@ -224,7 +223,6 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.equal(credentialReconciliation.historicalSshCredential.activeManagedTargetsChecked, 4);
   assert.equal(credentialReconciliation.historicalSshCredential.activeTargetsAuthorizingHistoricalKey, 0);
   assert.deepEqual(credentialReconciliation.gaps, []);
-  assert.equal(sha256('.agents/skills/LICENSE'), 'b70d71e24e40fce5da8f4b6f9cd862096a048e433db7f3c8cac5e348e6d34591');
   assert.deepEqual(overrides.packages.map((entry) => `${entry.name}@${entry.version}`).sort(), [
     'buildcheck@0.0.7',
     'cpu-features@0.0.10',
@@ -269,8 +267,6 @@ test('release metadata changes cannot bypass the CI guard path filters', () => {
   for (const filter of [
     '.gitleaks.toml',
     '.gitleaksignore',
-    '.agents/product-marketing-context.md',
-    '.agents/skills/**',
     'CONTRIBUTING.md',
     'LICENSE',
     'NOTICE',
@@ -406,11 +402,10 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
   assert.match(workflow, /Gitleaks reported a scan\/parsing error; refusing a partial scan/);
   assert.match(workflow, /gitleaks-detector-probe\/synthetic-credential\.txt/);
   assert.match(workflow, /test "\$probe_code" -eq 1/);
-  assert.match(workflow, /gitleaks-forced-text\/forced-text\.txt/);
-  assert.match(workflow, /scan "\$RUNNER_TEMP\/gitleaks-forced-text"[\s\S]*?scan \.[\s\S]*?mv tests\/missed_call_demo\.browser\.cjs/,
-    'the forced-text pass must succeed before the browser fixture is removed');
-  assert.equal(sha256('tests/missed_call_demo.browser.cjs'),
-    '8f6c56ebc1910e2a4e9b31f777afd5f9b2eb94a9bacbeaafb6eda07614367a2e');
+  assert.match(workflow, /scan \. "\$RUNNER_TEMP\/gitleaks-current-tree.json"/);
+  assert.match(workflow, /scan \. "\$RUNNER_TEMP\/gitleaks-expanded-tree.json"/);
+  assert.doesNotMatch(workflow, /missed_call_demo|gitleaks-forced-text/);
+  assert.equal(existsSync(path.join(root, 'tests/missed_call_demo.browser.cjs')), false);
   assert.equal(workflow.split(/gitleaks\/gitleaks" dir "\$target"/).length - 1, 1,
     'every pass must use the single fail-closed scan helper');
 });
