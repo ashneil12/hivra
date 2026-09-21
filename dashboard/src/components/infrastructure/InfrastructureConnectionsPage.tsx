@@ -3,26 +3,19 @@
 import {
   AlertTriangle,
   ArrowRight,
-  BookOpen,
   CheckCircle2,
-  Cloud,
-  Cpu,
   ExternalLink,
-  KeyRound,
   Loader2,
-  MemoryStick,
   Plus,
   RefreshCw,
-  Server,
   ServerCog,
   ShieldCheck,
-  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   deleteInfrastructureConnection,
@@ -64,6 +57,7 @@ import {
 } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
+import { InfrastructureEntryChooser } from "./InfrastructureEntryChooser";
 import { HivraCloudCapacityCard } from "./HivraCloudCapacityCard";
 import { HivraCloudPurchaseDialog } from "./HivraCloudPurchaseDialog";
 import { InfrastructureConnectionCard } from "./InfrastructureConnectionCard";
@@ -81,6 +75,8 @@ import { HetznerCloudConnectionCard } from "./HetznerCloudConnectionCard";
 import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
+
+const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
 
 type SshInfrastructureConnectionDto = Exclude<
   InfrastructureConnectionDto,
@@ -280,22 +276,6 @@ export function InfrastructureConnectionsPage() {
     return () => controller.abort();
   }, [loadConnections]);
 
-  const counts = useMemo(() => {
-    const hasManagedCapacity = Boolean(hivraCloud?.subscribed && hivraCloud.plan && hivraCloud.usage);
-    return {
-      total: connections.length + (hasManagedCapacity ? 1 : 0),
-      connected: connections.filter((connection) => connection.status === "ready").length
-        + (hasManagedCapacity ? 1 : 0),
-      readyTargets: targets.filter((target) =>
-        target.status === "ready"
-        && target.capabilities.launchReady
-        && connections.some(
-          (connection) => connection.id === target.connectionId && connection.status === "ready",
-        ),
-      ).length,
-    };
-  }, [connections, hivraCloud, targets]);
-
   const targetsByConnection = useMemo(() => {
     const indexed = new Map<string, DeploymentTargetDto>();
     // The API returns newest evidence first. Keep the newest target when a
@@ -336,13 +316,12 @@ export function InfrastructureConnectionsPage() {
   const showingFirstConnection = !loading
     && !hivraCloudLoading
     && !loadError
-    && !hivraCloudError
     && connections.length === 0
     && !hasHivraCloudCapacity;
   const showingEntryChooser = showingFirstConnection || entryChooserOpen;
 
   function openCreateWizard() {
-    setEntryChooserOpen(false);
+    setEntryChooserOpen(true);
     setEditingConnection(null);
     setWizardOpen(true);
     setActionError(null);
@@ -350,14 +329,14 @@ export function InfrastructureConnectionsPage() {
   }
 
   function openHivraCloudDialog() {
-    setEntryChooserOpen(false);
+    setEntryChooserOpen(true);
     setHivraCloudDialogOpen(true);
     setActionError(null);
     setActionNotice(null);
   }
 
   function openHetznerDialog() {
-    setEntryChooserOpen(false);
+    setEntryChooserOpen(true);
     setHetznerDialogOpen(true);
     setActionError(null);
     setActionNotice(null);
@@ -538,8 +517,8 @@ export function InfrastructureConnectionsPage() {
             <h1>Your infrastructure.</h1>
             <p>
               {selfHosted
-                ? "Connect a cloud project or bring a computer you control. Hivra Cloud remains a separate managed option when you want us to operate the capacity."
-                : "Use Hivra Cloud, connect a cloud project, or bring a computer you control. Managed capacity appears here as soon as your plan is active."}
+                ? "Connect a cloud project or bring a computer you control."
+                : "Manage your plan and the machines that power your agents and computers."}
             </p>
           </div>
           {!showingFirstConnection ? (
@@ -554,54 +533,10 @@ export function InfrastructureConnectionsPage() {
               {entryChooserOpen
                 ? <X size={16} aria-hidden="true" />
                 : <Plus size={16} aria-hidden="true" />}
-              {entryChooserOpen ? "Close options" : "Add capacity"}
+              {entryChooserOpen ? "Close options" : "Add infrastructure"}
             </button>
           ) : null}
         </header>
-
-        {!loading && !hivraCloudLoading && (connections.length > 0 || hasHivraCloudCapacity) ? (
-          <>
-            <section className={styles.summaryGrid} aria-label="Infrastructure summary">
-              <SummaryCard
-                icon={<ServerCog size={18} />}
-                label="Capacity sources"
-                value={String(counts.total)}
-                detail={selfHosted
-                  ? (counts.total === 1 ? "Provider project or host" : "Provider projects and hosts")
-                  : (counts.total === 1 ? "Managed pool or connection" : "Managed pools and connections")}
-              />
-              <SummaryCard
-                icon={<CheckCircle2 size={18} />}
-                label="Available"
-                value={String(counts.connected)}
-                detail={selfHosted ? "Latest connection check passed" : "Managed or latest connection check passed"}
-                tone="success"
-              />
-              <SummaryCard
-                icon={<ShieldCheck size={18} />}
-                label="Self-host targets ready"
-                value={targetLoadError ? "-" : String(counts.readyTargets)}
-                detail={targetLoadError ? "Readiness temporarily unavailable" : "Backed by a recent readiness check"}
-                tone={counts.readyTargets > 0 ? "success" : "neutral"}
-              />
-            </section>
-
-            <section className={styles.truthPanel}>
-              <span className={styles.truthIcon} aria-hidden="true">
-                <ShieldCheck size={18} />
-              </span>
-              <div>
-                <strong>Inspection comes before setup or launch.</strong>
-                <p>
-                  {selfHosted
-                    ? "Provider sync and host inspection make no changes. Setup and spending require separate approval, and Hivra will not fall back to managed infrastructure."
-                    : "Hivra Cloud is already operated for you. Provider sync and host inspection make no changes; self-managed setup and spending still require separate approval."}
-                </p>
-              </div>
-              <span className={styles.localBadge}><ShieldCheck size={12} aria-hidden="true" /> {selfHosted ? "Under your control" : "Managed or yours"}</span>
-            </section>
-          </>
-        ) : null}
 
         {actionNotice ? (
           <div className={styles.pageNotice} role="status">
@@ -908,29 +843,6 @@ export function InfrastructureConnectionsPage() {
   );
 }
 
-function SummaryCard({
-  icon,
-  label,
-  value,
-  detail,
-  tone = "neutral",
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  detail: string;
-  tone?: "neutral" | "success" | "warning";
-}) {
-  return (
-    <article className={`${styles.summaryCard} ${styles[`summary_${tone}`]}`}>
-      <span className={styles.summaryIcon} aria-hidden="true">{icon}</span>
-      <span className={styles.sectionLabel}>{label}</span>
-      <strong>{value}</strong>
-      <span>{detail}</span>
-    </article>
-  );
-}
-
 function LoadingConnections() {
   return (
     <div className={styles.loadingPanel} role="status" aria-live="polite">
@@ -940,227 +852,6 @@ function LoadingConnections() {
         <span>Reading your connected hosts.</span>
       </div>
     </div>
-  );
-}
-
-const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
-const HETZNER_API_TOKEN_GUIDE_URL = "https://docs.hetzner.com/cloud/api/getting-started/generating-api-token/";
-const HETZNER_SERVER_GUIDE_URL = "https://docs.hetzner.com/cloud/servers/getting-started/creating-a-server/";
-
-function InfrastructureEntryChooser({
-  firstConnection,
-  hivraCloud,
-  selfHosted,
-  onChooseHivraCloud,
-  onConnectHetzner,
-  onConnectExisting,
-}: {
-  firstConnection: boolean;
-  hivraCloud: HivraCloudCapacityDto | null;
-  selfHosted: boolean;
-  onChooseHivraCloud: () => void;
-  onConnectHetzner: () => void;
-  onConnectExisting: () => void;
-}) {
-  const hivraCloudPaid = hivraCloud?.paid === true;
-  const activeManagedCapacity = hivraCloudPaid && hivraCloud?.usage
-    ? {
-        cpu: hivraCloud.usage.totalCpu,
-        ram: hivraCloud.usage.totalRam,
-      }
-    : null;
-  const formatCapacityNumber = (value: number) => Number.isInteger(value)
-    ? String(value)
-    : value.toFixed(1);
-
-  return (
-    <section
-      id="infrastructure-entry-options"
-      className={styles.entryChooser}
-      aria-labelledby="infrastructure-entry-heading"
-    >
-      <div className={styles.entryHeading}>
-        <div>
-          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add capacity"}</span>
-          <h2 id="infrastructure-entry-heading">Choose how to add a computer.</h2>
-        </div>
-        <p>
-          Hivra Cloud is the quickest managed path. You can also create capacity in
-          your own Hetzner project or connect a server you already control.
-        </p>
-      </div>
-
-      <div className={styles.entryGrid}>
-        <article className={`${styles.entryCard} ${styles.entryCardRecommended} ${styles.managedEntryCard}`}>
-          <div>
-            <div className={styles.entryCardTopline}>
-              <span className={styles.entryIcon} aria-hidden="true"><Cloud size={21} /></span>
-              <span className={styles.recommendedBadge}>Fastest setup</span>
-            </div>
-            <span className={styles.sectionLabel}>Managed mode</span>
-            <h3>{hivraCloudPaid ? "Hivra Cloud is connected." : "Start with Hivra Cloud."}</h3>
-            <p>
-              {hivraCloudPaid
-                ? "Your managed compute pool is active. Hivra operates, updates, and recovers the underlying hosts for you."
-                : selfHosted
-                  ? "Open the hosted Hivra control plane to buy or manage a fully operated compute pool. Your local installation and provider connections stay independent."
-                : "Choose a compute pool and check out securely. Hivra provisions, operates, updates, and recovers the underlying hosts for you."}
-            </p>
-          </div>
-          <div className={styles.managedEntryAction}>
-            <div className={styles.managedEntryFacts} aria-label="Hivra Cloud options">
-              <span>
-                <Cpu size={14} aria-hidden="true" />
-                {activeManagedCapacity
-                  ? `${formatCapacityNumber(activeManagedCapacity.cpu)} vCPU in your active pool`
-                  : "CPU follows the plan you choose"}
-              </span>
-              <span>
-                <MemoryStick size={14} aria-hidden="true" />
-                {activeManagedCapacity
-                  ? `${formatCapacityNumber(activeManagedCapacity.ram / 1024)} GB RAM in your active pool`
-                  : "RAM follows the plan you choose"}
-              </span>
-              <span><SlidersHorizontal size={14} aria-hidden="true" /> Allocate per agent</span>
-            </div>
-            {selfHosted ? (
-              <a
-                className={styles.primaryButton}
-                href="https://hivra.cloud/dashboard/infrastructure"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open Hivra Cloud <ExternalLink size={14} aria-hidden="true" />
-                <span className={styles.srOnly}> (opens in a new tab)</span>
-              </a>
-            ) : hivraCloudPaid ? (
-              <Link className={styles.primaryButton} href="/dashboard/billing">
-                Manage Hivra Cloud <ArrowRight size={14} aria-hidden="true" />
-              </Link>
-            ) : (
-              <button type="button" className={styles.primaryButton} onClick={onChooseHivraCloud}>
-                Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" />
-              </button>
-            )}
-            <p>
-              {hivraCloudPaid
-                ? "Your active pool and computers are shown below. Plan changes use Billing."
-                : selfHosted
-                  ? "Managed capacity is purchased and operated on hivra.cloud; no hosted billing code runs inside this installation."
-                : "No charge occurs until you confirm the final amount in Stripe Checkout."}
-            </p>
-          </div>
-        </article>
-
-        <article className={styles.entryCard}>
-          <div className={styles.entryCardTopline}>
-            <span className={styles.entryIcon} aria-hidden="true"><Cloud size={21} /></span>
-          </div>
-          <span className={styles.sectionLabel}>Self-managed cloud</span>
-          <h3>Create a Hetzner cloud computer.</h3>
-          <p>
-            Connect a project token, choose a live server size, location, and system
-            image, then review freshly observed provider rates before anything is created.
-          </p>
-          <div className={styles.currentStateNote}>
-            <ShieldCheck size={15} aria-hidden="true" />
-            <span>
-              Connecting makes no purchase. Hivra asks for a token with Read &amp; Write
-              project authority; server billing starts only after final confirmation.
-            </span>
-          </div>
-          <div className={styles.entryActions}>
-            <button
-              type="button"
-              className={styles.primaryButton}
-              onClick={onConnectHetzner}
-            >
-              Start with Hetzner <ArrowRight size={14} aria-hidden="true" />
-            </button>
-            <a
-              className={styles.secondaryButton}
-              href={HETZNER_PROJECTS_URL}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open Hetzner Cloud <ExternalLink size={14} aria-hidden="true" />
-              <span className={styles.srOnly}> (opens in a new tab)</span>
-            </a>
-          </div>
-          <nav className={styles.guideLinks} aria-label="Official Hetzner setup guides">
-            <a href={HETZNER_SERVER_GUIDE_URL} target="_blank" rel="noreferrer">
-              <BookOpen size={13} aria-hidden="true" /> Server creation guide
-              <ExternalLink size={11} aria-hidden="true" />
-              <span className={styles.srOnly}> (opens in a new tab)</span>
-            </a>
-            <a href={HETZNER_API_TOKEN_GUIDE_URL} target="_blank" rel="noreferrer">
-              <KeyRound size={13} aria-hidden="true" /> API token guide
-              <ExternalLink size={11} aria-hidden="true" />
-              <span className={styles.srOnly}> (opens in a new tab)</span>
-            </a>
-          </nav>
-        </article>
-
-        <article className={styles.entryCard}>
-          <div className={styles.entryCardTopline}>
-            <span className={styles.entryIcon} aria-hidden="true"><Server size={21} /></span>
-          </div>
-          <span className={styles.sectionLabel}>Your server</span>
-          <h3>Bring an existing host.</h3>
-          <p>
-            Connect Linux, bare metal, or an existing Proxmox environment with pinned
-            root SSH. Hivra detects compatible candidates without changing the host.
-          </p>
-          <div className={styles.requirementList} aria-label="What you will need">
-            <span><CheckCircle2 size={14} aria-hidden="true" /> Existing Proxmox KVM can continue to strict readiness</span>
-            <span><CheckCircle2 size={14} aria-hidden="true" /> Compatible Ubuntu hosts can prepare the Linux Sandbox runtime</span>
-            <span><CheckCircle2 size={14} aria-hidden="true" /> A virtual-machine host needs nested KVM for hardware VMs</span>
-          </div>
-          <details className={styles.hostSupportDisclosure}>
-            <summary>Proxmox, KVM, and gVisor explained</summary>
-            <p>
-              Proxmox manages capacity; KVM is the hardware-VM isolation boundary.
-              A hardware VM can still share one physical server. gVisor is a supported
-              application-kernel sandbox for Linux terminal and Python workspaces on a
-              compatible prepared host; it is not a general desktop or Windows VM.
-            </p>
-          </details>
-          <button type="button" className={styles.primaryButton} onClick={onConnectExisting}>
-            Connect existing host <ArrowRight size={14} aria-hidden="true" />
-          </button>
-        </article>
-      </div>
-
-      <aside className={styles.whatHappens} aria-labelledby="what-happens-heading">
-        <div>
-          <span className={styles.sectionLabel}>What happens</span>
-          <h3 id="what-happens-heading">Connect first. Change nothing until you approve it.</h3>
-        </div>
-        <ol>
-          <li><span>1</span> Choose managed capacity or connect your own</li>
-          <li><span>2</span> Sync entitlements or inspect capacity</li>
-          <li><span>3</span> Show available power and isolation truthfully</li>
-          <li><span>4</span> Ask before payment, preparation, or launch</li>
-        </ol>
-      </aside>
-
-      <details className={styles.manualDisclosure}>
-        <summary>
-          <SlidersHorizontal size={15} aria-hidden="true" />
-          Manual SSH setup
-          <span>Custom user, port, key, and pinned fingerprint</span>
-        </summary>
-        <div>
-          <p>
-            Use this when the guided defaults do not match your server. You will enter
-            the same connection contract directly; Hivra still inspects before setup.
-          </p>
-          <button type="button" className={styles.tertiaryButton} onClick={onConnectExisting}>
-            Open manual connection form <ArrowRight size={13} aria-hidden="true" />
-          </button>
-        </div>
-      </details>
-    </section>
   );
 }
 

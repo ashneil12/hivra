@@ -4076,3 +4076,151 @@
     animation: none;
   }
 }
+
+/* Guided infrastructure setup uses the dashboard's shared theme and typography. */
+.pageInner {
+  padding-top: 28px;
+}
+.breadcrumb {
+  margin-bottom: 28px;
+}
+.pageHeader {
+  align-items: center;
+  padding-bottom: 24px;
+}
+.pageHeading h1 {
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 1.08;
+  margin-top: 10px;
+}
+.pageHeading p {
+  margin-top: 12px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.guidedHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.guidedHeading h2 {
+  font-family: var(--font-grotesk), sans-serif;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+  margin-top: 8px;
+}
+.guidedChoices,
+.guidedChoicesTwo {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.guidedChoicesTwo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.guidedChoice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-panel);
+  min-width: 0;
+}
+.guidedChoice h3,
+.guidedPreparation h3 {
+  font-family: var(--font-grotesk), sans-serif;
+  font-size: 21px;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+.guidedChoice p,
+.guidedPreparation p,
+.guidedChecklist {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.guidedChoice > button,
+.guidedChoice > a.primaryButton {
+  margin-top: auto;
+  white-space: normal;
+  text-align: left;
+}
+.guidedChoice > small {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--infra-muted);
+}
+.guidedChoice > a:not(.primaryButton) {
+  font-size: 13px;
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.guidedRecommended {
+  border-top: 3px solid var(--hivra-red);
+  padding-top: 22px;
+}
+.guidedPreparation {
+  border: 1px solid var(--infra-line);
+  background: var(--infra-panel);
+  padding: 24px;
+  display: grid;
+  gap: 20px;
+}
+.guidedChecklist {
+  list-style: decimal;
+  padding-left: 22px;
+  display: grid;
+  gap: 12px;
+  max-width: 800px;
+}
+.guidedChecklist strong {
+  color: var(--ink-black);
+}
+.guidedFootnote {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--infra-muted);
+  margin-top: 16px;
+  max-width: 800px;
+}
+.managedCapacityHeader {
+  padding: 22px;
+}
+.managedCapacityHeader p {
+  max-width: 550px;
+}
+.managedCapacityFacts > div {
+  padding: 18px 22px;
+}
+.managedCapacityFacts small {
+  font-size: 12px;
+  color: var(--infra-muted);
+  grid-column: 2;
+}
+@media (max-width: 760px) {
+  .guidedChoices,
+  .guidedChoicesTwo {
+    grid-template-columns: 1fr;
+  }
+  .guidedChoice,
+  .guidedPreparation {
+    padding: 20px;
+  }
+  .guidedHeading {
+    align-items: flex-start;
+  }
+  .pageHeader {
+    align-items: stretch;
+  }
+  .pageHeading h1 {
+    font-size: 36px;
+  }
+}
