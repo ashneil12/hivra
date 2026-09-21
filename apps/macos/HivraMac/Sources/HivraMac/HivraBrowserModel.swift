@@ -57,13 +57,7 @@ final class HivraBrowserModel: NSObject, ObservableObject {
         super.init()
 
         workspaceBridge?.receive = { [weak self] message in
-            guard let self else { return }
-            switch message {
-            case .workspace(let snapshot): workspaceSnapshot = snapshot
-            case .surfaces(let snapshot):
-                guard let url = webView.url, url.path == snapshot.pathname else { return }
-                surfaceSnapshot = snapshot
-            }
+            self?.receiveWorkspaceMessage(message)
         }
 
         webView.navigationDelegate = self
@@ -74,6 +68,16 @@ final class HivraBrowserModel: NSObject, ObservableObject {
             self?.updateState()
         }
         load(initialURL, localCredentials: localCredentials)
+    }
+
+    // Called only after the workspace bridge has validated the frame and origin.
+    func receiveWorkspaceMessage(_ message: HivraWorkspaceBridgeMessage) {
+        switch message {
+        case .workspace(let snapshot): workspaceSnapshot = snapshot
+        case .surfaces(let snapshot):
+            guard let url = webView.url, url.path == snapshot.pathname else { return }
+            surfaceSnapshot = snapshot
+        }
     }
 
     func load(

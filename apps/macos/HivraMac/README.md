@@ -48,12 +48,21 @@ Option Command O, or right-click a resource tab or sidebar resource. The window
 opens the same agent/computer and selected surface; it does not launch another
 runtime. Each window can be moved to another display or made full-screen with
 the standard Mac green window control. Its title identifies the resource and
-connection. Opening the same URL/title again focuses its existing window.
+connection. Repeating the action for an already detached resource focuses its existing window.
 
-The original tab stays open, including unsent input; unsent input is not copied
-to the new window. Closing a tab or window closes that view, not the remote agent
-or computer. Terminal connections and desktop controllers still follow their
-existing session/lease rules. The workspace menu also offers reload and history.
+Resource pop-outs move the existing WebKit view into the separate window. Drafts,
+page history and the selected surface stay with that view. The original tab shows
+**Show Window** and **Return to Hivra** rather than running a duplicate view.
+Use **Return to Hivra** in either window, or close the separate window, to bring
+that same session back. Repeating pop-out for a resource focuses its existing
+window. Different resources have independent windows.
+
+Closing the resource tab releases its view and closes its separate window;
+it does not stop the remote agent or computer. Clearing the account or removing
+a connection also closes its owned windows. Closing the parent workspace closes
+its resource views. Tabs and pop-outs are not restored across app exits.
+Non-resource web pop-ups still use independent URL-based windows. Terminal
+connections and desktop controllers keep their existing session/lease rules.
 Focus mode hides the sidebar and resource tab strip.
 
 | Shortcut | Action |
