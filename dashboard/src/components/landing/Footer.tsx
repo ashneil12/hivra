@@ -18,7 +18,8 @@ const COLUMNS = [
     { label: "Litepaper", href: "/docs/litepaper/" },
     { label: "Blog", href: "/blog" },
     { label: "Download the app", href: "/download" },
-    { label: "Tokenomics", href: "/tokenomics" },
+    { label: "Ecosystem", href: "/ecosystem" },
+    { label: "Token", href: "/token" },
     { label: "Nibbii", href: "https://nibbii.pet/" },
   ] },
   { title: "Company", links: [

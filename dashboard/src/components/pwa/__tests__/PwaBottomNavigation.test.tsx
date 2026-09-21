@@ -37,6 +37,7 @@ describe("PwaBottomNavigation", () => {
       "/dashboard/launch",
       "/dashboard/agents",
       "/dashboard/computers",
+      "/dashboard/billing",
     ]);
     expect(
       screen.getAllByRole("link").every((link) =>
@@ -56,6 +57,7 @@ describe("PwaBottomNavigation", () => {
         "/dashboard/launch",
         "/dashboard/agents",
         "/dashboard/computers",
+      "/dashboard/billing",
       ]);
       expect(screen.queryByRole("link", { name: /chat/i })).not.toBeInTheDocument();
     } finally {

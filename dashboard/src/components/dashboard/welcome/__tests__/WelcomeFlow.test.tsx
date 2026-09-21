@@ -3,7 +3,7 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
-import { WelcomeFlow } from "../WelcomeFlow";
+import { WelcomeFlow, TierPickerCards } from "../WelcomeFlow";
 import { providerVmTarget } from "@/lib/infrastructure/__tests__/provider-vm-target.fixtures";
 import { redirectToCheckoutUrl } from "@/lib/billing/client";
 import {
@@ -1693,7 +1693,7 @@ describe("WelcomeFlow", () => {
     expect(screen.getByText(/Hivra Cloud needs an active managed plan/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Launch ·/i })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /Choose Hivra Cloud plan/i }));
-    expect(await screen.findByText(/how do you want to pay/i)).toBeInTheDocument();
+    expect(await screen.findByText("Paying with Card")).toBeInTheDocument();
 
     expect(window.localStorage.getItem("hermes:welcome_agent_type")).toBe("claude-code");
   });
@@ -2570,6 +2570,8 @@ describe("WelcomeFlow", () => {
 
     // Funding is now a secondary path — the primary CTA stays "Deploy Agent".
     fireEvent.click(screen.getByRole("button", { name: /add credit first/i }));
+    fireEvent.click(screen.getByText("Optional token top-up"));
+    fireEvent.click(screen.getByRole("button", { name: /pay with \$HermesOS/i }));
     fireEvent.click(screen.getByRole("button", { name: /start \$HermesOS top-up/i }));
 
     await waitFor(() => {
@@ -2725,7 +2727,9 @@ describe("WelcomeFlow", () => {
     await screen.findByRole("button", { name: /^deploy (hermes agent|claude code)$/i });
     // Funding is now a secondary path — the primary CTA stays "Deploy Agent".
     fireEvent.click(screen.getByRole("button", { name: /add credit first/i }));
-    fireEvent.click(screen.getByRole("button", { name: /deposit card credits/i }));
+    expect(screen.getByRole("button", { name: /start card credit top-up/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /pay with \$HermesOS/i })).not.toBeVisible();
+    expect(screen.getByText("Optional token top-up").closest("details")).not.toHaveAttribute("open");
 
     expect(screen.queryByText(/^Bonus$/i)).not.toBeInTheDocument();
 
@@ -2913,5 +2917,39 @@ describe("WelcomeFlow", () => {
     expect(
       screen.queryByRole("button", { name: /continue to managed credits/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("optional payment choices", () => {
+  const props = {
+    tiers: [], onSelectFree: jest.fn(), onDeposit: jest.fn(), onSelectCard: jest.fn(),
+    onSelectCryptoYearly: jest.fn(), setPaidPathChoice: jest.fn(), cardCadence: "yearly" as const,
+    setCardCadence: jest.fn(), cryptoMode: "yearly" as const, setCryptoMode: jest.fn(),
+    cardCheckoutLoadingTier: null, freeActivationLoading: false,
+  };
+  const previous = process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
+  afterEach(() => {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
+    else process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = previous;
+  });
+  it("shows card and free options without a mandatory payment fork when crypto is off", () => {
+    delete process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
+    render(<TierPickerCards {...props} paidPathChoice="card" />);
+    expect(screen.getByText("Paying with Card")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start with Free" })).toBeInTheDocument();
+    expect(screen.queryByText("How do you want to pay?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Other payment options" })).not.toBeInTheDocument();
+  });
+  it("reveals enabled token selection only after opening other payment options", () => {
+    process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = "true";
+    function Harness() {
+      const [choice, setChoice] = React.useState<"card" | "crypto" | null>("card");
+      return <TierPickerCards {...props} paidPathChoice={choice} setPaidPathChoice={setChoice} />;
+    }
+    render(<Harness />);
+    expect(screen.queryByText("How do you want to pay?")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Other payment options" }));
+    expect(screen.getByText("How do you want to pay?")).toBeInTheDocument();
+    expect(screen.getByText("$HermesOS")).toBeInTheDocument();
   });
 });
