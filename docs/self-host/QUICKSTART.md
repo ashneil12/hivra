@@ -307,10 +307,12 @@ they are not automatic installation steps.
 
 - Windows-native packaging and an Electron wrapper are not implemented in this
   review path.
-- Clean-host acceptance for the exact public source candidate is not yet complete.
-- The private installed-state receipt, SBOM and notice review are generated and
-  byte-bound, but the complete transitive notices/source obligations and public
-  publication review remain open.
+- The initial public source export passed a clean local installation and recovery
+  rehearsal, including database recovery, storage, restart and key rotation.
+  This does not certify every provider or runtime deployment.
+- Source-export, SBOM and notice review passed for the initial public source
+  release. Separately distributed images and installers need their own
+  dependency, notice and source-obligation review.
 - Provider-agent restart and model login/inference were not exercised by the
   source-checkout acceptance run.
 - Hivra Cloud account linking from an independent local control plane is still a

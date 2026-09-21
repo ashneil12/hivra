@@ -1,4 +1,5 @@
 import { ArrowUpRight, Code2, GitFork, GitBranch, Server } from "lucide-react";
+import SourceLink from "@/components/public-site/SourceLink";
 import styles from "./product.module.css";
 
 export default function OpenSourceSection() {
@@ -14,7 +15,7 @@ export default function OpenSourceSection() {
       <div className={styles.sourceTop}><GitBranch size={34} strokeWidth={1.4} aria-hidden="true" /><span>Hivra / source</span><GitFork size={21} aria-hidden="true" /></div>
       <pre>{"Apache License\nVersion 2.0\nJanuary 2004"}</pre>
       <div className={styles.sourceRights}><span><Code2 size={16} aria-hidden="true" />Inspect & change</span><span><Server size={16} aria-hidden="true" />Run & self-host</span></div>
-      <div id="github-release" className={styles.releaseStatus}><strong>Public GitHub release coming soon.</strong><p>The repository link will be added here when the public release is ready.</p><button type="button" disabled aria-describedby="github-placeholder-note"><GitBranch size={17} aria-hidden="true" />GitHub link coming soon</button><small id="github-placeholder-note">Repository link placeholder</small></div>
+      <div id="github-release" className={styles.releaseStatus}><strong>The source is on GitHub.</strong><p>Read the code, run Hivra yourself, or contribute a fix.</p><SourceLink /><small>Apache 2.0 source release</small></div>
     </div>
   </section>;
 }

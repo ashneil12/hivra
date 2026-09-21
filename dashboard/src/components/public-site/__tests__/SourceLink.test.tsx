@@ -6,7 +6,7 @@ import SourceLink from "../SourceLink";
 const published = { status: "published" as const, href: "https://github.com/example/verified-project" as const };
 
 test("the unverified public repository stays disabled without an invented star count or private URL", () => {
-  const { container } = render(<SourceLink />);
+  const { container } = render(<SourceLink repository={{ status: "pending", href: null, stars: null }} />);
   expect(screen.getByRole("button", { name: "GitHub public repository coming soon" })).toBeDisabled();
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
   expect(container.textContent).toBe("GitHubSoon");
@@ -35,4 +35,9 @@ test.each([
 ])("invalid star metadata never becomes a public count", (stars) => {
   render(<SourceLink repository={{ ...published, stars }} />);
   expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveTextContent(/^GitHub$/);
+});
+
+ test("the default destination is the published Hivra repository", () => {
+  render(<SourceLink />);
+  expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
 });

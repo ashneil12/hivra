@@ -32,12 +32,12 @@ test("hosting choices explain independent computers, own capacity and model keys
   expect(screen.getByRole("link", { name: "About the open-source release" })).toHaveAttribute("href", "#open-source");
 });
 
-test("open source distinguishes the license from the pending public GitHub release", () => {
+test("open source links to the published source repository", () => {
   render(<OpenSourceSection />);
   expect(screen.getByText(/complete Hivra platform uses Apache 2.0/)).toBeVisible();
-  expect(screen.getByText("Public GitHub release coming soon.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "GitHub link coming soon" })).toBeDisabled();
+  expect(screen.getByText("The source is on GitHub.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   expect(screen.getByRole("link", { name: "Read the open-source commitment" })).toHaveAttribute("href", "/docs/litepaper/index.html#platform");
-  expect(screen.getByRole("link")).toHaveAttribute("target", "_blank");
-  expect(screen.queryByRole("link", { name: /GitHub/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("target", "_blank");
+
 });

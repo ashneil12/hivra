@@ -95,7 +95,7 @@ test('release policies preserve third-party and incomplete-release boundaries', 
   const security = read('SECURITY.md');
   assert.match(security, /Report a vulnerability privately/);
   assert.match(security, /info@hermesos\.cloud/);
-  assert.match(security, /remains gated on enabling and testing a private GitHub/i);
+  assert.match(security, /https:\/\/github\.com\/ashneil12\/hivra\/security\/advisories\/new/);
 
   const readme = read('README.md');
   assert.match(readme, /Do not publish a release artifact/i);

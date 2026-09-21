@@ -6,7 +6,9 @@ Hivra is building an open, self-hostable cloud-computing layer for AI agents: on
 
 ## Repository status
 
-This repository contains the current Hivra dashboard and control-plane implementation. Hivra-owned source is licensed under Apache-2.0, but the repository has not yet completed the architecture, third-party artifact, and sensitive-history gates required for its first public release.
+This is the public source repository for Hivra. Hivra-owned source is licensed under Apache-2.0. The initial source release passed an independent export review, secret scanning, and an exact exported-source installation and recovery rehearsal. Separately distributed runtime images and desktop installers require their own release checks.
+
+Use `main` for reviewed releases and `canary` for development. Hosted deployments use private configuration outside this repository.
 
 Today the codebase contains:
 

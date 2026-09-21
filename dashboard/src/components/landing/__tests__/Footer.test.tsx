@@ -60,7 +60,7 @@ describe("Footer", () => {
     render(<Footer />);
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
     expect(screen.getByRole("link", { name: "Hosting & self-hosting" })).toHaveAttribute("href", "/#hosting");
-    expect(screen.getByRole("link", { name: "GitHub (coming soon)" })).toHaveAttribute("href", "/#github-release");
+    expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
   it("links the changelog next to the roadmap entry", () => {

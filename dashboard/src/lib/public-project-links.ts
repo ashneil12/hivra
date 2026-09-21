@@ -1,10 +1,9 @@
 /**
  * Public website destinations, verified independently of the private Git remote.
  *
- * Last checked 2026-09-09: no public Hivra platform repository or public macOS /
- * Windows installer was found. The Mac 0.2.0 alpha is a local build, not a public
- * download. See docs/release/PUBLIC-REPOSITORY-DECISION.md and
- * docs/release/2026-09-09-mac-native-workspace.md.
+ * Public source verified on 2026-09-21 at github.com/ashneil12/hivra.
+ * Desktop installers remain unpublished. Source availability does not imply
+ * that a signed installer or separately distributed runtime image is available.
  *
  * Replace a pending entry only after its public destination is verified. A stars
  * snapshot must come from that repository's public GitHub API response. Unknown
@@ -38,7 +37,7 @@ export const PUBLIC_PROJECT_LINKS: Readonly<{
   desktop: DesktopDownloads;
   browser: string;
 }> = {
-  repository: { status: "pending", href: null, stars: null },
+  repository: { status: "published", href: "https://github.com/ashneil12/hivra", stars: null },
   desktop: {
     macos: { status: "pending", href: null },
     windows: { status: "pending", href: null },
