@@ -14,9 +14,9 @@ export const HOSTED_MACHINES = [
 export default function PricingSection() {
   return <section id="pricing" className={styles.pricing} aria-labelledby="pricing-heading">
     <header className={styles.heading}>
-      <span className={styles.eyebrow}>Pricing</span>
+      <span className={styles.eyebrow}>Pricing preview</span>
       <h2 id="pricing-heading">Pick a size.<span>Use it how you like.</span></h2>
-      <p>Self-host for free on your own infrastructure, or choose a hosted computer below.</p>
+      <p>Self-host for free on your own infrastructure. Hosted prices, resources and benefits below are proposed and are not yet available as shown.</p>
     </header>
     <div id="hosted-machines" className={styles.ladder} aria-label="Free self-hosting and hosted plans">
       <article className={`${styles.machine} ${styles.freeMachine}`} aria-labelledby="plan-free">

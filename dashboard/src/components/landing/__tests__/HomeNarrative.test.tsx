@@ -71,3 +71,9 @@ test("the founder story opens the litepaper rather than the brand transition", (
   expect(founder).toHaveAttribute("target", "_blank");
   expect(founder).toHaveAttribute("rel", "noopener noreferrer");
 });
+
+test("recovery copy does not promise universal nightly backups", () => {
+  const answer = HOMEPAGE_FAQ.find(item => item.q === "What happens if my agent crashes?")!.a;
+  expect(answer).toContain("not guaranteed");
+  expect(answer).not.toContain("losing today");
+});

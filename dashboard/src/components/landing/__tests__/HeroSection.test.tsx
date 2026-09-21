@@ -80,6 +80,7 @@ describe("HeroSection", () => {
       "href",
       "/get-started?plan=free"
     );
+    expect(screen.getAllByRole("link").some(link => link.getAttribute("href") === "#launch")).toBe(true);
     expect(screen.getByText(/免费层级始终可用/i)).toBeInTheDocument();
   });
 });

@@ -40,3 +40,9 @@ test.each(SUPPORTED_LOCALES)("locked ladder stays visible without retired prices
  expect(screen.getAllByRole("article")).toHaveLength(5);
  expect(screen.getByRole("heading",{name:"Max"})).toBeVisible();
 });
+
+test("identifies hosted offers as a pricing preview", () => {
+  render(<PricingSection />);
+  expect(screen.getByText("Pricing preview")).toBeVisible();
+  expect(screen.getByText(/are proposed and are not yet available as shown/)).toBeVisible();
+});

@@ -13,11 +13,11 @@ export const HOMEPAGE_FAQ = [
   { q: "Can I self-host without a Hivra account?", a: "Yes. Self-host the platform on your hardware with your own sign-in. You don't need a Hivra account. Self-hosting needs no token." },
   { q: "What happens when I close my browser?", a: "Closing the browser disconnects your view. It doesn't throw the workspace away. Reconnect from another device and return to your files, tools and settings. Your server keeps its own files and settings until you choose to remove them." },
   { q: "Can I see everything an agent does?", a: "Hivra collects the activity it can observe, including commands and actions running through its own tools. Work done entirely inside an external app may not appear there. You can also open the computer and terminal to inspect the work yourself." },
-  { q: "Do I need the token?", a: "No. Card works everywhere, and self-hosting needs neither a token nor an account." },
+  { q: "Do I need the token?", a: "No. Self-hosting needs neither a token nor a Hivra account. Available payment methods are shown in the managed checkout." },
   { q: "How many agents can I run?", a: "As many as fit. We sell you a computer, not a headcount." },
   { q: "Why not just rent a server?", a: "You could. It'd be cheaper and you'd spend a weekend setting it up, then an hour a month keeping it alive. Some people enjoy that. If you're one of them, go and enjoy it." },
-  { q: "What happens if my agent crashes?", a: "It comes back up on its own. Backups run nightly, so the worst day you can have is losing today." },
-  { q: "Can I move between plans?", a: "Up or down, whenever, no conversation required." },
+  { q: "What happens if my agent crashes?", a: "Recovery and backup coverage depend on the runtime, provider and configured services. Verify your backup schedule and restore process; nightly backups and a one-day recovery limit are not guaranteed." },
+  { q: "Can I move between plans?", a: "Available changes depend on your current plan and capacity. Check the managed billing page before changing your plan." },
   { q: "What's coming next?", a: "Hivra Orchestrator will bring your agents into one place to talk, follow their work and hand tasks between them. More agents, macOS and custom images are also coming. Gate, Exchange, Arena and Signal are the next pieces we're building around Agent Computers." },
 ] as const;
 
