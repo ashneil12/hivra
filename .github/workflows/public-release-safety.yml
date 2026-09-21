@@ -24,6 +24,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Guard managed hosting control validation
+        run: node --test scripts/release/check-managed-hosting-controls.test.mjs
+
       - name: Reject tracked secrets, generated output, and scan bypasses
         run: node --test scripts/release/asset-provenance-evidence.test.mjs scripts/release/check-dashboard-public-artifact.test.mjs scripts/release/credential-reconciliation-evidence.test.mjs scripts/release/notice-source-offer-evidence.test.mjs scripts/release/public-release-metadata.test.mjs scripts/release/public-source-approval.test.mjs scripts/release/public-source-candidate.test.mjs scripts/release/public-tree-hygiene.test.mjs scripts/release/runtime-distribution-boundary.test.mjs scripts/release/source-third-party-provenance.test.mjs dashboard/scripts/test-public-source-bootstrap-e2e.test.mjs dashboard/scripts/test-self-host-recovery-e2e.test.mjs && python3 -I -B dashboard/scripts/test-runtime-receipt.py && node scripts/release/public-tree-hygiene.mjs
 
