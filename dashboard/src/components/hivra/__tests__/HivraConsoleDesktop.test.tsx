@@ -157,6 +157,77 @@ describe("HivraConsoleDesktop", () => {
     expect(screen.getByRole("button", { name: "Open fast Windows desktop" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reconnect desktop" })).toBeNull();
     expect(screen.getByText("Open Windows desktop here")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Desktop quality" })).toBeTruthy();
+    expect(screen.getAllByRole("option")).toHaveLength(4);
+    expect(screen.queryByRole("group", { name: "Desktop streaming mode" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "HQ 1080p" })).toBeNull();
+    expect(screen.queryByText("Windows", { exact: true })).toBeNull();
+    expect(screen.getByRole("status").closest("header")).toBeTruthy();
+    expect(screen.getByText("Ready")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open fast Windows desktop" }).textContent).toBe("Open");
+  });
+
+  it("persists Windows quality and retains the frame until an explicit reconnect applies it", async () => {
+    window.localStorage.setItem(streamModeStorageKey("windows-id"), "qhd");
+    fetchMock.mockImplementation(() => response(201, { success: true, data: {
+      launchUrl: `https://windows-canary.hermesos.cloud/guacamole/#/client/${fetchMock.mock.calls.length}`,
+    } }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Work PC" profile="windows" />);
+    const quality = screen.getByRole("combobox", { name: "Desktop quality" }) as HTMLSelectElement;
+    expect(quality.value).toBe("qhd");
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    const frame = await screen.findByTitle("Work PC Windows desktop");
+    fireEvent.load(frame);
+    expect(screen.getByText("Open", { selector: "span" })).toBeTruthy();
+    const originalSource = frame.getAttribute("src");
+    fireEvent.change(quality, { target: { value: "performance" } });
+    expect(window.localStorage.getItem(streamModeStorageKey("windows-id"))).toBe("performance");
+    expect(screen.getByRole("status").textContent).toBe("Reconnect to apply the selected quality.");
+    expect(frame.getAttribute("src")).toBe(originalSource);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect Windows desktop" }));
+    await waitFor(() => expect(screen.getByTitle("Work PC Windows desktop")).not.toBe(frame));
+    expect(screen.getByTitle("Work PC Windows desktop").getAttribute("src")).not.toBe(originalSource);
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/hivra/agents/windows-id/windows-desktop",
+      expect.objectContaining({ body: JSON.stringify({ streamingMode: "performance" }) }));
+    expect(screen.queryByText("Reconnect to apply the selected quality.")).toBeNull();
+  });
+
+  it("reloads a failed Windows iframe on explicit retry even when the handoff URL is unchanged", async () => {
+    const launchUrl = "https://windows-canary.hermesos.cloud/guacamole/#/client/same";
+    fetchMock.mockImplementation(() => response(201, { success: true, data: { launchUrl } }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Work PC" profile="windows" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    const failedFrame = await screen.findByTitle("Work PC Windows desktop");
+    fireEvent.error(failedFrame);
+    expect(screen.getByRole("status").textContent).toBe("Windows desktop could not load. Reconnect Windows to request a fresh session.");
+    const retry = screen.getByRole("button", { name: "Try again" });
+    expect(screen.getByTitle("Work PC Windows desktop")).toBe(failedFrame);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByTitle("Work PC Windows desktop")).not.toBe(failedFrame));
+    const retriedFrame = screen.getByTitle("Work PC Windows desktop");
+    expect(retriedFrame.getAttribute("src")).toBe(launchUrl);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.load(retriedFrame);
+    expect(screen.getByRole("status").textContent).toBe("Windows desktop gateway loaded · Full screen is optional");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Reconnect Windows desktop" })).toBeTruthy();
+  });
+
+  it("keeps Windows failure diagnostics in the strip with a contextual retry", async () => {
+    fetchMock.mockImplementation(() => response(503, { success: false, error: "Gateway unavailable" }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Work PC" profile="windows" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(retry.closest("header")).toBeTruthy();
+    expect(screen.getByText("Couldn’t open")).toBeTruthy();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status").textContent).toBe("Gateway unavailable");
+    expect(screen.getByRole("status").getAttribute("title")).toBe("Gateway unavailable");
+    expect(screen.getByRole("status").closest("header")).toBe(retry.closest("header"));
+    fireEvent.click(retry);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
   it("replaces the idle prompt during handoff and keeps loading until the gateway frame loads", async () => {
@@ -182,7 +253,7 @@ describe("HivraConsoleDesktop", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
     await screen.findByText("Gateway unavailable");
     expect(screen.queryByText("Opening Windows…")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open fast Windows desktop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
   it("opens Windows inline without navigation and retains the same frame through fullscreen exit and tab changes", async () => {

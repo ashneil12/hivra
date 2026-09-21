@@ -452,3 +452,7 @@ desktop launch remains gated on its own lifecycle and security acceptance.
 - Full desktop before portable agent access surfaces are reliable.
 - Enterprise procurement and compliance suites.
 - New pricing, token, marketplace, or growth mechanics that distract from the reference path.
+
+### Optional token presentation and access integration
+
+The public website leads with Agent Computers. Ecosystem maps the litepaper’s Available now, Next, Then and Research products; Token explains the existing $HermesOS contract and current access separately from proposed $HIVRA migration, utility and treasury rules. Billing leads with plans and card payment, with token controls disclosed intentionally and existing balances retained. This is presentation and integration of existing gated flows only. It does not ship new token mechanics, open a migration, enable crypto billing, or change payment settlement. Deployment and live acceptance are recorded separately.

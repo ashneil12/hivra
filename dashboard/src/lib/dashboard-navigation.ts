@@ -1,3 +1,4 @@
+import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
   Activity,
   Bot,
@@ -20,6 +21,7 @@ type DashboardNavigationId =
   | "infrastructure"
   | "collaboration"
   | "settings"
+  | "billing"
   | "applications"
   | "help"
   | "launch";
@@ -88,13 +90,19 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     icon: Settings,
     routePrefixes: [
       "/dashboard/settings",
-      "/dashboard/billing",
       "/dashboard/wallet",
       "/dashboard/vault",
       "/dashboard/tools",
       "/dashboard/library",
       "/dashboard/templates",
     ],
+  },
+  {
+    id: "billing",
+    label: "Billing & Access",
+    href: "/dashboard/billing",
+    icon: Settings,
+    routePrefixes: ["/dashboard/billing"],
   },
 ];
 
@@ -133,6 +141,7 @@ export const DASHBOARD_MOBILE_NAVIGATION: readonly DashboardNavigationItem[] = [
   DASHBOARD_LAUNCH_NAVIGATION,
   PRIMARY_NAVIGATION_BY_ID.agents,
   PRIMARY_NAVIGATION_BY_ID.computers,
+  DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!,
 ];
 
 /**
@@ -143,7 +152,10 @@ export function filterDashboardNavigation(
   items: readonly DashboardNavigationItem[],
   workspaceShellEnabled: boolean,
 ): DashboardNavigationItem[] {
-  return items.filter((item) => !item.requiresWorkspaceShell || workspaceShellEnabled);
+  return items.filter((item) =>
+    (!item.requiresWorkspaceShell || workspaceShellEnabled) &&
+    (item.id !== "billing" || !isLocalAuthMode())
+  );
 }
 
 function matchesRoutePrefix(pathname: string, prefix: string): boolean {
