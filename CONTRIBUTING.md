@@ -42,3 +42,23 @@ terms. Hivra does not require assignment of copyright in ordinary contributions.
 Describe what changed, what you tested, what you intentionally left untouched,
 and anything that remains uncertain. User-facing and high-risk changes should
 include revision-bound live evidence appropriate to their blast radius.
+
+## Acceptance and managed hosting
+
+Open pull requests against `main`. A contribution is a proposal, not a promise
+of acceptance or a production release. Maintainers may request changes or decline
+work based on security, product fit, maintenance cost, or operational risk.
+
+Generally useful capabilities belong in the public project. A self-hosting feature
+that is unsuitable for the managed service should use an explicit optional setting
+or adapter and remain disabled in managed hosting until separately accepted.
+New providers, integrations, background jobs, privileged operations, and billable
+paths must not become enabled merely because their implementation was merged.
+Include tests for the disabled path and authorization boundary where applicable.
+Do not weaken tenant isolation, billing checks, or authentication to support an
+optional configuration.
+
+`main` contains accepted code. `canary` selects the revision being tested on the
+managed Canary service. Production deployment requires a separate, explicit
+promotion by an authorized operator. See the
+[managed release process](docs/release/MANAGED-HOSTING-RELEASES.md).
