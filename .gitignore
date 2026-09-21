@@ -85,3 +85,21 @@ supabase/.temp/
 apps/macos/HivraMac/.build/
 apps/macos/HivraMac/.swiftpm/
 apps/macos/HivraMac/dist/
+
+# Internal working material stays in private archives, not public source.
+/.agents/
+/*_PLAN.md
+/BENCHMARK_AFTER.md
+/HERMES_FORK_CHANGELOG.md
+/HIVRA_DOMAIN_CUTOVER.md
+/PATCHES.md
+/gemini.md
+/writelikeahuman.md
+/missed-call-demo.html
+/docs/designs/
+/docs/design-reviews/
+/docs/operations/
+/docs/verification/
+/docs/superpowers/plans/
+/dashboard/docs/superpowers/plans/
+/docs/litepaper/review/

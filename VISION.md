@@ -10,7 +10,7 @@
 choices in one resumable Launch journey. The approved implementation surface is
 web/Canary first; this direction does not claim that the current fragmented
 routes already implement or pass that journey. See the
-[approved reset plan](docs/superpowers/plans/2026-09-04-hivra-core-experience-reset.md).
+[core-experience direction](docs/CORE-EXPERIENCE.md).
 
 **Execution authority:** Code implementation, Canary deployment, and bounded
 launch tests using clearly identified Hivra-owned Canary capacity are authorized.
@@ -142,7 +142,7 @@ The initial Proxmox slice proves user-owned infrastructure and the strongest exi
 
 ## Approved implementation order
 
-The [core-experience reset](docs/superpowers/plans/2026-09-04-hivra-core-experience-reset.md)
+The [core-experience direction](docs/CORE-EXPERIENCE.md)
 is the approved web/Canary implementation sequence:
 
 1. align product truth and preserve the existing acceptance contracts;

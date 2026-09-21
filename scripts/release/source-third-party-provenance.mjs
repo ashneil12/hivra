@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -128,7 +128,7 @@ export function inspectSourceThirdPartyProvenance({ root } = {}) {
     throw new Error('Source tree unexpectedly redistributes Apple certificate bytes.');
   }
 
-  const actual = filesUnder(root, '.agents/skills');
+  const actual = existsSync(path.join(root, '.agents/skills')) ? filesUnder(root, '.agents/skills') : [];
   if (JSON.stringify([...expected].sort()) !== JSON.stringify(actual)) {
     throw new Error('Source provenance policy is not exhaustive for the tracked skills boundary.');
   }

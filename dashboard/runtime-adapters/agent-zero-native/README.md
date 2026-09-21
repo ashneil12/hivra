@@ -1,11 +1,11 @@
 # Agent Zero native editor lifecycle adapter
 
-**Status: released and first-open verified on one new Canary computer with
-runtime `2026.09.06.1`. Existing computers were not updated.** See
-`docs/release/2026-09-06-agent-zero-editor-runtime.md` at the repository root.
+**Status: source adapter with pinned regression fixtures.** Runtime distribution
+and provider acceptance are separate from these source tests; see the public
+[runtime boundary](../../../docs/release/RUNTIME-DISTRIBUTION.md).
 
-The `2026-09-06-agent-zero-launch-sizing.md` live receipt records a blank editor
-on first New File, followed by a working editor after one cancel/reopen. The
+The regression fixture captures a blank editor on first New File, followed by
+a working editor after one cancel/reopen. The
 exact guest's source calls `scheduleEditorInit()` immediately after starting an
 asynchronous modal load. Two animation frames later, `initEditor()` silently
 returns if the modal's container does not exist. No mount callback retries it.
