@@ -28,3 +28,14 @@
 ## Rollback Notes
 
 - Fastest rollback path if this misbehaves:
+
+## Hosting impact
+
+- Intended scope: shared core / optional self-hosting feature / managed operations
+- New settings, providers, permissions, background work, or ongoing costs:
+- Default behavior and how the feature stays disabled when not configured:
+- Tenant isolation, billing, and authentication impact:
+- Canary evidence for managed enablement (if applicable):
+
+Merging this PR accepts code; it does not authorize production promotion or
+managed-service enablement.
