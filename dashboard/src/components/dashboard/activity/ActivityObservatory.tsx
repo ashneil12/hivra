@@ -105,6 +105,8 @@ export function ActivityObservatory({
 }) {
   const [data, setData] = useState<ActivitySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("timeline");
   const [search, setSearch] = useState("");
@@ -112,17 +114,22 @@ export function ActivityObservatory({
   const [kind, setKind] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const request = useRef<AbortController | null>(null);
-  const refresh = useCallback(async () => {
+  const load = useCallback(async (cursor?: string) => {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
-    setLoading(true);
-    setError(null);
+    setLoading(!cursor);
+    setLoadingOlder(Boolean(cursor));
+    setOlderError(null);
+    if (!cursor) setError(null);
     try {
-      const response = await fetch("/api/activity?days=30&limit=100", {
-        cache: "no-store",
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        `/api/activity?days=30&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+        },
+      );
       if (!response.ok)
         throw new Error(
           response.status === 401
@@ -130,7 +137,7 @@ export function ActivityObservatory({
             : "Activity could not be loaded. Refresh to try again.",
         );
       const body = await response.json();
-      const snapshot = body.data;
+      const snapshot = body.data as ActivitySnapshot;
       if (
         snapshot?.schemaVersion !== 1 ||
         !Array.isArray(snapshot.events) ||
@@ -140,18 +147,56 @@ export function ActivityObservatory({
         throw new Error(
           "Activity returned an unsupported response. Refresh to try again.",
         );
-      if (!controller.signal.aborted) setData(snapshot);
+      if (!controller.signal.aborted) {
+        setData((previous) => {
+          if (!cursor || !previous) return snapshot;
+          const known = new Set(previous.events.map((event) => event.id));
+          const appended = snapshot.events.filter((event) => {
+            if (known.has(event.id)) return false;
+            known.add(event.id);
+            return true;
+          });
+          return {
+            ...previous,
+            events: [...previous.events, ...appended],
+            sources: previous.sources.map(
+              (source) =>
+                snapshot.sources.find(
+                  (next) => next.id === source.id && next.state === "degraded",
+                ) ?? source,
+            ),
+            degraded: previous.degraded || snapshot.degraded,
+            truncated: snapshot.degraded
+              ? previous.truncated
+              : snapshot.truncated,
+            nextCursor: snapshot.degraded
+              ? previous.nextCursor
+              : snapshot.nextCursor,
+          };
+        });
+        if (!cursor) setSelected(null);
+        else if (snapshot.degraded)
+          setOlderError(
+            "Some older activity sources could not be read. Available events were kept; retry this page to fill the gap.",
+          );
+      }
     } catch (cause) {
       if (!controller.signal.aborted)
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Activity could not be loaded.",
+        (cursor ? setOlderError : setError)(
+          cursor
+            ? "Older events could not be loaded. Your loaded events are preserved; try again."
+            : cause instanceof Error
+              ? cause.message
+              : "Activity could not be loaded.",
         );
     } finally {
-      if (!controller.signal.aborted) setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        setLoadingOlder(false);
+      }
     }
   }, []);
+  const refresh = useCallback(() => load(), [load]);
   useEffect(() => {
     void refresh();
     return () => request.current?.abort();
@@ -411,6 +456,20 @@ export function ActivityObservatory({
                 <Inspector event={active} selected={selected === active.id} />
               )}
             </div>
+            {olderError && (
+              <p role="alert" className={styles.notice}>
+                {olderError}
+              </p>
+            )}
+            {data.nextCursor && (
+              <button
+                className={styles.refresh}
+                disabled={loading || loadingOlder}
+                onClick={() => void load(data.nextCursor)}
+              >
+                {loadingOlder ? "Loading older events…" : "Load older events"}
+              </button>
+            )}
             {data.truncated && (
               <p className={styles.notice}>
                 This is a limited snapshot of the latest events. Filters search

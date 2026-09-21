@@ -194,3 +194,53 @@ it("brings selected evidence into view on a narrow screen", async () => {
     HTMLElement.prototype.scrollIntoView = originalScroll;
   }
 });
+
+it("appends older events once, preserves selection and coverage, and refresh resets history", async () => {
+  respond({ ...snapshot, truncated: true, nextCursor: "page/2" } as typeof snapshot);
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: /Agent started/ });
+  fireEvent.click(screen.getByRole("button", { name: /Test command failed/ }));
+  const older = { ...snapshot.events[0], id: "older-1", title: "Older launch" };
+  respond({ ...snapshot, events: [snapshot.events[1], older, older], resources: [], sources: [], truncated: false });
+  fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
+  await screen.findByRole("button", { name: /Older launch/ });
+  expect(global.fetch).toHaveBeenLastCalledWith("/api/activity?days=30&limit=100&cursor=page%2F2", expect.any(Object));
+  expect(screen.getAllByRole("button", { name: /Older launch/ })).toHaveLength(1);
+  expect(within(screen.getByRole("complementary")).getByText("event-2")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /Older launch/ }));
+  expect(within(screen.getByRole("complementary")).getByText("older-1")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Load older events" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+  expect(screen.getByText("Processes · missing")).toBeVisible();
+  respond(snapshot);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("button", { name: "Refresh" });
+  fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  expect(screen.queryByRole("button", { name: /Older launch/ })).not.toBeInTheDocument();
+  expect(global.fetch).toHaveBeenLastCalledWith("/api/activity?days=30&limit=100", expect.any(Object));
+});
+
+it("preserves loaded events and cursor after a pagination error", async () => {
+  respond({ ...snapshot, truncated: true, nextCursor: "retry-cursor" } as typeof snapshot);
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: /Agent started/ });
+  (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 503 });
+  fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Your loaded events are preserved");
+  expect(screen.getByRole("button", { name: /Agent started/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Load older events" })).toBeEnabled();
+  expect(screen.getByText(/Filters search only these loaded events/)).toBeVisible();
+});
+
+it("retains a failed source and retry cursor when an older page is degraded", async () => {
+  respond({ ...snapshot, truncated: true, nextCursor: "retry-cursor" } as typeof snapshot);
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: /Agent started/ });
+  respond({ ...snapshot, events: [], degraded: true, sources: [{ ...snapshot.sources[0], state: "degraded", detail: "Read failed." }] });
+  fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("retry this page to fill the gap");
+  expect(screen.getByRole("button", { name: "Load older events" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Coverage" }));
+  expect(screen.getByText("degraded")).toBeVisible();
+  expect(screen.getByText("Read failed.")).toBeVisible();
+});
