@@ -59,6 +59,7 @@ Do not weaken tenant isolation, billing checks, or authentication to support an
 optional configuration.
 
 `main` contains accepted code. `canary` selects the revision being tested on the
-managed Canary service. Production deployment requires a separate, explicit
+managed Canary service. Maintainers may test reviewed contributions on Canary
+before accepting them into main. Production deployment requires a separate, explicit
 promotion by an authorized operator. See the
 [managed release process](docs/release/MANAGED-HOSTING-RELEASES.md).

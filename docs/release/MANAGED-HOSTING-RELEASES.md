@@ -29,6 +29,26 @@ credential-bearing projects. Do not authorize arbitrary fork code to run there.
 Use local/disposable environments without managed credentials for contributor
 previews. Creating such a preview service requires its own scoped setup.
 
+## Test on Canary before accepting a contribution
+
+Canary is a separate deployment fed by the `canary` branch in this repository.
+A branch is a saved line of work, not a separate GitHub repository. Existing work
+in an older private repository or local checkout is not copied here automatically.
+
+Keep experiments on feature branches. After reviewing a contributor's proposed
+code and build scripts, a maintainer can apply the selected commits to a branch
+based on `canary` and open a PR into `canary`. This allows testing before accepting
+the original contribution into `main`. Record the original PR and exact tested
+commits, and resolve conflicts explicitly. Do not merge an entire private history
+into this public repository; transfer reviewed patches only.
+
+The managed Canary has credentials and real integrations: review code before
+running it there. Unreviewed contributions belong in a disposable environment.
+Once testing is satisfactory, open or complete the PR into `main`, verify that the
+production candidate contains the tested changes, and use the separate promotion
+steps below. Neither merging into Canary nor accepting into main releases to live.
+Do not overwrite Canary experiments with a blanket reset to main.
+
 ## Release one exact revision
 
 1. Review and merge an accepted contribution into `main`. CI is read-only and

@@ -4,7 +4,7 @@
 
 **Design authority:** [`docs/superpowers/specs/2026-08-24-hivra-agent-computers-design.md`](docs/superpowers/specs/2026-08-24-hivra-agent-computers-design.md)
 
-**Approved core-experience plan:** [`docs/superpowers/plans/2026-09-04-hivra-core-experience-reset.md`](docs/superpowers/plans/2026-09-04-hivra-core-experience-reset.md). The owner approved its sibling Agent-or-Computer entry and web/Canary execution order on 2026-09-04. This changes target direction and implementation sequencing; it does not make target behavior current or alter `UC-PORTABLE-AGENT-01`.
+**Core experience:** the target is a clear Agent-or-Computer entry, followed by revision-bound Canary verification. See [the product architecture](docs/PRODUCT-ARCHITECTURE.md). Target direction does not imply shipped behavior.
 
 **Execution authority:** Code implementation, Canary deployment, and bounded
 launch tests on clearly identified Hivra-owned Canary capacity are authorized.

@@ -99,12 +99,6 @@ runtime evidence. Browser desktop controls, native Moonlight and guest runtime
 UIs are different access surfaces; the app shell does not make a browser stream
 a native video transport.
 
-For dated native transport acceptance, see the
-[Mac handoff record](../../../docs/release/2026-09-08-mac-native-profile-handoff.md).
-For this workspace's implemented changes and actual acceptance results, see the
-[native workspace record](../../../docs/release/2026-09-09-mac-native-workspace.md).
-The subsequent window-framing correction is documented in the
-[integrated window record](../../../docs/release/2026-09-09-mac-integrated-window.md).
 Public release and additional provider/device acceptance remain separate gates.
 
 ## Local runtime prerequisites
