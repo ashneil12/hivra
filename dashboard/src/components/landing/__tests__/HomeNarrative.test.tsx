@@ -37,7 +37,7 @@ test("the FAQ renders the same answers used by homepage structured data", () => 
     expect(screen.getByText(a)).toBeInTheDocument();
   }
   expect(screen.getByText(/without attaching an agent/)).toBeInTheDocument();
-  expect(screen.getByText(/public GitHub release is coming soon/)).toBeInTheDocument();
+  expect(screen.getByText(/Self-hosting needs no token/)).toBeInTheDocument();
   expect(screen.queryByText(/free managed tier/)).not.toBeInTheDocument();
 });
 
@@ -54,12 +54,13 @@ test("planned products are visible on first render and marked as coming or next"
   expect(fullPlan).toHaveAttribute("href", "/docs/litepaper/index.html#future");
   expect(fullPlan).toHaveAttribute("target", "_blank");
   expect(fullPlan).toHaveAttribute("rel", "noopener noreferrer");
-  for (const name of ["Hivra Orchestrator", "macOS", "Custom images", "Gate", "Exchange", "Arena", "Signal"]) {
+  for (const name of ["Hivra Orchestrator", "macOS", "Custom images"]) {
     const heading = screen.getByRole("heading", { name });
     expect(heading).toBeVisible();
     expect(within(heading.closest("article")!).getByText(/^(Coming|Next)$/)).toBeVisible();
   }
-  expect(screen.getByText(/not features included in today's launch/)).toBeVisible();
+  expect(screen.getByText(/The longer plan, including Gate/)).toBeVisible();
+  expect(screen.queryByRole("heading",{name:"Gate"})).not.toBeInTheDocument();
 });
 
 

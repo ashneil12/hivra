@@ -17,21 +17,17 @@ import TickerStrip from "@/components/landing/TickerStrip";
 import ComputerScene from "@/components/landing/ComputerScene";
 import ComputersSection from "@/components/landing/ComputersSection";
 import HostingSection from "@/components/landing/HostingSection";
-import OpenSourceSection from "@/components/landing/OpenSourceSection";
 import { HOMEPAGE_FAQ } from "@/components/landing/public-home-content";
 import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
+import LaunchSection from "@/components/landing/LaunchSection";
+import OpenSourceSection from "@/components/landing/OpenSourceSection";
 import ChooseAgentSection from "@/components/landing/ChooseAgentSection";
-import FeaturesSection from "@/components/landing/FeaturesSection";
 import DashboardShowcaseSection from "@/components/landing/DashboardShowcaseSection";
-import HowItWorksSection from "@/components/landing/HowItWorksSection";
-import UseCasesSection from "@/components/landing/UseCasesSection";
 import PricingSection from "@/components/landing/PricingSection";
 import WhatsComingSection from "@/components/landing/WhatsComingSection";
 import FounderSection from "@/components/landing/FounderSection";
 import TokenomicsSection from "@/components/landing/TokenomicsSection";
-import DownloadsSection from "@/components/landing/DownloadsSection";
 import FAQSection from "@/components/landing/FAQSection";
-import TransitionFAQCard from "@/components/landing/TransitionFAQCard";
 
 const homepageTitle = "Hivra | A computer for you and your agents";
 const homepageDescription = "Launch Ubuntu, Windows or Omarchy. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
@@ -160,21 +156,15 @@ export default async function LandingPage({
         <main id="main-content" className={styles.home}>
           <HeroSection agentsCounter={<ComputerScene />} liveStat={<AgentsDeployedStat />} />
           <TickerStrip />
-          <ChooseAgentSection />
-          <ComputersSection />
-          <HostingSection />
-          <OpenSourceSection />
-          <DownloadsSection />
-          <FeaturesSection />
+          <LaunchSection agents={<ChooseAgentSection embedded />} computers={<ComputersSection embedded />} />
           <DashboardShowcaseSection />
-          <HowItWorksSection />
-          <UseCasesSection />
+          <HostingSection />
           <div className={styles.pricingWrap}><PricingSection /></div>
+          <OpenSourceSection />
           <div className={styles.comingWrap}><WhatsComingSection /></div>
           <TokenomicsSection />
           <FounderSection />
           <FAQSection />
-          <div className={styles.transitionWrap}><TransitionFAQCard /></div>
         </main>
       </PublicSite>
     </LocaleProvider>

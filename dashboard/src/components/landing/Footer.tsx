@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import styles from "../public-site/public-site.module.css";
 
 const COLUMNS = [
   { title: "Product", links: [
     { label: "Agents", href: "/#agents" },
     { label: "Computers", href: "/#computers" },
-    { label: "Download the app", href: "/#downloads" },
     { label: "Hosting & self-hosting", href: "/#hosting" },
     { label: "Pricing", href: "/#pricing" },
     { label: "Roadmap", href: "/roadmap" },
@@ -18,12 +17,12 @@ const COLUMNS = [
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "Litepaper", href: "/docs/litepaper/" },
     { label: "Blog", href: "/blog" },
-    { label: "Tokenomics", href: "/#tokenomics" },
+    { label: "Download the app", href: "/download" },
+    { label: "Tokenomics", href: "/tokenomics" },
     { label: "Nibbii", href: "https://nibbii.pet/" },
   ] },
   { title: "Company", links: [
-    { label: "Why I’m building Hivra", href: "/#founder" },
-    { label: "Why Hivra", href: "/why-hivra" },
+    { label: "Why I’m building Hivra", href: "/why-hivra" },
     { label: "Stats", href: "/stats" },
     { label: "Contact", href: "mailto:info@hermesos.cloud" },
     { label: "Terms", href: "/terms" },
@@ -34,11 +33,7 @@ const COLUMNS = [
 export default function Footer() {
   return (
     <footer className={styles.footer} data-public-footer>
-      <div className={styles.footerTop}>
-        <div className={styles.footerInvitation}>
-          <p>A place of its own.</p>
-          <Link href="/docs/litepaper/" className={styles.footerStory}>Read the litepaper<ArrowRight size={22} strokeWidth={1.5} aria-hidden="true" /></Link>
-        </div>
+      <div className={`${styles.footerTop} ${styles.footerCompact}`}>
         <div className={styles.footerColumns}>
           {COLUMNS.map((column) => (
             <nav key={column.title} aria-label={column.title}>
@@ -55,7 +50,7 @@ export default function Footer() {
       <Link href="/" className={styles.footerWordmark} aria-label="Hivra, back to homepage">Hivra<span aria-hidden="true">.</span></Link>
       <div className={styles.footerBottom}>
         <p>Powered by Hivra</p>
-        <Link href="/why-hivra">Formerly HermesOS<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" /></Link>
+        <Link href="/why-hivra/evolution">Formerly HermesOS<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" /></Link>
         <p>© Hivra</p>
       </div>
     </footer>
