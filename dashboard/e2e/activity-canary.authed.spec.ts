@@ -127,7 +127,7 @@ test.describe("Activity observatory (deployed canary)", () => {
     playwright,
     baseURL,
   }) => {
-    const anonymous = await playwright.request.newContext({ baseURL });
+    const anonymous = await playwright.request.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
     try {
       expect(
         (await anonymous.get("/api/activity", { maxRedirects: 0 })).status(),
