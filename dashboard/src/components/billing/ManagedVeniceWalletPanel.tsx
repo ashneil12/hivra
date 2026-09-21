@@ -52,8 +52,10 @@ function BalanceBlock(props: {
 export function ManagedVeniceWalletPanel({
   summary,
   onDeposit,
+  tokenPaymentsEnabled = false,
 }: {
   summary: ManagedVeniceWalletSummary;
+  tokenPaymentsEnabled?: boolean;
   onDeposit?: (walletType: ManagedVeniceWalletType) => void;
 }) {
   return (
@@ -72,36 +74,18 @@ export function ManagedVeniceWalletPanel({
             Managed Venice inference
           </div>
           <h3 className="serif" style={{ fontSize: 28, margin: "4px 0 0" }}>
-            Wallets
+            Model credits
           </h3>
         </div>
         {onDeposit && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <button
               type="button"
-              onClick={() => onDeposit("hermesos")}
-              style={{
-                border: "1px solid var(--gold-leaf)",
-                background: "rgba(255, 44, 45,0.12)",
-                color: "var(--ink-black)",
-                padding: "9px 12px",
-                cursor: "pointer",
-                fontFamily: "var(--font-mono), monospace",
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                fontWeight: 800,
-              }}
-            >
-              Top up with $HermesOS
-            </button>
-            <button
-              type="button"
               onClick={() => onDeposit("card")}
               style={{
                 border: "1px solid var(--etched-border)",
-                background: "transparent",
-                color: "var(--ink-black)",
+                background: "var(--btn-bg)",
+                color: "var(--btn-text)",
                 padding: "9px 12px",
                 cursor: "pointer",
                 fontFamily: "var(--font-mono), monospace",
@@ -119,26 +103,48 @@ export function ManagedVeniceWalletPanel({
 
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 18 }}>
         <BalanceBlock
+          title="Card credits"
+          primary={`${formatMicroUsd(summary.wallets.card.availableMicroUsd, 4)} available`}
+          secondary="Managed Venice credits"
+          reserveText={`${formatMicroUsd(summary.wallets.card.reservedMicroUsd, 4)} reserved`}
+        />
+        {(summary.wallets.hermesos.lockedValueMicroUsd > 0 || summary.wallets.hermesos.reservedMicroUsd > 0 || summary.wallets.hermesos.lots.length > 0) && <>
+        <BalanceBlock
           title="$HermesOS wallet"
           primary={summary.wallets.hermesos.tokenDisplay}
           secondary={`${formatMicroUsd(summary.wallets.hermesos.lockedValueMicroUsd, 4)} Venice credit`}
           reserveText={`${formatMicroUsd(summary.wallets.hermesos.availableMicroUsd, 4)} available · ${formatMicroUsd(summary.wallets.hermesos.reservedMicroUsd, 4)} reserved`}
         />
-        <BalanceBlock
-          title="Card credits"
-          primary={`${formatMicroUsd(summary.wallets.card.balanceMicroUsd, 4)} available`}
-          secondary="Unsubsidized managed Venice spend"
-          reserveText={`${formatMicroUsd(summary.wallets.card.reservedMicroUsd, 4)} reserved`}
-        />
+        </>}
       </div>
 
+      {tokenPaymentsEnabled && <details style={{ marginTop: 20 }}><summary style={{ cursor: "pointer" }}>Optional token top-ups</summary>
       <ManagedVeniceSubsidyBanner
         rate={summary.discount.rate}
         discountBps={summary.discount.discountBps}
         launchSubsidyUsedMicroUsd={summary.discount.launchSubsidyUsedMicroUsd}
         launchSubsidyCapMicroUsd={summary.discount.launchSubsidyCapMicroUsd}
         killSwitchActive={summary.killSwitch.active}
-      />
+      />            {onDeposit && <button
+              type="button"
+              onClick={() => onDeposit("hermesos")}
+              style={{
+                border: "1px solid var(--gold-leaf)",
+                background: "rgba(255, 44, 45,0.12)",
+                color: "var(--ink-black)",
+                padding: "9px 12px",
+                cursor: "pointer",
+                fontFamily: "var(--font-mono), monospace",
+                fontSize: 10,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                fontWeight: 800,
+              }}
+            >
+              Top up with $HermesOS
+            </button>}
+      </details>}
+
     </section>
   );
 }

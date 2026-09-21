@@ -367,33 +367,9 @@ export function DeployForm({
               AI Credit
             </label>
             <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-              Add prepaid credit for {displayName}&apos;s AI before deploying. Hivra charges Venice provider rates with no markup; $HermesOS top-ups can add bonus credits.
+              Add prepaid credit for {displayName}&apos;s AI before deploying. Hivra charges Venice provider rates with no markup.
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setManagedVeniceWalletType("hermesos");
-                  setManagedVeniceTokenQuote(null);
-                  setManagedVeniceTopUpError(null);
-                  setManagedVeniceTopUpNotice(null);
-                }}
-                style={{
-                  textAlign: "left",
-                  padding: "14px 16px",
-                  border: `1px solid ${managedVeniceWalletType === "hermesos" ? "var(--ink-black)" : "var(--etched-border)"}`,
-                  background: managedVeniceWalletType === "hermesos" ? "var(--bg-elevated)" : "var(--bg-surface)",
-                  cursor: "pointer",
-                }}
-              >
-                <Wallet size={15} style={{ marginBottom: 8 }} />
-                <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 800, marginBottom: 5 }}>
-                  Pay with $HermesOS
-                </div>
-                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
-                  Up to 20% more managed Venice credits during the launch wave, then a 10% standard bonus.
-                </p>
-              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -418,6 +394,33 @@ export function DeployForm({
                   No Venice markup. Pay exactly provider-rate credits with card.
                 </p>
               </button>
+              <details>
+                <summary style={{ cursor: 'pointer', padding: '12px 0', fontSize: 13 }}>Optional token top-up</summary>
+              <button
+                type="button"
+                onClick={() => {
+                  setManagedVeniceWalletType("hermesos");
+                  setManagedVeniceTokenQuote(null);
+                  setManagedVeniceTopUpError(null);
+                  setManagedVeniceTopUpNotice(null);
+                }}
+                style={{
+                  textAlign: "left",
+                  padding: "14px 16px",
+                  border: `1px solid ${managedVeniceWalletType === "hermesos" ? "var(--ink-black)" : "var(--etched-border)"}`,
+                  background: managedVeniceWalletType === "hermesos" ? "var(--bg-elevated)" : "var(--bg-surface)",
+                  cursor: "pointer",
+                }}
+              >
+                <Wallet size={15} style={{ marginBottom: 8 }} />
+                <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 800, marginBottom: 5 }}>
+                  Pay with $HermesOS
+                </div>
+                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
+                  Up to 20% more managed Venice credits during the launch wave, then a 10% standard bonus.
+                </p>
+              </button>
+              </details>
             </div>
 
             <div style={{ marginTop: 14 }}>

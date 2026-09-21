@@ -32,6 +32,7 @@
  * or plan path.
  */
 
+import { isCryptoBillingUiEnabled } from '@/lib/billing/format';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -662,10 +663,10 @@ export function WelcomeFlow() {
 
   // ── Plan selection ───────────────────────────────────────────────────────
   // Two-step paid-tier flow.
-  //   paidPathChoice === null     → step 1: pick Card or Crypto
+  //   paidPathChoice === null     → explicitly opened optional payment choices
   //   paidPathChoice === 'card'   → step 2: cadence toggle + Pro/Power grid
   //   paidPathChoice === 'crypto' → step 2: mode toggle + Pro/Power grid
-  const [paidPathChoice, setPaidPathChoice] = useState<'card' | 'crypto' | null>(null);
+  const [paidPathChoice, setPaidPathChoice] = useState<'card' | 'crypto' | null>('card');
   // Set while a card-checkout POST is in flight so we can show a
   // "Opening secure checkout…" state on the clicked CTA and disable
   // the sibling CTA. Cleared on error; on success the browser is
@@ -717,7 +718,8 @@ export function WelcomeFlow() {
     setDeployRamGb(value);
   }, []);
   const [veniceAccessMode, setVeniceAccessMode] = useState<'managed' | 'byok'>('managed');
-  const [managedVeniceWalletType, setManagedVeniceWalletType] = useState<ManagedVeniceWalletType>('hermesos');
+  const [managedVeniceWalletType, setManagedVeniceWalletType] = useState<ManagedVeniceWalletType>('card');
+  const initialFundingWalletResolved = useRef(false);
   const [managedVeniceCardCheckoutLoading, setManagedVeniceCardCheckoutLoading] = useState(false);
   const [managedVeniceSummary, setManagedVeniceSummary] =
     useState<ManagedVeniceWalletSummaryPayload | null>(null);
@@ -930,7 +932,8 @@ export function WelcomeFlow() {
   }, [isManagedVeniceDeploySelection, refreshManagedVeniceSummary]);
 
   useEffect(() => {
-    if (!isManagedVeniceDeploySelection || !managedVeniceSummary) return;
+    if (!isManagedVeniceDeploySelection || !managedVeniceSummary || initialFundingWalletResolved.current) return;
+    initialFundingWalletResolved.current = true;
     const hermesosAvailable = managedVeniceSummary.wallets.hermesos.availableMicroUsd;
     const cardAvailable = managedVeniceSummary.wallets.card.availableMicroUsd;
     if (
@@ -939,6 +942,8 @@ export function WelcomeFlow() {
       cardAvailable > 0
     ) {
       setManagedVeniceWalletType('card');
+    } else if (managedVeniceWalletType === 'card' && cardAvailable <= 0 && hermesosAvailable > 0) {
+      setManagedVeniceWalletType('hermesos');
     }
   }, [isManagedVeniceDeploySelection, managedVeniceSummary, managedVeniceWalletType]);
 
@@ -986,7 +991,7 @@ export function WelcomeFlow() {
       );
       setError(null);
       setCardGateMessage(null);
-      setPaidPathChoice(null);
+      setPaidPathChoice('card');
     },
     [setError, vaultKeys],
   );
@@ -4564,7 +4569,7 @@ function PersonaPicker({
 //     crypto), then Pro and Power side-by-side as compact cards.
 //     "← Change payment method" link returns to step 1.
 
-function TierPickerCards({
+export function TierPickerCards({
   tiers,
   onSelectFree,
   onDeposit,
@@ -4598,7 +4603,7 @@ function TierPickerCards({
     [tiers],
   );
 
-  if (paidPathChoice === null) {
+  if (isCryptoBillingUiEnabled() && paidPathChoice === null) {
     return (
       <PaymentMethodIntro
         onSelectFree={onSelectFree}
@@ -4610,9 +4615,10 @@ function TierPickerCards({
   }
 
   return (
+    <>
     <PlanGrid
       tiers={paidTiers}
-      paidPathChoice={paidPathChoice}
+      paidPathChoice={isCryptoBillingUiEnabled() && paidPathChoice === 'crypto' ? 'crypto' : 'card'}
       onBack={() => setPaidPathChoice(null)}
       cardCadence={cardCadence}
       setCardCadence={setCardCadence}
@@ -4623,6 +4629,8 @@ function TierPickerCards({
       onDeposit={onDeposit}
       cardCheckoutLoadingTier={cardCheckoutLoadingTier}
     />
+    <button type="button" onClick={onSelectFree} disabled={freeActivationLoading} style={{ marginTop: 20, background: 'transparent', color: 'var(--ink-black)', border: '1px solid var(--etched-border)', padding: '10px 16px', cursor: 'pointer' }}>Start with Free</button>
+    </>
   );
 }
 
@@ -4890,7 +4898,7 @@ function PlanGrid({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       <AnimateIn>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-          <button
+          {isCryptoBillingUiEnabled() && <button
             type="button"
             onClick={onBack}
             style={{
@@ -4907,8 +4915,8 @@ function PlanGrid({
               opacity: 0.7,
             }}
           >
-            ← Change payment method
-          </button>
+            Other payment options
+          </button>}
           <span
             className="mono"
             style={{

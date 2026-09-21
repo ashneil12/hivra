@@ -388,6 +388,7 @@ export function ProgressStage({
   );
 }
 export function ManagedVeniceDepositModal({
+  tokenPaymentsEnabled = false,
   isOpen,
   walletType,
   amountUsd,
@@ -403,6 +404,7 @@ export function ManagedVeniceDepositModal({
   onRefreshSummary,
 }: {
   isOpen: boolean;
+  tokenPaymentsEnabled?: boolean;
   walletType: ManagedVeniceWalletType;
   amountUsd: number;
   loading: boolean;
@@ -535,7 +537,7 @@ export function ManagedVeniceDepositModal({
               Top up before launch
             </h2>
             <p style={{ margin: "8px 0 0", color: "var(--text-secondary)", fontSize: 12.5, lineHeight: 1.6, maxWidth: 540 }}>
-              Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay; $HermesOS top-ups can add launch bonus credits.
+              Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay.
             </p>
           </div>
           <button
@@ -549,7 +551,7 @@ export function ManagedVeniceDepositModal({
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-          {walletButton(
+          {tokenPaymentsEnabled && walletType === "hermesos" && walletButton(
             "hermesos",
             "Pay with $HermesOS",
             "Up to 20% more credits during the launch wave, then the 10% standard bonus.",

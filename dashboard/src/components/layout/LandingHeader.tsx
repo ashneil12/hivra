@@ -28,7 +28,6 @@ export default function LandingHeader({ isSignedIn = false }: LandingHeaderProps
     { label: copy.nav.pricing, href: "/#pricing" },
     { label: "Blog", href: "/blog" },
     { label: "Ecosystem", href: "/ecosystem" },
-    { label: "Token", href: "/token" },
     { label: "Litepaper", href: "/docs/litepaper/" },
   ];
 

@@ -9,6 +9,17 @@ import {
 } from "@/lib/dashboard-navigation";
 
 describe("dashboard navigation", () => {
+  it("hides hosted billing from the mobile and desktop manage navigation in local auth mode", () => {
+    const previous = process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+    process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "local";
+    try {
+      expect(filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
+      expect(filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+      else process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = previous;
+    }
+  });
   it("keeps daily work, launch, and management in explicit groups", () => {
     expect(DASHBOARD_PRIMARY_NAVIGATION.map((item) => item.id)).toEqual([
       "home",
@@ -56,11 +67,12 @@ describe("dashboard navigation", () => {
       "launch",
       "agents",
       "computers",
+      "billing",
     ]);
     expect(DASHBOARD_MOBILE_NAVIGATION[1]).toBe(DASHBOARD_LAUNCH_NAVIGATION);
     expect(
       filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION, false).map((item) => item.id),
-    ).toEqual(["home", "launch", "agents", "computers"]);
+    ).toEqual(["home", "launch", "agents", "computers", "billing"]);
   });
 
   it("preserves applications and help under their own secondary destinations", () => {
