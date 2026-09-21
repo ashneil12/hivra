@@ -48,8 +48,8 @@ export function HivraCloudCapacityCard({
           <span className={styles.sectionLabel}>Hivra operated</span>
           <h3>Hivra Cloud</h3>
           <p>
-            Your plan&apos;s CPU and RAM allowance, shared across your managed agents.
-            This is not the capacity of the underlying Proxmox hosts.
+            Your plan&apos;s CPU and RAM allowance, shared across your managed computers.
+            The servers that host them have separate capacity.
           </p>
         </div>
         <div className={styles.managedCapacityPlan}>
@@ -63,11 +63,13 @@ export function HivraCloudCapacityCard({
           <Cpu size={15} aria-hidden="true" />
           <span>CPU available</span>
           <strong>{formatNumber(remainingCpu)} of {formatNumber(usage.totalCpu)}</strong>
+          <small>{formatNumber(usage.usedCpu)} vCPU allocated</small>
         </div>
         <div>
           <MemoryStick size={15} aria-hidden="true" />
           <span>Memory available</span>
           <strong>{formatRam(remainingRam)} of {formatRam(usage.totalRam)}</strong>
+          <small>{formatRam(usage.usedRam)} allocated</small>
         </div>
         <div>
           <Gauge size={15} aria-hidden="true" />
@@ -130,8 +132,7 @@ export function HivraCloudCapacityCard({
           <Settings2 size={18} aria-hidden="true" />
           <strong>Capacity is flexible.</strong>
           <p>
-            Resize individual Hivra agents from their computer settings. Plan limits
-            remain the server-side authority for every launch and resize.
+            Resize a computer from its settings. Review your plan in Billing.
           </p>
           {isFree ? (
             <button type="button" className={styles.primaryButton} onClick={onUpgrade}>
@@ -139,7 +140,7 @@ export function HivraCloudCapacityCard({
             </button>
           ) : (
             <Link className={styles.secondaryButton} href="/dashboard/billing">
-              Manage cloud plan <ArrowRight size={13} aria-hidden="true" />
+              {plan.canChangePlanInPlace && plan.source === "stripe" ? "Upgrade or manage plan" : "View plan options"} <ArrowRight size={13} aria-hidden="true" />
             </Link>
           )}
         </aside>
