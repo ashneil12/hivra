@@ -11,6 +11,7 @@ import {
   MemoryStick,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState, type RefObject } from "react";
 
 import {
@@ -43,6 +44,7 @@ export function HivraCloudPurchaseDialog({
   const [selectedPlan, setSelectedPlan] = useState<PaidPlanKey>("operator");
   const [cadence, setCadence] = useState<"monthly" | "yearly">("monthly");
   const [submitting, setSubmitting] = useState(false);
+  const [activeSubscription, setActiveSubscription] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useInfrastructureDialog({
@@ -58,7 +60,8 @@ export function HivraCloudPurchaseDialog({
     const result = await requestSubscriptionCheckout(selectedPlan, cadence);
     if (!result.ok) {
       if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
-        onActivated();
+        setActiveSubscription(true);
+        setSubmitting(false);
         return;
       }
       setSubmitting(false);
@@ -104,6 +107,7 @@ export function HivraCloudPurchaseDialog({
         </header>
 
         <div className={styles.wizardBody}>
+          {activeSubscription ? <div className={styles.providerSafetyNote} role="status"><Check size={17} aria-hidden="true" /><div><strong>You already have an active subscription.</strong><span>Review your existing plan and its available options in Billing.</span><Link className={styles.primaryButton} href="/dashboard/billing">Manage existing plan <ArrowRight size={14} aria-hidden="true" /></Link></div></div> : null}
           <div className={styles.providerGuide}>
             <span className={styles.providerGuideIcon} aria-hidden="true"><Cloud size={20} /></span>
             <div>
@@ -121,7 +125,7 @@ export function HivraCloudPurchaseDialog({
               aria-pressed={cadence === "monthly"}
               className={cadence === "monthly" ? styles.cloudCadenceActive : ""}
               onClick={() => setCadence("monthly")}
-              disabled={submitting}
+              disabled={submitting || activeSubscription}
             >
               Monthly
             </button>
@@ -130,7 +134,7 @@ export function HivraCloudPurchaseDialog({
               aria-pressed={cadence === "yearly"}
               className={cadence === "yearly" ? styles.cloudCadenceActive : ""}
               onClick={() => setCadence("yearly")}
-              disabled={submitting}
+              disabled={submitting || activeSubscription}
             >
               Yearly
             </button>
@@ -149,7 +153,7 @@ export function HivraCloudPurchaseDialog({
                   aria-checked={selected}
                   className={`${styles.cloudPlanOption} ${selected ? styles.cloudPlanOptionActive : ""}`}
                   onClick={() => setSelectedPlan(key)}
-                  disabled={submitting}
+                  disabled={submitting || activeSubscription}
                 >
                   <span className={styles.cloudPlanCheck} aria-hidden="true">
                     {selected ? <Check size={13} /> : null}
@@ -189,7 +193,7 @@ export function HivraCloudPurchaseDialog({
             <button type="button" className={styles.secondaryButton} onClick={onClose} disabled={submitting}>
               <ArrowLeft size={14} aria-hidden="true" /> Cancel
             </button>
-            <button type="button" className={styles.primaryButton} onClick={() => void continueToCheckout()} disabled={submitting}>
+            <button type="button" className={styles.primaryButton} onClick={() => void continueToCheckout()} disabled={submitting || activeSubscription}>
               {submitting ? <Loader2 size={15} className={styles.spin} aria-hidden="true" /> : <Cloud size={15} aria-hidden="true" />}
               {submitting ? "Opening checkout..." : "Continue to secure checkout"}
               {!submitting ? <ArrowRight size={14} aria-hidden="true" /> : null}

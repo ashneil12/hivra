@@ -1,0 +1,51 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    timeout: 2s
+    send_batch_size: 128
+
+exporters:
+  otlphttp/hivra:
+    traces_endpoint: ${env:HIVRA_ACTIVITY_INGEST_BASE_URL}/api/activity/ingest
+    logs_endpoint: ${env:HIVRA_ACTIVITY_INGEST_BASE_URL}/api/activity/ingest
+    encoding: json
+    compression: none
+    headers:
+      Authorization: Bearer ${env:HIVRA_ACTIVITY_COLLECTOR_TOKEN}
+      x-hivra-resource-id: ${env:HIVRA_ACTIVITY_RESOURCE_ID}
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 60s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/hivra]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/hivra]
