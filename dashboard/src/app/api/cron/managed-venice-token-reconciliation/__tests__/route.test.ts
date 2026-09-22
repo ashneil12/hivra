@@ -39,8 +39,10 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
       underconfirmed: 0,
       noMatch: 1,
       manualReview: 0,
+      cancelled: 0,
       skipped: 0,
       failed: 0,
+      transferSurfacing: { checked: 1, complete: 1, pending: 0, failed: 0 },
       results: [],
     });
   });
@@ -124,6 +126,20 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
         }),
       })
     );
+  });
+
+  it("reconciles 50 open quotes per scheduled tick when no limit is given", async () => {
+    // vercel.json schedules this route without ?limit.
+    const scheduled = await GET(req("Bearer cron-secret"));
+    const malformed = await GET(req(
+      "Bearer cron-secret",
+      "https://example/api/cron/managed-venice-token-reconciliation?limit=abc"
+    ));
+
+    expect(scheduled.status).toBe(200);
+    expect(malformed.status).toBe(200);
+    expect(reconcilePendingManagedVeniceTokenQuotes).toHaveBeenNthCalledWith(1, { limit: 50 });
+    expect(reconcilePendingManagedVeniceTokenQuotes).toHaveBeenNthCalledWith(2, { limit: 50 });
   });
 
   it("clamps an oversized limit to the bounded maximum", async () => {

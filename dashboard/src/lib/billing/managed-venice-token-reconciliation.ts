@@ -109,6 +109,8 @@ const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
 // JSON-RPC -32614). Keep every chunk at the provider limit.
 const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
 const DEFAULT_MIN_CONFIRMATIONS = 3;
+// Open (active|expired) quotes per batch. The cron route passes 50 (its own
+// default); this default only serves callers that pass no limit.
 const DEFAULT_PENDING_QUOTE_RECONCILIATION_LIMIT = 25;
 const MAX_PENDING_QUOTE_RECONCILIATION_LIMIT = 100;
 // Settled / in-review quotes given a surface-only pass per batch, after the
@@ -117,6 +119,22 @@ const MAX_PENDING_QUOTE_RECONCILIATION_LIMIT = 100;
 // confirmed, a few hours, so this set stays small; newest first keeps a stuck
 // old one from pinning it.
 const TRANSFER_SURFACING_LIMIT = 25;
+// RPC budget per cron tick (50 open + 25 surface-only quotes = 75 scans; a
+// claimed open quote is recovered without a scan). One head (eth_blockNumber)
+// and its timestamp per batch, then per scanned quote:
+//   - 2 timestamp->block searches, each <= MAX_BLOCK_SEARCH_PROBES (40)
+//     eth_getBlockByNumber probes; the 2 s/block estimate is verified, so
+//     typically 1-3 probes each, and every block timestamp is cached per batch;
+//   - ceil(span / 2,000) eth_getLogs: a window + grace is ~4,200 blocks, so 3;
+//     hard cap MAX_SCAN_SPAN_BLOCKS (50,000) / 2,000 = 25;
+//   - <= MAX_TRANSFER_TIMESTAMP_LOOKUPS (200) block timestamps for logs that
+//     carry no blockTimestamp (usually a handful of transfers, often 0);
+//   - 1 confirmed-head block timestamp (the same block for every quote).
+// Worst case, every bound hit and nothing cached:
+//   2 + 75 x (80 + 25 + 200 + 1) = 22,952 calls,
+// each retried up to the retry config's attempts (default 4) on 429/5xx/network.
+// Typical: 2 + 75 x (~4 + 3 + ~1 + 1) ~ 700 calls, plus a 150 ms pause between
+// quotes (~11 s per tick).
 
 // ── Quote-anchored scanning ───────────────────────────────────────────────
 // Each quote is scanned over ITS OWN time range, not "the latest N blocks":

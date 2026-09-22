@@ -15,14 +15,18 @@ const SOURCE = "cron:managed-venice-token-reconciliation";
 // Base RPC / DB.
 const MIN_LIMIT = 1;
 const MAX_LIMIT = 100;
+// Open quotes reconciled per scheduled tick (vercel.json calls this route
+// without ?limit). The reconciler adds up to 25 settled / in-review quotes
+// that still owe a surface-only pass; see its RPC budget comment.
+const DEFAULT_LIMIT = 50;
 
 export const dynamic = "force-dynamic";
 
 function readLimit(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("limit");
-  if (!raw) return undefined;
+  if (!raw) return DEFAULT_LIMIT;
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return undefined;
+  if (!Number.isFinite(parsed)) return DEFAULT_LIMIT;
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, parsed));
 }
 
