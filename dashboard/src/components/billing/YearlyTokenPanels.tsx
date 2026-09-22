@@ -930,7 +930,9 @@ export function YearlyTokenPaymentModal({
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <span className="mono" style={{ fontSize: 11, color: expired ? "#b3261e" : "#16a34a" }}>
-                {expired ? "Quote expired — close and try again" : `Expires in ${countdown}`}
+                {expired
+                  ? "Quote expired. If you already sent the tokens, don't send them again — late payments are still found and reviewed."
+                  : `Expires in ${countdown}`}
               </span>
               <span className="mono" style={{ fontSize: 9, opacity: 0.55, letterSpacing: "0.12em", textTransform: "uppercase" }}>
                 Quote locked

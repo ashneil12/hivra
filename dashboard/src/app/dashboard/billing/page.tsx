@@ -569,6 +569,8 @@ function BillingPageContent() {
             const body = await res.json().catch(() => ({}));
             if (res.ok && body?.success) {
               setYearlyTokenQuote(body.data);
+              // The banner (Check now, polling) is driven by the loaded state.
+              void loadYearlyQuotes();
             } else {
               setYearlyTokenError(body?.error || `Failed to get quote (${res.status}).`);
             }
@@ -778,6 +780,8 @@ function BillingPageContent() {
     setYearlyTokenTier(null);
     setYearlyTokenQuote(null);
     setYearlyTokenError(null);
+    // Show server truth in the banner once the modal is gone.
+    void loadYearlyQuotes();
   };
 
   const handleChangePlan = async (newPlan: PlanKey) => {

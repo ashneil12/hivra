@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 
-import { YearlyPaymentProgress } from "../YearlyTokenPanels";
+import { YearlyPaymentProgress, YearlyTokenPaymentModal } from "../YearlyTokenPanels";
 import type { YearlyTokenQuotePayload, YearlyTokenSubscriptionPayload } from "@/lib/billing/format";
 
 const inTenMinutes = () => new Date(Date.now() + 10 * 60_000).toISOString();
@@ -88,4 +88,20 @@ it("keeps checking for a late payment after the countdown ends instead of prompt
   expect(screen.getByText(/If you already sent the tokens, don't send them again/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Check now/ })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Open quote/ })).not.toBeInTheDocument();
+});
+
+it("tells a user whose quote expired in the payment modal not to send the tokens again", () => {
+  render(
+    <YearlyTokenPaymentModal
+      isOpen
+      tier="pro"
+      loading={false}
+      error={null}
+      quote={{ ...quote(), expiresAt: new Date(Date.now() - 60_000).toISOString() }}
+      onClose={() => {}}
+    />
+  );
+
+  expect(screen.getByText(/If you already sent the tokens, don't send them again/)).toBeInTheDocument();
+  expect(screen.queryByText(/close and try again/)).not.toBeInTheDocument();
 });

@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import BillingPage from "../page";
@@ -578,6 +578,33 @@ describe("BillingPage", () => {
 
       expect(await screen.findByText(/Step 1 · Send exactly/)).toBeInTheDocument();
       expect(fetchMock).toHaveBeenCalledWith("/api/billing/yearly-token-quote?tier=pro", { method: "GET" });
+    });
+
+    it("shows the banner for a quote minted from the email link once the payment modal is closed", async () => {
+      mockGet.mockImplementation((key: string) => (key === "plan" ? "pro" : key === "yearly_token" ? "1" : null));
+      let minted = false;
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(input);
+        if (url.includes("/api/billing/yearly-token-quote")) {
+          if (requestMethod(input, init) === "POST") {
+            minted = true;
+            return Promise.resolve(apiResponse({ success: true, data: yearlyQuote() }));
+          }
+          const data = url.includes("?tier=")
+            ? { quote: null, pendingQuote: null, subscription: currentYear, tier: "pro" }
+            : { pro: minted ? yearlyQuote() : null, power: null, proSubscription: currentYear, powerSubscription: null };
+          return Promise.resolve(apiResponse({ success: true, data }));
+        }
+        return base(input, init);
+      });
+
+      render(<BillingPage />);
+      const dialog = await screen.findByRole("dialog", { name: /Pay Pro yearly with \$HermesOS/ });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+      expect(await screen.findByText(/Yearly \$HermesOS · Pro/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Check now/ })).toBeInTheDocument();
     });
 
     it("does not mint a new quote from the email link while a payment for that tier is under review", async () => {

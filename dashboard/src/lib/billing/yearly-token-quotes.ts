@@ -275,8 +275,10 @@ export async function getActiveYearlyTokenQuotes(
 
 /**
  * The user's quotes that still matter to them although they can no longer be
- * paid, one per tier. Only each tier's NEWEST quote counts (a newer quote,
- * paid or not, supersedes it):
+ * paid, one per tier. Only each tier's newest RELEVANT quote counts — one that
+ * was paid, is under review, or can still receive a payment; a newer quote
+ * that was abandoned (cancelled, or past its late-payment grace) supersedes
+ * nothing:
  *   - past its expiry but inside the late-payment grace: a payment already on
  *     its way is still picked up. An 'active' row past expiry counts too, so
  *     the answer does not depend on whether a concurrent read has flipped it
@@ -298,8 +300,18 @@ export async function getPendingYearlyTokenQuotes(
     .limit(20);
   if (error) throw new Error(`Failed to load pending yearly quotes: ${error.message}`);
 
+  const stillRelevant = (quote: YearlyTokenQuote) => {
+    if (quote.status === "cancelled") return false;
+    const expiresAtMs = Date.parse(quote.expiresAt);
+    const pastExpiry = expiresAtMs <= now.getTime();
+    if (quote.status === "expired" || (quote.status === "active" && pastExpiry)) {
+      return expiresAtMs + YEARLY_LATE_PAYMENT_GRACE_MS > now.getTime();
+    }
+    return true; // payable, paid, or under review
+  };
   const newestPerTier: YearlyTokenQuote[] = [];
   for (const quote of ((data as unknown) as YearlyQuoteRow[] | null)?.map(asYearlyTokenQuote) ?? []) {
+    if (!stillRelevant(quote)) continue;
     if (!newestPerTier.some((existing) => existing.tier === quote.tier)) newestPerTier.push(quote);
   }
 

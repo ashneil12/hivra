@@ -86,3 +86,16 @@ it("keeps each tier's own newest quote", async () => {
 
   expect(await pending()).toEqual([["yq_pro", "pro", "expired"]]);
 });
+
+it("keeps an open review visible when a newer quote for the tier was abandoned", async () => {
+  setup(
+    [
+      { id: "yq_review", status: "manual_review", quoted_at: at(-300 * MINUTE_MS), expires_at: at(-280 * MINUTE_MS) },
+      { id: "yq_abandoned", status: "cancelled", quoted_at: at(-200 * MINUTE_MS), expires_at: at(-180 * MINUTE_MS) },
+      { id: "yq_lapsed", status: "expired", quoted_at: at(-190 * MINUTE_MS), expires_at: at(-170 * MINUTE_MS) },
+    ],
+    [{ user_id: "user_1", quote_id: "yq_review", status: "open", reason: "late_payment" }]
+  );
+
+  expect(await pending()).toEqual([["yq_review", "pro", "manual_review"]]);
+});
