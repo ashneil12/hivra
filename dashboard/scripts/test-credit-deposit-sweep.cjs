@@ -592,7 +592,7 @@ scenario("only settled checkout/open-credit Base USDC receipts are owed a sweep"
   ];
   const notOwed = [
     await h.settledReceipt({ userId: "user_a", wallet, amount: usdc(3), depositMode: "token_lock" }),
-    await h.settledReceipt({ userId: "user_a", wallet, amount: usdc(4), token: "0x4ed4e862860bed51a9570b96d89af5e1b0efefed" }),
+    await h.settledReceipt({ userId: "user_a", wallet, amount: usdc(4), token: addressFor("some-other-erc20") }),
     await h.settledReceipt({ userId: "user_a", wallet, amount: usdc(5), status: "confirmed" }),
     await h.settledReceipt({ userId: "user_a", wallet, amount: usdc(6), status: "failed" }),
   ];
