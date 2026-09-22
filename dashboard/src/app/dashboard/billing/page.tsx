@@ -179,6 +179,8 @@ function BillingPageContent() {
   // paywall_viewed fires once per mount when the plan grid first renders
   // (post-load). The ref guards against re-fires on data refreshes.
   const paywallViewedRef = useRef(false);
+  // The ?plan=&yearly_token=1 deep link is handled once per page load.
+  const yearlyDeepLinkHandledRef = useRef(false);
   const [activityLoading, setActivityLoading] = useState(billingV2Enabled);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [tokenLoading, setTokenLoading] = useState(cryptoBillingEnabled);
@@ -508,7 +510,13 @@ function BillingPageContent() {
     } else if (linkYearlyToken) {
       setCadence("yearly");
     }
-    if (cryptoBillingEnabled && linkYearlyToken && (linkPlan === "operator" || linkPlan === "fleet" || linkPlan === "pro" || linkPlan === "power")) {
+    if (
+      cryptoBillingEnabled &&
+      linkYearlyToken &&
+      !yearlyDeepLinkHandledRef.current &&
+      (linkPlan === "operator" || linkPlan === "fleet" || linkPlan === "pro" || linkPlan === "power")
+    ) {
+      yearlyDeepLinkHandledRef.current = true;
       const tier: "pro" | "power" =
         linkPlan === "operator" || linkPlan === "pro" ? "pro" : "power";
       // Strip the deep-link params from the URL FIRST so a refresh /
@@ -523,8 +531,12 @@ function BillingPageContent() {
         url.searchParams.delete("from");
         window.history.replaceState(null, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
       }
-      // Defer to next tick so state updates from above settle first.
-      const timer = window.setTimeout(() => {
+      // Defer to next tick so state updates from above settle first. The
+      // timer is deliberately NOT cleared when this effect re-runs: stripping
+      // the params above makes Next's router hand out a new searchParams,
+      // which re-runs the effect before the timer fires (and the ref above
+      // keeps it from firing twice).
+      window.setTimeout(() => {
         setYearlyTokenTier(tier);
         setYearlyTokenLoading(true);
         void (async () => {
@@ -540,6 +552,13 @@ function BillingPageContent() {
             const getBody = await getRes.json().catch(() => ({}));
             if (getRes.ok && getBody?.success && getBody.data?.quote) {
               setYearlyTokenQuote(getBody.data.quote);
+              return;
+            }
+            // A payment for this tier is under review: don't mint a new quote
+            // (that invites paying twice); the banner explains the review.
+            if (getRes.ok && getBody?.success && getBody.data?.pendingQuote?.status === "manual_review") {
+              setYearlyTokenTier(null);
+              void loadYearlyQuotes();
               return;
             }
             const res = await fetch("/api/billing/yearly-token-quote", {
@@ -558,7 +577,6 @@ function BillingPageContent() {
           }
         })();
       }, 50);
-      return () => window.clearTimeout(timer);
     }
   }, [billingV2Enabled, cryptoBillingEnabled, fetchBillingActivity, fetchManagedVeniceSummary, fetchUsage, fetchTokenHolding, loadYearlyQuotes, openManagedVeniceDeposit, searchParams, router]);
 
@@ -697,7 +715,10 @@ function BillingPageContent() {
         tier: "power" as const,
       },
     ];
-    let chosen = candidates.find((c) => c.quote);
+    // Across tiers: a quote that can still be paid wins over one under review
+    // or watching for a late payment, which wins over a subscription.
+    const payable = (tier: "pro" | "power") => (tier === "pro" ? activeYearlyQuotes.pro : activeYearlyQuotes.power);
+    let chosen = candidates.find((c) => payable(c.tier)) ?? candidates.find((c) => c.quote);
     if (!chosen) {
       const fiveMinAgo = Date.now() - 5 * 60_000;
       chosen = candidates.find(

@@ -275,9 +275,14 @@ export async function getActiveYearlyTokenQuotes(
 
 /**
  * The user's quotes that still matter to them although they can no longer be
- * paid, newest first, one per tier: 'expired' quotes inside the late-payment
- * grace (a payment on its way is still picked up) and recent quotes under
- * manual review (a payment arrived and an operator will resolve it).
+ * paid, one per tier. Only each tier's NEWEST quote counts (a newer quote,
+ * paid or not, supersedes it):
+ *   - past its expiry but inside the late-payment grace: a payment already on
+ *     its way is still picked up. An 'active' row past expiry counts too, so
+ *     the answer does not depend on whether a concurrent read has flipped it
+ *     to 'expired' yet (the status is reported as 'expired');
+ *   - in manual_review while the review still has an open reconciliation
+ *     item: a payment arrived and an operator will resolve it.
  */
 export async function getPendingYearlyTokenQuotes(
   userId: string,
@@ -288,18 +293,38 @@ export async function getPendingYearlyTokenQuotes(
     .from("yearly_token_quotes")
     .select(YEARLY_QUOTE_SELECT_COLUMNS)
     .eq("user_id", userId)
-    .in("status", ["expired", "manual_review"])
     .gt("quoted_at", new Date(now.getTime() - REVIEW_VISIBLE_MS).toISOString())
     .order("quoted_at", { ascending: false })
-    .limit(10);
+    .limit(20);
   if (error) throw new Error(`Failed to load pending yearly quotes: ${error.message}`);
-  const pending: YearlyTokenQuote[] = [];
+
+  const newestPerTier: YearlyTokenQuote[] = [];
   for (const quote of ((data as unknown) as YearlyQuoteRow[] | null)?.map(asYearlyTokenQuote) ?? []) {
-    if (pending.some((existing) => existing.tier === quote.tier)) continue;
-    const stillWatched =
-      quote.status === "manual_review" ||
-      Date.parse(quote.expiresAt) + YEARLY_LATE_PAYMENT_GRACE_MS > now.getTime();
-    if (stillWatched) pending.push(quote);
+    if (!newestPerTier.some((existing) => existing.tier === quote.tier)) newestPerTier.push(quote);
+  }
+
+  const pending: YearlyTokenQuote[] = [];
+  const underReview: YearlyTokenQuote[] = [];
+  for (const quote of newestPerTier) {
+    const expiresAtMs = Date.parse(quote.expiresAt);
+    const pastExpiry = expiresAtMs <= now.getTime();
+    if ((quote.status === "expired" || (quote.status === "active" && pastExpiry)) &&
+        expiresAtMs + YEARLY_LATE_PAYMENT_GRACE_MS > now.getTime()) {
+      pending.push({ ...quote, status: "expired" });
+    } else if (quote.status === "manual_review") {
+      underReview.push(quote);
+    }
+  }
+
+  if (underReview.length > 0) {
+    const { data: items, error: itemsError } = await supabaseAdmin
+      .from("yearly_token_reconciliation_items")
+      .select("quote_id")
+      .in("quote_id", underReview.map((quote) => quote.id))
+      .eq("status", "open");
+    if (itemsError) throw new Error(`Failed to load yearly review items: ${itemsError.message}`);
+    const open = new Set(((items as Array<{ quote_id?: string }> | null) ?? []).map((item) => item.quote_id));
+    pending.push(...underReview.filter((quote) => open.has(quote.id)));
   }
   return pending;
 }

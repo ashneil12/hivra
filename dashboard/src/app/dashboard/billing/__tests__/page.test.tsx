@@ -14,10 +14,15 @@ const mockRouter = {
 const mockSearchParams = {
   get: mockGet,
 };
+// Next's router hands out a NEW searchParams object whenever the URL changes
+// (including window.history.replaceState); tests can swap it here.
+const mockSearchParamsHolder: { current: { get: (key: string) => string | null } } = {
+  current: mockSearchParams,
+};
 
 jest.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
-  useSearchParams: () => mockSearchParams,
+  useSearchParams: () => mockSearchParamsHolder.current,
 }));
 
 jest.mock("framer-motion", () => {
@@ -134,6 +139,7 @@ describe("BillingPage", () => {
     jest.clearAllMocks();
     mockGet.mockReset();
     mockGet.mockReturnValue(null);
+    mockSearchParamsHolder.current = mockSearchParams;
     process.env.NEXT_PUBLIC_BILLING_V2_ENABLED = "true";
     process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = "true";
     process.env.NEXT_PUBLIC_CREDIT_TOPUPS_ENABLED = "true";
@@ -535,6 +541,71 @@ describe("BillingPage", () => {
 
       expect(await screen.findByText(/Yearly \$HermesOS · Pro/)).toBeInTheDocument();
       expect(screen.getByText("Waiting…")).toBeInTheDocument();
+    });
+
+    it("shows a payable quote of one tier ahead of another tier's quote under review", async () => {
+      withYearlyResponse({
+        pro: null,
+        power: yearlyQuote({ id: "yq_power", tier: "power" }),
+        proPending: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        powerPending: null,
+        proSubscription: null,
+        powerSubscription: null,
+      });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText(/Yearly \$HermesOS · Power/)).toBeInTheDocument();
+      expect(screen.queryByText("Payment under review")).not.toBeInTheDocument();
+    });
+
+    it("opens the payment from the renewal email link even though stripping the link re-renders the page", async () => {
+      mockGet.mockImplementation((key: string) => (key === "plan" ? "pro" : key === "yearly_token" ? "1" : null));
+      withYearlyResponse({ quote: null, pendingQuote: null, subscription: currentYear, tier: "pro" });
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/yearly-token-quote") && requestMethod(input, init) === "POST") {
+          return Promise.resolve(apiResponse({ success: true, data: yearlyQuote() }));
+        }
+        return base(input, init);
+      });
+
+      const { rerender } = render(<BillingPage />);
+      // What Next does after the page strips the params with replaceState:
+      // a new, empty searchParams and a re-render, before the modal opens.
+      mockSearchParamsHolder.current = { get: () => null };
+      rerender(<BillingPage />);
+
+      expect(await screen.findByText(/Step 1 · Send exactly/)).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledWith("/api/billing/yearly-token-quote?tier=pro", { method: "GET" });
+    });
+
+    it("does not mint a new quote from the email link while a payment for that tier is under review", async () => {
+      mockGet.mockImplementation((key: string) => (key === "plan" ? "pro" : key === "yearly_token" ? "1" : null));
+      withYearlyResponse({
+        quote: null,
+        pendingQuote: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        pro: null,
+        power: null,
+        proPending: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        powerPending: null,
+        proSubscription: null,
+        powerSubscription: null,
+      });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText("Payment under review")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith("/api/billing/yearly-token-quote?tier=pro", { method: "GET" })
+      );
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestUrl(input as RequestInfo).includes("/api/billing/yearly-token-quote") &&
+            requestMethod(input as RequestInfo, init as RequestInit) === "POST"
+        )
+      ).toBe(false);
     });
 
     it("tells the user a payment is under review instead of hiding the quote", async () => {
