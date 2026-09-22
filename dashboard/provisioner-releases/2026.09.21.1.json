@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "2026.09.22.1",
+  "version": "2026.09.21.1",
   "files": [
     {
       "path": ".gitignore",
@@ -9,8 +9,8 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 35902,
-      "sha256": "21dca243abeb78d52d99c700f279edc0cce240e107827c40d7fd12c295605389"
+      "bytes": 34149,
+      "sha256": "cb54c6cec61380d3132d9782de614ad60115e9b9b485daca056e26d192b08dab"
     },
     {
       "path": "README.md",
@@ -20,7 +20,7 @@
     {
       "path": "VERSION",
       "bytes": 13,
-      "sha256": "9cfeee6f04526b157dca9e43c0894387696a3f679197a1611a9044cbba8f030f"
+      "sha256": "8a875ffc2ad92e54e9263f54f992f7c09f56945990b4f733ebd2c65d13be1e8d"
     },
     {
       "path": "bux-hivra-chat.service",
@@ -93,16 +93,6 @@
       "sha256": "1a2de1e0b16b26dedcf6bd9a7dde992027f1ec57ab7b4f134291d95baa0c5118"
     },
     {
-      "path": "hivra-agent-trace.py",
-      "bytes": 77290,
-      "sha256": "c64214be5271d66dbcf44f1d0c40f7c8ab8d81364f8f8301a69685ad451fecfb"
-    },
-    {
-      "path": "hivra-agent-trace.service",
-      "bytes": 1698,
-      "sha256": "49f032866ade68353332aed3c5eaa381a559aaa030f54e020347db667b05ca3e"
-    },
-    {
       "path": "hivra-guest-ssh-known-hosts",
       "bytes": 2553,
       "sha256": "061a359294acfa2317a08a37ac8803d47bf23002ed9c1b5f914ea547dae795a8"
@@ -114,8 +104,8 @@
     },
     {
       "path": "hivra-install-agent.py",
-      "bytes": 28432,
-      "sha256": "6492cf89eb27de484b1299b73f85f00e1c1d9af3f1f4630e0ccdc5aa694468b7"
+      "bytes": 22224,
+      "sha256": "5fdfbe9e5b405340e6b1d84ba59116a9b30d7f440249bd8fa916b861980f2f51"
     },
     {
       "path": "hivra-provider-worker.py",
@@ -139,8 +129,8 @@
     },
     {
       "path": "hivra-runtime-receipt.py",
-      "bytes": 35338,
-      "sha256": "ce4d3b6b6c61af015a4d5a0c273a8d7f3cfc67175d546e189ae225836df5bfa0"
+      "bytes": 34928,
+      "sha256": "a262fafffc50c585f8b5ab312269ca2269e20412d96e5fe4aabb882dc5f8de4a"
     },
     {
       "path": "hivra-chat/app.js",
@@ -199,13 +189,13 @@
     },
     {
       "path": "hivra-provision-on-host.sh",
-      "bytes": 29230,
-      "sha256": "3a6ed53f89255fe794531f16e5d09bb2d1c64b45fef0ff2eeef3d9b862666d1d"
+      "bytes": 26907,
+      "sha256": "51363356f21f28097b7ce241d5f7457f40002edfc9dcd7ff004a7fbe70a0595b"
     },
     {
       "path": "hivra-start-on-host.sh",
-      "bytes": 15433,
-      "sha256": "9398c79e02c311d90df05c21cc5aa1dfb386b82758c85612a232f59efd7f678e"
+      "bytes": 9699,
+      "sha256": "9839c96a334ddb7911bf69b0e0a4462bc637d403564876dc6e97db40dd8bf7b4"
     },
     {
       "path": "hivra-update-guest-runtime.sh",

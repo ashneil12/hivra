@@ -13,5 +13,5 @@ it("lists exactly the migration files in supabase/migrations, in version order",
     .map(([, version, name]) => ({ version, name }))
     .sort((a, b) => a.version.localeCompare(b.version));
   expect(LOCAL_MIGRATIONS).toEqual(files);
-  expect(LOCAL_MIGRATIONS).toContainEqual({ version: "20260922120000", name: "hivra_activity_collectors" });
+  expect(LOCAL_MIGRATIONS).toContainEqual({ version: "20260922190000", name: "hivra_activity_collectors" });
 });

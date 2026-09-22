@@ -4,6 +4,7 @@ import path from "node:path";
 
 import release from "../../../../provisioner-releases/2026.09.22.1.json";
 import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json";
+import omarchyCursorRelease from "../../../../provisioner-releases/2026.09.21.1.json";
 import providerRelease from "../../../../provisioner-releases/2026.09.08.3.json";
 import {
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,

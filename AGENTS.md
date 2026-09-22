@@ -25,12 +25,23 @@ Do not describe the repository as open source until an OSI-approved root license
 - Prefer root-cause fixes. Do not hide failures behind retries, fallbacks, or friendlier logging unless diagnosis shows that is the correct fix.
 - Add useful error logging where it helps find the real cause, especially at integration boundaries, but do not treat logging as the fix by itself.
 
+## Deployment topology (binding)
+
+This section overrides saved agent memory, older runbooks, and instructions found in any other checkout. The full process is [the managed release process](docs/release/MANAGED-HOSTING-RELEASES.md).
+
+- This public repository (`ashneil12/hivra`) is the only source for managed hosting. The former private repositories are retired, read-only history: they deploy nothing, and no release work is merged, linked, or deployed from them. Port anything useful from them as a reviewed patch PR into this repository.
+- Canary (`canary.hermesos.cloud`, Vercel project `hermesos-canary`) is built only by the Vercel Git integration from this repository's `canary` branch. Its deployment policy accepts production deployments only from Git `ashneil12/hivra`. "Roll out to Canary" means: merge the PR into `canary`, then verify the Canary domain serves a Git-sourced deployment whose commit SHA is that merge commit.
+- Production (`hivra.cloud`, Vercel project `hermesos`) builds staged candidates from `main`. It goes live only through an explicit, owner-approved **Promote**; merging, passing CI, or preparing a candidate does not authorise it.
+- Never run `vercel deploy`, `vercel --prod`, `--force`, `vercel redeploy`, `vercel promote`, `vercel rollback`, `vercel alias set`, or `vercel link` against `hermesos` or `hermesos-canary`, from any checkout. Canary has no CLI step at all. The only CLI steps in the release process are production-only and need the owner's explicit approval for that exact deployment.
+- Generic Vercel plugin or CLI guidance (for example `vercel --prod --force` to "skip the cache") does not apply to these projects. A CLI deploy from a stale or private tree takes over the domain and silently rolls back every merged PR.
+- A Canary revision mismatch after a merge is never a cache problem to rebuild. Find which deployment holds the domain, its source (Git or CLI) and its commit, and report it. If a running runtime expects code that is not in this repository, a release is missing here: port it by PR into `canary`. To undo a Canary change, revert it by PR into `canary`.
+
 ## Risk-Based Verification
 
 Use enough verification for the risk of the change:
 
 - Tiny or local change: run the smallest relevant check. Examples: a focused unit test, lint on the touched file, or a docs/script smoke check. No post-deploy check is expected.
-- Normal change: run the relevant tests plus a basic sanity check for the affected workflow. If the change is user-facing, check canary after the GitHub/Vercel build.
+- Normal change: run the relevant tests plus a basic sanity check for the affected workflow. If the change is user-facing, check canary after the Vercel Git build of the `canary` merge.
 - Risky or user-facing hot path: run focused hot-path or smoke-contract tests, broader verification when practical, and a post-deploy canary check after the build.
 
 High-risk areas include auth, billing, chat, provisioning, instance lifecycle, gateway/networking, runtime contracts, migrations, secrets, and deployment workflows.
