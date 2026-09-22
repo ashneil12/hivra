@@ -5,7 +5,7 @@
  * Keep this module free of filesystem and credential access so importing the
  * contract cannot accidentally pull server secrets into a client bundle.
  */
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.15.2";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.21.1";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
