@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.09.22.1.json";
+import release from "../../../../provisioner-releases/2026.09.22.2.json";
 import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json";
 import omarchyCursorRelease from "../../../../provisioner-releases/2026.09.21.1.json";
 import providerRelease from "../../../../provisioner-releases/2026.09.08.3.json";
@@ -76,4 +76,21 @@ it("keeps the retained provider predecessor bound to its independently sealed bu
   expect(sql).toContain("73ba80eb4007cdba90046637af0efc4712b395532a3fe890cc6a2bbb6dc322cb");
   expect(sql).toContain("2026.09.08.3");
   expect(sql).toContain("Desktop handoff latency release anchor mismatch");
+});
+
+it("admits every retained and current provider bundle in SQL, bound to its sealed manifest", () => {
+  // Regression: 2026.09.15.1, .15.2 and .21.1 shipped TypeScript identities but
+  // SQL admission stopped at 2026.09.08.3, so their provider computers could
+  // never be admitted or keep a valid identity.
+  const sql = readFileSync("supabase/migrations/20260922201510_provider_release_admission_2026_09_22.sql", "utf8");
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+    const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
+    const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
+      file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
+      .sort((a, b) => String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0);
+    const digest = createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+    expect(sql).toContain(`''bundleSha256''=''${digest}'' and p_identity->''bundle''->>''provisionerVersion''=''${version}''`);
+    expect(sql).toContain(`''${version}''`);
+  }
+  expect(sql).toContain("Provider release admission anchor mismatch");
 });

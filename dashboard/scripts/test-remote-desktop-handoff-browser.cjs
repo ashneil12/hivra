@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const https = require('node:https');
 const { execFileSync } = require('node:child_process');
+const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const path = require('node:path');
 const { once } = require('node:events');
 const { chromium } = require('playwright');
 const { WebSocketServer } = require('ws');
@@ -129,12 +132,20 @@ async function main() {
 }
 
 async function testSessionIsolation(browser) {
-  // Ephemeral local TLS material stays in memory: no user profile, persisted
-  // fixture keys, remote login, or external network request is involved.
-  const pem = execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-    '-subj', '/CN=127.0.0.1', '-keyout', '/dev/stdout', '-out', '/dev/stdout'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  const tls = { key: pem.match(/-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/)[0],
-    cert: pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/)[0] };
+  // Ephemeral local TLS material lives only in a private temporary directory
+  // removed immediately: no user profile, persisted fixture keys, remote login,
+  // or external network request is involved. openssl cannot write to
+  // /dev/stdout when Node's stdio is a Unix socket (Linux), so use files.
+  const tlsDirectory = mkdtempSync(path.join(tmpdir(), 'hivra-handoff-tls-'));
+  let tls;
+  try {
+    const keyPath = path.join(tlsDirectory, 'key.pem'), certPath = path.join(tlsDirectory, 'cert.pem');
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+      '-subj', '/CN=127.0.0.1', '-keyout', keyPath, '-out', certPath], { stdio: 'ignore' });
+    tls = { key: readFileSync(keyPath, 'utf8'), cert: readFileSync(certPath, 'utf8') };
+  } finally {
+    rmSync(tlsDirectory, { recursive: true, force: true });
+  }
   const ids = [SESSION_ID, '44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555'];
   const grants = ids.map((id, index) => ({ id, code: String.fromCharCode(101 + index).repeat(43),
     token: `hrs1_${String.fromCharCode(116 + index).repeat(43)}`, active: false, revoked: false }));

@@ -111,7 +111,7 @@ function harness(options: {
           };
           child.stdout.emit("data", Buffer.from(JSON.stringify(options.inspect?.(value) ?? value)));
         } else if (args.includes("--preflight")) {
-          child.stdout.emit("data", Buffer.from(JSON.stringify(options.preflight ?? { uid: 1024, cwd: "/home/hermes", shell: "/bin/bash", pidfd: true })));
+          child.stdout.emit("data", Buffer.from(JSON.stringify(options.preflight ?? { uid: 1024, cwd: "/home/hermes", shell: "/bin/bash", pidfd: true, startTicks: 5000 })));
         } else if (args.includes("--cleanup")) {
           child.stdout.emit("data", Buffer.from(JSON.stringify({ clean: !options.cleanupFail })));
           child.emit("close", options.cleanupFail ? 1 : 0);
@@ -300,8 +300,8 @@ describe("native Desktop terminal sidecar boundary", () => {
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it.each([{ uid: 0 }, { uid: 1025 }, { pidfd: false }, { shell: "/bin/sh" }, { cwd: "relative" }])("fails closed on preflight mismatch %j", async (mismatch) => {
-    const h = harness({ preflight: { uid: 1024, cwd: "/home/hermes", shell: "/bin/bash", pidfd: true, ...mismatch } });
+  it.each([{ uid: 0 }, { uid: 1025 }, { pidfd: false }, { shell: "/bin/sh" }, { cwd: "relative" }, { startTicks: -1 }, { startTicks: "5000" }, { startTicks: undefined }])("fails closed on preflight mismatch %j", async (mismatch) => {
+    const h = harness({ preflight: { uid: 1024, cwd: "/home/hermes", shell: "/bin/bash", pidfd: true, startTicks: 5000, ...mismatch } });
     expect((await h.start()).statusCode).toBe(409);
     expect(h.helpers).toHaveLength(0);
     expect(h.leaseCount()).toBe(0);
@@ -309,7 +309,7 @@ describe("native Desktop terminal sidecar boundary", () => {
 
   it("passes a validated cwd as one literal argv item, never shell interpolation", async () => {
     const cwd = "/tmp/owner folder;$(not-executed)";
-    const h = harness({ preflight: { uid: 1024, cwd, shell: "/bin/bash", pidfd: true } });
+    const h = harness({ preflight: { uid: 1024, cwd, shell: "/bin/bash", pidfd: true, startTicks: 5000 } });
     expect((await h.call({ action: "start", cwd })).statusCode).toBe(200);
     const preflight = h.spawn.mock.calls.find(([, args]) => args.includes("--preflight"))!;
     expect(preflight[1][preflight[1].indexOf("--workdir") + 1]).toBe(cwd);
@@ -371,6 +371,8 @@ describe("native Desktop terminal sidecar boundary", () => {
     const cleanup = h.spawn.mock.calls.filter(([, args]) => args.includes("--cleanup"));
     expect(cleanup).toHaveLength(1);
     expect(cleanup[0][1]).toContain(CID);
+    // The preflight start time bounds which uninspectable processes may be ignored.
+    expect(cleanup[0][1].at(-1)).toBe("5000");
     expect(pending.res.body).not.toContain("sessionToken");
     expect(h.controls).toContainEqual({ type: "stop" });
   });
@@ -636,13 +638,17 @@ mode=os.environ["TEST_MODE"]
 marker=os.environ["TEST_MARKER"]
 real_sleep=time.sleep
 owned=b"HIVRA_DESKTOP_TERMINAL_ID="+marker.encode()+b"\0"
+ANCHOR=5000
 processes={
- "101":{"uid":1024,"env":owned,"alive":True},
- "102":{"uid":1024,"env":owned,"alive":True},
- "103":{"uid":1024,"env":b"HIVRA_DESKTOP_TERMINAL_ID=other\0","alive":True},
- "104":{"uid":2048,"env":owned,"alive":True},
- "999":{"uid":1024,"env":b"","alive":True},
+ "101":{"uid":1024,"env":owned,"alive":True,"start":ANCHOR+10},
+ "102":{"uid":1024,"env":owned,"alive":True,"start":ANCHOR+20},
+ "103":{"uid":1024,"env":b"HIVRA_DESKTOP_TERMINAL_ID=other\0","alive":True,"start":ANCHOR-100},
+ "104":{"uid":2048,"env":owned,"alive":True,"start":ANCHOR+30},
+ "999":{"uid":1024,"env":b"","alive":True,"start":ANCHOR},
 }
+if mode in ("preexisting-unreadable","new-unreadable"):
+ # A same-user process whose environment the kernel withholds (non-dumpable).
+ processes["105"]={"uid":1024,"env":None,"alive":True,"start":ANCHOR-1 if mode=="preexisting-unreadable" else ANCHOR+1}
 handles={}
 events=[]
 real_exit=sys.exit
@@ -662,9 +668,14 @@ os.close=lambda fd: events.append(["close",fd])
 select.select=lambda read,write,error,timeout: ([fd for fd in read if not handles[fd][1]["alive"]],[],[])
 def read_environment(path,mode):
  pid=path.split("/")[2]
+ if path.endswith("/stat"):
+  if pid=="self": pid="999"
+  if pid!="999": assert any(name==pid for name,process in handles.values()), "identity must be pinned before reading /proc"
+  events.append(["stat",int(pid)])
+  return io.BytesIO(("%s (fixture) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %d 0 0"%(pid,processes[pid]["start"])).encode())
  assert any(name==pid for name,process in handles.values()), "identity must be pinned before reading /proc"
  events.append(["read",int(pid)])
- if os.environ["TEST_MODE"]=="unreadable": raise PermissionError("fixture unreadable")
+ if os.environ["TEST_MODE"]=="unreadable" or processes[pid]["env"] is None: raise PermissionError("fixture unreadable")
  return io.BytesIO(processes[pid]["env"])
 builtins.open=read_environment
 def delivered(fd,signum,*args):
@@ -687,7 +698,7 @@ def now():
  return clock[0]
 time.monotonic=now
 if mode=="no-pidfd": del os.pidfd_open
-sys.argv=["native-cleanup","--cleanup",("e"*32 if mode=="wrong-marker" else marker),"1024"]
+sys.argv=["native-cleanup","--cleanup",("e"*32 if mode=="wrong-marker" else marker),"1024",str(ANCHOR)]
 status=0
 try: exec(compile(source,"native-cleanup","exec"),{})
 except SystemExit as error: status=error.code
@@ -728,11 +739,20 @@ describe("actual native process cleanup program", () => {
     expect(value.state.alive).toEqual([101, 102, 103, 104, 999]);
   });
 
-  it.each(["unreadable", "no-pidfd", "root", "stalled-scan"])("fails closed without numeric-kill fallback (%s)", (mode) => {
+  it("ignores an uninspectable same-user process that predates the terminal preflight", () => {
+    const value = execute("preexisting-unreadable");
+    expect(value.status).toBe(0);
+    expect(value.result).toEqual({ clean: true });
+    expect(value.state.alive).toEqual([103, 104, 999, 105]);
+    expect(value.state.events.filter(([name]: string[]) => name === "signal").map((event: number[]) => event[1])).toEqual([101, 102]);
+    expect(value.state.events).toContainEqual(["stat", 105]);
+  });
+
+  it.each(["unreadable", "new-unreadable", "no-pidfd", "root", "stalled-scan"])("fails closed without numeric-kill fallback (%s)", (mode) => {
     const value = execute(mode);
     expect(value.status).toBe(1);
     expect(value.result).toEqual({ clean: false, error: "native_terminal_process_check_failed" });
-    expect(value.state.alive).toEqual([101, 102, 103, 104, 999]);
+    expect(value.state.alive).toEqual(mode === "new-unreadable" ? [101, 102, 103, 104, 999, 105] : [101, 102, 103, 104, 999]);
   });
 
   const linuxNonRoot = process.platform === "linux" && process.getuid?.() !== 0 ? it : it.skip;
@@ -745,8 +765,27 @@ tagged=subprocess.Popen([sys.executable,"-I","-S","-u","-c",worker],env={"PATH":
 unrelated=subprocess.Popen([sys.executable,"-I","-S","-c","import time;time.sleep(6)"])
 try:
  descendant=int(tagged.stdout.readline())
- result=subprocess.run([sys.executable,"-I","-S","-c",code,"--cleanup",marker,str(os.getuid())],capture_output=True,text=True,timeout=4)
- assert result.returncode==0 and json.loads(result.stdout)["clean"] is True, result.stdout
+ # Terminal preflight anchor: this harness started before its tagged children.
+ with open("/proc/self/stat","rb") as f: raw=f.read()
+ anchor=raw[raw.rindex(b")")+2:].split()[19].decode()
+ result=subprocess.run([sys.executable,"-I","-S","-c",code,"--cleanup",marker,str(os.getuid()),anchor],capture_output=True,text=True,timeout=4)
+ if result.returncode!=0 or json.loads(result.stdout)["clean"] is not True:
+  # The probe fails closed on any same-uid process it cannot inspect. Name
+  # those processes so a host-environment cause is distinguishable from a
+  # probe regression.
+  blocked=[]
+  for name in os.listdir("/proc"):
+   if not name.isdecimal(): continue
+   try:
+    if os.stat("/proc/"+name).st_uid!=os.getuid(): continue
+    open("/proc/"+name+"/environ","rb").close()
+   except PermissionError:
+    try:
+     with open("/proc/"+name+"/status") as f: status=[line.strip() for line in f if line.startswith(("Name:","Uid:","Gid:"))]
+    except OSError: status=[]
+    blocked.append([name]+status)
+   except (FileNotFoundError,ProcessLookupError): pass
+  raise AssertionError(result.stdout.strip()+" self_gid="+str(os.getgid())+" uninspectable="+json.dumps(blocked))
  tagged.wait(timeout=1)
  assert unrelated.poll() is None
  try:

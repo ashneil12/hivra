@@ -7,7 +7,7 @@ import { loadFirstBootOperation } from "@/lib/infrastructure/first-boot-operatio
 import { loadHetznerCloudCapacityBootstrap } from "@/lib/infrastructure/hetzner-cloud-store";
 import { verifyEnrolledProviderReceipt } from "@/lib/infrastructure/enrolled-provider-receipt";
 import { inspectProviderWorkspaceRuntime } from "@/lib/infrastructure/first-boot-ssh";
-import { parseProviderWorkspaceRuntimeReceipt } from "@/lib/infrastructure/provider-desktop-runtime";
+import { PROVIDER_WORKSPACE_PROTOCOL_VERSIONS, parseProviderWorkspaceRuntimeReceipt } from "@/lib/infrastructure/provider-desktop-runtime";
 import { loadProviderDesktopCapabilityContext } from "./provider-desktop-capability";
 import { verifyProviderDesktopPublicRuntime } from "./provider-desktop-public-readiness";
 
@@ -64,7 +64,7 @@ export async function issueProviderWorkspaceSession(raw: unknown, dependencies: 
     const context = await deps.load(ref); fence();
     const controlOrigin = deps.controlOrigin();
     if (context.input.userId !== ref.userId || context.input.agentId !== ref.agentId
-      || !["2026.09.05.9", "2026.09.05.10"].includes(context.identity.bundle.provisionerVersion)
+      || !(PROVIDER_WORKSPACE_PROTOCOL_VERSIONS as readonly string[]).includes(context.identity.bundle.provisionerVersion)
       || !workspaceEmbeddingSupported(context, controlOrigin)) throw new Error();
     const boot = await deps.boot(context.scope); fence(); if (!boot) throw new Error();
     const verified = await deps.verify({ scope: context.scope, operation: boot, dispatchDeadlineMs: deadline },

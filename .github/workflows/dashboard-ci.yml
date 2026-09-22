@@ -66,6 +66,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Browser regression suites (recovery-control styles, desktop handoff)
+      # launch headless Chromium; the runner image does not ship Playwright's
+      # pinned build, so install exactly the version in package-lock.json.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+
       # Execute the generated config-repair Python rather than asserting only
       # string fragments. Debian's system Python may lack ensurepip/python-venv;
       # use a managed interpreter without changing packages on the shared runner.

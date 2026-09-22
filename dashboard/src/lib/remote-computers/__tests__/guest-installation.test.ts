@@ -792,7 +792,7 @@ except RuntimeError as error:
   it("derives a no-network image that maps the named desktop user onto the bux identity", () => {
     const installerPath = path.join(process.cwd(), "provisioner/remote-desktop/install-guest.py");
     const program = String.raw`
-import hashlib,importlib.util,json,os,pathlib,stat,subprocess,tempfile,types,sys
+import hashlib,importlib.util,json,os,pathlib,stat,subprocess,tempfile,time,types,sys
 spec=importlib.util.spec_from_file_location('desktop_guest',sys.argv[1])
 guest=importlib.util.module_from_spec(spec); spec.loader.exec_module(guest)
 base_id='sha256:'+'a'*64; runtime_id='sha256:'+'b'*64; calls=[]; derived_labels={}
@@ -916,8 +916,11 @@ with tempfile.TemporaryDirectory() as temporary:
  root=pathlib.Path(temporary); target=root/'target'; target.write_bytes(b'unchanged target')
  links={root/'relative':'target',root/'absolute':str(target.resolve()),root/'dangling':'missing-target'}
  timestamp=1234567890000000000
+ # Linux relatime re-stamps a link's atime whenever it is followed while
+ # atime<=ctime; a future atime keeps the baseline stable across traversal.
+ future_atime=time.time_ns()+86400*10**9
  for path,target_value in links.items():
-  path.symlink_to(target_value); os.utime(path,ns=(timestamp,timestamp+1000000),follow_symlinks=False)
+  path.symlink_to(target_value); os.utime(path,ns=(future_atime,timestamp+1000000),follow_symlinks=False)
  before={}
  for path in links:
   target_value=os.readlink(path); before[path]=(os.lstat(path),target_value)
