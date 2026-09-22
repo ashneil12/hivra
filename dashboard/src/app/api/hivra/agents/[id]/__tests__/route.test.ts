@@ -1188,4 +1188,112 @@ describe("GET /api/hivra/agents/[id]", () => {
     expect(mockSeedAgentBox).not.toHaveBeenCalled();
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
+
+  describe("agent-run reporter install result", () => {
+    const OPERATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const READY = `{"vmid":1090,"ready":true,"chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}`;
+    let collectorUpsert: jest.Mock;
+
+    beforeEach(() => {
+      collectorUpsert = jest.fn(async () => ({ error: null }));
+      const agentTable = mockSupabaseFrom.getMockImplementation() as (table: string) => Record<string, unknown>;
+      mockSupabaseFrom.mockImplementation((table: string) => (table === "hivra_activity_collectors"
+        ? { upsert: collectorUpsert }
+        : agentTable(table)));
+    });
+
+    const poll = () => GET(makeGetRequest() as never, { params: Promise.resolve({ id: "agent-1" }) });
+
+    it("records a failed launch install from the provision log, separately from issuance", async () => {
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_ACTIVITY_COLLECTOR status=failed reason=install_failed\n`, stderr: "",
+      });
+
+      expect((await poll()).status).toBe(200);
+      const script = String(mockRunProxmoxHostScript.mock.calls[0][0]);
+      expect(script).toContain("grep -E '^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$' '/root/hivra-prov-1090.log'");
+      expect(collectorUpsert).toHaveBeenCalledTimes(1);
+      expect(collectorUpsert).toHaveBeenCalledWith({
+        agent_id: "agent-1", user_id: "user-free", last_install_status: "failed", last_install_reason: "install_failed",
+        last_install_at: expect.any(String), updated_at: expect.any(String),
+      }, { onConflict: "agent_id" });
+    });
+
+    it.each(["start", "restart", "resize"])("records the %s helper's install result from the start log", async (kind) => {
+      mockAgentRow = { ...mockAgentRow, operation_kind: kind, operation_payload: null };
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_ACTIVITY_COLLECTOR status=installed\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+
+      expect((await poll()).status).toBe(200);
+      expect(String(mockRunProxmoxHostScript.mock.calls[0][0])).toContain("[a-z_]{1,40})$' '/root/hivra-start-1090.log'");
+      expect(collectorUpsert).toHaveBeenCalledWith(expect.objectContaining({
+        agent_id: "agent-1", last_install_status: "installed", last_install_reason: null,
+      }), { onConflict: "agent_id" });
+    });
+
+    it("records nothing when no marker was written, the completion was lost, or the line is not the closed enum", async () => {
+      for (const [stdout, wins] of [
+        [`${READY}\n`, true],
+        [`${READY}\nHIVRA_ACTIVITY_COLLECTOR status=installed\n`, false],
+        [`${READY}\nHIVRA_ACTIVITY_COLLECTOR status=failed reason=Install failed: hvra_otlp_v1.a.b\n`, true],
+        [`${READY}\nHIVRA_ACTIVITY_COLLECTOR status=failed\n`, true],
+      ] as const) {
+        mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_id: OPERATION_ID, operation_kind: "provision" };
+        mockCompleteRunningResult = wins;
+        mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: true, stdout: "", stderr: "" })
+          .mockResolvedValueOnce({ ok: true, stdout, stderr: "" });
+        expect((await poll()).status).toBe(200);
+      }
+      expect(collectorUpsert).not.toHaveBeenCalled();
+    });
+
+    it("never probes or records for an agent type without a native producer", async () => {
+      mockAgentRow = { ...mockAgentRow, type: "aeon" };
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_ACTIVITY_COLLECTOR status=installed\n`, stderr: "",
+      });
+
+      expect((await poll()).status).toBe(200);
+      expect(String(mockRunProxmoxHostScript.mock.calls[0][0])).not.toContain("HIVRA_ACTIVITY_COLLECTOR");
+      expect(collectorUpsert).not.toHaveBeenCalled();
+    });
+
+    it("converges even when the install result cannot be recorded", async () => {
+      collectorUpsert.mockResolvedValueOnce({ error: { message: "fixture outage" } });
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_ACTIVITY_COLLECTOR status=installed\n`, stderr: "",
+      });
+
+      expect((await poll()).status).toBe(200);
+      expect(updates).toContainEqual(expect.objectContaining({ status: "running" }));
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "hivra agent-run reporter install result could not be recorded",
+        expect.objectContaining({ failureType: "hivra_activity_collector_install_record_failed" }),
+      );
+    });
+
+    it("reads the marker from a real host log with the poll's own grep, ignoring look-alike lines", async () => {
+      await poll();
+      const script = String(mockRunProxmoxHostScript.mock.calls[0][0]);
+      const probe = script.split("\n").filter(line => line.includes("COLLECTOR")).join("\n");
+      expect(probe).toContain('COLLECTOR="$(grep -E');
+      const work = mkdtempSync(path.join(tmpdir(), "hivra-poll-collector-"));
+      try {
+        const log = path.join(work, "hivra-prov-1090.log");
+        const run = (content: string) => {
+          writeFileSync(log, content);
+          return spawnSync("bash", ["-c", `set -euo pipefail\n${probe.split("'/root/hivra-prov-1090.log'").join(`'${log}'`)}`], { encoding: "utf8" });
+        };
+        // The guest installer prints its marker after a blank line, amid bootstrap output.
+        expect(run("[hivra-prov] copying provisioner\nbootstrap progress 42%\nHivra agent-run reporter: hivra-agent-trace: install failed: systemctl restart failed\n\nHIVRA_ACTIVITY_COLLECTOR status=failed reason=install_failed\n[hivra-prov] checking CloudFlare NAMED tunnel\n{\"vmid\":1090,\"ready\":true}\n"))
+          .toMatchObject({ status: 0, stdout: "HIVRA_ACTIVITY_COLLECTOR status=failed reason=install_failed\n" });
+        expect(run("echo HIVRA_ACTIVITY_COLLECTOR status=installed\nHIVRA_ACTIVITY_COLLECTOR status=failed reason=Bad\nHIVRA_ACTIVITY_COLLECTOR status=installed trailing\n"))
+          .toMatchObject({ status: 0, stdout: "" });
+        expect(run("")).toMatchObject({ status: 0, stdout: "" });
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    });
+  });
 });

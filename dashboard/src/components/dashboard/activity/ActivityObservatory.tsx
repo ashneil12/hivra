@@ -7,6 +7,7 @@ import type {
   ActivitySnapshot,
   ActivityEvent,
   ActivityCapability,
+  ActivityResource,
 } from "@/lib/activity-observability/types";
 import {
   kindLabels,
@@ -14,13 +15,17 @@ import {
   capabilityNames,
   capabilityExplanation,
   capabilityStateLabel,
+  installFailureText,
   monitoringStates,
+  nativeTracingReason,
   presentEvent,
   producerName,
   reportingAlerts,
   sourceExplanation,
+  type CapabilityContext,
 } from "./presentation";
 import { AgentRuns } from "./AgentRuns";
+import { selectRuns } from "./run-groups";
 import styles from "./ActivityObservatory.module.css";
 
 type View = "runs" | "timeline" | "attention" | "coverage" | "usage";
@@ -37,17 +42,68 @@ function timestamp(value?: string) {
 }
 const reportingWarning = (capability: ActivityCapability) =>
   ["stale", "expired", "degraded"].includes(capability.state);
+const alertTitle = (capability: ActivityCapability) =>
+  capability.state === "expired"
+    ? "run reporting credential expired"
+    : "run reporting stopped checking in";
+
+const coverageContext = (
+  resource: ActivityResource,
+  now: string,
+): CapabilityContext => ({
+  status: resource.status,
+  agentType: resource.agentType,
+  now,
+});
+
+/** The credential line, stated only as far as the recorded facts support it. */
+function CredentialLine({
+  capability,
+  context,
+}: {
+  capability: ActivityCapability;
+  context: CapabilityContext;
+}) {
+  const reason = nativeTracingReason(capability, context);
+  // A newer credential was issued but the computer still presents an expired
+  // one: "valid until" would describe a credential the computer is not using.
+  if (reason === "expired_credential_presented")
+    return capability.issuedAt ? (
+      <p className={styles.meta}>
+        New reporting credential issued {timestamp(capability.issuedAt)}; the
+        computer has not started using it
+      </p>
+    ) : null;
+  // Set up but not reporting: the credential exists only in Hivra's records.
+  if (capability.state === "missing")
+    return capability.issuedAt ? (
+      <p className={styles.meta}>
+        Reporting set up {timestamp(capability.issuedAt)}
+      </p>
+    ) : null;
+  if (!capability.expiresAt) return null;
+  const expires = Date.parse(capability.expiresAt);
+  const expired =
+    !Number.isNaN(expires) && !!context.now && expires <= Date.parse(context.now);
+  return (
+    <p className={styles.meta}>
+      {expired
+        ? "Reporting credential expired"
+        : "Reporting credential valid until"}{" "}
+      {timestamp(capability.expiresAt)}
+    </p>
+  );
+}
 
 /** Automatic agent run reporting for one computer: state, check-in and credential. */
 function ReportingCoverage({
   capability,
-  now,
+  context,
 }: {
   capability: ActivityCapability;
-  now: string;
+  context: CapabilityContext;
 }) {
-  const expires = capability.expiresAt ? Date.parse(capability.expiresAt) : NaN;
-  const expired = !Number.isNaN(expires) && expires <= Date.parse(now);
+  const install = installFailureText(capability.installFailureReason);
   return (
     <div className={styles.reporting}>
       <p>
@@ -55,10 +111,12 @@ function ReportingCoverage({
         <span
           className={reportingWarning(capability) ? styles.warning : undefined}
         >
-          {capabilityStateLabel(capability)}
+          {capabilityStateLabel(capability, context)}
         </span>
       </p>
-      <p className={styles.muted}>{capabilityExplanation(capability)}</p>
+      <p className={styles.muted}>
+        {capabilityExplanation(capability, context)}
+      </p>
       {capability.state !== "unsupported" &&
         capability.state !== "degraded" && (
           <p className={styles.meta}>
@@ -68,14 +126,13 @@ function ReportingCoverage({
               : "No check-in received"}
           </p>
         )}
-      {capability.expiresAt && (
+      {capability.installFailedAt && (
         <p className={styles.meta}>
-          {expired
-            ? "Reporting credential expired"
-            : "Reporting credential valid until"}{" "}
-          {timestamp(capability.expiresAt)}
+          Last install attempt failed {timestamp(capability.installFailedAt)}
+          {install ? `: ${install}` : ""}
         </p>
       )}
+      <CredentialLine capability={capability} context={context} />
     </div>
   );
 }
@@ -285,42 +342,104 @@ export function ActivityObservatory({
     return () => request.current?.abort();
   }, [refresh]);
   const events = data?.events ?? [];
-  const alerts = reportingAlerts(data?.resources ?? []);
-  const visibleAlerts =
-    agent === "all"
-      ? alerts
-      : alerts.filter((alert) => alert.resource.id === agent);
-  const attentionCount =
-    events.filter((event) => event.needsAttention).length + alerts.length;
+  const now = data?.generatedAt ?? "";
   const query = search.trim().toLowerCase();
+  const matchesQuery = (event: ActivityEvent) =>
+    !query ||
+    [
+      presentEvent(event).title,
+      event.title,
+      event.id,
+      event.computerId,
+      event.spanId,
+      event.summary,
+      event.agentName,
+      event.runId,
+      event.traceId,
+      event.toolName,
+      event.conversationId,
+      producerName(event),
+      ...event.evidence.flatMap((item) => [item.label, item.value]),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  const inScope = (event: ActivityEvent) =>
+    (agent === "all" || event.agentId === agent) &&
+    (kind === "all" || event.kind === kind);
+  const isRunRecord = (event: ActivityEvent) =>
+    event.kind === "trace_span" || event.kind === "tool_activity";
   const filtered = events.filter(
     (event) =>
       (view !== "attention" || event.needsAttention) &&
-      (view !== "runs" ||
-        event.kind === "trace_span" ||
-        event.kind === "tool_activity") &&
-      (agent === "all" || event.agentId === agent) &&
-      (kind === "all" || event.kind === kind) &&
-      [
-        presentEvent(event).title,
-        event.title,
-        event.id,
-        event.computerId,
-        event.spanId,
-        event.summary,
-        event.agentName,
-        event.runId,
-        event.traceId,
-        event.toolName,
-        event.conversationId,
-        producerName(event),
-        ...event.evidence.flatMap((item) => [item.label, item.value]),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(query),
+      (view !== "runs" || isRunRecord(event)) &&
+      inScope(event) &&
+      matchesQuery(event),
   );
-  const active = filtered.find((event) => event.id === selected) ?? filtered[0];
+  // Runs are grouped from every loaded record that passes the agent and kind
+  // filters, so a run's status, start and counts never depend on the search;
+  // the search only chooses which runs are shown.
+  const runEvents =
+    view === "runs"
+      ? events.filter((event) => isRunRecord(event) && inScope(event))
+      : [];
+  const shownRuns =
+    view === "runs"
+      ? selectRuns(runEvents, query ? matchesQuery : undefined)
+      : undefined;
+  const shownRunIds = new Set(
+    shownRuns
+      ? [
+          ...shownRuns.groups.flatMap((group) =>
+            group.steps.flatMap((step) => step.records.map((item) => item.id)),
+          ),
+          ...shownRuns.ungrouped.map((event) => event.id),
+        ]
+      : [],
+  );
+  const selectable =
+    view === "runs"
+      ? runEvents.filter((event) => shownRunIds.has(event.id))
+      : filtered;
+  const active =
+    selectable.find((event) => event.id === selected) ??
+    selectable.find(matchesQuery);
+  // Reporting gaps follow the same filters as records: the agent filter and
+  // search (by computer and gap), and a kind filter hides them because a gap
+  // is not an activity type. The badge counts everything, and the view says
+  // how much the filters hide.
+  const alerts = reportingAlerts(data?.resources ?? []);
+  const alertText = ({
+    resource,
+    capability,
+  }: (typeof alerts)[number]) =>
+    [
+      resource.name,
+      resource.id,
+      alertTitle(capability),
+      capabilityExplanation(capability, coverageContext(resource, now)),
+    ]
+      .join(" ")
+      .toLowerCase();
+  const visibleAlerts = alerts.filter(
+    (alert) =>
+      (agent === "all" || alert.resource.id === agent) &&
+      kind === "all" &&
+      (!query || alertText(alert).includes(query)),
+  );
+  const attentionEvents = events.filter((event) => event.needsAttention);
+  const attentionCount = attentionEvents.length + alerts.length;
+  const hiddenAttention =
+    attentionCount -
+    visibleAlerts.length -
+    attentionEvents.filter((event) => inScope(event) && matchesQuery(event))
+      .length;
+  const filtersActive = Boolean(query) || agent !== "all" || kind !== "all";
+  const clearFilters = () => {
+    setSearch("");
+    setAgent("all");
+    setKind("all");
+  };
   const agents = Array.from(
     new Map(events.map((event) => [event.agentId, event.agentName])).entries(),
   );
@@ -462,7 +581,7 @@ export function ActivityObservatory({
                         <ReportingCoverage
                           key={capability.key}
                           capability={capability}
-                          now={data.generatedAt}
+                          context={coverageContext(resource, data.generatedAt)}
                         />
                       ))}
                     <div className={styles.capabilities}>
@@ -516,13 +635,13 @@ export function ActivityObservatory({
                       />
                       <div>
                         <strong>
-                          {resource.name}:{" "}
-                          {capability.state === "expired"
-                            ? "run reporting credential expired"
-                            : "run reporting stopped checking in"}
+                          {resource.name}: {alertTitle(capability)}
                         </strong>
                         <p className={styles.muted}>
-                          {capabilityExplanation(capability)}
+                          {capabilityExplanation(
+                            capability,
+                            coverageContext(resource, data.generatedAt),
+                          )}
                         </p>
                         <p className={styles.meta}>
                           Reporter last checked in:{" "}
@@ -541,6 +660,17 @@ export function ActivityObservatory({
                   See what is monitored
                 </button>
               </section>
+            )}
+            {view === "attention" && filtersActive && hiddenAttention > 0 && (
+              <p className={styles.viewHelp} role="status">
+                {hiddenAttention}{" "}
+                {hiddenAttention === 1 ? "item needs" : "items need"} attention
+                but {hiddenAttention === 1 ? "is" : "are"} hidden by your search
+                or filters.{" "}
+                <button className={styles.inlineButton} onClick={clearFilters}>
+                  Clear search and filters
+                </button>
+              </p>
             )}
             <div className={styles.toolbar}>
               <input
@@ -580,13 +710,14 @@ export function ActivityObservatory({
             <div className={styles.work}>
               {view === "runs" ? (
                 <AgentRuns
-                  events={filtered}
+                  events={runEvents}
+                  matches={query ? matchesQuery : undefined}
+                  hasOlder={Boolean(data.nextCursor)}
                   selected={active?.id}
                   onSelect={setSelected}
                   limited={
                     data.truncated ||
                     data.degraded ||
-                    Boolean(query) ||
                     agent !== "all" ||
                     kind !== "all"
                   }

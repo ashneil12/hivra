@@ -76,6 +76,20 @@ describe("native agent-run records",()=>{
     expect(one(native("collector.heartbeat",[],{service:"codex"}))).toMatchObject({events:[],heartbeats:[],rejectedLogRecords:1});
   });
 
+  it("accepts heartbeats whatever the guest clock says and counts skewed run records separately",()=>{
+    const at=(minutes:number)=>String(BigInt(NOW.getTime()+minutes*60_000)*1_000_000n);
+    const beat=(time:string)=>one(native("collector.heartbeat",[],{service:"hivra-agent-trace",runId:null,time}));
+    // Six minutes fast and 91 days slow: liveness uses the server's receive time, so both still count.
+    expect(beat(at(6))).toMatchObject({heartbeats:[{occurredAt:"2026-09-21T20:06:00.000Z"}],rejectedLogRecords:0,clockSkewedLogRecords:0});
+    expect(beat(at(-91*24*60)).heartbeats).toHaveLength(1);
+    // The timestamp still has to parse.
+    expect(beat("not-a-time")).toMatchObject({heartbeats:[],rejectedLogRecords:1,clockSkewedLogRecords:0});
+    // Run records keep the window, and a refusal caused only by the clock is counted as such.
+    expect(one(native("run.started",[],{time:at(6)}))).toMatchObject({events:[],rejectedLogRecords:1,clockSkewedLogRecords:1});
+    expect(one(native("run.exfiltrated",[],{time:at(6)}))).toMatchObject({events:[],rejectedLogRecords:1,clockSkewedLogRecords:0});
+    expect(one(native("run.started",[],{time:at(4)})).events).toHaveLength(1);
+  });
+
   it("rejects and counts unknown roles, producers, ids and runs",()=>{
     for(const body of [native("run.exfiltrated"),native("tool.started",[],{service:"aider"}),native("run.started",[],{eventId:null}),native("run.started",[],{eventId:"0123456789ABCDEF0123456789ABCDEF"}),native("run.started",[],{eventId:"short"}),native("run.started",[],{runId:null}),native("run.started",[],{runId:"turn 1; rm"})]) {
       expect(one(body)).toMatchObject({events:[],heartbeats:[],rejectedLogRecords:1});

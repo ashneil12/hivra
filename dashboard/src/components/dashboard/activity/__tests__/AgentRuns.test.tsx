@@ -59,7 +59,14 @@ const finishedRun = [
   }),
 ];
 
-function renderRuns(events: ActivityEvent[], selected?: string) {
+function renderRuns(
+  events: ActivityEvent[],
+  selected?: string,
+  options: {
+    matches?: (event: ActivityEvent) => boolean;
+    hasOlder?: boolean;
+  } = {},
+) {
   const onSelect = jest.fn();
   render(
     <AgentRuns
@@ -67,6 +74,7 @@ function renderRuns(events: ActivityEvent[], selected?: string) {
       selected={selected}
       onSelect={onSelect}
       limited={false}
+      {...options}
     />,
   );
   return {
@@ -140,12 +148,16 @@ it.each<[NonNullable<ActivityEvent["role"]> | null, string]>([
 });
 
 it("says when a run started before the loaded records and when a tool has no finish", () => {
-  const { runs } = renderRuns([
-    record("tool", "tool.started", "2026-09-21T12:00:01Z", {
-      spanId: "2".repeat(16),
-      toolName: "web_search",
-    }),
-  ]);
+  const { runs } = renderRuns(
+    [
+      record("tool", "tool.started", "2026-09-21T12:00:01Z", {
+        spanId: "2".repeat(16),
+        toolName: "web_search",
+      }),
+    ],
+    undefined,
+    { hasOlder: true },
+  );
   expect(
     runs.getByText(
       "Started before the loaded records; load older events for earlier steps.",
@@ -173,5 +185,88 @@ it("labels a subagent run as delegated within the same conversation", () => {
   expect(child.getByText(/same conversation/)).toBeVisible();
   expect(
     runs.getByRole("article", { name: "Builder Claude Code run" }),
+  ).toBeVisible();
+});
+
+it("offers older events for a run's start only when an older page exists", () => {
+  const { runs } = renderRuns([
+    record("tool", "tool.started", "2026-09-21T12:00:01Z", {
+      spanId: "2".repeat(16),
+      toolName: "web_search",
+    }),
+  ]);
+  expect(
+    runs.getByText(
+      "Its start is not in the loaded records: the run began more than 30 days ago, or its start was never reported.",
+    ),
+  ).toBeVisible();
+  expect(runs.queryByText(/load older events/)).not.toBeInTheDocument();
+});
+
+it("searches for runs without trimming them: status, start and counts come from every loaded record", () => {
+  const other = [
+    record("o-start", "run.started", "2026-09-21T13:00:00Z", {
+      runId: "turn-2",
+    }),
+    record("o-end", "run.failed", "2026-09-21T13:00:04Z", {
+      runId: "turn-2",
+      outcome: "failure",
+      severity: "error",
+    }),
+  ];
+  const bash = (event: ActivityEvent) => event.toolName === "Bash";
+  const { runs } = renderRuns([...finishedRun, ...other], undefined, {
+    matches: bash,
+  });
+  const run = within(runs.getByRole("article", { name: "Builder Codex run" }));
+  expect(run.getByText("Finished in 5.0 s (reported by the agent)")).toBeVisible();
+  expect(run.getByText(/^Started/)).toBeVisible();
+  expect(run.getByText(/2 tool calls · 1 tool error/)).toBeVisible();
+  expect(run.queryByText(/not in the loaded records|Started before/)).not.toBeInTheDocument();
+  expect(run.getAllByRole("button")).toHaveLength(4);
+  expect(
+    within(run.getByRole("button", { name: /Tool: Bash/ })).getByText(
+      /Matches your search/,
+    ),
+  ).toBeVisible();
+  expect(
+    within(run.getByRole("button", { name: /Tool: Read/ })).queryByText(
+      /Matches your search/,
+    ),
+  ).not.toBeInTheDocument();
+  expect(runs.getByText(/Showing runs with a step that matches your search/)).toBeVisible();
+  // The failed run has no matching record, so it is not shown.
+  expect(runs.getAllByRole("article")).toHaveLength(1);
+  expect(runs.queryByText("Ended with a failure")).not.toBeInTheDocument();
+});
+
+it("keeps a failed run's status when only a tool step matches the search", () => {
+  const failed = [
+    record("start", "run.started", "2026-09-21T12:00:00Z"),
+    record("t-start", "tool.started", "2026-09-21T12:00:01Z", {
+      spanId: "4".repeat(16),
+      toolName: "Bash",
+    }),
+    record("t-end", "tool.completed", "2026-09-21T12:00:02Z", {
+      spanId: "4".repeat(16),
+      toolName: "Bash",
+    }),
+    record("end", "run.failed", "2026-09-21T12:00:03Z", {
+      outcome: "failure",
+      severity: "error",
+    }),
+  ];
+  const { runs } = renderRuns(failed, undefined, {
+    matches: (event) => event.toolName === "Bash",
+  });
+  const [heading] = runs.getAllByText("Ended with a failure");
+  expect(heading.previousElementSibling).toHaveTextContent("Builder · Codex run");
+  expect(heading).toHaveClass("warning");
+});
+
+it("says plainly when no run matches the search", () => {
+  const { runs } = renderRuns(finishedRun, undefined, { matches: () => false });
+  expect(
+    runs.getByText("No agent run has a step that matches your search."),
   ).toBeVisible();
 });

@@ -430,13 +430,20 @@ def install_agent(launch, source, *, provider_desktop=None):
     else:
         bootstrap()
         if launch.get("version") == 4:
-            # After bootstrap (bux and its home exist) and before access, so a
-            # reporter that cannot start keeps the computer unpublished.
+            # After bootstrap (bux and its home exist) and before access. The
+            # reporter is optional: a failure is reported, never fatal.
             install_activity_reporter(launch, source)
         configure_access(launch, source)
 
 
 def install_activity_reporter(launch, source):
+    """Install the agent-run reporter; fail-open, with exactly one marker line.
+
+    A credential that was not validated is still refused (the launch document
+    parser already rejected malformed ones). Any failure to install or start
+    the reporter only changes the marker: the computer continues to access
+    setup and Activity shows its coverage as missing.
+    """
     # Re-check here too: this function must never forward an unvalidated or
     # unsupported credential, whatever composed the launch document.
     telemetry = launch.get("activityTelemetry")
@@ -457,11 +464,31 @@ def install_activity_reporter(launch, source):
     except subprocess.TimeoutExpired:
         # Do not print exception text: it can contain command/output data.
         print("Hivra agent-run reporter installation exceeded its bounded deadline.", file=sys.stderr)
-        raise InstallError("agent-run reporter installation timed out") from None
+        report_activity_collector("failed", "timeout")
+        return
     except subprocess.CalledProcessError as error:
         relay_reporter_status(error.stderr, telemetry["token"])
-        raise InstallError("agent-run reporter installation failed") from None
+        report_activity_collector("failed", "install_failed")
+        return
+    except OSError:
+        report_activity_collector("failed", "install_failed")
+        return
     relay_reporter_status(completed.stderr, telemetry["token"])
+    report_activity_collector("installed")
+
+
+def report_activity_collector(status, reason=None):
+    # The one line the control plane records as this computer's reporter
+    # install status (host provisioning log). A closed enum, never a message.
+    # The leading newline keeps it a whole line even if bootstrap output on
+    # the other stream ended without one.
+    if status == "installed" and reason is None:
+        line = "HIVRA_ACTIVITY_COLLECTOR status=installed"
+    elif status == "failed" and isinstance(reason, str) and re.fullmatch(r"[a-z_]{1,40}", reason):
+        line = "HIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason
+    else:
+        raise InstallError("invalid agent-run reporter status")
+    print("\n" + line, file=sys.stderr, flush=True)
 
 
 def relay_reporter_status(output, token):

@@ -180,6 +180,25 @@ describe("hivra-start-on-host.sh agent-run reporter step", () => {
     for (const line of guestCalls) expect(line).toMatch(/timeout -k \d+ \d+ "\$\{GSSH\[@\]\}"/);
   });
 
+  it("gives the guest install more time than the reporter's own worst case, with the whole step still bounded", () => {
+    // hivra-agent-trace.py install: daemon-reload 15 s + enable 15 s + show 15 s
+    // + restart 30 s + settle 2 s + is-active 15 s. Plus the pinned ssh connect.
+    const REPORTER_WORST_CASE_SECONDS = 92;
+    const SSH_CONNECT_SECONDS = 10;
+    const install = shellFunction("install_activity_collector");
+    const bounds = [...install.matchAll(/timeout -k (\d+) (\d+) "\$\{GSSH\[@\]\}"/g)]
+      .map((match) => ({ kill: Number(match[1]), limit: Number(match[2]), line: install.slice(match.index, install.indexOf("\n", match.index)) }));
+    expect(bounds).toHaveLength(3);
+    const installer = bounds.find((bound) => bound.line.includes("ACTIVITY_CREDENTIAL_JSON")
+      || install.slice(install.indexOf(bound.line) - 80, install.indexOf(bound.line)).includes("ACTIVITY_CREDENTIAL_JSON"));
+    expect(installer).toBeDefined();
+    expect(installer!.limit).toBeGreaterThanOrEqual(REPORTER_WORST_CASE_SECONDS + SSH_CONNECT_SECONDS + 10);
+    expect(bounds.reduce((total, bound) => total + bound.limit + bound.kill, 0)).toBeLessThanOrEqual(180);
+    const reporter = readFileSync(path.join(bundleRoot, "hivra-agent-trace.py"), "utf8");
+    expect(reporter).toContain("def _systemctl(*arguments, timeout=15, capture=False):");
+    expect(reporter).toContain('_systemctl("restart", UNIT_NAME, timeout=30)');
+  });
+
   it("installs the reviewed reporter with the credential on stdin only", () => {
     const run = runInstall();
     expect(run.status).toBe(0);
@@ -199,7 +218,6 @@ describe("hivra-start-on-host.sh agent-run reporter step", () => {
   });
 
   it.each([
-    ["the guest is not a Claude Code or Codex computer", { stageExit: 3 }, "unsupported_kind", ["stage"]],
     ["the guest cannot be reached", { stageExit: 255 }, "transfer_failed", ["stage"]],
     ["staging times out", { stageExit: 124 }, "timeout", ["stage"]],
     ["the guest returns an unexpected directory", { stageDir: "/tmp/x; rm -rf /" }, "transfer_failed", ["stage"]],
@@ -226,15 +244,13 @@ describe("hivra-start-on-host.sh agent-run reporter step", () => {
   describe("guest staging script", () => {
     function stage(guest: string, input: Buffer) {
       const script = extractGuestStage()
-        .replaceAll("/home/bux/.hivra/agent-kind", path.join(guest, "agent-kind"))
         .replaceAll("/run/hivra-agent-trace-install", path.join(guest, "run", "hivra-agent-trace-install"));
-      return spawnSync("/bin/sh", ["-c", script], { input });
+      return spawnSync("/bin/sh", ["-c", script], { input, timeout: 10_000 });
     }
 
-    it.each(["claude", "codex\n"])("unpacks the reporter into a fresh private directory for kind %j", (kind) => {
+    it("unpacks the reporter into a fresh private directory", () => {
       withWorkDirectory((guest) => {
         mkdirSync(path.join(guest, "run"));
-        writeFileSync(path.join(guest, "agent-kind"), kind);
         const result = stage(guest, reporterArchive());
         expect(result.status).toBe(0);
         const directory = result.stdout.toString("utf8").trim();
@@ -247,27 +263,46 @@ describe("hivra-start-on-host.sh agent-run reporter step", () => {
       });
     });
 
+    // Regression: root used to decide eligibility from /home/bux/.hivra/agent-kind,
+    // which the monitored agent owns. Writing "aeon" there skipped every
+    // re-credentialing, and a FIFO swapped in could hang a root reader. The
+    // control plane already stages credentials only for Claude Code / Codex.
+    it("reads nothing the monitored agent can write", () => {
+      const script = extractGuestStage();
+      expect(script).not.toMatch(/\/home\/|agent-kind|\bhead\b/);
+      expect(script).not.toMatch(/exit 3/);
+    });
+
     it.each([
-      ["another agent kind", (guest: string) => writeFileSync(path.join(guest, "agent-kind"), "aeon\n")],
-      ["no agent identity", () => undefined],
-      ["a symlinked agent identity", (guest: string) => {
-        writeFileSync(path.join(guest, "elsewhere"), "claude\n");
-        symlinkSync(path.join(guest, "elsewhere"), path.join(guest, "agent-kind"));
+      ["claims another agent kind", (home: string) => writeFileSync(path.join(home, "agent-kind"), "aeon\n")],
+      ["removed its identity file", () => undefined],
+      ["replaced its identity file with a FIFO", (home: string) => {
+        expect(spawnSync("mkfifo", [path.join(home, "agent-kind")]).status).toBe(0);
       }],
-    ])("refuses %s before creating anything", (_case, prepare) => {
+      ["symlinked its identity file", (home: string) => {
+        writeFileSync(path.join(home, "elsewhere"), "aeon\n");
+        symlinkSync(path.join(home, "elsewhere"), path.join(home, "agent-kind"));
+      }],
+    ])("stages the reporter even when the agent %s", (_case, prepare) => {
       withWorkDirectory((guest) => {
         mkdirSync(path.join(guest, "run"));
-        prepare(guest);
-        const result = stage(guest, reporterArchive());
-        expect(result.status).toBe(3);
-        expect(readdirSync(path.join(guest, "run"))).toEqual([]);
+        const home = path.join(guest, "home-bux-hivra");
+        mkdirSync(home);
+        prepare(home);
+        // Point any leftover reference at the agent-controlled fixture.
+        const script = extractGuestStage()
+          .replaceAll("/home/bux/.hivra", home)
+          .replaceAll("/run/hivra-agent-trace-install", path.join(guest, "run", "hivra-agent-trace-install"));
+        const result = spawnSync("/bin/sh", ["-c", script], { input: reporterArchive(), timeout: 10_000 });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(0);
+        expect(readdirSync(result.stdout.toString("utf8").trim()).sort()).toEqual(["hivra-agent-trace.py", "hivra-agent-trace.service"]);
       });
     });
 
     it("removes its directory when the reporter archive is incomplete", () => {
       withWorkDirectory((guest) => {
         mkdirSync(path.join(guest, "run"));
-        writeFileSync(path.join(guest, "agent-kind"), "claude\n");
         const result = stage(guest, reporterArchive(["hivra-agent-trace.py"]));
         expect(result.status).not.toBe(0);
         expect(readdirSync(path.join(guest, "run"))).toEqual([]);

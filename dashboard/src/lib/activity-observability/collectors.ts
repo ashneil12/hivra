@@ -157,6 +157,41 @@ export async function recordCollectorRejected(
   });
 }
 
+export type ActivityCollectorInstallStatus = "installed" | "failed";
+
+const INSTALL_REASON = /^[a-z_]{1,40}$/;
+
+/**
+ * Record the outcome of the most recent guest reporter installation, taken
+ * from the host's `HIVRA_ACTIVITY_COLLECTOR` marker. An installed result
+ * clears any earlier failure reason; a failure must carry a closed-enum reason.
+ * Best effort: returns false instead of throwing, and writes nothing for an
+ * unknown status, a malformed reason or an invalid timestamp.
+ */
+export async function recordCollectorInstallResult(
+  client: SupabaseClient,
+  input: { agentId: string; userId: string; status: ActivityCollectorInstallStatus; reason?: string; at?: Date },
+): Promise<boolean> {
+  try {
+    if (input.status !== "installed" && input.status !== "failed") return false;
+    const reason = input.status === "failed" ? input.reason : undefined;
+    if (input.status === "failed" && (typeof reason !== "string" || !INSTALL_REASON.test(reason))) return false;
+    if (input.status === "installed" && input.reason !== undefined) return false;
+    const at = iso(input.at ?? new Date());
+    const { error } = await client.from("hivra_activity_collectors").upsert({
+      agent_id: input.agentId,
+      user_id: input.userId,
+      last_install_status: input.status,
+      last_install_reason: reason ?? null,
+      last_install_at: at,
+      updated_at: at,
+    }, { onConflict: "agent_id" });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 /** Record a credential re-issued by the renewal endpoint. */
 export function recordCollectorRenewed(
   client: SupabaseClient,

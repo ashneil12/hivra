@@ -53,6 +53,47 @@ describe("native tracing coverage",()=>{
     expect(nativeState(agent(),collector({last_heartbeat_at:ago(14)}))).toMatchObject({state:"observed",lastSeenAt:ago(14)});
   });
 
+  it("says which cause of unsupported applies",()=>{
+    expect(nativeState(agent({type:"aeon"}),collector())).toMatchObject({state:"unsupported",reason:"agent_type"});
+    expect(nativeState(agent({type:"claude-code",computer_substrate:"provider-vm"}),collector())).toMatchObject({state:"unsupported",reason:"substrate"});
+    expect(nativeState(agent({computer_substrate:"provider-vm"}))).toMatchObject({state:"unsupported",reason:"substrate"});
+  });
+
+  it("lets a re-issued credential supersede an earlier expired refusal, and says when the computer still presents the old one",()=>{
+    const future=new Date(NOW.getTime()+7*86_400_000).toISOString();
+    // Refused before the restart re-issued a credential: waiting for the new reporter, not expired.
+    expect(nativeState(agent(),collector({issued_at:ago(5),credential_expires_at:future,last_heartbeat_at:null,last_rejected_at:ago(30),last_rejected_reason:"expired"}))).toMatchObject({state:"configured",issuedAt:ago(5),expiresAt:future});
+    // Refused after the re-issue: the computer never picked the new credential up.
+    expect(nativeState(agent(),collector({issued_at:ago(20),credential_expires_at:future,last_heartbeat_at:ago(2*24*60),last_rejected_at:ago(1),last_rejected_reason:"expired"})))
+      .toMatchObject({state:"expired",reason:"expired_credential_presented",issuedAt:ago(20),expiresAt:future});
+    expect(nativeState(agent(),collector({credential_expires_at:ago(1)}))).toMatchObject({state:"expired",reason:"credential_ran_out"});
+  });
+
+  it("tells never set up, set up but never checked in, and could not be installed apart",()=>{
+    expect(nativeState(agent())).toEqual({key:"native_tracing",label:"Agent run reporting",state:"missing",reason:"not_set_up"});
+    expect(nativeState(agent(),collector({issued_at:null,last_heartbeat_at:null}))).toMatchObject({state:"missing",reason:"not_set_up"});
+    expect(nativeState(agent(),collector({issued_at:ago(30),last_heartbeat_at:null}))).toMatchObject({state:"missing",reason:"never_checked_in",issuedAt:ago(30)});
+    const failed={last_install_status:"failed",last_install_reason:"transfer_failed"};
+    // Failed after the latest issuance: missing even inside the first-report grace, with the installer's code.
+    expect(nativeState(agent(),collector({issued_at:ago(4),last_heartbeat_at:null,...failed,last_install_at:ago(3)})))
+      .toMatchObject({state:"missing",reason:"install_failed",installFailedAt:ago(3),installFailureReason:"transfer_failed",issuedAt:ago(4)});
+    // A later re-issue supersedes the failure; a check-in after it proves a reporter is delivering.
+    expect(nativeState(agent(),collector({issued_at:ago(2),last_heartbeat_at:null,...failed,last_install_at:ago(3)})).state).toBe("configured");
+    expect(nativeState(agent(),collector({issued_at:ago(60),last_heartbeat_at:ago(1),...failed,last_install_at:ago(3)})).state).toBe("observed");
+    expect(nativeState(agent(),collector({issued_at:ago(60),last_heartbeat_at:null,last_install_status:"installed",last_install_reason:null,last_install_at:ago(59)}))).toMatchObject({state:"missing",reason:"never_checked_in"});
+    // The failure code is re-validated on read.
+    const odd=nativeState(agent(),collector({issued_at:ago(60),last_heartbeat_at:null,last_install_status:"failed",last_install_reason:"Bad reason; see log",last_install_at:ago(58)}));
+    expect(odd).toMatchObject({state:"missing",reason:"install_failed"}); expect(odd.installFailureReason).toBeUndefined();
+  });
+
+  it("never shows the reporter's heartbeat as the agent's last report",()=>{
+    const idle=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent()],collectorRows:[collector({last_heartbeat_at:ago(2)})]});
+    expect(idle.resources[0].lastSeenAt).toBeUndefined();
+    expect(idle.resources[0].capabilities.find(c=>c.key==="native_tracing")).toMatchObject({state:"observed",lastSeenAt:ago(2)});
+    const busy=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent()],collectorRows:[collector({last_heartbeat_at:ago(2),last_event_at:ago(7)})]});
+    expect(busy.resources[0].lastSeenAt).toBe(ago(7));
+  });
+
   it("never reports a stopped computer as stale, for any capability",()=>{
     const old=ago(55);
     const snapshot=buildActivitySnapshot({now:NOW,limit:20,sessionRows:[],agentRows:[agent({status:"stopped"})],collectorRows:[collector({last_heartbeat_at:old})],

@@ -7,6 +7,7 @@ import {
   type ActivitySource,
   type NativeProducer,
   type NativeRunRole,
+  type NativeTracingReason,
 } from "@/lib/activity-observability/types";
 
 export const kindLabels: Record<string, string> = {
@@ -252,8 +253,61 @@ export function sourceExplanation(source: ActivitySource) {
   return "Hivra can read saved history, but there may be no records in the last 30 days. This does not cover everything happening on the computer.";
 }
 
+/** What the page knows about the computer a capability belongs to. */
+export interface CapabilityContext {
+  /** The computer's own status, e.g. "running", "stopped", "provisioning". */
+  status?: string;
+  agentType?: string;
+  /** The snapshot's generation time, for comparing credential expiry. */
+  now?: string;
+}
+
+const NATIVE_TRACING_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex"]);
+
+/**
+ * The cause of a native_tracing state. The feed states it; when it does not
+ * (an older response), it is inferred only from facts the page already has.
+ */
+export function nativeTracingReason(
+  capability: ActivityCapability,
+  context: CapabilityContext = {},
+): NativeTracingReason | undefined {
+  if (capability.key !== "native_tracing") return undefined;
+  if (capability.reason) return capability.reason;
+  switch (capability.state) {
+    case "unsupported":
+      return context.agentType && NATIVE_TRACING_TYPES.has(context.agentType)
+        ? "substrate"
+        : "agent_type";
+    case "missing":
+      return capability.issuedAt || capability.expiresAt
+        ? "never_checked_in"
+        : "not_set_up";
+    case "expired": {
+      const expires = capability.expiresAt
+        ? Date.parse(capability.expiresAt)
+        : NaN;
+      const now = context.now ? Date.parse(context.now) : NaN;
+      return !Number.isNaN(expires) && !Number.isNaN(now) && expires > now
+        ? "expired_credential_presented"
+        : "credential_ran_out";
+    }
+    default:
+      return undefined;
+  }
+}
+
 /** Plain-language state for one capability chip. */
-export function capabilityStateLabel(capability: ActivityCapability) {
+export function capabilityStateLabel(
+  capability: ActivityCapability,
+  context: CapabilityContext = {},
+) {
+  if (capability.key === "native_tracing") {
+    const reason = nativeTracingReason(capability, context);
+    if (reason === "substrate") return "Not available on this host type";
+    if (reason === "not_set_up") return "Not set up";
+    if (reason === "install_failed") return "Reporter could not be installed";
+  }
   return (
     (capability.key === "native_tracing"
       ? nativeTracingStates[capability.state]
@@ -263,6 +317,28 @@ export function capabilityStateLabel(capability: ActivityCapability) {
   );
 }
 
+const installFailures: Record<string, string> = {
+  timeout: "it timed out",
+  transfer_failed: "it could not be copied to the computer",
+  install_failed: "the installer reported an error",
+  invalid_input: "its setup details were refused",
+};
+/** Plain-language cause of a failed reporter install, from its failure code. */
+export function installFailureText(code?: string): string | undefined {
+  if (!code) return undefined;
+  return installFailures[code] ?? `failure code ${code}`;
+}
+
+const notRunningStatus: Record<string, string> = {
+  stopped: "Stopped; no reports expected until it starts again.",
+  provisioning:
+    "Still being set up; reports are expected once it is running.",
+  pending: "Still being set up; reports are expected once it is running.",
+  starting: "Starting; reports are expected once it is running.",
+  error:
+    "Hivra recorded a problem with this computer, so it is not running normally; no reports are expected until it is running again.",
+};
+
 /**
  * One honest line about what a capability state means. Only automatic agent
  * run reporting has per-computer check-ins worth explaining; other
@@ -270,23 +346,36 @@ export function capabilityStateLabel(capability: ActivityCapability) {
  */
 export function capabilityExplanation(
   capability: ActivityCapability,
+  context: CapabilityContext = {},
 ): string | undefined {
   if (capability.key !== "native_tracing") return undefined;
+  const reason = nativeTracingReason(capability, context);
   switch (capability.state) {
     case "observed":
       return "Checking in. Runs are what the agent reports about itself, not an audit of everything on the computer.";
     case "configured":
       return "Set up recently; the first check-in should arrive within 10 minutes.";
     case "missing":
-      return "No reports received — computers launched before automatic reporting start reporting after their next restart.";
+      if (reason === "install_failed")
+        return "The reporter could not be installed, so runs on this computer are not being recorded. Restarting the computer tries again.";
+      if (reason === "never_checked_in")
+        return "Reporting was set up, but the reporter has never checked in, so runs on this computer are not being recorded. Restarting the computer reinstalls it.";
+      return "Reporting has not been set up on this computer. Computers launched before automatic reporting may start reporting after their next restart.";
     case "stale":
       return "Hasn’t checked in for 15+ min while running; runs in this gap may be missing.";
     case "expired":
+      if (reason === "expired_credential_presented")
+        return "Hivra issued a new reporting credential, but the computer is still using an expired one, so new runs are not being recorded. Restart the computer again; if this keeps happening, contact support.";
       return "The reporting credential ran out, so new runs are not being recorded. Restarting the computer issues a new one.";
     case "unsupported":
-      return "Automatic run reporting covers Claude Code and Codex computers only.";
+      return reason === "substrate"
+        ? "Automatic run reporting works for Claude Code and Codex on Hivra-hosted computers; this computer’s host type isn’t supported yet."
+        : "Automatic run reporting covers Claude Code and Codex computers only.";
     case "not_running":
-      return "Stopped; no reports expected until it starts again.";
+      return (
+        (context.status && notRunningStatus[context.status]) ??
+        "This computer is not running right now, so no reports are expected."
+      );
     case "degraded":
       return "Hivra couldn’t read reporting status just now. Refresh to try again.";
     default:

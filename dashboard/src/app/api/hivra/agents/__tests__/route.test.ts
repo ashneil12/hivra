@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync as readFixtureFile, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
 import { NextRequest } from "next/server";
 
 import { GET, POST } from "../route";
@@ -2828,6 +2831,14 @@ describe("POST /api/hivra/agents", () => {
         plan: "operator", status: "active", instance_limit: 4,
         total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
       };
+      // A current host bundle: phase 1 staged the credential it was handed.
+      mockRunProxmoxHostScript.mockReset()
+        .mockImplementationOnce(async (body: string) => ({
+          ok: true,
+          stdout: `${body.includes("HIVRA_ACTIVITY_STAGE=1") ? "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n" : ""}HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n`,
+        }))
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
     });
     afterEach(() => {
       consoleSpies.forEach(spy => spy.mockRestore());
@@ -2843,11 +2854,49 @@ describe("POST /api/hivra/agents", () => {
       expect(script).toBeDefined();
       return script as string;
     }
-    // The shellQuote'd value written into the root-only secret handoff file.
+    // The shellQuote'd value phase 1 may write into the root-only secret
+    // handoff file (only after its bundle probe passes).
     function handedOffTelemetry(script: string): string {
-      const match = script.match(/printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; write_secret_b64 '([^'\n]*)'\n/);
+      const match = script.match(/printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; (?:if \[ "\$HIVRA_ACTIVITY_STAGE" = 1 \]; then )?write_secret_b64 '([^'\n]*)'(?:; else printf '\\n'; fi)?\n/);
       expect(match).not.toBeNull();
       return match?.[1] ?? "";
+    }
+    // Run phase 1's real probe + handoff fragment against a host bundle
+    // directory, with only root-owned paths and GNU-only flags shimmed.
+    function stageOnBundle(script: string, provisionerDirectory: string, bundle: string) {
+      const start = script.indexOf("HIVRA_ACTIVITY_STAGE=0");
+      const endMarker = 'if [ "$HIVRA_ACTIVITY_STAGE" = 1 ]; then echo HIVRA_ACTIVITY_CREDENTIAL_STAGED; fi\n';
+      const end = script.indexOf(endMarker);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const fragment = script.slice(start, end + endMarker.length)
+        .split(`'${provisionerDirectory}/`).join(`'${bundle}/`);
+      expect(fragment).not.toContain(provisionerDirectory);
+      const work = mkdtempSync(nodePath.join(tmpdir(), "hivra-launch-activity-"));
+      try {
+        const secretFile = nodePath.join(work, "200.env");
+        const run = spawnSync("bash", ["-c", `set -euo pipefail
+install() { : > "\${@: -1}"; chmod 600 "\${@: -1}"; }
+base64() { [ "\${1:-}" != -w ] || shift 2; command base64 "$@" | tr -d '\\n'; }
+SECRET_ENV_FILE="$1"
+${fragment}`, "phase1", secretFile], { encoding: "utf8" });
+        const handoff = readFixtureFile(secretFile, "utf8");
+        const line = handoff.split("\n").find(entry => entry.startsWith("HIVRA_ACTIVITY_TELEMETRY_B64=")) ?? "";
+        return {
+          status: run.status,
+          stdout: run.stdout,
+          stderr: run.stderr,
+          handoffKeyPresent: handoff.split("\n").some(entry => entry.startsWith("HIVRA_ACTIVITY_TELEMETRY_B64=")),
+          credential: Buffer.from(line.slice("HIVRA_ACTIVITY_TELEMETRY_B64=".length), "base64").toString("utf8"),
+        };
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
+    function bundleFixture(files: Record<string, string>): string {
+      const bundle = mkdtempSync(nodePath.join(tmpdir(), "hivra-launch-bundle-"));
+      for (const [name, content] of Object.entries(files)) writeFileSync(nodePath.join(bundle, name), content);
+      return bundle;
     }
 
     it.each([["claude-code", "claude"], ["codex", "codex"]])(
@@ -2928,6 +2977,63 @@ describe("POST /api/hivra/agents", () => {
       expect(handedOffTelemetry(kickoffScript())).not.toBe("");
       expect(consoleOutput()).toContain("hivra_activity_collector_record_failed");
       expect(consoleOutput()).not.toContain("hvra_otlp_v1");
+    });
+
+    it("records no issuance when the managed default host bundle did not stage the credential", async () => {
+      // Regression: admission still accepts predecessor bundles (for example
+      // 2026.09.15.2) that silently drop the credential. Recording it anyway
+      // produced a false "credential expired, restart to fix" alert on day 7.
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const response = await POST(makeRequest({ type: "claude-code", name: "OLD_DEFAULT", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript())).not.toBe("");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      expect(consoleOutput()).toContain("hivra_activity_collector_not_staged");
+      expect(consoleOutput()).not.toContain("hvra_otlp_v1");
+    });
+
+    it("stages the credential only on a host bundle that consumes and reports it end to end", async () => {
+      const response = await POST(makeRequest({ type: "codex", name: "PROBED", cpu: 2, ram: 4 }) as never);
+      expect(response.status).toBe(201);
+      const script = kickoffScript();
+      const provisionerDirectory = script.match(/HIVRA_PROV_DIR='([^']+)'/)?.[1] ?? "";
+      expect(provisionerDirectory).not.toBe("");
+      const handed = handedOffTelemetry(script);
+
+      // The bundle this release ships satisfies the probe.
+      const current = stageOnBundle(script, provisionerDirectory, nodePath.join(process.cwd(), "provisioner"));
+      expect({ status: current.status, stdout: current.stdout, stderr: current.stderr })
+        .toEqual({ status: 0, stdout: "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n", stderr: "" });
+      expect(current.credential).toBe(handed);
+
+      const newHost = "read_optional_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64\n";
+      const newInstaller = 'line = "HIVRA_ACTIVITY_COLLECTOR status=installed"\n';
+      const cases: Array<[string, Record<string, string>]> = [
+        ["a predecessor bundle without reporting", {
+          "hivra-provision-on-host.sh": "guest_launch_document\n", "hivra-install-agent.py": "KINDS = set()\n" }],
+        ["a host script that ignores the credential", {
+          "hivra-provision-on-host.sh": "guest_launch_document\n", "hivra-install-agent.py": newInstaller,
+          "hivra-agent-trace.py": "", "hivra-agent-trace.service": "" }],
+        ["a fail-closed installer that reports no install status", {
+          "hivra-provision-on-host.sh": newHost, "hivra-install-agent.py": "install_activity_reporter(launch, source)\n",
+          "hivra-agent-trace.py": "", "hivra-agent-trace.service": "" }],
+        ["a bundle missing the reporter sources", {
+          "hivra-provision-on-host.sh": newHost, "hivra-install-agent.py": newInstaller }],
+      ];
+      for (const [label, files] of cases) {
+        const bundle = bundleFixture(files);
+        try {
+          const staged = stageOnBundle(script, provisionerDirectory, bundle);
+          expect({ label, status: staged.status, stdout: staged.stdout, key: staged.handoffKeyPresent, credential: staged.credential })
+            .toEqual({ label, status: 0, stdout: "", key: true, credential: "" });
+        } finally {
+          rmSync(bundle, { recursive: true, force: true });
+        }
+      }
     });
 
     it("hands no credential to a self-managed bundle that predates the reporter", async () => {

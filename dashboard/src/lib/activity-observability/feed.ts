@@ -16,6 +16,7 @@ import {
 } from "./otlp";
 import {
   ACTIVITY_SCHEMA_VERSION,
+  NATIVE_TRACING_AGENT_TYPES,
   type ActivityCapability,
   type ActivityEvent,
   type ActivityOutcome,
@@ -28,6 +29,8 @@ import {
 const STALE_MS = 15 * 60_000;
 /** A freshly issued reporter gets this long to deliver its first heartbeat before it counts as missing. */
 const FIRST_REPORT_GRACE_MS = 10 * 60_000;
+/** Installer failure codes, as the collectors table constrains them. */
+const INSTALL_REASON = /^[a-z_]{1,40}$/;
 const FETCH_CAP = 1000;
 const DESKTOP_ID_PREFIX = "desktop:";
 const TELEMETRY_EVENTS = ["otel_span", "otel_log"];
@@ -36,7 +39,11 @@ export interface ActivityEventRow { id:string; agent_id:string|null; event:strin
 export interface ActivitySessionRow { id:string; computer_id:string; transport:string; input_role:string; created_at:string }
 export interface ActivityAgentRow { id:string; name:string; type:string; status:string; created_at:string; computer_substrate?:string|null }
 /** One row per computer in hivra_activity_collectors (guest reporter state). */
-export interface ActivityCollectorRow { agent_id:string; issued_at:string|null; credential_expires_at:string|null; last_heartbeat_at:string|null; last_event_at:string|null; last_rejected_at:string|null; last_rejected_reason:string|null }
+export interface ActivityCollectorRow {
+  agent_id:string; issued_at:string|null; credential_expires_at:string|null; last_heartbeat_at:string|null; last_event_at:string|null; last_rejected_at:string|null; last_rejected_reason:string|null;
+  /** The launch installer's or start helper's last HIVRA_ACTIVITY_COLLECTOR result for this computer. */
+  last_install_status?:string|null; last_install_reason?:string|null; last_install_at?:string|null;
+}
 /** Slim rows used only to find each computer's latest record of a kind, independent of the history page. */
 export interface ActivityCoverageEventRow { agent_id:string|null; event:string; created_at:string; received_at?:string|null }
 export interface ActivityCoverageSessionRow { computer_id:string; created_at:string }
@@ -120,6 +127,8 @@ const hexId = (value: unknown, length: 16 | 32): string | undefined => typeof va
 const genericId = (value: unknown): string | undefined => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,119}$/.test(value) ? value : undefined;
 const validTime = (value: unknown): string | undefined => typeof value === "string" && timeKey(value) ? value : undefined;
 const later = (a: string | undefined, b: string | undefined): string | undefined => !a ? b : !b ? a : timeKey(a) >= timeKey(b) ? a : b;
+/** Strictly after `reference`, or true when there is no reference. Both are validTime values. */
+const after = (value: string, reference: string | undefined): boolean => !reference || timeKey(value) > timeKey(reference);
 
 const lifecycleTitles: Record<string,string> = {
   launch_requested:"Launch requested", provisioned:"Computer provisioned", failed:"Computer action failed",
@@ -217,19 +226,34 @@ function telemetryCapability(label:string,key:ActivityCapability["key"],lastSeen
 export function nativeTracingCapability(agent: ActivityAgentRow, row: ActivityCollectorRow | undefined, degraded: boolean, now: Date): ActivityCapability {
   const base = { key: "native_tracing" as const, label: "Agent run reporting" };
   if (degraded) return { ...base, state: "degraded" };
-  if (!supportsNativeTracing(agent)) return { ...base, state: "unsupported" };
-  const heartbeat = validTime(row?.last_heartbeat_at), expiresAt = validTime(row?.credential_expires_at);
-  const seen = { ...(heartbeat ? { lastSeenAt: heartbeat } : {}), ...(expiresAt ? { expiresAt } : {}) };
-  if (agent.status !== "running") return { ...base, state: "not_running", ...seen };
-  if (row) {
-    const rejectedAt = validTime(row.last_rejected_at);
-    const rejectedSinceHeartbeat = row.last_rejected_reason === "expired" && !!rejectedAt && (!heartbeat || Date.parse(rejectedAt) > Date.parse(heartbeat));
-    if ((expiresAt && Date.parse(expiresAt) <= now.getTime()) || rejectedSinceHeartbeat) return { ...base, state: "expired", ...seen };
+  if (!supportsNativeTracing(agent)) {
+    // Claude Code and Codex are supported types, so for them the host type is the limit.
+    return { ...base, state: "unsupported", reason: agent.type && NATIVE_TRACING_AGENT_TYPES.has(agent.type) ? "substrate" : "agent_type" };
   }
-  if (!row) return { ...base, state: "missing" };
+  const heartbeat = validTime(row?.last_heartbeat_at), expiresAt = validTime(row?.credential_expires_at), issuedAt = validTime(row?.issued_at);
+  const seen = { ...(heartbeat ? { lastSeenAt: heartbeat } : {}), ...(expiresAt ? { expiresAt } : {}), ...(issuedAt ? { issuedAt } : {}) };
+  if (agent.status !== "running") return { ...base, state: "not_running", ...seen };
+  if (!row) return { ...base, state: "missing", reason: "not_set_up" };
+  if (expiresAt && Date.parse(expiresAt) <= now.getTime()) return { ...base, state: "expired", reason: "credential_ran_out", ...seen };
+  // A refusal counts only when it is newer than both the last check-in and the
+  // latest issuance: a re-issue supersedes an earlier refusal, while an expired
+  // credential presented after it means the computer never picked the new one up.
+  const rejectedAt = validTime(row.last_rejected_at);
+  if (row.last_rejected_reason === "expired" && rejectedAt && after(rejectedAt, heartbeat) && after(rejectedAt, issuedAt)) {
+    return { ...base, state: "expired", reason: "expired_credential_presented", ...seen };
+  }
+  // The latest install attempt, at or after the latest issuance, failed and no
+  // check-in has arrived since (a check-in proves a reporter is delivering).
+  const installAt = validTime(row.last_install_at);
+  if (row.last_install_status === "failed" && installAt && (!issuedAt || timeKey(installAt) >= timeKey(issuedAt)) && after(installAt, heartbeat)) {
+    const installFailureReason = typeof row.last_install_reason === "string" && INSTALL_REASON.test(row.last_install_reason) ? row.last_install_reason : undefined;
+    return { ...base, state: "missing", reason: "install_failed", ...seen, installFailedAt: installAt, ...(installFailureReason ? { installFailureReason } : {}) };
+  }
   if (!heartbeat) {
-    const issuedAt = validTime(row.issued_at);
-    return { ...base, state: issuedAt && now.getTime() - Date.parse(issuedAt) < FIRST_REPORT_GRACE_MS ? "configured" : "missing", ...seen };
+    if (!issuedAt) return { ...base, state: "missing", reason: "not_set_up", ...seen };
+    return now.getTime() - Date.parse(issuedAt) < FIRST_REPORT_GRACE_MS
+      ? { ...base, state: "configured", ...seen }
+      : { ...base, state: "missing", reason: "never_checked_in", ...seen };
   }
   return { ...base, state: now.getTime() - Date.parse(heartbeat) > STALE_MS ? "stale" : "observed", ...seen };
 }
@@ -292,7 +316,10 @@ export function buildActivitySnapshot(input:{
   const resources=entries.map(({agent,native})=>{
     const running=agent.status==="running"; const trace=traces.get(agent.id), tool=tools.get(agent.id);
     const historical=(label:string,key:ActivityCapability["key"],seen:string|undefined,degraded:boolean):ActivityCapability=>degraded?{key,label,state:"degraded",...(seen?{lastSeenAt:seen}:{})}:seen?{key,label,state:"observed",lastSeenAt:seen}:{key,label,state:"missing"};
-    const observed=later(later(trace,tool),native.lastSeenAt);
+    // "Last agent report" means agent telemetry only. The reporter's heartbeat
+    // is liveness, shown as its own check-in; accepted native run records
+    // already reach the tool lane through the collector's last_event_at.
+    const observed=later(trace,tool);
     return {id:agent.id,name:agent.name,agentType:agent.type,status:agent.status,capabilities:[
       historical("Lifecycle","lifecycle",lifecycle.get(agent.id),lifecycleDegraded),
       historical("Desktop sessions","desktop",desktop.get(agent.id),desktopDegraded),
@@ -332,7 +359,7 @@ export async function getActivitySnapshot(userId:string,opts:{days:number;limit:
     events.order("created_at",{ascending:false}).order("id",{ascending:false}).limit(page),
     sessions.order("created_at",{ascending:false}).order("id",{ascending:false}).limit(page),
     db.from("hivra_agents").select("id,name,type,status,computer_substrate,created_at").eq("user_id",userId).neq("status","deleted").order("created_at",{ascending:false}).limit(FETCH_CAP+1),
-    db.from("hivra_activity_collectors").select("agent_id,issued_at,credential_expires_at,last_heartbeat_at,last_event_at,last_rejected_at,last_rejected_reason").eq("user_id",userId).limit(FETCH_CAP+1),
+    db.from("hivra_activity_collectors").select("agent_id,issued_at,credential_expires_at,last_heartbeat_at,last_event_at,last_rejected_at,last_rejected_reason,last_install_status,last_install_reason,last_install_at").eq("user_id",userId).limit(FETCH_CAP+1),
     // Coverage lanes: slim, per kind, and never cursor-bound, so busy agent
     // telemetry cannot crowd lifecycle or desktop history out of coverage.
     db.from("hivra_agent_events").select("agent_id,event,created_at").eq("user_id",userId).gte("created_at",since).not("event","in",`(${TELEMETRY_EVENTS.join(",")})`).order("created_at",{ascending:false}).limit(FETCH_CAP),

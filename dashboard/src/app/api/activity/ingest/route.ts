@@ -13,6 +13,8 @@ export const dynamic = "force-dynamic";
 
 const ROUTE="/api/activity/ingest";
 const MAX_BODY_BYTES=1_048_576;
+/** Matches the event time window's future bound in normalizeOtlpJson. */
+const CLOCK_SKEW_WARN_SECONDS=300;
 
 type IngestAgent={id:string;user_id:string;type:string|null;name:string|null;status:string;desired_state:string|null};
 
@@ -84,9 +86,15 @@ export async function POST(request:NextRequest){
     result.accepted>0?recordCollectorEvents(supabaseAdmin,{agentId:agent.id,userId:claims.userId,receivedAt,credentialExpiresAt}):true,
   ]);
   if(recorded.includes(false)) log.warn("activity collector state not recorded",{source:"activity-ingest",route:ROUTE,agentId:agent.id});
+  // A wrong guest clock never blocks liveness, but it does refuse run records,
+  // so it is surfaced to operators and to the reporter instead of staying silent.
+  const guestClockMs=normalized.heartbeats.map(h=>Date.parse(h.occurredAt)).filter(Number.isFinite).at(-1);
+  const clockSkewSeconds=guestClockMs===undefined?undefined:Math.round((guestClockMs-receivedAt.getTime())/1000);
+  if(normalized.clockSkewedLogRecords||(clockSkewSeconds!==undefined&&Math.abs(clockSkewSeconds)>CLOCK_SKEW_WARN_SECONDS)) log.warn("activity collector clock skew",{source:"activity-ingest",route:ROUTE,agentId:agent.id,clockSkewSeconds,clockSkewedLogRecords:normalized.clockSkewedLogRecords});
   const partialSuccess:Record<string,unknown>={};
   if(normalized.rejectedSpans) partialSuccess.rejectedSpans=normalized.rejectedSpans;
   if(normalized.rejectedLogRecords) partialSuccess.rejectedLogRecords=normalized.rejectedLogRecords;
-  if(normalized.rejectedSpans||normalized.rejectedLogRecords) partialSuccess.errorMessage="Records with invalid identifiers, timestamps or fields were rejected.";
+  if(normalized.rejectedSpans||normalized.rejectedLogRecords) partialSuccess.errorMessage="Records with invalid identifiers, timestamps or fields were rejected."
+    +(normalized.clockSkewedLogRecords?` ${normalized.clockSkewedLogRecords} run record(s) had timestamps more than 5 minutes ahead of, or 90 days behind, the server clock; check the computer's clock.`:"");
   return Response.json(Object.keys(partialSuccess).length?{partialSuccess}:{},{status:200,headers:{"Cache-Control":"no-store","x-hivra-accepted":String(result.accepted),"x-hivra-duplicates":String(result.duplicates)}});
 }

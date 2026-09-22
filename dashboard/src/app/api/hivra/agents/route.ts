@@ -132,6 +132,11 @@ const emittedBoxCreatedAgentIds = new Set<string>();
 // selects its runtime from agentKind. Hermes is a separate lane (/api/instances).
 const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "linux-desktop"]);
 
+// Printed by phase 1 only after it wrote the reporter credential into the
+// handoff file for a host bundle that consumes it (the start path uses the
+// same line). Issuance is recorded only when this line is observed.
+const ACTIVITY_CREDENTIAL_STAGED = "HIVRA_ACTIVITY_CREDENTIAL_STAGED";
+
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n)) return def;
@@ -223,7 +228,8 @@ function submittedLaunchRequestIntent(
 // The bundle version a Proxmox launch will execute, when admission pins it.
 // Self-managed targets carry verified evidence and the managed Canary channel
 // admits only the current release. Managed default hosts may run any
-// compatible predecessor, which ignores the credential, so it stays unknown.
+// compatible predecessor, so it stays unknown and phase 1 probes the exact
+// bundle on the host before staging the credential.
 function launchProvisionerVersion(
   portableRuntime: PortableProxmoxRuntime | null,
   channel: ManagedHivraProvisionerChannel,
@@ -288,6 +294,24 @@ function phase1Script(params: {
         expiresAt: telemetry.expiresAt,
       })
     : "";
+  // Admission accepts compatible predecessor bundles that silently drop the
+  // credential. Stage it only when this exact bundle consumes it end to end:
+  // the host script reads the handoff key, the guest installer reports the
+  // reporter's install status (fail-open), and the reporter sources ship
+  // alongside. The key is always written (empty when not staged), and only a
+  // staged credential prints the marker the route records issuance from.
+  const activityTelemetryProbe = telemetry
+    ? `HIVRA_ACTIVITY_STAGE=0
+if grep -Fq HIVRA_ACTIVITY_TELEMETRY_B64 ${shellQuote(`${provisionerDirectory}/hivra-provision-on-host.sh`)} 2>/dev/null \\
+  && grep -Fq HIVRA_ACTIVITY_COLLECTOR ${shellQuote(`${provisionerDirectory}/hivra-install-agent.py`)} 2>/dev/null \\
+  && [ -f ${shellQuote(`${provisionerDirectory}/hivra-agent-trace.py`)} ] \\
+  && [ -f ${shellQuote(`${provisionerDirectory}/hivra-agent-trace.service`)} ]; then
+  HIVRA_ACTIVITY_STAGE=1
+fi`
+    : "HIVRA_ACTIVITY_STAGE=0";
+  const activityTelemetryHandoff = telemetry
+    ? `printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; if [ "$HIVRA_ACTIVITY_STAGE" = 1 ]; then write_secret_b64 ${shellQuote(activityTelemetryDocument)}; else printf '\\n'; fi`
+    : `printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; write_secret_b64 ''`;
   const hostEnvironment = [
     `HIVRA_PROV_DIR=${shellQuote(runtimePaths.provisionerDirectory)}`,
     `HIVRA_STORAGE=${shellQuote(runtimePaths.storage)}`,
@@ -533,6 +557,7 @@ INTENT_TMP="$INTENT_FILE.tmp.$$"
 chmod 0600 "$INTENT_TMP"
 mv -f -- "$INTENT_TMP" "$INTENT_FILE"
 printf 'HIVRA_ALLOCATION_SELECTED {"vmid":%s,"ip":"${params.subnetPrefix}.%s"}\\n' "$VMID" "$OCTET"
+${activityTelemetryProbe}
 install -m 0600 /dev/null "$SECRET_ENV_FILE"
 write_secret_b64() { printf '%s' "$1" | base64 -w 0; printf '\n'; }
 {
@@ -541,8 +566,9 @@ write_secret_b64() { printf '%s' "$1" | base64 -w 0; printf '\n'; }
   printf 'HIVRA_MODEL_KEY_B64='; write_secret_b64 ${shellQuote(params.modelKey ?? "")}
   printf 'HIVRA_MODEL_BASE_URL_B64='; write_secret_b64 ${shellQuote(params.modelBaseUrl ?? "")}
   printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 ${shellQuote(params.model ?? "")}
-  printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; write_secret_b64 ${shellQuote(activityTelemetryDocument)}
+  ${activityTelemetryHandoff}
 } > "$SECRET_ENV_FILE"
+if [ "$HIVRA_ACTIVITY_STAGE" = 1 ]; then echo ${ACTIVITY_CREDENTIAL_STAGED}; fi
 ${kickoff}
 ALLOCATION_RECEIPT="/run/hivra-provision/$VMID.allocated"
 allocation_receipt_is_exact() {
@@ -1786,11 +1812,26 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       capacityPolicy,
       activityTelemetry,
     }), env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
-    if (activityTelemetry) {
-      // Recorded once the credential has been handed to the host, whatever the
-      // kickoff outcome: a computer compensated below becomes deleted, which
-      // ingest and renewal refuse. Best effort and bounded: a slow database
-      // must not hold the launch response.
+    const activityCredentialStaged = activityTelemetry !== null
+      && (result.stdout || "").split(/\r?\n/).some(line => line.trim() === ACTIVITY_CREDENTIAL_STAGED);
+    if (activityTelemetry && !activityCredentialStaged) {
+      // The host bundle predates the reporter (or the kickoff stopped before
+      // the handoff), so the credential never left this request. Recording it
+      // would later surface a false "credential expired" state.
+      log.info("hivra launch host bundle did not stage the agent-run reporting credential", {
+        source: "hivra/agents",
+        failureType: "hivra_activity_collector_not_staged",
+        userId,
+        agentId: agent.id,
+        agentType: type,
+        kickoffOk: result.ok,
+      });
+    }
+    if (activityTelemetry && activityCredentialStaged) {
+      // Recorded once the host confirmed the credential is in the handoff
+      // file, whatever the kickoff outcome: a computer compensated below
+      // becomes deleted, which ingest and renewal refuse. Best effort and
+      // bounded: a slow database must not hold the launch response.
       let recordTimer: ReturnType<typeof setTimeout> | undefined;
       const recorded = await Promise.race([
         recordActivityCollectorIssued(supabaseAdmin, {

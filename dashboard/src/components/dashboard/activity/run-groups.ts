@@ -254,6 +254,36 @@ export function groupActivityRuns(events: ActivityEvent[]) {
   };
 }
 
+/**
+ * Runs to show. Groups are always built from every record passed in, so a
+ * run's status, start and counts never depend on the search; `matches` only
+ * decides which runs (any record matches) and ungrouped reports are shown.
+ */
+export function selectRuns(
+  events: ActivityEvent[],
+  matches?: (event: ActivityEvent) => boolean,
+) {
+  const { groups, ungrouped } = groupActivityRuns(events);
+  if (!matches) return { groups, ungrouped };
+  return {
+    groups: groups.filter((group) =>
+      group.steps.some((step) => step.records.some(matches)),
+    ),
+    ungrouped: ungrouped.filter(matches),
+  };
+}
+
+/**
+ * Why an incomplete run has no start. "Load older events" is offered only
+ * when an older page exists; otherwise the start is outside the 30-day window
+ * or was never reported.
+ */
+export function describeIncompleteRun(hasOlder: boolean): string {
+  return hasOlder
+    ? "Started before the loaded records; load older events for earlier steps."
+    : "Its start is not in the loaded records: the run began more than 30 days ago, or its start was never reported.";
+}
+
 /** The run's one-line status. Native runs speak only from explicit run records. */
 export function describeRunStatus(group: ActivityRunGroup): {
   text: string;

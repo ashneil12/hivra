@@ -348,6 +348,15 @@
   color: var(--text-secondary);
   font-size: 12px;
 }
+.inlineButton {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 .runs {
   min-width: 0;

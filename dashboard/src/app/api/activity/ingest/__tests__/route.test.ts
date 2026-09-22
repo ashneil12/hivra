@@ -81,6 +81,20 @@ describe("POST /api/activity/ingest",()=>{
     expect(row).not.toHaveProperty("last_event_at");
   });
 
+  it("records a heartbeat from a computer whose clock is 6 minutes fast, and says why its run records were refused",async()=>{
+    const ahead=String(BigInt(Date.now()+6*60_000)*1_000_000n);
+    const body=heartbeat(); body.resourceLogs[0].scopeLogs[0].logRecords[0].timeUnixNano=ahead;
+    const db=database(); const before=Date.now();
+    const response=await POST(request(body)); expect(response.status).toBe(200); expect(await response.json()).toEqual({});
+    expect(db.collectorUpsert).toHaveBeenCalledTimes(1);
+    const [row]=db.collectorUpsert.mock.calls[0];
+    expect(Date.parse(row.last_heartbeat_at)).toBeGreaterThanOrEqual(before); expect(Date.parse(row.last_heartbeat_at)).toBeLessThanOrEqual(Date.now());
+    const skewed=database(); const run={...nativeRecord("run.started",[],"5".repeat(32)),timeUnixNano:ahead};
+    const refused=await POST(request(nativeBody(run))); expect(refused.status).toBe(200);
+    expect(await refused.json()).toEqual({partialSuccess:{rejectedLogRecords:1,errorMessage:expect.stringContaining("check the computer's clock")}});
+    expect(skewed.collectorUpsert).not.toHaveBeenCalled();
+  });
+
   it("records a correctly signed expired token against the owner's computer, then refuses it",async()=>{
     const db=database(); const expired=token([A],{iat:-7200,exp:-60});
     const response=await POST(request(heartbeat(),A,expired)); expect(response.status).toBe(401);

@@ -63,9 +63,17 @@ export interface NormalizedTelemetryEvent {
   conversationId?: string;
   errorType?: string;
 }
-/** A reporter liveness signal. Never stored as an activity event; ingest records server receive time. */
+/**
+ * A reporter liveness signal. Never stored as an activity event; ingest records
+ * server receive time. `occurredAt` is the guest's own clock, kept only so a
+ * wrong guest clock can be noticed; it is never used for liveness.
+ */
 export interface NativeHeartbeat { occurredAt: string }
-export interface OtlpNormalization { events: NormalizedTelemetryEvent[]; heartbeats: NativeHeartbeat[]; rejectedSpans: number; rejectedLogRecords: number }
+export interface OtlpNormalization {
+  events: NormalizedTelemetryEvent[]; heartbeats: NativeHeartbeat[]; rejectedSpans: number; rejectedLogRecords: number;
+  /** Of rejectedLogRecords: valid native run records refused only because their timestamp is outside the accepted window (usually a wrong guest clock). */
+  clockSkewedLogRecords: number;
+}
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec | null => v && typeof v === "object" && !Array.isArray(v) ? v as Rec : null;
@@ -276,7 +284,7 @@ export function normalizeOtlpJson(body: unknown, resourceId: string, now = new D
   const hasSpans = Array.isArray(root.resourceSpans);
   const hasLogs = Array.isArray(root.resourceLogs);
   if (!hasSpans && !hasLogs) return null;
-  const out: NormalizedTelemetryEvent[] = []; const heartbeats: NativeHeartbeat[] = []; let rejectedSpans=0; let rejectedLogRecords=0;
+  const out: NormalizedTelemetryEvent[] = []; const heartbeats: NativeHeartbeat[] = []; let rejectedSpans=0; let rejectedLogRecords=0; let clockSkewedLogRecords=0;
   const timestampAllowed=(iso:string)=>{const ms=new Date(iso).getTime(); return ms<=now.getTime()+5*60_000&&ms>=now.getTime()-90*86_400_000;};
 
   for (const resourceSpanValue of arr(root.resourceSpans)) {
@@ -308,15 +316,20 @@ export function normalizeOtlpJson(body: unknown, resourceId: string, now = new D
         if (out.length + heartbeats.length >= MAX_ITEMS) throw new Error("too_many_telemetry_items");
         const record = rec(logValue); if (!record) continue;
         const rawTime=record.timeUnixNano ?? record.observedTimeUnixNano;
-        const occurredAt = nanoToIso(rawTime); if (!occurredAt || !timestampAllowed(occurredAt)) { rejectedLogRecords++; continue; }
+        const occurredAt = nanoToIso(rawTime); if (!occurredAt) { rejectedLogRecords++; continue; }
         const native = nativeRaw(resourceAttributeList, record.attributes);
         if (native.get("service.namespace") === NATIVE_NAMESPACE) {
+          // Classified before the time window: liveness is the server's receive
+          // time, so a heartbeat's own timestamp only has to parse and a guest
+          // with a wrong clock still shows as reporting.
           const result = normalizeNativeLog(native, record, resourceId, occurredAt);
-          if (result.kind === "event") out.push(result.event);
-          else if (result.kind === "heartbeat") heartbeats.push({ occurredAt });
-          else rejectedLogRecords++;
+          if (result.kind === "heartbeat") heartbeats.push({ occurredAt });
+          else if (result.kind === "rejected") rejectedLogRecords++;
+          else if (!timestampAllowed(occurredAt)) { rejectedLogRecords++; clockSkewedLogRecords++; }
+          else out.push(result.event);
           continue;
         }
+        if (!timestampAllowed(occurredAt)) { rejectedLogRecords++; continue; }
         const a = { ...resourceAttrs, ...attributes(record.attributes) };
         const tool = str(a.tool_name ?? a["tool.name"] ?? a.tool,120);
         const success = a.success;
@@ -328,5 +341,5 @@ export function normalizeOtlpJson(body: unknown, resourceId: string, now = new D
       }
     }
   }
-  return {events:out,heartbeats,rejectedSpans,rejectedLogRecords};
+  return {events:out,heartbeats,rejectedSpans,rejectedLogRecords,clockSkewedLogRecords};
 }

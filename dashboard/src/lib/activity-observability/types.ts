@@ -66,6 +66,26 @@ export interface ActivityEvent {
   needsAttention: boolean;
 }
 
+/**
+ * native_tracing only: which of a state's contract causes applies, so the page
+ * can explain it without guessing.
+ */
+export type NativeTracingReason =
+  /** unsupported: the agent type has no verified producer. */
+  | "agent_type"
+  /** unsupported: Claude Code or Codex on a host type without a verified producer. */
+  | "substrate"
+  /** expired: the recorded credential's expiry has passed. */
+  | "credential_ran_out"
+  /** expired: the computer presented an expired credential after the latest issuance and check-in. */
+  | "expired_credential_presented"
+  /** missing: no credential was ever recorded (launched before reporting, or issuance failed). */
+  | "not_set_up"
+  /** missing: the latest install attempt after issuance failed and nothing has checked in since. */
+  | "install_failed"
+  /** missing: a credential was issued 10+ minutes ago and the reporter has never checked in. */
+  | "never_checked_in";
+
 export interface ActivityCapability {
   key: "lifecycle" | "desktop" | "traces" | "tool_activity" | "native_tracing";
   label: string;
@@ -73,6 +93,14 @@ export interface ActivityCapability {
   lastSeenAt?: string;
   /** native_tracing only: when the credential in use stops being accepted. */
   expiresAt?: string;
+  /** native_tracing only: when the latest credential was issued. */
+  issuedAt?: string;
+  /** native_tracing only: which cause of `state` applies, when a state has several. */
+  reason?: NativeTracingReason;
+  /** native_tracing only, reason "install_failed": when the failed install attempt was recorded. */
+  installFailedAt?: string;
+  /** native_tracing only, reason "install_failed": the installer's failure code (`^[a-z_]{1,40}$`). */
+  installFailureReason?: string;
 }
 
 export interface ActivityResource {

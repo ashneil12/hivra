@@ -9,6 +9,7 @@ import {
   capabilityNames,
   capabilityStateLabel,
   formatDuration,
+  installFailureText,
   monitoringStates,
   presentEvent,
   reportingAlerts,
@@ -173,12 +174,12 @@ it.each<[ActivityCapabilityState, RegExp]>([
   ],
   [
     "missing",
-    /^No reports received — computers launched before automatic reporting start reporting after their next restart\.$/,
+    /^Reporting has not been set up on this computer\. Computers launched before automatic reporting may start reporting after their next restart\.$/,
   ],
   ["expired", /credential ran out.*Restarting the computer issues a new one/],
   ["configured", /first check-in should arrive within 10 minutes/],
   ["unsupported", /Claude Code and Codex computers only/],
-  ["not_running", /no reports expected/],
+  ["not_running", /not running right now, so no reports are expected/],
   ["observed", /not an audit/],
   ["degraded", /Refresh to try again/],
 ])(
@@ -246,4 +247,98 @@ it("raises reporting alerts only for running computers that are stale or expired
     "expired-running",
     "expired-no-status",
   ]);
+});
+
+it("names the host type, not the agent type, when Claude Code or Codex runs on an unsupported host", () => {
+  const substrate = tracing("unsupported", { reason: "substrate" });
+  expect(capabilityStateLabel(substrate)).toBe("Not available on this host type");
+  expect(capabilityExplanation(substrate)).toBe(
+    "Automatic run reporting works for Claude Code and Codex on Hivra-hosted computers; this computer’s host type isn’t supported yet.",
+  );
+  expect(capabilityExplanation(substrate)).not.toMatch(/computers only/);
+  // Without a reason from the feed, a Claude Code or Codex type still means the host is the limit.
+  expect(
+    capabilityExplanation(tracing("unsupported"), { agentType: "claude-code" }),
+  ).toMatch(/host type isn’t supported yet/);
+  const other = tracing("unsupported", { reason: "agent_type" });
+  expect(capabilityStateLabel(other)).toBe("Not available for this agent");
+  expect(capabilityExplanation(other)).toBe(
+    "Automatic run reporting covers Claude Code and Codex computers only.",
+  );
+  expect(
+    capabilityExplanation(tracing("unsupported"), { agentType: "aeon" }),
+  ).toMatch(/computers only/);
+});
+
+it("tells never set up, set up but silent, and could not be installed apart", () => {
+  const notSetUp = tracing("missing", { reason: "not_set_up" });
+  expect(capabilityStateLabel(notSetUp)).toBe("Not set up");
+  expect(capabilityExplanation(notSetUp)).toMatch(/has not been set up/);
+  const silent = tracing("missing", {
+    reason: "never_checked_in",
+    issuedAt: "2026-09-21T10:00:00Z",
+  });
+  expect(capabilityStateLabel(silent)).toBe("No reports received");
+  expect(capabilityExplanation(silent)).toBe(
+    "Reporting was set up, but the reporter has never checked in, so runs on this computer are not being recorded. Restarting the computer reinstalls it.",
+  );
+  expect(capabilityExplanation(silent)).not.toMatch(/launched before/);
+  // Without a reason, an issued credential still rules out "launched before reporting".
+  expect(
+    capabilityExplanation(
+      tracing("missing", { expiresAt: "2026-09-28T10:00:00Z" }),
+    ),
+  ).toMatch(/never checked in/);
+  const failed = tracing("missing", {
+    reason: "install_failed",
+    installFailedAt: "2026-09-21T10:01:00Z",
+    installFailureReason: "transfer_failed",
+  });
+  expect(capabilityStateLabel(failed)).toBe("Reporter could not be installed");
+  expect(capabilityExplanation(failed)).toBe(
+    "The reporter could not be installed, so runs on this computer are not being recorded. Restarting the computer tries again.",
+  );
+  expect(installFailureText("transfer_failed")).toBe(
+    "it could not be copied to the computer",
+  );
+  expect(installFailureText("disk_full")).toBe("failure code disk_full");
+  expect(installFailureText(undefined)).toBeUndefined();
+});
+
+it("explains an expired credential the computer still presents after a re-issue", () => {
+  const presented = tracing("expired", {
+    reason: "expired_credential_presented",
+    expiresAt: "2026-09-28T12:00:00Z",
+    issuedAt: "2026-09-21T11:40:00Z",
+  });
+  expect(capabilityExplanation(presented)).toBe(
+    "Hivra issued a new reporting credential, but the computer is still using an expired one, so new runs are not being recorded. Restart the computer again; if this keeps happening, contact support.",
+  );
+  // An older response without a reason: a future expiry on an expired state means the same.
+  expect(
+    capabilityExplanation(
+      tracing("expired", { expiresAt: "2026-09-28T12:00:00Z" }),
+      { now: "2026-09-21T12:00:00Z" },
+    ),
+  ).toMatch(/still using an expired one/);
+  expect(
+    capabilityExplanation(
+      tracing("expired", { expiresAt: "2026-09-20T12:00:00Z" }),
+      { now: "2026-09-21T12:00:00Z" },
+    ),
+  ).toMatch(/credential ran out/);
+});
+
+it.each<[string | undefined, RegExp]>([
+  ["stopped", /^Stopped; no reports expected until it starts again\.$/],
+  ["provisioning", /^Still being set up; reports are expected once it is running\.$/],
+  ["pending", /^Still being set up/],
+  ["starting", /^Starting; reports are expected once it is running\.$/],
+  ["error", /recorded a problem with this computer/],
+  ["resizing", /^This computer is not running right now, so no reports are expected\.$/],
+  [undefined, /^This computer is not running right now/],
+])("words not_running from the computer's actual status (%s)", (status, expected) => {
+  const text = capabilityExplanation(tracing("not_running"), { status });
+  expect(text).toMatch(expected);
+  if (status !== "stopped") expect(text).not.toMatch(/^Stopped/);
 });

@@ -188,11 +188,14 @@ class LaunchContract(unittest.TestCase):
         for kind in ("claude", "codex"):
             value = traced_launch(agentKind=kind)
             order = Mock()
+            output = io.StringIO()
             with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
                  patch.object(guest, "configure_named_tunnel", side_effect=lambda *args: order.access()) as tunnel, \
-                 patch.object(guest.subprocess, "run", side_effect=lambda *args, **kwargs: order.run(*args, **kwargs)):
+                 patch.object(guest.subprocess, "run", side_effect=lambda *args, **kwargs: order.run(*args, **kwargs)), \
+                 patch.object(guest.sys, "stderr", output):
                 guest.install_agent(value, Path("/owned-bundle"))
             with self.subTest(kind=kind):
+                self.assertIn("\nHIVRA_ACTIVITY_COLLECTOR status=installed\n", output.getvalue())
                 tunnel.assert_called_once_with(value["tunnelToken"], 0)
                 self.assertEqual([call[0] for call in order.mock_calls], ["run", "run", "access"])
                 bootstrap, reporter = order.run.call_args_list
@@ -210,10 +213,13 @@ class LaunchContract(unittest.TestCase):
                 self.assertNotIn("activityTelemetry", json.dumps(bootstrap.kwargs["env"]))
                 self.assertEqual(bootstrap.kwargs["stdin"], subprocess.DEVNULL)
 
-    def test_reporter_failure_fails_closed_before_access_without_echoing_the_credential(self):
-        failures = (subprocess.CalledProcessError(1, "fixture", stderr=("leaked " + FIXTURE_REPORTER_TOKEN).encode()),
-                    subprocess.TimeoutExpired(["fixture"], 120, stderr=FIXTURE_REPORTER_TOKEN.encode()))
-        for failure in failures:
+    def test_reporter_failure_is_fail_open_with_one_sanitized_marker_and_access_still_configured(self):
+        # Contract: reporter installation never fails a launch. The installer
+        # reports one closed-enum marker line and continues to access setup.
+        failures = ((subprocess.CalledProcessError(1, "fixture", stderr=("leaked " + FIXTURE_REPORTER_TOKEN).encode()), "install_failed"),
+                    (subprocess.TimeoutExpired(["fixture"], 120, stderr=FIXTURE_REPORTER_TOKEN.encode()), "timeout"),
+                    (FileNotFoundError(2, "fixture"), "install_failed"))
+        for failure, reason in failures:
             def run(arguments, **kwargs):
                 if arguments[0] == "/usr/bin/python3":
                     raise failure
@@ -223,13 +229,47 @@ class LaunchContract(unittest.TestCase):
                  patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
                  patch.object(guest, "configure_named_tunnel") as tunnel, \
                  patch.object(guest.subprocess, "run", side_effect=run), patch.object(guest.sys, "stderr", output):
-                with self.assertRaises(guest.InstallError) as raised:
-                    guest.install_agent(traced_launch(), Path("/owned-bundle"))
-                tunnel.assert_not_called()
-                self.assertNotIn(FIXTURE_REPORTER_TOKEN, str(raised.exception))
-                # Raised "from None": the subprocess error and its output never reach a traceback.
-                self.assertTrue(raised.exception.__suppress_context__)
+                guest.install_agent(traced_launch(), Path("/owned-bundle"))
+                tunnel.assert_called_once_with(traced_launch()["tunnelToken"], 0)
+                markers = [line for line in output.getvalue().splitlines() if line.startswith("HIVRA_ACTIVITY_COLLECTOR")]
+                self.assertEqual(markers, ["HIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason])
+                self.assertIn("\nHIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason + "\n", output.getvalue())
                 self.assertNotIn("hvra_otlp_v1", output.getvalue())
+
+    def test_reporter_success_emits_exactly_one_installed_marker_before_access(self):
+        order = Mock()
+        output = io.StringIO()
+
+        def run(arguments, **kwargs):
+            order.run()
+            if arguments[0] == "/usr/bin/python3":
+                return SimpleNamespace(returncode=0, stderr=b"hivra-agent-trace: installed and active\n")
+            return SimpleNamespace(returncode=0)
+        with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
+             patch.object(guest, "configure_named_tunnel", side_effect=lambda *args: order.access(output.getvalue())), \
+             patch.object(guest.subprocess, "run", side_effect=run), patch.object(guest.sys, "stderr", output):
+            guest.install_agent(traced_launch(), Path("/owned-bundle"))
+        markers = [line for line in output.getvalue().splitlines() if line.startswith("HIVRA_ACTIVITY_COLLECTOR")]
+        self.assertEqual(markers, ["HIVRA_ACTIVITY_COLLECTOR status=installed"])
+        # Emitted before access is configured, so a later access failure still leaves it in the log.
+        self.assertIn("HIVRA_ACTIVITY_COLLECTOR status=installed", order.access.call_args.args[0])
+
+    def test_launches_without_a_credential_emit_no_collector_marker(self):
+        output = io.StringIO()
+        with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
+             patch.object(guest, "configure_named_tunnel"), patch.object(guest.subprocess, "run"), \
+             patch.object(guest.sys, "stderr", output):
+            guest.install_agent(launch(agentKind="claude"), Path("/owned-bundle"))
+        self.assertNotIn("HIVRA_ACTIVITY_COLLECTOR", output.getvalue())
+
+    def test_collector_marker_accepts_only_the_closed_status_enum(self):
+        for status, reason in (("installed", "timeout"), ("failed", None), ("failed", "Bad Reason"), ("failed", "a" * 41),
+                               ("failed", FIXTURE_REPORTER_TOKEN), ("partial", None)):
+            output = io.StringIO()
+            with self.subTest(status=status, reason=reason), patch.object(guest.sys, "stderr", output), \
+                 self.assertRaises(guest.InstallError):
+                guest.report_activity_collector(status, reason)
+            self.assertEqual(output.getvalue(), "")
 
     def test_reporter_status_line_is_relayed_only_when_plain_and_credential_free(self):
         cases = ((b"hivra-agent-trace: installed; unit active\n", "Hivra agent-run reporter: hivra-agent-trace: installed; unit active\n"),

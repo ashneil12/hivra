@@ -190,19 +190,18 @@ fi
 
 # (Re)install the agent-run reporter with the fresh credential. This also
 # backfills reporting into computers launched before it existed. Every guest
-# call is time-bounded (at most ~80 s in total) and every failure only changes
+# call is time-bounded (at most ~160 s in total: the reporter's own worst case
+# is ~92 s of bounded systemctl calls) and every failure only changes
 # ACTIVITY_COLLECTOR_STATUS; the start itself continues regardless.
 install_activity_collector() {
   local source guest_dir rc
-  # Runs as root in the guest. Refuses (exit 3) anything but a Claude Code or
-  # Codex computer, then unpacks the reviewed reporter into a fresh root-only
-  # directory so no guest user can swap it between staging and install.
+  # Runs as root in the guest. The control plane stages a credential only for
+  # Claude Code / Codex Proxmox computers, so the guest reads nothing the
+  # monitored agent can write (no /home/bux selector). It unpacks the reviewed
+  # reporter into a fresh root-only directory so no guest user can swap it
+  # between staging and install.
   local stage='set -eu
 umask 077
-kind_file=/home/bux/.hivra/agent-kind
-if [ ! -f "$kind_file" ] || [ -L "$kind_file" ]; then exit 3; fi
-kind="$(head -c 64 "$kind_file" | tr -d "[:space:]")"
-case "$kind" in claude|codex) ;; *) exit 3 ;; esac
 dir="$(mktemp -d /run/hivra-agent-trace-install.XXXXXXXX)"
 if ! tar --no-same-owner --no-same-permissions -xf - -C "$dir" hivra-agent-trace.py hivra-agent-trace.service \
   || [ ! -f "$dir/hivra-agent-trace.py" ] || [ -L "$dir/hivra-agent-trace.py" ] \
@@ -223,7 +222,6 @@ printf "%s\n" "$dir"'
   rc=$?
   case "$rc" in
     0) ;;
-    3) ACTIVITY_COLLECTOR_STATUS="status=failed reason=unsupported_kind"; return 0 ;;
     124|137) ACTIVITY_COLLECTOR_STATUS="status=failed reason=timeout"; return 0 ;;
     *) ACTIVITY_COLLECTOR_STATUS="status=failed reason=transfer_failed"; return 0 ;;
   esac
@@ -233,7 +231,7 @@ printf "%s\n" "$dir"'
   fi
   # The credential travels only on stdin (printf is a builtin, so it never
   # appears in any argv); the guest installer validates it strictly.
-  printf '%s' "$ACTIVITY_CREDENTIAL_JSON" | timeout -k 5 40 "${GSSH[@]}" "ubuntu@${IP}" \
+  printf '%s' "$ACTIVITY_CREDENTIAL_JSON" | timeout -k 5 120 "${GSSH[@]}" "ubuntu@${IP}" \
     "sudo -n /usr/bin/python3 -I -B ${guest_dir}/hivra-agent-trace.py install --source-dir ${guest_dir}; rc=\$?; sudo -n /bin/rm -rf -- ${guest_dir}; exit \$rc" \
     >/dev/null 2>&1
   rc=$?
