@@ -96,6 +96,8 @@ export async function requestAgentWelcomeMessage(params: AgentWelcomeInput & {
   token?: string | null;
   agentKind: WelcomeAgentKind;
   fetchImpl?: typeof fetch;
+  /** Cancels the turn: the box kills the CLI when the client disconnects. */
+  signal?: AbortSignal;
 }): Promise<string> {
   const fetcher = params.fetchImpl ?? fetch;
   const response = await fetcher(`${boxBase(params.boxUrl)}/api/chat`, {
@@ -108,6 +110,7 @@ export async function requestAgentWelcomeMessage(params: AgentWelcomeInput & {
       message: buildAgentWelcomePrompt(params),
       sessionId: null,
     }),
+    signal: params.signal,
   });
 
   const body = await response.text().catch(() => "");

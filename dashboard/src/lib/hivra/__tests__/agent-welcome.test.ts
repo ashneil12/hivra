@@ -204,6 +204,19 @@ describe("agent-welcome", () => {
     expect(sentBody.message).toContain("do this task now and return the finished result");
   });
 
+  it("threads an abort signal into the welcome request so the chat's Stop can cancel it", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ type: "_text", text: "hi" }) });
+    const controller = new AbortController();
+    await requestAgentWelcomeMessage({
+      fetchImpl: fetchMock as typeof fetch,
+      boxUrl: "https://box.example.com",
+      agentKind: "generic",
+      channel: "chat",
+      signal: controller.signal,
+    });
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
   it("sends Telegram welcome text without putting the bot token in thrown errors", async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
