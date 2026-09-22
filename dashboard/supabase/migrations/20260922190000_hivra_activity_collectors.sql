@@ -22,7 +22,7 @@ create table if not exists public.hivra_activity_collectors (
   last_heartbeat_at timestamptz,
   last_event_at timestamptz,
   last_rejected_at timestamptz,
-  last_rejected_reason text check (last_rejected_reason in ('expired')),
+  last_rejected_reason text check (last_rejected_reason in ('expired', 'clock_skew')),
   last_install_status text check (last_install_status in ('installed', 'failed')),
   last_install_reason text check (last_install_reason ~ '^[a-z_]{1,40}$'),
   last_install_at timestamptz,

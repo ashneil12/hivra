@@ -15,6 +15,8 @@ const ROUTE="/api/activity/ingest";
 const MAX_BODY_BYTES=1_048_576;
 /** Matches the event time window's future bound in normalizeOtlpJson. */
 const CLOCK_SKEW_WARN_SECONDS=300;
+// Matches the event window in normalizeOtlpJson: 5 min ahead, 90 days behind.
+const CLOCK_SKEW_MAX_BEHIND_SECONDS=90*86_400;
 
 type IngestAgent={id:string;user_id:string;type:string|null;name:string|null;status:string;desired_state:string|null};
 
@@ -91,6 +93,10 @@ export async function POST(request:NextRequest){
   const guestClockMs=normalized.heartbeats.map(h=>Date.parse(h.occurredAt)).filter(Number.isFinite).at(-1);
   const clockSkewSeconds=guestClockMs===undefined?undefined:Math.round((guestClockMs-receivedAt.getTime())/1000);
   if(normalized.clockSkewedLogRecords||(clockSkewSeconds!==undefined&&Math.abs(clockSkewSeconds)>CLOCK_SKEW_WARN_SECONDS)) log.warn("activity collector clock skew",{source:"activity-ingest",route:ROUTE,agentId:agent.id,clockSkewSeconds,clockSkewedLogRecords:normalized.clockSkewedLogRecords});
+  // Run records from a clock outside the accepted window are refused, so a
+  // computer that still checks in must not look healthy: record why.
+  const runRecordsRefusedByClock=normalized.clockSkewedLogRecords>0||(clockSkewSeconds!==undefined&&(clockSkewSeconds>CLOCK_SKEW_WARN_SECONDS||clockSkewSeconds<-CLOCK_SKEW_MAX_BEHIND_SECONDS));
+  if(runRecordsRefusedByClock&&!(await recordCollectorRejected(supabaseAdmin,{agentId:agent.id,userId:claims.userId,reason:"clock_skew",rejectedAt:receivedAt}))) log.warn("activity collector clock skew not recorded",{source:"activity-ingest",route:ROUTE,agentId:agent.id});
   const partialSuccess:Record<string,unknown>={};
   if(normalized.rejectedSpans) partialSuccess.rejectedSpans=normalized.rejectedSpans;
   if(normalized.rejectedLogRecords) partialSuccess.rejectedLogRecords=normalized.rejectedLogRecords;

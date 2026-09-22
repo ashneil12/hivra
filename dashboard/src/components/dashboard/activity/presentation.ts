@@ -396,8 +396,10 @@ export function capabilityExplanation(
         return "The reporter could not be installed, so runs on this computer are not being recorded. Restarting the computer tries again.";
       if (reason === "never_checked_in")
         return "Reporting was set up, but the reporter has never checked in, so runs on this computer are not being recorded. Restarting the computer reinstalls it.";
-      return "Reporting has not been set up on this computer. Computers launched before automatic reporting may start reporting after their next restart.";
+      return "Reporting has not been set up on this computer. Computers launched before automatic reporting get it when they are restarted after their host is updated.";
     case "stale":
+      if (reason === "clock_skew")
+        return "This computer’s clock is wrong, so Hivra is refusing its run reports even though the reporter checks in. Restarting the computer usually corrects its clock.";
       return "Hasn’t checked in for 15+ min while running; runs in this gap may be missing.";
     case "expired":
       // Only what the records show: an expired credential arrived after the

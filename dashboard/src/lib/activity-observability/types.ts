@@ -84,7 +84,9 @@ export type NativeTracingReason =
   /** missing: the latest install attempt after issuance failed and nothing has checked in since. */
   | "install_failed"
   /** missing: a credential was issued 10+ minutes ago and the reporter has never checked in. */
-  | "never_checked_in";
+  | "never_checked_in"
+  /** stale: the reporter checks in, but its run records are refused because the computer's clock is wrong. */
+  | "clock_skew";
 
 export interface ActivityCapability {
   key: "lifecycle" | "desktop" | "traces" | "tool_activity" | "native_tracing";

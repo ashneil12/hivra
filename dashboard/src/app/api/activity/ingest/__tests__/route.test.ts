@@ -86,13 +86,19 @@ describe("POST /api/activity/ingest",()=>{
     const body=heartbeat(); body.resourceLogs[0].scopeLogs[0].logRecords[0].timeUnixNano=ahead;
     const db=database(); const before=Date.now();
     const response=await POST(request(body)); expect(response.status).toBe(200); expect(await response.json()).toEqual({});
-    expect(db.collectorUpsert).toHaveBeenCalledTimes(1);
-    const [row]=db.collectorUpsert.mock.calls[0];
-    expect(Date.parse(row.last_heartbeat_at)).toBeGreaterThanOrEqual(before); expect(Date.parse(row.last_heartbeat_at)).toBeLessThanOrEqual(Date.now());
+    const rows=db.collectorUpsert.mock.calls.map(([row])=>row);
+    const beat=rows.find(r=>r.last_heartbeat_at); expect(beat).toBeDefined();
+    expect(Date.parse(beat.last_heartbeat_at)).toBeGreaterThanOrEqual(before); expect(Date.parse(beat.last_heartbeat_at)).toBeLessThanOrEqual(Date.now());
+    // The heartbeat alone shows the clock is ahead of the event window, so run
+    // records from this computer will be refused: that is recorded, not hidden.
+    expect(rows).toContainEqual(expect.objectContaining({agent_id:A,last_rejected_reason:"clock_skew"}));
     const skewed=database(); const run={...nativeRecord("run.started",[],"5".repeat(32)),timeUnixNano:ahead};
     const refused=await POST(request(nativeBody(run))); expect(refused.status).toBe(200);
     expect(await refused.json()).toEqual({partialSuccess:{rejectedLogRecords:1,errorMessage:expect.stringContaining("check the computer's clock")}});
-    expect(skewed.collectorUpsert).not.toHaveBeenCalled();
+    expect(skewed.collectorUpsert).toHaveBeenCalledWith(expect.objectContaining({agent_id:A,user_id:"user_1",last_rejected_reason:"clock_skew",last_rejected_at:expect.any(String)}),{onConflict:"agent_id"});
+    // A correct clock records no skew.
+    const fine=database(); expect((await POST(request(heartbeat()))).status).toBe(200);
+    expect(fine.collectorUpsert.mock.calls.map(([row])=>row.last_rejected_reason).filter(Boolean)).toEqual([]);
   });
 
   it("records a correctly signed expired token against the owner's computer, then refuses it",async()=>{

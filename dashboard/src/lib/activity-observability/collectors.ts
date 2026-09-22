@@ -140,10 +140,14 @@ export async function recordCollectorEvents(
   });
 }
 
-/** Record that a correctly signed credential for this computer was refused because it expired. */
+/**
+ * Record why this computer's records were refused: a correctly signed but
+ * expired credential, or run records outside the accepted time window because
+ * the computer's clock is wrong.
+ */
 export async function recordCollectorRejected(
   client: SupabaseClient,
-  input: { agentId: string; userId: string; reason: "expired"; rejectedAt?: Date | string },
+  input: { agentId: string; userId: string; reason: "expired" | "clock_skew"; rejectedAt?: Date | string },
 ): Promise<boolean> {
   return upsertCollectorState(client, () => {
     const at = iso(input.rejectedAt ?? new Date());

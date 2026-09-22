@@ -134,8 +134,8 @@ crash or restart are idempotent.
 - Renew when less than half of the 7-day lifetime remains (`expiresAt - now <
   3.5 days`); write the new credential atomically.
 - Parse cost is bounded, not just line length: a line is parsed as JSON only
-  when it is at most 8 MiB and a cheap byte count of `{` and `[` shows a
-  bounded number of containers; the unit's memory ceiling must hold the worst
+  when it is at most 4 MiB and a cheap byte count of `{` and `[` shows at
+  most 100k containers; the unit's memory ceiling must hold the worst
   admitted line with margin. Any other line is never fully parsed, the offset
   still advances, and only a bounded head and tail (8 KiB each) may be
   inspected with fixed patterns to recover structural fields such as `type`,
@@ -169,7 +169,7 @@ crash or restart are idempotent.
 `hivra_activity_collectors` (one row per agent; service role only):
 `agent_id` (pk), `user_id`, `issued_at`, `credential_expires_at`,
 `issue_reason` (`launch|start|renew`), `last_heartbeat_at` (server receive
-time), `last_event_at`, `last_rejected_at`, `last_rejected_reason`,
+time), `last_event_at`, `last_rejected_at`, `last_rejected_reason` (`expired|clock_skew`),
 `last_install_status` (`installed|failed`), `last_install_reason`,
 `last_install_at`, `updated_at`. Heartbeat timestamps are not subject to the
 event time window (liveness uses the server receive time), so a guest with a
@@ -187,11 +187,11 @@ Evaluated in order, first match wins:
 1. `degraded`: the collectors lane could not be read.
 2. `unsupported`: type is not `claude-code`/`codex`, or substrate is not `proxmox-kvm`.
 3. `not_running`: agent status is not `running` (silence expected).
-4. `expired`: `credential_expires_at <= now`, or an `expired` rejection was recorded after both the latest issuance and the latest heartbeat.
-5. `missing`: no collector row (launched before reporting existed, or issuance failed), or the last install attempt after issuance failed (explained as "could not be installed").
+4. `missing`: no collector row (launched before reporting existed, or issuance failed), or the last install attempt after the latest issuance failed and nothing has checked in since ("could not be installed"; this outranks expiry).
+5. `expired`: `credential_expires_at <= now` and a reporter checked in with that credential (otherwise `missing`, "never checked in"), or an `expired` rejection was recorded after both the latest issuance and the latest heartbeat.
 6. `configured`: no heartbeat since the latest issuance, and that issuance was less than 10 min ago ("waiting for first report"; covers a fresh launch and a restart that re-issued the credential).
 7. `missing`: issued 10 min or more ago and never heard from.
-8. `stale`: last heartbeat older than 15 min.
+8. `stale`: last heartbeat older than 15 min, or the reporter checks in but its run records were refused for a wrong guest clock (`clock_skew`) within the last 15 min.
 9. `observed`.
 
 `stale` and `expired` on a running computer are Needs-attention items.

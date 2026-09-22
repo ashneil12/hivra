@@ -102,6 +102,24 @@ describe("native tracing coverage",()=>{
     expect(odd).toMatchObject({state:"missing",reason:"install_failed"}); expect(odd.installFailureReason).toBeUndefined();
   });
 
+  it("keeps an install failure or a never-used credential from turning into 'expired' after 7 days",()=>{
+    const ranOut={issued_at:ago(8*24*60),credential_expires_at:ago(24*60)};
+    // The install failed and nothing ever checked in: the credential never reached a working reporter.
+    expect(nativeState(agent(),collector({...ranOut,last_heartbeat_at:null,last_install_status:"failed",last_install_reason:"timeout",last_install_at:ago(8*24*60-1)})))
+      .toMatchObject({state:"missing",reason:"install_failed",installFailureReason:"timeout"});
+    // Issued, never checked in, no install result recorded: still "never checked in", not "expired".
+    expect(nativeState(agent(),collector({...ranOut,last_heartbeat_at:null}))).toMatchObject({state:"missing",reason:"never_checked_in"});
+    // A reporter that did check in with it and then lapsed is genuinely expired.
+    expect(nativeState(agent(),collector({...ranOut,last_heartbeat_at:ago(2*24*60)}))).toMatchObject({state:"expired",reason:"credential_ran_out"});
+  });
+
+  it("shows a checking-in computer whose run records are refused for a wrong clock as stale, not healthy",()=>{
+    const skewed=nativeState(agent(),collector({last_heartbeat_at:ago(1),last_rejected_reason:"clock_skew",last_rejected_at:ago(1)}));
+    expect(skewed).toMatchObject({state:"stale",reason:"clock_skew",lastSeenAt:ago(1)});
+    // Once the refusals stop for 15 minutes the computer is healthy again.
+    expect(nativeState(agent(),collector({last_heartbeat_at:ago(1),last_rejected_reason:"clock_skew",last_rejected_at:ago(16)})).state).toBe("observed");
+  });
+
   it("never shows the reporter's heartbeat as the agent's last report",()=>{
     const idle=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent()],collectorRows:[collector({last_heartbeat_at:ago(2)})]});
     expect(idle.resources[0].lastSeenAt).toBeUndefined();

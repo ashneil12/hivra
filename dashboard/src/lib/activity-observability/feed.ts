@@ -234,20 +234,28 @@ export function nativeTracingCapability(agent: ActivityAgentRow, row: ActivityCo
   const seen = { ...(heartbeat ? { lastSeenAt: heartbeat } : {}), ...(expiresAt ? { expiresAt } : {}), ...(issuedAt ? { issuedAt } : {}) };
   if (agent.status !== "running") return { ...base, state: "not_running", ...seen };
   if (!row) return { ...base, state: "missing", reason: "not_set_up" };
-  if (expiresAt && Date.parse(expiresAt) <= now.getTime()) return { ...base, state: "expired", reason: "credential_ran_out", ...seen };
+  // The latest install attempt, at or after the latest issuance, failed and no
+  // check-in has arrived since (a check-in proves a reporter is delivering).
+  // This outranks expiry: the credential never reached a working reporter.
+  const installAt = validTime(row.last_install_at);
+  if (row.last_install_status === "failed" && installAt && (!issuedAt || timeKey(installAt) >= timeKey(issuedAt)) && after(installAt, heartbeat)) {
+    const installFailureReason = typeof row.last_install_reason === "string" && INSTALL_REASON.test(row.last_install_reason) ? row.last_install_reason : undefined;
+    return { ...base, state: "missing", reason: "install_failed", ...seen, installFailedAt: installAt, ...(installFailureReason ? { installFailureReason } : {}) };
+  }
+  // A credential that ran out is "expired" only if a reporter was using it;
+  // one that never produced a check-in after its issuance is "never checked in".
+  const checkedInSinceIssue = !!heartbeat && (!issuedAt || timeKey(heartbeat) >= timeKey(issuedAt));
+  if (expiresAt && Date.parse(expiresAt) <= now.getTime()) {
+    return checkedInSinceIssue || !issuedAt
+      ? { ...base, state: "expired", reason: "credential_ran_out", ...seen }
+      : { ...base, state: "missing", reason: "never_checked_in", ...seen };
+  }
   // A refusal counts only when it is newer than both the last check-in and the
   // latest issuance: a re-issue supersedes an earlier refusal, while an expired
   // credential presented after it means the computer never picked the new one up.
   const rejectedAt = validTime(row.last_rejected_at);
   if (row.last_rejected_reason === "expired" && rejectedAt && after(rejectedAt, heartbeat) && after(rejectedAt, issuedAt)) {
     return { ...base, state: "expired", reason: "expired_credential_presented", ...seen };
-  }
-  // The latest install attempt, at or after the latest issuance, failed and no
-  // check-in has arrived since (a check-in proves a reporter is delivering).
-  const installAt = validTime(row.last_install_at);
-  if (row.last_install_status === "failed" && installAt && (!issuedAt || timeKey(installAt) >= timeKey(issuedAt)) && after(installAt, heartbeat)) {
-    const installFailureReason = typeof row.last_install_reason === "string" && INSTALL_REASON.test(row.last_install_reason) ? row.last_install_reason : undefined;
-    return { ...base, state: "missing", reason: "install_failed", ...seen, installFailedAt: installAt, ...(installFailureReason ? { installFailureReason } : {}) };
   }
   const withinFirstReportGrace = !!issuedAt && now.getTime() - Date.parse(issuedAt) < FIRST_REPORT_GRACE_MS;
   if (!heartbeat) {
@@ -257,6 +265,11 @@ export function nativeTracingCapability(agent: ActivityAgentRow, row: ActivityCo
       : { ...base, state: "missing", reason: "never_checked_in", ...seen };
   }
   const silent = now.getTime() - Date.parse(heartbeat) > STALE_MS;
+  // Checking in while its run records are refused for a wrong clock is not
+  // healthy reporting: show the gap until the refusals stop.
+  if (!silent && row.last_rejected_reason === "clock_skew" && rejectedAt && now.getTime() - Date.parse(rejectedAt) <= STALE_MS) {
+    return { ...base, state: "stale", reason: "clock_skew", ...seen };
+  }
   // A start, restart or runtime update re-issues the credential and reinstalls
   // the reporter, so until the first check-in after that issuance is due the
   // computer is waiting for its first report, not stale. A renewal from a

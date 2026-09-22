@@ -94,13 +94,13 @@
     },
     {
       "path": "hivra-agent-trace.py",
-      "bytes": 77290,
-      "sha256": "c64214be5271d66dbcf44f1d0c40f7c8ab8d81364f8f8301a69685ad451fecfb"
+      "bytes": 77456,
+      "sha256": "a067d190e1752624461e64af0a75582d1058696e80dd6fc2fdc937b046a9d53f"
     },
     {
       "path": "hivra-agent-trace.service",
-      "bytes": 1698,
-      "sha256": "49f032866ade68353332aed3c5eaa381a559aaa030f54e020347db667b05ca3e"
+      "bytes": 1695,
+      "sha256": "b30a7bceab64826b655618a1e0c1bb0815fd878cf45545b2418f17596f0bbb32"
     },
     {
       "path": "hivra-guest-ssh-known-hosts",

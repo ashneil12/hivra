@@ -596,7 +596,7 @@ it("shows agent run reporting per computer with its check-in, credential and an 
   expect(coverage.getByText(/Reporting credential valid until Sep 25, 2026/)).toBeVisible();
   // A computer with no collector row predates reporting: it was never set up.
   expect(coverage.getByText("Not set up")).toBeVisible();
-  expect(coverage.getByText(/start reporting after their next restart/)).toBeVisible();
+  expect(coverage.getByText(/get it when they are restarted after their host is updated/)).toBeVisible();
   expect(coverage.getByText("Agent not running")).toBeVisible();
   expect(coverage.getByText("Stopped; no reports expected until it starts again.")).toBeVisible();
   expect(coverage.getAllByText("Reporting credential expired").length).toBeGreaterThan(0);

@@ -39,9 +39,9 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-# A line is parsed only within the reporter's parse-cost bound (<= 8 MiB and
-# <= 200k containers); the worst admitted line peaks near 270 MB resident
-# (Python 3.9/3.10), so the ceiling holds it with ~1.9x margin. A line that
+# Parse cost is bounded per line (<= 4 MiB and <= 100k containers); the
+# costliest admitted line measured peaks near 131 MB resident on Python 3.10
+# (141 MB on 3.9), so this ceiling holds it with ~3.6x margin. A line that
 # still stops the process is skipped on the next start (parsing.json).
 MemoryMax=512M
 CPUQuota=25%

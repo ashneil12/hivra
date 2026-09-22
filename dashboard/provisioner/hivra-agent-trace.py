@@ -51,13 +51,15 @@ CREDENTIAL_KEYS = frozenset({"endpoint", "resourceId", "token", "expiresAt"})
 
 # Parse cost is bounded, not just line length. A line is parsed as JSON only
 # when it is at most MAX_LINE bytes and holds at most MAX_CONTAINERS `{` and
-# `[` bytes (a cheap count, strings included). The worst admitted line then
-# peaks near 270 MB resident on Python 3.9/3.10 (one object of ~900k distinct
-# keys); the unit's MemoryMax holds that with margin, and a unit test keeps
-# the two in step. Every other line is never parsed: only its first and last
+# `[` bytes (a cheap count, strings included). The costliest admitted shape
+# measured (~100k tiny objects followed by dense distinct keys) peaks near
+# 141 MB resident on Python 3.9 and 131 MB on 3.10, about 3.6x under the unit's
+# MemoryMax; a unit test keeps the two in step. Real transcripts stay far below
+# MAX_LINE (largest observed Claude line 1.3 MiB; large Codex lines are
+# pre-filtered before parsing). Every other line is never parsed: only its first and last
 # ENVELOPE bytes are inspected with fixed patterns.
-MAX_LINE = 8 * 1024 * 1024
-MAX_CONTAINERS = 200_000
+MAX_LINE = 4 * 1024 * 1024
+MAX_CONTAINERS = 100_000
 ENVELOPE = 8 * 1024
 MARK_BYTES = 1024 * 1024          # larger lines are parsed under a persisted in-progress marker
 MAX_SKIPS = 64                    # remembered lines that stopped the reporter mid-parse

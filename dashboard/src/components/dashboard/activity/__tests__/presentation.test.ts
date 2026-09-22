@@ -174,7 +174,7 @@ it.each<[ActivityCapabilityState, RegExp]>([
   ],
   [
     "missing",
-    /^Reporting has not been set up on this computer\. Computers launched before automatic reporting may start reporting after their next restart\.$/,
+    /^Reporting has not been set up on this computer\. Computers launched before automatic reporting get it when they are restarted after their host is updated\.$/,
   ],
   ["expired", /credential ran out.*Restarting the computer issues a new one/],
   ["configured", /first check-in should arrive within 10 minutes/],
@@ -190,6 +190,13 @@ it.each<[ActivityCapabilityState, RegExp]>([
     expect(text?.split(/(?<=\.)\s/).length).toBeLessThanOrEqual(2);
   },
 );
+
+it("says a checking-in computer with a wrong clock is having its run reports refused", () => {
+  const text = capabilityExplanation({ ...tracing("stale"), reason: "clock_skew" });
+  expect(text).toMatch(/clock is wrong/);
+  expect(text).toMatch(/refusing its run reports/);
+  expect(text).not.toMatch(/Hasn’t checked in/);
+});
 
 it("only explains capabilities with a per-computer check-in", () => {
   expect(
