@@ -476,6 +476,43 @@ describe("managed Venice reconciler: candidates, retirement and recovery", () =>
     expect(tick.checked).toBe(0);
   });
 
+  it.each([
+    ["result: null", { jsonrpc: "2.0", id: 1, result: null }],
+    ["no result field", { jsonrpc: "2.0", id: 1 }],
+  ])("never retires a paid quote on an eth_getLogs answer with %s: the tick fails and the next one settles", async (_label, body) => {
+    const memory = seed(managedVeniceQuoteRow({ status: "expired" }));
+    const rpc = chain([transfer("0xpaid", QUOTED, "2026-05-16T10:22:00.000Z")]);
+    const healthy = rpc.fetchImpl.getMockImplementation()!;
+    rpc.fetchImpl.mockImplementation(async (url, init) =>
+      (JSON.parse(init.body) as { method: string }).method === "eth_getLogs"
+        ? { ok: true, status: 200, json: async () => body }
+        : healthy(url, init)
+    );
+
+    // The window + grace (12:40) is confirmed past the finality margin: a scan
+    // that believed it saw no transfer would retire the quote for good.
+    const broken = await tickAt(memory, rpc, "2026-05-16T13:30:00.000Z");
+    expect(broken).toMatchObject({ checked: 1, failed: 1, cancelled: 0, settled: 0 });
+    expect(broken.results).toEqual([
+      expect.objectContaining({
+        quoteId: "quote_1",
+        status: "failed",
+        errorMessage: "Invalid eth_getLogs result from Base RPC",
+      }),
+    ]);
+    expect(quote(memory)).toMatchObject({ status: "expired", transaction_hash: null });
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
+    expect(items(memory)).toHaveLength(0);
+
+    rpc.fetchImpl.mockImplementation(healthy);
+    const healed = await tickAt(memory, rpc, "2026-05-16T13:35:00.000Z");
+    expect(healed).toMatchObject({ settled: 1, failed: 0 });
+    expect(quote(memory)).toMatchObject({ status: "settled", transaction_hash: "0xpaid" });
+    expect(memory.tables.managed_venice_token_lots).toEqual([
+      expect.objectContaining({ quote_id: "quote_1", transaction_hash: "0xpaid" }),
+    ]);
+  });
+
   it("scans the quote's anchored range in <= 2,000-block eth_getLogs chunks", async () => {
     const memory = seed();
     const rpc = chain();
