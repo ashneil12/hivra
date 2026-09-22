@@ -5,6 +5,7 @@
  * that chain (and refuse to overdraw, like a real transfer would).
  */
 
+import { BankrTransferHttpError } from "@/lib/billing/bankr-withdraw";
 import { parseTokenAmountToRaw } from "@/lib/billing/token-holdings";
 import { createBaseRpcFake } from "@/test-utils/base-rpc-fake";
 import {
@@ -43,11 +44,11 @@ export function createYearlyTokenWorld(options: { nowMs?: number; blockTimeSec?:
         const credential = memory.tables.bankr_deposit_wallet_credentials.find(
           (row) => row.bankr_wallet_id === walletId
         );
-        if (!credential) throw new Error(`Bankr transfer failed status=404 body=unknown wallet ${walletId}`);
+        if (!credential) throw new BankrTransferHttpError(404, `unknown wallet ${walletId}`);
         const from = String(credential.evm_address).toLowerCase();
         const amountRaw = parseTokenAmountToRaw(params.amountDisplay, 18);
         if (chain.balanceOf(from) < amountRaw) {
-          throw new Error("Bankr transfer failed status=400 body=insufficient token balance");
+          throw new BankrTransferHttpError(400, "insufficient token balance");
         }
         sweepSequence += 1;
         const hash = txHash(0xa000 + sweepSequence);

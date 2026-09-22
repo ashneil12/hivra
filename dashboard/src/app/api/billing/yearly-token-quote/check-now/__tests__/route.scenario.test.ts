@@ -34,6 +34,7 @@ jest.mock("@clerk/nextjs/server", () => ({
 }));
 
 jest.mock("@/lib/billing/bankr-withdraw", () => ({
+  ...jest.requireActual("@/lib/billing/bankr-withdraw"),
   mintScopedTransferApiKey: (params: { bankrWalletId: string }) =>
     mockState.world!.bankr.mintScopedTransferApiKey(params),
   submitBankrTransfer: (params: { apiKey: string; recipientAddress: string; amountDisplay: string }) =>

@@ -42,7 +42,7 @@ import {
 } from "./token-holdings";
 import { getBankrDepositWalletCredentialForAddress } from "./bankr-deposit-wallets";
 import { getBankrPartnerConfig } from "./bankr-wallets";
-import { mintScopedTransferApiKey, submitBankrTransfer } from "./bankr-withdraw";
+import { BankrTransferHttpError, mintScopedTransferApiKey, submitBankrTransfer } from "./bankr-withdraw";
 import { ensureWalletHasGas, type EnsureWalletGasResult } from "./treasury-gas";
 
 /** A failed sweep attempted within this window is left alone this tick. */
@@ -154,14 +154,18 @@ function depositAddressOf(row: ClaimedRow) {
   return recorded.trim().toLowerCase() || null;
 }
 
-// A Bankr 4xx (other than a timeout) is a definite rejection: nothing was
-// sent, so the sweep can be retried. Anything else (5xx, network error,
-// timeout) may or may not have moved the tokens.
+// A Bankr 4xx means it refused the request and broadcast nothing, so the sweep
+// can be retried. 408 and 409 can mean the request is still being processed,
+// and a 5xx, a network error or a timeout can follow a broadcast: those leave
+// the outcome unknown. Same rule as the USDC credit-deposit sweep.
 function isDefiniteTransferRejection(error: unknown) {
-  const match = /status=(\d{3})/.exec(safeErrorMessage(error));
-  if (!match) return false;
-  const status = Number(match[1]);
-  return status >= 400 && status < 500 && status !== 408;
+  return (
+    error instanceof BankrTransferHttpError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.status !== 409
+  );
 }
 
 /**

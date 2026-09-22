@@ -10,6 +10,7 @@ jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: (...args: unknown[]) => mockReportOpsEvent(...args),
 }));
 
+import { BankrTransferHttpError } from "@/lib/billing/bankr-withdraw";
 import {
   sweepPendingYearlyTokenSubscriptions,
   sweepYearlyTokenSubscription,
@@ -147,13 +148,26 @@ describe("parks for an operator instead of guessing", () => {
     world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -2 * MINUTE_MS });
     const result = await sweepYearlyTokenSubscription(
       { id: "ys_1", user_id: "user_1" },
-      options(world, { submitTransfer: async () => Promise.reject(new Error("Bankr transfer failed status=502 body=")) })
+      options(world, { submitTransfer: async () => Promise.reject(new BankrTransferHttpError(502, "")) })
     );
 
     expect(result.outcome).toBe("needs_operator");
     expect(sub(world)).toMatchObject({ sweep_status: "needs_operator" });
     expect(sub(world)?.sweep_submitted_at).toEqual(expect.any(String));
   });
+});
+
+it("treats a 409 from Bankr (request may still be processing) as an unknown outcome", async () => {
+  const world = createYearlyTokenWorld();
+  pendingSub(world);
+  world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -2 * MINUTE_MS });
+
+  const result = await sweepYearlyTokenSubscription(
+    { id: "ys_1", user_id: "user_1" },
+    options(world, { submitTransfer: async () => Promise.reject(new BankrTransferHttpError(409, "in progress")) })
+  );
+
+  expect(result.outcome).toBe("needs_operator");
 });
 
 it("releases a definite Bankr rejection back to failed for a later retry", async () => {
@@ -163,7 +177,7 @@ it("releases a definite Bankr rejection back to failed for a later retry", async
 
   const result = await sweepYearlyTokenSubscription(
     { id: "ys_1", user_id: "user_1" },
-    options(world, { submitTransfer: async () => Promise.reject(new Error("Bankr transfer failed status=400 body=bad")) })
+    options(world, { submitTransfer: async () => Promise.reject(new BankrTransferHttpError(400, "bad")) })
   );
 
   expect(result.outcome).toBe("transfer_failed");
