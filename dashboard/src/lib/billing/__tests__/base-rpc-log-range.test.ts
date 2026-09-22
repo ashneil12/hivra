@@ -306,6 +306,14 @@ describe("getLogsInBlockChunks", () => {
     expect(ranges).toEqual([]);
   });
 
+  it("refuses a non-array eth_getLogs result instead of treating it as no logs", async () => {
+    const call = (async () => null) as unknown as Parameters<typeof getLogsInBlockChunks>[0]["call"];
+
+    await expect(getLogsInBlockChunks({ call, filter, fromBlock: 0, toBlock: 10 })).rejects.toThrow(
+      "Invalid eth_getLogs result from Base RPC"
+    );
+  });
+
   it("fails the whole scan when one chunk fails, instead of returning a partial scan", async () => {
     let requests = 0;
     const call = (async () => {

@@ -74,7 +74,12 @@ export async function getLogsInBlockChunks<TLog>(params: {
       },
     ]);
 
-    if (Array.isArray(chunkLogs)) logs.push(...chunkLogs);
+    // A successful eth_getLogs always returns an array. Anything else is a
+    // broken provider response; treating it as "no logs" could hide a payment.
+    if (!Array.isArray(chunkLogs)) {
+      throw new Error("Invalid eth_getLogs result from Base RPC");
+    }
+    logs.push(...chunkLogs);
   }
 
   return logs;
