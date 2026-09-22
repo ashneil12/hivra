@@ -344,5 +344,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260922185029", name: "credit_deposit_sweep_state" },
   { version: "20260922190915", name: "hivra_activity_collectors" },
   { version: "20260922201510", name: "provider_release_admission_2026_09_22" },
-  { version: "20260922210000", name: "yearly_token_payment_attribution" },
+  { version: "20260922222737", name: "yearly_token_payment_attribution" },
 ];
