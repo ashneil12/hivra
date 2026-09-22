@@ -727,8 +727,9 @@ function affectedRowCount(data: unknown) {
 // up on the SAME deposit address (lots and yearly subscriptions by the same
 // user, who owns exactly one credit_deposit wallet): a tx claimed on another
 // address is a different transfer, which must still be credited or surfaced
-// here. Within one address the identity is per log: the binding's log index
-// (null for records without one, meaning the tx's first log to the address).
+// here. Within one address the identity is per log: the binding's log index,
+// or, for a record without one (a bearer settlement, a legacy lot), the log
+// whose amount it recorded (see the reconciler's boundLogIndex).
 
 export type ManagedVeniceTransferBindingKind =
   | "quote_claim"
@@ -741,6 +742,15 @@ export interface ManagedVeniceTransferBinding {
   kind: ManagedVeniceTransferBindingKind;
   quoteId: string | null;
   logIndex: number | null;
+  // The transfer amount the record holds (the claim's, the lot's, or the
+  // review's observed amount); null when it records none (yearly payments, a
+  // claim without readable settlement values).
+  tokenAmountRaw: string | null;
+}
+
+function tokenAmountRawOrNull(value: unknown) {
+  const text = typeof value === "number" || typeof value === "bigint" ? String(value) : value;
+  return typeof text === "string" && /^\d+$/.test(text) ? text : null;
 }
 
 type BindingQuote = Pick<ManagedVeniceTokenQuote, "id" | "userId" | "depositAddress">;
@@ -762,7 +772,7 @@ export async function loadManagedVeniceTransferBindings(
       .in("deposit_address", addresses)
       .in("transaction_hash", variants),
     table(client, "managed_venice_token_lots")
-      .select("id, quote_id, transaction_hash, metadata")
+      .select("id, quote_id, transaction_hash, token_amount_raw::text, metadata")
       .eq("user_id", params.quote.userId)
       .in("transaction_hash", variants),
     table(client, "managed_venice_token_quotes")
@@ -800,12 +810,15 @@ export async function loadManagedVeniceTransferBindings(
 
   for (const row of rows(claims, "quote")) {
     const claim = metadataRecord(metadataRecord(row.metadata).settlementClaim);
+    const claimIsForRowTx = sameTransactionHash(
+      nonEmptyString(claim.transactionHash),
+      nonEmptyString(row.transaction_hash)
+    );
     add(row.transaction_hash, {
       kind: "quote_claim",
       quoteId: id(row.id),
-      logIndex: sameTransactionHash(nonEmptyString(claim.transactionHash), nonEmptyString(row.transaction_hash))
-        ? normalizeLogIndex(claim.logIndex)
-        : null,
+      logIndex: claimIsForRowTx ? normalizeLogIndex(claim.logIndex) : null,
+      tokenAmountRaw: claimIsForRowTx ? tokenAmountRawOrNull(claim.tokenAmountRaw) : null,
     });
   }
   for (const row of rows(lots, "lot")) {
@@ -813,6 +826,7 @@ export async function loadManagedVeniceTransferBindings(
       kind: "lot",
       quoteId: id(row.quote_id),
       logIndex: normalizeLogIndex(metadataRecord(row.metadata).logIndex),
+      tokenAmountRaw: tokenAmountRawOrNull(row.token_amount_raw),
     });
   }
   for (const row of rows(reviews, "review")) {
@@ -821,13 +835,14 @@ export async function loadManagedVeniceTransferBindings(
       kind: "review_trigger",
       quoteId: id(row.id),
       logIndex: normalizeLogIndex(metadata.reviewLogIndex),
+      tokenAmountRaw: tokenAmountRawOrNull(metadata.observedTokenAmountRaw),
     });
   }
   for (const row of rows(yearlyQuotes, "yearly quote")) {
-    add(row.consumed_tx_hash, { kind: "yearly_quote", quoteId: null, logIndex: null });
+    add(row.consumed_tx_hash, { kind: "yearly_quote", quoteId: null, logIndex: null, tokenAmountRaw: null });
   }
   for (const row of rows(yearlySubscriptions, "yearly subscription")) {
-    add(row.deposit_tx_hash, { kind: "yearly_subscription", quoteId: null, logIndex: null });
+    add(row.deposit_tx_hash, { kind: "yearly_subscription", quoteId: null, logIndex: null, tokenAmountRaw: null });
   }
   return bindings;
 }

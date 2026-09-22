@@ -464,9 +464,14 @@ interface ScannedTransfer {
   transactionHash: string;
   logIndex: number;
   // The lowest log index of this tx's Transfer logs to the deposit address:
-  // the log a binding without a log index accounts for, and the one whose
-  // item carries the bare tx/address key.
+  // the one whose item carries the bare tx/address key, and the log a binding
+  // without a log index accounts for unless its amount names another (see
+  // boundLogIndex).
   firstLogIndex: number;
+  // Every Transfer log of this tx to the deposit address in the scan (this
+  // one included), so a binding without a log index can be matched by amount
+  // whichever subset of the scan is being partitioned.
+  txLogs: ReadonlyArray<{ logIndex: number; amount: bigint }>;
   // The log index for the item's dedupe key: null for the tx's first log to
   // the address, this log's index for any later one.
   dedupeLogIndex: number | null;
@@ -519,7 +524,7 @@ async function scanQuoteTransfers(params: {
 
   const parsed = new Map<
     string,
-    Omit<ScannedTransfer, "timestampMs" | "observedAt" | "firstLogIndex" | "dedupeLogIndex"> & {
+    Omit<ScannedTransfer, "timestampMs" | "observedAt" | "firstLogIndex" | "dedupeLogIndex" | "txLogs"> & {
       logTimestampSec: number | null;
     }
   >();
@@ -564,18 +569,22 @@ async function scanQuoteTransfers(params: {
   }
   // A tx's logs share one block, so they are always scanned (and in range,
   // and confirmed) together.
-  const firstLogIndexByTx = new Map<string, number>();
+  const logsByTx = new Map<string, Array<{ logIndex: number; amount: bigint }>>();
   for (const entry of parsed.values()) {
-    const first = firstLogIndexByTx.get(entry.transactionHash);
-    if (first === undefined || entry.logIndex < first) firstLogIndexByTx.set(entry.transactionHash, entry.logIndex);
+    logsByTx.set(entry.transactionHash, [
+      ...(logsByTx.get(entry.transactionHash) ?? []),
+      { logIndex: entry.logIndex, amount: entry.amount },
+    ]);
   }
   const transfers: ScannedTransfer[] = [];
   for (const { logTimestampSec, ...transfer } of parsed.values()) {
     const timestampSec = logTimestampSec ?? (await chain.blockTimestamp(transfer.blockNumber));
-    const firstLogIndex = firstLogIndexByTx.get(transfer.transactionHash) ?? transfer.logIndex;
+    const txLogs = logsByTx.get(transfer.transactionHash) ?? [{ logIndex: transfer.logIndex, amount: transfer.amount }];
+    const firstLogIndex = Math.min(...txLogs.map((log) => log.logIndex));
     transfers.push({
       ...transfer,
       firstLogIndex,
+      txLogs,
       dedupeLogIndex: transfer.logIndex === firstLogIndex ? null : transfer.logIndex,
       timestampMs: timestampSec * 1000,
       observedAt: new Date(timestampSec * 1000).toISOString(),
@@ -643,8 +652,8 @@ async function loadAttributionBoundaryMs(db: SupabaseLike, quote: ManagedVeniceT
 // log of the same tx (a bundle paying several wallets), which this quote must
 // still credit or surface (settle sends it to review as a claim conflict when
 // the tx is claimed elsewhere). Per log, within the address:
-//   - bound: a counted binding accounts for this log (its log index, or the
-//     tx's first log to the address when the binding has none). Excluded.
+//   - bound: a counted binding accounts for this log (see boundLogIndex).
+//     Excluded.
 //   - extra_log: the tx is bound here, but on another of its logs (a batched
 //     double-send). Real money no quote can credit (the claim is unique per
 //     tx), so it is only ever surfaced.
@@ -656,16 +665,48 @@ async function loadAttributionBoundaryMs(db: SupabaseLike, quote: ManagedVeniceT
 // whichever binds it first wins, and a transfer is credited XOR surfaced.
 type BindingState = "unbound" | "bound" | "extra_log";
 
+// The log of `transfer`'s tx (to this deposit address) that a binding
+// accounts for:
+//   - its own log index, when it recorded one;
+//   - otherwise (a bearer settlement, which has no log index, or a legacy
+//     lot) the one scanned log of the tx whose amount equals the amount the
+//     binding recorded. A claim with no readable amount (a legacy settled
+//     quote) takes its own quote's lot for the same tx, which is the credit
+//     that exists. Without a unique amount match (no amount, or zero or
+//     several logs with it) it falls back to the tx's first log.
+//   - a review trigger without a log index always takes the tx's first log.
+//     Its item carries the bare tx/address key, which is the first log's key,
+//     so matching it by amount to a later log would let the first log's own
+//     item collide with the review's item and never be written. Known
+//     limitation: a bearer review of a multi-log tx is attributed to the
+//     tx's first log to the address, whatever amount it reported.
+function boundLogIndex(
+  binding: ManagedVeniceTransferBinding,
+  siblings: ManagedVeniceTransferBinding[],
+  transfer: ScannedTransfer
+) {
+  const source =
+    binding.kind === "quote_claim" && binding.logIndex === null && binding.tokenAmountRaw === null
+      ? siblings.find((other) => other.kind === "lot" && other.quoteId === binding.quoteId) ?? binding
+      : binding;
+  if (source.logIndex !== null) return source.logIndex;
+  if (source.kind !== "review_trigger" && source.tokenAmountRaw !== null) {
+    const amount = BigInt(source.tokenAmountRaw);
+    const matching = transfer.txLogs.filter((log) => log.amount === amount);
+    if (matching.length === 1) return matching[0].logIndex;
+  }
+  return transfer.firstLogIndex;
+}
+
 function bindingStateOf(
   transfer: ScannedTransfer,
   bindings: Map<string, ManagedVeniceTransferBinding[]>,
   quoteId: string
 ): BindingState {
-  const counted = (bindings.get(transfer.transactionHash) ?? []).filter((binding) =>
-    isManagedVeniceTransferBindingCounted(binding, quoteId)
-  );
+  const all = bindings.get(transfer.transactionHash) ?? [];
+  const counted = all.filter((binding) => isManagedVeniceTransferBindingCounted(binding, quoteId));
   if (counted.length === 0) return "unbound";
-  return counted.some((binding) => (binding.logIndex ?? transfer.firstLogIndex) === transfer.logIndex)
+  return counted.some((binding) => boundLogIndex(binding, all, transfer) === transfer.logIndex)
     ? "bound"
     : "extra_log";
 }

@@ -281,6 +281,85 @@ describe("managed Venice transfers: two logs to one deposit address in one tx", 
   });
 });
 
+describe("managed Venice transfers: a binding without a log index on a two-log tx", () => {
+  // 0xbatch pays D1 twice: log 0 = 5 tokens, log 1 = the quoted 1000.
+  const SMALL = 5n * 10n ** 18n;
+  const PAID_AT = "2026-05-16T10:22:00.000Z";
+  const batch = () =>
+    chain([
+      transfer("0xbatch", SMALL, PAID_AT, { logIndex: 0 }),
+      transfer("0xbatch", QUOTED, PAID_AT, { logIndex: 1 }),
+    ]);
+  const smallLogItem = (quoteId: string) => ({
+    key: transferKey("0xbatch", D1),
+    reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid,
+    quoteId,
+    amount: SMALL.toString(),
+  });
+
+  it("a bearer settle binds the log whose amount it credited; the uncredited log is surfaced under the bare key", async () => {
+    const memory = seed();
+    const rpc = batch();
+
+    // The bearer route has no log index: the claim and lot record only the amount.
+    const bearer = await settleManagedVeniceTokenQuote(
+      { quoteId: "quote_1", transactionHash: "0xbatch", tokenAmountRaw: QUOTED.toString(), observedAt: PAID_AT, blockTimestamp: PAID_AT },
+      memory.db
+    );
+    expect(bearer).toEqual({ status: "settled", quoteId: "quote_1" });
+    for (const iso of ["2026-05-16T10:30:00.000Z", "2026-05-16T13:30:00.000Z"]) {
+      expect((await tickAt(memory, rpc, iso)).failed).toBe(0);
+    }
+
+    expect(quote(memory)).toMatchObject({ status: "settled", transaction_hash: "0xbatch", transfer_surfacing_pending: false });
+    expect(memory.tables.managed_venice_token_lots).toEqual([
+      expect.objectContaining({ quote_id: "quote_1", transaction_hash: "0xbatch", token_amount_raw: QUOTED.toString() }),
+    ]);
+    // The credited 1000 (log 1) is never shown as uncredited; the 5 tokens are.
+    expect(openItems(memory)).toEqual([smallLogItem("quote_1")]);
+  });
+
+  it("a legacy settled quote's lot without a log index binds its log by amount on a later quote's scan", async () => {
+    // quote_A predates settlement claims and lot log indexes: its tx and lot
+    // record only the tx and the amount. The tx was mined in quote_1's window.
+    const memory = seed(
+      managedVeniceQuoteRow({
+        id: "quote_A",
+        status: "settled",
+        transaction_hash: "0xbatch",
+        settled_at: "2026-05-16T10:23:00.000Z",
+        quoted_at: "2026-05-16T10:00:00.000Z",
+        expires_at: "2026-05-16T10:20:00.000Z",
+        created_at: "2026-05-16T10:00:00.000Z",
+      }),
+      managedVeniceQuoteRow()
+    );
+    memory.insertRow("managed_venice_token_lots", {
+      account_id: "account_1",
+      user_id: "user_1",
+      quote_id: "quote_A",
+      source: "hermesos_deposit",
+      token_amount_raw: QUOTED.toString(),
+      transaction_hash: "0xbatch",
+      status: "active",
+      metadata: {},
+    });
+    const rpc = batch();
+
+    for (const iso of ["2026-05-16T10:30:00.000Z", "2026-05-16T13:30:00.000Z"]) {
+      expect((await tickAt(memory, rpc, iso)).failed).toBe(0);
+    }
+
+    // quote_A's credited 1000 is bound; the 5 tokens are surfaced on quote_1,
+    // which retires once its range is covered instead of retrying the claimed
+    // tx every tick.
+    expect(quote(memory)).toMatchObject({ status: "cancelled", transaction_hash: null });
+    expect(quote(memory, "quote_A")).toMatchObject({ status: "settled", transaction_hash: "0xbatch" });
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(1);
+    expect(openItems(memory)).toEqual([smallLogItem("quote_1")]);
+  });
+});
+
 describe("managed Venice transfers: a review trigger binds its transfer", () => {
   // quote_A's window holds the payment; quote_B (a later quote on the same
   // address) was quoted after it. A bearer delivery posts the payment against
