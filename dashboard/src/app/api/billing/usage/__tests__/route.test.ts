@@ -68,9 +68,9 @@ describe("GET /api/billing/usage", () => {
     mockSupabaseQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
-      // 2026-05-01: yearly_token_subscriptions chain uses .in().order().limit()
-      // before .maybeSingle(). Stub all three as returnThis so the mock keeps
-      // chaining through any of the queries inside resolveEffectiveSubscription.
+      // Stub the filter/order builders as returnThis so the mock keeps chaining
+      // through any of the queries inside resolveEffectiveSubscription (the
+      // yearly_token_subscriptions read ends at .in() and is awaited as a list).
       in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
@@ -149,10 +149,9 @@ describe("GET /api/billing/usage", () => {
 
   it("should return unsubscribed payload if no active subscription", async () => {
     // resolveEffectiveSubscription queries hermes_subscriptions, then
-    // apple_iap_subscriptions (added 2026-07-16), then
-    // yearly_token_subscriptions (added 2026-05-01) before falling through.
-    // Mock all three to return null so the helper hits the holding path.
-    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    // apple_iap_subscriptions (added 2026-07-16), both via .maybeSingle(); the
+    // yearly_token_subscriptions list read yields no rows from this mock.
+    // Both return null so the helper hits the holding path.
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
