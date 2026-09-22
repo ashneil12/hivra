@@ -267,6 +267,21 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
+// True on touch-first (coarse pointer) devices; follows changes (e.g. a tablet
+// keyboard/trackpad attached). False when matchMedia is unavailable.
+function useCoarsePointer(): boolean {
+ const [coarse, setCoarse] = useState(false);
+ useEffect(() => {
+ if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+ const query = window.matchMedia("(pointer: coarse)");
+ setCoarse(query.matches);
+ const onChange = (e: MediaQueryListEvent) => setCoarse(e.matches);
+ query.addEventListener?.("change", onChange);
+ return () => query.removeEventListener?.("change", onChange);
+ }, []);
+ return coarse;
+}
+
 function toolIcon(name: string): string {
  if (name === "Bash") return "⚙";
  if (/browser|cdp|harness|navigate|screenshot/i.test(name)) return "🌐";
@@ -449,13 +464,39 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const [uploading, setUploading] = useState(false);
  const fileInputRef = useRef<HTMLInputElement>(null);
  const composerRef = useRef<HTMLTextAreaElement>(null);
- useEffect(() => {
+ const fitComposer = useCallback(() => {
    const textarea = composerRef.current;
    if (!textarea) return;
    textarea.style.height = "auto";
    textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, 160))}px`;
    textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
- }, [input]);
+ }, []);
+ useEffect(() => { fitComposer(); }, [input, fitComposer]);
+ // Wrapping depends on width too (rail opened/closed, window resized). Refit on
+ // width changes only: our own height writes also resize the box.
+ useEffect(() => {
+   const textarea = composerRef.current;
+   if (!textarea || typeof ResizeObserver === "undefined") return;
+   let lastWidth: number | null = null;
+   const observer = new ResizeObserver((entries) => {
+     const width = entries[entries.length - 1]?.contentRect.width;
+     if (width === undefined || width === lastWidth) return;
+     const first = lastWidth === null;
+     lastWidth = width;
+     if (!first) fitComposer();
+   });
+   observer.observe(textarea);
+   return () => observer.disconnect();
+ }, [fitComposer]);
+ // IME: Safari fires compositionend BEFORE the Enter that commits a candidate
+ // (with isComposing false, keyCode 229), so track composition ourselves and
+ // keep the guard up until the commit keystroke has passed.
+ const composingRef = useRef(false);
+ const compositionEndTimerRef = useRef<number | null>(null);
+ useEffect(() => () => { if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current); }, []);
+ // Touch keyboards: Return inserts a newline and Send is the button, because a
+ // soft keyboard has no Shift+Enter.
+ const coarsePointer = useCoarsePointer();
  // Sessions rail visibility — collapsed by default on narrow screens.
  const [showRail, setShowRail] = useState(false);
  useEffect(() => {
@@ -1195,12 +1236,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-label={`Message ${agentName}`}
  value={input}
  onChange={(e) => setInput(e.target.value)}
+ onCompositionStart={() => {
+ if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current);
+ compositionEndTimerRef.current = null;
+ composingRef.current = true;
+ }}
+ onCompositionEnd={() => {
+ compositionEndTimerRef.current = window.setTimeout(() => {
+ compositionEndTimerRef.current = null;
+ composingRef.current = false;
+ }, 0);
+ }}
  onKeyDown={(e) => {
- if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+ if (e.key !== "Enter" || e.shiftKey || coarsePointer) return;
+ if (e.nativeEvent.isComposing || e.keyCode === 229 || composingRef.current) return;
  e.preventDefault();
  void send(input);
- }
  }}
+ enterKeyHint={coarsePointer ? "enter" : "send"}
  onPaste={(e) => {
  if (!token) return;
  const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
@@ -1297,7 +1350,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  ) : null}
  <p className="mx-auto mt-2 w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)]">
- Runs the official agent CLI on this computer · Enter to send, Shift+Enter for newline
+ Runs the official agent CLI on this computer · {coarsePointer ? "Return adds a new line · tap Send to send" : "Enter to send, Shift+Enter for newline"}
  </p>
  </div>
  </div>

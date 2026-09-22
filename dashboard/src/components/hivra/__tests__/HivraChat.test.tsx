@@ -1185,4 +1185,113 @@ describe("HivraChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "2 actions" }));
     expect(screen.getByRole("button", { name: "Bash — Result not stored" })).toBeInTheDocument();
   });
+
+  // ── Composer: IME commit, width-driven height, touch keyboards ─────────
+  it("does not send on the Enter that commits an IME composition (Safari keyCode 229 / composition events)", async () => {
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="ime" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+    fireEvent.change(textarea, { target: { value: "にほん" } });
+    // An IME keystroke reported only as keyCode 229 (no composition events seen).
+    fireEvent.keyDown(textarea, { key: "Enter", keyCode: 229 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.compositionStart(textarea);
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.compositionEnd(textarea);
+    // Safari fires compositionend BEFORE the commit Enter, with isComposing false.
+    fireEvent.keyDown(textarea, { key: "Enter", keyCode: 229 });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("refits the composer height when its width changes, not only when the text changes", async () => {
+    const observers: { cb: ResizeObserverCallback; el?: Element }[] = [];
+    const original = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      private entry: { cb: ResizeObserverCallback; el?: Element };
+      constructor(cb: ResizeObserverCallback) { this.entry = { cb }; observers.push(this.entry); }
+      observe(el: Element) { this.entry.el = el; }
+      unobserve() {}
+      disconnect() {}
+    };
+    try {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="composer-width" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+      const observer = observers.find((o) => o.el === textarea);
+      expect(observer).toBeDefined();
+      const resize = (width: number) => act(() => observer!.cb([{ target: textarea, contentRect: { width } } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+      Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 100 });
+      fireEvent.change(textarea, { target: { value: "a long draft that wraps" } });
+      expect(textarea).toHaveStyle({ height: "100px", overflowY: "hidden" });
+      resize(600);
+      // The rail opens: narrower textarea, more wrapped lines.
+      Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 200 });
+      resize(400);
+      expect(textarea).toHaveStyle({ height: "160px", overflowY: "auto" });
+      // Wider again: the extra height is released.
+      Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 70 });
+      resize(700);
+      expect(textarea).toHaveStyle({ height: "70px", overflowY: "hidden" });
+    } finally {
+      (globalThis as { ResizeObserver?: unknown }).ResizeObserver = original;
+    }
+  });
+
+  function mockPointer(coarse: boolean) {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: coarse && query === "(pointer: coarse)",
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    return () => { window.matchMedia = original; };
+  }
+
+  it("lets Return insert a newline on touch keyboards and sends only via the Send button", async () => {
+    const restore = mockPointer(true);
+    try {
+      const fetchMock = mockChatFetchOk();
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="coarse" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+      expect(textarea).toHaveAttribute("enterkeyhint", "enter");
+      fireEvent.change(textarea, { target: { value: "line one" } });
+      const enter = fireEvent.keyDown(textarea, { key: "Enter" });
+      expect(enter).toBe(true); // default not prevented: the keyboard inserts a newline
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Shift\+Enter/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Return adds a new line · tap Send to send/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps Enter-to-send and a truthful hint on fine pointers", async () => {
+    const restore = mockPointer(false);
+    try {
+      const fetchMock = mockChatFetchOk();
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="fine" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+      expect(textarea).toHaveAttribute("enterkeyhint", "send");
+      expect(screen.getByText(/Enter to send, Shift\+Enter for newline/)).toBeInTheDocument();
+      fireEvent.change(textarea, { target: { value: "hello" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    } finally {
+      restore();
+    }
+  });
 });
