@@ -37,6 +37,10 @@ const INTERPOLATION_PROBES = 4;
 // with a handful of transfers; anything far above that is refused, not scanned.
 const MAX_SCAN_SPAN_BLOCKS = 50_000;
 const MAX_TRANSFER_TIMESTAMP_LOOKUPS = 200;
+// A provider that accepts the connection and then stalls would otherwise hold
+// the request until the platform kills the function (undici's default header
+// timeout is 300 s). Time out, and let the retry layer try again.
+const DEFAULT_RPC_REQUEST_TIMEOUT_MS = 10_000;
 
 export type JsonRpcFetch = (
   input: string,
@@ -44,6 +48,7 @@ export type JsonRpcFetch = (
     method: "POST";
     headers: { "Content-Type": "application/json" };
     body: string;
+    signal?: AbortSignal;
   }
 ) => Promise<{
   ok: boolean;
@@ -132,13 +137,25 @@ async function rpcCallOnce<T>(
   rpcUrl: string,
   method: string,
   params: unknown[],
-  fetchImpl: JsonRpcFetch
+  fetchImpl: JsonRpcFetch,
+  timeoutMs: number
 ): Promise<T> {
-  const response = await fetchImpl(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
+  let response: Awaited<ReturnType<JsonRpcFetch>>;
+  try {
+    response = await fetchImpl(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    const name = (error as { name?: unknown } | null)?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      // A network-level failure, like fetch's own TypeError: retryable.
+      throw new TypeError(`Base RPC ${method} timed out after ${timeoutMs} ms`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const httpError = new RpcHttpError(response.status);
@@ -170,13 +187,15 @@ export function createBaseChainReader(params: {
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   rpcOptions?: RpcCallOptions;
+  requestTimeoutMs?: number;
 }): BaseChainReader {
   const rpcUrl = params.rpcUrl || getBaseRpcUrl();
   const fetchImpl = params.fetchImpl || (fetch as unknown as JsonRpcFetch);
+  const timeoutMs = params.requestTimeoutMs ?? DEFAULT_RPC_REQUEST_TIMEOUT_MS;
   let latest: Promise<number> | null = null;
   const timestamps = new Map<number, Promise<number>>();
   const call = <T>(method: string, args: unknown[]) =>
-    withRpcRetry<T>(() => rpcCallOnce<T>(rpcUrl, method, args, fetchImpl), params.rpcOptions);
+    withRpcRetry<T>(() => rpcCallOnce<T>(rpcUrl, method, args, fetchImpl, timeoutMs), params.rpcOptions);
 
   return {
     call,

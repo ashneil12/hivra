@@ -7,9 +7,11 @@
  *   - "expired"      — sent when the 7-day grace closes; tier dropped
  *                       to Free
  *
- * Both emails are advisory; the renewal flow is unchanged regardless
- * of whether the email lands. Best-effort, non-blocking. If
- * RESEND_API_KEY is unset, we log and skip.
+ * Both emails are advisory: renewal and expiry happen on their dates
+ * whether or not the email lands (the expiry cron retries undelivered
+ * "ended" emails for a bounded window). Paying while the subscription is
+ * active extends it by a year from its current end; paying during grace
+ * runs a year from the payment. If RESEND_API_KEY is unset, we log and skip.
  */
 
 import { Resend } from "resend";
@@ -47,7 +49,10 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
 function buildEmail(params: SendParams): { subject: string; body: string } {
   const tierLabel = params.tier === "power" ? "Power" : "Pro";
   const expiresLabel = params.expiresAt.toUTCString();
-  const renewUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://hivra.cloud"}/dashboard/billing`;
+  // Deep link straight into the $HermesOS yearly payment for this tier: the
+  // billing page opens the quote modal for it, including for a subscriber
+  // whose current year is still live (renewal).
+  const renewUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://hivra.cloud"}/dashboard/billing?plan=${params.tier}&yearly_token=1`;
 
   if (params.transition === "expiring_soon") {
     return {
@@ -57,7 +62,9 @@ function buildEmail(params: SendParams): { subject: string; body: string } {
         ``,
         `Your yearly $HermesOS-paid ${tierLabel} subscription expires on ${expiresLabel}.`,
         ``,
-        `If you want to keep ${tierLabel} after that date, mint a fresh quote on /dashboard/billing and pay with $HermesOS again. There's also a 7-day grace window after expiry — your tier stays active during that time.`,
+        `To keep ${tierLabel}, pay for another year with $HermesOS on /dashboard/billing. Paying before it expires adds a full year on top of your current end date, so you don't lose any days.`,
+        ``,
+        `There's also a 7-day grace window after expiry — your tier stays active during that time, and a payment made then runs for a year from the day you pay.`,
         ``,
         `Renew here: ${renewUrl}`,
         ``,

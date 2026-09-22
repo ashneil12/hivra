@@ -108,10 +108,12 @@ export interface YearlyTokenQuotePayload {
 export interface YearlyTokenSubscriptionPayload {
   id: string;
   tier: "pro" | "power";
+  /** The quote whose payment created this row (null for manual grants). */
+  yearlyQuoteId: string | null;
   paidAt: string;
   expiresAt: string;
-  status: "active" | "grace" | "expired" | "cancelled";
-  sweepStatus: "pending" | "swept" | "failed" | "skipped";
+  status: "active" | "grace" | "expired" | "cancelled" | "renewed";
+  sweepStatus: "pending" | "sweeping" | "swept" | "failed" | "skipped" | "needs_operator";
   sweepTxHash: string | null;
   amountReceivedRaw: string;
 }

@@ -73,6 +73,19 @@ describe("account deletion safeguards", () => {
     );
   });
 
+  it("deletes yearly token rows before the quotes they reference", () => {
+    const tableNames = ACCOUNT_DELETION_TABLES.map((entry) => entry.table);
+
+    expect(tableNames.indexOf("yearly_token_reconciliation_items")).toBeGreaterThanOrEqual(0);
+    expect(tableNames.indexOf("yearly_token_reconciliation_items")).toBeLessThan(
+      tableNames.indexOf("yearly_token_subscriptions")
+    );
+    // yearly_token_subscriptions.yearly_quote_id references yearly_token_quotes.
+    expect(tableNames.indexOf("yearly_token_subscriptions")).toBeLessThan(
+      tableNames.indexOf("yearly_token_quotes")
+    );
+  });
+
   it("covers managed Venice account data in deletion-safe dependency order", () => {
     const tableNames = ACCOUNT_DELETION_TABLES.map((entry) => entry.table);
 
