@@ -2,8 +2,9 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.09.21.1.json";
-import priorCapacityRelease from "../../../provisioner-releases/2026.09.15.2.json";
+import currentRelease from "../../../provisioner-releases/2026.09.22.1.json";
+import capacityRelease from "../../../provisioner-releases/2026.09.15.2.json";
+import omarchyCursorRelease from "../../../provisioner-releases/2026.09.21.1.json";
 import priorFifteenRelease from "../../../provisioner-releases/2026.09.15.1.json";
 import handoffReductionRelease from "../../../provisioner-releases/2026.09.08.3.json";
 import handoffLatencyRelease from "../../../provisioner-releases/2026.09.08.2.json";
@@ -76,10 +77,12 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.09.21.1"
+  const release = identity.bundle.provisionerVersion === "2026.09.22.1"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.09.21.1"
+      ? omarchyCursorRelease
     : identity.bundle.provisionerVersion === "2026.09.15.2"
-      ? priorCapacityRelease
+      ? capacityRelease
     : identity.bundle.provisionerVersion === "2026.09.15.1"
       ? priorFifteenRelease
     : identity.bundle.provisionerVersion === "2026.09.08.3"

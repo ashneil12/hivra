@@ -2,6 +2,12 @@ import { POST } from "../route";
 import { NextRequest } from "next/server";
 import { ProxmoxExecutionContextError } from "@/lib/infrastructure/proxmox-execution-context";
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
+import { verifyActivityCollectorToken } from "@/lib/activity-observability/auth";
+import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const mockAuth = jest.fn();
 const mockSupabaseFrom = jest.fn();
@@ -1290,5 +1296,213 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalled();
     expect(mockResolveSelfManagedProxmoxExecutionContext).not.toHaveBeenCalled();
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  describe("agent-run reporter credential on every start-helper run", () => {
+    const AGENT_ID = "00000000-0000-4000-8000-000a00000002";
+    const ORIGIN = "https://canary.hivra.cloud";
+    const SIGNING_SECRET = randomBytes(32).toString("hex");
+    const ACTIVITY_FILE = "/run/hivra-lifecycle/1090.activity.env";
+    const START_HELPER = "/root/hivra-provisioner/hivra-start-on-host.sh";
+    const HELPER_SOURCE = path.join(process.cwd(), "provisioner/hivra-start-on-host.sh");
+    const mockCollectorUpsert = jest.fn();
+    let priorOrigin: string | undefined;
+    let priorSecret: string | undefined;
+
+    const routeParams = () => ({ params: Promise.resolve({ id: AGENT_ID }) });
+    function lifecycleRequest(body: Record<string, unknown>) {
+      return new NextRequest(`https://hivra.cloud/api/hivra/agents/${AGENT_ID}/action`, {
+        method: "POST",
+        headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }) as never;
+    }
+    function lastHostScript(): string {
+      const calls = mockRunProxmoxHostScript.mock.calls;
+      return String(calls[calls.length - 1][0]);
+    }
+    function stagedCredential(script: string): Record<string, string> {
+      const encoded = script.match(/'HIVRA_ACTIVITY_TELEMETRY_B64=([A-Za-z0-9+/]+={0,2})'/)?.[1];
+      expect(encoded).toBeDefined();
+      return JSON.parse(Buffer.from(encoded as string, "base64").toString("utf8"));
+    }
+
+    beforeEach(() => {
+      priorOrigin = process.env.NEXT_PUBLIC_APP_URL;
+      priorSecret = process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET;
+      process.env.NEXT_PUBLIC_APP_URL = ORIGIN;
+      process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET = SIGNING_SECRET;
+      mockAgent = { ...mockAgent, id: AGENT_ID, computer_substrate: "proxmox-kvm" };
+      mockCollectorUpsert.mockReset().mockResolvedValue({ error: null });
+      const baseFrom = mockSupabaseFrom.getMockImplementation() as (table: string) => unknown;
+      mockSupabaseFrom.mockImplementation((table: string) =>
+        table === "hivra_activity_collectors" ? { upsert: mockCollectorUpsert } : baseFrom(table));
+      // A current helper passes the kickoff probe, so the host prints the
+      // staging receipt exactly when the script carried a credential.
+      mockRunProxmoxHostScript.mockImplementation(async (script: string) => ({
+        ok: true,
+        stdout: `${script.includes("HIVRA_ACTIVITY_TELEMETRY_B64=") ? "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n" : ""}kicked\n`,
+        stderr: "",
+      }));
+    });
+    afterEach(() => {
+      if (priorOrigin === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = priorOrigin;
+      if (priorSecret === undefined) delete process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET;
+      else process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET = priorSecret;
+    });
+
+    it.each([
+      ["start", "claude-code", { action: "start" }],
+      ["restart", "codex", { action: "restart" }],
+      ["update_runtime", "claude-code", { action: "update_runtime" }],
+      ["resize", "codex", { action: "resize", cpu: 2, ram: 4 }],
+    ] as const)("stages a fresh credential scoped to exactly this computer on %s of a %s computer", async (_action, type, body) => {
+      mockAgent = { ...mockAgent, type };
+      const issuedNoEarlierThan = Math.floor(Date.now() / 1000);
+
+      const response = await POST(lifecycleRequest(body), routeParams());
+
+      expect(response.status).toBe(200);
+      const script = lastHostScript();
+      const credential = stagedCredential(script);
+      expect(Object.keys(credential)).toEqual(["endpoint", "resourceId", "token", "expiresAt"]);
+      expect(credential).toMatchObject({ endpoint: `${ORIGIN}/api/activity/ingest`, resourceId: AGENT_ID });
+      const claims = verifyActivityCollectorToken(`Bearer ${credential.token}`);
+      expect(claims).toMatchObject({ userId: "user-free", resourceIds: [AGENT_ID] });
+      expect(claims!.iat).toBeGreaterThanOrEqual(issuedNoEarlierThan);
+      expect(claims!.exp - claims!.iat).toBe(7 * 24 * 60 * 60);
+      expect(credential.expiresAt).toBe(new Date(claims!.exp * 1000).toISOString());
+      // The token exists only base64-encoded inside the root-only file write:
+      // never as a command argument or environment value of the start helper.
+      expect(script).not.toContain(credential.token);
+      const probeAt = script.indexOf(`grep -Fq HIVRA_ACTIVITY_TELEMETRY_FILE '${START_HELPER}'`);
+      const fileAt = script.indexOf(`install -m 0600 /dev/null '${ACTIVITY_FILE}'`);
+      const writeAt = script.indexOf(`'HIVRA_ACTIVITY_TELEMETRY_B64=`);
+      const helperAt = script.indexOf(`bash '${START_HELPER}' 1090 90`);
+      expect(probeAt).toBeGreaterThan(-1);
+      expect(probeAt).toBeLessThan(fileAt);
+      expect(fileAt).toBeLessThan(writeAt);
+      expect(writeAt).toBeLessThan(helperAt);
+      expect(script).toContain(`then HIVRA_ACTIVITY_FILE='${ACTIVITY_FILE}'; echo HIVRA_ACTIVITY_CREDENTIAL_STAGED;`);
+      expect(script).toContain(`HIVRA_ACTIVITY_TELEMETRY_FILE="$HIVRA_ACTIVITY_FILE" bash '${START_HELPER}' 1090 90`);
+      expect(mockCollectorUpsert).toHaveBeenCalledTimes(1);
+      expect(mockCollectorUpsert).toHaveBeenCalledWith(expect.objectContaining({
+        agent_id: AGENT_ID,
+        user_id: "user-free",
+        credential_expires_at: credential.expiresAt,
+        issue_reason: "start",
+      }), { onConflict: "agent_id" });
+    });
+
+    it("writes the file only for a helper that consumes it, in exactly the format that helper reads", async () => {
+      const response = await POST(lifecycleRequest({ action: "start" }), routeParams());
+      expect(response.status).toBe(200);
+      const script = lastHostScript();
+      const stage = script.slice(script.indexOf("HIVRA_ACTIVITY_FILE='';"), script.indexOf("nohup env"));
+      expect(stage.length).toBeGreaterThan(0);
+      const work = mkdtempSync(path.join(tmpdir(), "hivra-activity-stage-"));
+      try {
+        const runtimeDirectory = path.join(work, "run", "hivra-lifecycle");
+        const helper = path.join(work, "hivra-start-on-host.sh");
+        const stagedFile = path.join(runtimeDirectory, "1090.activity.env");
+        const localStage = stage
+          .replaceAll("/run/hivra-lifecycle", runtimeDirectory)
+          .replaceAll(START_HELPER, helper);
+        const kickoff = () => spawnSync("bash", [
+          "-c",
+          `set -euo pipefail; umask 077; ${localStage}printf 'FILE=%s\\n' "$HIVRA_ACTIVITY_FILE"`,
+        ], { encoding: "utf8" });
+
+        // A host still on an older bundle: nothing is written and the helper
+        // receives an empty path, so the start proceeds exactly as before.
+        writeFileSync(helper, "#!/usr/bin/env bash\necho legacy start helper\n");
+        const legacy = kickoff();
+        expect({ status: legacy.status, stdout: legacy.stdout }).toEqual({ status: 0, stdout: "FILE=\n" });
+        expect(() => statSync(stagedFile)).toThrow();
+
+        writeFileSync(helper, readFileSync(HELPER_SOURCE, "utf8"));
+        const current = kickoff();
+        expect({ status: current.status, stdout: current.stdout }).toEqual({
+          status: 0,
+          stdout: `HIVRA_ACTIVITY_CREDENTIAL_STAGED\nFILE=${stagedFile}\n`,
+        });
+        expect(statSync(stagedFile).mode & 0o777).toBe(0o600);
+
+        // The start helper's own reader (GNU stat stubbed for portability)
+        // decodes and accepts exactly the credential the control plane minted.
+        const reader = readFileSync(HELPER_SOURCE, "utf8").match(/^read_activity_credential\(\) \{[\s\S]*?\n\}\n/m)?.[0];
+        expect(reader).toBeDefined();
+        const read = spawnSync("bash", [
+          "-c",
+          `set -euo pipefail
+stat() { if [ "$2" = "%s" ]; then wc -c < "$3" | tr -d " "; else echo 600:root:root; fi; }
+${reader}
+read_activity_credential "$1"`,
+          "reader",
+          stagedFile,
+        ], { encoding: "utf8" });
+        expect(read.status).toBe(0);
+        expect(JSON.parse(read.stdout)).toEqual(stagedCredential(script));
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    });
+
+    it.each(["openclaw", "aeon", "agent-zero", "deepseek-harness", "linux-desktop"])(
+      "neither issues nor stages a credential for unsupported type %s",
+      async (type) => {
+        mockAgent = { ...mockAgent, type };
+        const response = await POST(lifecycleRequest({ action: "start" }), routeParams());
+        expect(response.status).toBe(200);
+        const script = lastHostScript();
+        expect(script).toContain(`bash '${START_HELPER}' 1090 90`);
+        expect(script).not.toContain("HIVRA_ACTIVITY");
+        expect(script).not.toContain("/run/hivra-lifecycle");
+        expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not issue a credential for a Claude Code computer outside Proxmox", async () => {
+      mockAgent = { ...mockAgent, computer_substrate: "provider-vm", deployment_mode: "self-managed", vmid: null };
+      const response = await POST(lifecycleRequest({ action: "start" }), routeParams());
+      expect(response.status).toBe(202);
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["signing secret", () => { delete process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET; }],
+      ["public https origin", () => { process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000"; }],
+    ])("still starts without a %s and leaves coverage to show missing", async (_missing, unset) => {
+      unset();
+      const response = await POST(lifecycleRequest({ action: "start" }), routeParams());
+      expect(response.status).toBe(200);
+      const script = lastHostScript();
+      expect(script).toContain(`bash '${START_HELPER}' 1090 90`);
+      expect(script).not.toContain("HIVRA_ACTIVITY");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("continue_hivra_agent_operation", expect.anything());
+    });
+
+    it("records issuance only after the host confirms the credential file was staged", async () => {
+      mockRunProxmoxHostScript.mockImplementation(async () => ({ ok: true, stdout: "kicked\n", stderr: "" }));
+      expect((await POST(lifecycleRequest({ action: "start" }), routeParams())).status).toBe(200);
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+
+      mockRunProxmoxHostScript.mockImplementation(async () => ({
+        ok: false, stdout: "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n", stderr: "", error: "Proxmox SSH operation timed out",
+      }));
+      expect((await POST(lifecycleRequest({ action: "start" }), routeParams())).status).toBe(502);
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+    });
+
+    it("keeps the start successful when the issuance record cannot be written", async () => {
+      mockCollectorUpsert.mockResolvedValue({ error: { message: "collector table unavailable" } });
+      const response = await POST(lifecycleRequest({ action: "start" }), routeParams());
+      expect(response.status).toBe(200);
+      expect(mockCollectorUpsert).toHaveBeenCalledTimes(1);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("continue_hivra_agent_operation", expect.anything());
+    });
   });
 });

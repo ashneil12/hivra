@@ -520,6 +520,17 @@ describe("portable provisioner source contract", () => {
     expect(provision).not.toMatch(/sudo env[^\n]*HIVRA_MODEL_KEY/);
     expect(provision).not.toMatch(/HIVRA_TUNNEL_TOKEN_B64=[^\n]*bash -s/);
     expect(provision).toContain("guest_launch_document |");
+    // The agent-run reporter credential is optional in the handoff, never
+    // inherited by host children, and reaches the guest only inside the
+    // strictly validated stdin document.
+    expect(provision).not.toMatch(/HIVRA_ACTIVITY_TELEMETRY[^\n]*bash -s/);
+    expect(provision).toContain('HIVRA_ACTIVITY_TELEMETRY="$(read_optional_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"');
+    expect(provision).toContain("export -n HIVRA_ACTIVITY_TELEMETRY");
+    expect(provision).toContain('"$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}"');
+    expect(provision).toContain('set(value) != {"endpoint", "resourceId", "token", "expiresAt"}');
+    expect(provision).toContain('r"(?::[0-9]{1,5})?/api/activity/ingest"');
+    expect(provision).toContain('r"hvra_otlp_v1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"');
+    expect(provision).toContain('if values[0] not in ("claude", "codex"):');
     expect(provision).toContain("GUEST_PROVISIONER=/tmp/hivra-provisioner");
     expect(provision).toContain('if [ "$AGENT_KIND" = "deepseek-harness" ]; then');
     expect(provision).toContain("GUEST_PROVISIONER=/opt/hivra/provider-bundle");

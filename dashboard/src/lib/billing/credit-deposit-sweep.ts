@@ -59,6 +59,7 @@ import {
 } from "./bankr-withdraw";
 import { ensureWalletHasGas } from "./treasury-gas";
 import { USDC_BASE_TOKEN_ADDRESS, CRYPTO_TOPUP_ASSETS } from "./crypto-topups";
+import { getLogsInBlockChunks } from "./base-rpc-logs";
 
 const USDC_DECIMALS = CRYPTO_TOPUP_ASSETS.usdc_base.tokenDecimals;
 const ERC20_BALANCE_OF_SELECTOR = "70a08231";
@@ -276,16 +277,15 @@ function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
       fromBlock: number;
       toBlock: number;
     }): Promise<RpcLog[]> {
-      const result = await call("eth_getLogs", [
-        {
+      return getLogsInBlockChunks<RpcLog>({
+        call: <T>(method: string, args: unknown[]) => call(method, args) as Promise<T>,
+        filter: {
           address: USDC_BASE_TOKEN_ADDRESS,
-          fromBlock: `0x${params.fromBlock.toString(16)}`,
-          toBlock: `0x${params.toBlock.toString(16)}`,
           topics: [ERC20_TRANSFER_TOPIC, addressTopic(params.from), addressTopic(params.to)],
         },
-      ]);
-      if (!Array.isArray(result)) throw new Error("Invalid eth_getLogs result from Base RPC");
-      return result as RpcLog[];
+        fromBlock: params.fromBlock,
+        toBlock: params.toBlock,
+      });
     },
   };
 }

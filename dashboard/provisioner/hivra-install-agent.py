@@ -8,6 +8,7 @@ installer. A provider VM requires exactly one pre-journaled access binding:
 either the hosted named-tunnel credential or a standalone direct hostname.
 """
 import ctypes
+import datetime
 import fcntl
 import importlib.util
 import json
@@ -24,6 +25,18 @@ KINDS = {"claude", "codex", "aeon", "openclaw", "agent-zero"}
 FIELDS = {"version", "agentKind", "computerSubstrate", "wantBrowser", "modelKey",
           "modelBaseUrl", "model", "tunnelToken", "accessHostname"}
 LINUX_DESKTOP_FIELDS = FIELDS | {"publicOrigin", "computerId", "controlOrigin"}
+# v4 is v1 plus the agent-run reporter credential, for the two runtimes whose
+# transcripts it reads. Contract:
+# docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md
+ACTIVITY_TELEMETRY_KINDS = {"claude", "codex"}
+ACTIVITY_TELEMETRY_FIELDS = {"endpoint", "resourceId", "token", "expiresAt"}
+_ORIGIN_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+ACTIVITY_ENDPOINT = re.compile(r"https://(?:" + _ORIGIN_LABEL + r"\.)*" + _ORIGIN_LABEL
+                               + r"(?::[0-9]{1,5})?/api/activity/ingest")
+ACTIVITY_RESOURCE_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+ACTIVITY_TOKEN = re.compile(r"hvra_otlp_v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+ACTIVITY_EXPIRES_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{3}|\.[0-9]{6})?Z")
+ACTIVITY_REPORTER_TIMEOUT_SECONDS = 120
 MAX_INPUT_BYTES = 32768
 TOKEN_FILE = Path("/etc/hivra-cf-token.env")
 UNIT_FILE = Path("/etc/systemd/system/hivra-cf-tunnel.service")
@@ -85,12 +98,18 @@ def parse_launch(raw, *, provider_desktop=False):
         version = value.get("version")
         if type(provider_desktop) is not bool or (provider_desktop and (version != 3 or value.get("computerSubstrate") != "provider-vm")):
             raise ValueError()
-        expected_fields = FIELDS if version == 1 else FIELDS | {"publicOrigin"} if version == 2 else LINUX_DESKTOP_FIELDS
-        if type(version) is not int or version not in (1, 2, 3) or set(value) != expected_fields:
+        expected_fields = (FIELDS if version == 1 else FIELDS | {"publicOrigin"} if version == 2
+                           else LINUX_DESKTOP_FIELDS if version == 3 else FIELDS | {"activityTelemetry"})
+        if type(version) is not int or version not in (1, 2, 3, 4) or set(value) != expected_fields:
             raise ValueError()
         if ((version == 1 and value["agentKind"] not in KINDS)
                 or (version == 2 and value["agentKind"] != "deepseek-harness")
-                or (version == 3 and value["agentKind"] != "linux-desktop")):
+                or (version == 3 and value["agentKind"] != "linux-desktop")
+                or (version == 4 and value["agentKind"] not in ACTIVITY_TELEMETRY_KINDS)):
+            raise ValueError()
+        # Agent-run reporting is verified only on Proxmox computers.
+        if version == 4 and (value["computerSubstrate"] != "proxmox-kvm"
+                             or not valid_activity_telemetry(value["activityTelemetry"])):
             raise ValueError()
         if value["computerSubstrate"] not in {"proxmox-kvm", "provider-vm"}:
             raise ValueError()
@@ -141,6 +160,25 @@ def parse_launch(raw, *, provider_desktop=False):
     except (ValueError, TypeError, UnicodeError, RecursionError, InstallError):
         # Never propagate parser exceptions containing input credentials.
         raise InstallError("invalid guest launch document") from None
+
+
+def valid_activity_telemetry(value):
+    if (not isinstance(value, dict) or set(value) != ACTIVITY_TELEMETRY_FIELDS
+            or not all(isinstance(item, str) for item in value.values())):
+        return False
+    if len(value["endpoint"]) > 300 or not ACTIVITY_ENDPOINT.fullmatch(value["endpoint"]):
+        return False
+    if not ACTIVITY_RESOURCE_ID.fullmatch(value["resourceId"]):
+        return False
+    if len(value["token"].encode("utf-8")) > 4096 or not ACTIVITY_TOKEN.fullmatch(value["token"]):
+        return False
+    if not ACTIVITY_EXPIRES_AT.fullmatch(value["expiresAt"]):
+        return False
+    try:
+        datetime.datetime.fromisoformat(value["expiresAt"][:-1])
+    except ValueError:
+        return False
+    return True
 
 
 def canonical_origin(value):
@@ -391,7 +429,84 @@ def install_agent(launch, source, *, provider_desktop=None):
             raise
     else:
         bootstrap()
+        if launch.get("version") == 4:
+            # After bootstrap (bux and its home exist) and before access. The
+            # reporter is optional: a failure is reported, never fatal.
+            install_activity_reporter(launch, source)
         configure_access(launch, source)
+
+
+def install_activity_reporter(launch, source):
+    """Install the agent-run reporter; fail-open, with exactly one marker line.
+
+    A credential that was not validated is still refused (the launch document
+    parser already rejected malformed ones). Any failure to install or start
+    the reporter only changes the marker: the computer continues to access
+    setup and Activity shows its coverage as missing.
+    """
+    # Re-check here too: this function must never forward an unvalidated or
+    # unsupported credential, whatever composed the launch document.
+    telemetry = launch.get("activityTelemetry")
+    if launch.get("agentKind") not in ACTIVITY_TELEMETRY_KINDS or not valid_activity_telemetry(telemetry):
+        raise InstallError("invalid agent-run reporter credential")
+    # The reporter's own idempotent installer owns the script, unit and 0600
+    # credential file. The credential travels only on its stdin: never argv,
+    # the environment, or the runtime bootstrap environment.
+    credential = json.dumps({key: telemetry[key] for key in ("endpoint", "resourceId", "token", "expiresAt")},
+                            separators=(",", ":")).encode("utf-8")
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/python3", "-I", "-B", str(source / "hivra-agent-trace.py"), "install",
+             "--source-dir", str(source)],
+            input=credential, check=True, timeout=ACTIVITY_REPORTER_TIMEOUT_SECONDS,
+            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"},
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except subprocess.TimeoutExpired:
+        # Do not print exception text: it can contain command/output data.
+        print("Hivra agent-run reporter installation exceeded its bounded deadline.", file=sys.stderr)
+        report_activity_collector("failed", "timeout")
+        return
+    except subprocess.CalledProcessError as error:
+        relay_reporter_status(error.stderr, telemetry["token"])
+        report_activity_collector("failed", "install_failed")
+        return
+    except Exception:
+        # Fail-open for anything else too (a missing interpreter, an OS
+        # error): the exception text is never printed, only the closed enum.
+        report_activity_collector("failed", "install_failed")
+        return
+    relay_reporter_status(completed.stderr, telemetry["token"])
+    report_activity_collector("installed")
+
+
+def report_activity_collector(status, reason=None):
+    # The one line the control plane records as this computer's reporter
+    # install status: the host appends this stream to the provisioning log
+    # the dashboard poll reads. A closed enum, never a message. One write of
+    # the whole line with a leading newline, so it stays a line of its own even
+    # when bootstrap output on the other stream ended without one.
+    if status == "installed" and reason is None:
+        line = "HIVRA_ACTIVITY_COLLECTOR status=installed"
+    elif status == "failed" and isinstance(reason, str) and re.fullmatch(r"[a-z_]{1,40}", reason):
+        line = "HIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason
+    else:
+        raise InstallError("invalid agent-run reporter status")
+    sys.stderr.write("\n" + line + "\n")
+    sys.stderr.flush()
+
+
+def relay_reporter_status(output, token):
+    # The reporter prints one status line and never the credential. Relay only
+    # a short plain line into the private provisioning log, and drop anything
+    # that could carry credential material.
+    if not isinstance(output, bytes):
+        return
+    lines = output[-4096:].decode("ascii", "replace").strip().splitlines()
+    line = lines[-1].strip() if lines else ""
+    if (not line or len(line) > 200 or token in line or "hvra_otlp_v1" in line
+            or not re.fullmatch(r"[A-Za-z0-9 .,:;_()/=+-]+", line)):
+        return
+    print("Hivra agent-run reporter: " + line, file=sys.stderr)
 
 
 def configure_access(launch, source):

@@ -1,0 +1,52 @@
+[Unit]
+Description=Hivra agent-run reporter (structural Codex and Claude Code transcript events)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I -B /opt/hivra/agent-trace/hivra-agent-trace.py run
+Restart=always
+RestartSec=10
+# root only so it can read bux's 0600 transcripts. CAP_DAC_READ_SEARCH bypasses
+# read and directory-search permission checks and nothing else: no write
+# override, no ownership changes, no network or process privileges.
+User=root
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+NoNewPrivileges=true
+# The only writable path: credential.json, state.json and parsing.json (0600).
+StateDirectory=hivra-agent-trace
+StateDirectoryMode=0700
+UMask=0077
+ProtectSystem=strict
+# Transcripts are read, never written. ~/.codex or ~/.claude may be absent.
+ProtectHome=read-only
+ReadOnlyPaths=-/home/bux/.codex -/home/bux/.claude
+PrivateTmp=true
+PrivateDevices=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Parse cost is bounded per line (<= 4 MiB and <= 100k containers); the
+# costliest admitted line measured peaks near 131 MB resident on Python 3.10
+# (141 MB on 3.9), so this ceiling holds it with ~3.6x margin. A line that
+# still stops the process is skipped on the next start (parsing.json).
+MemoryMax=512M
+CPUQuota=25%
+TasksMax=16
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
