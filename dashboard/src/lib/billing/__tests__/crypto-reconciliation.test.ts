@@ -274,7 +274,7 @@ describe("crypto top-up reconciliation", () => {
     expect(getLogsFilter).toEqual({
       address: USDC_BASE_TOKEN_ADDRESS,
       fromBlock: "0x60",
-      toBlock: "latest",
+      toBlock: "0x69",
       topics: [
         ERC20_TRANSFER_TOPIC,
         null,

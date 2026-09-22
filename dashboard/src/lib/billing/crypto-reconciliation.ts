@@ -6,6 +6,14 @@ import {
   USDC_BASE_TOKEN_ADDRESS,
   settleCryptoTopUpIntent,
 } from "@/lib/billing/crypto-topups";
+import { getLogsInBlockChunks, type BaseRpcCall } from "@/lib/billing/base-rpc-logs";
+import {
+  normalizeRpcRetryConfig,
+  RpcHttpError,
+  withRpcRetry,
+  type RpcCallOptions,
+  type RpcRetryConfig,
+} from "@/lib/billing/base-rpc-retry";
 
 type QueryError = { code?: string; message?: string } | null;
 
@@ -122,11 +130,6 @@ function normalizeMinConfirmations(confirmations: number | undefined) {
   return Math.max(1, Math.min(100, Math.floor(confirmations ?? DEFAULT_MIN_CONFIRMATIONS)));
 }
 
-
-function rpcQuantity(value: number) {
-  return `0x${value.toString(16)}`;
-}
-
 function parseRpcQuantity(value: unknown, label: string) {
   if (typeof value !== "string" || !/^0x[a-fA-F0-9]+$/.test(value)) {
     throw new Error(`Invalid ${label} RPC quantity`);
@@ -148,7 +151,7 @@ function decodeUint256LogData(data: unknown) {
   return BigInt(data);
 }
 
-async function rpcCall<T>(
+async function rpcCallOnce<T>(
   rpcUrl: string,
   method: string,
   params: unknown[],
@@ -166,7 +169,9 @@ async function rpcCall<T>(
   });
 
   if (!response.ok) {
-    throw new Error(`Base RPC request failed with status ${response.status}`);
+    // Typed so the shared retry layer retries 429/5xx and fails fast on the
+    // rest (e.g. the public endpoint's 413 for an over-wide log range).
+    throw new RpcHttpError(response.status);
   }
 
   const payload = (await response.json()) as JsonRpcResponse;
@@ -177,53 +182,52 @@ async function rpcCall<T>(
   return payload.result as T;
 }
 
+function createRpcCall(params: {
+  rpcUrl: string;
+  fetchImpl: JsonRpcFetch;
+  rpcOptions?: RpcCallOptions;
+}): BaseRpcCall {
+  return <T>(method: string, args: unknown[]) =>
+    withRpcRetry<T>(
+      () => rpcCallOnce<T>(params.rpcUrl, method, args, params.fetchImpl),
+      params.rpcOptions
+    );
+}
+
 export function encodeErc20TransferToTopic(walletAddress: string) {
   const normalized = normalizeEvmAddress(walletAddress);
   return `0x${normalized.slice(2).padStart(64, "0")}`;
 }
 
-async function getLatestBaseBlockNumber(params: {
-  rpcUrl: string;
-  fetchImpl: JsonRpcFetch;
-}) {
-  const latestBlockHex = await rpcCall<string>(
-    params.rpcUrl,
-    "eth_blockNumber",
-    [],
-    params.fetchImpl
-  );
+async function getLatestBaseBlockNumber(call: BaseRpcCall) {
+  const latestBlockHex = await call<string>("eth_blockNumber", []);
   return parseRpcQuantity(latestBlockHex, "block number");
 }
 
 async function fetchUsdcTransfersToAddress(params: {
   depositAddress: string;
-  rpcUrl: string;
-  fetchImpl: JsonRpcFetch;
+  call: BaseRpcCall;
   lookbackBlocks: number;
 }) {
-  const latestBlock = await getLatestBaseBlockNumber(params);
+  const latestBlock = await getLatestBaseBlockNumber(params.call);
   const fromBlock = Math.max(0, latestBlock - params.lookbackBlocks + 1);
-  const logs = await rpcCall<EvmLog[]>(
-    params.rpcUrl,
-    "eth_getLogs",
-    [
-      {
-        address: USDC_BASE_TOKEN_ADDRESS,
-        fromBlock: rpcQuantity(fromBlock),
-        toBlock: "latest",
-        topics: [
-          ERC20_TRANSFER_TOPIC,
-          null,
-          encodeErc20TransferToTopic(params.depositAddress),
-        ],
-      },
-    ],
-    params.fetchImpl
-  );
+  const logs = await getLogsInBlockChunks<EvmLog>({
+    call: params.call,
+    filter: {
+      address: USDC_BASE_TOKEN_ADDRESS,
+      topics: [
+        ERC20_TRANSFER_TOPIC,
+        null,
+        encodeErc20TransferToTopic(params.depositAddress),
+      ],
+    },
+    fromBlock,
+    toBlock: latestBlock,
+  });
 
   return {
     latestBlock,
-    logs: Array.isArray(logs) ? logs : [],
+    logs,
   };
 }
 
@@ -446,6 +450,7 @@ async function reconcileCryptoTopUpIntent(params: {
   minConfirmations?: number;
   settleIntent?: SettleCryptoTopUp;
   now?: Date;
+  rpcOptions?: RpcCallOptions;
 }) {
   const admin = requireDb(params.db ?? supabaseAdmin);
   const parsedPayment = parsePendingPayment(params.payment);
@@ -464,8 +469,7 @@ async function reconcileCryptoTopUpIntent(params: {
   const now = params.now ?? new Date();
   const scan = await fetchUsdcTransfersToAddress({
     depositAddress: parsedPayment.depositAddress,
-    rpcUrl,
-    fetchImpl,
+    call: createRpcCall({ rpcUrl, fetchImpl, rpcOptions: params.rpcOptions }),
     lookbackBlocks,
   });
   const matches = findMatchingTransfer({
@@ -550,10 +554,20 @@ export async function reconcilePendingCryptoTopUps(params: {
   minConfirmations?: number;
   settleIntent?: SettleCryptoTopUp;
   now?: Date;
+  // Retry knobs for 429/5xx from Base RPC (optional; exposed mainly so tests
+  // can inject a fake sleep/random and tighten the retry budget).
+  rpcRetryConfig?: Partial<RpcRetryConfig>;
+  rpcSleepImpl?: (ms: number) => Promise<void>;
+  rpcRandom?: () => number;
 } = {}) {
   const admin = requireDb(params.db ?? supabaseAdmin);
   const limit = normalizeLimit(params.limit);
   const payments = await listPendingCryptoTopUps({ db: admin, limit });
+  const rpcOptions: RpcCallOptions = {
+    retryConfig: normalizeRpcRetryConfig(params.rpcRetryConfig),
+    sleepImpl: params.rpcSleepImpl,
+    random: params.rpcRandom,
+  };
   const results: Array<
     | Awaited<ReturnType<typeof reconcileCryptoTopUpIntent>>
     | { status: "failed"; referenceId: string; errorName: string }
@@ -576,6 +590,7 @@ export async function reconcilePendingCryptoTopUps(params: {
         minConfirmations: params.minConfirmations,
         settleIntent: params.settleIntent,
         now: params.now,
+        rpcOptions,
       });
       results.push(result);
 

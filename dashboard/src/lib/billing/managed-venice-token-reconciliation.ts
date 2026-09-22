@@ -25,6 +25,7 @@ import {
   type RpcCallOptions,
   type RpcRetryConfig,
 } from "@/lib/billing/base-rpc-retry";
+import { getLogsInBlockChunks } from "@/lib/billing/base-rpc-logs";
 
 // Re-exported so existing importers/tests of this module keep their entry
 // points. The implementations now live in the shared base-rpc-retry module so
@@ -93,10 +94,6 @@ type SettleManagedVeniceQuote = typeof settleManagedVeniceTokenQuote;
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
 const DEFAULT_LOOKBACK_BLOCKS = 20_000;
 const MAX_LOOKBACK_BLOCKS = 100_000;
-// Base's public RPC currently rejects eth_getLogs ranges above 2,000 blocks.
-// Keep the range at the provider limit so manual verification and the cron
-// reconciler both receive logs instead of a deterministic JSON-RPC error.
-const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
 const DEFAULT_MIN_CONFIRMATIONS = 3;
 const DEFAULT_PENDING_QUOTE_RECONCILIATION_LIMIT = 25;
 const MAX_PENDING_QUOTE_RECONCILIATION_LIMIT = 100;
@@ -268,39 +265,21 @@ async function fetchHermesTransfersToAddress(params: {
 }) {
   const latestBlock = await getLatestBaseBlockNumber(params);
   const fromBlock = Math.max(0, latestBlock - params.lookbackBlocks + 1);
-  const logs: EvmLog[] = [];
-  const toTopic = encodeErc20TransferToTopic(params.depositAddress);
-
-  for (
-    let chunkStart = fromBlock;
-    chunkStart <= latestBlock;
-    chunkStart += MAX_BASE_RPC_LOG_RANGE_BLOCKS
-  ) {
-    const chunkEnd = Math.min(
-      latestBlock,
-      chunkStart + MAX_BASE_RPC_LOG_RANGE_BLOCKS - 1
-    );
-    const chunkLogs = await rpcCall<EvmLog[]>(
-      params.rpcUrl,
-      "eth_getLogs",
-      [
-        {
-          address: HERMESOS_TOKEN_ADDRESS,
-          fromBlock: rpcQuantity(chunkStart),
-          toBlock: rpcQuantity(chunkEnd),
-          topics: [
-            ERC20_TRANSFER_TOPIC,
-            null,
-            toTopic,
-          ],
-        },
+  // Chunked at the public endpoint's 2,000-block eth_getLogs limit.
+  const logs = await getLogsInBlockChunks<EvmLog>({
+    call: <T>(method: string, args: unknown[]) =>
+      rpcCall<T>(params.rpcUrl, method, args, params.fetchImpl, params.rpcOptions),
+    filter: {
+      address: HERMESOS_TOKEN_ADDRESS,
+      topics: [
+        ERC20_TRANSFER_TOPIC,
+        null,
+        encodeErc20TransferToTopic(params.depositAddress),
       ],
-      params.fetchImpl,
-      params.rpcOptions
-    );
-
-    if (Array.isArray(chunkLogs)) logs.push(...chunkLogs);
-  }
+    },
+    fromBlock,
+    toBlock: latestBlock,
+  });
 
   return {
     latestBlock,
