@@ -142,7 +142,10 @@ export function settleYearlyTokenPaymentModel(
   const claimedElsewhere =
     tables.yearly_token_quotes.some((row) => lower(row.consumed_tx_hash) === tx) ||
     tables.yearly_token_subscriptions.some((row) => lower(row.deposit_tx_hash) === tx) ||
-    tables.managed_venice_token_quotes.some((row) => lower(row.transaction_hash) === tx) ||
+    // A managed-Venice quote in review does not own the tx it recorded.
+    tables.managed_venice_token_quotes.some(
+      (row) => lower(row.transaction_hash) === tx && row.status !== "manual_review_required"
+    ) ||
     tables.managed_venice_token_lots.some((row) => lower(row.transaction_hash) === tx);
   if (claimedElsewhere) return { data: { status: "transaction_already_claimed" }, error: null };
 
@@ -263,6 +266,7 @@ export function yearlyQuoteRow(overrides: MemoryRow = {}): MemoryRow {
     consumed_balance_raw: null,
     consumed_at: null,
     consumed_tx_hash: null,
+    attribution_closed_at: null,
     source: "dexscreener",
     metadata: {},
     created_at: "2026-09-22T10:00:00.000Z",

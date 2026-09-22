@@ -17,6 +17,12 @@
 --       automatically (under-paid, far over-paid, or late); the transfer is in
 --       yearly_token_reconciliation_items.
 --     * consumed_tx_hash is unique: one transfer pays at most one quote.
+--     * attribution_closed_at — set once the quote's whole attribution range
+--       (quotedAt .. min(expiresAt + late grace, next session)) has been
+--       scanned at full confirmations. Until then the reconciler keeps
+--       watching the range, even after the quote settled or went to review,
+--       so a duplicate payment or a late top-up is always surfaced. Existing
+--       consumed/cancelled quotes are closed by this migration.
 --   yearly_token_subscriptions
 --     * status 'renewed' — superseded by a renewal row that carries the
 --       extended period (one row per paid year, each with its own sweep).
@@ -48,11 +54,21 @@ create unique index if not exists uq_yearly_token_quotes_consumed_tx_hash
   on public.yearly_token_quotes (lower(consumed_tx_hash))
   where consumed_tx_hash is not null;
 
--- Reconciler candidates (quotes whose window or late-payment grace may still
--- hold a payment) and the next-session attribution boundary lookup.
-create index if not exists ix_yearly_token_quotes_open_quoted_at
+alter table public.yearly_token_quotes
+  add column if not exists attribution_closed_at timestamptz;
+
+-- Quotes that predate transfer attribution and are already final: their
+-- ranges belong to the old balance-based flow and are never rescanned.
+update public.yearly_token_quotes
+   set attribution_closed_at = coalesce(consumed_at, updated_at, now())
+ where attribution_closed_at is null
+   and status in ('consumed', 'cancelled');
+
+-- Reconciler candidates (quotes whose attribution range may still hold a
+-- transfer) and the next-session attribution boundary lookup.
+create index if not exists ix_yearly_token_quotes_attribution_open
   on public.yearly_token_quotes (quoted_at desc)
-  where status in ('active', 'expired');
+  where attribution_closed_at is null;
 
 create index if not exists ix_yearly_token_quotes_user_quoted_at
   on public.yearly_token_quotes (user_id, quoted_at);
@@ -105,7 +121,8 @@ create table if not exists public.yearly_token_reconciliation_items (
   status text not null default 'open'
     check (status in ('open', 'resolved', 'ignored')),
   -- underpaid | overpaid | late_payment | unattributed_late_transfer |
-  -- extra_transfer | legacy_subscription_exists
+  -- extra_transfer | payment_after_review | legacy_subscription_exists |
+  -- contested_by_managed_venice_review
   reason text not null check (btrim(reason) <> ''),
   transaction_hash text,
   log_index integer,
@@ -166,7 +183,10 @@ revoke all on public.yearly_token_reconciliation_items from anon, authenticated;
 --      replay, bound to another tx is a conflict, and only 'active' /
 --      'expired' quotes can settle;
 --   2. serialise per (user, tier) and refuse a tx any flow has already bound
---      (another yearly quote or subscription, a managed-Venice quote or lot);
+--      (another yearly quote or subscription, a managed-Venice lot, or a
+--      managed-Venice quote that claimed or settled it). A managed-Venice
+--      quote in 'manual_review_required' does NOT own its transaction_hash:
+--      the pre-attribution Venice flow wrote REJECTED transfers there;
 --   3. no live subscription for the tier -> a new 365-day row. A live
 --      ('active' / 'grace') one -> it becomes 'renewed' and a new row runs
 --      365 days from max(its expires_at, now);
@@ -243,7 +263,11 @@ begin
 
   if exists (select 1 from public.yearly_token_quotes where lower(consumed_tx_hash) = v_tx)
      or exists (select 1 from public.yearly_token_subscriptions where lower(deposit_tx_hash) = v_tx)
-     or exists (select 1 from public.managed_venice_token_quotes where lower(transaction_hash) = v_tx)
+     or exists (
+       select 1 from public.managed_venice_token_quotes
+        where lower(transaction_hash) = v_tx
+          and status <> 'manual_review_required'
+     )
      or exists (select 1 from public.managed_venice_token_lots where lower(transaction_hash) = v_tx) then
     return jsonb_build_object('status', 'transaction_already_claimed');
   end if;

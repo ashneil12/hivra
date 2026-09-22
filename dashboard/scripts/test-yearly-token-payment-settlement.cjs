@@ -82,6 +82,7 @@ async function main() {
     // A legacy subscription (pre-attribution) survives and gets its
     // deposit_address backfilled from the metadata the old code recorded.
     const legacyQuote = await quote({ user_id: "user_legacy", status: "consumed" });
+    const legacyExpired = await quote({ user_id: "user_legacy", tier: "power", status: "expired" });
     await db.query(
       `insert into public.yearly_token_subscriptions
          (user_id, tier, yearly_quote_id, expires_at, amount_received_raw, sweep_status, metadata)
@@ -97,6 +98,11 @@ async function main() {
     const [legacy] = await subs("user_legacy");
     assert.equal(legacy.deposit_address, "0x78f4ff3c8d68afdb11d09c4201e800c55432bb05");
     assert.equal(legacy.status, "active");
+    // Final legacy quotes are closed for attribution; open ones stay watched.
+    const closedAt = async (id) =>
+      (await one("select attribution_closed_at from public.yearly_token_quotes where id = $1", [id])).attribution_closed_at;
+    assert.ok(await closedAt(legacyQuote), "legacy consumed quote closed");
+    assert.equal(await closedAt(legacyExpired), null);
 
     // New statuses are accepted; unknown ones still rejected.
     await rejectsWith("23514", () =>
@@ -133,6 +139,9 @@ async function main() {
       { status: "consumed", tx: tx(1), amount: "1000" }
     );
     assert.equal(q1Row.metadata.consumedLogIndex, 3);
+    // Settling does not close attribution: the range is still watched for
+    // duplicate or late transfers until it has been fully scanned.
+    assert.equal(await closedAt(q1), null);
 
     // Idempotent replay; a different tx on a settled quote is a conflict.
     const replay = await settle(q1, tx(1));
@@ -164,6 +173,18 @@ async function main() {
       [account, tx(0x78)]
     );
     assert.equal((await settle(qPower, tx(0x78))).status, "transaction_already_claimed");
+    // A managed-Venice quote in review does not own the tx it recorded (the
+    // pre-attribution Venice flow wrote REJECTED transfers there).
+    await db.query(
+      `insert into public.managed_venice_token_quotes
+         (account_id, user_id, token_amount_raw, snapshot_price_usd, locked_value_micro_usd,
+          deposit_address, quoted_at, expires_at, status, source, transaction_hash)
+       values ($1, 'user_1', 1000, '0.05', 50000000, '0xba5e', now() - interval '3 hours',
+               now() - interval '160 minutes', 'manual_review_required', 'dexscreener', $2)`,
+      [account, tx(0x79)]
+    );
+    const qContested = await quote({ user_id: "user_contested" });
+    assert.equal((await settle(qContested, tx(0x79))).status, "activated");
     const qPowerRow = await one("select status, consumed_tx_hash from public.yearly_token_quotes where id = $1", [qPower]);
     assert.deepEqual(qPowerRow, { status: "active", consumed_tx_hash: null });
 
