@@ -39,6 +39,7 @@ import {
   type RpcCallOptions,
   type RpcRetryConfig,
 } from "@/lib/billing/base-rpc-retry";
+import { getLogsInBlockChunks } from "@/lib/billing/base-rpc-logs";
 
 // Re-exported so existing importers/tests of this module keep their entry
 // points. The implementations now live in the shared base-rpc-retry module so
@@ -109,9 +110,6 @@ interface EvmBlock {
 type SettleManagedVeniceQuote = typeof settleManagedVeniceTokenQuote;
 
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
-// Base's public RPC rejects eth_getLogs ranges above 2,000 blocks (HTTP 413,
-// JSON-RPC -32614). Keep every chunk at the provider limit.
-const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
 const DEFAULT_MIN_CONFIRMATIONS = 3;
 // Open (active|expired) quotes per batch. The cron route passes 50 (its own
 // default); this default only serves callers that pass no limit.
@@ -509,19 +507,14 @@ async function scanQuoteTransfers(params: {
   }
 
   const toTopic = encodeErc20TransferToTopic(params.quote.depositAddress);
-  const logs: EvmLog[] = [];
-  for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += MAX_BASE_RPC_LOG_RANGE_BLOCKS) {
-    const chunkEnd = Math.min(toBlock, chunkStart + MAX_BASE_RPC_LOG_RANGE_BLOCKS - 1);
-    const chunkLogs = await chain.call<EvmLog[]>("eth_getLogs", [
-      {
-        address: HERMESOS_TOKEN_ADDRESS,
-        fromBlock: rpcQuantity(chunkStart),
-        toBlock: rpcQuantity(chunkEnd),
-        topics: [ERC20_TRANSFER_TOPIC, null, toTopic],
-      },
-    ]);
-    if (Array.isArray(chunkLogs)) logs.push(...chunkLogs);
-  }
+  // Chunked at the public endpoint's 2,000-block eth_getLogs limit (Base's
+  // public RPC answers a wider range with HTTP 413 / JSON-RPC -32614).
+  const logs = await getLogsInBlockChunks<EvmLog>({
+    call: chain.call,
+    filter: { address: HERMESOS_TOKEN_ADDRESS, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
+    fromBlock,
+    toBlock,
+  });
 
   const parsed = new Map<
     string,

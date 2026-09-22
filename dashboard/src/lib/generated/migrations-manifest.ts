@@ -341,5 +341,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260918120000", name: "hivra_activity_read_path_indexes" },
   { version: "20260922172439", name: "enable_rls_remaining_public_tables" },
   { version: "20260922180543", name: "crypto_topup_reconciliation_items" },
+  { version: "20260922185029", name: "credit_deposit_sweep_state" },
   { version: "20260922190000", name: "managed_venice_token_transfer_dedupe" },
 ];

@@ -173,6 +173,20 @@ interface SubmitTransferParams {
   fetchImpl?: JsonRpcFetch;
 }
 
+/**
+ * Bankr answered /wallet/transfer with a non-2xx status. Carries the status so
+ * a caller can tell a refused request from one whose outcome is unknown.
+ */
+export class BankrTransferHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, detail: string) {
+    super(`Bankr transfer failed status=${status} body=${detail.slice(0, 200)}`);
+    this.name = "BankrTransferHttpError";
+    this.status = status;
+  }
+}
+
 export async function submitBankrTransfer(params: SubmitTransferParams): Promise<string | null> {
   const config = getBankrPartnerConfig(params.env);
   const fetchImpl = params.fetchImpl || (fetch as unknown as JsonRpcFetch);
@@ -194,7 +208,7 @@ export async function submitBankrTransfer(params: SubmitTransferParams): Promise
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`Bankr transfer failed status=${response.status} body=${detail.slice(0, 200)}`);
+    throw new BankrTransferHttpError(response.status, detail);
   }
 
   const payload = (await response.json().catch(() => ({}))) as {
