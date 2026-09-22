@@ -9,4 +9,5 @@ it("applies the managed Venice transfer-dedupe migration (twice) on the real sch
     { encoding: "utf8", timeout: 45_000 }
   );
   expect(output).toContain("PASS managed Venice token transfer dedupe");
+  expect(output).toContain("transfer_surfacing_pending flag + index");
 }, 50_000);
