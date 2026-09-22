@@ -163,23 +163,39 @@ function isDefiniteTransferRejection(error: unknown) {
   return status >= 400 && status < 500 && status !== 408;
 }
 
+/**
+ * The state a transition requires. `attemptedAt` identifies a claim: every
+ * write after a claim is conditioned on the claim's own sweep_attempted_at,
+ * so a sweeper whose claim was recovered as stale can never overwrite the
+ * claim that replaced it.
+ */
+interface SweepGuard {
+  from: "pending" | "failed" | "sweeping";
+  attemptedAt?: string | null;
+  submittedIsNull?: boolean;
+}
+
 async function transition(
   db: SupabaseLike,
   subscriptionId: string,
-  from: string,
+  guard: SweepGuard,
   patch: Record<string, unknown>
 ) {
-  const { data, error } = await table(db, "yearly_token_subscriptions")
+  let query = table(db, "yearly_token_subscriptions")
     .update(patch)
     .eq("id", subscriptionId)
-    .eq("sweep_status", from)
-    .select("id");
+    .eq("sweep_status", guard.from);
+  if (guard.attemptedAt !== undefined) {
+    query = guard.attemptedAt === null ? query.is("sweep_attempted_at", null) : query.eq("sweep_attempted_at", guard.attemptedAt);
+  }
+  if (guard.submittedIsNull) query = query.is("sweep_submitted_at", null);
+  const { data, error } = await query.select("id");
   if (error) throw new Error(`Failed to update yearly sweep ${subscriptionId}: ${error.message || "unknown error"}`);
   return Array.isArray(data) && data.length > 0;
 }
 
-async function releaseAsFailed(db: SupabaseLike, subscriptionId: string, message: string, now: Date) {
-  await transition(db, subscriptionId, "sweeping", {
+async function releaseAsFailed(db: SupabaseLike, subscriptionId: string, message: string, now: Date, guard: SweepGuard) {
+  await transition(db, subscriptionId, guard, {
     sweep_status: "failed",
     sweep_error: message,
     sweep_submitted_at: null,
@@ -193,9 +209,9 @@ async function parkForOperator(
   row: { id: string; user_id: string },
   reason: string,
   now: Date,
-  from = "sweeping"
+  guard: SweepGuard
 ) {
-  const parked = await transition(db, row.id, from, {
+  const parked = await transition(db, row.id, guard, {
     sweep_status: "needs_operator",
     sweep_error: reason,
     updated_at: now.toISOString(),
@@ -229,27 +245,30 @@ export async function sweepYearlyTokenSubscription(
   const env = options.env ?? process.env;
   const base = { subscriptionId: subscription.id, userId: subscription.user_id };
 
-  // Claim (CAS). Only 'pending' or 'failed' rows can be claimed, by one caller.
+  // Claim (CAS). Only 'pending' or 'failed' rows with no submitted transfer
+  // can be claimed, by one caller; sweep_attempted_at is the claim's token.
+  const claimedAt = now.toISOString();
   const { data: claimed, error: claimError } = await table(db, "yearly_token_subscriptions")
     .update({
       sweep_status: "sweeping",
-      sweep_attempted_at: now.toISOString(),
-      sweep_submitted_at: null,
+      sweep_attempted_at: claimedAt,
       sweep_error: null,
-      updated_at: now.toISOString(),
+      updated_at: claimedAt,
     })
     .eq("id", subscription.id)
     .in("sweep_status", ["pending", "failed"])
+    .is("sweep_submitted_at", null)
     .select(SWEEP_ROW_COLUMNS)
     .maybeSingle();
   if (claimError) throw new Error(`Failed to claim yearly sweep ${subscription.id}: ${claimError.message || "unknown error"}`);
   if (!claimed) return { ...base, outcome: "claimed_elsewhere" };
   const row = claimed as ClaimedRow;
+  const claim: SweepGuard = { from: "sweeping", attemptedAt: claimedAt };
 
   const treasury = getTreasuryAddress(env);
   if (!treasury) {
     const message = "HERMES_TREASURY_ADDRESS missing or invalid";
-    await releaseAsFailed(db, row.id, message, now);
+    await releaseAsFailed(db, row.id, message, now, claim);
     return { ...base, outcome: "no_treasury_configured", error: message };
   }
 
@@ -259,21 +278,21 @@ export async function sweepYearlyTokenSubscription(
     // Pre-attribution rows recorded the wallet's whole balance, not a transfer:
     // sweeping that amount could take another flow's tokens.
     const reason = "no attributed deposit transfer recorded for this subscription";
-    await parkForOperator(db, row, reason, now);
+    await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }
 
   const credential = await getBankrDepositWalletCredentialForAddress({ address: depositAddress, db });
   if (!credential?.bankrWalletId) {
     const reason = `no Bankr credential for deposit wallet ${depositAddress}`;
-    await parkForOperator(db, row, reason, now);
+    await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }
   // Address lookups are purpose-agnostic; a hermesos_lock wallet holds the
   // user's own tier-eligibility tokens and must never be swept.
   if (credential.purpose === "hermesos_lock") {
     const reason = "refused to sweep a hermesos_lock wallet";
-    await parkForOperator(db, row, reason, now);
+    await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }
   const walletAddress = credential.evmAddress;
@@ -285,14 +304,14 @@ export async function sweepYearlyTokenSubscription(
     liveBalanceRaw = BigInt(normalizeNumericToBigIntString(String(liveBalance.balanceRaw)));
   } catch (error) {
     const message = `balance read failed: ${safeErrorMessage(error)}`;
-    await releaseAsFailed(db, row.id, message, now);
+    await releaseAsFailed(db, row.id, message, now, claim);
     return { ...base, outcome: "transfer_failed", error: message };
   }
   if (liveBalanceRaw < amountRaw) {
     // The subscription's tokens are no longer all there (moved by hand, or
     // another sweep took them). Retrying cannot fix that.
     const reason = `live balance ${liveBalanceRaw.toString()} < subscription amount ${amountRaw.toString()}`;
-    await parkForOperator(db, row, reason, now);
+    await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }
 
@@ -303,12 +322,12 @@ export async function sweepYearlyTokenSubscription(
     // transfer; only a drained treasury hot wallet is a hard failure.
     if (gas.status === "treasury_drained") {
       const message = `gas top-up ${gas.status}: ${gas.reason || "treasury hot wallet drained"}`;
-      await releaseAsFailed(db, row.id, message, now);
+      await releaseAsFailed(db, row.id, message, now, claim);
       return { ...base, outcome: "gas_topup_failed", error: message };
     }
   } catch (error) {
     const message = `gas top-up failed: ${safeErrorMessage(error)}`;
-    await releaseAsFailed(db, row.id, message, now);
+    await releaseAsFailed(db, row.id, message, now, claim);
     return { ...base, outcome: "gas_topup_failed", error: message };
   }
 
@@ -324,13 +343,13 @@ export async function sweepYearlyTokenSubscription(
     const reason = getBankrPartnerConfig(env).partnerKey
       ? "Bankr API key mint returned null (likely per-wallet 20-key cap — revoke stale keys on Bankr)"
       : "Bankr partner key not configured (BANKR_PARTNER_KEY env var missing)";
-    await releaseAsFailed(db, row.id, reason, now);
+    await releaseAsFailed(db, row.id, reason, now, claim);
     return { ...base, outcome: "no_credentials", error: reason };
   }
 
   // Mark the submit under the claim. Losing the claim here means another
   // sweeper recovered this row; nothing has been sent by us.
-  const stillClaimed = await transition(db, row.id, "sweeping", { sweep_submitted_at: now.toISOString() });
+  const stillClaimed = await transition(db, row.id, claim, { sweep_submitted_at: now.toISOString() });
   if (!stillClaimed) return { ...base, outcome: "claimed_elsewhere" };
 
   const amountDisplay = formatRawTokenBalance(amountRaw, HERMESOS_TOKEN_DECIMALS);
@@ -348,15 +367,16 @@ export async function sweepYearlyTokenSubscription(
   } catch (error) {
     const message = `transfer failed: ${safeErrorMessage(error)}`;
     if (isDefiniteTransferRejection(error)) {
-      await releaseAsFailed(db, row.id, message, now);
+      // Nothing was sent: clear the submit marker so the row can be retried.
+      await releaseAsFailed(db, row.id, message, now, claim);
       return { ...base, outcome: "transfer_failed", error: message };
     }
     const reason = `treasury transfer outcome unknown (${message})`;
-    await parkForOperator(db, row, reason, now);
+    await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }
 
-  await transition(db, row.id, "sweeping", {
+  await transition(db, row.id, claim, {
     sweep_status: "swept",
     sweep_tx_hash: txHash,
     sweep_error: null,
@@ -393,10 +413,13 @@ async function recoverStaleClaims(db: SupabaseLike, now: Date, limit: number) {
   let released = 0;
   let parked = 0;
   for (const row of rows) {
+    const stale: SweepGuard = { from: "sweeping", attemptedAt: row.sweep_attempted_at };
     if (row.sweep_submitted_at) {
-      if (await parkForOperator(db, row, "sweep claim went stale after a treasury transfer was submitted", now)) parked += 1;
+      if (await parkForOperator(db, row, "sweep claim went stale after a treasury transfer was submitted", now, stale)) {
+        parked += 1;
+      }
     } else if (
-      await transition(db, row.id, "sweeping", {
+      await transition(db, row.id, { ...stale, submittedIsNull: true }, {
         sweep_status: "failed",
         sweep_error: "sweep claim went stale before a transfer was submitted",
         updated_at: now.toISOString(),
@@ -453,12 +476,22 @@ export async function sweepPendingYearlyTokenSubscriptions(
   const retryable = failedQueue.filter(
     (row) => !row.sweep_attempted_at || Date.parse(row.sweep_attempted_at) < backoffCutoff
   );
+  // A failed row that still carries a submit marker may already have moved
+  // its tokens; it is never retried automatically.
+  let submittedFailedParked = 0;
+  for (const row of retryable.filter((candidate) => candidate.sweep_submitted_at)) {
+    const guard: SweepGuard = { from: "failed", attemptedAt: row.sweep_attempted_at };
+    if (await parkForOperator(db, row, "failed sweep carries a submitted treasury transfer", now, guard)) {
+      submittedFailedParked += 1;
+    }
+  }
+  const retryNow = retryable.filter((candidate) => !candidate.sweep_submitted_at);
 
   const summary: YearlySweepBatchResult = {
     examined: 0,
     swept: 0,
     failed: 0,
-    needsOperator: stale.parked,
+    needsOperator: stale.parked + submittedFailedParked,
     claimedElsewhere: 0,
     treasuryNotConfigured: 0,
     backoffSkipped: failedQueue.length - retryable.length,
@@ -470,7 +503,7 @@ export async function sweepPendingYearlyTokenSubscriptions(
 
   const stuckBefore = now.getTime() - YEARLY_SWEEP_STUCK_ALERT_MS;
   const stuck: Array<{ subscriptionId: string; userId: string }> = [];
-  for (const row of [...pending, ...retryable]) {
+  for (const row of [...pending, ...retryNow]) {
     summary.examined += 1;
     let result: SweepResult;
     try {

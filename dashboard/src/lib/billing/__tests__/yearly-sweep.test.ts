@@ -28,7 +28,9 @@ import { createYearlyTokenWorld, MINUTE_MS, type YearlyTokenWorld } from "@/test
 
 const REQUIRED = 1_000n * 10n ** 18n;
 
-function options(world: YearlyTokenWorld, overrides: Partial<YearlySweepOptions> = {}): YearlySweepOptions {
+type BatchOptions = YearlySweepOptions & { limit?: number };
+
+function options(world: YearlyTokenWorld, overrides: Partial<BatchOptions> = {}): BatchOptions {
   return {
     db: world.memory.db,
     now: new Date(world.nowMs),
@@ -205,15 +207,23 @@ describe("batch", () => {
     );
   });
 
-  it("retries failed rows least-recently-attempted first once their backoff has passed", async () => {
+  it("retries failed rows least-recently-attempted first, whatever their activation order", async () => {
     const world = createYearlyTokenWorld();
-    for (const [id, minutesAgo] of [["ys_recent", 5], ["ys_oldest", 300], ["ys_older", 120]] as const) {
+    // Activation order runs opposite to attempt order, so paid_at ordering
+    // (the YR-6 bug) would pick the wrong rows.
+    const rows: Array<[string, number, number]> = [
+      ["ys_recent", 5, 60],
+      ["ys_oldest", 300, 1],
+      ["ys_older", 120, 30],
+    ];
+    for (const [id, attemptedMinutesAgo, paidMinutesAgo] of rows) {
       pendingSub(world, {
         id,
         user_id: id,
-        deposit_tx_hash: txHash(id.length * 1000 + minutesAgo),
+        paid_at: world.at(-paidMinutesAgo * 60 * MINUTE_MS),
+        deposit_tx_hash: txHash(id.length * 1000 + attemptedMinutesAgo),
         sweep_status: "failed",
-        sweep_attempted_at: world.at(-minutesAgo * MINUTE_MS),
+        sweep_attempted_at: world.at(-attemptedMinutesAgo * MINUTE_MS),
       });
     }
 
@@ -221,5 +231,60 @@ describe("batch", () => {
 
     expect(summary.results.map((result) => result.subscriptionId)).toEqual(["ys_oldest", "ys_older"]);
     expect(summary.backoffSkipped).toBe(1);
+  });
+
+  it("reaches failed rows beyond the first page on the next pass", async () => {
+    const world = createYearlyTokenWorld();
+    for (const [index, id] of ["ys_a", "ys_b", "ys_c"].entries()) {
+      pendingSub(world, {
+        id,
+        user_id: id,
+        paid_at: world.at(-(10 - index) * 60 * MINUTE_MS),
+        deposit_tx_hash: txHash(0x500 + index),
+        sweep_status: "failed",
+        sweep_attempted_at: world.at(-(3 - index) * 60 * MINUTE_MS),
+      });
+    }
+    const first = await sweepPendingYearlyTokenSubscriptions(options(world, { env: {}, limit: 2 }));
+    const later = new Date(world.nowMs + 31 * MINUTE_MS);
+    const second = await sweepPendingYearlyTokenSubscriptions(options(world, { env: {}, limit: 2, now: later }));
+
+    expect(first.results.map((result) => result.subscriptionId)).toEqual(["ys_a", "ys_b"]);
+    expect(second.results.map((result) => result.subscriptionId)[0]).toBe("ys_c");
+  });
+
+  it("never lets a pass acting on a stale read release a claim another sweeper holds", async () => {
+    const world = createYearlyTokenWorld();
+    const staleAt = world.at(-YEARLY_SWEEP_CLAIM_STALE_MS - MINUTE_MS);
+    const staleRead = { ...pendingSub(world, { sweep_status: "sweeping", sweep_attempted_at: staleAt, sweep_submitted_at: null }) };
+    // Since that read, another pass recovered the stale claim, re-claimed the
+    // row and submitted its transfer.
+    const liveClaim = world.at(-1 * MINUTE_MS);
+    Object.assign(sub(world)!, { sweep_attempted_at: liveClaim, sweep_submitted_at: liveClaim });
+
+    const stalePass = world.memory.withStaleReads("yearly_token_subscriptions", [staleRead]);
+    await sweepPendingYearlyTokenSubscriptions(options(world, { db: stalePass }));
+
+    expect(sub(world)).toMatchObject({
+      sweep_status: "sweeping",
+      sweep_attempted_at: liveClaim,
+      sweep_submitted_at: liveClaim,
+    });
+  });
+
+  it("parks a failed row that still carries a submitted transfer instead of retrying it", async () => {
+    const world = createYearlyTokenWorld();
+    pendingSub(world, {
+      sweep_status: "failed",
+      sweep_attempted_at: world.at(-2 * 60 * MINUTE_MS),
+      sweep_submitted_at: world.at(-2 * 60 * MINUTE_MS),
+    });
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -3 * 60 * MINUTE_MS });
+
+    const summary = await sweepPendingYearlyTokenSubscriptions(options(world));
+
+    expect(sub(world)).toMatchObject({ sweep_status: "needs_operator" });
+    expect(summary.needsOperator).toBe(1);
+    expect(world.submitted).toHaveLength(0);
   });
 });
