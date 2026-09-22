@@ -97,7 +97,17 @@ export function YearlyPaymentProgress({
   // done   = behind us, draws a check
   // pending = ahead of us, dimmed
   type StageStatus = "pending" | "active" | "done" | "failed";
-  const subActive = subscription !== null;
+  // A subscription only completes THIS payment if it was created by this
+  // quote. While a renewal quote is open, the user's current subscription
+  // belongs to an earlier payment and must not mark the new one as done.
+  const subActive =
+    subscription !== null && (!quote || subscription.yearlyQuoteId === quote.id);
+  // A payment reached this quote but needs an operator (a different amount,
+  // or it arrived after the quote expired). The user must not pay again.
+  const underReview = quote?.status === "manual_review" && !subActive;
+  // Past the countdown the quote can no longer be paid, but a payment already
+  // on its way is still picked up (and reviewed) during the late grace.
+  const watchingLate = quoteExpired && !underReview && !subActive;
   // Three user-visible stages. "Settled" (the treasury sweep) used to
   // be a fourth stage but it's an operator concern — once the tier is
   // active, the user is done. Sweep status stays in the DB for ops
@@ -112,19 +122,19 @@ export function YearlyPaymentProgress({
     {
       key: "received",
       label: "Tokens received",
-      sub: subActive ? "Detected on chain" : quoteExpired ? "Quote expired" : "Waiting…",
-      status: subActive
-        ? "done"
-        : quoteExpired
-          ? "failed"
-          : quote
-            ? "active"
-            : "pending",
+      sub: subActive
+        ? "Detected on chain"
+        : underReview
+          ? "Under review"
+          : watchingLate
+            ? "Watching for a late payment"
+            : "Waiting…",
+      status: subActive ? "done" : quote ? "active" : "pending",
     },
     {
       key: "active",
       label: "Tier active",
-      sub: subscription
+      sub: subActive && subscription
         ? `Until ${new Date(subscription.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}`
         : "Activating…",
       status: subActive ? "done" : "pending",
@@ -178,7 +188,9 @@ export function YearlyPaymentProgress({
             <Coins size={11} />
             {allDone
               ? `${tierName} tier active`
-              : quoteExpired
+              : underReview
+                ? "Payment under review"
+                : quoteExpired
                 ? "Quote expired"
                 : subActive
                   ? `Activating ${tierName}`
@@ -197,9 +209,11 @@ export function YearlyPaymentProgress({
                 }.`
               : subActive
                 ? `Tokens received · finishing up activation`
-                : quoteExpired
-                  ? `Mint a fresh quote to continue.`
-                  : `Send tokens to your deposit address. Cron checks every 5 min, or hit "Check now" once your tx confirms.`}
+                : underReview
+                  ? `We received a payment for this quote that needs a quick manual check (a different amount, or it arrived after the quote expired). Please don't send another payment — we'll sort it out and email you.`
+                  : quoteExpired
+                    ? `If you already sent the tokens, don't send them again: payments that arrive up to 2 hours late are still found and reviewed. Otherwise, start a fresh quote.`
+                    : `Send tokens to your deposit address. Cron checks every 5 min, or hit "Check now" once your tx confirms.`}
           </span>
         </div>
 
@@ -221,7 +235,7 @@ export function YearlyPaymentProgress({
               {countdown}
             </span>
           )}
-          {quote && !subActive && (
+          {quote && !subActive && !underReview && (
             <>
               <button
                 type="button"
@@ -252,27 +266,29 @@ export function YearlyPaymentProgress({
                 )}
                 Check now
               </button>
-              <button
-                type="button"
-                onClick={onResume}
-                style={{
-                  padding: "10px 16px",
-                  background: "var(--ink-black)",
-                  color: "var(--bg-surface)",
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-mono), monospace",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.12em",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                Open quote <ArrowRight size={11} />
-              </button>
+              {!quoteExpired && (
+                <button
+                  type="button"
+                  onClick={onResume}
+                  style={{
+                    padding: "10px 16px",
+                    background: "var(--ink-black)",
+                    color: "var(--bg-surface)",
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "var(--font-mono), monospace",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.12em",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  Open quote <ArrowRight size={11} />
+                </button>
+              )}
             </>
           )}
         </div>
@@ -705,11 +721,14 @@ export function YearlyTokenPaymentModal({
   error,
   quote,
   onClose,
+  reviewPending = false,
 }: {
   isOpen: boolean;
   tier: "pro" | "power" | null;
   loading: boolean;
   error: string | null;
+  /** A payment for this tier is already under manual review. */
+  reviewPending?: boolean;
   quote: {
     id: string;
     tier: "pro" | "power";
@@ -820,7 +839,30 @@ export function YearlyTokenPaymentModal({
           />
         )}
 
-        {quote && !loading && (
+        {reviewPending && (
+          <div
+            role="note"
+            style={{ border: "1px solid var(--gold-leaf)", padding: "0.65rem 0.85rem", fontSize: 12.5, lineHeight: 1.5 }}
+          >
+            A payment for {tierName} is already under review. You don&apos;t need to pay again unless we ask you to —
+            we&apos;ll sort it out and email you.
+          </div>
+        )}
+
+        {quote && !loading && expired && (
+          <>
+            <div
+              role="status"
+              style={{ border: "1px solid rgba(179,38,30,0.5)", padding: "0.75rem 0.9rem", fontSize: 13, lineHeight: 1.5 }}
+            >
+              <strong>This quote expired.</strong> If you already sent the tokens, don&apos;t send them again: payments
+              that arrive up to 2 hours late are still found and reviewed. Otherwise, close this and start a fresh quote.
+            </div>
+            <BankrTrustFooter />
+          </>
+        )}
+
+        {quote && !loading && !expired && (
           <>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.55, fontWeight: 700 }}>
@@ -913,8 +955,8 @@ export function YearlyTokenPaymentModal({
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <span className="mono" style={{ fontSize: 11, color: expired ? "#b3261e" : "#16a34a" }}>
-                {expired ? "Quote expired — close and try again" : `Expires in ${countdown}`}
+              <span className="mono" style={{ fontSize: 11, color: "#16a34a" }}>
+                {`Expires in ${countdown}`}
               </span>
               <span className="mono" style={{ fontSize: 9, opacity: 0.55, letterSpacing: "0.12em", textTransform: "uppercase" }}>
                 Quote locked
@@ -922,7 +964,7 @@ export function YearlyTokenPaymentModal({
             </div>
 
             <p style={{ fontSize: 11, color: "var(--text-muted, var(--text-secondary))", margin: 0, lineHeight: 1.55 }}>
-              Once your transfer lands, your {tierName} tier activates within ~5 minutes for 365 days. No auto-renewal — pay again next year if you want to extend.
+              Once your transfer lands, your {tierName} tier activates within ~5 minutes for 365 days. No auto-renewal — paying again before it ends adds another year after your current end date.
             </p>
 
             <BankrTrustFooter />

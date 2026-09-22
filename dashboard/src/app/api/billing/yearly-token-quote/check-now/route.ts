@@ -1,21 +1,21 @@
 /**
  * POST /api/billing/yearly-token-quote/check-now   body: { tier?: 'pro' | 'power' }
  *
- * On-demand version of the yearly-token-sweep cron's per-user pass.
- * The cron runs every 5 min — for the user staring at the modal after
- * sending tokens, that's a long silent wait. This endpoint lets the
- * dashboard banner ask "did my tokens land yet?" right now.
+ * On-demand version of the yearly-token-sweep cron, scoped to the signed-in
+ * user. The cron runs every 5 min — for the user watching the banner after
+ * sending tokens, that's a long silent wait. This lets the dashboard ask
+ * "did my payment land?" right now.
  *
  * Behaviour mirrors the cron exactly:
- *   1. Find the user's active yearly_token_quote(s).
- *   2. For each, run detectAndActivateYearlyDeposit (read on-chain
- *      balance; if ≥ tokens_required, consume quote + insert sub row).
- *   3. For any newly activated sub with sweep_status='pending', run
- *      sweepActivatedSubscription (mint Bankr API key, transfer to
- *      treasury, mark swept).
+ *   1. Reconcile the user's yearly quotes whose attribution range is still
+ *      open: bind the on-chain Transfer log that paid an open quote and
+ *      activate or renew the subscription, and surface transfers that need an
+ *      operator (including ones reaching an already settled or reviewed
+ *      quote's range).
+ *   2. Sweep the user's newly activated subscriptions to the treasury.
  *
- * Idempotent — re-runs are safe. Heavy on-chain RPC + Bankr calls so
- * frontend-side rate limiting via a debounced button is recommended.
+ * Idempotent and compare-and-set — safe to race the cron. Heavy on-chain RPC
+ * + Bankr calls, so the dashboard debounces the button.
  */
 
 import { NextRequest } from "next/server";
@@ -26,18 +26,15 @@ import {
   BILLING_V2_UNAVAILABLE_MESSAGE,
   isBillingV2ServerEnabled,
 } from "@/lib/billing/billing-v2-availability";
-import {
-  detectAndActivateYearlyDeposit,
-  sweepActivatedSubscription,
-  type DetectionResult,
-  type SweepResult,
-} from "@/lib/billing/yearly-sweep";
-import {
-  getActiveYearlyTokenQuote,
-  getActiveYearlyTokenQuotes,
-} from "@/lib/billing/yearly-token-quotes";
+import { reconcilePendingYearlyTokenQuotes } from "@/lib/billing/yearly-token-settlement";
+import { sweepYearlyTokenSubscription, type SweepResult } from "@/lib/billing/yearly-sweep";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
+
+// User-facing: keep the button responsive. Quotes not reached in time are
+// reconciled by the cron.
+export const maxDuration = 60;
+const RECONCILE_BUDGET_MS = 25_000;
 
 function isValidTier(value: unknown): value is TierKey {
   return value === "pro" || value === "power";
@@ -50,7 +47,6 @@ interface PostBody {
 interface PendingSweepRow {
   id: string;
   user_id: string;
-  amount_received_raw: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -64,53 +60,45 @@ export async function POST(req: NextRequest) {
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
-    let body: PostBody = {};
-    try {
-      body = (await req.json().catch(() => ({}))) as PostBody;
-    } catch {
-      body = {};
-    }
-    const tier = isValidTier(body.tier) ? body.tier : null;
+    const body = (await req.json().catch(() => ({}))) as PostBody;
+    const tier = isValidTier(body?.tier) ? body.tier : undefined;
 
-    // Pass 1 — detect deposits + activate.
-    const detectionResults: DetectionResult[] = [];
-    const quotes = tier
-      ? await (async () => {
-          const q = await getActiveYearlyTokenQuote({ userId, tier });
-          return q ? [q] : [];
-        })()
-      : await getActiveYearlyTokenQuotes(userId);
-    for (const quote of quotes) {
-      const result = await detectAndActivateYearlyDeposit(quote);
-      detectionResults.push(result);
-    }
+    // Pass 1 — bind payments to this user's open quotes.
+    const reconciliation = await reconcilePendingYearlyTokenQuotes({
+      db: supabaseAdmin,
+      userId,
+      tier,
+      limit: 10,
+      deadlineMs: Date.now() + RECONCILE_BUDGET_MS,
+    });
 
-    // Pass 2 — sweep any pending subs (the just-activated ones plus
-    // anything from a previous tick that didn't sweep cleanly).
-    const { data: pendingRows } = await supabaseAdmin
+    // Pass 2 — sweep this user's fresh activations (the cron retries failures).
+    const { data: pendingRows, error: pendingError } = await supabaseAdmin
       .from("yearly_token_subscriptions")
-      .select("id, user_id, amount_received_raw::text")
+      .select("id, user_id")
       .eq("user_id", userId)
       .eq("sweep_status", "pending")
       .order("paid_at", { ascending: true })
       .limit(10);
+    if (pendingError) throw new Error(`Failed to load pending sweeps: ${pendingError.message}`);
 
     const sweepResults: SweepResult[] = [];
     for (const row of (pendingRows as PendingSweepRow[] | null) ?? []) {
-      const result = await sweepActivatedSubscription(row);
-      sweepResults.push(result);
+      sweepResults.push(await sweepYearlyTokenSubscription(row, { db: supabaseAdmin }));
     }
 
     return apiSuccess({
-      detection: detectionResults,
+      detection: reconciliation.results,
       sweep: sweepResults,
       summary: {
-        examined: detectionResults.length,
-        activated: detectionResults.filter((r) => r.outcome === "activated").length,
-        alreadyActive: detectionResults.filter((r) => r.outcome === "already_active").length,
-        noBalance: detectionResults.filter((r) => r.outcome === "no_balance").length,
-        insufficient: detectionResults.filter((r) => r.outcome === "insufficient_balance").length,
-        swept: sweepResults.filter((r) => r.outcome === "swept").length,
+        examined: reconciliation.checked,
+        activated: reconciliation.activated + reconciliation.renewed,
+        renewed: reconciliation.renewed,
+        underconfirmed: reconciliation.underconfirmed,
+        noMatch: reconciliation.noMatch,
+        manualReview: reconciliation.manualReview,
+        failed: reconciliation.failed,
+        swept: sweepResults.filter((result) => result.outcome === "swept").length,
       },
     });
   } catch (error) {

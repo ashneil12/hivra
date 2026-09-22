@@ -189,17 +189,25 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     source: "userId",
     reason: "crypto deposit quote rows",
   },
+  // Children first: reconciliation items reference quotes and subscriptions,
+  // and subscriptions reference the quote that paid for them.
   {
-    table: "yearly_token_quotes",
+    table: "yearly_token_reconciliation_items",
     filterColumn: "user_id",
     source: "userId",
-    reason: "yearly token subscription quotes",
+    reason: "yearly token payment reconciliation items",
   },
   {
     table: "yearly_token_subscriptions",
     filterColumn: "user_id",
     source: "userId",
     reason: "yearly token subscription rows",
+  },
+  {
+    table: "yearly_token_quotes",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "yearly token subscription quotes",
   },
   {
     table: "token_tier_qualifications",

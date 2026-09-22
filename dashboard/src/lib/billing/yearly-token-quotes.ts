@@ -12,9 +12,11 @@
  *   - Sweeps to treasury after activation (the eligibility lock holds forever)
  *   - One-time payment grants 365 days, not perpetual hold
  *
- * Lifecycle: active → consumed (matched + activated) | expired (20 min
- * passed) | cancelled. The activated subscription row lives in
- * `yearly_token_subscriptions`.
+ * Lifecycle: active → expired (20 min passed; still reconciled through the
+ * late-payment grace) → consumed (a specific on-chain transfer was bound to it
+ * by settle_yearly_token_payment) | manual_review (a payment was seen but needs
+ * an operator) | cancelled (window + grace scanned, nothing paid). The
+ * activated subscription row lives in `yearly_token_subscriptions`.
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
@@ -28,7 +30,14 @@ import {
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
 
 const YEARLY_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
-type YearlyQuoteStatus = "active" | "consumed" | "expired" | "cancelled";
+/**
+ * A payment mined after the quote window but within this grace is still
+ * attributed to the quote (and goes to manual review).
+ */
+export const YEARLY_LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
+// How long a quote under manual review stays visible to the user.
+const REVIEW_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000;
+export type YearlyQuoteStatus = "active" | "consumed" | "expired" | "cancelled" | "manual_review";
 
 /**
  * USD targets per BUILD_PLAN.md (yearly token-pay). Locked as integer
@@ -39,7 +48,7 @@ const YEARLY_USD_TARGET_CENTS: Record<TierKey, number> = {
   power: 9900, // $99/yr
 };
 
-interface YearlyQuoteRow {
+export interface YearlyQuoteRow {
   id: string;
   user_id: string;
   tier: TierKey;
@@ -54,6 +63,7 @@ interface YearlyQuoteRow {
   consumed_balance_raw: string | null;
   consumed_at: string | null;
   consumed_tx_hash: string | null;
+  consumed_log_index?: number | null;
   source: string;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -77,10 +87,12 @@ export interface YearlyTokenQuote {
   consumedBalanceRaw: bigint | null;
   consumedAt: string | null;
   consumedTxHash: string | null;
+  /** Log index of the consumed Transfer (null for pre-attribution quotes). */
+  consumedLogIndex: number | null;
   source: string;
 }
 
-function asQuote(row: YearlyQuoteRow): YearlyTokenQuote {
+export function asYearlyTokenQuote(row: YearlyQuoteRow): YearlyTokenQuote {
   return {
     id: row.id,
     userId: row.user_id,
@@ -98,15 +110,16 @@ function asQuote(row: YearlyQuoteRow): YearlyTokenQuote {
     consumedBalanceRaw: row.consumed_balance_raw ? BigInt(row.consumed_balance_raw) : null,
     consumedAt: row.consumed_at,
     consumedTxHash: row.consumed_tx_hash,
+    consumedLogIndex: typeof row.consumed_log_index === "number" ? row.consumed_log_index : null,
     source: row.source,
   };
 }
 
-const SELECT_COLUMNS =
+export const YEARLY_QUOTE_SELECT_COLUMNS =
   "id, user_id, tier, usd_target_cents, price_usd_at_quote, " +
   "tokens_required_raw::text, tokens_required_display, deposit_address, " +
   "quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, " +
-  "consumed_tx_hash, source, metadata, created_at, updated_at";
+  "consumed_tx_hash, consumed_log_index, source, metadata, created_at, updated_at";
 
 interface CreateYearlyQuoteParams {
   userId: string;
@@ -183,13 +196,13 @@ export async function createYearlyTokenQuote(
       source: priceQuote.source,
       metadata: { priceLastUpdatedAt: priceQuote.lastUpdatedAt },
     })
-    .select(SELECT_COLUMNS)
+    .select(YEARLY_QUOTE_SELECT_COLUMNS)
     .single<YearlyQuoteRow>();
 
   if (error || !data) {
     throw new Error(`Failed to create yearly token quote: ${error?.message ?? "unknown"}`);
   }
-  return asQuote(data);
+  return asYearlyTokenQuote(data);
 }
 
 interface GetActiveYearlyQuoteParams {
@@ -218,7 +231,7 @@ export async function getActiveYearlyTokenQuote(
 
   const { data, error } = await supabaseAdmin
     .from("yearly_token_quotes")
-    .select(SELECT_COLUMNS)
+    .select(YEARLY_QUOTE_SELECT_COLUMNS)
     .eq("user_id", params.userId)
     .eq("tier", params.tier)
     .eq("status", "active")
@@ -229,7 +242,7 @@ export async function getActiveYearlyTokenQuote(
   if (error) {
     throw new Error(`Failed to load yearly quotes: ${error.message}`);
   }
-  return data ? asQuote(data) : null;
+  return data ? asYearlyTokenQuote(data) : null;
 }
 
 /** Get all active yearly quotes for a user (both tiers). */
@@ -251,50 +264,79 @@ export async function getActiveYearlyTokenQuotes(
 
   const { data, error } = await supabaseAdmin
     .from("yearly_token_quotes")
-    .select(SELECT_COLUMNS)
+    .select(YEARLY_QUOTE_SELECT_COLUMNS)
     .eq("user_id", userId)
     .eq("status", "active")
     .order("quoted_at", { ascending: false });
 
   if (error) throw new Error(`Failed to load yearly quotes: ${error.message}`);
-  return ((data as unknown) as YearlyQuoteRow[] | null)?.map(asQuote) ?? [];
-}
-
-interface ConsumeYearlyQuoteParams {
-  quoteId: string;
-  consumedBalanceRaw: bigint;
-  consumedTxHash?: string | null;
-  now?: Date;
+  return ((data as unknown) as YearlyQuoteRow[] | null)?.map(asYearlyTokenQuote) ?? [];
 }
 
 /**
- * Mark a yearly quote as consumed. Called by the deposit-detection
- * cron when an incoming transfer matches the quote's tokens_required.
- * The activated `yearly_token_subscriptions` row is written separately
- * by the caller.
+ * The user's quotes that still matter to them although they can no longer be
+ * paid, one per tier. Only each tier's newest RELEVANT quote counts — one that
+ * was paid, is under review, or can still receive a payment; a newer quote
+ * that was abandoned (cancelled, or past its late-payment grace) supersedes
+ * nothing:
+ *   - past its expiry but inside the late-payment grace: a payment already on
+ *     its way is still picked up. An 'active' row past expiry counts too, so
+ *     the answer does not depend on whether a concurrent read has flipped it
+ *     to 'expired' yet (the status is reported as 'expired');
+ *   - in manual_review while the review still has an open reconciliation
+ *     item: a payment arrived and an operator will resolve it.
  */
-export async function consumeYearlyTokenQuote(
-  params: ConsumeYearlyQuoteParams
-): Promise<YearlyTokenQuote> {
+export async function getPendingYearlyTokenQuotes(
+  userId: string,
+  now: Date = new Date()
+): Promise<YearlyTokenQuote[]> {
   if (!supabaseAdmin) throw new Error("Database not configured");
-  const now = params.now ?? new Date();
-
   const { data, error } = await supabaseAdmin
     .from("yearly_token_quotes")
-    .update({
-      status: "consumed" satisfies YearlyQuoteStatus,
-      consumed_balance_raw: params.consumedBalanceRaw.toString(),
-      consumed_at: now.toISOString(),
-      consumed_tx_hash: params.consumedTxHash ?? null,
-      updated_at: now.toISOString(),
-    })
-    .eq("id", params.quoteId)
-    .eq("status", "active")
-    .select(SELECT_COLUMNS)
-    .single<YearlyQuoteRow>();
+    .select(YEARLY_QUOTE_SELECT_COLUMNS)
+    .eq("user_id", userId)
+    .gt("quoted_at", new Date(now.getTime() - REVIEW_VISIBLE_MS).toISOString())
+    .order("quoted_at", { ascending: false })
+    .limit(20);
+  if (error) throw new Error(`Failed to load pending yearly quotes: ${error.message}`);
 
-  if (error || !data) {
-    throw new Error(`Failed to consume yearly quote: ${error?.message ?? "no active row"}`);
+  const stillRelevant = (quote: YearlyTokenQuote) => {
+    if (quote.status === "cancelled") return false;
+    const expiresAtMs = Date.parse(quote.expiresAt);
+    const pastExpiry = expiresAtMs <= now.getTime();
+    if (quote.status === "expired" || (quote.status === "active" && pastExpiry)) {
+      return expiresAtMs + YEARLY_LATE_PAYMENT_GRACE_MS > now.getTime();
+    }
+    return true; // payable, paid, or under review
+  };
+  const newestPerTier: YearlyTokenQuote[] = [];
+  for (const quote of ((data as unknown) as YearlyQuoteRow[] | null)?.map(asYearlyTokenQuote) ?? []) {
+    if (!stillRelevant(quote)) continue;
+    if (!newestPerTier.some((existing) => existing.tier === quote.tier)) newestPerTier.push(quote);
   }
-  return asQuote(data);
+
+  const pending: YearlyTokenQuote[] = [];
+  const underReview: YearlyTokenQuote[] = [];
+  for (const quote of newestPerTier) {
+    const expiresAtMs = Date.parse(quote.expiresAt);
+    const pastExpiry = expiresAtMs <= now.getTime();
+    if ((quote.status === "expired" || (quote.status === "active" && pastExpiry)) &&
+        expiresAtMs + YEARLY_LATE_PAYMENT_GRACE_MS > now.getTime()) {
+      pending.push({ ...quote, status: "expired" });
+    } else if (quote.status === "manual_review") {
+      underReview.push(quote);
+    }
+  }
+
+  if (underReview.length > 0) {
+    const { data: items, error: itemsError } = await supabaseAdmin
+      .from("yearly_token_reconciliation_items")
+      .select("quote_id")
+      .in("quote_id", underReview.map((quote) => quote.id))
+      .eq("status", "open");
+    if (itemsError) throw new Error(`Failed to load yearly review items: ${itemsError.message}`);
+    const open = new Set(((items as Array<{ quote_id?: string }> | null) ?? []).map((item) => item.quote_id));
+    pending.push(...underReview.filter((quote) => open.has(quote.id)));
+  }
+  return pending;
 }
