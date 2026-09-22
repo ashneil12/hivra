@@ -14,7 +14,7 @@ import "@testing-library/jest-dom";
 import posthog from "posthog-js";
 
 import { HivraChat } from "../HivraChat";
-import { listBoxSessions, readBoxSession, stampAgentFirstUsage } from "@/lib/hivra/agent-api";
+import { listBoxSessions, readBoxSession, stampAgentFirstUsage, uploadBoxFile } from "@/lib/hivra/agent-api";
 import { requestAgentWelcomeMessage } from "@/lib/hivra/agent-welcome";
 
 jest.mock("posthog-js", () => ({
@@ -44,6 +44,7 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   listBoxSessions: jest.fn(),
   readBoxSession: jest.fn(),
   stampAgentFirstUsage: jest.fn(),
+  uploadBoxFile: jest.fn(),
 }));
 
 jest.mock("@/lib/hivra/agent-welcome", () => ({
@@ -1300,5 +1301,97 @@ describe("HivraChat", () => {
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     expect(container.firstElementChild).toHaveClass("hivra-chat-root");
     expect(container.firstElementChild).toContainElement(screen.getByRole("textbox", { name: "Message Atlas" }));
+  });
+
+  // ── Stop / failure state / send contract ───────────────────────────────
+  it("returns the composer to a sendable state after Stop and sends the next message", async () => {
+    const pending = deferred<{ done: boolean; value?: Uint8Array }>();
+    const firstRead = jest.fn().mockResolvedValueOnce(eventChunk(claudeText("Working on it"))).mockImplementationOnce(() => pending.promise);
+    const secondRead = jest.fn().mockResolvedValueOnce(eventChunk(claudeText("Second reply"), exitEvent(0))).mockResolvedValueOnce({ done: true });
+    const fetchMock = jest.fn().mockResolvedValueOnce(chatResponse(firstRead)).mockResolvedValueOnce(chatResponse(secondRead));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="stop-then-send" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("first");
+    await screen.findByText("Working on it");
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeEnabled();
+    await sendMessage("second");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).message).toBe("second");
+    expect(await screen.findByText("Second reply")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument());
+    // The stopped turn keeps its state; it is history now, so it is no longer live.
+    expect(screen.getByRole("note", { name: "Response stopped" })).toBeInTheDocument();
+  });
+
+  it("after a mid-tool stream failure shows the tool as Unconfirmed and the turn as failed", async () => {
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(runningToolEvent("t1", "npm run build"), partialText)).mockRejectedValueOnce(new Error("connection lost"));
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="fail-tool-state" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("build");
+    expect(await screen.findByRole("status", { name: "Response failed" })).toHaveTextContent("The connection to your agent was lost");
+    expect(activityLabels()).toEqual(["Response failed"]);
+    expect(document.querySelector(".hivra-chat-activity-detail")).toHaveTextContent("1 action");
+    expect(document.querySelector(".hivra-chat-activity-dot")).toHaveClass("is-error");
+    fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+    expect(screen.getByRole("button", { name: "Bash · npm run build — Unconfirmed" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Completed|Interrupted|Running/ })).not.toBeInTheDocument();
+  });
+
+  it("sends the bearer token, resume id and uploaded attachments, and persists the session", async () => {
+    seedSessions("send-contract", [
+      { id: "s1", title: "Earlier", claudeSessionId: "sid-stored", createdAt: 1, messages: [{ role: "user", text: "hi", tools: [] }, { role: "assistant", text: "hello", tools: [] }] },
+    ], "s1");
+    (uploadBoxFile as jest.Mock).mockResolvedValue({ ok: true, path: "uploads/diagram.png" });
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(
+      { type: "system", subtype: "init", session_id: "sid-next" },
+      claudeText("Looked at it."),
+      { type: "result", subtype: "success", is_error: false, session_id: "sid-next" },
+      exitEvent(0),
+    )).mockResolvedValueOnce({ done: true });
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(read));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com/" storageKey="send-contract" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("hello");
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["png-bytes"], "diagram.png", { type: "image/png" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    expect(await screen.findByText("diagram.png")).toBeInTheDocument();
+    expect(uploadBoxFile).toHaveBeenCalledWith("https://box.example.com/", "diagram.png", Buffer.from("png-bytes").toString("base64"), "box-token");
+
+    await sendMessage("what is in this?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://box.example.com/api/chat");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({ "Content-Type": "application/json", Authorization: "Bearer box-token" });
+    expect(JSON.parse(init.body as string)).toEqual({ message: "what is in this?", sessionId: "sid-stored", images: ["uploads/diagram.png"] });
+    expect(await screen.findByText(/what is in this\?\s+📎 diagram\.png/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove diagram.png" })).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument());
+    const stored = JSON.parse(window.localStorage.getItem("hivra_sessions_sendcontract") || "[]");
+    expect(stored[0]).toMatchObject({ id: "s1", claudeSessionId: "sid-next" });
+    expect(stored[0].messages.map((m: { role: string; text: string }) => [m.role, m.text])).toEqual([
+      ["user", "hi"], ["assistant", "hello"], ["user", "what is in this?\n\n📎 diagram.png"], ["assistant", "Looked at it."],
+    ]);
+    expect(stored[0].messages[3]).toMatchObject({ outcome: "complete", streaming: false });
+  });
+
+  it("omits the Authorization header and resume id for a tokenless fresh chat", async () => {
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="no-token" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("hello");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.headers).not.toHaveProperty("Authorization");
+    expect(JSON.parse(init.body as string)).toEqual({ message: "hello", sessionId: null });
   });
 });
