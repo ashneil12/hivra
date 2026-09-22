@@ -67,7 +67,7 @@ it("composes the native readiness probe with the actual guest gateway and sessio
         } };
         if (name === "./deepseek-harness/runtime-process.cjs") return { startRuntime: async () => ({}) };
         if (name === "./guarded-files.cjs") return { createGuardedFiles: () => ({}) };
-        if (["path", "net", "crypto", "./llm-application.js"].includes(name)) return realRequire(name);
+        if (["path", "net", "crypto", "./llm-application.js", "./agent-zero-editor.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected fixture dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "deepseek-harness" }, once() {}, exit() {} },

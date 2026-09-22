@@ -68,10 +68,14 @@ export function buildProviderDesktopRuntimeProbe(input: ProviderDesktopRuntimePr
 export function buildProviderDesktopPowerProbe(input: ProviderDesktopRuntimeProbe): string {
   return buildProbe(input, true);
 }
+/** Releases whose installed gateway speaks hivra-workspace-v1. The probe,
+ * receipt parser and session issuer must share one list so a release bump
+ * cannot admit a probe the issuer then refuses. */
+export const PROVIDER_WORKSPACE_PROTOCOL_VERSIONS = ["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"] as const;
 /** Workspace grants require installed code and the running gateway's original
  * identity/configuration, not a release label or unauthenticated HTML alone. */
 export function buildProviderWorkspaceRuntimeProbe(input: ProviderWorkspaceRuntimeProbe): string {
-  if (!["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"].includes(checked(input).identity.bundle.provisionerVersion)) throw new Error("Workspace protocol unavailable");
+  if (!(PROVIDER_WORKSPACE_PROTOCOL_VERSIONS as readonly string[]).includes(checked(input).identity.bundle.provisionerVersion)) throw new Error("Workspace protocol unavailable");
   return buildProbe(input, false, ControlOrigin.parse(input.controlOrigin));
 }
 function buildProbe(input: ProviderDesktopRuntimeProbe, captureBootId: boolean, workspaceControlOrigin?: string): string {
@@ -319,7 +323,7 @@ export function parseProviderDesktopPowerReceipt(output: string, input: Provider
 export function parseProviderWorkspaceRuntimeReceipt(output: string, input: ProviderWorkspaceRuntimeProbe) {
   try {
     const expected = checked(input), controlOrigin = ControlOrigin.parse(input.controlOrigin), marker = "HIVRA_PROVIDER_WORKSPACE_V1 ";
-    if (!["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"].includes(expected.identity.bundle.provisionerVersion) || Buffer.byteLength(output) > 8192
+    if (!(PROVIDER_WORKSPACE_PROTOCOL_VERSIONS as readonly string[]).includes(expected.identity.bundle.provisionerVersion) || Buffer.byteLength(output) > 8192
       || !output.startsWith(marker) || !output.endsWith("\n") || output.indexOf("\n") !== output.length - 1 || output.includes("\r")) throw new Error();
     const value = z.object({ protocol: z.literal("hivra-workspace-v1"), computerId: z.string().uuid(), operationId: z.string().uuid(),
       publicOrigin: z.string(), controlOrigin: z.string(), capabilityOutput: z.string().max(4096) }).strict().parse(JSON.parse(output.slice(marker.length)));

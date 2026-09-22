@@ -84,6 +84,9 @@ async function main() {
         "20260906050000_provider_desktop_teardown_authority.sql",
         "20260906060000_provider_desktop_cold_start_release.sql",
         "20260908023000_hq_streaming_profiles_release.sql",
+        "20260908080000_first_frame_streaming_profile_release.sql",
+        "20260908090000_desktop_handoff_latency_release.sql",
+        "20260922200000_provider_release_admission_2026_09_21.sql",
       ].includes(name)).sort()) {
       await db.exec(migration(file));
     }

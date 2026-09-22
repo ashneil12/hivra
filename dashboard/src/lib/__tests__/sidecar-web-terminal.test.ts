@@ -746,7 +746,23 @@ unrelated=subprocess.Popen([sys.executable,"-I","-S","-c","import time;time.slee
 try:
  descendant=int(tagged.stdout.readline())
  result=subprocess.run([sys.executable,"-I","-S","-c",code,"--cleanup",marker,str(os.getuid())],capture_output=True,text=True,timeout=4)
- assert result.returncode==0 and json.loads(result.stdout)["clean"] is True, result.stdout
+ if result.returncode!=0 or json.loads(result.stdout)["clean"] is not True:
+  # The probe fails closed on any same-uid process it cannot inspect. Name
+  # those processes so a host-environment cause is distinguishable from a
+  # probe regression.
+  blocked=[]
+  for name in os.listdir("/proc"):
+   if not name.isdecimal(): continue
+   try:
+    if os.stat("/proc/"+name).st_uid!=os.getuid(): continue
+    open("/proc/"+name+"/environ","rb").close()
+   except PermissionError:
+    try:
+     with open("/proc/"+name+"/status") as f: status=[line.strip() for line in f if line.startswith(("Name:","Uid:","Gid:"))]
+    except OSError: status=[]
+    blocked.append([name]+status)
+   except (FileNotFoundError,ProcessLookupError): pass
+  raise AssertionError(result.stdout.strip()+" self_gid="+str(os.getgid())+" uninspectable="+json.dumps(blocked))
  tagged.wait(timeout=1)
  assert unrelated.poll() is None
  try:
