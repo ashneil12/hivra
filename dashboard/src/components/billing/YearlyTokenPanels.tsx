@@ -97,7 +97,11 @@ export function YearlyPaymentProgress({
   // done   = behind us, draws a check
   // pending = ahead of us, dimmed
   type StageStatus = "pending" | "active" | "done" | "failed";
-  const subActive = subscription !== null;
+  // A subscription only completes THIS payment if it was created by this
+  // quote. While a renewal quote is open, the user's current subscription
+  // belongs to an earlier payment and must not mark the new one as done.
+  const subActive =
+    subscription !== null && (!quote || subscription.yearlyQuoteId === quote.id);
   // Three user-visible stages. "Settled" (the treasury sweep) used to
   // be a fourth stage but it's an operator concern — once the tier is
   // active, the user is done. Sweep status stays in the DB for ops
@@ -124,7 +128,7 @@ export function YearlyPaymentProgress({
     {
       key: "active",
       label: "Tier active",
-      sub: subscription
+      sub: subActive && subscription
         ? `Until ${new Date(subscription.expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}`
         : "Activating…",
       status: subActive ? "done" : "pending",
