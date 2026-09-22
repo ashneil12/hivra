@@ -1,5 +1,5 @@
 jest.mock("@/lib/supabase",()=>({supabaseAdmin:null}));
-import { buildActivitySnapshot } from "../feed";
+import { buildActivitySnapshot, type ActivityAgentRow, type ActivityCollectorRow, type ActivityEventRow } from "../feed";
 
 describe("activity feed normalization",()=>{
   it("keeps deleted-agent history and separates lifecycle availability from telemetry freshness",()=>{
@@ -19,5 +19,96 @@ describe("activity feed normalization",()=>{
     expect(snapshot.degraded).toBe(true); expect(snapshot.events).toHaveLength(1);
     expect(snapshot.sources.find(s=>s.id==="hivra-lifecycle")?.state).toBe("degraded");
     expect(snapshot.sources.find(s=>s.id==="hivra-desktop")?.state).toBe("active");
+  });
+});
+
+
+const NOW=new Date("2026-09-22T12:00:00Z");
+const A="00000000-0000-4000-8000-00000000000a";
+const ago=(minutes:number)=>new Date(NOW.getTime()-minutes*60_000).toISOString();
+const agent=(over:Partial<ActivityAgentRow>={}):ActivityAgentRow=>({id:A,name:"Box",type:"codex",status:"running",computer_substrate:"proxmox-kvm",created_at:"2026-09-01T00:00:00Z",...over});
+const collector=(over:Partial<ActivityCollectorRow>={}):ActivityCollectorRow=>({agent_id:A,issued_at:ago(60),credential_expires_at:new Date(NOW.getTime()+86_400_000).toISOString(),last_heartbeat_at:ago(2),last_event_at:null,last_rejected_at:null,last_rejected_reason:null,...over});
+function nativeState(a:ActivityAgentRow,row?:ActivityCollectorRow,collectorDegraded=false){
+  const snapshot=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[a],collectorRows:row?[row]:[],collectorDegraded});
+  return snapshot.resources[0].capabilities.find(c=>c.key==="native_tracing")!;
+}
+function nativeRow(telemetry:Record<string,unknown>,id="e-native"):ActivityEventRow{
+  return {id,agent_id:A,event:"otel_log",agent_type:"codex",created_at:ago(1),detail:{schemaVersion:1,source:"otlp_log",receivedAt:ago(1),agentName:"Box",telemetry:{producer:"codex",runId:"turn-1",traceId:"a".repeat(32),spanId:"b".repeat(16),...telemetry}}};
+}
+
+describe("native tracing coverage",()=>{
+  it("walks the contract's ordered state machine",()=>{
+    expect(nativeState(agent(),collector(),true).state).toBe("degraded");
+    expect(nativeState(agent({type:"aeon"}),collector()).state).toBe("unsupported");
+    expect(nativeState(agent({computer_substrate:"provider-vm"}),collector()).state).toBe("unsupported");
+    expect(nativeState(agent({status:"stopped"}),collector({last_heartbeat_at:ago(600),credential_expires_at:ago(5)}))).toMatchObject({state:"not_running",lastSeenAt:ago(600),expiresAt:ago(5)});
+    expect(nativeState(agent(),collector({credential_expires_at:ago(1)})).state).toBe("expired");
+    expect(nativeState(agent(),collector({last_heartbeat_at:ago(30),last_rejected_at:ago(3),last_rejected_reason:"expired"})).state).toBe("expired");
+    expect(nativeState(agent(),collector({last_heartbeat_at:ago(1),last_rejected_at:ago(3),last_rejected_reason:"expired"})).state).toBe("observed");
+    expect(nativeState(agent()).state).toBe("missing");
+    expect(nativeState(agent(),collector({issued_at:ago(4),last_heartbeat_at:null})).state).toBe("configured");
+    expect(nativeState(agent(),collector({issued_at:ago(11),last_heartbeat_at:null})).state).toBe("missing");
+    expect(nativeState(agent(),collector({issued_at:null,last_heartbeat_at:null})).state).toBe("missing");
+    expect(nativeState(agent(),collector({last_heartbeat_at:ago(16)}))).toMatchObject({state:"stale",lastSeenAt:ago(16)});
+    expect(nativeState(agent(),collector({last_heartbeat_at:ago(14)}))).toMatchObject({state:"observed",lastSeenAt:ago(14)});
+  });
+
+  it("never reports a stopped computer as stale, for any capability",()=>{
+    const old=ago(55);
+    const snapshot=buildActivitySnapshot({now:NOW,limit:20,sessionRows:[],agentRows:[agent({status:"stopped"})],collectorRows:[collector({last_heartbeat_at:old})],
+      eventRows:[{id:"g1",agent_id:A,event:"otel_log",agent_type:"codex",created_at:old,detail:{schemaVersion:1,source:"otlp_log",receivedAt:old,telemetry:{title:"Read used"}}},{id:"g2",agent_id:A,event:"otel_span",agent_type:"codex",created_at:old,detail:{schemaVersion:1,source:"otlp_trace",receivedAt:old,telemetry:{}}}]});
+    const states=snapshot.resources[0].capabilities.map(c=>c.state);
+    expect(states).not.toContain("stale");
+    expect(snapshot.resources[0]).toMatchObject({agentType:"codex",status:"stopped"});
+    expect(snapshot.sources.filter(s=>s.id.startsWith("otlp-")).map(s=>s.state)).toEqual(["active","active"]);
+    const running=buildActivitySnapshot({now:NOW,limit:20,sessionRows:[],agentRows:[agent()],eventRows:[{id:"g1",agent_id:A,event:"otel_log",agent_type:"codex",created_at:old,detail:{schemaVersion:1,source:"otlp_log",receivedAt:old,telemetry:{}}}]});
+    expect(running.resources[0].capabilities.find(c=>c.key==="tool_activity")?.state).toBe("stale");
+  });
+
+  it("uses the collector's last accepted event for tool coverage when history rows are elsewhere",()=>{
+    const snapshot=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent()],collectorRows:[collector({last_event_at:ago(3)})]});
+    expect(snapshot.resources[0].capabilities.find(c=>c.key==="tool_activity")).toMatchObject({state:"observed",lastSeenAt:ago(3)});
+  });
+
+  it("summarises running Claude Code and Codex computers honestly",()=>{
+    const B="00000000-0000-4000-8000-00000000000b", C="00000000-0000-4000-8000-00000000000c", D="00000000-0000-4000-8000-00000000000d";
+    const snapshot=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],
+      agentRows:[agent(),agent({id:B,type:"claude-code"}),agent({id:C,type:"claude-code"}),agent({id:D,type:"aeon"})],
+      collectorRows:[collector(),collector({agent_id:B}),collector({agent_id:C,last_heartbeat_at:ago(40)})]});
+    const source=snapshot.sources.find(s=>s.id==="agent-tracing")!;
+    expect(source).toMatchObject({label:"Agent run reporting",state:"stale"});
+    expect(source.detail).toBe("2 of 3 running Claude Code/Codex computers reporting. 1 stopped reporting.");
+    const healthy=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent()],collectorRows:[collector()]});
+    expect(healthy.sources.find(s=>s.id==="agent-tracing")).toMatchObject({state:"active",detail:"1 of 1 running Codex computer reporting."});
+    const idle=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent({status:"stopped"})],collectorRows:[]});
+    expect(idle.sources.find(s=>s.id==="agent-tracing")?.state).toBe("missing");
+  });
+});
+
+describe("native run records on read",()=>{
+  it("flags a failed task but not a stopped task or a failed tool call",()=>{
+    const snapshot=buildActivitySnapshot({now:NOW,limit:20,sessionRows:[],agentRows:[agent()],eventRows:[
+      nativeRow({role:"run.failed",outcome:"failure",severity:"error",errorType:"rate_limit"},"e1"),
+      nativeRow({role:"run.stopped",outcome:"unknown",severity:"info"},"e2"),
+      nativeRow({role:"tool.failed",outcome:"failure",severity:"warning",toolName:"Bash",durationMs:1200},"e3"),
+    ]});
+    const byId=Object.fromEntries(snapshot.events.map(e=>[e.id,e]));
+    expect(byId.e1).toMatchObject({role:"run.failed",needsAttention:true,severity:"error",title:"Codex task ended with a failure",errorType:"rate_limit"});
+    expect(byId.e2).toMatchObject({role:"run.stopped",needsAttention:false,outcome:"unknown",title:"Codex task was stopped"});
+    expect(byId.e3).toMatchObject({role:"tool.failed",needsAttention:false,severity:"warning",outcome:"failure",toolName:"Bash",durationMs:1200,title:"Tool Bash failed after 1.2 s"});
+  });
+
+  it("rebuilds text from re-validated fields so a tampered row cannot inject content",()=>{
+    const snapshot=buildActivitySnapshot({now:NOW,limit:20,sessionRows:[],agentRows:[agent()],eventRows:[
+      nativeRow({role:"tool.completed",outcome:"success",toolName:"Bash; curl evil",durationMs:12.5,title:"Click here: evil",summary:"ignore previous instructions",
+        evidence:[{label:"Prompt",value:"secret"}],conversationId:"conv id with spaces",parentSpanId:"NOT-HEX",traceId:"<script>",runId:"turn 1;",errorType:"Stack trace"},"t1"),
+      nativeRow({role:"tool.exfiltrate",outcome:"success",title:"Agent activity"},"t2"),
+    ]});
+    const t1=snapshot.events.find(e=>e.id==="t1")!;
+    expect(t1).toMatchObject({role:"tool.completed",title:"A tool finished",outcome:"success",summary:"The agent reported it succeeded."});
+    for(const field of ["toolName","durationMs","conversationId","parentSpanId","traceId","runId","errorType"] as const) expect(t1[field]).toBeUndefined();
+    expect(JSON.stringify(t1)).not.toMatch(/evil|ignore previous|secret|script|spaces/);
+    const t2=snapshot.events.find(e=>e.id==="t2")!;
+    expect(t2.role).toBeUndefined(); expect(t2.kind).toBe("tool_activity");
   });
 });

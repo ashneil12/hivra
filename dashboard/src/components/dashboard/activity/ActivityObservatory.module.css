@@ -370,8 +370,68 @@
 .runHeading > span {
   font-size: 11px;
 }
+.runs > p + p,
+.runGroup > p + p {
+  margin-top: 8px;
+}
 .runSteps {
   list-style: none;
   padding: 0;
   margin: 14px 0 0;
+}
+
+/* Automatic agent run reporting, per computer, in What is monitored. */
+.reporting {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--etched-border);
+  border-radius: 0;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.reporting strong {
+  font-weight: 500;
+}
+.reporting .meta {
+  margin-top: 4px;
+}
+
+/* Needs attention: running computers whose run reporting has a gap. */
+.alerts {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--etched-border);
+  border-left: 2px solid var(--yellow);
+  border-radius: 0;
+  background: var(--bg-surface);
+}
+.alerts h2 {
+  font-family: var(--font-mono, monospace);
+  margin: 0 0 10px;
+}
+.alerts ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.alert {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--etched-border);
+}
+.alert:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.alert > svg {
+  margin-top: 3px;
+}
+.alert strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.alert p {
+  margin-top: 4px !important;
 }

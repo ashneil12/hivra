@@ -507,3 +507,24 @@ density. Observation is the legacy default. It never resizes or evicts an
 existing guest, and a reducing resize remains available on an already
 overcommitted host. Inventory and per-guest status errors fail closed, and an
 uncapped QEMU guest's CPU maximum counts every configured socket.
+
+Release `2026.09.22.1` adds the agent-run reporter for Claude Code and Codex
+computers on Proxmox. `hivra-agent-trace.py` and `hivra-agent-trace.service`
+read only the structure of the agent's own session transcripts (task start and
+end, tool name, duration and a structured outcome) and deliver bounded OTLP
+records to the dashboard ingest with a per-computer seven-day credential that
+the reporter renews itself; prompts, replies, commands, tool inputs and tool
+outputs are never recorded or sent. The host launch script reads that
+credential from the existing root-only secret handoff and emits launch
+document version 4 only for Claude Code and Codex; other runtimes keep the
+unchanged version 1-3 documents, and an older dashboard that writes no
+credential still launches. The guest installer validates the credential
+strictly, passes it to the reporter's installer on stdin only, and fails the
+installation before access is configured if the reporter cannot start. Start,
+restart and resize reinstall the reporter from a fresh VMID-bound credential
+file, which also brings computers launched before this release into reporting;
+a reporter failure there is reported as one status line and never fails the
+start. The runtime receipt records the reporter script, unit and unit state
+when present and never reads the credential. This is agent-reported evidence,
+not an operating-system audit, and this source release does not deploy,
+install, or establish Canary acceptance.

@@ -85,3 +85,82 @@ export async function recordActivityCollectorIssued(
     return false;
   }
 }
+
+const iso = (value: Date | string): string => (typeof value === "string" ? new Date(value) : value).toISOString();
+
+/**
+ * Upsert per-computer reporter state keyed on agent_id, writing only the
+ * columns in the row. Best effort: returns false instead of throwing, including
+ * when a timestamp input is invalid.
+ */
+async function upsertCollectorState(client: SupabaseClient, row: () => Record<string, string>): Promise<boolean> {
+  try {
+    const { error } = await client.from("hivra_activity_collectors").upsert(row(), { onConflict: "agent_id" });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Record that the reporter delivered a heartbeat. `receivedAt` is the
+ * dashboard's own receive time (never the guest clock) and
+ * `credentialExpiresAt` comes from the token actually in use.
+ */
+export async function recordCollectorHeartbeat(
+  client: SupabaseClient,
+  input: { agentId: string; userId: string; receivedAt: Date | string; credentialExpiresAt: string },
+): Promise<boolean> {
+  return upsertCollectorState(client, () => {
+    const at = iso(input.receivedAt);
+    return {
+      agent_id: input.agentId,
+      user_id: input.userId,
+      last_heartbeat_at: at,
+      credential_expires_at: iso(input.credentialExpiresAt),
+      updated_at: at,
+    };
+  });
+}
+
+/** Record that ingest accepted at least one new activity event from this computer. */
+export async function recordCollectorEvents(
+  client: SupabaseClient,
+  input: { agentId: string; userId: string; receivedAt: Date | string; credentialExpiresAt?: string },
+): Promise<boolean> {
+  return upsertCollectorState(client, () => {
+    const at = iso(input.receivedAt);
+    return {
+      agent_id: input.agentId,
+      user_id: input.userId,
+      last_event_at: at,
+      ...(input.credentialExpiresAt ? { credential_expires_at: iso(input.credentialExpiresAt) } : {}),
+      updated_at: at,
+    };
+  });
+}
+
+/** Record that a correctly signed credential for this computer was refused because it expired. */
+export async function recordCollectorRejected(
+  client: SupabaseClient,
+  input: { agentId: string; userId: string; reason: "expired"; rejectedAt?: Date | string },
+): Promise<boolean> {
+  return upsertCollectorState(client, () => {
+    const at = iso(input.rejectedAt ?? new Date());
+    return {
+      agent_id: input.agentId,
+      user_id: input.userId,
+      last_rejected_at: at,
+      last_rejected_reason: input.reason,
+      updated_at: at,
+    };
+  });
+}
+
+/** Record a credential re-issued by the renewal endpoint. */
+export function recordCollectorRenewed(
+  client: SupabaseClient,
+  input: { agentId: string; userId: string; expiresAt: string; issuedAt?: Date },
+): Promise<boolean> {
+  return recordActivityCollectorIssued(client, { ...input, reason: "renew" });
+}

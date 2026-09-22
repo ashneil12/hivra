@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { ActivitySnapshot } from "../src/lib/activity-observability/types";
+import { reportingAlerts } from "../src/components/dashboard/activity/presentation";
+import {
+  describeRunStatus,
+  groupActivityRuns,
+} from "../src/components/dashboard/activity/run-groups";
 
 // Real authenticated read-only acceptance. Missing credentials are a reported
 // prerequisite, never evidence that a deployed revision passed.
@@ -96,22 +101,39 @@ test.describe("Activity observatory (deployed canary)", () => {
     const runs = activity.getByRole("region", { name: "Agent runs", exact: true });
     await expect(runs).toBeVisible();
     await expect(runs).toContainText("not a complete account of a run");
-    const linked = data.events.filter((event) =>
-      (event.kind === "trace_span" || event.kind === "tool_activity") &&
-      (event.runId?.trim() || event.traceId?.trim()),
-    );
-    if (!linked.length) await expect(runs).toContainText("No linked agent runs");
+    await expect(runs).toContainText("never records prompts");
+    // The page groups exactly these loaded records; each linked run states the
+    // status its own explicit run records support, never an inferred finish.
+    const { groups } = groupActivityRuns(data.events);
+    if (!groups.length) await expect(runs).toContainText("No linked agent runs");
+    for (const group of groups.slice(0, 10)) {
+      const run = runs.getByRole("article").filter({ hasText: group.agentName }).filter({
+        hasText: describeRunStatus(group).text,
+      });
+      await expect(run.first()).toBeVisible();
+      if (group.incomplete)
+        await expect(runs).toContainText("Started before the loaded records");
+    }
     const steps = runs.getByRole("button");
     if (await steps.count()) {
       await steps.first().click();
       await expect(activity.getByRole("complementary", { name: "Event inspector" })).toBeVisible();
     }
-    await activity.getByRole("button", { name: /Needs attention/ }).click();
+    const flagged = data.events.filter((event) => event.needsAttention).length;
+    const alerts = reportingAlerts(data.resources);
+    const attention = activity.getByRole("button", { name: /Needs attention/ });
+    if (flagged + alerts.length)
+      await expect(attention).toContainText(String(flagged + alerts.length));
+    await attention.click();
     await expect(
       activity
         .getByRole("region", { name: "Recorded events" })
         .getByRole("button"),
-    ).toHaveCount(data.events.filter((event) => event.needsAttention).length);
+    ).toHaveCount(flagged);
+    const gaps = activity.getByRole("region", { name: "Reporting gaps" });
+    if (alerts.length) {
+      for (const { resource } of alerts) await expect(gaps).toContainText(resource.name);
+    } else await expect(gaps).toHaveCount(0);
     await activity
       .getByRole("button", { name: "What is monitored", exact: true })
       .click();
@@ -128,6 +150,12 @@ test.describe("Activity observatory (deployed canary)", () => {
       await expect(coverage.getByText("Unable to load", { exact: true }).first()).toBeVisible();
     for (const resource of data.resources)
       await expect(coverage).toContainText(resource.name);
+    if (
+      data.resources.some((resource) =>
+        resource.capabilities.some((capability) => capability.key === "native_tracing"),
+      )
+    )
+      await expect(coverage).toContainText("Agent run reporting");
     const refreshed = page.waitForResponse(
       (res) =>
         res.url().includes("/api/activity?") &&

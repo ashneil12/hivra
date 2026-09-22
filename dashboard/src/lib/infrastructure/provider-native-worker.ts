@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.09.15.2.json";
+import release from "../../../provisioner-releases/2026.09.22.1.json";
 import type { PortableProvisionerBundleAsset } from "./connection-preparation";
 import type { FirstBootOperationScope } from "./first-boot-operations";
 import { parseProviderGuestClock, providerGuestBundleManifest, providerGuestBundleReceipt,
@@ -14,7 +14,7 @@ import { providerGuestWorkerRecipe } from "./provider-guest-worker-recipes";
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.09.15.2";
+const VERSION = "2026.09.22.1";
 const PROFILE = "deepseek-owned-service-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -26,13 +26,14 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.08.31.3" | "2026.08.31.4" | "2026.09.01.1" | "2026.09.01.2" | "2026.09.01.3" | "2026.09.01.4" | "2026.09.01.5" | "2026.09.01.6" | "2026.09.01.7" | "2026.09.01.8" | "2026.09.01.9" | "2026.09.02.1" | "2026.09.02.2" | "2026.09.02.3" | "2026.09.02.4" | "2026.09.02.5" | "2026.09.02.6" | "2026.09.02.7" | "2026.09.02.8" | "2026.09.03.1" | "2026.09.03.2" | "2026.09.04.1" | "2026.09.04.2" | "2026.09.04.3" | "2026.09.04.4" | "2026.09.05.1" | "2026.09.05.2" | "2026.09.05.3" | "2026.09.05.4" | "2026.09.05.5" | "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2", bundle: string) { return z.object({ version: z.literal(2), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.08.31.3" | "2026.08.31.4" | "2026.09.01.1" | "2026.09.01.2" | "2026.09.01.3" | "2026.09.01.4" | "2026.09.01.5" | "2026.09.01.6" | "2026.09.01.7" | "2026.09.01.8" | "2026.09.01.9" | "2026.09.02.1" | "2026.09.02.2" | "2026.09.02.3" | "2026.09.02.4" | "2026.09.02.5" | "2026.09.02.6" | "2026.09.02.7" | "2026.09.02.8" | "2026.09.03.1" | "2026.09.03.2" | "2026.09.04.1" | "2026.09.04.2" | "2026.09.04.3" | "2026.09.04.4" | "2026.09.05.1" | "2026.09.05.2" | "2026.09.05.3" | "2026.09.05.4" | "2026.09.05.5" | "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.22.1", bundle: string) { return z.object({ version: z.literal(2), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   nativeCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
 }).strict(); }
 const CurrentIdentity = identity(VERSION, bundleSha256);
 const Identity = z.union([
+  identity("2026.09.15.2", "17f367fbffbda1212fd61e4aab5e45f0646528de388b0667d0e4dc33c011711f"),
   identity("2026.09.15.1", "8c78992766b7f6f5aa499556342e3ff4e340bd5f8718850b488b4ce09e8dcf49"),
   identity("2026.09.08.2", "1660674e4927585463122666f3471de1ce7e6bc391f476c83f2fb96548f9672e"),
   identity("2026.09.07.1", "73ba80eb4007cdba90046637af0efc4712b395532a3fe890cc6a2bbb6dc322cb"),

@@ -1,0 +1,249 @@
+import type {
+  ActivityCapability,
+  ActivityCapabilityState,
+  ActivityEvent,
+  ActivityResource,
+} from "@/lib/activity-observability/types";
+import {
+  capabilityExplanation,
+  capabilityNames,
+  capabilityStateLabel,
+  formatDuration,
+  monitoringStates,
+  presentEvent,
+  reportingAlerts,
+  sourceExplanation,
+  sourceNames,
+} from "../presentation";
+
+const event = (overrides: Partial<ActivityEvent> = {}): ActivityEvent => ({
+  id: "one",
+  kind: "tool_activity",
+  title: "Agent activity",
+  agentId: "agent-1",
+  agentName: "Builder",
+  occurredAt: "2026-09-21T12:00:00Z",
+  outcome: "unknown",
+  severity: "info",
+  summary: "Report",
+  source: { kind: "otlp_log", label: "Agent" },
+  evidence: [],
+  needsAttention: false,
+  ...overrides,
+});
+const tracing = (
+  state: ActivityCapabilityState,
+  extra: Partial<ActivityCapability> = {},
+): ActivityCapability => ({
+  key: "native_tracing",
+  label: "Agent run reporting",
+  state,
+  ...extra,
+});
+
+it("formats reported durations in plain units", () => {
+  expect(formatDuration(850)).toBe("850 ms");
+  expect(formatDuration(5000)).toBe("5.0 s");
+  expect(formatDuration(59_949)).toBe("59.9 s");
+  expect(formatDuration(59_990)).toBe("1 min 0 s");
+  expect(formatDuration(65_000)).toBe("1 min 5 s");
+  expect(formatDuration(2 * 3_600_000 + 4 * 60_000)).toBe("2 h 4 min");
+  expect(formatDuration(-1)).toBeUndefined();
+});
+
+it("presents each native run role in plain language without overclaiming", () => {
+  const codex = { producer: "codex" as const };
+  expect(presentEvent(event({ ...codex, role: "run.started" }))).toMatchObject({
+    title: "Codex started a task",
+    status: "Recorded",
+    warning: false,
+  });
+  expect(
+    presentEvent(event({ ...codex, role: "run.started" })).happened,
+  ).toMatch(
+    /never records prompts, replies, commands, file contents, or tool inputs and outputs/,
+  );
+  const done = presentEvent(
+    event({
+      ...codex,
+      role: "run.completed",
+      outcome: "success",
+      durationMs: 5000,
+    }),
+  );
+  expect(done).toMatchObject({
+    title: "Codex finished a task",
+    status: "Finished (reported by the agent)",
+  });
+  expect(done.happened).toMatch(
+    /after 5.0 s\. This does not check whether the work is correct/,
+  );
+  const failed = presentEvent(
+    event({
+      producer: "claude-code",
+      role: "run.failed",
+      outcome: "failure",
+      severity: "error",
+      errorType: "server_error",
+    }),
+  );
+  expect(failed).toMatchObject({
+    title: "Claude Code task ended with a failure",
+    warning: true,
+  });
+  expect(failed.happened).toMatch(/\(type: server_error\)/);
+  expect(presentEvent(event({ ...codex, role: "run.stopped" }))).toMatchObject({
+    status: "Stopped before finishing",
+    warning: false,
+  });
+  expect(
+    presentEvent(event({ role: "tool.started", toolName: "Read" })).title,
+  ).toBe("Tool Read started");
+  expect(
+    presentEvent(
+      event({ role: "tool.completed", toolName: "Read", outcome: "success" }),
+    ).status,
+  ).toBe("Reported successful");
+  expect(
+    presentEvent(event({ role: "tool.completed", toolName: "exec" })).status,
+  ).toBe("Finished; result not reported");
+});
+
+it("treats a tool error as a warning agents often recover from", () => {
+  const presented = presentEvent(
+    event({
+      role: "tool.failed",
+      toolName: "Bash",
+      outcome: "failure",
+      severity: "warning",
+    }),
+  );
+  expect(presented).toMatchObject({
+    title: "Tool Bash reported an error",
+    status: "Tool reported an error",
+    warning: true,
+  });
+  expect(presented.guidance).toMatch(/Agents often recover from tool errors/);
+  expect(presented.guidance).toMatch(/Check whether the task finished/);
+});
+
+it("drops unsafe tool names and unknown producers or roles from plain-language copy", () => {
+  expect(
+    presentEvent(event({ role: "tool.started", toolName: "Bash; rm -rf /" }))
+      .title,
+  ).toBe("A tool started");
+  expect(
+    presentEvent(event({ role: "run.started", producer: "evil" as never }))
+      .title,
+  ).toBe("The agent started a task");
+  expect(presentEvent(event({ role: "run.exploded" as never })).title).toBe(
+    "Agent tool used",
+  );
+});
+
+it("names agent run reporting and every coverage state", () => {
+  expect(capabilityNames.native_tracing).toBe("Agent run reporting");
+  expect(sourceNames["agent-tracing"]).toBe("Agent run reporting");
+  expect(monitoringStates).toMatchObject({
+    expired: "Reporting credential expired",
+    unsupported: "Not available for this agent",
+    not_running: "Agent not running",
+    configured: "Waiting for first report",
+    degraded: "Unable to load",
+  });
+  expect(capabilityStateLabel(tracing("observed"))).toBe("Reporting");
+  expect(capabilityStateLabel(tracing("stale"))).toBe("Stopped checking in");
+  expect(capabilityStateLabel(tracing("expired"))).toBe(
+    "Reporting credential expired",
+  );
+  // Other capabilities keep the history wording.
+  expect(
+    capabilityStateLabel({
+      key: "tool_activity",
+      label: "Tools",
+      state: "observed",
+    }),
+  ).toBe("Records available");
+});
+
+it.each<[ActivityCapabilityState, RegExp]>([
+  [
+    "stale",
+    /^Hasn’t checked in for 15\+ min while running; runs in this gap may be missing\.$/,
+  ],
+  [
+    "missing",
+    /^No reports received — computers launched before automatic reporting start reporting after their next restart\.$/,
+  ],
+  ["expired", /credential ran out.*Restarting the computer issues a new one/],
+  ["configured", /first check-in should arrive within 10 minutes/],
+  ["unsupported", /Claude Code and Codex computers only/],
+  ["not_running", /no reports expected/],
+  ["observed", /not an audit/],
+  ["degraded", /Refresh to try again/],
+])(
+  "explains the %s reporting state honestly in one line",
+  (state, expected) => {
+    const text = capabilityExplanation(tracing(state));
+    expect(text).toMatch(expected);
+    expect(text?.split(/(?<=\.)\s/).length).toBeLessThanOrEqual(2);
+  },
+);
+
+it("only explains capabilities with a per-computer check-in", () => {
+  expect(
+    capabilityExplanation({
+      key: "lifecycle",
+      label: "Lifecycle",
+      state: "missing",
+    }),
+  ).toBeUndefined();
+});
+
+it("explains the agent run reporting source without treating silence as idleness", () => {
+  const source = {
+    id: "agent-tracing" as const,
+    label: "Agent run reporting",
+    detail: "",
+  };
+  expect(sourceExplanation({ ...source, state: "missing" })).toMatch(
+    /Silence does not mean the agents were idle/,
+  );
+  expect(sourceExplanation({ ...source, state: "stale" })).toMatch(
+    /some of its runs may be missing/,
+  );
+  expect(sourceExplanation({ ...source, state: "active" })).toMatch(
+    /not an audit of the computer/,
+  );
+});
+
+it("raises reporting alerts only for running computers that are stale or expired", () => {
+  const resource = (
+    id: string,
+    state: ActivityCapabilityState,
+    status?: string,
+  ): ActivityResource => ({
+    id,
+    name: id,
+    ...(status ? { status } : {}),
+    capabilities: [tracing(state)],
+  });
+  const alerts = reportingAlerts([
+    resource("stale-running", "stale", "running"),
+    resource("expired-running", "expired", "running"),
+    resource("expired-no-status", "expired"),
+    resource("stale-stopped", "stale", "stopped"),
+    resource("missing", "missing", "running"),
+    resource("observed", "observed", "running"),
+    {
+      id: "legacy",
+      name: "legacy",
+      capabilities: [{ key: "tool_activity", label: "Tools", state: "stale" }],
+    },
+  ]);
+  expect(alerts.map((alert) => alert.resource.id)).toEqual([
+    "stale-running",
+    "expired-running",
+    "expired-no-status",
+  ]);
+});

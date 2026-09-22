@@ -6,13 +6,18 @@ import { AgentActivityPanel } from "@/components/dashboard/AgentActivityPanel";
 import type {
   ActivitySnapshot,
   ActivityEvent,
+  ActivityCapability,
 } from "@/lib/activity-observability/types";
 import {
   kindLabels,
   sourceNames,
   capabilityNames,
+  capabilityExplanation,
+  capabilityStateLabel,
   monitoringStates,
   presentEvent,
+  producerName,
+  reportingAlerts,
   sourceExplanation,
 } from "./presentation";
 import { AgentRuns } from "./AgentRuns";
@@ -30,6 +35,51 @@ function timestamp(value?: string) {
         timeStyle: "medium",
       });
 }
+const reportingWarning = (capability: ActivityCapability) =>
+  ["stale", "expired", "degraded"].includes(capability.state);
+
+/** Automatic agent run reporting for one computer: state, check-in and credential. */
+function ReportingCoverage({
+  capability,
+  now,
+}: {
+  capability: ActivityCapability;
+  now: string;
+}) {
+  const expires = capability.expiresAt ? Date.parse(capability.expiresAt) : NaN;
+  const expired = !Number.isNaN(expires) && expires <= Date.parse(now);
+  return (
+    <div className={styles.reporting}>
+      <p>
+        <strong>{capabilityNames[capability.key] ?? capability.label}</strong> ·{" "}
+        <span
+          className={reportingWarning(capability) ? styles.warning : undefined}
+        >
+          {capabilityStateLabel(capability)}
+        </span>
+      </p>
+      <p className={styles.muted}>{capabilityExplanation(capability)}</p>
+      {capability.state !== "unsupported" &&
+        capability.state !== "degraded" && (
+          <p className={styles.meta}>
+            Reporter last checked in:{" "}
+            {capability.lastSeenAt
+              ? timestamp(capability.lastSeenAt)
+              : "No check-in received"}
+          </p>
+        )}
+      {capability.expiresAt && (
+        <p className={styles.meta}>
+          {expired
+            ? "Reporting credential expired"
+            : "Reporting credential valid until"}{" "}
+          {timestamp(capability.expiresAt)}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Inspector({
   event,
   selected,
@@ -58,6 +108,12 @@ function Inspector({
     ["Trace", event.traceId],
     ["Span", event.spanId],
     ["Parent span", event.parentSpanId],
+    ["Reported by", producerName(event)],
+    ["Record type", event.role],
+    ["Tool", event.toolName],
+    ["Duration (ms)", event.durationMs?.toString()],
+    ["Conversation", event.conversationId],
+    ["Error type", event.errorType],
   ];
   return (
     <aside
@@ -70,7 +126,13 @@ function Inspector({
         {event.needsAttention ? "Worth checking" : "History record"}
       </p>
       <h2>{presentation.title}</h2>
-      <span className={event.needsAttention ? styles.warning : styles.muted}>
+      <span
+        className={
+          event.needsAttention || presentation.warning
+            ? styles.warning
+            : styles.muted
+        }
+      >
         {presentation.status}
       </span>
       <h3>What happened</h3>
@@ -223,6 +285,13 @@ export function ActivityObservatory({
     return () => request.current?.abort();
   }, [refresh]);
   const events = data?.events ?? [];
+  const alerts = reportingAlerts(data?.resources ?? []);
+  const visibleAlerts =
+    agent === "all"
+      ? alerts
+      : alerts.filter((alert) => alert.resource.id === agent);
+  const attentionCount =
+    events.filter((event) => event.needsAttention).length + alerts.length;
   const query = search.trim().toLowerCase();
   const filtered = events.filter(
     (event) =>
@@ -242,6 +311,9 @@ export function ActivityObservatory({
         event.agentName,
         event.runId,
         event.traceId,
+        event.toolName,
+        event.conversationId,
+        producerName(event),
         ...event.evidence.flatMap((item) => [item.label, item.value]),
       ]
         .join(" ")
@@ -305,12 +377,9 @@ export function ActivityObservatory({
             onClick={() => setView(key)}
           >
             {title}
-            {key === "attention" &&
-              events.some((event) => event.needsAttention) && (
-                <span className={styles.count}>
-                  {events.filter((event) => event.needsAttention).length}
-                </span>
-              )}
+            {key === "attention" && attentionCount > 0 && (
+              <span className={styles.count}>{attentionCount}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -341,8 +410,11 @@ export function ActivityObservatory({
             <p className={styles.kicker}>What Hivra can see</p>
             <h2>What is recorded, and what is missing.</h2>
             <p className={styles.muted}>
-              Hivra shows saved computer changes and reports sent by agents. It
-              does not see every command, file change, or network connection.
+              Hivra shows saved computer changes and what supported agents
+              report about their own runs. Agent reports come from inside the
+              computer; they are not an audit of every command, file change, or
+              network connection, and a quiet computer is not proof that nothing
+              happened.
             </p>
             <h3>Types of history</h3>
             {data.sources.map((source) => (
@@ -382,18 +454,34 @@ export function ActivityObservatory({
                     <p className={styles.muted}>
                       Last agent report: {timestamp(resource.lastSeenAt)}
                     </p>
-                    <div className={styles.capabilities}>
-                      {resource.capabilities.map((capability) => (
-                        <span key={capability.key}>
-                          {capabilityNames[capability.key] ?? capability.label}{" "}
-                          · {monitoringStates[capability.state]}
-                          {capability.lastSeenAt && (
-                            <small>
-                              Last seen {timestamp(capability.lastSeenAt)}
-                            </small>
-                          )}
-                        </span>
+                    {resource.capabilities
+                      .filter(
+                        (capability) => capability.key === "native_tracing",
+                      )
+                      .map((capability) => (
+                        <ReportingCoverage
+                          key={capability.key}
+                          capability={capability}
+                          now={data.generatedAt}
+                        />
                       ))}
+                    <div className={styles.capabilities}>
+                      {resource.capabilities
+                        .filter(
+                          (capability) => capability.key !== "native_tracing",
+                        )
+                        .map((capability) => (
+                          <span key={capability.key}>
+                            {capabilityNames[capability.key] ??
+                              capability.label}{" "}
+                            · {capabilityStateLabel(capability)}
+                            {capability.lastSeenAt && (
+                              <small>
+                                Last seen {timestamp(capability.lastSeenAt)}
+                              </small>
+                            )}
+                          </span>
+                        ))}
                     </div>
                   </div>
                 </div>
@@ -412,9 +500,48 @@ export function ActivityObservatory({
               {view === "runs"
                 ? "Follow reported agent steps in order. Select a step to inspect what was reported; a quiet run does not mean it finished."
                 : view === "attention"
-                  ? "Only records marked for review appear here. The count covers loaded records, not all activity or a guarantee that everything is fine."
+                  ? "Only records marked for review and reporting gaps on running computers appear here. The count covers loaded records and current reporting, not all activity or a guarantee that everything is fine."
                   : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems."}
             </p>
+            {view === "attention" && visibleAlerts.length > 0 && (
+              <section aria-label="Reporting gaps" className={styles.alerts}>
+                <h2 className={styles.kicker}>Reporting gaps</h2>
+                <ul>
+                  {visibleAlerts.map(({ resource, capability }) => (
+                    <li key={resource.id} className={styles.alert}>
+                      <AlertTriangle
+                        size={16}
+                        className={styles.warning}
+                        aria-hidden="true"
+                      />
+                      <div>
+                        <strong>
+                          {resource.name}:{" "}
+                          {capability.state === "expired"
+                            ? "run reporting credential expired"
+                            : "run reporting stopped checking in"}
+                        </strong>
+                        <p className={styles.muted}>
+                          {capabilityExplanation(capability)}
+                        </p>
+                        <p className={styles.meta}>
+                          Reporter last checked in:{" "}
+                          {capability.lastSeenAt
+                            ? timestamp(capability.lastSeenAt)
+                            : "No check-in received"}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  className={styles.refresh}
+                  onClick={() => setView("coverage")}
+                >
+                  See what is monitored
+                </button>
+              </section>
+            )}
             <div className={styles.toolbar}>
               <input
                 type="search"
@@ -478,7 +605,7 @@ export function ActivityObservatory({
                         aria-pressed={active?.id === event.id}
                         onClick={() => setSelected(event.id)}
                       >
-                        {event.needsAttention ? (
+                        {event.needsAttention || presentEvent(event).warning ? (
                           <AlertTriangle
                             size={16}
                             className={styles.warning}
@@ -496,7 +623,8 @@ export function ActivityObservatory({
                           <span className={styles.eventBottom}>
                             <span
                               className={
-                                event.needsAttention
+                                event.needsAttention ||
+                                presentEvent(event).warning
                                   ? styles.warning
                                   : undefined
                               }

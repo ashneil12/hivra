@@ -108,7 +108,17 @@ import {
   resolveHivraVmidStart,
   shellQuote,
 } from "@/lib/hivra/proxmox-target";
-import { mintActivityCollectorToken } from "@/lib/activity-observability/auth";
+import {
+  activityControlOrigin,
+  issueActivityCollectorCredential,
+  recordActivityCollectorIssued,
+  supportsNativeTracing,
+  type ActivityCollectorCredential,
+} from "@/lib/activity-observability/collectors";
+import {
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+  provisionerSupportsActivityTelemetry,
+} from "@/lib/infrastructure/portable-provisioner-contract";
 
 // Process-lifetime once-guard for the hivra-lane box_created emit. Same
 // rationale as emittedBoxCreatedInstanceIds in instance-service.ts (#353):
@@ -210,16 +220,16 @@ function submittedLaunchRequestIntent(
   };
 }
 
-function linuxDesktopControlOrigin(): string | null {
-  const value = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" && parsed.origin === value && !parsed.username && !parsed.password
-      ? parsed.origin
-      : null;
-  } catch {
-    return null;
-  }
+// The bundle version a Proxmox launch will execute, when admission pins it.
+// Self-managed targets carry verified evidence and the managed Canary channel
+// admits only the current release. Managed default hosts may run any
+// compatible predecessor, which ignores the credential, so it stays unknown.
+function launchProvisionerVersion(
+  portableRuntime: PortableProxmoxRuntime | null,
+  channel: ManagedHivraProvisionerChannel,
+): string | null {
+  if (portableRuntime) return portableRuntime.provisionerVersion;
+  return channel === "canary" ? PORTABLE_HIVRA_PROVISIONER_VERSION : null;
 }
 
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
@@ -250,12 +260,8 @@ function phase1Script(params: {
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
-  activityTelemetry?: {
-    endpoint: string;
-    resourceId: string;
-    token: string;
-    expiresAt: string;
-  } | null;
+  // Travels only in the root-only secret handoff file, never argv or logs.
+  activityTelemetry?: ActivityCollectorCredential | null;
 }): string {
   const runtime = params.portableRuntime ?? null;
   const runtimePaths = runtime ?? params.managedRuntimePaths;
@@ -271,6 +277,17 @@ function phase1Script(params: {
   const wantBrowserEnvValue = params.agentKind === "linux-desktop"
     ? ""
     : params.wantBrowser ? "1" : "0";
+  // Exactly the four keys the host and guest validators accept. Empty when
+  // absent, so an older host bundle simply reads no credential.
+  const telemetry = params.activityTelemetry ?? null;
+  const activityTelemetryDocument = telemetry
+    ? JSON.stringify({
+        endpoint: telemetry.endpoint,
+        resourceId: telemetry.resourceId,
+        token: telemetry.token,
+        expiresAt: telemetry.expiresAt,
+      })
+    : "";
   const hostEnvironment = [
     `HIVRA_PROV_DIR=${shellQuote(runtimePaths.provisionerDirectory)}`,
     `HIVRA_STORAGE=${shellQuote(runtimePaths.storage)}`,
@@ -524,7 +541,7 @@ write_secret_b64() { printf '%s' "$1" | base64 -w 0; printf '\n'; }
   printf 'HIVRA_MODEL_KEY_B64='; write_secret_b64 ${shellQuote(params.modelKey ?? "")}
   printf 'HIVRA_MODEL_BASE_URL_B64='; write_secret_b64 ${shellQuote(params.modelBaseUrl ?? "")}
   printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 ${shellQuote(params.model ?? "")}
-  printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; write_secret_b64 ${shellQuote(params.activityTelemetry ? JSON.stringify(params.activityTelemetry) : "")}
+  printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; write_secret_b64 ${shellQuote(activityTelemetryDocument)}
 } > "$SECRET_ENV_FILE"
 ${kickoff}
 ALLOCATION_RECEIPT="/run/hivra-provision/$VMID.allocated"
@@ -965,7 +982,7 @@ async function launchAgent(request: NextRequest) {
     const agentKind = def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
       : type === "agent-zero" ? "agent-zero" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
     const compatibilityRuntimeId = type;
-    const desktopControlOrigin = type === "linux-desktop" ? linuxDesktopControlOrigin() : null;
+    const desktopControlOrigin = type === "linux-desktop" ? activityControlOrigin() : null;
     if (type === "linux-desktop" && (!desktopControlOrigin || !isTunnelConfigured())) {
       return apiError(
         "Ubuntu Desktop requires this Hivra installation's canonical HTTPS access and named-tunnel configuration.",
@@ -1718,6 +1735,30 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       await finishCancelledProvision(null);
       return apiError("Launch was cancelled before provider allocation.", 409);
     }
+    // Agent-run reporting (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md):
+    // a 7-day credential scoped to exactly this computer. It never fails the
+    // launch: without a public origin or signing secret the computer launches
+    // unreported and Activity shows missing coverage. Local-auth installs have
+    // no guest-reachable ingest, and a bundle known to predate the reporter
+    // would silently drop the credential, so neither receives one.
+    const hostProvisionerVersion = launchProvisionerVersion(portableRuntime, managedProvisionerChannel);
+    const activityTelemetryEligible = (agentKind === "claude" || agentKind === "codex")
+      && supportsNativeTracing({ type, computer_substrate: agent.computer_substrate })
+      && !isLocalAuthMode()
+      && (hostProvisionerVersion === null || provisionerSupportsActivityTelemetry(hostProvisionerVersion));
+    const activityTelemetry = activityTelemetryEligible
+      ? issueActivityCollectorCredential({ userId, agentId: String(agent.id) })
+      : null;
+    if (activityTelemetryEligible && !activityTelemetry) {
+      log.warn("hivra launch continues without an agent-run reporting credential", {
+        source: "hivra/agents",
+        failureType: "hivra_activity_collector_unavailable",
+        userId,
+        agentId: agent.id,
+        agentType: type,
+        controlOriginConfigured: activityControlOrigin() !== null,
+      });
+    }
     const result = await runProxmoxHostScript(phase1Script({
       cpu: provisionCores,
       cpuLimit: maximumCpu,
@@ -1743,7 +1784,33 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       computerId: type === "linux-desktop" ? String(agent.id) : undefined,
       controlOrigin: desktopControlOrigin ?? undefined,
       capacityPolicy,
+      activityTelemetry,
     }), env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
+    if (activityTelemetry) {
+      // Recorded once the credential has been handed to the host, whatever the
+      // kickoff outcome: a computer compensated below becomes deleted, which
+      // ingest and renewal refuse. Best effort and bounded: a slow database
+      // must not hold the launch response.
+      let recordTimer: ReturnType<typeof setTimeout> | undefined;
+      const recorded = await Promise.race([
+        recordActivityCollectorIssued(supabaseAdmin, {
+          agentId: activityTelemetry.resourceId,
+          userId,
+          expiresAt: activityTelemetry.expiresAt,
+          reason: "launch",
+        }),
+        new Promise<false>(resolve => { recordTimer = setTimeout(() => resolve(false), 5_000); }),
+      ]).finally(() => clearTimeout(recordTimer));
+      if (!recorded) {
+        log.warn("hivra agent-run reporting credential issuance was not recorded", {
+          source: "hivra/agents",
+          failureType: "hivra_activity_collector_record_failed",
+          userId,
+          agentId: agent.id,
+          agentType: type,
+        });
+      }
+    }
     const allocationIdentity = parsePhase1AllocationIdentity({
       stdout: result.stdout || "",
       vmidStart,

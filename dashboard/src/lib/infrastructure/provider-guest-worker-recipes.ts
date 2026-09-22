@@ -300,6 +300,11 @@ const recipes = Object.freeze({
     workerSha256: "fb12467a5f09f81d6d117e246c3d98b74ec7b9c5e41d86b57578d9df9954c14b",
     workerSize: 45185,
   }),
+  "2026.09.22.1": Object.freeze({
+    protocol: "v1" as const, // Same provider worker; the agent-run reporter is installed only on Proxmox Claude Code/Codex guests.
+    workerSha256: "fb12467a5f09f81d6d117e246c3d98b74ec7b9c5e41d86b57578d9df9954c14b",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

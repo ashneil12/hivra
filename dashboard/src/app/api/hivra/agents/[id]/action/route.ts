@@ -82,6 +82,16 @@ import {
 } from "@/lib/hivra/prepared-canary-computers";
 import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import {
+  issueActivityCollectorCredential,
+  recordActivityCollectorIssued,
+  supportsNativeTracing,
+  type ActivityCollectorCredential,
+} from "@/lib/activity-observability/collectors";
+
+// Printed by the start kickoff only after the reporter credential file was
+// written for a start helper that consumes it.
+const ACTIVITY_CREDENTIAL_STAGED = "HIVRA_ACTIVITY_CREDENTIAL_STAGED";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
@@ -580,8 +590,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ? `${lifecycleMutationPrelude(vmid, lifecycleBindingTag, true)}
 ${restorePrefix}${lifecycleVmAuthorityBody()}`
       : lifecyclePrelude;
-    const startKickoff = (operationId: string) =>
-      `umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
+    // Agent-run reporting: every start-helper run of a Claude Code / Codex
+    // Proxmox computer re-issues its 7-day reporter credential, replacing one
+    // that expired while stopped and backfilling computers launched before
+    // reporting existed once their host carries the new helper. The credential
+    // reaches the host only inside this script (stdin to bash -s) and a root-only
+    // file the helper consumes and deletes. Lifecycle readiness admits older
+    // helpers that cannot consume it, so the file is written only after probing
+    // the exact helper. A deployment without an origin or signing secret skips
+    // silently; Activity then shows the computer's coverage as missing.
+    let stagedActivityCredential: ActivityCollectorCredential | null = null;
+    const activityTelemetryKickoff = (): { stage: string; env: string } => {
+      stagedActivityCredential = supportsNativeTracing(agent)
+        ? issueActivityCollectorCredential({ userId: String(agent.user_id), agentId: String(agent.id) })
+        : null;
+      if (!stagedActivityCredential) return { stage: "", env: "" };
+      const file = shellQuote(`/run/hivra-lifecycle/${vmid}.activity.env`);
+      const encoded = Buffer.from(JSON.stringify(stagedActivityCredential), "utf8").toString("base64");
+      return {
+        stage: `HIVRA_ACTIVITY_FILE=''; if grep -Fq HIVRA_ACTIVITY_TELEMETRY_FILE ${shellQuote(startHelper)} 2>/dev/null && install -d -m 0700 /run/hivra-lifecycle && install -m 0600 /dev/null ${file} && printf '%s\\n' ${shellQuote(`HIVRA_ACTIVITY_TELEMETRY_B64=${encoded}`)} > ${file}; then HIVRA_ACTIVITY_FILE=${file}; echo ${ACTIVITY_CREDENTIAL_STAGED}; else rm -f -- ${file} 2>/dev/null || true; fi; `,
+        env: `HIVRA_ACTIVITY_TELEMETRY_FILE="$HIVRA_ACTIVITY_FILE" `,
+      };
+    };
+    // Best effort, and only once the host confirmed the credential file exists:
+    // a failed record never fails the lifecycle operation.
+    const recordActivityCredentialIssued = async (result: HostScriptResult) => {
+      const credential = stagedActivityCredential;
+      if (!credential || !supabaseAdmin) return;
+      if (!(result.stdout || "").split(/\r?\n/).includes(ACTIVITY_CREDENTIAL_STAGED)) return;
+      const recorded = await recordActivityCollectorIssued(supabaseAdmin, {
+        agentId: String(agent.id),
+        userId: String(agent.user_id),
+        expiresAt: credential.expiresAt,
+        reason: "start",
+      });
+      if (!recorded) {
+        log.warn("hivra activity collector issuance could not be recorded", {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_activity_collector_issue_record_failed",
+          userId,
+          agentId: agent.id,
+          action,
+        });
+      }
+    };
+    const startKickoff = (operationId: string) => {
+      const activity = activityTelemetryKickoff();
+      return `umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; ${activity.stage}nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}${activity.env}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
+    };
 
     const claimProviderOperation = async (
       operationKind: Exclude<HivraAgentOperationKind, "provision" | "delete">,
@@ -843,6 +899,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Start outcome is unknown"));
         return apiError("Start failed", 502);
       }
+      await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
         userId,
         agentId: String(agent.id),
@@ -877,6 +934,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Restart outcome is unknown"));
         return apiError("Restart failed", 502);
       }
+      await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
         userId,
         agentId: String(agent.id),
@@ -931,6 +989,7 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Runtime update outcome is unknown"));
         return apiError("Runtime update could not be verified. Refresh this computer before trying again.", 502);
       }
+      await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
         userId,
         agentId: String(agent.id),
@@ -1136,6 +1195,7 @@ ${startKickoff(operationId)}`,
         }
         return apiError("Resize failed", 502);
       }
+      await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentResizeOperation({
         userId,
         agentId: String(agent.id),

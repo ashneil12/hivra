@@ -5,7 +5,7 @@
  * Keep this module free of filesystem and credential access so importing the
  * contract cannot accidentally pull server secrets into a client bundle.
  */
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.15.2";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.22.1";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -56,6 +56,7 @@ export const PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS = [
   "2026.09.08.1",
   "2026.09.08.2",
   "2026.09.08.3",
+  "2026.09.15.2",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function isCompatibleProxmoxProvisionerVersion(version: unknown): version is string {
@@ -107,6 +108,7 @@ const PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS = [
   "2026.09.08.1",
   "2026.09.08.2",
   "2026.09.08.3",
+  "2026.09.15.2",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 
@@ -114,10 +116,16 @@ function provisionerSupportsLinuxDesktop(version: unknown): boolean {
   return (PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS as readonly unknown[]).includes(version);
 }
 
-/** Windows setup was first reviewed in this release. Compatible predecessor
- * lifecycle ABIs must never inherit this host mutation capability. */
+/** Exact reviewed releases that ship the Windows setup host capability.
+ * 2026.09.15.2 is the first admitted lifecycle release carrying it. Earlier
+ * compatible lifecycle ABIs must never inherit this host mutation capability,
+ * so each later release is listed explicitly rather than implied. */
+const PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS = [
+  "2026.09.15.2",
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+] as const;
 export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
-  return version === PORTABLE_HIVRA_PROVISIONER_VERSION;
+  return (PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS as readonly unknown[]).includes(version);
 }
 
 /** Legacy provider runtimes; desktop admission is separately version-bound. */
@@ -136,14 +144,22 @@ export function providerProvisionerSupportsCatalogRuntime(version: unknown, runt
     ? version === PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION
     : (PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).includes(runtime));
 }
-export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
 
 /** Native launch compatibility is not model-key delivery capability. Only the
  * reviewed atomic model-settings release can opt into launch-time custody.
  * Actual guest capability and receipt checks still run before key delivery. */
-export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
 export function supportsModelSettingsProvisionerVersion(version: unknown): version is string {
   return (PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS as readonly unknown[]).includes(version);
+}
+
+/** Releases whose host script and guest installer carry the agent-run
+ * reporter (launch document v4). A predecessor ignores the credential, so the
+ * control plane does not issue one to a host known to run an older bundle. */
+export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1"] as const;
+export function provisionerSupportsActivityTelemetry(version: unknown): version is string {
+  return (PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS as readonly unknown[]).includes(version);
 }
 
 type PortableHivraSupportedCatalogRuntimeId =
@@ -234,6 +250,8 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "deepseek-harness/install-guest.py",
   "deepseek-harness/bux-hivra-chat.service",
   "hivra-agent-shell",
+  "hivra-agent-trace.py",
+  "hivra-agent-trace.service",
   "hivra-guest-ssh-known-hosts",
   "hivra-host-capacity-admission",
   "hivra-install-agent.py",

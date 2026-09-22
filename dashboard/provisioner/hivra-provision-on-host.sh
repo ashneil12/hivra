@@ -182,12 +182,18 @@ if [ -n "$SECRET_ENV_FILE" ]; then
     [[ "$encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] || fail "secret input contains invalid base64"
     printf '%s' "$encoded" | base64 -d || fail "secret input could not be decoded"
   }
+  # Dashboards that predate agent-run reporting never write this key; its
+  # absence means "no credential", not a malformed handoff.
+  read_optional_secret_b64() {
+    grep -q -m1 -E "^$1=" "$SECRET_ENV_FILE" 2>/dev/null || return 0
+    read_secret_b64 "$1"
+  }
   HIVRA_TUNNEL_TOKEN="$(read_secret_b64 HIVRA_TUNNEL_TOKEN_B64)"
   HIVRA_TUNNEL_URL="$(read_secret_b64 HIVRA_TUNNEL_URL_B64)"
   HIVRA_MODEL_KEY="$(read_secret_b64 HIVRA_MODEL_KEY_B64)"
   HIVRA_MODEL_BASE_URL="$(read_secret_b64 HIVRA_MODEL_BASE_URL_B64)"
   HIVRA_HERMES_MODEL="$(read_secret_b64 HIVRA_HERMES_MODEL_B64)"
-  HIVRA_ACTIVITY_TELEMETRY="$(read_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"
+  HIVRA_ACTIVITY_TELEMETRY="$(read_optional_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"
   rm -f -- "$SECRET_ENV_FILE"
   SECRET_ENV_FILE=""
 else
@@ -196,7 +202,11 @@ else
   HIVRA_MODEL_KEY="${HIVRA_MODEL_KEY:-}"
   HIVRA_MODEL_BASE_URL="${HIVRA_MODEL_BASE_URL:-}"
   HIVRA_HERMES_MODEL="${HIVRA_HERMES_MODEL:-}"
+  HIVRA_ACTIVITY_TELEMETRY="${HIVRA_ACTIVITY_TELEMETRY:-}"
 fi
+# The reporter credential reaches the guest only inside the stdin launch
+# document; no child process of this script inherits it.
+export -n HIVRA_ACTIVITY_TELEMETRY
 HIVRA_COMPUTER_ID="${HIVRA_COMPUTER_ID:-}"
 HIVRA_CONTROL_ORIGIN="${HIVRA_CONTROL_ORIGIN:-}"
 validate_named_tunnel_input() {
@@ -453,7 +463,35 @@ guest_launch_document() {
     "$HIVRA_MODEL_BASE_URL" "$HIVRA_HERMES_MODEL" "${HIVRA_TUNNEL_TOKEN:-}" "${HIVRA_TUNNEL_URL:-}" \
     "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" \
     | python3 -I -B -c '
-import json, sys
+import datetime, json, re, sys
+def unique_object(pairs):
+    result = {}
+    for key, item in pairs:
+        if key in result:
+            raise ValueError()
+        result[key] = item
+    return result
+def activity_telemetry(raw):
+    # Agent-run reporter credential: exactly these four strings, see
+    # docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md.
+    value = json.loads(raw, object_pairs_hook=unique_object)
+    if not isinstance(value, dict) or set(value) != {"endpoint", "resourceId", "token", "expiresAt"}:
+        raise ValueError()
+    if not all(isinstance(item, str) for item in value.values()):
+        raise ValueError()
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if len(value["endpoint"]) > 300 or not re.fullmatch(
+            r"https://(?:" + label + r"\.)*" + label + r"(?::[0-9]{1,5})?/api/activity/ingest", value["endpoint"]):
+        raise ValueError()
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value["resourceId"]):
+        raise ValueError()
+    if len(value["token"].encode("utf-8")) > 4096 or not re.fullmatch(
+            r"hvra_otlp_v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", value["token"]):
+        raise ValueError()
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{3}|\.[0-9]{6})?Z", value["expiresAt"]):
+        raise ValueError()
+    datetime.datetime.fromisoformat(value["expiresAt"][:-1])
+    return value
 try:
     raw = sys.stdin.buffer.read(32769)
     if len(raw) > 32768:
@@ -477,11 +515,11 @@ try:
         document["computerId"] = values[7]
         document["controlOrigin"] = values[8]
     if values[9]:
-        telemetry = json.loads(values[9])
-        if values[0] not in ("claude", "codex") or not isinstance(telemetry, dict):
+        # Only Claude Code and Codex write the transcripts the reporter reads.
+        if values[0] not in ("claude", "codex"):
             raise ValueError()
         document["version"] = 4
-        document["activityTelemetry"] = telemetry
+        document["activityTelemetry"] = activity_telemetry(values[9])
     print(json.dumps(document))
 except Exception:
     print("invalid guest launch input", file=sys.stderr)
