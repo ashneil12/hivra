@@ -306,8 +306,8 @@ const recipes = Object.freeze({
     workerSize: 45185,
   }),
   "2026.09.22.1": Object.freeze({
-    protocol: "v1" as const, // Same provider worker as 2026.09.21.1; the agent-run reporter is installed only on Proxmox Claude Code/Codex guests.
-    workerSha256: "f88d2e5482128f1a7ceed5240c7bfd54694d0b6de2e186e215a418b5cc3b002a",
+    protocol: "v1" as const, // Admit the new immutable bundle identity; the agent-run reporter is installed only on Proxmox Claude Code/Codex guests.
+    workerSha256: "69f92695647a5eca6c4a1074d61bbaf233450111b9694ffc1a7464a188079744",
     workerSize: 45185,
   }),
 });
