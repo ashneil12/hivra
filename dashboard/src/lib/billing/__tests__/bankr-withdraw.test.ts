@@ -3,6 +3,7 @@ jest.mock("@/lib/supabase", () => ({
 }));
 
 import {
+  BankrTransferHttpError,
   submitBankrTransfer,
   withdrawAllHermesTokensForUser,
 } from "../bankr-withdraw";
@@ -54,5 +55,26 @@ describe("submitBankrTransfer", () => {
         }),
       })
     );
+  });
+
+  it("reports a non-2xx answer with its status, so callers can tell a refusal from an unknown outcome", async () => {
+    const fetchImpl = jest.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => "insufficient_funds_for_gas",
+    }));
+
+    const error = await submitBankrTransfer({
+      apiKey: "bk_agent_secret",
+      tokenAddress: "0x0000000000000000000000000000000000000000",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
+      amountDisplay: "1",
+      env: { BANKR_API_BASE_URL: "https://bankr.example.test" },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BankrTransferHttpError);
+    expect((error as BankrTransferHttpError).status).toBe(400);
+    expect((error as Error).message).toBe("Bankr transfer failed status=400 body=insufficient_funds_for_gas");
   });
 });

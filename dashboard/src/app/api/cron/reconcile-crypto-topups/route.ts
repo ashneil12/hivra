@@ -8,6 +8,10 @@ import { sweepPendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-veni
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 
+// Each open intent is scanned over its own window on Base (a few chunked
+// eth_getLogs calls), then both treasury sweeps run.
+export const maxDuration = 300;
+
 function parseLimit(req: NextRequest) {
   const raw = new URL(req.url).searchParams.get("limit");
   const value = raw ? Number(raw) : 50;
@@ -35,6 +39,41 @@ export async function GET(req: NextRequest) {
   try {
     const limit = parseLimit(req);
     const reconciliation = await reconcilePendingCryptoTopUps({ limit });
+    if (reconciliation.failed > 0) {
+      // Per-intent failures (an RPC rejecting the scan, a DB error) used to
+      // vanish into a 200 while paid top-ups went uncredited. Surface them.
+      const failures = reconciliation.results.filter(
+        (result) =>
+          result.status === "failed" ||
+          (result.status === "settlement_skipped" && result.settlementStatus !== "intent_closed")
+      );
+      log.error("crypto top-up reconciliation failed for some intents", new Error("crypto top-up reconciliation failures"), {
+        source: "reconcile-crypto-topups",
+        route: "/api/cron/reconcile-crypto-topups",
+        method: "GET",
+        failureType: "crypto_topup_reconciliation_intent_failed",
+        failed: reconciliation.failed,
+      });
+      await reportOpsEvent({
+        source: "cron.reconcile-crypto-topups",
+        severity: "error",
+        title: "USDC top-up reconciliation failed",
+        message:
+          "Some open USDC top-up intents could not be reconciled this tick. A paid intent is not " +
+          "credited until this clears; each intent is retried on the next tick.",
+        route: "/api/cron/reconcile-crypto-topups",
+        metadata: {
+          failureType: "crypto_topup_reconciliation_intent_failed",
+          failed: reconciliation.failed,
+          sample: failures.slice(0, 5).map((result) => ({
+            referenceId: result.referenceId,
+            errorName: "errorName" in result ? result.errorName : undefined,
+            errorMessage: "errorMessage" in result ? result.errorMessage : undefined,
+            settlementStatus: "settlementStatus" in result ? result.settlementStatus : undefined,
+          })),
+        },
+      });
+    }
     // Sweep happens after reconciliation so any newly-settled receipts
     // from this tick are eligible for sweep on the same cron run.
     // A sweep-side failure must NOT bubble up and mask reconciliation
