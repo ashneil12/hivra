@@ -334,7 +334,18 @@ import signal
 import sys
 import time
 
-def owned_processes(marker, uid):
+def start_ticks(pid):
+    # Field 22 of /proc/<pid>/stat: start time in clock ticks since boot. It is
+    # readable even for non-dumpable processes whose environment is not.
+    with open("/proc/" + str(pid) + "/stat", "rb") as source:
+        raw = source.read(4096)
+    fields = raw[raw.rindex(b")") + 2:].split()
+    value = int(fields[19])
+    if value < 0:
+        raise RuntimeError("Invalid process start time")
+    return value
+
+def owned_processes(marker, uid, started_after):
     result = []
     try:
         for name in os.listdir("/proc"):
@@ -348,8 +359,21 @@ def owned_processes(marker, uid):
                 fd = os.pidfd_open(int(name), 0)
                 if select.select([fd], [], [], 0)[0]:
                     continue
-                with open(process_dir + "/environ", "rb") as source:
-                    environment = source.read(262145)
+                try:
+                    with open(process_dir + "/environ", "rb") as source:
+                        environment = source.read(262145)
+                except PermissionError:
+                    # A same-user process the kernel will not let us inspect
+                    # (non-dumpable, e.g. a setuid sandbox helper or the user's
+                    # systemd manager). It cannot descend from this terminal if
+                    # it started before the terminal preflight; ignore only
+                    # those, and fail closed on anything newer.
+                    started = start_ticks(name)
+                    if select.select([fd], [], [], 0)[0]:
+                        continue
+                    if started < started_after:
+                        continue
+                    raise
                 if len(environment) > 262144:
                     raise RuntimeError("Process environment exceeds inspection limit")
                 if b"HIVRA_DESKTOP_TERMINAL_ID=" + marker in environment.split(b"\0"):
@@ -378,16 +402,19 @@ def main():
     if sys.argv[1] == "--preflight":
         if not os.access("/bin/bash", os.X_OK):
             raise RuntimeError("Native shell is unavailable")
-        print(json.dumps({"uid": uid, "cwd": os.getcwd(), "shell": "/bin/bash", "pidfd": True}))
+        print(json.dumps({"uid": uid, "cwd": os.getcwd(), "shell": "/bin/bash", "pidfd": True,
+                          "startTicks": start_ticks(os.getpid())}))
         return
-    if sys.argv[1] != "--cleanup" or len(sys.argv) != 4 or int(sys.argv[3]) != uid:
+    if (sys.argv[1] != "--cleanup" or len(sys.argv) != 5 or int(sys.argv[3]) != uid
+            or not re.fullmatch(r"[0-9]{1,20}", sys.argv[4])):
         raise RuntimeError("Invalid cleanup request")
+    started_after = int(sys.argv[4])
     if not re.fullmatch(r"[0-9a-f]{32}", sys.argv[2]):
         raise RuntimeError("Invalid process ownership marker")
     marker = sys.argv[2].encode("ascii")
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
-        handles = owned_processes(marker, uid)
+        handles = owned_processes(marker, uid, started_after)
         if not handles:
             print('{"clean":true}')
             return
@@ -1586,7 +1613,7 @@ async function stopDesktopTerminalSession(sessionKey, reason, details) {
         }
         const output = await desktopTerminalDocker([
           'exec', lease.target.id, '/usr/bin/python3', '-I', '-S', '-c',
-          DESKTOP_TERMINAL_PROCESS_CODE, '--cleanup', lease.marker, String(lease.uid),
+          DESKTOP_TERMINAL_PROCESS_CODE, '--cleanup', lease.marker, String(lease.uid), String(lease.startTicks),
         ], 3500);
         if (JSON.parse(output).clean !== true) throw desktopTerminalError(502, 'desktop_terminal_cleanup_unconfirmed');
       }
@@ -1639,12 +1666,14 @@ async function startDesktopTerminal(req, res, body) {
     assertCurrent();
     const configuredUser = lease.target.user.split(':')[0];
     if (!verified || !Number.isInteger(verified.uid) || verified.uid <= 0 || verified.pidfd !== true ||
+        !Number.isSafeInteger(verified.startTicks) || verified.startTicks < 0 ||
         verified.shell !== '/bin/bash' || typeof verified.cwd !== 'string' || !verified.cwd.startsWith('/') ||
         Buffer.byteLength(verified.cwd) > 1024 || /[\\x00-\\x1f\\x7f]/.test(verified.cwd) ||
         (/^[0-9]+$/.test(configuredUser) && Number(configuredUser) !== verified.uid)) {
       throw desktopTerminalError(409, 'desktop_terminal_preflight_mismatch');
     }
     lease.uid = verified.uid;
+    lease.startTicks = verified.startTicks;
     lease.cwd = verified.cwd;
     const cols = body.cols === undefined ? 80 : body.cols;
     const rows = body.rows === undefined ? 24 : body.rows;
