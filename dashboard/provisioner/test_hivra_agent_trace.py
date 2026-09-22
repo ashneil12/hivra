@@ -1460,10 +1460,21 @@ class UnitFileTest(unittest.TestCase):
             keys.append(item)
             size += len(item)
             index += 1
-        admitted, admitted_containers = peak_mb(b"".join(keys)[:-1] + b"}")
-        refused, refused_containers = peak_mb(fill(b"[", b'{"a":0},', b'{"a":0}]'))
-        self.assertEqual((admitted_containers, refused_containers), (0, 1))
-        self.assertLess(refused, admitted)
+        distinct_keys, keys_refused = peak_mb(b"".join(keys)[:-1] + b"}")
+        # Adversarial mix found in review: just under MAX_CONTAINERS tiny
+        # objects, then dense distinct keys up to MAX_LINE.
+        mix = bytearray(b'{"type":"user","x":[' + b'{"a":1},' * (trace.MAX_CONTAINERS - 8) + b'{}],"k":{')
+        index = 0
+        while len(mix) < trace.MAX_LINE - 32:
+            mix += b'"%x":"ab",' % index
+            index += 1
+        mix = bytes(mix[:trace.MAX_LINE - 8]).rsplit(b",", 1)[0] + b"}}"
+        self.assertLessEqual(mix.count(b"{") + mix.count(b"["), trace.MAX_CONTAINERS)
+        mixed, mixed_refused = peak_mb(mix)
+        # One container too many is never parsed (counted, not loaded).
+        _, over_refused = peak_mb(fill(b"[", b'{"a":0},', b'{"a":0}]'))
+        self.assertEqual((keys_refused, mixed_refused, over_refused), (0, 0, 1))
+        admitted = max(distinct_keys, mixed)
         # 1.5x margin over the worst admitted line, which includes the interpreter itself.
         self.assertLessEqual(admitted * 1.5, ceiling_mb, "MemoryMax=%s, worst admitted line peaked at %d MB"
                              % (ceiling, admitted))
