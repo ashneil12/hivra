@@ -46,6 +46,15 @@ atomically, runs `daemon-reload`, `enable`, `restart`, and exits 0 only when
 the unit is active. It prints one status line to stderr and never prints the
 token.
 
+Reporter installation is fail-open everywhere: a malformed credential document
+is refused, but a failure to install or start the reporter never fails a
+launch or a start. The launch installer and the start helper each emit exactly
+one marker line into the host log,
+`HIVRA_ACTIVITY_COLLECTOR status=installed` or
+`HIVRA_ACTIVITY_COLLECTOR status=failed reason=<enum>`, which the control plane
+records as the computer's install status. Issuance is recorded only when the
+host bundle actually staged the credential.
+
 ### Credential document (launch document v4 field `activityTelemetry`)
 
 Exactly these keys:
@@ -89,7 +98,7 @@ these attributes only:
 | Role | Meaning | Outcome |
 |---|---|---|
 | `run.started` | A new human/SDK task began | unknown |
-| `run.completed` | The producer recorded a normal end of the task | success |
+| `run.completed` | The producer recorded a normal end of the task (Claude: `end_turn`/`stop_sequence`/`refusal`, never `max_tokens`, which Claude Code continues from) | success |
 | `run.failed` | The producer recorded an error end (`error.type` when known) | failure |
 | `run.stopped` | The task was interrupted or replaced before finishing | unknown |
 | `tool.started` | A tool call was issued | unknown |
@@ -110,7 +119,10 @@ crash or restart are idempotent.
 ## Reporter behaviour
 
 - Loop every 10 s. Heartbeat every 300 s in its own request, even when there
-  is nothing else to send.
+  is nothing else to send. A heartbeat means "alive and delivering": while
+  event delivery has failed continuously for 300 s or more, or the reporter is
+  stuck re-reading the same unread bytes, heartbeats stop so Activity shows the
+  gap as stale instead of healthy.
 - Files first seen with an mtime older than the reporter's first start are
   skipped to EOF (no historical backfill); files created later are read from
   offset 0.
@@ -121,10 +133,15 @@ crash or restart are idempotent.
   incomplete-read errors back off exponentially up to 5 min.
 - Renew when less than half of the 7-day lifetime remains (`expiresAt - now <
   3.5 days`); write the new credential atomically.
-- Lines up to 8 MiB are parsed as JSON. Longer lines are skipped without
-  parsing the body (the offset still advances); only a bounded envelope
-  prefix (first 8 KiB) may be inspected with fixed patterns to recover
-  structural fields such as `type`, `payload.type`, `call_id` and `timestamp`.
+- Parse cost is bounded, not just line length: a line is parsed as JSON only
+  when it is at most 8 MiB and a cheap byte count of `{` and `[` shows a
+  bounded number of containers; the unit's memory ceiling must hold the worst
+  admitted line with margin. Any other line is never fully parsed, the offset
+  still advances, and only a bounded head and tail (8 KiB each) may be
+  inspected with fixed patterns to recover structural fields such as `type`,
+  `payload.type`, `call_id`, `tool_use_id`, `is_error` and `timestamp`. A line that crashed the reporter
+  is skipped on the next start (in-progress marker), so one line can never
+  blind a computer permanently.
 - Parser state is bounded: open runs and tools older than 24 h are pruned and
   entries for deleted files are dropped; truncated or replaced files
   (inode change or size below offset) restart from 0 with fresh parser state.
@@ -153,7 +170,10 @@ crash or restart are idempotent.
 `agent_id` (pk), `user_id`, `issued_at`, `credential_expires_at`,
 `issue_reason` (`launch|start|renew`), `last_heartbeat_at` (server receive
 time), `last_event_at`, `last_rejected_at`, `last_rejected_reason`,
-`updated_at`. Heartbeats never become `hivra_agent_events` rows.
+`last_install_status` (`installed|failed`), `last_install_reason`,
+`last_install_at`, `updated_at`. Heartbeat timestamps are not subject to the
+event time window (liveness uses the server receive time), so a guest with a
+wrong clock still shows as reporting. Heartbeats never become `hivra_agent_events` rows.
 
 Native events are stored in `hivra_agent_events` with `event = 'otel_log'`,
 `detail.source = 'otlp_log'`, and `detail.telemetry` extended with
@@ -168,7 +188,7 @@ Evaluated in order, first match wins:
 2. `unsupported`: type is not `claude-code`/`codex`, or substrate is not `proxmox-kvm`.
 3. `not_running`: agent status is not `running` (silence expected).
 4. `expired`: `credential_expires_at <= now`, or the last rejection was `expired` after the last heartbeat.
-5. `missing`: no collector row (launched before reporting existed, or issuance failed).
+5. `missing`: no collector row (launched before reporting existed, or issuance failed), or the last install attempt after issuance failed (explained as "could not be installed").
 6. `configured`: issued, no heartbeat yet, issued less than 10 min ago ("waiting for first report").
 7. `missing`: issued 10 min or more ago and never heard from.
 8. `stale`: last heartbeat older than 15 min.
