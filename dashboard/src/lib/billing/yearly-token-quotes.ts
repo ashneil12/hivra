@@ -30,6 +30,8 @@ import {
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
 
 const YEARLY_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
+// At most one active quote per (user, tier); see the yearly_token_subscriptions migration.
+const ACTIVE_QUOTE_UNIQUE_INDEX = "yearly_token_quotes_user_tier_active_idx";
 /**
  * A payment mined after the quote window but within this grace is still
  * attributed to the quote (and goes to manual review).
@@ -135,7 +137,8 @@ interface CreateYearlyQuoteParams {
  * Mint a yearly token quote — but only if no active one exists for the
  * (user, tier) pair. The unique partial index in the migration enforces
  * this at the DB layer too. Locked-quote semantics: if one already
- * exists, return it verbatim (no re-quote at a new price for 20 min).
+ * exists, return it verbatim (no re-quote at a new price for 20 min),
+ * including when a concurrent mint inserted it after our check.
  */
 export async function createYearlyTokenQuote(
   params: CreateYearlyQuoteParams
@@ -199,6 +202,16 @@ export async function createYearlyTokenQuote(
     .select(YEARLY_QUOTE_SELECT_COLUMNS)
     .single<YearlyQuoteRow>();
 
+  if (error?.code === "23505" && error.message.includes(ACTIVE_QUOTE_UNIQUE_INDEX)) {
+    // A concurrent mint for this (user, tier) inserted first (double-click,
+    // retry). Return its quote, exactly as the pre-check above would have.
+    const winner = await getActiveYearlyTokenQuote({
+      userId: params.userId,
+      tier: params.tier,
+      now,
+    });
+    if (winner) return winner;
+  }
   if (error || !data) {
     throw new Error(`Failed to create yearly token quote: ${error?.message ?? "unknown"}`);
   }
