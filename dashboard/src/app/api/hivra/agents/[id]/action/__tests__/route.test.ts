@@ -1299,7 +1299,7 @@ describe("POST /api/hivra/agents/[id]/action", () => {
   });
 
   describe("agent-run reporter credential on every start-helper run", () => {
-    const AGENT_ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
+    const AGENT_ID = "00000000-0000-4000-8000-000a00000002";
     const ORIGIN = "https://canary.hivra.cloud";
     const SIGNING_SECRET = randomBytes(32).toString("hex");
     const ACTIVITY_FILE = "/run/hivra-lifecycle/1090.activity.env";

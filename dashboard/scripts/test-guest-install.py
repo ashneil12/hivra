@@ -29,7 +29,7 @@ FIXTURE_REPORTER_TOKEN = "hvra_otlp_v1.eyJmaXh0dXJlIjp0cnVlfQ.Zml4dHVyZS1zaWduYX
 
 def telemetry(**overrides):
     return {"endpoint": "https://canary.example.test/api/activity/ingest",
-            "resourceId": "11111111-2222-4333-8444-555555555555",
+            "resourceId": "00000000-0000-4000-8000-000a00000003",
             "token": FIXTURE_REPORTER_TOKEN, "expiresAt": "2026-09-29T12:00:00.000Z", **overrides}
 
 
@@ -164,7 +164,7 @@ class LaunchContract(unittest.TestCase):
                 ("endpoint", "https://Canary.example.test/api/activity/ingest"),
                 ("endpoint", "https://canary.example.test/api/activity/ingest\n"),
                 ("resourceId", "11111111-2222-4333-8444-55555555555G"),
-                ("resourceId", "AAAAAAAA-2222-4333-8444-555555555555"),
+                ("resourceId", "00000000-0000-4000-8000-000A00000005"),
                 ("resourceId", "not-a-uuid"),
                 ("token", "hvra_otlp_v2.eyJmaXh0dXJlIjp0cnVlfQ.c2ln"),
                 ("token", "hvra_otlp_v1.eyJmaXh0dXJlIjp0cnVlfQ"),

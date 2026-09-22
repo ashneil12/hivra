@@ -2817,7 +2817,7 @@ describe("POST /api/hivra/agents", () => {
   });
 
   describe("agent-run reporting credential", () => {
-    const AGENT_ID = "abcdef01-2345-4678-89ab-cdef01234567";
+    const AGENT_ID = "00000000-0000-4000-8000-000a00000006";
     const originalSigningSecret = process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET;
     let consoleSpies: jest.SpyInstance[] = [];
 

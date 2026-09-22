@@ -31,7 +31,7 @@ spec.loader.exec_module(trace)
 
 SECRET = "SENTINEL-content-4d1e9a"
 SECRET_ENUM = "sentinel_enum_4d1e9a"  # shaped like an error enum, so only field choice keeps it out
-RESOURCE = "8c1f5b7e-3d2a-4f60-9b1e-2a7c4d5e6f70"
+RESOURCE = "00000000-0000-4000-8000-000a00000004"
 TOKEN = "hvra_otlp_v1.eyJ2IjoxfQ.c2lnbmF0dXJlLW9uZQ"
 NEW_TOKEN = "hvra_otlp_v1.eyJ2IjoxfQ.c2lnbmF0dXJlLXR3bw"
 ENDPOINT = "https://dashboard.test/api/activity/ingest"
@@ -147,7 +147,7 @@ def result_line(seconds, call, prompt_id, content, result=None, is_error="absent
     if order == "last":
         block["tool_use_id"] = call
     record = {"parentUuid": "a-1", "isSidechain": sidechain, "promptId": prompt_id, "type": "user",
-              "message": {"role": "user", "content": [block]}, "uuid": "0b4e2c1a-7d3f-4c55-9e0a-1f2b3c4d5e6f",
+              "message": {"role": "user", "content": [block]}, "uuid": "00000000-0000-4000-8000-000a00000001",
               "timestamp": iso(seconds)}
     if result is not None:
         record["toolUseResult"] = result

@@ -51,7 +51,7 @@ function pgTime(ms:number,fraction?:string){return `${new Date(ms).toISOString()
 
 describe("activity history pagination",()=>{
   it("expresses the history order per lane in SQL",()=>{
-    const at="2026-09-21T19:00:00.123456+00:00", id="0a5f2c1e-0000-4000-8000-000000000001";
+    const at="2026-09-21T19:00:00.123456+00:00", id="00000000-0000-4000-8000-000a00000000";
     expect(historyCursorFilter({at,id},"events")).toEqual({op:"or",filter:`created_at.lt."${at}",and(created_at.eq."${at}",id.lt."${id}")`});
     expect(historyCursorFilter({at,id},"desktop")).toEqual({op:"lte",at});
     expect(historyCursorFilter({at,id:`desktop:${id}`},"events")).toEqual({op:"lt",at});
@@ -60,7 +60,7 @@ describe("activity history pagination",()=>{
   });
 
   it("refuses cursors that could alter the SQL filter",()=>{
-    const id="0a5f2c1e-0000-4000-8000-000000000001";
+    const id="00000000-0000-4000-8000-000a00000000";
     expect(decodeActivityCursor(cursor("2026-09-21T19:00:00+00:00",id))).toEqual({at:"2026-09-21T19:00:00+00:00",id});
     expect(decodeActivityCursor(cursor("2026-09-21T19:00:00.5Z",`desktop:${id}`))).not.toBeNull();
     for(const bad of [cursor("2026-09-21T19:00:00+00:00",`${id}"),id.not.is.null,and(id.eq."x`),cursor('2026-09-21T19:00:00+00:00",and(x',id),cursor("Mon Sep 21 2026",id),cursor("2026-09-21T19:00:00+00:00","event-1"),cursor("2026-09-21T19:00:00+00:00",`desktop:${id},x`),"%%%"]) {

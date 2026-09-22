@@ -77,7 +77,7 @@ it("emits Linux Desktop only as a strict v3 computer launch", () => {
 const REPORTER_TOKEN = "hvra_otlp_v1.eyJmaXh0dXJlIjp0cnVlfQ.Zml4dHVyZS1zaWduYXR1cmU";
 const REPORTER_CREDENTIAL = {
   endpoint: "https://canary.example.test/api/activity/ingest",
-  resourceId: "11111111-2222-4333-8444-555555555555",
+  resourceId: "00000000-0000-4000-8000-000a00000003",
   token: REPORTER_TOKEN,
   expiresAt: "2026-09-29T12:00:00.000Z",
 };
@@ -109,7 +109,7 @@ it("rejects a reporter credential for other runtimes or in any malformed shape w
     { ...REPORTER_CREDENTIAL, endpoint: "https://canary.example.test/api/activity/ingest#fragment" },
     { ...REPORTER_CREDENTIAL, endpoint: "https://user:pass@canary.example.test/api/activity/ingest" },
     { ...REPORTER_CREDENTIAL, resourceId: "not-a-uuid" },
-    { ...REPORTER_CREDENTIAL, resourceId: "AAAAAAAA-2222-4333-8444-555555555555" },
+    { ...REPORTER_CREDENTIAL, resourceId: "00000000-0000-4000-8000-000A00000005" },
     { ...REPORTER_CREDENTIAL, token: "hvra_otlp_v2.eyJmaXh0dXJlIjp0cnVlfQ.c2ln" },
     { ...REPORTER_CREDENTIAL, token: "hvra_otlp_v1.only-claims" },
     { ...REPORTER_CREDENTIAL, token: `${REPORTER_TOKEN}.extra` },
