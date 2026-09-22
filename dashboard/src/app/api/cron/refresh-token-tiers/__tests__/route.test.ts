@@ -55,11 +55,57 @@ interface QualificationFixture {
   currently_eligible: boolean;
 }
 
+interface YearlyFixture {
+  user_id: string;
+  tier: "pro" | "power";
+  status: "active" | "grace" | "expired" | "cancelled" | "renewed";
+  paid_at: string;
+  expires_at: string;
+}
+
+type QueryResult<Row> = { data: Row[] | null; error: { message: string } | null };
+
+interface FilteringBuilder<Row> extends PromiseLike<QueryResult<Row>> {
+  select: jest.Mock<FilteringBuilder<Row>, unknown[]>;
+  in: jest.Mock<FilteringBuilder<Row>, [string, readonly unknown[]]>;
+  eq: jest.Mock<FilteringBuilder<Row>, [string, unknown]>;
+}
+
+// Applies the `.in` / `.eq` filters the route sends, so a fixture row outside
+// the requested users or statuses is dropped the way Postgres would drop it.
+function filteringBuilder<Row extends object>(
+  rows: Row[],
+  error: { message: string } | null = null
+): FilteringBuilder<Row> {
+  const filters: Array<(row: Row) => boolean> = [];
+  const field = (row: Row, column: string) => (row as Record<string, unknown>)[column];
+  const builder: FilteringBuilder<Row> = {
+    select: jest.fn(() => builder),
+    in: jest.fn((column: string, values: readonly unknown[]) => {
+      filters.push((row) => values.includes(field(row, column)));
+      return builder;
+    }),
+    eq: jest.fn((column: string, value: unknown) => {
+      filters.push((row) => field(row, column) === value);
+      return builder;
+    }),
+    then: (onFulfilled, onRejected) =>
+      Promise.resolve<QueryResult<Row>>(
+        error
+          ? { data: null, error }
+          : { data: rows.filter((row) => filters.every((keep) => keep(row))), error: null }
+      ).then(onFulfilled, onRejected),
+  };
+  return builder;
+}
+
 function mockSupabase(opts: {
   instances: InstanceFixture[];
   snapshots: SnapshotFixture[];
   subscriptions: SubscriptionFixture[];
   qualifications: QualificationFixture[];
+  yearly?: YearlyFixture[];
+  yearlyError?: string;
   boosts?: string[];
 }) {
   const instancesBuilder = {
@@ -90,12 +136,17 @@ function mockSupabase(opts: {
       error: null,
     }),
   };
+  const yearlyBuilder = filteringBuilder(
+    opts.yearly ?? [],
+    opts.yearlyError ? { message: opts.yearlyError } : null
+  );
 
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
     if (table === "hermes_instances") return instancesBuilder;
     if (table === "token_holding_snapshots") return snapshotsBuilder;
     if (table === "hermes_subscriptions") return subscriptionsBuilder;
     if (table === "token_tier_qualifications") return qualificationsBuilder;
+    if (table === "yearly_token_subscriptions") return yearlyBuilder;
     if (table === "venice_compute_boost_qualifications") return boostsBuilder;
     throw new Error(`Unexpected table ${table}`);
   });
@@ -105,7 +156,26 @@ function mockSupabase(opts: {
     snapshotsBuilder,
     subscriptionsBuilder,
     qualificationsBuilder,
+    yearlyBuilder,
     boostsBuilder,
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function yearlyRow(
+  user_id: string,
+  tier: "pro" | "power",
+  overrides: Partial<YearlyFixture> = {}
+): YearlyFixture {
+  const paidAt = Date.now() - 30 * DAY_MS;
+  return {
+    user_id,
+    tier,
+    status: "active",
+    paid_at: new Date(paidAt).toISOString(),
+    expires_at: new Date(paidAt + 365 * DAY_MS).toISOString(),
+    ...overrides,
   };
 }
 
@@ -456,5 +526,198 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     const res = await POST(makeRequest());
     expect(res.status).toBe(200);
     expect(applyTierChange).not.toHaveBeenCalled();
+  });
+
+  describe("yearly $HermesOS subscriptions", () => {
+    it("keeps a yearly Power subscriber on fleet when the wallet no longer holds the tokens", async () => {
+      // The yearly payment sweeps the $HermesOS out of the wallet, so there is
+      // no qualification and no snapshot. resolveEffectiveSubscription still
+      // entitles the user to fleet, which is what createInstance provisioned.
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_power", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [{ user_id: "user_yearly_power", status: "active", plan: "free" }],
+        qualifications: [],
+        yearly: [yearlyRow("user_yearly_power", "power")],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      // Before the fix the cron never read yearly_token_subscriptions, fell
+      // through to credit_base and live-resized the paid VM down every tick.
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+
+    it("upgrades a yearly Pro subscriber's token_base instances to operator", async () => {
+      const { yearlyBuilder } = mockSupabase({
+        instances: [
+          { user_id: "user_yearly_pro", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        yearly: [yearlyRow("user_yearly_pro", "pro")],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user_yearly_pro",
+          newTier: "operator",
+          source: "token_snapshot",
+          reason: "cron: yearly $HermesOS pro subscription",
+        })
+      );
+      expect(yearlyBuilder.in).toHaveBeenCalledWith("user_id", ["user_yearly_pro"]);
+    });
+
+    it("counts a row in its post-expiry grace window as live", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_grace", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        yearly: [
+          yearlyRow("user_yearly_grace", "power", {
+            status: "grace",
+            paid_at: new Date(Date.now() - 366 * DAY_MS).toISOString(),
+            expires_at: new Date(Date.now() - DAY_MS).toISOString(),
+          }),
+        ],
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+
+    it("drops a user whose only yearly row has expired to credit_base", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_expired", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        yearly: [
+          yearlyRow("user_yearly_expired", "power", { status: "expired" }),
+          yearlyRow("user_yearly_expired", "pro", { status: "renewed" }),
+        ],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_yearly_expired", newTier: "credit_base" })
+      );
+    });
+
+    it("keeps fleet when a newer Pro year is paid while a Power year is still live", async () => {
+      // One live row per tier: renewing or buying Pro inserts the NEWEST row.
+      // Tier rank must win over payment order, as in resolveEffectiveSubscription.
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_both", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        yearly: [
+          yearlyRow("user_yearly_both", "power", {
+            paid_at: new Date(Date.now() - 200 * DAY_MS).toISOString(),
+            expires_at: new Date(Date.now() + 165 * DAY_MS).toISOString(),
+          }),
+          yearlyRow("user_yearly_both", "pro", {
+            paid_at: new Date(Date.now() - DAY_MS).toISOString(),
+            expires_at: new Date(Date.now() + 364 * DAY_MS).toISOString(),
+          }),
+        ],
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+
+    it("lets a paid Stripe plan outrank a yearly subscription", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_stripe_yearly", resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 },
+        ],
+        snapshots: [],
+        subscriptions: [{ user_id: "user_stripe_yearly", status: "active", plan: "operator" }],
+        qualifications: [],
+        yearly: [yearlyRow("user_stripe_yearly", "power")],
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+
+    it("lets a yearly subscription outrank a token-holding qualification", async () => {
+      // Same order as resolveEffectiveSubscription, so the cron and
+      // createInstance never disagree about which tier the user is on.
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_qual", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [{ user_id: "user_yearly_qual", tier: "power", currently_eligible: true }],
+        yearly: [yearlyRow("user_yearly_qual", "pro")],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_yearly_qual", newTier: "operator" })
+      );
+    });
+
+    it("applies the VVV boost on top of a yearly tier", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_vvv", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        yearly: [yearlyRow("user_yearly_vvv", "power")],
+        boosts: ["user_yearly_vvv"],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_yearly_vvv", newTier: "fleet", veniceBoost: true })
+      );
+    });
+
+    it("fails the run instead of downgrading anyone when the yearly scan errors", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_yearly_power", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        yearlyError: "connection reset",
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(500);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
   });
 });
