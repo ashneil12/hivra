@@ -34,6 +34,17 @@ previews. Creating such a preview service requires its own scoped setup.
 Canary is a separate deployment fed by the `canary` branch in this repository.
 A branch is a saved line of work, not a separate GitHub repository. Existing work
 in an older private repository or local checkout is not copied here automatically.
+The older private repositories are retired, read-only history and deploy nothing;
+a change made there reaches Canary only after it is ported here by PR.
+
+Canary changes only through the Vercel Git integration building a merge into
+`canary`. The `hermesos-canary` deployment policy accepts production deployments
+only from Git `ashneil12/hivra`; CLI production uploads are refused. Never
+CLI-deploy, redeploy, promote, roll back, force-rebuild, or re-alias Canary, from
+any checkout. If the Canary domain serves an unexpected revision, identify which
+deployment holds it, its source (Git or CLI) and its commit, and report it. A
+mismatch means a change is missing from or unmerged into `canary`, not a stale
+cache. To undo a Canary change, revert it by PR into `canary`.
 
 Keep experiments on feature branches. After reviewing a contributor's proposed
 code and build scripts, a maintainer can apply the selected commits to a branch
@@ -58,10 +69,13 @@ Do not overwrite Canary experiments with a blanket reset to main.
    Canary revision and affected workflows. Record its commit, results, database
    migration requirements, managed settings, costs, and rollback deployment.
 3. Select the production candidate whose source tree matches the verified revision.
-   If main advanced, do not promote its newest deployment automatically. Build the
-   chosen revision explicitly with `vercel deploy --prod --skip-domain` in the
-   correctly linked production checkout if needed. Keep credentials out of GitHub
-   PRs, logs, and source control.
+   If main advanced, do not promote its newest deployment automatically. If no
+   candidate exists for the chosen revision, the owner may build one explicitly
+   with `vercel deploy --prod --skip-domain`, only from a clean checkout of public
+   `ashneil12/hivra` at that exact commit, linked to project `hermesos` (never
+   `hermesos-canary`, a retired private repository, or a feature worktree). That
+   build must not move any domain; it only stages a candidate for step 4. Canary is
+   never CLI-deployed. Keep credentials out of GitHub PRs, logs, and source control.
 4. Review the exact candidate and approve production separately. In Vercel select
    the `hermesos` deployment and **Promote**. A trusted operator may instead use
    `vercel promote <verified-deployment-id>`. This action changes live traffic;
