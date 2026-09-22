@@ -113,10 +113,21 @@ function textFromContent(content: unknown): string {
 
 // Box-level protocol events, shared by every adapter. Returns true when the
 // event was consumed.
+//   {type:"_done", code}  — the agent process exited (box: child "close").
+//   {type:"_stderr", text:"spawn error: …"} — the box could not start the agent
+//     and ended the stream without `_done` (box: child "error").
+const SPAWN_ERROR_PREFIX = "spawn error:";
 function parseBoxEvent(ev: Record<string, unknown>, sink: ChatSink): boolean {
-  if (ev.type !== "_done") return false;
-  sink.exit(typeof ev.code === "number" ? ev.code : null);
-  return true;
+  if (ev.type === "_done") {
+    sink.exit(typeof ev.code === "number" ? ev.code : null);
+    return true;
+  }
+  if (ev.type === "_stderr" && typeof ev.text === "string" && ev.text.startsWith(SPAWN_ERROR_PREFIX)) {
+    const detail = ev.text.slice(SPAWN_ERROR_PREFIX.length).trim();
+    sink.fail(detail ? `Agent process could not start (${detail})` : "Agent process could not start");
+    return true;
+  }
+  return false;
 }
 
 // Codex item statuses (exec_events: CommandExecutionStatus / PatchApplyStatus /

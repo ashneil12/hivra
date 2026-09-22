@@ -860,6 +860,17 @@ describe("HivraChat", () => {
     expect(screen.getByText("Half an answ")).toBeInTheDocument();
   });
 
+  it("marks the turn failed when the box reports the agent could not be spawned", async () => {
+    const read = jest.fn().mockResolvedValueOnce(eventChunk({ type: "_stderr", text: "spawn error: spawn /usr/bin/claude ENOENT" })).mockResolvedValueOnce({ done: true });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="spawn-error" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("go");
+    const failed = await screen.findByRole("status", { name: "Response failed" });
+    expect(failed).toHaveTextContent("Agent process could not start (spawn /usr/bin/claude ENOENT)");
+    expect(screen.queryByRole("status", { name: "Response unconfirmed" })).not.toBeInTheDocument();
+  });
+
   it("treats a clean EOF without the box's exit report as unconfirmed, not complete", async () => {
     const read = jest.fn().mockResolvedValueOnce(eventChunk(runningToolEvent("t1", "ls"), toolResult("t1", "ok"), claudeText("Answer"))).mockResolvedValueOnce({ done: true });
     global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;

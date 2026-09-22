@@ -254,6 +254,12 @@ describe("agent-adapters", () => {
       expect(run(getAdapter(kind), [{ type: "_done", code: null }]).exits).toEqual([null]);
       expect(run(getAdapter(kind), [{ type: "_done", code: 0 }]).exits).toEqual([0]);
     });
+
+    it.each(["claude", "codex", "generic"])("%s treats the box's spawn-error line as a terminal failure, not a warning", (kind) => {
+      const r = run(getAdapter(kind), [{ type: "_stderr", text: "spawn error: spawn /usr/bin/claude ENOENT" }]);
+      expect(r.failures).toEqual(["Agent process could not start (spawn /usr/bin/claude ENOENT)"]);
+      expect(r.warnings).toEqual([]);
+    });
   });
 
   describe("extractAssistantText (welcome path shares the live parser)", () => {
