@@ -949,8 +949,9 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
 // compare-and-set:
 //   1. CLAIM  — quote.transaction_hash := tx (CAS: open status, tx still null).
 //               The unique tx index makes this the single point where a
-//               transfer is bound to exactly one quote. Nothing is credited
-//               before the claim is durable.
+//               transfer is bound to exactly one quote; a tx that is already
+//               another quote's lot (legacy) is refused before the claim.
+//               Nothing is credited before the claim is durable.
 //   2. LOT    — one spendable lot (unique per quote), from the claim values.
 //   3. EVENTS — token_deposit + subsidy_applied, keyed by quote + claimed tx.
 //   4. FLIP   — status := settled (CAS: open status, tx = claimed tx), and
@@ -1280,12 +1281,44 @@ async function reviewUnclaimedQuote(
   return { status: "manual_review_required" };
 }
 
+// Lots whose tx is `transactionHash` and that belong to a quote other than
+// `quoteId`. Claim-first settlement only inserts a lot after its quote claims
+// the tx, but legacy lots exist whose quote never recorded the tx, so the
+// unique quotes.transaction_hash index alone cannot refuse them.
+async function findOtherQuoteLot(db: SupabaseLike, transactionHash: string, quoteId: string) {
+  const { data, error } = await table(db, "managed_venice_token_lots")
+    .select("id, quote_id")
+    .in("transaction_hash", transactionHashVariants(transactionHash));
+  if (error) {
+    throw new Error(error.message || "Failed to check managed Venice lot transaction binding");
+  }
+  const lots = (Array.isArray(data) ? data : []) as Array<{ id?: unknown; quote_id?: unknown }>;
+  return lots.find((lot) => lot.quote_id !== quoteId) ?? null;
+}
+
 async function claimAndSettle(
   db: SupabaseLike,
   record: ManagedVeniceTokenQuoteRecord,
   transfer: SettlementTransfer
 ): Promise<SettlementPass> {
   const { quote } = record;
+  const alreadyClaimed = (boundTo: "quote" | "lot") => {
+    // Another quote already owns this transfer. It is accounted for there;
+    // this quote stays open for its own transfer and nothing is written.
+    log.warn("managed Venice token transfer already claimed by another quote", {
+      source: "managed-venice-token-quotes",
+      failureType: "managed_venice_token_transaction_already_claimed",
+      quoteId: quote.id,
+      transactionHash: transfer.transactionHash,
+      boundTo,
+    });
+    return { status: "transaction_already_claimed" as const, quoteId: quote.id };
+  };
+
+  if (await findOtherQuoteLot(db, transfer.transactionHash, quote.id)) {
+    return alreadyClaimed("lot");
+  }
+
   const now = new Date().toISOString();
   const claim = buildSettlementClaim(quote, transfer, now);
   const metadata = { ...record.metadata, settlementClaim: claim };
@@ -1296,17 +1329,8 @@ async function claimAndSettle(
     .is("transaction_hash", null)
     .select("id");
 
-  if (error?.code === "23505") {
-    // The unique tx index says another quote already owns this transfer. It
-    // is accounted for there; this quote stays open for its own transfer.
-    log.warn("managed Venice token transfer already claimed by another quote", {
-      source: "managed-venice-token-quotes",
-      failureType: "managed_venice_token_transaction_already_claimed",
-      quoteId: quote.id,
-      transactionHash: claim.transactionHash,
-    });
-    return { status: "transaction_already_claimed", quoteId: quote.id };
-  }
+  // The unique tx index: another quote claimed this transfer.
+  if (error?.code === "23505") return alreadyClaimed("quote");
   if (error) {
     throw new Error(error.message || "Failed to claim managed Venice token deposit");
   }

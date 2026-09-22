@@ -163,6 +163,48 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
 
+  it("refuses a fresh claim of a tx that is already another quote's lot (legacy lot, that quote's tx never recorded)", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        managedVeniceQuoteRow({ id: "quote_a", created_at: "2026-05-16T10:20:00.000Z" }),
+        managedVeniceQuoteRow({ id: "quote_b", created_at: "2026-05-16T10:20:00.001Z" }),
+      ],
+    });
+    memory.insertRow("managed_venice_token_lots", {
+      account_id: "account_1",
+      user_id: "user_1",
+      quote_id: "quote_a",
+      source: "hermesos_deposit",
+      token_amount_raw: QUOTED,
+      remaining_token_amount_raw: QUOTED,
+      snapshot_price_usd: "0.05",
+      original_value_micro_usd: 60_000_000,
+      remaining_value_micro_usd: 60_000_000,
+      quote_source: "dexscreener",
+      quoted_at: "2026-05-16T10:20:00.000Z",
+      transaction_hash: "0xlegacy",
+      status: "active",
+      metadata: { quoteId: "quote_a", observedAt: IN_WINDOW },
+    });
+
+    const warn = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+    const result = await settleManagedVeniceTokenQuote(
+      { quoteId: "quote_b", transactionHash: "0xLEGACY", tokenAmountRaw: QUOTED, observedAt: IN_WINDOW },
+      memory.db
+    );
+
+    expect(result).toEqual({ status: "transaction_already_claimed", quoteId: "quote_b" });
+    expect(warn).toHaveBeenCalledWith(
+      "managed Venice token transfer already claimed by another quote",
+      expect.objectContaining({ quoteId: "quote_b", transactionHash: "0xlegacy", boundTo: "lot" })
+    );
+    warn.mockRestore();
+    expect(quoteRow(memory, "quote_b")).toMatchObject({ status: "active", transaction_hash: null });
+    expect(memory.tables.managed_venice_token_lots.map((lot) => lot.quote_id)).toEqual(["quote_a"]);
+    expect(events(memory, "token_deposit")).toHaveLength(0);
+    expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
   it("keys a transfer's item by its lowercased tx hash alone (no log index)", () => {
     expect(managedVeniceTokenTransferDedupeKey(" 0xABC ")).toBe("managed_venice_token_transfer:0xabc");
   });
