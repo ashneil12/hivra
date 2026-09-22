@@ -15,7 +15,7 @@ const PREREQUISITES = [
   "20260512181000_managed_venice_token_quotes.sql",
   "20260606130100_managed_venice_token_lots_unique_quote.sql",
 ];
-const MIGRATION = "20260922190000_yearly_token_payment_attribution.sql";
+const MIGRATION = "20260922210000_yearly_token_payment_attribution.sql";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const YEAR_MS = 365 * DAY_MS;
 const NOW = "2026-09-22T12:00:00.000Z";
