@@ -76,6 +76,10 @@ export const MANAGED_VENICE_TOKEN_DEPOSIT_REASONS = {
   // A credited lot whose tx is already bound to a different quote (legacy
   // cross-quote capture), so this quote can never be flipped to settled.
   claimConflict: "managed_venice_token_deposit_claim_conflict",
+  // An open quote that claimed a tx but has neither a lot nor readable claim
+  // values: nothing says what to credit, so it goes to review instead of
+  // failing every reconcile.
+  claimUnrecoverable: "managed_venice_token_deposit_claim_unrecoverable",
 } as const;
 
 export type ManagedVeniceTokenDepositReason =
@@ -1340,6 +1344,70 @@ async function claimAndSettle(
   return { status: "settled", quoteId: quote.id };
 }
 
+// An open quote that claimed `claimedTransactionHash` but has no lot and no
+// readable claim values. The CAS (open status, tx = the claimed tx) flips it to
+// manual_review_required with the surfacing flag and KEEPS the claim, so the
+// tx stays bound to this quote and no other quote can credit it; THEN one item
+// for the claimed tx. A lost CAS writes nothing and re-evaluates. A different
+// transfer the caller delivered is surfaced once, like any transfer that
+// reaches a closed quote.
+async function reviewUnrecoverableClaim(
+  db: SupabaseLike,
+  record: ManagedVeniceTokenQuoteRecord,
+  claimedTransactionHash: string,
+  transfer: SettlementTransfer
+): Promise<SettlementPass> {
+  const { quote } = record;
+  const reason = MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable;
+  const now = new Date().toISOString();
+  const { data, error } = await table(db, "managed_venice_token_quotes")
+    .update({
+      status: "manual_review_required" satisfies ManagedVeniceTokenQuoteStatus,
+      transfer_surfacing_pending: true,
+      updated_at: now,
+      metadata: {
+        ...record.metadata,
+        manualReviewReason: reason,
+        reviewTransactionHash: claimedTransactionHash,
+        reviewedAt: now,
+      },
+    })
+    .eq("id", quote.id)
+    .in("status", OPEN_QUOTE_STATUSES)
+    .eq("transaction_hash", claimedTransactionHash)
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message || "Failed to mark managed Venice token quote for review");
+  }
+  if (affectedRowCount(data) === 0) return RETRY_SETTLEMENT;
+
+  log.warn("managed Venice token quote claim has no lot and no claim values; sent to manual review", {
+    source: "managed-venice-token-quotes",
+    failureType: "managed_venice_token_claim_unrecoverable",
+    quoteId: quote.id,
+    transactionHash: claimedTransactionHash,
+  });
+  await insertTransferItem(
+    db,
+    quote,
+    { transactionHash: claimedTransactionHash, logIndex: null, tokenAmountRaw: null, observedAt: now },
+    reason
+  );
+  if (
+    !sameTransactionHash(transfer.transactionHash, claimedTransactionHash) &&
+    !(await isTransactionBound(db, transfer.transactionHash))
+  ) {
+    await insertTransferItem(
+      db,
+      quote,
+      transfer,
+      classifyTransfer(quote, transfer) ?? MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.afterQuoteClosed
+    );
+  }
+  return { status: "manual_review_required" };
+}
+
 async function convergeClaimedSettlement(
   db: SupabaseLike,
   record: ManagedVeniceTokenQuoteRecord,
@@ -1351,19 +1419,19 @@ async function convergeClaimedSettlement(
   let claim: ManagedVeniceTokenSettlementClaim;
   if (lot) {
     claim = settlementClaimFromLot(quote, lot, recordedClaim, transfer);
-  } else if (recordedClaim && sameTransactionHash(recordedClaim.transactionHash, quote.transactionHash)) {
-    claim = recordedClaim;
   } else if (
-    sameTransactionHash(quote.transactionHash, transfer.transactionHash) &&
-    classifyTransfer(quote, transfer) === null
+    quote.transactionHash &&
+    recordedClaim &&
+    sameTransactionHash(recordedClaim.transactionHash, quote.transactionHash)
   ) {
-    // Claimed without recorded claim values: rebuild them from this delivery
-    // of the same (qualifying) transfer.
-    claim = buildSettlementClaim(quote, transfer, new Date().toISOString());
+    claim = recordedClaim;
+  } else if (quote.transactionHash) {
+    // Claimed, but no lot and no readable claim values: nothing says what the
+    // claimed transfer was worth (the reconciler's recovery call only has the
+    // quote's own numbers), so never credit it and never fail every tick.
+    return reviewUnrecoverableClaim(db, record, quote.transactionHash, transfer);
   } else {
-    throw new Error(
-      "Managed Venice token quote has a claimed transaction without settlement details; it needs manual review"
-    );
+    throw new Error("Managed Venice token quote has no claimed transaction and no deposit lot to converge on");
   }
 
   let metadata = record.metadata;

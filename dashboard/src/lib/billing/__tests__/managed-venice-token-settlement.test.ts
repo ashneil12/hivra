@@ -209,6 +209,40 @@ describe("managed Venice token settlement saga", () => {
     expect(managedVeniceTokenTransferDedupeKey(" 0xABC ")).toBe("managed_venice_token_transfer:0xabc");
   });
 
+  it("sends a claim with no lot and no claim values to review; a different delivered tx is surfaced once", async () => {
+    const memory = seed({ transaction_hash: "0xorphan" });
+
+    const warn = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+    const first = await settleManagedVeniceTokenQuote(
+      { quoteId: "quote_1", transactionHash: "0xother", tokenAmountRaw: HALF, observedAt: IN_WINDOW },
+      memory.db
+    );
+    const redelivery = await settleManagedVeniceTokenQuote(
+      { quoteId: "quote_1", transactionHash: "0xother", tokenAmountRaw: HALF, observedAt: IN_WINDOW },
+      memory.db
+    );
+    warn.mockRestore();
+
+    expect(first).toEqual({ status: "manual_review_required" });
+    expect(redelivery).toEqual({ status: "manual_review_required" });
+    expect(quoteRow(memory)).toMatchObject({
+      status: "manual_review_required",
+      transaction_hash: "0xorphan",
+      transfer_surfacing_pending: true,
+      metadata: expect.objectContaining({
+        manualReviewReason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable,
+        reviewTransactionHash: "0xorphan",
+        managedVeniceTopUp: expect.objectContaining({ reason: "launch" }),
+      }),
+    });
+    expect(memory.tables.managed_venice_reconciliation_items.map((item) => [item.dedupe_key, item.reason])).toEqual([
+      [managedVeniceTokenTransferDedupeKey("0xorphan"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable],
+      [managedVeniceTokenTransferDedupeKey("0xother"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid],
+    ]);
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
+    expect(memory.tables.managed_venice_financial_events).toHaveLength(0);
+  });
+
   it("CAS: a stale review can never overwrite a settled quote", async () => {
     const memory = seed();
     const snapshot = memory.tables.managed_venice_token_quotes.map((row) => ({ ...row }));

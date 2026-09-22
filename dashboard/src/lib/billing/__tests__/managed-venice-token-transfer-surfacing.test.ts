@@ -1,3 +1,4 @@
+import { log } from "@/lib/logger";
 import {
   MANAGED_VENICE_TOKEN_DEPOSIT_REASONS,
   settleManagedVeniceTokenQuote,
@@ -473,6 +474,78 @@ describe("managed Venice settlement: surfacing relative to what actually happene
     expect(bearer).toEqual({ status: "manual_review_required" });
     expect(openItems(memory)).toEqual([
       { key: transferKey("0xagain"), reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer },
+    ]);
+  });
+});
+
+describe("managed Venice settlement: a claim with no lot and no claim values", () => {
+  // Legacy / corrupt state: transaction_hash set on an open quote, but no lot
+  // and no readable metadata.settlementClaim, so nothing says what to credit.
+  const orphanQuote = () =>
+    managedVeniceQuoteRow({ status: "expired", transaction_hash: "0xorphan", updated_at: "2026-05-16T10:30:00.000Z" });
+
+  it("goes to manual review once (flag set, one item) instead of failing every tick", async () => {
+    const memory = seed(orphanQuote());
+    const rpc = chain([transfer("0xorphan", QUOTED, "2026-05-16T10:21:00.000Z")]);
+    const warn = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+
+    const first = await tickAt(memory, rpc, "2026-05-16T11:00:00.000Z");
+    const second = await tickAt(memory, rpc, "2026-05-16T11:05:00.000Z");
+
+    expect(first).toMatchObject({ failed: 0, manualReview: 1 });
+    expect(first.results[0]).toMatchObject({
+      quoteId: "quote_1",
+      status: "manual_review_required",
+      transactionHash: "0xorphan",
+    });
+    expect(second.failed).toBe(0);
+    expect(quote(memory)).toMatchObject({
+      status: "manual_review_required",
+      // The claim stays on the quote: the tx remains bound here.
+      transaction_hash: "0xorphan",
+      transfer_surfacing_pending: true,
+      metadata: expect.objectContaining({
+        manualReviewReason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable,
+        reviewTransactionHash: "0xorphan",
+        primaryRaw: { pairAddress: "0xpair" },
+      }),
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "managed Venice token quote claim has no lot and no claim values; sent to manual review",
+      expect.objectContaining({ quoteId: "quote_1", transactionHash: "0xorphan" })
+    );
+    warn.mockRestore();
+    expect(openItems(memory)).toEqual([
+      { key: transferKey("0xorphan"), reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable },
+    ]);
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
+    expect(memory.tables.managed_venice_financial_events).toHaveLength(0);
+
+    // A bearer redelivery of the claimed tx (in window, in band) never credits it.
+    const bearer = await settleManagedVeniceTokenQuote(
+      { quoteId: "quote_1", transactionHash: "0xorphan", tokenAmountRaw: QUOTED.toString(), observedAt: "2026-05-16T10:21:00.000Z" },
+      memory.db
+    );
+    expect(bearer).toEqual({ status: "manual_review_required" });
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
+    expect(openItems(memory)).toHaveLength(1);
+  });
+
+  it("rewrites the claim's item from the surface-only pass when the insert after the flip fails", async () => {
+    const memory = seed(orphanQuote());
+    const rpc = chain();
+    memory.failNext({
+      table: "managed_venice_reconciliation_items",
+      op: "insert",
+      match: (row) => row.reason === MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable,
+    });
+
+    const tick = await tickAt(memory, rpc, "2026-05-16T11:00:00.000Z");
+
+    expect(tick).toMatchObject({ failed: 1, transferSurfacing: { checked: 1, failed: 0 } });
+    expect(quote(memory)).toMatchObject({ status: "manual_review_required", transfer_surfacing_pending: true });
+    expect(openItems(memory)).toEqual([
+      { key: transferKey("0xorphan"), reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable },
     ]);
   });
 });

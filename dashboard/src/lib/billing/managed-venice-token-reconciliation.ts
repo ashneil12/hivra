@@ -844,8 +844,29 @@ async function surfaceTerminalQuoteTransfers(params: {
   chain: BaseChainReader;
   quote: ManagedVeniceTokenQuote;
   minConfirmations: number;
+  now: Date;
 }): Promise<"complete" | "pending"> {
   const { db, quote } = params;
+
+  // A claim-unrecoverable review keeps its claimed tx bound to the quote, so
+  // the scan below never surfaces it: (re)write its item directly (a no-op
+  // once it exists), in case the insert after the review flip failed.
+  if (
+    quote.status === "manual_review_required" &&
+    quote.manualReviewReason === MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable &&
+    quote.transactionHash
+  ) {
+    await surfaceManagedVeniceTokenTransfer(
+      {
+        quote,
+        transactionHash: quote.transactionHash,
+        tokenAmountRaw: null,
+        observedAt: params.now.toISOString(),
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable,
+      },
+      db
+    );
+  }
 
   const scan = await scanAttributableTransfers(params);
   await surfaceTransfers(db, quote, scan.attributable.filter(scan.isConfirmed), (transfer) =>
@@ -936,7 +957,13 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     // whatever else reached the quote. Legacy terminal quotes (flag false) and
     // cancelled quotes return as-is, without a scan.
     if (quote.transferSurfacingPending) {
-      const transferSurfacing = await surfaceTerminalQuoteTransfers({ db, chain, quote, minConfirmations });
+      const transferSurfacing = await surfaceTerminalQuoteTransfers({
+        db,
+        chain,
+        quote,
+        minConfirmations,
+        now: params.now ?? new Date(),
+      });
       return {
         status: quote.status,
         quote: quotePayload(quote),
@@ -955,7 +982,8 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   const lot = await loadManagedVeniceTokenDepositLot(quote.id, db);
   if (quote.transactionHash || lot) {
     // The flip sets transfer_surfacing_pending, so any extra transfer this
-    // recovery does not scan for is surfaced by the surface-only pass.
+    // recovery does not scan for is surfaced by the surface-only pass. A claim
+    // with no lot and no readable claim values goes to review in settle.
     const recovery = recoveryTransfer(quote, lot, now);
     const settlement = await settle(recovery, db);
     return finishSettlement({ db, quote, settlement, transfer: recovery });
