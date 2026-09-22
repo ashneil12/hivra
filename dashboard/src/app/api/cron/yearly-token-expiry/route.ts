@@ -1,22 +1,26 @@
 /**
  * Yearly token-subscription expiry cron.
  *
- * Three passes per tick:
+ * Four passes per tick:
  *
  *   1. Pre-expiry warning — for active subs whose expires_at is within
  *      7 days AND no expiry_warning_email_sent_at, send the
  *      "expiring soon" email and stamp the timestamp.
  *
- *   2. Move to grace — for active subs whose expires_at has just passed,
- *      flip status='active' → 'grace'. Tier access continues during
- *      grace via provisioning-entitlements.
+ *   2. Move to grace — active subs whose expires_at has passed flip
+ *      'active' -> 'grace'. Tier access continues during grace.
  *
- *   3. Move to expired — for grace subs whose expires_at + 7 days has
- *      passed, flip status='grace' → 'expired' and send the "ended"
- *      email. provisioning-entitlements stops granting tier access at
- *      this point.
+ *   3. Move to expired — grace subs whose expires_at + 7 days has passed flip
+ *      'grace' -> 'expired'. This is driven by the DATE alone: entitlement
+ *      ends on time whether or not an email can be delivered.
  *
- * All passes are idempotent. Re-running on the same tick is a no-op.
+ *   4. Ended email — expired subs whose "ended" email has not gone out yet
+ *      are emailed and stamped; a failed send is retried on later ticks for
+ *      a bounded window.
+ *
+ * Transitions are compare-and-set in the UPDATE itself, so a renewal that
+ * lands between reads and writes is never moved (and never emailed).
+ * Re-running on the same tick is a no-op.
  */
 
 import { NextRequest } from "next/server";
@@ -29,13 +33,17 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { sendYearlyTokenSubscriptionNotification } from "@/lib/email/yearly-token-subscription-notifications";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+// Keep retrying an undelivered "ended" email for this long after the grace
+// window closed, then give up (a user with no email address never gets one).
+const ENDED_EMAIL_RETRY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const PASS_LIMIT = 200;
 
 interface SubRow {
   id: string;
   user_id: string;
   tier: "pro" | "power";
   expires_at: string;
-  status: "active" | "grace" | "expired" | "cancelled";
+  status: "active" | "grace" | "expired" | "cancelled" | "renewed";
   expiry_warning_email_sent_at: string | null;
   expired_email_sent_at: string | null;
 }
@@ -109,7 +117,8 @@ async function runYearlyTokenExpiry(
     .is("expiry_warning_email_sent_at", null)
     .lt("expires_at", sevenDaysFromNow.toISOString())
     .gt("expires_at", now.toISOString())
-    .limit(100);
+    .order("expires_at", { ascending: true })
+    .limit(PASS_LIMIT);
   // A query failure must NOT be treated as "zero rows" — that silently skips
   // every warning this run. Throw so the top-level guard logs + ops-events it.
   if (warnErr) {
@@ -127,97 +136,78 @@ async function runYearlyTokenExpiry(
     });
     if (result.sent) {
       warnSent += 1;
-      // Only stamp the sent-timestamp on a SUCCESSFUL send. Stamping
-      // unconditionally meant a Resend outage permanently suppressed the
-      // warning (the row would never re-match this SELECT). Leaving it null on
-      // failure lets the next tick retry; the row stays eligible because the
-      // expires_at window is days wide, so a few retries won't spam users.
+      // Only stamp on a SUCCESSFUL send, so a Resend outage is retried next
+      // tick (the window is days wide).
       await supabaseAdmin
         .from("yearly_token_subscriptions")
         .update({ expiry_warning_email_sent_at: now.toISOString(), updated_at: now.toISOString() })
-        .eq("id", row.id);
+        .eq("id", row.id)
+        .is("expiry_warning_email_sent_at", null);
     } else {
       warnFailed += 1;
     }
   }
 
-  // ─── Pass 2: move expired-but-still-active rows into grace ─────────
-  const { data: graceCandidates, error: graceErr } = await supabaseAdmin
+  // ─── Pass 2: active rows past their end move into grace ────────────
+  const { data: graced, error: graceErr } = await supabaseAdmin
     .from("yearly_token_subscriptions")
-    .select("id")
+    .update({ status: "grace", updated_at: now.toISOString() })
     .eq("status", "active")
     .lt("expires_at", now.toISOString())
-    .limit(200);
+    .select("id");
   if (graceErr) {
-    throw new Error(`grace-candidate query failed: ${graceErr.message || graceErr.code || "unknown"}`);
+    throw new Error(`grace transition failed: ${graceErr.message || graceErr.code || "unknown"}`);
   }
+  const movedToGrace = Array.isArray(graced) ? graced.length : 0;
 
-  let movedToGrace = 0;
-  if (graceCandidates && graceCandidates.length > 0) {
-    const ids = (graceCandidates as { id: string }[]).map((r) => r.id);
-    const { error } = await supabaseAdmin
-      .from("yearly_token_subscriptions")
-      .update({ status: "grace", updated_at: now.toISOString() })
-      .in("id", ids);
-    if (!error) movedToGrace = ids.length;
-  }
-
-  // ─── Pass 3: expire grace rows past their grace window ─────────────
-  const { data: expireRows, error: expireErr } = await supabaseAdmin
+  // ─── Pass 3: grace rows past their grace window expire ─────────────
+  const { data: expiredRows, error: expireErr } = await supabaseAdmin
     .from("yearly_token_subscriptions")
-    .select("id, user_id, tier, expires_at, status, expiry_warning_email_sent_at, expired_email_sent_at")
+    .update({ status: "expired", updated_at: now.toISOString() })
     .eq("status", "grace")
     .lt("expires_at", sevenDaysAgo.toISOString())
-    .limit(100);
+    .select("id");
   if (expireErr) {
-    throw new Error(`expire-row query failed: ${expireErr.message || expireErr.code || "unknown"}`);
+    throw new Error(`expiry transition failed: ${expireErr.message || expireErr.code || "unknown"}`);
+  }
+  const expired = Array.isArray(expiredRows) ? expiredRows.length : 0;
+
+  // ─── Pass 4: "ended" email for expired rows not yet notified ───────
+  const retryFloor = new Date(sevenDaysAgo.getTime() - ENDED_EMAIL_RETRY_WINDOW_MS);
+  const { data: emailRows, error: emailErr } = await supabaseAdmin
+    .from("yearly_token_subscriptions")
+    .select("id, user_id, tier, expires_at, status, expiry_warning_email_sent_at, expired_email_sent_at")
+    .eq("status", "expired")
+    .is("expired_email_sent_at", null)
+    .gt("expires_at", retryFloor.toISOString())
+    .order("expires_at", { ascending: true })
+    .limit(PASS_LIMIT);
+  if (emailErr) {
+    throw new Error(`ended-email query failed: ${emailErr.message || emailErr.code || "unknown"}`);
   }
 
-  let expired = 0;
   let expiredEmailSent = 0;
   let expiredEmailFailed = 0;
-  for (const row of (expireRows as SubRow[] | null) ?? []) {
-    // ORDER MATTERS: send the expiry email BEFORE flipping status to
-    // 'expired'. Previously the row was flipped first, so if the email
-    // send threw (Resend hiccup, env missing) the row was 'expired'
-    // with no email sent — and the next tick's SELECT requires
-    // `status='grace'`, so the row was excluded forever. User got no
-    // notification, and there was no obvious recovery path.
-    let emailWritten = false;
-    if (!row.expired_email_sent_at) {
-      try {
-        const result = await sendYearlyTokenSubscriptionNotification({
-          userId: row.user_id,
-          tier: row.tier,
-          transition: "expired",
-          expiresAt: new Date(row.expires_at),
-        });
-        if (result.sent) {
-          expiredEmailSent += 1;
-          await supabaseAdmin
-            .from("yearly_token_subscriptions")
-            .update({ expired_email_sent_at: now.toISOString(), updated_at: now.toISOString() })
-            .eq("id", row.id);
-          emailWritten = true;
-        } else {
-          expiredEmailFailed += 1;
-        }
-      } catch {
+  for (const row of (emailRows as SubRow[] | null) ?? []) {
+    try {
+      const result = await sendYearlyTokenSubscriptionNotification({
+        userId: row.user_id,
+        tier: row.tier,
+        transition: "expired",
+        expiresAt: new Date(row.expires_at),
+      });
+      if (result.sent) {
+        expiredEmailSent += 1;
+        await supabaseAdmin
+          .from("yearly_token_subscriptions")
+          .update({ expired_email_sent_at: now.toISOString(), updated_at: now.toISOString() })
+          .eq("id", row.id)
+          .is("expired_email_sent_at", null);
+      } else {
         expiredEmailFailed += 1;
       }
-    }
-
-    // Only flip to 'expired' if either the email already went out or
-    // we just wrote `expired_email_sent_at`. If the email failed AND
-    // we haven't written it yet, leave the row as 'grace' so the next
-    // tick retries the email. The grace window is 7 days, so a few
-    // missed cron ticks worth of retries is fine.
-    if (row.expired_email_sent_at || emailWritten) {
-      await supabaseAdmin
-        .from("yearly_token_subscriptions")
-        .update({ status: "expired", updated_at: now.toISOString() })
-        .eq("id", row.id);
-      expired += 1;
+    } catch {
+      expiredEmailFailed += 1;
     }
   }
 
