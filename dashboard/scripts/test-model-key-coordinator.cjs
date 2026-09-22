@@ -71,6 +71,7 @@ async function main() {
     for (const file of fs.readdirSync(dir).filter(name => /^2026082[5678]/.test(name)).sort()) await db.exec(migration(file));
     await db.exec(migration('20260830132000_launch_fingerprint_key_separation.sql'));
     await db.exec(migration('20260905140000_managed_provisioner_channels.sql'));
+    await db.exec(migration('20260915150000_hivra_resource_envelopes.sql'));
     const id = randomUUID(), token = 'a'.repeat(64), accountId = randomUUID();
     await db.query("insert into public.managed_venice_wallet_accounts(id,user_id) values($1,'owner')", [accountId]);
     await db.query(`insert into public.hivra_agents(id,user_id,type,name,status,desired_state,vmid,api_token,cf_hostname,cf_tunnel_id,chat_url)
@@ -78,7 +79,7 @@ async function main() {
     await db.exec('set role service_role');
     // A small PostgREST adapter for the actual store's select/filter/RPC calls.
     // SQL identifiers are strictly allowlisted; values remain bound parameters.
-    const identifier = name => { assert.match(name, /^[a-z_]+$/); return '"' + name + '"'; };
+    const identifier = name => { assert.match(name, /^[a-z_][a-z0-9_]*$/); return '"' + name + '"'; };
     let loseAdmission = false, loseSettlement = false, loseReservation = false, losePromotion = false, rpcCalls = [];
     const client = {
       from(table) {
@@ -103,7 +104,7 @@ async function main() {
           admit_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_binding', 'p_request'],
           claim_hivra_model_key_delivery: ['p_user_id', 'p_agent_id', 'p_operation_id'],
           settle_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_lease_id', 'p_receipt'],
-          reserve_hivra_launch_model_request: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key'],
+          reserve_hivra_launch_model_request_v2: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key'],
           claim_hivra_launch_model_attempt: ['p_user_id','p_agent_id','p_request_id','p_automatic'],
           promote_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id','p_attempt_id','p_binding','p_request'],
           cancel_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id'],
@@ -113,7 +114,7 @@ async function main() {
           const result = await db.query(`select public.${identifier(name)}(${parameters.map((_,i) => '$'+(i+1)).join(',')}) as result`, parameters.map(key => args[key]));
           if (name === 'admit_hivra_model_key_operation' && loseAdmission) { loseAdmission = false; throw new Error('Synthetic lost admission reply'); }
           if (name === 'settle_hivra_model_key_operation' && loseSettlement) { loseSettlement = false; throw new Error('Synthetic lost settlement reply'); }
-          if (name === 'reserve_hivra_launch_model_request' && loseReservation) { loseReservation = false; throw new Error('Synthetic lost reservation reply'); }
+          if (name === 'reserve_hivra_launch_model_request_v2' && loseReservation) { loseReservation = false; throw new Error('Synthetic lost reservation reply'); }
           if (name === 'promote_hivra_launch_model_request' && losePromotion) { losePromotion = false; throw new Error('Synthetic lost promotion reply'); }
           return { data: result.rows[0].result, error: null };
         } catch (error) { return { data: null, error }; }

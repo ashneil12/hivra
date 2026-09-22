@@ -21,7 +21,7 @@ it("preserves the Python command argument across OpenSSH-style argument joining"
   const harness = `set -euo pipefail
 sudo() {
   [ "\${1:-}" != -n ] || shift
-  if [ "\${1:-}" = /usr/bin/python3 ]; then shift; /opt/homebrew/bin/python3 "$@"; else "$@"; fi
+  if [ "\${1:-}" = /usr/bin/python3 ]; then shift; command python3 "$@"; else "$@"; fi
 }
 export -f sudo
 ssh_like() {

@@ -1,6 +1,9 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { buildVmidBoundGuestExecPrelude } from "../vmid-bound-guest-exec";
 
@@ -52,11 +55,17 @@ printf 'complete\\n'
       [{ exited: "true", exitcode: 0, "out-data": "unsafe\n" }, 125, "", "HIVRA_QGA_FAILURE result_invalid\n"],
       [{ exited: 1, exitcode: "0", "out-data": "unsafe\n" }, 125, "", "HIVRA_QGA_FAILURE result_invalid\n"],
     ] as const) {
-      const run = spawnSync("/usr/bin/perl", ["-MJSON::PP", "-e", parser!, "/dev/stdin"], {
-        encoding: "utf8",
-        input: JSON.stringify(document),
-      });
-      expect({ status: run.status, stdout: run.stdout, stderr: run.stderr }).toEqual({ status, stdout, stderr });
+      // Decode a regular file, as the helper does with its mktemp receipt. On
+      // Linux spawnSync stdin is a socket, which /dev/stdin cannot open.
+      const directory = mkdtempSync(path.join(tmpdir(), "hivra-qga-result-"));
+      try {
+        const resultFile = path.join(directory, "result.json");
+        writeFileSync(resultFile, JSON.stringify(document), { mode: 0o600 });
+        const run = spawnSync("/usr/bin/perl", ["-MJSON::PP", "-e", parser!, resultFile], { encoding: "utf8" });
+        expect({ status: run.status, stdout: run.stdout, stderr: run.stderr }).toEqual({ status, stdout, stderr });
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
   });
 });

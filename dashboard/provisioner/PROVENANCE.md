@@ -513,6 +513,15 @@ existing guest, and a reducing resize remains available on an already
 overcommitted host. Inventory and per-guest status errors fail closed, and an
 uncapped QEMU guest's CPU maximum counts every configured socket.
 
+Release `2026.09.22.2` builds on `2026.09.22.1` and aligns the provider-VM
+desktop service planner with the Selkies environment the sealed desktop
+installer has written since `2026.09.15.1` (`SELKIES_SCALING_DPI=96` with
+`SELKIES_USE_CSS_SCALING=true|locked`). The planner still demanded the retired
+`96|locked` value, so provider-VM Ubuntu desktop preparation rejected its own
+installer's configuration. Guest desktop assets (installer, broker, server,
+image) are unchanged, so the remote-desktop bundle revision and every session
+revision are preserved, as are all earlier manifests.
+
 Release `2026.09.22.1` builds on `2026.09.21.1` and adds the agent-run reporter
 for Claude Code and Codex computers on Proxmox. `hivra-agent-trace.py` and
 `hivra-agent-trace.service` read only the structure of the agent's own session
