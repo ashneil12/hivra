@@ -1,5 +1,5 @@
 import { getGoal } from "@/lib/hivra/agent-identity";
-import { extractAssistantText, type AgentKind } from "@/lib/hivra/agent-adapters";
+import { extractAssistantTurn, type AgentKind, type AssistantTurn } from "@/lib/hivra/agent-adapters";
 
 type WelcomeChannel = "chat" | "telegram";
 // Welcome generation works for any agent the registry knows (claude/codex/generic).
@@ -69,11 +69,13 @@ export function buildAgentWelcomePrompt(input: AgentWelcomeInput): string {
   ].join("\n");
 }
 
-// Extract the assistant's text from a full NDJSON turn body (non-interactive,
-// e.g. the welcome message). Delegates to the SAME per-agent parser the live
-// chat uses (agent-adapters), so the welcome and the live render can never
-// diverge — that divergence is exactly what rendered the welcome twice.
-export function extractWelcomeTextFromNdjson(body: string, agentKind: WelcomeAgentKind): string {
+// Parse a full NDJSON turn body (non-interactive, e.g. the welcome message)
+// into the assistant's text and how the turn ended. Delegates to the SAME
+// per-agent parser the live chat uses (agent-adapters), so the welcome and the
+// live render can never diverge — that divergence is exactly what rendered the
+// welcome twice — and a killed or failed welcome is never mistaken for a
+// finished one.
+export function extractWelcomeTurnFromNdjson(body: string, agentKind: WelcomeAgentKind): AssistantTurn {
   const events: Record<string, unknown>[] = [];
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -84,7 +86,8 @@ export function extractWelcomeTextFromNdjson(body: string, agentKind: WelcomeAge
       /* skip malformed line */
     }
   }
-  return extractAssistantText(events, agentKind).replace(/\n{3,}/g, "\n\n").trim();
+  const turn = extractAssistantTurn(events, agentKind);
+  return { ...turn, text: turn.text.replace(/\n{3,}/g, "\n\n").trim() };
 }
 
 function boxBase(boxUrl: string): string {
@@ -96,7 +99,9 @@ export async function requestAgentWelcomeMessage(params: AgentWelcomeInput & {
   token?: string | null;
   agentKind: WelcomeAgentKind;
   fetchImpl?: typeof fetch;
-}): Promise<string> {
+  /** Cancels the turn: the box kills the CLI when the client disconnects. */
+  signal?: AbortSignal;
+}): Promise<AssistantTurn> {
   const fetcher = params.fetchImpl ?? fetch;
   const response = await fetcher(`${boxBase(params.boxUrl)}/api/chat`, {
     method: "POST",
@@ -108,15 +113,20 @@ export async function requestAgentWelcomeMessage(params: AgentWelcomeInput & {
       message: buildAgentWelcomePrompt(params),
       sessionId: null,
     }),
+    signal: params.signal,
   });
 
-  const body = await response.text().catch(() => "");
   if (!response.ok) {
+    await response.text().catch(() => "");
     throw new Error(`Agent welcome generation failed (${response.status})`);
   }
-  const text = extractWelcomeTextFromNdjson(body, params.agentKind);
-  if (!text) throw new Error("Agent welcome generation returned no assistant text");
-  return text;
+  // A transport failure while reading the body rejects: the turn's end was
+  // never observed, so there is nothing to show as its result.
+  const body = await response.text();
+  // The caller decides what to show: the outcome says whether the agent and the
+  // box confirmed the turn finished (a killed or failed first task is not a
+  // finished deliverable).
+  return extractWelcomeTurnFromNdjson(body, params.agentKind);
 }
 
 export async function sendTelegramWelcomeMessage(params: {

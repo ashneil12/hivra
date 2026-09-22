@@ -5,7 +5,7 @@
 // CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
 // box in localStorage; each session resumes its own Claude session_id.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,7 +14,7 @@ import { Send, Loader2, Check, X, Plus, MessageSquare, Trash2, ChevronRight, Che
 import { listBoxSessions, readBoxSession, stampAgentFirstUsage, uploadBoxFile, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
 import { requestAgentWelcomeMessage, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
-import { getAdapter, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
+import { getAdapter, settleTurn, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
@@ -100,12 +100,44 @@ interface ToolChip {
  result?: string;
 }
 
+// How a turn ended, from what was actually observed:
+//   complete    — the box reported the agent process exited 0 (`_done`).
+//   error       — the agent reported a terminal failure, the process exited
+//                 non-zero / was killed, or the request/transport failed.
+//   stopped     — the user pressed Stop.
+//   interrupted — the chat itself aborted the turn (box URL changed, chat deleted).
+//   unconfirmed — the stream closed without the box's exit report.
+type TurnOutcome = "complete" | "error" | "stopped" | "interrupted" | "unconfirmed";
+
 interface ChatMessage {
+  /** Stable render key (index keys leak per-message UI state across sessions). */
+  id?: string;
   role: "user" | "assistant";
   text: string;
   tools: ToolChip[];
   streaming?: boolean;
-  outcome?: "complete" | "error" | "stopped";
+  outcome?: TurnOutcome;
+  /** Non-fatal notices surfaced during the turn. Kept apart from `text` so an
+   * agent that re-sends its full text (codex setText) cannot wipe them. */
+  warnings?: string[];
+  /** Why the turn failed (terminal), shown with the failed state. */
+  failure?: string;
+  /** Restored from the box's own session store, which keeps only tool names. */
+  historical?: boolean;
+}
+
+// One in-flight request (a chat turn or the auto-welcome). Every stream update
+// is addressed to (sessionId, messageId), never to "the active session's last
+// message", so a turn can only ever write into its own bubble.
+interface ActiveTurn {
+  kind: "chat" | "welcome";
+  controller: AbortController;
+  sessionId: string;
+  messageId: string;
+  /** Per-turn scratch state for the agent's parser (e.g. codex's id→segment map). */
+  parserState: Record<string, unknown>;
+  /** Exit code from the box's `_done` event; undefined until it arrives. */
+  exitCode?: number | null;
 }
 
 interface Session {
@@ -148,13 +180,40 @@ export interface HivraChatProps {
 // Map a box session message (from the VM's own session store) to a ChatMessage.
 function boxMsgToChat(m: BoxMessage): ChatMessage {
  return {
+ id: newId(),
  role: m.role,
  text: m.text || "",
  tools: (m.tools || []).map((name) => ({ name, detail: "", status: "unknown" as const })),
+ historical: true,
  };
 }
 
 const MAX_SESSIONS = 30;
+// The largest single argv element Linux accepts (MAX_ARG_STRLEN = 32 pages of
+// 4 KiB, including the terminating NUL). The box passes a codex message as one.
+const CODEX_MAX_MESSAGE_BYTES = 128 * 1024 - 1;
+// Autoscroll: within this many px of the bottom counts as "at the bottom".
+const AT_BOTTOM_PX = 4;
+// A scroll event this soon after the user's input (wheel, touch, key, pointer
+// release) is theirs; smooth wheel scrolling and key repeat stay inside it.
+const USER_SCROLL_INTENT_MS = 250;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+function isEditable(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT");
+}
+
+// True when an element between `target` and `pane` can itself scroll up, so an
+// upward wheel/key goes to it (tool output, a tall code block) and not the pane.
+function nestedScrollerTakes(target: EventTarget | null, pane: HTMLElement): boolean {
+  for (let node = target instanceof Element ? target : null; node && node !== pane; node = node.parentElement) {
+    if (!(node instanceof HTMLElement) || node.scrollHeight <= node.clientHeight || node.scrollTop <= 0) continue;
+    const style = window.getComputedStyle(node);
+    const overflowY = style.overflowY || style.overflow;
+    if (/(auto|scroll)/.test(overflowY)) return true;
+  }
+  return false;
+}
 
 // Per-session draft key — the half-typed message survives reloads + session switches.
 function draftKey(sk: string, sessionId: string): string {
@@ -193,7 +252,16 @@ function loadSessions(boxUrl: string): Session[] {
  return parsed
  // Drop any hidden welcome-generation session persisted before the rail filter landed.
  .filter((s) => !isHiddenWelcomeTitle(s.title))
- .map((s) => ({ ...s, messages: (s.messages || []).map((m) => ({ ...m, streaming: false })) }));
+ .map((s) => ({
+ ...s,
+ messages: (s.messages || []).map((m) => ({
+ ...m,
+ id: m.id || newId(),
+ streaming: false,
+ // A turn persisted mid-stream never observed its end.
+ outcome: m.streaming && !m.outcome ? "unconfirmed" : m.outcome,
+ })),
+ }));
  } catch {
  return [];
  }
@@ -214,6 +282,21 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
+// True on touch-first (coarse pointer) devices; follows changes (e.g. a tablet
+// keyboard/trackpad attached). False when matchMedia is unavailable (SSR, tests).
+const COARSE_POINTER_QUERY = "(pointer: coarse)";
+function coarsePointerQuery(): MediaQueryList | null {
+ return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(COARSE_POINTER_QUERY) : null;
+}
+function subscribeCoarsePointer(onChange: () => void): () => void {
+ const query = coarsePointerQuery();
+ query?.addEventListener?.("change", onChange);
+ return () => query?.removeEventListener?.("change", onChange);
+}
+function useCoarsePointer(): boolean {
+ return useSyncExternalStore(subscribeCoarsePointer, () => Boolean(coarsePointerQuery()?.matches), () => false);
+}
+
 function toolIcon(name: string): string {
  if (name === "Bash") return "⚙";
  if (/browser|cdp|harness|navigate|screenshot/i.test(name)) return "🌐";
@@ -223,12 +306,14 @@ function toolIcon(name: string): string {
 }
 // A single tool card. Collapsed by default — header shows ⚙ name + command +
 // status; click to expand the output (when there is one).
-function ToolCard({ tool, streaming = false, interrupted = false }: { tool: ToolChip; streaming?: boolean; interrupted?: boolean }) {
+function ToolCard({ tool, streaming = false, interrupted = false, historical = false }: { tool: ToolChip; streaming?: boolean; interrupted?: boolean; historical?: boolean }) {
   const [open, setOpen] = useState(false);
   const hasResult = Boolean(tool.result);
   const disclosureId = `tool-result-${useId().replace(/:/g, "")}`;
   const unconfirmed = tool.status === "unknown" || (!streaming && tool.status === "running");
-  const statusLabel = unconfirmed ? (interrupted ? "Interrupted" : "Unconfirmed") : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
+  const statusLabel = unconfirmed
+    ? (historical && tool.status === "unknown" ? "Result not stored" : interrupted ? "Interrupted" : "Unconfirmed")
+    : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
   return (
     <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
       <button
@@ -272,25 +357,63 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  );
 }
 
-function AssistantActivity({ tools, streaming, outcome, text }: { tools: ToolChip[]; streaming?: boolean; outcome?: ChatMessage["outcome"]; text: string }) {
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function AssistantActivity({ message, live }: { message: ChatMessage; live: boolean }) {
+  const { tools, streaming, outcome, text } = message;
   if (!streaming && tools.length === 0) return null;
-  const runningTools = streaming ? tools.filter((tool) => tool.status === "running") : [];
+  // The agent already reported a terminal failure while its CLI is still
+  // shutting down: say so, in agreement with the turn-state row, rather than
+  // "Responding" / "Working".
+  const failing = Boolean(streaming && message.failure);
+  const runningTools = streaming && !failing ? tools.filter((tool) => tool.status === "running") : [];
   const running = runningTools[runningTools.length - 1];
   const failed = tools.some((tool) => tool.status === "error");
-  const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
-  const summary = streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
+  const unconfirmed = outcome === "unconfirmed" || tools.some((tool) => tool.status === "running" || tool.status === "unknown");
+  // Box history keeps only tool names: say so plainly rather than implying the
+  // reply did not finish.
+  const historical = !streaming && message.historical;
+  const summary = historical ? plural(tools.length, "earlier action")
+    : failing ? "Response failed"
+    : streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
     : outcome === "stopped" ? "Activity stopped"
+    : outcome === "interrupted" ? "Activity interrupted"
     : outcome === "error" ? "Response failed"
     : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
-  const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? `${tools.length} action${tools.length === 1 ? "" : "s"}` : "";
-  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" ? "is-muted" : "is-done";
+  const detail = historical ? "results not stored"
+    : running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? plural(tools.length, "action") : "";
+  const dot = failing ? "is-error" : streaming ? "is-running" : historical ? "is-muted" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "interrupted" ? "is-muted" : "is-done";
+  // Only the current turn is a live region; history must not queue stale
+  // announcements when a session is opened.
+  const liveProps = live ? { role: "status", "aria-live": "polite" as const, "aria-atomic": true } : {};
   return (
-    <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
+    <div className="hivra-chat-activity" {...liveProps}>
       <span className={`hivra-chat-activity-dot ${dot}`} aria-hidden />
       <span className="hivra-chat-activity-label">{summary}</span>
       <span className="hivra-chat-activity-detail">{detail}</span>
     </div>
   );
+}
+
+const TURN_STATES: Partial<Record<TurnOutcome, { name: string; label: string }>> = {
+ stopped: { name: "Response stopped", label: "Stopped" },
+ interrupted: { name: "Response interrupted", label: "Interrupted" },
+ error: { name: "Response failed", label: "Could not complete response" },
+ unconfirmed: { name: "Response unconfirmed", label: "Connection closed before the agent confirmed it finished" },
+};
+
+// Turn-level end state under a reply. A terminal failure is shown as soon as
+// the agent reports it, even while the CLI is still shutting down.
+function TurnState({ message, live }: { message: ChatMessage; live: boolean }) {
+ const outcome: TurnOutcome | undefined = message.streaming ? (message.failure ? "error" : undefined) : message.outcome;
+ const state = outcome ? TURN_STATES[outcome] : undefined;
+ if (!state) return null;
+ return (
+ <div className="hivra-chat-turn-state" role={live ? "status" : "note"} aria-label={state.name}>
+ <span>{state.label}</span>
+ {outcome === "error" && message.failure ? <span className="hivra-chat-turn-reason"> · {message.failure}</span> : null}
+ </div>
+ );
 }
 
 function ToolHistory({ message }: { message: ChatMessage }) {
@@ -305,7 +428,7 @@ function ToolHistory({ message }: { message: ChatMessage }) {
  </button>
  <div id={id} hidden={!open}>
  <div className="hivra-chat-tool-history-list">
- {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped"} />)}
+ {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped" || message.outcome === "interrupted"} historical={message.historical} />)}
  </div>
  </div>
  </div>
@@ -341,18 +464,17 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const activeIdRef = useRef<string>("");
  const scrollRef = useRef<HTMLDivElement>(null);
  const autoWelcomeAttemptedRef = useRef(false);
- // Per-turn scratch state for the active agent's parser (e.g. codex's id→text
- // segment map). Reset at the start of each send().
- const turnStateRef = useRef<Record<string, unknown>>({});
- // Aborts the in-flight turn. The box kills the CLI when the client disconnects,
- // so aborting the fetch genuinely stops the agent (not just the UI).
-  const abortRef = useRef<AbortController | null>(null);
- // Every async turn captures the current generation. Changing the backing box
- // or stable storage identity invalidates that generation before aborting so a
- // late fetch result or reader callback cannot target the replacement chat.
- const requestGenerationRef = useRef(0);
+ // The in-flight turn. Aborting its controller disconnects from the box, which
+ // kills the CLI (a real interrupt, not just a UI reset). A turn is "current"
+ // only while turnRef points at it: replacing or clearing the ref invalidates
+ // every late fetch result or reader callback of the old turn.
+ const turnRef = useRef<ActiveTurn | null>(null);
+ // The message of the most recent turn started here — the only live region.
+ const [liveMessageId, setLiveMessageId] = useState<string | null>(null);
  // Last user message of the active turn, so a failed turn can offer a one-tap retry.
  const [lastFailed, setLastFailed] = useState<string | null>(null);
+ // Why the composer's message was not sent (it stays in the composer).
+ const [composerError, setComposerError] = useState<string | null>(null);
  // Thumbs up/down selection per assistant message, keyed by `${sessionId}:${index}`
  // so a rating sticks to its message and survives session switches. UI-only state
  // (the event itself goes to PostHog) — not persisted across reloads.
@@ -364,36 +486,101 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const [uploading, setUploading] = useState(false);
  const fileInputRef = useRef<HTMLInputElement>(null);
  const composerRef = useRef<HTMLTextAreaElement>(null);
- useEffect(() => {
+ const fitComposer = useCallback(() => {
    const textarea = composerRef.current;
    if (!textarea) return;
    textarea.style.height = "auto";
    textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, 160))}px`;
    textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
- }, [input]);
+ }, []);
+ useEffect(() => { fitComposer(); }, [input, fitComposer]);
+ // Wrapping depends on width too (rail opened/closed, window resized). Refit on
+ // width changes only: our own height writes also resize the box.
+ useEffect(() => {
+   const textarea = composerRef.current;
+   if (!textarea || typeof ResizeObserver === "undefined") return;
+   let lastWidth: number | null = null;
+   let frame: number | null = null;
+   const observer = new ResizeObserver((entries) => {
+     const width = entries[entries.length - 1]?.contentRect.width;
+     if (width === undefined || width === lastWidth) return;
+     const first = lastWidth === null;
+     lastWidth = width;
+     if (first || frame !== null) return;
+     // Refit on the next frame, not inside the callback: resizing the observed
+     // element from its own callback makes the browser raise a "ResizeObserver
+     // loop" window error (reported to telemetry as an unhandled client error).
+     frame = requestAnimationFrame(() => {
+       frame = null;
+       fitComposer();
+     });
+   });
+   observer.observe(textarea);
+   return () => {
+     observer.disconnect();
+     if (frame !== null) cancelAnimationFrame(frame);
+   };
+ }, [fitComposer]);
+ // IME: Safari fires compositionend BEFORE the Enter that commits a candidate
+ // (with isComposing false, keyCode 229), so track composition ourselves and
+ // keep the guard up until the commit keystroke has passed.
+ const composingRef = useRef(false);
+ const compositionEndTimerRef = useRef<number | null>(null);
+ useEffect(() => () => { if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current); }, []);
+ // Touch keyboards: Return inserts a newline and Send is the button, because a
+ // soft keyboard has no Shift+Enter.
+ const coarsePointer = useCoarsePointer();
  // Sessions rail visibility — collapsed by default on narrow screens.
  const [showRail, setShowRail] = useState(false);
  useEffect(() => {
  if (typeof window !== "undefined" && window.innerWidth < 720) setShowRail(false);
  }, []);
 
+ const updateSession = useCallback((sessionId: string, fn: (s: Session) => Session) => {
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? fn(s) : s)));
+ }, []);
+ const updateMessage = useCallback((sessionId: string, messageId: string, fn: (m: ChatMessage) => ChatMessage) => {
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, messages: s.messages.map((m) => (m.id === messageId ? fn(m) : m)) } : s)));
+ }, []);
+
+ // Settle the turn's own message and release the composer. No-op for a turn
+ // that is no longer current (stopped, interrupted, or superseded).
+ const finishTurn = useCallback((turn: ActiveTurn, fn: (m: ChatMessage) => ChatMessage) => {
+ if (turnRef.current !== turn) return false;
+ turnRef.current = null;
+ updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? fn(m) : m));
+ setBusy(false);
+ return true;
+ }, [updateMessage]);
+
+ // Abort the in-flight turn and settle its message. An agent failure that was
+ // already observed stays a failure: the stop/abort did not cause it.
+ const interruptTurn = useCallback((outcome: "stopped" | "interrupted") => {
+ const turn = turnRef.current;
+ if (!turn) return;
+ turnRef.current = null;
+ turn.controller.abort();
+ if (turn.kind === "welcome" && outcome === "interrupted") {
+ // Same as a failed welcome: drop the empty bubble so it can run again.
+ updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
+ } else if (turn.exitCode !== undefined) {
+ // The box already reported how the agent exited: the turn ended there, and
+ // the stop/abort only closed the stream after it.
+ updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? { ...m, streaming: false, ...settleTurn({ failure: m.failure, exitCode: turn.exitCode }) } : m));
+ } else {
+ updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? { ...m, streaming: false, outcome: m.failure ? "error" : outcome } : m));
+ }
+ setBusy(false);
+ }, [updateMessage, updateSession]);
+
  useEffect(() => {
- requestGenerationRef.current += 1;
- const controller = abortRef.current;
- abortRef.current = null;
- controller?.abort();
- turnStateRef.current = {};
  autoWelcomeAttemptedRef.current = false;
  setBusy(false);
  setLastFailed(null);
-
- return () => {
- requestGenerationRef.current += 1;
- const activeController = abortRef.current;
- abortRef.current = null;
- activeController?.abort();
- };
- }, [boxUrl, skey]);
+ // Changing the backing box or storage identity (and unmounting) aborts the
+ // turn and settles its bubble so it can never read "Working" forever.
+ return () => interruptTurn("interrupted");
+ }, [boxUrl, skey, interruptTurn]);
 
  const uploadAttachment = useCallback(async (file: File) => {
  if (!token || uploading || attachmentsRef.current.length >= 5) return;
@@ -500,18 +687,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [boxUrl, token],
  );
 
- // Smart autoscroll: follow the stream only while the user is at (or near) the
- // bottom. Scrolling up to re-read mid-stream pins the view; returning to the
- // bottom re-engages following. `force` is for user-initiated sends.
+ // Smart autoscroll: follow the stream only while the user is at the bottom.
+ // A scroll-up by the USER (any size) unsticks at once; only returning to the
+ // bottom re-engages following. A scroll event alone cannot say who moved the
+ // pane — content growth, a code block landing before the next frame, the
+ // composer or banner resizing the pane, and our own pins all fire one — so a
+ // scroll only counts as the user's when it follows their input (wheel, touch,
+ // pointer on the pane or its scrollbar, scroll keys, focus moving into the
+ // conversation). Any other scroll while following just re-pins. `force` is for
+ // user-initiated sends and "Return to latest".
  const stickToBottomRef = useRef(true);
  const scrollFrameRef = useRef<number | null>(null);
+ // Last observed position and scroll range, to tell a user scroll-up from the
+ // browser clamping scrollTop when the scroll range shrinks.
+ const lastScrollRef = useRef({ top: 0, maxTop: 0 });
+ // Until when a scroll event is attributed to the user's input.
+ const userIntentUntilRef = useRef(0);
+ const pointerHeldRef = useRef(false);
  const [showLatest, setShowLatest] = useState(false);
- const onScrollPane = useCallback(() => {
- const el = scrollRef.current;
- if (!el) return;
- const following = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
- stickToBottomRef.current = following;
- setShowLatest(!following);
+ const unstick = useCallback(() => {
+ stickToBottomRef.current = false;
+ setShowLatest(true);
+ }, []);
+ const markUserIntent = useCallback(() => {
+ userIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
  }, []);
  const scrollDown = useCallback((force?: boolean) => {
  if (force) {
@@ -524,9 +723,79 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // A scroll-up between the stream event and this frame must win.
  if (!stickToBottomRef.current) return;
  const el = scrollRef.current;
- if (el) el.scrollTop = el.scrollHeight;
+ if (!el) return;
+ el.scrollTop = el.scrollHeight;
+ lastScrollRef.current = { top: el.scrollTop, maxTop: el.scrollHeight - el.clientHeight };
  });
  }, []);
+ const onScrollPane = useCallback(() => {
+ const el = scrollRef.current;
+ if (!el) return;
+ const last = lastScrollRef.current;
+ const top = el.scrollTop;
+ const maxTop = el.scrollHeight - el.clientHeight;
+ lastScrollRef.current = { top, maxTop };
+ if (maxTop - top <= AT_BOTTOM_PX) {
+ stickToBottomRef.current = true;
+ setShowLatest(false);
+ return;
+ }
+ if (!stickToBottomRef.current) {
+ setShowLatest(true);
+ return;
+ }
+ // Moved up by the user, and not the browser clamping a shrunken range.
+ const scrolledUp = top < last.top - 1 && maxTop >= last.maxTop - 1;
+ const userInput = pointerHeldRef.current || Date.now() <= userIntentUntilRef.current;
+ if (scrolledUp && userInput) unstick();
+ // Not the user: content or layout moved the bottom. Keep following.
+ else scrollDown();
+ }, [scrollDown, unstick]);
+ // Intent signals. A wheel-up or scroll key that will actually move THIS pane
+ // up unsticks at once, before its scroll event lands, so a pin scheduled for
+ // the next token cannot undo it. A gesture the pane cannot follow does not:
+ // nothing above to scroll to, a nested scroller (tool output, code block)
+ // takes it, a mostly-horizontal swipe, or a pinch-zoom (ctrl+wheel).
+ const onWheelPane = useCallback((e: React.WheelEvent) => {
+ if (e.ctrlKey) return;
+ markUserIntent();
+ const pane = scrollRef.current;
+ if (!pane || e.deltaY >= 0 || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+ if (pane.scrollTop > 0 && !nestedScrollerTakes(e.target, pane)) unstick();
+ }, [markUserIntent, unstick]);
+ const onKeyDownPane = useCallback((e: React.KeyboardEvent) => {
+ if (!SCROLL_KEYS.has(e.key) || isEditable(e.target)) return;
+ markUserIntent();
+ const pane = scrollRef.current;
+ if (!pane || !(e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home")) return;
+ if (pane.scrollTop > 0 && !nestedScrollerTakes(e.target, pane)) unstick();
+ }, [markUserIntent, unstick]);
+ const onPointerDownPane = useCallback(() => {
+ pointerHeldRef.current = true;
+ markUserIntent();
+ }, [markUserIntent]);
+ useEffect(() => {
+ // A pointer released anywhere (a scrollbar drag often ends outside the pane).
+ const release = () => {
+ if (!pointerHeldRef.current) return;
+ pointerHeldRef.current = false;
+ markUserIntent();
+ };
+ window.addEventListener("pointerup", release);
+ window.addEventListener("pointercancel", release);
+ return () => {
+ window.removeEventListener("pointerup", release);
+ window.removeEventListener("pointercancel", release);
+ };
+ }, [markUserIntent]);
+ const onTouchEndPane = useCallback(() => {
+ pointerHeldRef.current = false;
+ markUserIntent();
+ }, [markUserIntent]);
+ const onFocusPane = useCallback((e: React.FocusEvent) => {
+ // Focus moving to something in the conversation scrolls it into view.
+ if (e.target !== scrollRef.current) markUserIntent();
+ }, [markUserIntent]);
  useEffect(() => {
  scrollDown(true);
  return () => {
@@ -534,10 +803,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  scrollFrameRef.current = null;
  };
  }, [activeId, scrollDown]);
-
- const updateActive = useCallback((fn: (s: Session) => Session) => {
- setSessions((prev) => prev.map((s) => (s.id === activeIdRef.current ? fn(s) : s)));
- }, []);
 
  useEffect(() => {
  if (!boxHistoryChecked || hasBoxHistory || busy || autoWelcomeAttemptedRef.current) return;
@@ -550,14 +815,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }
 
  autoWelcomeAttemptedRef.current = true;
- const welcomeGeneration = requestGenerationRef.current;
- const isCurrentWelcome = () => requestGenerationRef.current === welcomeGeneration;
+ const turn: ActiveTurn = { kind: "welcome", controller: new AbortController(), sessionId: active.id, messageId: newId(), parserState: {} };
+ turnRef.current = turn;
+ setLiveMessageId(turn.messageId);
  setBusy(true);
  const hasFirstTask = Boolean((firstTask || "").trim());
- updateActive((s) => ({
+ updateSession(turn.sessionId, (s) => ({
  ...s,
  title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text: "", tools: [], streaming: true }],
+ messages: [{ id: turn.messageId, role: "assistant", text: "", tools: [], streaming: true }],
  }));
 
  // The agent opens the conversation on its own — and when a first task was
@@ -585,78 +851,86 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  context,
  firstTask,
  channel: "chat",
+ signal: turn.controller.signal,
  })
- .then((text) => {
- if (!isCurrentWelcome()) return;
- updateActive((s) => ({
- ...s,
- title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text, tools: [], streaming: false }],
- }));
+ .then((result) => {
+ if (turnRef.current !== turn) return; // stopped or interrupted: already settled
+ const { text, warnings, outcome, failure } = result;
+ if (outcome === "complete" && text) {
+ finishTurn(turn, (m) => ({ ...m, text, warnings, outcome, streaming: false }));
+ // Only a welcome the agent and box confirmed finished counts as sent.
  try {
  window.localStorage.setItem(flagKey, "1");
  } catch {
  // Best-effort duplicate guard only.
  }
+ scrollDown();
+ return;
+ }
+ clientLog.warn("agent first message did not complete", {
+ source: "hivra-chat",
+ failureType: "hivra_chat_welcome_incomplete",
+ agentKind,
+ agentName,
+ outcome,
+ failure,
+ });
+ if (!text && !failure) {
+ // Nothing to show and no reason to give: drop the bubble.
+ turnRef.current = null;
+ updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
+ setBusy(false);
+ return;
+ }
+ // A partial or failed first task is shown as exactly that, never as a
+ // finished deliverable, and the welcome stays eligible to run again.
+ finishTurn(turn, (m) => ({ ...m, text, warnings, outcome, failure, streaming: false }));
+ scrollDown();
  })
  .catch((err) => {
- if (!isCurrentWelcome()) return;
+ if (turnRef.current !== turn) return; // stopped or interrupted: already settled
  clientLog.warn("agent first message generation failed", {
  source: "hivra-chat",
  failureType: "hivra_chat_welcome_generation_failed",
  agentKind,
  agentName,
  }, err);
- updateActive((s) => ({ ...s, messages: [] }));
- })
- .finally(() => {
- if (!isCurrentWelcome()) return;
+ turnRef.current = null;
+ updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
  setBusy(false);
- scrollDown();
  });
- }, [agentKind, agentName, active, boxHistoryChecked, boxUrl, busy, context, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateActive]);
+ }, [agentKind, agentName, active, boxHistoryChecked, boxUrl, busy, context, finishTurn, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateSession]);
 
- const updateAssistant = useCallback(
- (fn: (msg: ChatMessage) => ChatMessage) => {
- updateActive((s) => {
- const messages = s.messages.slice();
- const last = messages.length - 1;
- if (last >= 0 && messages[last].role === "assistant") messages[last] = fn(messages[last]);
- return { ...s, messages };
- });
- },
- [updateActive],
- );
-
- const upsertTool = useCallback(
- (id: string | undefined, patch: Partial<ToolChip>) => {
- updateAssistant((m) => {
+ // One stream event → UI. The per-agent parsing lives in the adapter registry
+ // (agent-adapters), which the welcome path shares — so live + welcome can't
+ // diverge. This component only provides a sink bound to ONE turn's message.
+ const handleEvent = useCallback(
+ (turn: ActiveTurn, ev: Record<string, unknown>) => {
+ const update = (fn: (m: ChatMessage) => ChatMessage) => updateMessage(turn.sessionId, turn.messageId, fn);
+ const sink: ChatSink = {
+ setSessionId: (id) => updateSession(turn.sessionId, (s) => ({ ...s, claudeSessionId: id })),
+ appendText: (t) => update((m) => ({ ...m, text: m.text + t })),
+ setText: (t) => update((m) => ({ ...m, text: t })),
+ upsertTool: (id, patch) => update((m) => {
  const tools = m.tools.slice();
  const idx = id ? tools.findIndex((t) => t.id === id) : -1;
  if (idx >= 0) tools[idx] = { ...tools[idx], ...patch };
  else tools.push({ id, name: "tool", detail: "", status: "running", ...patch });
  return { ...m, tools };
- });
+ }),
+ appendWarning: (t) => {
+ const warning = t.trim();
+ if (warning) update((m) => ({ ...m, warnings: [...(m.warnings || []), warning] }));
  },
- [updateAssistant],
- );
-
- // One stream event → UI. The per-agent parsing lives in the adapter registry
- // (agent-adapters), which the welcome path shares — so live + welcome can't
- // diverge. This component only provides the sink that maps parser intents onto
- // React state, plus the per-turn scratch state in turnStateRef.
- const handleEvent = useCallback(
- (ev: Record<string, unknown>) => {
- const sink: ChatSink = {
- setSessionId: (id) => updateActive((s) => ({ ...s, claudeSessionId: id })),
- appendText: (t) => updateAssistant((m) => ({ ...m, text: m.text + t })),
- setText: (t) => updateAssistant((m) => ({ ...m, text: t })),
- upsertTool: (id, patch) => upsertTool(id, patch),
- appendWarning: (t) => updateAssistant((m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
+ // The first terminal cause reported is the one shown.
+ fail: (reason) => update((m) => ({ ...m, failure: m.failure || reason })),
+ exit: (code) => {
+ turn.exitCode = code;
+ },
  };
- getAdapter(agentKind).parseEvent(ev, sink, turnStateRef.current);
+ getAdapter(agentKind).parseEvent(ev, sink, turn.parserState);
  },
- [agentKind, updateActive, updateAssistant, upsertTool],
+ [agentKind, updateMessage, updateSession],
  );
 
  const send = useCallback(
@@ -664,32 +938,47 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (busy) return;
  const text = raw.trim();
  if (!text) return;
- const session = sessions.find((s) => s.id === activeIdRef.current);
- const resumeId = session?.claudeSessionId || null;
+ // The chat on screen. The rail and New chat are disabled while busy, so it
+ // cannot change under a turn; the turn is bound to it by id from here on.
+ const session = active;
+ if (!session) return;
+ // Codex receives the message as one argv element, and Linux caps a single
+ // argument at 128 KiB (MAX_ARG_STRLEN): the box's spawn() would throw E2BIG
+ // and take its chat server down. Say so here instead of sending it.
+ const overLimit = agentKind === "codex" ? new TextEncoder().encode(text).length - CODEX_MAX_MESSAGE_BYTES : 0;
+ if (overLimit > 0) {
+ setComposerError(`This message is too long for ${agentName} to receive (${Math.ceil((CODEX_MAX_MESSAGE_BYTES + overLimit) / 1024)} KB; the limit is ${Math.floor(CODEX_MAX_MESSAGE_BYTES / 1024)} KB). ${token ? "Attach it as a file" : "Split it into shorter messages"} instead.`);
+ return;
+ }
+ setComposerError(null);
+ const resumeId = session.claudeSessionId || null;
  const images = attachmentsRef.current.map((a) => a.path);
  setInput("");
  setAttachments([]);
- try { window.localStorage.removeItem(draftKey(skey, activeIdRef.current)); } catch { /* ignore */ }
-    setBusy(true);
-    setLastFailed(null);
- const controller = new AbortController();
- const requestGeneration = ++requestGenerationRef.current;
- const isCurrentRequest = () =>
- requestGenerationRef.current === requestGeneration && abortRef.current === controller;
- abortRef.current = controller;
- turnStateRef.current = getAdapter(agentKind).createTurnState(); // fresh per-turn parser state
+ try { window.localStorage.removeItem(draftKey(skey, session.id)); } catch { /* ignore */ }
+ setBusy(true);
+ setLastFailed(null);
+ const turn: ActiveTurn = {
+ kind: "chat",
+ controller: new AbortController(),
+ sessionId: session.id,
+ messageId: newId(),
+ parserState: getAdapter(agentKind).createTurnState(), // fresh per-turn parser state
+ };
+ turnRef.current = turn;
+ setLiveMessageId(turn.messageId);
+ const isCurrentRequest = () => turnRef.current === turn;
  const shownText = images.length ? text + "\n\n📎 " + images.map((p) => p.split("/").pop()).join(", ") : text;
- updateActive((s) => ({
+ updateSession(turn.sessionId, (s) => ({
  ...s,
  title: s.messages.length === 0 ? text.slice(0, 42) : s.title,
  messages: [
  ...s.messages,
- { role: "user", text: shownText, tools: [] },
- { role: "assistant", text: "", tools: [], streaming: true },
+ { id: newId(), role: "user", text: shownText, tools: [] },
+ { id: turn.messageId, role: "assistant", text: "", tools: [], streaming: true },
  ],
  }));
- stickToBottomRef.current = true; // a fresh send re-engages following
- scrollDown(true);
+ scrollDown(true); // a fresh send re-engages following
 
  let resp: Response;
  try {
@@ -706,28 +995,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // string like the cron path's, or `--model`-style flags?) and align this
  // key + the TaskModal cron path so chat and scheduled tasks match.
  body: JSON.stringify({ message: text, sessionId: resumeId, ...(images.length ? { images } : {}), ...(thinkRef.current ? { reasoning: true } : {}) }),
- signal: controller.signal,
+ signal: turn.controller.signal,
  });
  } catch (e) {
+ // Stops and interrupts clear turnRef before aborting, so any failure of a
+ // still-current request is unexpected.
  if (!isCurrentRequest()) return;
- abortRef.current = null;
- // User stops invalidate this request before aborting. Any current failure
- // here is an unexpected transport error.
  if ((e as Error).name === "AbortError") {
-      updateAssistant((m) => ({ ...m, streaming: false, outcome: "error" }));
-    } else {
-      updateAssistant((m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: m.failure || "The request was cancelled before your agent responded." }));
+ } else {
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: "Couldn't reach your agent. It may be starting up — try again in a moment." }));
  setLastFailed(text);
  }
- setBusy(false);
  return;
  }
  if (!isCurrentRequest()) return;
  if (!resp.ok || !resp.body) {
- abortRef.current = null;
-    updateAssistant((m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: "Your agent hit an error (HTTP " + resp.status + "). Try again." }));
  setLastFailed(text);
- setBusy(false);
  return;
  }
 
@@ -759,7 +1044,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const event = parseNdjsonLine(line);
  if (!event) return true;
  try {
- handleEvent(event);
+ handleEvent(turn, event);
  } catch {
  /* skip malformed or unsupported event */
  }
@@ -786,37 +1071,29 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  buf = "";
  break;
  }
-  } catch {
-    if (!isCurrentRequest()) return;
-    abortRef.current = null;
-    updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "error" } : m)) }));
-    setBusy(false);
-    return;
-  }
-  if (!isCurrentRequest()) return;
-  abortRef.current = null;
-  updateAssistant((m) => ({ ...m, streaming: false, outcome: m.outcome || "complete" }));
-  updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: m.outcome || "complete" } : m)) }));
- setBusy(false);
+ } catch {
+ if (!isCurrentRequest()) return;
+ // A connection lost after the box reported the exit does not change how
+ // the turn ended; before it, the end was never observed.
+ const exitCode = turn.exitCode;
+ finishTurn(turn, (m) => exitCode !== undefined
+ ? { ...m, streaming: false, ...settleTurn({ failure: m.failure, exitCode }) }
+ : { ...m, streaming: false, outcome: "error", failure: m.failure || "The connection to your agent was lost before the response finished." });
+ return;
+ }
+ if (!isCurrentRequest()) return;
+ // The outcome comes from what the agent and the box reported, never from the
+ // transport closing: only a 0 exit in the box's `_done` confirms completion.
+ const exitCode = turn.exitCode;
+ finishTurn(turn, (m) => ({ ...m, streaming: false, ...settleTurn({ failure: m.failure, exitCode }) }));
  scrollDown();
  },
- [agentKind, boxUrl, busy, handleEvent, scrollDown, sessions, updateActive, updateAssistant, token, skey],
+ [active, agentKind, agentName, boxUrl, busy, finishTurn, handleEvent, scrollDown, skey, token, updateSession],
  );
 
- // Stop the in-flight turn. Aborting the fetch disconnects from the box, which
- // kills the underlying CLI process — a real interrupt, not just a UI reset.
-  const stop = useCallback(() => {
-    const controller = abortRef.current;
-    if (!controller) return;
-    requestGenerationRef.current += 1;
-    abortRef.current = null;
-    controller.abort();
-    updateActive((s) => ({
-      ...s,
-      messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
-    }));
-    setBusy(false);
-  }, [updateActive]);
+ // Stop the in-flight turn (chat or auto-welcome). Aborting the fetch
+ // disconnects from the box, which kills the underlying CLI process.
+ const stop = useCallback(() => interruptTurn("stopped"), [interruptTurn]);
 
  // Record a thumbs up/down on an assistant message and fire the funnel event.
  // Toggling the same thumb clears it (and emits rating "none"); the capture goes
@@ -851,8 +1128,20 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setInput("");
  }, [busy]);
 
+ // Where focus goes after the focused delete control is removed with its row.
+ const railRef = useRef<HTMLDivElement>(null);
+ const pendingRailFocusRef = useRef<string | null>(null);
  const deleteChat = useCallback(
- (id: string) => {
+ (id: string, control?: HTMLElement) => {
+ // Deleting the chat a turn is streaming into ends that turn first, so its
+ // late events (text, resume id) can never land in another session.
+ if (turnRef.current?.sessionId === id) interruptTurn("interrupted");
+ if (control && document.activeElement === control) {
+ // Keep a keyboard / screen-reader user in the rail: the next chat, else
+ // the previous one.
+ const index = sessions.findIndex((s) => s.id === id);
+ pendingRailFocusRef.current = (sessions[index + 1] || sessions[index - 1])?.id ?? "";
+ }
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
  const final = next.length ? next : [emptySession()];
@@ -860,8 +1149,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return final;
  });
  },
- [],
+ [interruptTurn, sessions],
  );
+ useEffect(() => {
+ const target = pendingRailFocusRef.current;
+ if (target === null) return;
+ pendingRailFocusRef.current = null;
+ const rail = railRef.current;
+ const row = Array.from(rail?.querySelectorAll<HTMLElement>("[data-session-row]") || []).find((el) => el.dataset.sessionRow === target);
+ // A row is disabled while a turn streams; then its delete control, then New
+ // chat, then the conversation itself.
+ const candidates = [row, row?.parentElement?.querySelector<HTMLElement>("[data-session-delete]"), rail?.querySelector<HTMLElement>("[data-new-chat]"), scrollRef.current];
+ candidates.find((el): el is HTMLElement => Boolean(el) && !(el as HTMLButtonElement).disabled)?.focus();
+ }, [sessions]);
 
  useEffect(() => {
  scrollDown();
@@ -878,9 +1178,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)" }}>
  {/* Sessions sidebar */}
  {showRail ? (
- <div className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">
+ <div ref={railRef} className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">
  <button
  type="button"
+ data-new-chat
  onClick={newChat}
  disabled={busy}
  className="mx-3 mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] disabled:opacity-50"
@@ -890,31 +1191,39 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div className="flex-1 overflow-y-auto p-2">
  {sessions.map((s) => {
  const isActive = s.id === activeId;
+ const title = s.title || "New chat";
+ // The row is a real button (keyboard operable, named by its title); the
+ // delete control is its sibling, never nested inside it.
  return (
  <div
  key={s.id}
- onClick={() => !busy && selectSession(s)}
  className={[
- "group mb-0.5 flex items-center gap-2 px-2.5 py-2",
- busy ? "cursor-default" : "cursor-pointer",
+ "group mb-0.5 flex items-center",
  isActive
  ? "bg-[var(--hivra-red-soft)]"
  : "hover:bg-[var(--bg-elevated)]",
  ].join(" ")}
  >
- <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" />
+ <button
+ type="button"
+ data-session-row={s.id}
+ onClick={() => selectSession(s)}
+ disabled={busy}
+ aria-current={isActive ? "true" : undefined}
+ className="hivra-chat-rail-item flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left cursor-pointer disabled:cursor-default"
+ >
+ <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" aria-hidden />
  <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink-black)]">
- {s.title || "New chat"}
+ {title}
  </span>
+ </button>
  {sessions.length > 1 ? (
  <button
  type="button"
- aria-label="Delete chat"
- onClick={(e) => {
- e.stopPropagation();
- deleteChat(s.id);
- }}
- className="inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+ data-session-delete
+ aria-label={`Delete chat: ${title}`}
+ onClick={(e) => deleteChat(s.id, e.currentTarget)}
+ className="mr-1.5 inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
  >
  <Trash2 size={12} />
  </button>
@@ -952,7 +1261,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} role="region" aria-label="Conversation" onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
+ <div ref={scrollRef} className="hivra-chat-scroll" role="region" aria-label="Conversation" tabIndex={0} onScroll={onScrollPane} onWheel={onWheelPane} onKeyDown={onKeyDownPane} onPointerDown={onPointerDownPane} onTouchStart={onPointerDownPane} onTouchMove={markUserIntent} onTouchEnd={onTouchEndPane} onTouchCancel={onTouchEndPane} onFocus={onFocusPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
@@ -986,7 +1295,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {messages.map((m, i) => {
  const isUser = m.role === "user";
  return (
- <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
+ <div key={m.id ?? i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
  <div
  style={{
  width: 26,
@@ -1007,7 +1316,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
- {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
+ {m.role === "assistant" ? <AssistantActivity message={m} live={m.id === liveMessageId} /> : null}
  <div className="hivra-md" style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
  {m.role === "assistant" ? (
  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
@@ -1015,12 +1324,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
  </div>
- {m.role === "assistant" ? <ToolHistory message={m} /> : null}
- {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error") ? (
- <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : "Response failed"}>
- {m.outcome === "stopped" ? "Stopped" : "Could not complete response"}
- </div>
+ {m.role === "assistant" && m.warnings?.length ? (
+ <ul className="hivra-chat-warnings" aria-label="Agent warnings">
+ {m.warnings.map((w, wi) => (
+ <li key={wi}><span aria-hidden>⚠</span> {w}</li>
+ ))}
+ </ul>
  ) : null}
+ {m.role === "assistant" ? <ToolHistory message={m} /> : null}
+ {m.role === "assistant" ? <TurnState message={m} live={m.id === liveMessageId} /> : null}
  {m.role === "assistant" && m.text && !m.streaming ? (
  <span style={{ display: "inline-flex", alignItems: "center" }}>
  <MessageCopy text={m.text} />
@@ -1036,7 +1348,17 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
 
  <div className="relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 pb-3 pt-3">
  {showLatest ? (
- <button type="button" onClick={() => scrollDown(true)} className="hivra-chat-latest">
+ <button
+ type="button"
+ onClick={() => {
+ scrollDown(true);
+ // This button unmounts on activation; keep focus in the chat, on the
+ // conversation the user asked to see. Not the composer: focusing a
+ // textarea from a tap opens the on-screen keyboard over the latest output.
+ scrollRef.current?.focus({ preventScroll: true });
+ }}
+ className="hivra-chat-latest"
+ >
  <ChevronDown size={14} aria-hidden /> Return to latest
  </button>
  ) : null}
@@ -1055,6 +1377,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </button>
  </div>
  ) : null}
+ {composerError ? (
+ <div role="alert" className="mx-auto mb-2 w-full max-w-[760px] text-[12.5px] text-[#c0392b]">
+ {composerError}
+ </div>
+ ) : null}
  <form
  onSubmit={(e) => {
  e.preventDefault();
@@ -1066,13 +1393,25 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  ref={composerRef}
  aria-label={`Message ${agentName}`}
  value={input}
- onChange={(e) => setInput(e.target.value)}
+ onChange={(e) => { setInput(e.target.value); setComposerError(null); }}
+ onCompositionStart={() => {
+ if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current);
+ compositionEndTimerRef.current = null;
+ composingRef.current = true;
+ }}
+ onCompositionEnd={() => {
+ compositionEndTimerRef.current = window.setTimeout(() => {
+ compositionEndTimerRef.current = null;
+ composingRef.current = false;
+ }, 0);
+ }}
  onKeyDown={(e) => {
- if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+ if (e.key !== "Enter" || e.shiftKey || coarsePointer) return;
+ if (e.nativeEvent.isComposing || e.keyCode === 229 || composingRef.current) return;
  e.preventDefault();
  void send(input);
- }
  }}
+ enterKeyHint={coarsePointer ? "enter" : "send"}
  onPaste={(e) => {
  if (!token) return;
  const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
@@ -1169,7 +1508,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  ) : null}
  <p className="mx-auto mt-2 w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)]">
- Runs the official agent CLI on this computer · Enter to send, Shift+Enter for newline
+ Runs the official agent CLI on this computer · {coarsePointer ? "Return adds a new line · tap Send to send" : "Enter to send, Shift+Enter for newline"}
  </p>
  </div>
  </div>

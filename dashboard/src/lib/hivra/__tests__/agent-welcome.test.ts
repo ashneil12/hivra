@@ -1,6 +1,6 @@
 import {
   buildAgentWelcomePrompt,
-  extractWelcomeTextFromNdjson,
+  extractWelcomeTurnFromNdjson,
   isHiddenWelcomeTitle,
   requestAgentWelcomeMessage,
   sendTelegramWelcomeMessage,
@@ -68,7 +68,7 @@ describe("agent-welcome", () => {
   });
 
   it("extracts assistant welcome text from Claude stream-json lines", () => {
-    const text = extractWelcomeTextFromNdjson(
+    const { text } = extractWelcomeTurnFromNdjson(
       [
         JSON.stringify({ type: "system", subtype: "init", session_id: "s1" }),
         JSON.stringify({
@@ -96,7 +96,7 @@ describe("agent-welcome", () => {
     // With --include-partial-messages the box streams the text as deltas and then
     // re-sends the SAME text as a complete `assistant` message. The extractor must
     // return the text once, not concatenated twice (the rendered-twice bug).
-    const text = extractWelcomeTextFromNdjson(
+    const { text } = extractWelcomeTurnFromNdjson(
       [
         JSON.stringify({
           type: "stream_event",
@@ -119,7 +119,7 @@ describe("agent-welcome", () => {
   });
 
   it("falls back to the assistant message when no streamed partials are present", () => {
-    const text = extractWelcomeTextFromNdjson(
+    const { text } = extractWelcomeTurnFromNdjson(
       [
         JSON.stringify({
           type: "assistant",
@@ -142,7 +142,7 @@ describe("agent-welcome", () => {
   });
 
   it("extracts assistant welcome text from Codex JSON events in item order", () => {
-    const text = extractWelcomeTextFromNdjson(
+    const { text } = extractWelcomeTurnFromNdjson(
       [
         JSON.stringify({
           type: "item.completed",
@@ -171,10 +171,11 @@ describe("agent-welcome", () => {
               delta: { type: "text_delta", text: "Scout here, ready to research." },
             },
           }),
+          JSON.stringify({ type: "_done", code: 0 }),
         ].join("\n"),
     });
 
-    const text = await requestAgentWelcomeMessage({
+    const turn = await requestAgentWelcomeMessage({
       fetchImpl: fetchMock as typeof fetch,
       boxUrl: "https://box.example.com/",
       token: "box-token",
@@ -185,7 +186,7 @@ describe("agent-welcome", () => {
       channel: "chat",
     });
 
-    expect(text).toBe("Scout here, ready to research.");
+    expect(turn).toEqual({ text: "Scout here, ready to research.", warnings: [], outcome: "complete" });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://box.example.com/api/chat",
       expect.objectContaining({
@@ -202,6 +203,44 @@ describe("agent-welcome", () => {
     // agent performs it on the first turn.
     expect(sentBody.message).toContain("Research the best CRM for dentists");
     expect(sentBody.message).toContain("do this task now and return the finished result");
+  });
+
+  it("threads an abort signal into the welcome request so the chat's Stop can cancel it", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ type: "_text", text: "hi" }) });
+    const controller = new AbortController();
+    await requestAgentWelcomeMessage({
+      fetchImpl: fetchMock as typeof fetch,
+      boxUrl: "https://box.example.com",
+      agentKind: "generic",
+      channel: "chat",
+      signal: controller.signal,
+    });
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
+  it("reports a killed or failed first-task turn instead of returning its text as a finished welcome", async () => {
+    const body = (...events: unknown[]) => ({ ok: true, text: async () => events.map((e) => JSON.stringify(e)).join("\n") });
+    const delta = (t: string) => ({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: t } } });
+    const request = (fetchImpl: jest.Mock) => requestAgentWelcomeMessage({ fetchImpl: fetchImpl as unknown as typeof fetch, boxUrl: "https://box.example.com", agentKind: "claude", channel: "chat", firstTask: "Pull my competitor list" });
+
+    // OOM-killed mid-task: partial text, `_done` null.
+    await expect(request(jest.fn().mockResolvedValue(body(delta("Hi, I'm Atlas. Pulling your competitor list now — first I'll"), { type: "_done", code: null }))))
+      .resolves.toEqual({ text: "Hi, I'm Atlas. Pulling your competitor list now — first I'll", warnings: [], outcome: "error", failure: "Agent process was killed before it finished" });
+    // Logged-out CLI: the error text arrives as the assistant message.
+    await expect(request(jest.fn().mockResolvedValue(body(
+      { type: "assistant", message: { content: [{ type: "text", text: "Invalid API key · Please run /login" }] } },
+      { type: "result", is_error: true, result: "Invalid API key · Please run /login" },
+      { type: "_done", code: 1 },
+    )))).resolves.toMatchObject({ outcome: "error", failure: "Invalid API key · Please run /login" });
+    // Stream closed without the box's exit report.
+    await expect(request(jest.fn().mockResolvedValue(body(delta("Half"))))).resolves.toMatchObject({ text: "Half", outcome: "unconfirmed" });
+  });
+
+  it("rejects when the welcome body cannot be read, and on an HTTP error", async () => {
+    const lost = { ok: true, text: async () => { throw new TypeError("network error"); } };
+    const args = { boxUrl: "https://box.example.com", agentKind: "claude" as const, channel: "chat" as const };
+    await expect(requestAgentWelcomeMessage({ ...args, fetchImpl: jest.fn().mockResolvedValue(lost) as unknown as typeof fetch })).rejects.toThrow("network error");
+    await expect(requestAgentWelcomeMessage({ ...args, fetchImpl: jest.fn().mockResolvedValue({ ok: false, status: 502, text: async () => "" }) as unknown as typeof fetch })).rejects.toThrow("Agent welcome generation failed (502)");
   });
 
   it("sends Telegram welcome text without putting the bot token in thrown errors", async () => {

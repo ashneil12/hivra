@@ -37,8 +37,26 @@ export interface ChatSink {
   setText(text: string): void;
   /** Create or update a tool card by id. */
   upsertTool(id: string | undefined, patch: ToolPatch): void;
-  /** Surface a warning inline (rendered as "⚠ …" under the message). */
+  /**
+   * Surface a NON-FATAL notice (rendered as "⚠ …" under the message). The turn
+   * may still finish successfully — e.g. an MCP server that failed to connect,
+   * codex ERROR-level tracing, or a codex retry notice. A warning must never,
+   * on its own, mark the turn as failed.
+   */
   appendWarning(text: string): void;
+  /**
+   * The agent reported that the turn FAILED (terminal): claude `result` with
+   * is_error, codex `turn.failed`, or a codex `error` the turn never recovered
+   * from. `reason` is the human-readable cause shown with the failed turn.
+   */
+  fail(reason: string): void;
+  /**
+   * The box reported that the agent process exited (`{type:"_done", code}` —
+   * written by the box on child close). `null` means the process was killed by
+   * a signal. Only a 0 exit confirms the turn completed; anything else is a
+   * failure even if the transport then closes cleanly.
+   */
+  exit(code: number | null): void;
 }
 
 export interface AgentAdapter {
@@ -93,6 +111,42 @@ function textFromContent(content: unknown): string {
     .join("");
 }
 
+// Box-level protocol events, shared by every adapter. Returns true when the
+// event was consumed.
+//   {type:"_done", code}  — the agent process exited (box: child "close").
+//   {type:"_stderr", text:"spawn error: …"} — the box could not start the agent
+//     and ended the stream without `_done` (box: child "error").
+const SPAWN_ERROR_PREFIX = "spawn error:";
+function parseBoxEvent(ev: Record<string, unknown>, sink: ChatSink): boolean {
+  if (ev.type === "_done") {
+    sink.exit(typeof ev.code === "number" ? ev.code : null);
+    return true;
+  }
+  if (ev.type === "_stderr" && typeof ev.text === "string" && ev.text.startsWith(SPAWN_ERROR_PREFIX)) {
+    const detail = ev.text.slice(SPAWN_ERROR_PREFIX.length).trim();
+    sink.fail(detail ? `Agent process could not start (${detail})` : "Agent process could not start");
+    return true;
+  }
+  return false;
+}
+
+// Codex item statuses (exec_events: CommandExecutionStatus / PatchApplyStatus /
+// McpToolCallStatus). Only an observed success maps to "done".
+function codexItemStatus(item: Record<string, unknown>, completed: boolean): ToolStatus {
+  const status = typeof item.status === "string" ? item.status : "";
+  if (status === "failed" || status === "declined") return "error";
+  if (item.error && typeof item.error === "object") return "error";
+  if ("exit_code" in item && item.exit_code !== undefined) {
+    const exit = item.exit_code;
+    if (typeof exit === "number" && exit !== 0) return "error";
+    // A finished command with no exit code was never run to completion.
+    if (completed && exit === null) return "error";
+  }
+  if (!completed || status === "in_progress") return "running";
+  return "done";
+}
+
+
 // ---- claude: `claude -p --output-format stream-json --include-partial-messages` ----
 const claudeAdapter: AgentAdapter = {
   kind: "claude",
@@ -100,6 +154,7 @@ const claudeAdapter: AgentAdapter = {
   createTurnState: () => ({ seenText: false }),
   parseEvent(ev, sink, state) {
     const type = ev.type as string;
+    if (parseBoxEvent(ev, sink)) return;
 
     if (type === "system" && ev.subtype === "init") {
       const sid = ev.session_id as string | undefined;
@@ -153,7 +208,7 @@ const claudeAdapter: AgentAdapter = {
       // Without this the turn just ends silently with an empty assistant bubble.
       if (ev.is_error) {
         const msg = typeof ev.result === "string" && ev.result ? ev.result : "The request failed.";
-        sink.appendWarning(msg);
+        sink.fail(msg);
       }
     } else if (type === "_stderr") {
       const text = String(ev.text || "");
@@ -166,10 +221,16 @@ const claudeAdapter: AgentAdapter = {
 const codexAdapter: AgentAdapter = {
   kind: "codex",
   label: "Codex",
-  createTurnState: () => ({ segments: new Map<string, string>() }),
+  createTurnState: () => ({ segments: new Map<string, string>(), turnCompleted: false, lastError: undefined }),
   parseEvent(ev, sink, state) {
     const type = ev.type as string;
     const segments = state.segments as Map<string, string>;
+    if (type === "_done" && !state.turnCompleted && typeof state.lastError === "string") {
+      // The process ended without finishing the turn, and the last thing it
+      // reported was an error it never moved past: that error is why.
+      sink.fail(state.lastError);
+    }
+    if (parseBoxEvent(ev, sink)) return;
 
     if (type === "thread.started") {
       const tid = ev.thread_id as string | undefined;
@@ -179,6 +240,10 @@ const codexAdapter: AgentAdapter = {
     if (type === "item.started" || type === "item.updated" || type === "item.completed") {
       const item = (ev.item as Record<string, unknown>) || {};
       const itype = String(item.item_type || item.type || "");
+      // Any item but a warning means the agent is working again, so an earlier
+      // top-level error (a retry notice) was recovered from and is not why the
+      // turn may later end: a kill or crash after this is its exit code.
+      if (itype !== "error") state.lastError = undefined;
       const id = String(item.id || itype);
       const done = type === "item.completed";
       if (itype === "agent_message" || itype === "assistant_message") {
@@ -192,28 +257,42 @@ const codexAdapter: AgentAdapter = {
       } else if (itype === "command_execution") {
         const cmd = String(item.command || "");
         const out = String(item.aggregated_output || item.output || "");
-        const exit = item.exit_code;
-        const status: ToolStatus = done ? (typeof exit === "number" && exit !== 0 ? "error" : "done") : "running";
-        sink.upsertTool(id, { name: "Bash", detail: cmd.slice(0, 130), status, result: out ? out.slice(0, 2000) : undefined });
+        sink.upsertTool(id, { name: "Bash", detail: cmd.slice(0, 130), status: codexItemStatus(item, done), result: out ? out.slice(0, 2000) : undefined });
       } else if (itype === "file_change" || itype === "patch" || itype === "patch_apply") {
-        sink.upsertTool(id, { name: "Edit", detail: fmtCodexFiles(item), status: done ? "done" : "running" });
+        sink.upsertTool(id, { name: "Edit", detail: fmtCodexFiles(item), status: codexItemStatus(item, done) });
       } else if (itype === "web_search") {
-        sink.upsertTool(id, { name: "WebSearch", detail: String(item.query || "").slice(0, 130), status: done ? "done" : "running" });
+        sink.upsertTool(id, { name: "WebSearch", detail: String(item.query || "").slice(0, 130), status: codexItemStatus(item, done) });
       } else if (itype === "mcp_tool_call") {
-        sink.upsertTool(id, { name: String(item.tool || item.name || "mcp"), detail: String(item.server || ""), status: done ? "done" : "running" });
+        sink.upsertTool(id, { name: String(item.tool || item.name || "mcp"), detail: String(item.server || ""), status: codexItemStatus(item, done) });
       } else if (itype === "error") {
+        // Codex's non-fatal warnings arrive as `error` items.
         sink.appendWarning(String(item.message || "error"));
       }
       return;
     }
+    if (type === "turn.completed") {
+      // The turn finished: any earlier top-level `error` was recovered from.
+      state.turnCompleted = true;
+      return;
+    }
     if (type === "turn.failed") {
       const err = (ev.error as Record<string, unknown>) || {};
-      sink.appendWarning(String(err.message || "turn failed"));
+      sink.fail(String(err.message || "turn failed"));
       return;
     }
     if (type === "error") {
+      // Codex emits top-level `error` for retry-layer notices ("Reconnecting...
+      // 1/5", "Falling back from WebSockets to HTTPS transport.", "stream
+      // connection failed; waiting to retry") as well as for errors it does not
+      // recover from, and the wording is not a stable contract. So an `error` is
+      // never terminal on its own: it is shown as a notice, and it becomes the
+      // turn's failure reason only if the turn then ends without turn.completed
+      // (see `_done` above) with no progress after it. A fatal error also
+      // arrives as turn.failed or a non-zero exit.
       const msg = String(ev.message || "");
-      if (msg) sink.appendWarning(msg);
+      if (!msg) return;
+      sink.appendWarning(msg);
+      state.lastError = msg;
       return;
     }
     if (type === "_stderr") {
@@ -221,7 +300,7 @@ const codexAdapter: AgentAdapter = {
       if (/error|invalid|denied|expired|unauthor/i.test(text)) sink.appendWarning(text.trim());
       return;
     }
-    // ignore turn.started / _done / unrecognised
+    // ignore turn.started / unrecognised
   },
 };
 
@@ -235,6 +314,7 @@ const genericAdapter: AgentAdapter = {
   createTurnState: () => ({}),
   parseEvent(ev, sink) {
     const type = ev.type as string;
+    if (parseBoxEvent(ev, sink)) return;
     if (type === "_text") {
       const t = String(ev.text || "");
       if (t) sink.appendText(t);
@@ -245,7 +325,7 @@ const genericAdapter: AgentAdapter = {
       if (/error|invalid|denied|expired|unauthor|fatal|traceback/i.test(text)) sink.appendWarning(text.trim());
       return;
     }
-    // ignore _done and anything unrecognised
+    // ignore anything unrecognised
   },
 };
 
@@ -263,15 +343,48 @@ export function getAdapter(kind: string | null | undefined): AgentAdapter {
   return ADAPTERS[(kind as AgentKind)] || claudeAdapter;
 }
 
+/** How a finished turn ended. `unconfirmed`: the box never reported the exit. */
+export type SettledOutcome = "complete" | "error" | "unconfirmed";
+
+export function exitFailure(code: number | null): string {
+  return code === null
+    ? "Agent process was killed before it finished"
+    : `Agent process exited unexpectedly (code ${code})`;
+}
+
 /**
- * Run an agent's parser over a list of stream events and return the assistant
- * text it produced — used for non-interactive turns (e.g. the welcome message).
- * Shares the exact parser the live chat uses, so the two never diverge.
+ * Derive a finished turn's outcome from what the agent and the box reported —
+ * never from the transport closing. A reported failure wins; otherwise only a
+ * 0 exit in the box's `_done` confirms completion. Shared by the live chat and
+ * the welcome turn so the two can never disagree about how a turn ended.
  */
-export function extractAssistantText(events: Record<string, unknown>[], kind: string): string {
+export function settleTurn(observed: { failure?: string; exitCode?: number | null }): { outcome: SettledOutcome; failure?: string } {
+  if (observed.failure) return { outcome: "error", failure: observed.failure };
+  if (observed.exitCode === undefined) return { outcome: "unconfirmed" };
+  if (observed.exitCode === 0) return { outcome: "complete" };
+  return { outcome: "error", failure: exitFailure(observed.exitCode) };
+}
+
+export interface AssistantTurn {
+  text: string;
+  warnings: string[];
+  outcome: SettledOutcome;
+  failure?: string;
+}
+
+/**
+ * Run an agent's parser over a complete turn's stream events and return what
+ * it produced and how it ended — used for non-interactive turns (e.g. the
+ * welcome message). Shares the exact parser the live chat uses, so the two
+ * never diverge.
+ */
+export function extractAssistantTurn(events: Record<string, unknown>[], kind: string): AssistantTurn {
   const adapter = getAdapter(kind);
   const state = adapter.createTurnState();
   let text = "";
+  const warnings: string[] = [];
+  let failure: string | undefined;
+  let exitCode: number | null | undefined;
   const sink: ChatSink = {
     setSessionId: () => {},
     appendText: (t) => {
@@ -281,8 +394,18 @@ export function extractAssistantText(events: Record<string, unknown>[], kind: st
       text = t;
     },
     upsertTool: () => {},
-    appendWarning: () => {},
+    appendWarning: (t) => {
+      const warning = t.trim();
+      if (warning) warnings.push(warning);
+    },
+    // The first terminal cause reported is the one shown (same as the live chat).
+    fail: (reason) => {
+      failure = failure || reason;
+    },
+    exit: (code) => {
+      exitCode = code;
+    },
   };
   for (const ev of events) adapter.parseEvent(ev, sink, state);
-  return text;
+  return { text, warnings, ...settleTurn({ failure, exitCode }) };
 }
