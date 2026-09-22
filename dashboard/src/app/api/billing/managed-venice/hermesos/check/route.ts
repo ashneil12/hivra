@@ -59,6 +59,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // The transfer this check found is already bound to another quote (it was
+    // credited there). This quote is still open for its own payment, so the
+    // user sees the ordinary "no matching transfer yet" state, never another
+    // quote's transaction.
+    if (result.status === "transaction_already_claimed") {
+      return apiSuccess({ status: "no_match" as const, quote: result.quote });
+    }
+
+    // settled | underconfirmed | no_match | manual_review_required |
+    // cancelled (closed without a matching payment after its window + grace).
     return apiSuccess(result);
   } catch (error) {
     return apiError(
