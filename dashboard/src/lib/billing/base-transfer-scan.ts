@@ -17,12 +17,12 @@ import {
   withRpcRetry,
   type RpcCallOptions,
 } from "@/lib/billing/base-rpc-retry";
+import { getLogsInBlockChunks } from "@/lib/billing/base-rpc-logs";
 
 export const ERC20_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
-export const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
 // Base produces a block every 2 s; used to estimate a block from a timestamp.
 // Every estimate is verified against eth_getBlockByNumber before it is used.
 const BASE_BLOCK_TIME_SEC = 2;
@@ -312,19 +312,12 @@ export async function scanErc20TransfersInWindow(params: {
   }
 
   const toTopic = encodeErc20TransferToTopic(params.toAddress);
-  const logs: EvmLog[] = [];
-  for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += MAX_BASE_RPC_LOG_RANGE_BLOCKS) {
-    const chunkEnd = Math.min(toBlock, chunkStart + MAX_BASE_RPC_LOG_RANGE_BLOCKS - 1);
-    const chunkLogs = await chain.call<EvmLog[]>("eth_getLogs", [
-      {
-        address: tokenAddress,
-        fromBlock: rpcQuantity(chunkStart),
-        toBlock: rpcQuantity(chunkEnd),
-        topics: [ERC20_TRANSFER_TOPIC, null, toTopic],
-      },
-    ]);
-    if (Array.isArray(chunkLogs)) logs.push(...chunkLogs);
-  }
+  const logs = await getLogsInBlockChunks<EvmLog>({
+    call: chain.call,
+    filter: { address: tokenAddress, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
+    fromBlock,
+    toBlock,
+  });
 
   const parsed = new Map<
     string,
