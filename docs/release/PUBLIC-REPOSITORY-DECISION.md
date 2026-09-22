@@ -25,10 +25,16 @@ functionally superior private core.
 
 ## Release procedure
 
-1. Keep this private Canary repository and its history unchanged as the internal
-   engineering record.
-2. Close the source-only credential, runtime-distribution, notice, and
-   self-host acceptance gates in the private repository. Keep separately built
+1. (Completed 2026-09-21; historical.) The former private Canary repository and
+   its history are retained unchanged as a read-only internal engineering record.
+   It no longer feeds Canary or production; all current work, release gates, and
+   deployments use this public repository (see
+   [the public transition](PUBLIC-TRANSITION.md) and
+   [managed hosting releases](MANAGED-HOSTING-RELEASES.md)).
+2. (Historical wording: before the initial export these gates were worked in the
+   private repository; for every later revision they run in this public
+   repository.) Close the source-only credential, runtime-distribution, notice,
+   and self-host acceptance gates. Keep separately built
    images and mirrored runtime artifacts outside the first source release until
    their own byte-level notices, SBOMs, and source obligations are complete.
 3. Export one exact accepted commit with `git archive`; never copy the working

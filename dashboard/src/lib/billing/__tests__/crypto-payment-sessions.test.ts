@@ -125,7 +125,7 @@ describe("crypto payment sessions", () => {
     });
   });
 
-  it("expires stale sessions before checking for an active conflict", async () => {
+  it("ignores expired sessions when checking for an active conflict, leaving a top-up to the reconciler", async () => {
     const { db, paymentTransactions, yearlyTokenQuotes } = createSessionDb({
       paymentTransactions: [{
         id: "pt_old",
@@ -157,13 +157,10 @@ describe("crypto payment sessions", () => {
       })
     ).resolves.toBeNull();
 
-    expect(paymentTransactions[0]).toMatchObject({
-      status: "failed",
-      metadata: expect.objectContaining({
-        creditGrantStatus: "expired",
-        failureType: "crypto_payment_session_expired",
-      }),
-    });
+    // Not failed here: the user may have paid it minutes ago. The reconciler
+    // checks the chain and closes it (crypto-reconciliation.ts).
+    expect(paymentTransactions[0]).toMatchObject({ status: "pending" });
+    expect(paymentTransactions[0].metadata).not.toHaveProperty("failureType");
     expect(yearlyTokenQuotes[0]).toMatchObject({
       status: "expired",
       updated_at: now.toISOString(),

@@ -15,7 +15,7 @@ const PREREQUISITES = [
   "20260516120000_managed_venice_token_treasury_sweeps.sql",
   "20260606130100_managed_venice_token_lots_unique_quote.sql",
 ];
-const MIGRATION = "20260922120000_managed_venice_token_transfer_dedupe.sql";
+const MIGRATION = "20260922190000_managed_venice_token_transfer_dedupe.sql";
 
 const read = (name) => fs.readFileSync(path.join(MIGRATIONS, name), "utf8");
 

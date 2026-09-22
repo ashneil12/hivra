@@ -41,7 +41,7 @@ const INSPECTION_TIMEOUT_MS = 45_000;
 /** Owner-bound capability ledger TTL after a successful inspection/refresh. */
 export const REMOTE_DESKTOP_CAPABILITY_TTL_MS = 8 * 60_000;
 const SELKIES_IMAGE = "ghcr.io/selkies-project/selkies-egl-desktop@sha256:6ee5ddc3aa50ec9b3f22d2090ee1b0d2161e7be5acd9f385717e7c3603f6b3aa";
-export const REMOTE_DESKTOP_BUNDLE_REVISION = "6e66475cc695c033c9b2ed568e5ce0cecd3a3b7cbcb75682eb40e59f3020e96d";
+export const REMOTE_DESKTOP_BUNDLE_REVISION = "98926697837c764e9e87901a0e1b6dce3ac5ba59827948068d68c78838b8401a";
 // Session compatibility is narrower than installation compatibility. Retain
 // only the sealed session-binding release; pre-binding brokers stay rejected.
 // New installer-only releases must prove identical broker/server assets before
@@ -52,10 +52,14 @@ export const REMOTE_DESKTOP_SESSION_REVISIONS: readonly string[] = [...new Set([
   "e97280bea96549d42fc4e25d8b9880d7fcad2722da950c53fd7810c0c866fb56",
   // Omarchy-only opt-in cursor policy leaves this Ubuntu broker behavior intact.
   "9beeb61195795feb78f86196f5a9b059d1b6828adcbd81f1c00d409642b68cfe",
-  // Previous sealed broker remains session-safe during an explicit runtime update.
+  // The prior release used the same session protocol; only Omarchy opted into
+  // the removed fixed-arrow browser override.
   "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca",
+  // Previous sealed brokers remain session-safe during an explicit runtime update.
   "f2707c137c8363f3dfcc539a1f2eade116378c032ef51779c36bc8097b697d46",
   "78be6f62955aceea5e33345e8187efcc4f16fb886c203e54f9ce3ec3b775146e",
+  // Bundle revision admitted before 2026.09.21.1; retained so no guest loses sessions.
+  "6e66475cc695c033c9b2ed568e5ce0cecd3a3b7cbcb75682eb40e59f3020e96d",
   REMOTE_DESKTOP_BUNDLE_REVISION,
   OMARCHY_DESKTOP_SESSION_REVISION,
 ])];
@@ -79,8 +83,8 @@ export const REMOTE_DESKTOP_COMPATIBILITY = {
   "8bc933b88594073475ac54dba45abdf25ed9ff4e1acb816217905a2713f76d8c": { version: "2026.09.08.3", recipe: "symlinks-v3" },
   "e97280bea96549d42fc4e25d8b9880d7fcad2722da950c53fd7810c0c866fb56": { version: "2026.09.08.3", recipe: "symlinks-v3" },
   "9beeb61195795feb78f86196f5a9b059d1b6828adcbd81f1c00d409642b68cfe": { version: "2026.09.08.3", recipe: "symlinks-v3" },
-  "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca": { version: "2026.09.08.3", recipe: "symlinks-v3" },
-  [REMOTE_DESKTOP_BUNDLE_REVISION]: { version: "2026.09.08.3", recipe: "symlinks-v3" },
+  "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca": { version: "2026.09.15.2", recipe: "symlinks-v3" },
+  [REMOTE_DESKTOP_BUNDLE_REVISION]: { version: "2026.09.21.1", recipe: "symlinks-v3" },
 } as const;
 const LEGACY_DESKTOP_REVISION = "5a24955abe099ddbabaa66e01da0dc9cb395254d7b9ebcbb268539abcf2db38d";
 const DESKTOP_UPGRADE_MESSAGE = "This desktop needs an update to establish its shared-folder identity. This check did not install or change anything.";

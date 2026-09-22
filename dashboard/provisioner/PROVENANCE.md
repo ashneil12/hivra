@@ -499,6 +499,11 @@ not inherit this capability. Dashboard delivery does not install this release;
 the owner must explicitly prepare the host and complete a fresh preflight before
 Windows setup is selectable.
 
+Release `2026.09.21.1` updates the pinned Omarchy Selkies transport so guest
+cursor shapes are sent as metadata and rendered by the local browser pointer,
+while native cursor pixels remain excluded from the delayed video stream. It
+also preserves release `2026.09.15.2` and every earlier manifest unchanged.
+
 Release `2026.09.15.2` adds one host-capacity admission helper shared by launch,
 start, restart, and resize. It counts only active non-template guest floors,
 keeps a configurable host reserve, rejects a guest maximum larger than the
