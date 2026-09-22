@@ -114,7 +114,7 @@ describe("managed Venice reconciler: attribution and selection", () => {
     expect(items(memory)).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: "managed_venice_token_transfer:0xsecond_exact:0",
+        dedupe_key: "managed_venice_token_transfer:0xsecond_exact",
       }),
     ]);
   });
@@ -139,7 +139,7 @@ describe("managed Venice reconciler: attribution and selection", () => {
     expect(items(memory)).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: "managed_venice_token_transfer:0xfat:0",
+        dedupe_key: "managed_venice_token_transfer:0xfat",
       }),
     ]);
   });

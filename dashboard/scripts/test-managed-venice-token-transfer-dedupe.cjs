@@ -69,11 +69,12 @@ async function main() {
     assert.match(indexes.uq_managed_venice_reconciliation_items_dedupe_key, /CREATE UNIQUE INDEX .*\(dedupe_key\) WHERE \(dedupe_key IS NOT NULL\)/);
     assert.match(indexes.ix_managed_venice_token_quotes_deposit_address_quoted_at, /\(deposit_address, quoted_at\)/);
 
-    // One item per transfer: a repeat key is 23505; null keys never collide.
-    const key = "managed_venice_token_transfer:0xabc:0";
+    // One item per transfer (tx-hash key): a repeat key is 23505 whichever
+    // path writes it; null keys never collide.
+    const key = "managed_venice_token_transfer:0xabc";
     await item(key);
     await rejectsWith("23505", () => item(key));
-    await item("managed_venice_token_transfer:0xabc:1");
+    await item("managed_venice_token_transfer:0xdef");
     await item(null);
     await item(null);
     assert.equal((await db.query(

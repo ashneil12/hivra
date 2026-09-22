@@ -82,7 +82,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xsecond", 0),
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xsecond"),
         status: "open",
         metadata: expect.objectContaining({ quoteId: "quote_1", transactionHash: "0xsecond" }),
       }),
@@ -128,7 +128,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xother", null),
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xother"),
       }),
     ]);
   });
@@ -161,6 +161,10 @@ describe("managed Venice token settlement saga", () => {
     expect(events(memory, "token_deposit")).toHaveLength(1);
     expect(quoteRow(memory, "quote_b")).toMatchObject({ status: "active", transaction_hash: null });
     expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
+  it("keys a transfer's item by its lowercased tx hash alone (no log index)", () => {
+    expect(managedVeniceTokenTransferDedupeKey(" 0xABC ")).toBe("managed_venice_token_transfer:0xabc");
   });
 
   it("CAS: a stale review can never overwrite a settled quote", async () => {
@@ -230,7 +234,7 @@ describe("managed Venice token settlement saga", () => {
       expect.objectContaining({ transaction_hash: "0xclaimed", token_amount_raw: QUOTED }),
     ]);
     expect(memory.tables.managed_venice_reconciliation_items.map((item) => item.dedupe_key)).toEqual([
-      managedVeniceTokenTransferDedupeKey("0xunder", null),
+      managedVeniceTokenTransferDedupeKey("0xunder"),
     ]);
   });
 
@@ -256,7 +260,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid,
-        dedupe_key: "managed_venice_token_transfer:0xunder:3",
+        dedupe_key: "managed_venice_token_transfer:0xunder",
       }),
     ]);
     expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
@@ -341,7 +345,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xlate", null),
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xlate"),
       }),
     ]);
   });

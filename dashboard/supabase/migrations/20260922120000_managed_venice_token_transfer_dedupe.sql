@@ -4,8 +4,10 @@
 -- Settlement and the reconciler surface every transfer they cannot credit
 -- (under-payments, over-ceiling or late payments, extra transfers, replays)
 -- as a managed_venice_reconciliation_items row keyed by
---   dedupe_key = 'managed_venice_token_transfer:<lowercased tx>:<logIndex|na>'
--- (src/lib/billing/managed-venice-token-quotes.ts). The partial unique index
+--   dedupe_key = 'managed_venice_token_transfer:<lowercased tx>'
+-- (src/lib/billing/managed-venice-token-quotes.ts). The key is the tx hash
+-- alone, so the bearer settle route (which has no log index) and the
+-- reconciler key the same transfer identically. The partial unique index
 -- makes a repeat insert (every cron tick, the cron racing a user's check, a
 -- bearer redelivery) fail with 23505, which the code treats as "already
 -- surfaced", so each transfer is surfaced exactly once. Existing rows (usage

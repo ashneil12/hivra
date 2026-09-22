@@ -644,12 +644,11 @@ function transactionHashVariants(transactionHash: string) {
 // One open item per on-chain transfer, whatever the reason: the unique index on
 // managed_venice_reconciliation_items.dedupe_key turns a repeat insert (every
 // cron tick, cron racing the user's check, a bearer redelivery) into a no-op.
-export function managedVeniceTokenTransferDedupeKey(
-  transactionHash: string,
-  logIndex?: number | null
-) {
-  const index = normalizeLogIndex(logIndex);
-  return `managed_venice_token_transfer:${transactionHash.trim().toLowerCase()}:${index ?? "na"}`;
+// Keyed by the tx hash alone: the bearer settle route has no log index, and the
+// reconciler and the bearer route must key the same transfer identically. (The
+// claim is per tx too: the unique quotes.transaction_hash index.)
+export function managedVeniceTokenTransferDedupeKey(transactionHash: string) {
+  return `managed_venice_token_transfer:${transactionHash.trim().toLowerCase()}`;
 }
 
 function affectedRowCount(data: unknown) {
@@ -700,7 +699,7 @@ async function insertTransferItem(
   transfer: ObservedTransfer,
   reason: ManagedVeniceTokenDepositReason
 ): Promise<"surfaced" | "already_surfaced"> {
-  const dedupeKey = managedVeniceTokenTransferDedupeKey(transfer.transactionHash, transfer.logIndex);
+  const dedupeKey = managedVeniceTokenTransferDedupeKey(transfer.transactionHash);
   const { error } = await table(db, "managed_venice_reconciliation_items").insert({
     user_id: quote.userId,
     account_id: quote.accountId,
