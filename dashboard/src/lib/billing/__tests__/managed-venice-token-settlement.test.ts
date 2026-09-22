@@ -476,11 +476,18 @@ describe("managed Venice token settlement saga", () => {
     expect(quoteRow(memory, "quote_review")).toMatchObject({ status: "manual_review_required", transaction_hash: null });
     expect(quoteRow(memory, "quote_cancelled")).toMatchObject({ status: "cancelled", transaction_hash: null });
     expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
-    // Only 0xlate is new: 0xbound belongs to another quote and 0xreviewed is the review's own transfer.
+    // 0xlate is surfaced once and 0xbound (another quote's) not at all. The
+    // redelivered review trigger 0xreviewed had no item (flag already clear),
+    // so it gets exactly one, keyed like the review; its review recorded no
+    // reason, so the delivery is classified (in window, under the quote).
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow,
         dedupe_key: transferKey("0xlate"),
+      }),
+      expect.objectContaining({
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid,
+        dedupe_key: transferKey("0xreviewed"),
       }),
     ]);
   });

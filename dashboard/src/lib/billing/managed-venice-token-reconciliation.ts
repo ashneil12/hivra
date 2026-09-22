@@ -14,6 +14,7 @@ import {
   managedVeniceTokenQuoteWindow,
   retireManagedVeniceTokenQuote,
   settleManagedVeniceTokenQuote,
+  surfaceManagedVeniceTokenReviewTrigger,
   surfaceManagedVeniceTokenTransfer,
   MANAGED_VENICE_MAX_OVERSEND_NUMERATOR,
   MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR,
@@ -964,25 +965,14 @@ async function surfaceTerminalQuoteTransfers(params: {
 }): Promise<"complete" | "pending"> {
   const { db, quote } = params;
 
-  // A claim-unrecoverable review keeps its claimed tx bound to the quote, so
-  // the scan below never surfaces it: (re)write its item directly (a no-op
-  // once it exists), in case the insert after the review flip failed.
-  if (
-    quote.status === "manual_review_required" &&
-    quote.manualReviewReason === MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable &&
-    quote.transactionHash
-  ) {
-    await surfaceManagedVeniceTokenTransfer(
-      {
-        quote,
-        transactionHash: quote.transactionHash,
-        tokenAmountRaw: null,
-        observedAt: params.now.toISOString(),
-        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable,
-      },
-      db
-    );
-  }
+  // A review's trigger can lie outside the range scanned below (a bearer
+  // delivery mined before quotedAt, after the grace, or after the user's next
+  // payment session started), and a claim-unrecoverable review keeps its
+  // claimed tx bound to the quote, so the scan may never surface it. If the
+  // item insert after the review flip failed, (re)write it from the review's
+  // metadata under the review's own key first: a no-op once it exists, and a
+  // failure here fails the pass, so the flag is never cleared without it.
+  await surfaceManagedVeniceTokenReviewTrigger({ quote, observedAt: params.now.toISOString() }, db);
 
   const scan = await scanAttributableTransfers(params);
   const surfaceable = [...scan.attributable, ...scan.extraLogs].sort(byChainOrder);

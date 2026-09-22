@@ -191,6 +191,13 @@ export interface ManagedVeniceTokenQuote {
   // The review trigger's log index; null when the delivery had none (the
   // bearer route), meaning the tx's first Transfer log to the address.
   reviewLogIndex?: number | null;
+  // The log index the review trigger's item is keyed by (see
+  // managedVeniceTokenTransferDedupeKey): null for the bare tx/address key.
+  reviewDedupeLogIndex?: number | null;
+  // What the review recorded about its trigger (metadata observedTokenAmountRaw
+  // / observedAt), so the trigger's item can be rewritten from the quote alone.
+  reviewObservedTokenAmountRaw?: string | null;
+  reviewObservedAt?: string | null;
 }
 
 export interface ManagedVeniceTokenSettlementClaim {
@@ -369,6 +376,12 @@ function asQuote(row: TokenQuoteRow): ManagedVeniceTokenQuote {
     manualReviewReason: nonEmptyString(metadata.manualReviewReason),
     reviewTransactionHash: nonEmptyString(metadata.reviewTransactionHash),
     reviewLogIndex: normalizeLogIndex(metadata.reviewLogIndex),
+    reviewDedupeLogIndex: normalizeLogIndex(metadata.reviewDedupeLogIndex),
+    reviewObservedTokenAmountRaw:
+      typeof metadata.observedTokenAmountRaw === "string" && /^\d+$/.test(metadata.observedTokenAmountRaw)
+        ? metadata.observedTokenAmountRaw
+        : null,
+    reviewObservedAt: nonEmptyString(metadata.observedAt) ?? nonEmptyString(metadata.reviewedAt),
   };
 }
 
@@ -936,6 +949,55 @@ export async function surfaceManagedVeniceTokenTransfer(
   return { status };
 }
 
+const DEPOSIT_REASON_VALUES = new Set<string>(Object.values(MANAGED_VENICE_TOKEN_DEPOSIT_REASONS));
+
+function isDepositReason(value: string | null | undefined): value is ManagedVeniceTokenDepositReason {
+  return typeof value === "string" && DEPOSIT_REASON_VALUES.has(value);
+}
+
+// The transfer that sent a quote to review (its review trigger), rebuilt from
+// the review's own metadata, and its item reason. It is keyed exactly as the
+// review keyed it (reviewDedupeLogIndex; null = the bare tx/address key), so
+// rewriting it is a no-op once the item exists, and a resolved item is never
+// reopened (the dedupe index covers every status). Null when the quote is not
+// in review or its review recorded no trigger (reviews before
+// reviewTransactionHash existed recorded only a reason).
+function reviewTriggerItem(
+  quote: ManagedVeniceTokenQuote,
+  context: { observedAt: string; delivered?: SettlementTransfer }
+): { transfer: ObservedTransfer; reason: ManagedVeniceTokenDepositReason } | null {
+  if (quote.status !== "manual_review_required" || !quote.reviewTransactionHash) return null;
+  return {
+    transfer: {
+      transactionHash: quote.reviewTransactionHash.trim().toLowerCase(),
+      logIndex: quote.reviewLogIndex ?? null,
+      dedupeLogIndex: quote.reviewDedupeLogIndex ?? null,
+      tokenAmountRaw: quote.reviewObservedTokenAmountRaw ?? null,
+      observedAt: quote.reviewObservedAt ?? context.observedAt,
+    },
+    reason: isDepositReason(quote.manualReviewReason)
+      ? quote.manualReviewReason
+      : (context.delivered && classifyTransfer(quote, context.delivered)) ??
+        MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.afterQuoteClosed,
+  };
+}
+
+// (Re)write the item for the transfer that sent `quote` to review, from the
+// quote's review metadata alone. The review writes it right after its flip; if
+// that insert failed, the reconciler's surface-only pass calls this before it
+// clears transfer_surfacing_pending, because the trigger can lie outside the
+// range that pass scans (a bearer delivery mined before quotedAt, after the
+// grace, or after the user's next payment session started). Idempotent per
+// transfer; null when the quote has no recorded review trigger.
+export async function surfaceManagedVeniceTokenReviewTrigger(
+  params: { quote: ManagedVeniceTokenQuote; observedAt: string },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ status: "surfaced" | "already_surfaced" } | null> {
+  const item = reviewTriggerItem(params.quote, { observedAt: params.observedAt });
+  if (!item) return null;
+  return { status: await insertTransferItem(requireDb(db), params.quote, item.transfer, item.reason) };
+}
+
 export async function createManagedVeniceTokenQuote(
   params: {
     userId: string;
@@ -1394,21 +1456,14 @@ async function handleClosedQuote(
   const status = quote.status === "cancelled" ? "cancelled" : "manual_review_required";
   // Review and cancelled are terminal for automation: never settle, never
   // re-review.
-  if (sameTransactionHash(quote.reviewTransactionHash, transfer.transactionHash)) {
+  if (isReviewTriggerDelivery(quote, transfer)) {
     // The transfer that caused the review. Its item is written right after the
-    // review flip; while the quote still owes surfacing that insert may have
-    // failed, so a redelivery (re)writes it (a no-op once it exists). Legacy
-    // reviews (flag false) wrote theirs before this flag existed.
-    if (quote.transferSurfacingPending) {
-      await insertTransferItem(
-        db,
-        quote,
-        transfer,
-        (quote.manualReviewReason as ManagedVeniceTokenDepositReason | null) ??
-          classifyTransfer(quote, transfer) ??
-          MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.afterQuoteClosed
-      );
-    }
+    // review flip; if that insert failed, a redelivery rewrites it from the
+    // review's metadata under the review's own key, whatever the surfacing
+    // flag says: the flag may already be cleared when the trigger lies outside
+    // the range the surface-only pass scans. A no-op once the item exists.
+    const item = reviewTriggerItem(quote, { observedAt: transfer.observedAt, delivered: transfer });
+    if (item) await insertTransferItem(db, quote, item.transfer, item.reason);
     return { status };
   }
   if (!(await isTransactionBound(db, quote, transfer.transactionHash))) {
@@ -1420,6 +1475,15 @@ async function handleClosedQuote(
     );
   }
   return { status };
+}
+
+// Whether a delivery to a quote in review is its review trigger. A delivery
+// without a log index (the bearer route) names the tx; one with a log index is
+// the trigger only when it is keyed like the trigger, so another log of the
+// same tx is still surfaced as its own transfer.
+function isReviewTriggerDelivery(quote: ManagedVeniceTokenQuote, transfer: SettlementTransfer) {
+  if (!sameTransactionHash(quote.reviewTransactionHash, transfer.transactionHash)) return false;
+  return transfer.logIndex === null || (transfer.dedupeLogIndex ?? null) === (quote.reviewDedupeLogIndex ?? null);
 }
 
 async function reviewUnclaimedQuote(
@@ -1450,6 +1514,9 @@ async function reviewUnclaimedQuote(
         observedAt: transfer.observedAt,
         reviewTransactionHash: transfer.transactionHash,
         reviewLogIndex: transfer.logIndex,
+        // The key the trigger's item is written under below, so the
+        // surface-only pass or a redelivery can rewrite that same item.
+        reviewDedupeLogIndex: transfer.dedupeLogIndex ?? null,
       },
     })
     .eq("id", quote.id)
@@ -1575,6 +1642,11 @@ async function reviewUnrecoverableClaim(
         ...record.metadata,
         manualReviewReason: reason,
         reviewTransactionHash: claimedTransactionHash,
+        // Nothing records the claimed transfer's log or amount: its item uses
+        // the bare tx/address key and no amount (see reviewTriggerItem).
+        reviewLogIndex: null,
+        reviewDedupeLogIndex: null,
+        observedTokenAmountRaw: null,
         reviewedAt: now,
       },
     })

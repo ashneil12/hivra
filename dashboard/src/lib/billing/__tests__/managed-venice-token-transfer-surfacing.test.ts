@@ -554,3 +554,144 @@ describe("managed Venice settlement: a claim with no lot and no claim values", (
     ]);
   });
 });
+
+describe("managed Venice review triggers: the item survives a failed insert wherever the trigger was mined", () => {
+  // A bearer delivery can review quote_1 with a transfer its surface-only pass
+  // never scans: mined after the grace (12:40), before quotedAt (10:20), or at
+  // or after the user's next quote started. If the review's item insert fails,
+  // the pass rewrites the item from the quote's review metadata before it
+  // clears the flag, and a redelivery of the trigger rewrites it whatever the
+  // flag says.
+  const deliver = (memory: Memory, tx: string, minedAt: string, amount: bigint) =>
+    settleManagedVeniceTokenQuote(
+      { quoteId: "quote_1", transactionHash: tx, tokenAmountRaw: amount.toString(), observedAt: minedAt, blockTimestamp: minedAt },
+      memory.db
+    );
+
+  function items(memory: Memory) {
+    return memory.tables.managed_venice_reconciliation_items.map((row) => ({
+      key: row.dedupe_key,
+      reason: row.reason,
+      status: row.status,
+      quoteId: (row.metadata as MemoryRow).quoteId,
+      amount: (row.metadata as MemoryRow).observedTokenAmountRaw,
+      observedAt: (row.metadata as MemoryRow).observedAt,
+    }));
+  }
+
+  // quote_2: the user's next quote on the same address, quoted at 10:30.
+  const nextQuote = () =>
+    managedVeniceQuoteRow({
+      id: "quote_2",
+      quoted_at: "2026-05-16T10:30:00.000Z",
+      expires_at: "2026-05-16T10:50:00.000Z",
+      created_at: "2026-05-16T10:30:00.000Z",
+    });
+
+  it.each([
+    ["mined after the grace ends", "2026-05-16T13:00:00.000Z", QUOTED, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow, false],
+    ["mined before quotedAt", "2026-05-16T10:10:00.000Z", QUOTED, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow, false],
+    ["mined at the next quote's quoted_at", "2026-05-16T10:30:00.000Z", UNDER, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid, true],
+  ])("%s: the cron writes the review's item before it clears the flag", async (_label, minedAt, amount, reason, withNextQuote) => {
+    const memory = seed(managedVeniceQuoteRow(), ...(withNextQuote ? [nextQuote()] : []));
+    const rpc = chain([transfer("0xtrig", amount, minedAt)]);
+    memory.failNext({ table: "managed_venice_reconciliation_items", op: "insert" });
+
+    await expect(deliver(memory, "0xtrig", minedAt, amount)).rejects.toThrow("injected insert failure");
+    expect(quote(memory)).toMatchObject({ status: "manual_review_required", transfer_surfacing_pending: true });
+    expect(items(memory)).toEqual([]);
+
+    // Past the grace end + finality margin for both quotes.
+    const tick = await tickAt(memory, rpc, "2026-05-16T13:10:00.000Z");
+    expect(tick.transferSurfacing).toEqual({ checked: 1, complete: 1, pending: 0, failed: 0 });
+
+    const expected = [
+      { key: transferKey("0xtrig"), reason, status: "open", quoteId: "quote_1", amount: amount.toString(), observedAt: minedAt },
+    ];
+    expect(quote(memory)).toMatchObject({ status: "manual_review_required", transaction_hash: null, transfer_surfacing_pending: false });
+    expect(items(memory)).toEqual(expected);
+
+    // A redelivery after the flag cleared leaves exactly that one item.
+    expect(await deliver(memory, "0xtrig", minedAt, amount)).toEqual({ status: "manual_review_required" });
+    expect(items(memory)).toEqual(expected);
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
+  });
+
+  it("the cron keeps the flag while the review's item still cannot be written", async () => {
+    const memory = seed();
+    const minedAt = "2026-05-16T13:00:00.000Z";
+    const rpc = chain([transfer("0xtrig", QUOTED, minedAt)]);
+    memory.failNext({ table: "managed_venice_reconciliation_items", op: "insert", times: 2 });
+
+    await expect(deliver(memory, "0xtrig", minedAt, QUOTED)).rejects.toThrow("injected insert failure");
+    const failing = await tickAt(memory, rpc, "2026-05-16T13:10:00.000Z");
+    expect(failing.transferSurfacing).toEqual({ checked: 1, complete: 0, pending: 0, failed: 1 });
+    expect(quote(memory).transfer_surfacing_pending).toBe(true);
+
+    const recovered = await tickAt(memory, rpc, "2026-05-16T13:15:00.000Z");
+    expect(recovered.transferSurfacing).toEqual({ checked: 1, complete: 1, pending: 0, failed: 0 });
+    expect(quote(memory).transfer_surfacing_pending).toBe(false);
+    expect(items(memory).map((item) => [item.key, item.reason])).toEqual([
+      [transferKey("0xtrig"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow],
+    ]);
+  });
+
+  it("a bearer redelivery writes a review's missing item from its metadata even after the flag cleared", async () => {
+    const memory = seed();
+    const minedAt = "2026-05-16T13:00:00.000Z";
+    memory.failNext({ table: "managed_venice_reconciliation_items", op: "insert" });
+    await expect(deliver(memory, "0xtrig", minedAt, QUOTED)).rejects.toThrow("injected insert failure");
+    // The state an earlier surface-only pass could leave: flag cleared, no item.
+    quote(memory).transfer_surfacing_pending = false;
+
+    for (let delivery = 0; delivery < 2; delivery += 1) {
+      expect(await deliver(memory, "0xtrig", minedAt, QUOTED)).toEqual({ status: "manual_review_required" });
+    }
+
+    expect(items(memory)).toEqual([
+      {
+        key: transferKey("0xtrig"),
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow,
+        status: "open",
+        quoteId: "quote_1",
+        amount: QUOTED.toString(),
+        observedAt: minedAt,
+      },
+    ]);
+    expect(quote(memory)).toMatchObject({ status: "manual_review_required", transfer_surfacing_pending: false });
+  });
+
+  it("rewrites a reconciler review of a tx's later log under that log's key, next to the first log's item", async () => {
+    const memory = seed();
+    const SMALL = 5n * 10n ** 18n;
+    const rpc = chain([
+      transfer("0xpair", SMALL, "2026-05-16T10:22:00.000Z", { logIndex: 1 }),
+      transfer("0xpair", FAT, "2026-05-16T10:22:00.000Z", { logIndex: 2 }),
+    ]);
+    // The review (log 2, over the ceiling) flips, then its item insert fails.
+    memory.failNext({
+      table: "managed_venice_reconciliation_items",
+      op: "insert",
+      match: (row) => row.reason === MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
+    });
+
+    const reviewing = await tickAt(memory, rpc, "2026-05-16T10:25:00.000Z");
+    expect(reviewing.failed).toBe(1);
+    expect(quote(memory)).toMatchObject({
+      status: "manual_review_required",
+      transfer_surfacing_pending: true,
+      metadata: expect.objectContaining({ reviewTransactionHash: "0xpair", reviewLogIndex: 2, reviewDedupeLogIndex: 2 }),
+    });
+
+    await tickAt(memory, rpc, "2026-05-16T13:30:00.000Z");
+
+    expect(quote(memory).transfer_surfacing_pending).toBe(false);
+    expect(items(memory).map((item) => [item.key, item.reason, item.amount])).toEqual(
+      expect.arrayContaining([
+        [transferKey("0xpair"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid, SMALL.toString()],
+        [transferKey("0xpair", TEST_DEPOSIT_ADDRESS, 2), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch, FAT.toString()],
+      ])
+    );
+    expect(items(memory)).toHaveLength(2);
+  });
+});
