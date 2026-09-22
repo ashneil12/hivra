@@ -218,7 +218,9 @@ class LaunchContract(unittest.TestCase):
         # reports one closed-enum marker line and continues to access setup.
         failures = ((subprocess.CalledProcessError(1, "fixture", stderr=("leaked " + FIXTURE_REPORTER_TOKEN).encode()), "install_failed"),
                     (subprocess.TimeoutExpired(["fixture"], 120, stderr=FIXTURE_REPORTER_TOKEN.encode()), "timeout"),
-                    (FileNotFoundError(2, "fixture"), "install_failed"))
+                    (FileNotFoundError(2, "fixture"), "install_failed"),
+                    # Anything else is still fail-open and never echoes its text.
+                    (RuntimeError("unexpected " + FIXTURE_REPORTER_TOKEN), "install_failed"))
         for failure, reason in failures:
             def run(arguments, **kwargs):
                 if arguments[0] == "/usr/bin/python3":
@@ -253,6 +255,18 @@ class LaunchContract(unittest.TestCase):
         self.assertEqual(markers, ["HIVRA_ACTIVITY_COLLECTOR status=installed"])
         # Emitted before access is configured, so a later access failure still leaves it in the log.
         self.assertIn("HIVRA_ACTIVITY_COLLECTOR status=installed", order.access.call_args.args[0])
+
+    def test_collector_marker_is_one_whole_line_in_a_single_write(self):
+        # The host appends this stream and the guest's stdout to the same
+        # provisioning log. Two writes ("\n" + line, then "\n") could let
+        # other output land between them and break the anchored poll match.
+        for status, reason, line in (("installed", None, "HIVRA_ACTIVITY_COLLECTOR status=installed"),
+                                     ("failed", "timeout", "HIVRA_ACTIVITY_COLLECTOR status=failed reason=timeout")):
+            stream = Mock()
+            with self.subTest(status=status), patch.object(guest.sys, "stderr", stream):
+                guest.report_activity_collector(status, reason)
+            self.assertEqual(stream.write.call_args_list, [unittest.mock.call("\n" + line + "\n")])
+            stream.flush.assert_called_once_with()
 
     def test_launches_without_a_credential_emit_no_collector_marker(self):
         output = io.StringIO()

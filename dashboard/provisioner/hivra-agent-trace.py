@@ -42,14 +42,25 @@ UNIT_PATH = "/etc/systemd/system/hivra-agent-trace.service"
 STATE_DIR = "/var/lib/hivra-agent-trace"
 CREDENTIAL_PATH = STATE_DIR + "/credential.json"
 STATE_PATH = STATE_DIR + "/state.json"
+MARKER_PATH = STATE_DIR + "/parsing.json"   # the large line being parsed, and lines that crashed a parse
 DEFAULT_HOME = "/home/bux"
 SYSTEMCTL = "/usr/bin/systemctl"
 INGEST_PATH = "/api/activity/ingest"
 RENEW_PATH = "/api/activity/collector/renew"
 CREDENTIAL_KEYS = frozenset({"endpoint", "resourceId", "token", "expiresAt"})
 
-MAX_LINE = 8 * 1024 * 1024        # longer lines are skipped without parsing the body
-ENVELOPE = 8 * 1024               # bounded prefix inspected on a skipped line
+# Parse cost is bounded, not just line length. A line is parsed as JSON only
+# when it is at most MAX_LINE bytes and holds at most MAX_CONTAINERS `{` and
+# `[` bytes (a cheap count, strings included). The worst admitted line then
+# peaks near 270 MB resident on Python 3.9/3.10 (one object of ~900k distinct
+# keys); the unit's MemoryMax holds that with margin, and a unit test keeps
+# the two in step. Every other line is never parsed: only its first and last
+# ENVELOPE bytes are inspected with fixed patterns.
+MAX_LINE = 8 * 1024 * 1024
+MAX_CONTAINERS = 200_000
+ENVELOPE = 8 * 1024
+MARK_BYTES = 1024 * 1024          # larger lines are parsed under a persisted in-progress marker
+MAX_SKIPS = 64                    # remembered lines that stopped the reporter mid-parse
 CODEX_HEAD = 1024                 # prefix used to pre-filter Codex records before parsing
 CHUNK = 1024 * 1024
 MAX_RECORDS = 400                 # log records per request (contract)
@@ -64,6 +75,8 @@ RENEW_RETRY_SECONDS = 900
 RENEW_RATE_LIMITED_SECONDS = 3600
 PRUNE_SECONDS = 24 * 3600
 PRUNE_INTERVAL_SECONDS = 600
+STALL_SECONDS = 300               # unread bytes stuck this long withhold heartbeats
+FRESH_MARGIN = 1.0                # first-start floor below the marker's mtime (timestamp granularity)
 QUIET_SECONDS = 30                # a Claude end is final once its file is this quiet
 MAX_DURATION_MS = 604_800_000
 MAX_KEY = 256                     # call/item ids are hashed, never sent; bound their size
@@ -96,6 +109,19 @@ AGENT_FILE_RE = re.compile(r"agent-([A-Za-z0-9][A-Za-z0-9_.-]{0,100})\.jsonl", r
 CODEX_ENVELOPE_RE = re.compile(rb'\{"timestamp":"([^"\\]{1,40})",(?:"ordinal":([0-9]{1,15}),)?"type":"([a-z_]{1,40})"'
                                rb'(?:,"payload":\{"type":"([a-z_]{1,60})")?')
 CALL_ID_RE = re.compile(rb'"call_id":"([A-Za-z0-9_.:@-]{1,256})"')
+NAME_RE = re.compile(rb'"name":"([A-Za-z0-9_.-]{1,120})"')
+NAMESPACE_RE = re.compile(rb'"namespace":"([A-Za-z0-9_.-]{1,120})"')
+# Claude Code writes a tool result as one user record: parentUuid, isSidechain,
+# promptId, [agentId], type, message {role, content [one tool_result block]},
+# uuid, timestamp, [toolUseResult], sourceToolAssistantUUID, … The block's
+# keys come in a few orders; its tool_use_id is either first (head) or last
+# (just before the message closes). The message is always followed by uuid
+# and timestamp, so that seam is recognisable in either window.
+CLAUDE_HEAD_RE = re.compile(rb'\{"parentUuid":(?:null|"[^"\\]{0,128}"),"isSidechain":(true|false),')
+CLAUDE_RESULT_RE = re.compile(rb'"type":"user","message":\{"role":"user","content":\[\{(?:"tool_use_id":"([A-Za-z0-9_.:@-]{1,256})",)?'
+                              rb'"type":"tool_result"(?:,"tool_use_id":"([A-Za-z0-9_.:@-]{1,256})")?')
+CLAUDE_RESULT_END_RE = re.compile(rb'(?:"is_error":(true|false),?)?(?:"tool_use_id":"([A-Za-z0-9_.:@-]{1,256})")?'
+                                  rb'\}\]\},"uuid":"[^"\\]{1,64}","timestamp":"([^"\\]{1,40})"')
 
 CODEX_CALLS = {"function_call": None, "custom_tool_call": None,
                "local_shell_call": "local_shell", "tool_search_call": "tool_search"}
@@ -103,8 +129,10 @@ CODEX_OUTPUTS = frozenset({"function_call_output", "custom_tool_call_output",
                            "local_shell_call_output", "tool_search_output"})
 CODEX_EVENTS = frozenset({"task_started", "task_complete", "turn_aborted", "item_completed"})
 CODEX_ITEMS = frozenset(CODEX_CALLS) | CODEX_OUTPUTS | {"web_search_call"}
-CLAUDE_TERMINAL = frozenset({"end_turn", "stop_sequence", "max_tokens", "refusal"})
+# max_tokens is not an end: Claude Code continues the same task from it.
+CLAUDE_TERMINAL = frozenset({"end_turn", "stop_sequence", "refusal"})
 
+_UNMARKED = object()   # a large line that could not be marked in progress, so was not parsed
 _EPOCH = datetime.datetime(1970, 1, 1)
 _MIN_NS = 946684800 * 10**9    # 2000-01-01
 _MAX_NS = 4102444800 * 10**9   # 2100-01-01
@@ -241,10 +269,10 @@ def otlp_body(records):
 class Context:
     """Where the current line came from; used for ids of records without their own."""
 
-    __slots__ = ("path", "agent", "offset", "stats")
+    __slots__ = ("path", "agent", "offset", "stats", "ino")
 
-    def __init__(self, path, agent, stats):
-        self.path, self.agent, self.offset, self.stats = path, agent, 0, stats
+    def __init__(self, path, agent, stats, ino=None):
+        self.path, self.agent, self.offset, self.stats, self.ino = path, agent, 0, stats, ino
 
 
 # --- Codex rollouts (~/.codex/sessions/**/rollout-*.jsonl) -------------------
@@ -453,19 +481,29 @@ def _codex_output(payload, p, conversation, at, ctx):
                           call=call, tool=tool.get("n"), success=ok, duration_ms=duration)]
 
 
-def codex_envelope(head):
-    """Rebuild the structural part of an over-long Codex tool output from its prefix."""
+def codex_envelope(head, tail=b""):
+    """Rebuild the structural part of an unparsed Codex tool call or output from its head and tail.
+
+    A call's id follows its (possibly huge) arguments, so it may only be in
+    the tail; an output's id precedes its output. Anything else is dropped.
+    """
     match = CODEX_ENVELOPE_RE.match(head)
     if not match or match.group(3) != b"response_item" or not match.group(4):
         return None
     sub = match.group(4).decode("ascii")
-    if sub not in CODEX_OUTPUTS:
+    if sub not in CODEX_OUTPUTS and sub not in CODEX_CALLS:
         return None
-    call = CALL_ID_RE.search(head, match.end())
+    call = CALL_ID_RE.search(head, match.end()) or CALL_ID_RE.search(tail)
     if not call:
         return None
-    record = {"timestamp": match.group(1).decode("ascii", "replace"), "type": "response_item",
-              "payload": {"type": sub, "call_id": call.group(1).decode("ascii")}}
+    payload = {"type": sub, "call_id": call.group(1).decode("ascii")}
+    if sub in CODEX_CALLS:
+        name, namespace = NAME_RE.search(head, match.end()), NAMESPACE_RE.search(head, match.end())
+        if name:
+            payload["name"] = name.group(1).decode("ascii")
+        if namespace:
+            payload["namespace"] = namespace.group(1).decode("ascii")
+    record = {"timestamp": match.group(1).decode("ascii", "replace"), "type": "response_item", "payload": payload}
     if match.group(2):
         record["ordinal"] = int(match.group(2))
     return record
@@ -473,16 +511,22 @@ def codex_envelope(head):
 
 # --- Claude Code transcripts (~/.claude/projects/**/*.jsonl) ------------------
 # Parser state per file: r current run, c its conversation, t its start ns,
-# o 1 while open, e pending end [ns, duration] until final, T open tools.
+# o 1 while open, e pending end [ns, duration] until final, T open tools,
+# P tool results recovered without a time, ended at the next record's time.
 
 def parse_claude(record, p, ctx):
+    at = time_ns(record.get("timestamp"))
+    out = claude_settle(p, at) if p.get("P") else []
     kind = record.get("type")
     if kind not in ("user", "assistant", "system"):
-        return []
+        return out
     conversation = record.get("sessionId")
     if not _is_id(conversation):
-        return []
-    at = time_ns(record.get("timestamp"))
+        return out
+    return out + _parse_claude(record, p, ctx, kind, conversation, at)
+
+
+def _parse_claude(record, p, ctx, kind, conversation, at):
     # A subagent (…/subagents/**/agent-<agentId>.jsonl, isSidechain records) is
     # its own run, agent:<agentId>, in the parent's conversation: its records
     # reuse the parent's promptId, so that cannot be the run key. A sidechain
@@ -550,6 +594,10 @@ def _claude_assistant(record, p, conversation, at, ctx):
     if not run:
         ctx.stats["claude.assistant_without_run"] += 1
         return []
+    if not p.get("o"):
+        # The run's end was already emitted and cannot be replaced (one end
+        # identity per run). Counted so a scan shows how often an end was early.
+        ctx.stats["claude.after_end"] += 1
     out = []
     tools = p.setdefault("T", {})
     for block in _claude_blocks(record):
@@ -596,6 +644,55 @@ def claude_flush(p):
     return [native_record("claude-code", p.get("c"), p.get("r"), "run.completed", at, duration_ms=duration)]
 
 
+def claude_settle(p, at):
+    """End the tool results whose own time was unrecoverable at at, the first time known after them.
+
+    at is an upper bound, so no duration is claimed and the outcome stays
+    unknown (only a recovered is_error with its time can say more).
+    """
+    pending = p.get("P")
+    if not pending or at is None:
+        return []
+    p["P"] = []
+    return [native_record("claude-code", item["c"], item["r"], "tool.completed", at, call=item["k"], tool=item.get("n"))
+            for item in pending]
+
+
+def claude_envelope(head, tail, p, ctx):
+    """Recover a tool result from an unparsed Claude line; None when the line is not one."""
+    top = CLAUDE_HEAD_RE.match(head)
+    result = CLAUDE_RESULT_RE.search(head, top.end()) if top else None
+    if not result:
+        return None
+    if top.group(1) == b"true" and not ctx.agent:
+        ctx.stats["claude.inline_sidechain"] += 1
+        return []
+    end = CLAUDE_RESULT_END_RE.search(head, result.end()) or CLAUDE_RESULT_END_RE.search(tail)
+    first = result.group(1) or result.group(2)
+    last = end.group(2) if end else None
+    call = _key((first or last or b"").decode("ascii"))
+    tools = p.get("T") or {}
+    tool = tools.pop(call, None) if call else None
+    if not tool:
+        ctx.stats["claude.result_unmatched"] += 1
+        return []
+    at = time_ns(end.group(3).decode("ascii", "replace")) if end else None
+    if at is None:
+        # Its time is in the unread middle: end it at the next known time.
+        ctx.stats["claude.result_time_deferred"] += 1
+        pending = p.setdefault("P", [])
+        pending.append({"k": call, "r": tool["r"], "c": tool["c"], "n": tool.get("n"), "t": tool.get("t")})
+        del pending[:-MAX_OPEN_TOOLS]
+        return []
+    # is_error sits at the end of the block, so it belongs to this call only
+    # when the block's id is not first or matches the one found at the end.
+    flag = end.group(1) if not last or not first or first == last else None
+    success = False if flag == b"true" else True if flag == b"false" else None
+    return [native_record("claude-code", tool["c"], tool["r"], "tool.failed" if success is False else "tool.completed",
+                          at, call=call, tool=tool.get("n"), success=success,
+                          duration_ms=_elapsed_ms(tool.get("t"), at))]
+
+
 def claude_close(p, at):
     """Close the current run because another began: completed if it had ended, else stopped."""
     if not p.get("r") or not p.get("o"):
@@ -622,29 +719,32 @@ def prune_parser(kind, p, now_ns):
         aliases = p.get("A") or {}
         for alias in [alias for alias, call in aliases.items() if call not in (p.get("T") or {})]:
             del aliases[alias]
-    elif p.get("o") and (p.get("t") or 0) < cutoff:
-        p["o"], p["e"] = 0, None
+    else:
+        if p.get("o") and (p.get("t") or 0) < cutoff:
+            p["o"], p["e"] = 0, None
+        if p.get("P"):
+            p["P"] = [item for item in p["P"] if (item.get("t") or 0) >= cutoff]
 
 
 def parser_idle(kind, p):
     if kind == "codex":
         return not p.get("R") and not p.get("T")
-    return not p.get("o") and not p.get("T") and not p.get("e")
+    return not p.get("o") and not p.get("T") and not p.get("e") and not p.get("P")
 
 
 # --- Files ---------------------------------------------------------------------
 
 def iter_lines(stream, offset):
-    """Yield (start, end, line, head) for each complete line from offset.
+    """Yield (start, end, line, envelope) for each complete line from offset.
 
-    line is None for a line longer than MAX_LINE; only its first ENVELOPE
-    bytes (head) are kept and the rest is discarded unread by the parser. A
-    trailing line without a newline is left for the next pass: the producer
-    may still be writing it.
+    line is None for a line longer than MAX_LINE: only its first and last
+    ENVELOPE bytes are kept, as envelope (head, tail), and the rest is never
+    held. A trailing line without a newline is left for the next pass: the
+    producer may still be writing it.
     """
     stream.seek(offset)
     base = start = offset
-    parts, size, head = [], 0, None
+    parts, size, head, tail = [], 0, None, b""
     while True:
         chunk = stream.read(CHUNK)
         if not chunk:
@@ -657,17 +757,31 @@ def iter_lines(stream, offset):
             size += len(piece)
             if head is None:
                 if size > MAX_LINE:
-                    head = (b"".join(parts) + piece[:ENVELOPE])[:ENVELOPE]
+                    parts.append(piece)
+                    head, tail = _edge(parts, ENVELOPE), _edge(parts, ENVELOPE, last=True)
                     parts = []
                 else:
                     parts.append(piece)
+            else:
+                tail = (tail + piece[-ENVELOPE:])[-ENVELOPE:]
             if newline < 0:
                 break
             end = base + newline + 1
-            yield (start, end, b"".join(parts), None) if head is None else (start, end, None, head)
-            start, parts, size, head = end, [], 0, None
+            yield (start, end, b"".join(parts), None) if head is None else (start, end, None, (head, tail))
+            start, parts, size, head, tail = end, [], 0, None, b""
             position = newline + 1
         base += len(chunk)
+
+
+def _edge(parts, size, last=False):
+    """The first (or last) size bytes of the concatenated parts, without joining them all."""
+    kept, total = [], 0
+    for part in (reversed(parts) if last else parts):
+        kept.append(part[-(size - total):] if last else part[:size - total])
+        total += len(kept[-1])
+        if total >= size:
+            break
+    return b"".join(reversed(kept) if last else kept)
 
 
 def _open_regular(path, expected=None):
@@ -685,15 +799,21 @@ class Tracker:
     files is the committed per-file state {path: {k, i, o, p}}. collect()
     works on copies and returns them; commit() applies them only after the
     records they produced were delivered, so offsets never pass undelivered
-    events.
+    events. idle holds tombstones {path: [inode, offset]} of fully delivered
+    files forgotten after a day without writes: an unchanged one is never
+    reopened, and one that grows resumes at its offset instead of replaying.
     """
 
-    def __init__(self, home, files, *, backfill_before=None, stats=None):
+    def __init__(self, home, files, *, backfill_before=None, stats=None, idle=None):
         self.home = home
         self.files = files
+        self.idle = idle if idle is not None else {}
         self.backfill_before = backfill_before
         self.stats = stats if stats is not None else collections.Counter()
         self.current = None  # the file whose records are being emitted
+        self.skip = set()    # (path, inode, offset, length) of lines that stopped the reporter mid-parse
+        self.guard = None    # guard(line identity or None) persists the large line being parsed
+        self.stalls = {}     # {path: [offset, since]} files whose unread bytes could not be read
 
     def discover(self):
         found = []
@@ -743,7 +863,11 @@ class Tracker:
                     yield path, kind, agent, info
 
     def collect(self, sink, *, max_records, max_bytes, now, quiet_seconds=QUIET_SECONDS):
-        """Feed new records to sink; return (working copies, whether every file was read to its end)."""
+        """Feed new records to sink; return (working copies, whether every file was read to its end).
+
+        working maps a path to its new entry, or to None when the file and
+        any tombstone of it are gone.
+        """
         working, seen = {}, set()
         emitted = used = 0
         visited = True
@@ -754,60 +878,91 @@ class Tracker:
             seen.add(path)
             entry = self.files.get(path)
             fresh = entry is None
+            if fresh and self._forgotten(path, info):
+                self.stalls.pop(path, None)
+                continue
             if fresh or entry.get("i") != info.st_ino or info.st_size < entry.get("o", 0) or entry.get("k") != kind:
-                # New, replaced or truncated: start over with fresh parser state.
-                entry = {"k": kind, "i": info.st_ino, "o": 0, "p": {}}
-                self.stats["files.new" if fresh else "files.reset"] += 1
-                if fresh and self.backfill_before is not None and info.st_mtime < self.backfill_before:
-                    entry["o"] = info.st_size  # no historical backfill
-                    self.stats["files.skipped_history"] += 1
-                    if kind == "codex":
-                        self._seed(path, info, entry)
+                entry = self._start(path, kind, info, fresh)
                 working[path] = entry
             quiet = now - info.st_mtime >= quiet_seconds
-            held = kind == "claude" and entry["p"].get("e")
+            held = kind == "claude" and (entry["p"].get("e") or entry["p"].get("P"))
             if info.st_size == entry["o"] and not (held and quiet):
+                self.stalls.pop(path, None)
                 continue
             if path not in working:
                 entry = working[path] = copy.deepcopy(entry)
             self.current = path
-            at_end = True
+            status = "end"
             if info.st_size > entry["o"]:
-                count, size, at_end = self._read(path, info, entry, Context(path, agent, self.stats), sink,
+                count, size, status = self._read(path, info, entry, Context(path, agent, self.stats, info.st_ino), sink,
                                                  max_records - emitted, max_bytes - used)
                 emitted += count
                 used += size
-            if at_end and quiet and kind == "claude" and entry["p"].get("e"):
-                for record in claude_flush(entry["p"]):
+            self._note_stall(path, entry["o"], status, now)
+            if status == "end" and quiet and kind == "claude" and (entry["p"].get("e") or entry["p"].get("P")):
+                for record in claude_settle(entry["p"], info.st_mtime_ns) + claude_flush(entry["p"]):
                     if record is not None:
                         sink(record)
                         emitted += 1
         if visited:
-            for path in self.files:
+            for path in list(self.files) + list(self.idle):
                 if path not in seen:
                     working[path] = None  # deleted transcript: drop its state
+                    self.stalls.pop(path, None)
         return working, visited and emitted < max_records and used < max_bytes
+
+    def _forgotten(self, path, info):
+        """True for an unchanged tombstoned file, which is never reopened."""
+        tomb = self.idle.get(path)
+        return bool(tomb) and tomb[0] == info.st_ino and tomb[1] == info.st_size
+
+    def _start(self, path, kind, info, fresh):
+        """Entry for a new, replaced, truncated or resumed file, with fresh parser state."""
+        entry = {"k": kind, "i": info.st_ino, "o": 0, "p": {}}
+        tomb = self.idle.get(path) if fresh else None
+        if tomb and tomb[0] == info.st_ino and tomb[1] < info.st_size:
+            entry["o"] = tomb[1]  # a forgotten file written again: only its new lines
+            self.stats["files.resumed"] += 1
+        elif fresh and self.backfill_before is not None and info.st_mtime < self.backfill_before:
+            entry["o"] = info.st_size  # no historical backfill
+            self.stats["files.new"] += 1
+            self.stats["files.skipped_history"] += 1
+        else:
+            self.stats["files.new" if fresh else "files.reset"] += 1
+        if entry["o"] and kind == "codex":
+            self._seed(path, info, entry)
+        return entry
+
+    def _note_stall(self, path, offset, status, now):
+        # Unread bytes that could not be read stay put; heartbeats stop once
+        # they have been stuck for STALL_SECONDS (Reporter.stalled).
+        if status != "error":
+            self.stalls.pop(path, None)
+        elif self.stalls.get(path, [None])[0] != offset:
+            self.stalls[path] = [offset, now]
 
     def commit(self, working):
         for path, entry in working.items():
+            self.idle.pop(path, None)
             if entry is None:
                 self.files.pop(path, None)
             else:
                 self.files[path] = entry
 
     def _seed(self, path, info, entry):
-        # A skipped Codex rollout can still be resumed later; keep its session.
+        # A Codex rollout read from the middle can still be resumed later; keep its session.
         try:
             fd, _ = _open_regular(path, (info.st_ino, info.st_dev))
         except OSError:
             return
+        ctx = Context(path, None, self.stats, info.st_ino)
         try:
             with os.fdopen(fd, "rb", buffering=0, closefd=False) as stream:
-                for _, _, line, _ in iter_lines(stream, 0):
-                    if line is not None:
-                        record = json.loads(line)
-                        if isinstance(record, dict) and record.get("type") == "session_meta":
-                            parse_codex(record, entry["p"], Context(path, None, self.stats))
+                for start, _, line, _ in iter_lines(stream, 0):
+                    ctx.offset = start
+                    record = self._decode(line, ctx) if line is not None else None
+                    if isinstance(record, dict) and record.get("type") == "session_meta":
+                        parse_codex(record, entry["p"], ctx)
                     break
         except (OSError, ValueError, RecursionError):
             pass
@@ -815,50 +970,95 @@ class Tracker:
             os.close(fd)
 
     def _read(self, path, info, entry, ctx, sink, record_budget, byte_budget):
+        """Read complete lines from entry's offset; return (records, bytes, "end" | "budget" | "error")."""
         try:
             fd, _ = _open_regular(path, (info.st_ino, info.st_dev))
         except OSError:
             self.stats["files.unreadable"] += 1
-            return 0, 0, False
+            return 0, 0, "error"
         emitted = used = 0
         try:
             with os.fdopen(fd, "rb", buffering=0, closefd=False) as stream:
-                for start, end, line, head in iter_lines(stream, entry["o"]):
+                for start, end, line, envelope in iter_lines(stream, entry["o"]):
                     ctx.offset = start
-                    for record in self._line(entry["k"], line, head, entry["p"], ctx):
+                    for record in self._line(entry["k"], line, envelope, entry["p"], ctx):
                         sink(record)
                         emitted += 1
                     used += end - start
                     self.stats["bytes.read"] += end - start
                     entry["o"] = end
                     if emitted >= record_budget or used >= byte_budget:
-                        return emitted, used, False
+                        return emitted, used, "budget"
         except OSError:
             self.stats["files.read_error"] += 1
-            return emitted, used, False
+            return emitted, used, "error"
         finally:
             os.close(fd)
-        return emitted, used, True
+        return emitted, used, "end"
 
-    def _line(self, kind, line, head, p, ctx):
+    def _refusal(self, line, ctx):
+        """Why a complete line must not be parsed, or None: the parse-cost bound and crash skips."""
+        if self.skip and (ctx.path, ctx.ino, ctx.offset, len(line)) in self.skip:
+            return "crashed"
+        if len(line) > MAX_CONTAINERS and line.count(b"{") + line.count(b"[") > MAX_CONTAINERS:
+            return "containers"
+        return None
+
+    def _parse(self, line, ctx):
+        """json.loads, or _UNMARKED for a line over MARK_BYTES whose identity could not be persisted.
+
+        A large line is parsed only after the guard has recorded it as in
+        progress, so a parse that kills the process is skipped on next start.
+        """
+        if len(line) <= MARK_BYTES or self.guard is None:
+            return json.loads(line)
+        if not self.guard((ctx.path, ctx.ino, ctx.offset, len(line))):
+            return _UNMARKED
+        try:
+            record = json.loads(line)
+        except Exception:
+            self.guard(None)
+            raise
+        # Deliberately not a finally: a parse that kills the process (the OOM
+        # killer, or any exit mid-parse) must leave the marker in place.
+        self.guard(None)
+        return record
+
+    def _decode(self, line, ctx):
+        """The parsed line within the parse-cost bound, or None when it must not be parsed."""
+        if self._refusal(line, ctx):
+            return None
+        record = self._parse(line, ctx)
+        return None if record is _UNMARKED else record
+
+    def _line(self, kind, line, envelope, p, ctx):
         stats = ctx.stats
         stats["lines"] += 1
         try:
-            if line is None:
-                stats["lines.oversize"] += 1
-                record = codex_envelope(head) if kind == "codex" else None
-                if record is None:
-                    return []
-                stats["lines.oversize_recovered"] += 1
-                out = parse_codex(record, p, ctx)
-            else:
-                if kind == "codex" and self._skip_codex(line, p, stats):
-                    return []
+            if line is not None and kind == "codex" and self._skip_codex(line, p, stats):
+                return []
+            reason = "oversize" if line is None else self._refusal(line, ctx)
+            if reason is None:
                 try:
-                    record = json.loads(line)
+                    record = self._parse(line, ctx)
                 except (ValueError, RecursionError):
                     stats["lines.invalid"] += 1
                     return []
+                if record is _UNMARKED:
+                    reason = "unmarked"
+            if reason is not None:
+                # Never parsed: only the bounded head and tail are inspected.
+                stats["lines." + reason] += 1
+                head, tail = envelope if line is None else (line[:ENVELOPE], line[-ENVELOPE:])
+                if kind == "codex":
+                    record = codex_envelope(head, tail)
+                    out = None if record is None else parse_codex(record, p, ctx)
+                else:
+                    out = claude_envelope(head, tail, p, ctx)
+                if out is None:
+                    return []
+                stats["lines.%s_recovered" % reason] += 1
+            else:
                 if not isinstance(record, dict):
                     return []
                 out = (parse_codex if kind == "codex" else parse_claude)(record, p, ctx)
@@ -1039,12 +1239,16 @@ class Reporter:
     def __init__(self, *, root="/", home=DEFAULT_HOME, transport=None, clock=time.time, log=None):
         self.credential_path = _rooted(root, CREDENTIAL_PATH)
         self.state_path = _rooted(root, STATE_PATH)
+        self.marker_path = _rooted(root, MARKER_PATH)
         self.transport = transport or urllib_transport
         self.clock = clock
         self.log = log or (lambda message: print(SERVICE_NAME + ": " + message, file=sys.stderr, flush=True))
+        self.last_note = None
         self.state = self._load_state()
-        self.tracker = Tracker(_rooted(root, home), self.state["files"],
-                               backfill_before=max(self.state["firstStart"], self.state.get("idleBefore", 0)))
+        self.tracker = Tracker(_rooted(root, home), self.state["files"], idle=self.state["idle"],
+                               backfill_before=self.state["firstStart"])
+        self.tracker.skip = self._load_marker()
+        self.tracker.guard = self._mark
         self.fingerprint = None
         self.failures = 0
         self.blocked_until = 0.0
@@ -1052,7 +1256,6 @@ class Reporter:
         self.renew_tried = None
         self.last_heartbeat = None
         self.last_prune = self.clock()
-        self.last_note = None
 
     def note(self, message):
         if message != self.last_note:
@@ -1060,19 +1263,28 @@ class Reporter:
             self.log(message)
 
     def _load_state(self):
-        now = self.clock()
         try:
             state = json.loads(_read_private(self.state_path, MAX_STATE_BYTES).decode("utf-8"))
-            if (isinstance(state, dict) and state.get("v") == 1 and isinstance(state.get("files"), dict)
-                    and all(isinstance(state.get(key, 0), (int, float)) and not isinstance(state.get(key), bool)
-                            for key in ("firstStart", "idleBefore")) and "firstStart" in state):
+            first = state.get("firstStart") if isinstance(state, dict) else None
+            if (state.get("v") == 1 and isinstance(state.get("files"), dict) and isinstance(first, (int, float))
+                    and not isinstance(first, bool) and isinstance(state.get("idle", {}), dict)):
                 state["files"] = {path: entry for path, entry in state["files"].items() if _valid_entry(entry)}
+                state["idle"] = {path: tomb for path, tomb in state.get("idle", {}).items()
+                                 if isinstance(tomb, list) and len(tomb) == 2 and all(_is_int(n) for n in tomb)
+                                 and path not in state["files"]}
+                state.pop("idleBefore", None)  # superseded by per-file tombstones
                 return state
-        except (OSError, ValueError, RecursionError):
+        except (OSError, ValueError, RecursionError, AttributeError):
             pass
         # First start, or unreadable state: never backfill what already exists.
-        state = {"v": 1, "firstStart": now, "files": {}}
+        # "Already exists" is judged in the filesystem's clock domain: the
+        # floor is the state file's own mtime, less a margin for coarse
+        # timestamps, so a transcript written right after this moment is
+        # never mistaken for history.
+        state = {"v": 1, "firstStart": self.clock() - FRESH_MARGIN, "files": {}, "idle": {}}
         try:
+            self._save_state(state)
+            state["firstStart"] = os.stat(self.state_path).st_mtime - FRESH_MARGIN
             self._save_state(state)
         except OSError:
             pass
@@ -1080,6 +1292,50 @@ class Reporter:
 
     def _save_state(self, state=None):
         write_atomic(self.state_path, json.dumps(state or self.state, separators=(",", ":")).encode("utf-8"), 0o600)
+
+    def _load_marker(self):
+        """Lines that stopped the reporter mid-parse, including the one in progress when it last died."""
+        skip = []
+        try:
+            marker = json.loads(_read_private(self.marker_path, 64 * 1024).decode("utf-8"))
+            lines = marker.get("skip", []) + ([marker["line"]] if marker.get("line") else [])
+            skip = [tuple(line) for line in lines if isinstance(line, list) and len(line) == 4
+                    and isinstance(line[0], str) and all(_is_int(n) for n in line[1:])]
+            if marker.get("line") and tuple(marker["line"]) in skip:
+                self.note("skipping a transcript line that stopped the reporter while it was parsed")
+        except (OSError, ValueError, RecursionError, AttributeError, TypeError):
+            pass
+        self.marker = {"v": 1, "line": None, "skip": self._live_skips(skip)}
+        try:
+            self._write_marker()
+        except OSError:
+            pass
+        return set(map(tuple, self.marker["skip"]))
+
+    def _live_skips(self, skip):
+        # A skip is needed only until the committed offset passes its line.
+        live = []
+        for line in skip:
+            entry = self.state["files"].get(line[0])
+            if (entry is None or (entry["i"] == line[1] and entry["o"] <= line[2])) and list(line) not in live:
+                live.append(list(line))
+        return live[-MAX_SKIPS:]
+
+    def _write_marker(self):
+        write_atomic(self.marker_path, json.dumps(self.marker, separators=(",", ":")).encode("utf-8"), 0o600)
+
+    def _mark(self, line):
+        """Tracker guard: persist the large line about to be parsed (None once done); False if not persisted."""
+        self.marker["line"] = list(line) if line is not None else None
+        if line is not None:
+            self.marker["skip"] = self._live_skips(self.marker["skip"])
+        try:
+            self._write_marker()
+        except OSError:
+            if line is not None:
+                self.note("could not record parse progress; large lines are skipped")
+            return False
+        return True
 
     def _credential(self):
         credential = read_credential(self.credential_path)
@@ -1096,7 +1352,15 @@ class Reporter:
         return credential
 
     def step(self):
-        """One loop iteration; returns the number of seconds to wait."""
+        """One loop iteration; returns the number of seconds to wait.
+
+        The heartbeat comes last and means "alive and delivering": it is sent
+        only after this iteration's transcripts were read and every record
+        was accepted. So it stops while event delivery keeps failing, while
+        collection raises or the process dies mid-line (a crash loop never
+        reaches it), and while unread bytes have been stuck unreadable for
+        STALL_SECONDS; Activity then shows the gap as stale, not healthy.
+        """
         now = self.clock()
         credential = self._credential()
         if credential is None:
@@ -1104,11 +1368,6 @@ class Reporter:
         if now < self.blocked_until:
             return max(1.0, min(LOOP_SECONDS, self.blocked_until - now))
         credential = self._maybe_renew(credential, now)
-        if self.last_heartbeat is None or now - self.last_heartbeat >= HEARTBEAT_SECONDS:
-            outcome, credential = self._deliver(credential, [heartbeat_record(int(now * 10**9))], now)
-            if outcome != "ok":
-                return self._wait(now)
-            self.last_heartbeat = now
         complete = False
         for _ in range(MAX_PASSES):
             records = []
@@ -1126,15 +1385,28 @@ class Reporter:
         if complete and now - self.last_prune >= PRUNE_INTERVAL_SECONDS:
             self.last_prune = now
             self._prune(now)
+        if self.last_heartbeat is None or now - self.last_heartbeat >= HEARTBEAT_SECONDS:
+            if self.stalled(now):
+                self.note("transcript bytes have been unreadable for %d s; heartbeat withheld" % STALL_SECONDS)
+                return LOOP_SECONDS
+            outcome, credential = self._deliver(credential, [heartbeat_record(int(now * 10**9))], now)
+            if outcome != "ok":
+                return self._wait(now)
+            self.last_heartbeat = now
         self.note("delivering")
         return LOOP_SECONDS
+
+    def stalled(self, now):
+        """True while some file's unread bytes have been stuck unreadable for STALL_SECONDS or more."""
+        return any(now - since >= STALL_SECONDS for _, since in self.tracker.stalls.values())
 
     def _prune(self, now):
         """Bound state: forget day-old open runs/tools, and fully read files idle for a day.
 
         Runs only right after a pass that read and committed every file, so a
-        forgotten file is exactly one whose content was delivered; the idle
-        floor makes its rediscovery skip to EOF instead of replaying it.
+        forgotten file is exactly one whose content was delivered. It leaves a
+        tombstone (inode, offset): rediscovery never reopens it while it is
+        unchanged, and new lines appended later are read from that offset.
         """
         cutoff = now - PRUNE_SECONDS
         files = self.state["files"]
@@ -1147,8 +1419,7 @@ class Reporter:
             if (info.st_mtime < cutoff and info.st_ino == entry["i"] and info.st_size == entry["o"]
                     and parser_idle(entry["k"], entry["p"])):
                 del files[path]
-        self.state["idleBefore"] = max(self.state.get("idleBefore", 0), cutoff)
-        self.tracker.backfill_before = max(self.state["firstStart"], self.state["idleBefore"])
+                self.state["idle"][path] = [entry["i"], entry["o"]]
         self._save_state()
 
     def _wait(self, now):

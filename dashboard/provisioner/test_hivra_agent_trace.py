@@ -138,6 +138,52 @@ def text(seconds, stop="end_turn", ms=0, **fields):
         {"type": "text", "text": SECRET}]}, **fields)
 
 
+def result_line(seconds, call, prompt_id, content, result=None, is_error="absent", order="first", sidechain=False):
+    """A Claude Code tool-result line byte for byte as written (compact, real key order)."""
+    block = {"tool_use_id": call, "type": "tool_result"} if order == "first" else {"type": "tool_result"}
+    block["content"] = content
+    if is_error != "absent":
+        block["is_error"] = is_error
+    if order == "last":
+        block["tool_use_id"] = call
+    record = {"parentUuid": "a-1", "isSidechain": sidechain, "promptId": prompt_id, "type": "user",
+              "message": {"role": "user", "content": [block]}, "uuid": "0b4e2c1a-7d3f-4c55-9e0a-1f2b3c4d5e6f",
+              "timestamp": iso(seconds)}
+    if result is not None:
+        record["toolUseResult"] = result
+    record.update({"sourceToolAssistantUUID": "a-1", "userType": "external", "entrypoint": "cli",
+                   "cwd": "/home/bux/" + SECRET, "sessionId": "5a1c-session", "version": "2.1.0", "gitBranch": SECRET})
+    return json.dumps(record, separators=(",", ":"))
+
+
+class ProcessKilled(BaseException):
+    """Stands in for the OOM killer: nothing in the reporter may catch it or clean up after it."""
+
+
+class ParseSpy:
+    """Replaces the json module inside the reporter: counts parses of long lines and can kill one."""
+
+    def __init__(self, kill_on=None):
+        self.kill_on, self.long_parses = kill_on, 0
+
+    def loads(self, data, **kwargs):
+        if len(data) > 100_000:
+            self.long_parses += 1
+            if self.kill_on is not None and self.kill_on in data:
+                raise ProcessKilled()
+        return json.loads(data, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(json, name)
+
+
+def spy_on_parses(test, **kwargs):
+    spy = ParseSpy(**kwargs)
+    trace.json = spy
+    test.addCleanup(setattr, trace, "json", json)
+    return spy
+
+
 class TimeParsingTest(unittest.TestCase):
     def check_times(self):
         self.assertEqual(trace.time_ns("2026-09-20T20:00:00.123Z"), ns(T0, 123))
@@ -389,6 +435,39 @@ class ClaudeParserTest(unittest.TestCase):
         end = trace.claude_flush(state)
         self.assertEqual(attrs(end[0])["duration_ms"], 4000)
 
+    def test_max_tokens_is_not_the_end_of_the_task(self):
+        # The shape measured on real transcripts: the model hits max_tokens
+        # mid-thinking and Claude Code continues the same task with tools.
+        ctx = context("/p/s.jsonl")
+        out, state = feed(trace.parse_claude, [
+            prompt(T0, "p-1"),
+            claude("assistant", T0 + 1, message={"stop_reason": "max_tokens", "content": [
+                {"type": "thinking", "thinking": SECRET}]}),
+        ], ctx=ctx)
+        self.assertEqual(roles(out), ["run.started"])
+        # A quiet file (the continuation can take longer than QUIET_SECONDS) must not end the run.
+        self.assertEqual(trace.claude_flush(state), [])
+        more, _ = feed(trace.parse_claude, [
+            claude("assistant", T0 + 50, message={"stop_reason": "tool_use", "content": [{"type": "thinking",
+                                                                                         "thinking": SECRET}]}),
+            tool_use(T0 + 50, "toolu-1"), tool_result(T0 + 51, "toolu-1", "p-1"), text(T0 + 52),
+            claude("system", T0 + 52, subtype="turn_duration", durationMs=52000),
+        ], state, ctx)
+        self.assertEqual(roles(more), ["tool.started", "tool.completed", "run.completed"])
+        self.assertEqual((more[-1]["timeUnixNano"], attrs(more[-1])["duration_ms"]), (str(ns(T0 + 52)), 52000))
+        self.assertEqual(ctx.stats["claude.after_end"], 0)
+        self.assertNotIn("max_tokens", trace.CLAUDE_TERMINAL)
+
+    def test_records_after_an_emitted_end_are_counted(self):
+        ctx = context("/p/s.jsonl")
+        out, state = feed(trace.parse_claude, [prompt(T0, "p-1"), text(T0 + 1)], ctx=ctx)
+        out += trace.claude_flush(state)  # the file went quiet: final
+        later, _ = feed(trace.parse_claude, [tool_use(T0 + 60, "toolu-9"), text(T0 + 61)], state, ctx)
+        self.assertEqual(roles(out), ["run.started", "run.completed"])
+        # Still reported (they happened), never a second end, and counted as an early end.
+        self.assertEqual(roles(later), ["tool.started"])
+        self.assertEqual(ctx.stats["claude.after_end"], 2)
+
     def test_api_error_fails_the_run_with_enum_only(self):
         out, _ = feed(trace.parse_claude, [
             prompt(T0, "p-1"),
@@ -471,16 +550,83 @@ class TrackerTest(unittest.TestCase):
         claude_path = self.write(os.path.join(self.projects, "s.jsonl"), [
             prompt(T0, "p-1"),
             json.dumps(tool_result(T0 + 1, "x", "p-1") | {"pad": SECRET * (trace.MAX_LINE // len(SECRET) + 10)}),
-            text(T0 + 2),
+            tool_use(T0 + 2, "toolu-big", name="Read"),
+            # Oversize, in Claude Code's own layout: id in the head, is_error and time in the tail.
+            result_line(T0 + 3, "toolu-big", "p-1", SECRET * (trace.MAX_LINE // len(SECRET) + 10), is_error=False,
+                        result={"type": "text"}),
+            text(T0 + 4),
         ])
         out = self.collect()
         self.assertEqual(roles(out), ["run.started", "tool.started", "tool.completed", "run.completed",
-                                      "run.started", "run.completed"])
+                                      "run.started", "tool.started", "tool.completed", "run.completed"])
         self.assertEqual(attrs(out[2])["duration_ms"], 1000)
+        recovered = attrs(out[6])
+        self.assertEqual((out[6]["timeUnixNano"], recovered["tool.name"], recovered["success"], recovered["duration_ms"]),
+                         (str(ns(T0 + 3)), "Read", True, 1000))
         self.assertEqual(self.files[path]["o"], os.path.getsize(path))
         self.assertEqual(self.files[claude_path]["o"], os.path.getsize(claude_path))
-        self.assertEqual(self.tracker.stats["lines.oversize"], 3)
-        self.assertEqual(self.tracker.stats["lines.oversize_recovered"], 1)
+        self.assertEqual(self.tracker.stats["lines.oversize"], 4)
+        self.assertEqual(self.tracker.stats["lines.oversize_recovered"], 2)
+        self.assertEqual(self.collect(), [])
+
+    def test_container_heavy_lines_are_never_parsed_and_their_envelope_is_recovered(self):
+        spy = spy_on_parses(self)
+        heavy = [{}] * (trace.MAX_CONTAINERS + 10)            # real JSON containers
+        braces = "{[" * (trace.MAX_CONTAINERS // 2 + 10)      # container bytes inside a string count too
+        claude_path = self.write(os.path.join(self.projects, "r.jsonl"), [
+            prompt(T0, "p-1"),
+            tool_use(T0 + 1, "toolu-a", name="Read"),
+            # Message small, toolUseResult heavy: id, is_error and time are all in the head.
+            result_line(T0 + 2, "toolu-a", "p-1", SECRET, result={"file": heavy}, is_error=True),
+            tool_use(T0 + 3, "toolu-b", name="Grep"),
+            # Content heavy, id written last: id, is_error and time are in the tail.
+            result_line(T0 + 4, "toolu-b", "p-1", braces, result={"n": 1}, is_error=False, order="last"),
+            tool_use(T0 + 5, "toolu-c", name="Bash"),
+            # Both heavy: the time is in the unread middle, so the next record's time ends it.
+            result_line(T0 + 6, "toolu-c", "p-1", braces, result={"file": heavy}),
+            text(T0 + 9),
+        ])
+        waiting = self.write(os.path.join(self.projects, "w.jsonl"), [
+            prompt(T0, "p-2"), tool_use(T0 + 1, "toolu-d", name="Bash"),
+            result_line(T0 + 2, "toolu-d", "p-2", braces, result={"file": heavy}),
+        ])
+        os.utime(waiting, (T0 + 30, T0 + 30))
+        rollout = self.write(os.path.join(self.sessions, "rollout-heavy.jsonl"), [
+            codex_meta(), codex("event_msg", T0 + 1, {"type": "task_started", "turn_id": "turn-1", "started_at": T0 + 1}),
+            # A call's id follows its arguments, so only the tail has it.
+            json.dumps(codex("response_item", T0 + 2, {"type": "function_call", "id": "fc-1", "name": "apply_patch",
+                                                      "arguments": braces, "call_id": "call-1"}), separators=(",", ":")),
+            codex("response_item", T0 + 3, {"type": "function_call_output", "call_id": "call-1", "output": SECRET}),
+        ])
+        out = self.collect()
+        by_file = collections.defaultdict(list)
+        for record in out:
+            by_file[attrs(record)["service.name"] + ":" + attrs(record)["session.id"]].append(record)
+        main, other, codex_run = by_file["claude-code:p-1"], by_file["claude-code:p-2"], by_file["codex:turn-1"]
+        self.assertEqual(roles(main), ["run.started", "tool.started", "tool.failed", "tool.started", "tool.completed",
+                                       "tool.started", "tool.completed", "run.completed"])
+        failed, completed, deferred = attrs(main[2]), attrs(main[4]), attrs(main[6])
+        self.assertEqual((main[2]["timeUnixNano"], failed["success"], failed["duration_ms"], failed["tool.name"]),
+                         (str(ns(T0 + 2)), False, 1000, "Read"))
+        self.assertEqual((main[4]["timeUnixNano"], completed["success"], completed["duration_ms"]),
+                         (str(ns(T0 + 4)), True, 1000))
+        # Upper-bound time only: no duration and no outcome are claimed.
+        self.assertEqual(main[6]["timeUnixNano"], str(ns(T0 + 9)))
+        self.assertEqual(main[6]["spanId"], main[5]["spanId"])
+        self.assertNotIn("success", deferred)
+        self.assertNotIn("duration_ms", deferred)
+        # With nothing written after it, the quiet file's mtime ends it.
+        self.assertEqual(roles(other), ["run.started", "tool.started", "tool.completed"])
+        self.assertEqual(other[2]["timeUnixNano"], str(ns(T0 + 30)))
+        self.assertEqual(roles(codex_run), ["run.started", "tool.started", "tool.completed"])
+        self.assertEqual(attrs(codex_run[1])["tool.name"], "apply_patch")
+        self.assertEqual(codex_run[1]["spanId"], codex_run[2]["spanId"])
+        self.assertEqual(spy.long_parses, 0)
+        self.assertEqual((self.tracker.stats["lines.containers"], self.tracker.stats["lines.containers_recovered"]), (5, 5))
+        self.assertEqual(self.tracker.stats["claude.result_time_deferred"], 2)
+        for path in (claude_path, waiting, rollout):
+            self.assertEqual(self.files[path]["o"], os.path.getsize(path))
+        self.assertNotIn(SECRET, json.dumps(out))
         self.assertEqual(self.collect(), [])
 
     def test_partial_trailing_line_waits_for_its_newline(self):
@@ -670,6 +816,12 @@ class ReporterTest(unittest.TestCase):
     def all_records(self):
         return [record for _, document in self.mock.ingested() for record in self.mock.records(document)]
 
+    def heartbeats(self):
+        return [r for r in self.all_records() if attrs(r)["event.name"] == "collector.heartbeat"]
+
+    def events(self):
+        return [r for r in self.all_records() if attrs(r)["event.name"] != "collector.heartbeat"]
+
     def test_request_shape_heartbeat_batches_and_offsets(self):
         path = self.write("rollout-a.jsonl", [codex_meta(), *codex_turn(calls=225)])
         self.assertEqual(self.reporter.step(), trace.LOOP_SECONDS)
@@ -681,14 +833,15 @@ class ReporterTest(unittest.TestCase):
             self.assertEqual(headers["content-type"], "application/json")
             self.assertEqual(document["resourceLogs"][0]["resource"]["attributes"],
                              [{"key": "service.namespace", "value": {"stringValue": "hivra.native"}}])
-        (heartbeat,) = self.mock.records(ingested[0][1])
+        # The heartbeat comes last, in its own request, once the events were accepted.
+        (heartbeat,) = self.mock.records(ingested[-1][1])
         self.assertEqual(set(heartbeat), {"timeUnixNano", "severityNumber", "attributes"})
         self.assertEqual(set(attrs(heartbeat)), {"event.name", "event.id", "service.name"})
         self.assertEqual(attrs(heartbeat)["event.name"], "collector.heartbeat")
         self.assertEqual(attrs(heartbeat)["service.name"], "hivra-agent-trace")
-        sizes = [len(self.mock.records(document)) for _, document in ingested[1:]]
+        sizes = [len(self.mock.records(document)) for _, document in ingested[:-1]]
         self.assertEqual(sizes, [400, 52])
-        records = [r for _, document in ingested[1:] for r in self.mock.records(document)]
+        records = [r for _, document in ingested[:-1] for r in self.mock.records(document)]
         self.assertEqual(len({attrs(r)["event.id"] for r in records}), 452)
         for record in records:
             self.assertEqual(set(attrs(record)) - {"event.name", "event.id", "service.name", "conversation.id",
@@ -712,42 +865,183 @@ class ReporterTest(unittest.TestCase):
         busy = self.write("rollout-busy.jsonl", [codex_meta(session="busy-s"), codex(
             "event_msg", T0, {"type": "task_started", "turn_id": "open-turn", "started_at": int(self.now)})])
         self.reporter.step()
-        self.assertEqual(len(self.all_records()), 5 + 1)
+        self.assertEqual(len(self.events()), 5)
         os.utime(idle, (self.now - 2 * 86400, self.now - 2 * 86400))
         os.utime(busy, (self.now - 2 * 86400, self.now - 2 * 86400))
         self.now += trace.PRUNE_INTERVAL_SECONDS
         self.reporter.step()
-        # The fully read idle file is forgotten; the one with an open run stays.
+        # The fully read idle file is forgotten, leaving only a tombstone; the one with an open run stays.
+        size = os.path.getsize(idle)
         self.assertEqual(sorted(self.reporter.state["files"]), [busy])
-        self.assertEqual(self.reporter.state["idleBefore"], self.now - trace.PRUNE_SECONDS)
+        self.assertEqual(self.reporter.state["idle"], {idle: [os.stat(idle).st_ino, size]})
         with open(os.path.join(self.state_dir, "state.json")) as stream:
-            self.assertEqual(sorted(json.load(stream)["files"]), [busy])
-        self.now += 10
-        self.reporter.step()
-        self.assertEqual(len(self.all_records()), 5 + 1 + 1)  # only the due heartbeat, no replay
-        # A restart keeps the floor.
+            saved = json.load(stream)
+        self.assertEqual((sorted(saved["files"]), sorted(saved["idle"])), ([busy], [idle]))
+        # Further passes neither recreate its state nor reopen it.
+        opened = []
+        original = trace._open_regular
+        trace._open_regular = lambda path, expected=None: (opened.append(path), original(path, expected))[1]
+        self.addCleanup(setattr, trace, "_open_regular", original)
+        seen = dict(self.reporter.tracker.stats)
+        for _ in range(3):
+            self.now += 10
+            self.reporter.step()
+        self.assertEqual(sorted(self.reporter.state["files"]), [busy])
+        self.assertNotIn(idle, opened)
+        self.assertEqual({key: self.reporter.tracker.stats[key] - seen.get(key, 0)
+                          for key in ("files.new", "files.skipped_history", "files.resumed")},
+                         {"files.new": 0, "files.skipped_history": 0, "files.resumed": 0})
+        self.assertEqual(len(self.events()), 5)  # no replay
+        # A restart keeps the tombstones; a forgotten file written again resumes where it stopped.
         restarted = trace.Reporter(root=self.root, home="/home/bux", transport=self.mock.transport,
                                    clock=lambda: self.now, log=self.logs.append)
-        self.assertEqual(restarted.tracker.backfill_before, self.now - 10 - trace.PRUNE_SECONDS)
+        self.assertEqual(restarted.tracker.idle, {idle: [os.stat(idle).st_ino, size]})
+        self.write("rollout-idle.jsonl", codex_turn("turn-2", start=T0 + 100))
+        self.now += 10
+        restarted.step()
+        resumed = self.events()[5:]
+        self.assertEqual(roles(resumed), ["run.started", "tool.started", "tool.completed", "run.completed"])
+        self.assertEqual({(attrs(r)["conversation.id"], attrs(r)["session.id"]) for r in resumed},
+                         {("idle-s", "turn-2")})
+        self.assertEqual(restarted.state["files"][idle]["o"], os.path.getsize(idle))
+        self.assertEqual(restarted.state["idle"], {})
+        self.assertEqual(restarted.tracker.stats["files.resumed"], 1)
+        # Deleting a forgotten file drops its tombstone.
+        entry = restarted.state["files"].pop(busy)
+        restarted.state["idle"][busy] = [entry["i"], entry["o"]]
+        os.unlink(busy)
+        self.now += 10
+        restarted.step()
+        self.assertEqual((sorted(restarted.state["files"]), restarted.state["idle"]), ([idle], {}))
 
     def test_offsets_advance_only_after_a_successful_response(self):
         path = self.write("rollout-a.jsonl", [codex_meta(), *codex_turn()])
-        self.mock.responses[trace.INGEST_PATH] = [(200, b"{}", {}), (503, b"{}", {}), (502, b"{}", {})]
+        self.mock.responses[trace.INGEST_PATH] = [(503, b"{}", {}), (502, b"{}", {})]
         self.reporter.step()
         self.assertNotIn(path, self.reporter.state["files"])
         self.assertEqual(self.reporter.blocked_until, self.now + 10)
         self.reporter.step()
-        self.assertEqual(len(self.mock.ingested()), 2)  # still backing off
+        self.assertEqual(len(self.mock.ingested()), 1)  # still backing off
         self.now += 10
         self.reporter.step()
         self.assertEqual(self.reporter.blocked_until, self.now + 20)
         self.now += 20
         self.reporter.step()
         self.assertEqual(self.reporter.state["files"][path]["o"], os.path.getsize(path))
-        attempts = [self.mock.records(document) for _, document in self.mock.ingested()[1:]]
+        attempts = [self.mock.records(document) for _, document in self.mock.ingested()]
         self.assertEqual(attempts[0], attempts[1])
         self.assertEqual(attempts[1], attempts[2])  # the same records, not lost
+        self.assertEqual(roles(attempts[3]), ["collector.heartbeat"])  # only once they were accepted
         self.assertEqual(self.reporter.failures, 0)
+
+    def test_heartbeats_stop_while_event_delivery_keeps_failing(self):
+        def events_fail(url, headers, body, timeout):
+            names = {attrs(r)["event.name"] for r in self.mock.records(json.loads(body))}
+            if names != {"collector.heartbeat"}:
+                self.mock.requests.append((trace.INGEST_PATH, {}, body))
+                return 503, b""  # a heartbeat alone would still be accepted
+            return self.mock.transport(url, headers, body, timeout)
+
+        self.reporter.transport = events_fail
+        self.reporter.step()
+        self.assertEqual(len(self.heartbeats()), 1)
+        self.write("rollout-a.jsonl", [codex_meta(), *codex_turn()])
+        start = self.now
+        while self.now - start < 3 * trace.HEARTBEAT_SECONDS:
+            self.now = max(self.now + 10, self.reporter.blocked_until)
+            self.reporter.step()
+        self.assertEqual(len(self.heartbeats()), 1)  # none while the events cannot be delivered
+        self.reporter.transport = self.mock.transport
+        self.now = max(self.now + 10, self.reporter.blocked_until)
+        self.reporter.step()
+        self.assertEqual(len(self.heartbeats()), 2)
+        self.assertEqual(roles(self.all_records())[-1], "collector.heartbeat")
+
+    @unittest.skipIf(os.geteuid() == 0, "requires an unprivileged user")
+    def test_heartbeats_stop_while_unread_bytes_are_stuck(self):
+        path = self.write("rollout-a.jsonl", [codex_meta(), *codex_turn()])
+        os.chmod(path, 0)
+        self.reporter.step()
+        self.assertEqual((len(self.heartbeats()), len(self.events())), (1, 0))  # just started: still healthy
+        for _ in range(4):
+            self.now += trace.HEARTBEAT_SECONDS // 4 + 1
+            self.reporter.step()
+        self.assertEqual(len(self.heartbeats()), 1)
+        self.assertTrue(self.reporter.stalled(self.now))
+        self.assertIn("heartbeat withheld", " ".join(self.logs))
+        os.chmod(path, 0o600)
+        self.now += 10
+        self.reporter.step()
+        self.assertEqual((len(self.heartbeats()), len(self.events())), (2, 4))
+        self.assertFalse(self.reporter.stalled(self.now))
+
+    def test_a_line_that_kills_the_parse_is_skipped_on_the_next_start(self):
+        spy = spy_on_parses(self, kill_on=b"KILLS-THE-PARSER")
+        path = self.write("s.jsonl", [prompt(T0, "p-1"), tool_use(T0 + 1, "toolu-1", name="Read")],
+                          directory=self.projects)
+        start = os.path.getsize(path)
+        with open(path, "a") as stream:
+            line = result_line(T0 + 2, "toolu-1", "p-1", "x" * (trace.MARK_BYTES + 10) + "KILLS-THE-PARSER",
+                               is_error=False, result={"type": "text"})
+            stream.write(line + "\n")
+        self.write("s.jsonl", [text(T0 + 3)], directory=self.projects)
+        with self.assertRaises(ProcessKilled):
+            self.reporter.step()
+        # Nothing was reported as healthy by the process that died.
+        self.assertEqual(self.mock.ingested(), [])
+        marker = os.path.join(self.state_dir, "parsing.json")
+        self.assertEqual(stat.S_IMODE(os.stat(marker).st_mode), 0o600)
+        with open(marker) as stream:
+            self.assertEqual(json.load(stream)["line"], [path, os.stat(path).st_ino, start, len(line)])
+        # systemd restarts it: that line is recovered from its envelope, never parsed again.
+        restarted = trace.Reporter(root=self.root, home="/home/bux", transport=self.mock.transport,
+                                   clock=lambda: self.now, log=self.logs.append)
+        restarted.state["firstStart"] = restarted.tracker.backfill_before = 0
+        restarted.step()
+        self.assertEqual(spy.long_parses, 1)
+        self.assertEqual(roles(self.events()), ["run.started", "tool.started", "tool.completed", "run.completed"])
+        self.assertEqual((self.events()[2]["timeUnixNano"], attrs(self.events()[2])["success"]), (str(ns(T0 + 2)), True))
+        self.assertEqual(len(self.heartbeats()), 1)
+        self.assertEqual((restarted.tracker.stats["lines.crashed"], restarted.tracker.stats["lines.crashed_recovered"]),
+                         (1, 1))
+        self.assertIn("stopped the reporter", " ".join(self.logs))
+        # Once delivered past it, the skip is forgotten.
+        trace.Reporter(root=self.root, home="/home/bux", transport=self.mock.transport, clock=lambda: self.now,
+                       log=self.logs.append)
+        with open(marker) as stream:
+            self.assertEqual(json.load(stream), {"v": 1, "line": None, "skip": []})
+
+    def test_large_lines_parse_normally_under_the_marker(self):
+        spy = spy_on_parses(self)
+        path = self.write("s.jsonl", [prompt(T0, "p-1"), tool_use(T0 + 1, "toolu-1")], directory=self.projects)
+        with open(path, "a") as stream:
+            stream.write(result_line(T0 + 2, "toolu-1", "p-1", "x" * (trace.MARK_BYTES + 10)) + "\n")
+        marks = []
+        guard = self.reporter.tracker.guard
+        self.reporter.tracker.guard = lambda line: (marks.append(line), guard(line))[1]
+        self.reporter.step()
+        self.assertEqual(spy.long_parses, 1)
+        self.assertEqual([None if line is None else line[0] for line in marks], [path, None])
+        self.assertEqual(roles(self.events()), ["run.started", "tool.started", "tool.completed"])
+        with open(os.path.join(self.state_dir, "parsing.json")) as stream:
+            self.assertIsNone(json.load(stream)["line"])
+
+    def test_first_start_floor_uses_the_filesystem_clock(self):
+        os.unlink(os.path.join(self.state_dir, "state.json"))
+        # The process clock may run ahead of file timestamps (coarse or other clock domain).
+        reporter = trace.Reporter(root=self.root, home="/home/bux", transport=self.mock.transport,
+                                  clock=lambda: time.time() + 5, log=self.logs.append)
+        marker = os.stat(os.path.join(self.state_dir, "state.json")).st_mtime
+        self.assertAlmostEqual(reporter.state["firstStart"], marker - trace.FRESH_MARGIN, delta=0.25)
+        history = self.write("rollout-old.jsonl", [codex_meta(session="old-s"), *codex_turn("turn-0")])
+        os.utime(history, (marker - 60, marker - 60))
+        # Written just after the first start, on a filesystem that truncates timestamps.
+        fresh = self.write("rollout-new.jsonl", [codex_meta(session="new-s"), *codex_turn("turn-1")])
+        os.utime(fresh, (marker - 0.5, marker - 0.5))
+        reporter.step()
+        self.assertEqual({attrs(r)["conversation.id"] for r in self.events()}, {"new-s"})
+        self.assertEqual(len(self.events()), 4)
+        self.assertEqual(reporter.state["files"][history]["o"], os.path.getsize(history))
 
     def test_rejected_batches_are_dropped_and_advanced(self):
         path = self.write("rollout-a.jsonl", [codex_meta(), *codex_turn()])
@@ -774,8 +1068,8 @@ class ReporterTest(unittest.TestCase):
             self.assertEqual(json.load(stream), {"endpoint": ENDPOINT, "resourceId": RESOURCE, "token": NEW_TOKEN,
                                                  "expiresAt": expires})
         self.assertEqual(stat.S_IMODE(os.stat(credential).st_mode), 0o600)
-        # The refused heartbeat, its retry, then the run's four records.
-        self.assertEqual([len(self.mock.records(d)) for _, d in self.mock.ingested()], [1, 1, 4])
+        # The refused run records, their retry, then the heartbeat.
+        self.assertEqual([len(self.mock.records(d)) for _, d in self.mock.ingested()], [4, 4, 1])
 
     def test_failed_renewal_waits_for_a_pushed_replacement(self):
         self.write("rollout-a.jsonl", [codex_meta(), *codex_turn()])
@@ -795,7 +1089,7 @@ class ReporterTest(unittest.TestCase):
         self.reporter.step()
         self.assertEqual({headers["authorization"] for _, headers, _ in self.mock.requests[count:]},
                          {"Bearer " + NEW_TOKEN})
-        self.assertEqual([len(self.mock.records(d)) for _, d in self.mock.ingested()], [1, 1, 4])
+        self.assertEqual([len(self.mock.records(d)) for _, d in self.mock.ingested()], [4, 4, 1])
         self.assertNotIn("credential", self.reporter.state)
 
     def test_forbidden_and_missing_resource_back_off_five_minutes(self):
@@ -1134,6 +1428,45 @@ class UnitFileTest(unittest.TestCase):
         self.assertNotIn("ReadWritePaths", settings)  # would fail before the state directory exists
         self.assertTrue(all(path.startswith("-") for value in settings["ReadOnlyPaths"] for path in value.split()))
         self.assertTrue(settings["MemoryMax"] and settings["CPUQuota"])
+
+    def test_memory_ceiling_holds_the_worst_admitted_line_with_margin(self):
+        (ceiling,) = [line.split("=", 1)[1] for line in (HERE / "hivra-agent-trace.service").read_text().splitlines()
+                      if line.startswith("MemoryMax=")]
+        self.assertRegex(ceiling, r"^[0-9]+M$")
+        ceiling_mb = int(ceiling[:-1])
+
+        def peak_mb(line):
+            # The real line path (read, bound check, parse) in a fresh process; aggregate counts only.
+            with tempfile.TemporaryDirectory() as home:
+                projects = os.path.join(home, ".claude", "projects", "p")
+                os.makedirs(projects)
+                with open(os.path.join(projects, "s.jsonl"), "wb") as stream:
+                    stream.write(line + b"\n")
+                result = subprocess.run([sys.executable, "-I", "-B", str(SCRIPT), "scan", "--home", home,
+                                         "--all-history", "--stats"], capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            stats = json.loads(result.stdout)
+            return stats["max_rss_mb"], stats.get("lines.containers", 0)
+
+        def fill(prefix, unit, suffix):
+            count = (trace.MAX_LINE - len(prefix) - len(suffix)) // len(unit)
+            return prefix + unit * count + suffix
+
+        # The costliest shapes measured per byte: one object of distinct keys
+        # (admitted: one container), and small objects (bounded by the count).
+        keys, size, index = [b"{"], 1, 0
+        while size < trace.MAX_LINE - 32:
+            item = b'"%x":0,' % index
+            keys.append(item)
+            size += len(item)
+            index += 1
+        admitted, admitted_containers = peak_mb(b"".join(keys)[:-1] + b"}")
+        refused, refused_containers = peak_mb(fill(b"[", b'{"a":0},', b'{"a":0}]'))
+        self.assertEqual((admitted_containers, refused_containers), (0, 1))
+        self.assertLess(refused, admitted)
+        # 1.5x margin over the worst admitted line, which includes the interpreter itself.
+        self.assertLessEqual(admitted * 1.5, ceiling_mb, "MemoryMax=%s, worst admitted line peaked at %d MB"
+                             % (ceiling, admitted))
 
 
 if __name__ == "__main__":

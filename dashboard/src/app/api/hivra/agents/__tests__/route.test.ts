@@ -3063,8 +3063,14 @@ ${fragment}`, "phase1", secretFile], { encoding: "utf8" });
       // Self-managed evidence and the managed Canary channel both pin the
       // current release; the managed default fleet is covered above.
       const expected = provisionerSupportsActivityTelemetry(PORTABLE_HIVRA_PROVISIONER_VERSION);
+      // The pinned host runs the same bundle probe; it prints the staged
+      // marker only when the probe passed, and only then is issuance recorded.
+      const phase1 = (ip: string) => async (body: string) => ({
+        ok: true,
+        stdout: `${body.includes("HIVRA_ACTIVITY_STAGE=1") ? "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n" : ""}HIVRA_PROVISION_RESULT {"vmid":200,"ip":"${ip}"}\n`,
+      });
       mockRunProxmoxHostScript.mockReset()
-        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.251.20.50"}\n' })
+        .mockImplementationOnce(phase1("10.251.20.50"))
         .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_ALLOCATION_VERIFIED 200\n" })
         .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
       const selfManaged = await POST(makeRequest({
@@ -3072,16 +3078,19 @@ ${fragment}`, "phase1", secretFile], { encoding: "utf8" });
       }) as never);
       expect(selfManaged.status).toBe(201);
       expect(handedOffTelemetry(kickoffScript()) !== "").toBe(expected);
+      expect(mockCollectorUpsert).toHaveBeenCalledTimes(expected ? 1 : 0);
 
       process.env.VERCEL_TARGET_ENV = "canary";
       mockRunProxmoxHostScript.mockReset()
-        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockImplementationOnce(phase1("10.250.21.50"))
         .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
         .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
       const canary = await POST(makeRequest({ type: "claude-code", name: "CANARY", cpu: 2, ram: 4 }) as never);
       expect(canary.status).toBe(201);
       expect(kickoffScript()).toContain("/root/hivra-provisioner-canary");
       expect(handedOffTelemetry(kickoffScript()) !== "").toBe(expected);
+      expect(mockCollectorUpsert).toHaveBeenCalledTimes(expected ? 2 : 0);
+      for (const [row] of mockCollectorUpsert.mock.calls) expect(row).toMatchObject({ agent_id: AGENT_ID, issue_reason: "launch" });
     });
   });
 

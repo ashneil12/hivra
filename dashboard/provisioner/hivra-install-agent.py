@@ -470,7 +470,9 @@ def install_activity_reporter(launch, source):
         relay_reporter_status(error.stderr, telemetry["token"])
         report_activity_collector("failed", "install_failed")
         return
-    except OSError:
+    except Exception:
+        # Fail-open for anything else too (a missing interpreter, an OS
+        # error): the exception text is never printed, only the closed enum.
         report_activity_collector("failed", "install_failed")
         return
     relay_reporter_status(completed.stderr, telemetry["token"])
@@ -479,16 +481,18 @@ def install_activity_reporter(launch, source):
 
 def report_activity_collector(status, reason=None):
     # The one line the control plane records as this computer's reporter
-    # install status (host provisioning log). A closed enum, never a message.
-    # The leading newline keeps it a whole line even if bootstrap output on
-    # the other stream ended without one.
+    # install status: the host appends this stream to the provisioning log
+    # the dashboard poll reads. A closed enum, never a message. One write of
+    # the whole line with a leading newline, so it stays a line of its own even
+    # when bootstrap output on the other stream ended without one.
     if status == "installed" and reason is None:
         line = "HIVRA_ACTIVITY_COLLECTOR status=installed"
     elif status == "failed" and isinstance(reason, str) and re.fullmatch(r"[a-z_]{1,40}", reason):
         line = "HIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason
     else:
         raise InstallError("invalid agent-run reporter status")
-    print("\n" + line, file=sys.stderr, flush=True)
+    sys.stderr.write("\n" + line + "\n")
+    sys.stderr.flush()
 
 
 def relay_reporter_status(output, token):

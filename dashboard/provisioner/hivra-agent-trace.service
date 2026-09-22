@@ -15,7 +15,7 @@ User=root
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 AmbientCapabilities=
 NoNewPrivileges=true
-# The only writable path: credential.json and state.json (both 0600).
+# The only writable path: credential.json, state.json and parsing.json (0600).
 StateDirectory=hivra-agent-trace
 StateDirectoryMode=0700
 UMask=0077
@@ -39,7 +39,11 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-MemoryMax=256M
+# A line is parsed only within the reporter's parse-cost bound (<= 8 MiB and
+# <= 200k containers); the worst admitted line peaks near 270 MB resident
+# (Python 3.9/3.10), so the ceiling holds it with ~1.9x margin. A line that
+# still stops the process is skipped on the next start (parsing.json).
+MemoryMax=512M
 CPUQuota=25%
 TasksMax=16
 Nice=10

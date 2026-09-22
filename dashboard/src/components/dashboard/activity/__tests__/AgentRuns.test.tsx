@@ -259,9 +259,14 @@ it("keeps a failed run's status when only a tool step matches the search", () =>
   const { runs } = renderRuns(failed, undefined, {
     matches: (event) => event.toolName === "Bash",
   });
+  // Grouped from only the matching tool records, the run would have no end
+  // record ("No finish reported yet") and no start (incomplete).
   const [heading] = runs.getAllByText("Ended with a failure");
   expect(heading.previousElementSibling).toHaveTextContent("Builder · Codex run");
-  expect(heading).toHaveClass("warning");
+  expect(runs.queryByText("No finish reported yet")).not.toBeInTheDocument();
+  expect(runs.getByText(/^Started/)).toHaveTextContent(/1 tool call$/);
+  expect(runs.queryByText(/not in the loaded records|Started before/)).not.toBeInTheDocument();
+  expect(runs.getAllByRole("button")).toHaveLength(3);
 });
 
 it("says plainly when no run matches the search", () => {

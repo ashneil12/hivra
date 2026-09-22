@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Runtime receipt coverage for the optional agent-run reporter; no host mutation."""
-import hashlib
+"""The runtime receipt makes no claim about the agent-run reporter; no host mutation.
+
+The receipt is collected inside the runtime bootstrap, before the fail-open
+reporter install at launch and on every start (contract:
+docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md). Any record
+of the reporter there would describe a pre-install or stale state, so the
+receipt neither lists its files nor probes its unit, whatever is installed.
+"""
 import importlib.util
 import json
 from pathlib import Path
@@ -15,19 +21,22 @@ spec.loader.exec_module(receipt)
 
 SCRIPT = "/opt/hivra/agent-trace/hivra-agent-trace.py"
 UNIT = "/etc/systemd/system/hivra-agent-trace.service"
+UNIT_NAME = "hivra-agent-trace.service"
 SENTINEL = "hvra_otlp_v1.synthetic-never-read.receipt-sentinel"
 
 
 class Runner:
-    """Minimal fixture: only the reporter unit is loaded; every other probe is absent."""
+    """Minimal fixture: every probe is absent except dpkg and, optionally, an active reporter unit."""
 
     def __init__(self, reporter_active):
         self.reporter_active = reporter_active
+        self.calls = []
 
     def __call__(self, arguments, user=None):
+        self.calls.append(list(arguments))
         if arguments[0] == "/usr/bin/dpkg-query":
             return b"bash\t5.1-6ubuntu1.1\tamd64\tbash\t5.1-6ubuntu1.1\tii \n"
-        if arguments[0:2] == ["/usr/bin/systemctl", "show"] and arguments[-1] == "hivra-agent-trace.service":
+        if arguments[0:2] == ["/usr/bin/systemctl", "show"] and arguments[-1] == UNIT_NAME:
             if self.reporter_active:
                 return b"LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"
             return b"LoadState=not-found\nActiveState=inactive\nUnitFileState=\n"
@@ -42,19 +51,30 @@ class AgentTraceReceiptTest(unittest.TestCase):
         (self.root / "usr/lib").mkdir(parents=True)
         (self.root / "usr/lib/os-release").write_text('ID=ubuntu\nVERSION_ID="22.04"\n')
 
-    def collect(self, reporter_active):
+    def collect(self, runner):
         return receipt.collect_receipt(provisioner_version="2026.09.22.1", agent_kind="codex", substrate="proxmox-kvm",
-                                       browser_enabled=False, root=self.root, runner=Runner(reporter_active))
+                                       browser_enabled=False, root=self.root, runner=runner)
+
+    def assert_no_reporter_claim(self, value, runner):
+        rendered = receipt.encode(value).decode("ascii")
+        sbom = receipt.encode(receipt.build_installed_sbom(value, "a" * 64)).decode("ascii")
+        for text in (rendered, sbom):
+            self.assertNotIn("agent-trace", text)
+            self.assertNotIn(SENTINEL, text)
+        self.assertNotIn(UNIT_NAME, [record["unit"] for record in value["services"]])
+        self.assertFalse([call for call in runner.calls if UNIT_NAME in call])
 
     def test_computer_without_the_reporter_still_produces_a_receipt(self):
-        value = self.collect(False)
-        self.assertNotIn(SCRIPT, [artifact["path"] for artifact in value["artifacts"]])
-        self.assertNotIn(UNIT, [artifact["path"] for artifact in value["artifacts"]])
-        service = next(record for record in value["services"] if record["unit"] == "hivra-agent-trace.service")
-        self.assertEqual(service, {"active": "inactive", "load": "not-found", "unit": "hivra-agent-trace.service", "unitFile": ""})
-        receipt.build_installed_sbom(value, "a" * 64)
+        runner = Runner(reporter_active=False)
+        value = self.collect(runner)
+        self.assert_no_reporter_claim(value, runner)
+        self.assertEqual(value["schemaVersion"], 2)
 
-    def test_records_installed_reporter_identity_and_never_its_credential_or_state(self):
+    def test_installed_reporter_is_not_recorded_because_the_receipt_predates_its_install(self):
+        # Regression: the receipt listed the reporter's files and unit although
+        # it is written before the launch installer (and every start) installs
+        # the reporter, so launched computers showed a "not-found" reporter
+        # that was running moments later.
         files = {
             SCRIPT: b"#!/usr/bin/env python3\n# reporter fixture\n",
             UNIT: b"[Service]\nExecStart=/usr/bin/python3 -I -B /opt/hivra/agent-trace/hivra-agent-trace.py run\n",
@@ -66,20 +86,11 @@ class AgentTraceReceiptTest(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(raw)
             path.chmod(0o600 if absolute.startswith("/var/lib/") else 0o644)
-        value = self.collect(True)
-        artifacts = {artifact["path"]: artifact for artifact in value["artifacts"]}
-        for absolute in (SCRIPT, UNIT):
-            self.assertEqual(artifacts[absolute], {"mode": 0o644, "path": absolute,
-                                                   "sha256": hashlib.sha256(files[absolute]).hexdigest(),
-                                                   "size": len(files[absolute])})
-        self.assertFalse([path for path in artifacts if path.startswith("/var/lib/hivra-agent-trace")])
-        self.assertIn({"active": "active", "load": "loaded", "unit": "hivra-agent-trace.service", "unitFile": "enabled"},
-                      value["services"])
-        sbom = receipt.build_installed_sbom(value, "a" * 64)
-        self.assertIn(SCRIPT, [component["name"] for component in sbom["components"]])
-        for rendered in (receipt.encode(value), receipt.encode(sbom)):
-            self.assertNotIn(SENTINEL, rendered.decode("ascii"))
-            self.assertNotIn("credential.json", rendered.decode("ascii"))
+        runner = Runner(reporter_active=True)
+        value = self.collect(runner)
+        self.assert_no_reporter_claim(value, runner)
+        self.assertNotIn(SCRIPT, [artifact["path"] for artifact in value["artifacts"]])
+        self.assertNotIn(UNIT, [artifact["path"] for artifact in value["artifacts"]])
 
 
 if __name__ == "__main__":

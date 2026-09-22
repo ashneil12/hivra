@@ -164,6 +164,67 @@ it("reads the reporter credential from the host handoff optionally, so older das
   }
 });
 
+it("forwards the guest installer's reporter marker into the host provisioning log the poll reads", () => {
+  // Chain the real pieces: the host's guest-install statement (with ssh
+  // replaced by a local guest), the guest installer's own marker writer, the
+  // phase 1 kickoff's `>> "$LOG" 2>&1`, and the poll's exact grep pattern.
+  const hostSource = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+  const statement = hostSource.match(/^guest_launch_document \| "\$\{GSSH\[@\]\}" "ubuntu@\$\{IP\}" \\\n.*hivra-install-agent\.py" >&2$/m)?.[0];
+  expect(statement).toBeDefined();
+  const pollSource = readFileSync(path.join(process.cwd(), "src/app/api/hivra/agents/[id]/route.ts"), "utf8");
+  const pattern = pollSource.match(/const ACTIVITY_COLLECTOR_MARKER_PATTERN = "([^"]+)";/)?.[1];
+  expect(pattern).toBe("^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$");
+  const installer = path.join(process.cwd(), "provisioner/hivra-install-agent.py");
+  const directory = mkdtempSync(path.join(tmpdir(), "hivra-provision-log-"));
+  try {
+    const log = path.join(directory, "hivra-prov-1090.log");
+    const guest = (status: string, reason: string) => `set -euo pipefail
+guest_launch_document() { printf 'document'; }
+guest() {
+  cat >/dev/null
+  # Bootstrap output on stdout that ends mid-line, then the reporter marker.
+  printf 'bootstrap progress 42%%'
+  /usr/bin/python3 -I -B -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("guest_install", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.report_activity_collector(sys.argv[2], sys.argv[3] or None)' "$INSTALLER" "$STATUS" "$REASON"
+  printf 'Hivra access configured\\n'
+}
+GSSH=(guest)
+IP=10.250.21.90
+GUEST_PROVISIONER=/tmp/hivra-provisioner
+{
+${statement}
+} >> "$LOG" 2>&1 < /dev/null
+grep -E "$PATTERN" "$LOG"
+`;
+    for (const [status, reason, line] of [
+      ["installed", "", "HIVRA_ACTIVITY_COLLECTOR status=installed"],
+      ["failed", "timeout", "HIVRA_ACTIVITY_COLLECTOR status=failed reason=timeout"],
+    ]) {
+      writeFileSync(log, "", { mode: 0o600 });
+      const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", guest(status, reason)], {
+        env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", HOME: "/tmp", LOG: log, PATTERN: String(pattern),
+          INSTALLER: installer, STATUS: status, REASON: reason },
+        encoding: "utf8", timeout: 10_000,
+      });
+      expect({ status: result.status, stdout: result.stdout, stderr: result.stderr }).toEqual({ status: 0, stdout: `${line}\n`, stderr: "" });
+      expect(readFileSync(log, "utf8")).toBe(`bootstrap progress 42%\n${line}\nHivra access configured\n`);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps the runtime receipt free of any claim about the agent-run reporter", () => {
+  const result = spawnSync("/usr/bin/python3", ["-I", "-B", "scripts/test-runtime-receipt-agent-trace.py"], {
+    cwd: process.cwd(), encoding: "utf8", timeout: 20_000,
+  });
+  expect({ status: result.status, stdout: result.stdout }).toEqual({ status: 0, stdout: "" });
+  expect(result.stderr).toContain("OK");
+});
+
 it("preserves the legacy default browser/quick-tunnel input but rejects malformed browser flags", () => {
   expect(JSON.parse(document({}).stdout)).toMatchObject({ wantBrowser: null, tunnelToken: null });
   expect(JSON.parse(document({ HIVRA_WANT_BROWSER: "0" }).stdout)).toMatchObject({ wantBrowser: false });

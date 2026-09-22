@@ -249,13 +249,20 @@ export function nativeTracingCapability(agent: ActivityAgentRow, row: ActivityCo
     const installFailureReason = typeof row.last_install_reason === "string" && INSTALL_REASON.test(row.last_install_reason) ? row.last_install_reason : undefined;
     return { ...base, state: "missing", reason: "install_failed", ...seen, installFailedAt: installAt, ...(installFailureReason ? { installFailureReason } : {}) };
   }
+  const withinFirstReportGrace = !!issuedAt && now.getTime() - Date.parse(issuedAt) < FIRST_REPORT_GRACE_MS;
   if (!heartbeat) {
     if (!issuedAt) return { ...base, state: "missing", reason: "not_set_up", ...seen };
-    return now.getTime() - Date.parse(issuedAt) < FIRST_REPORT_GRACE_MS
+    return withinFirstReportGrace
       ? { ...base, state: "configured", ...seen }
       : { ...base, state: "missing", reason: "never_checked_in", ...seen };
   }
-  return { ...base, state: now.getTime() - Date.parse(heartbeat) > STALE_MS ? "stale" : "observed", ...seen };
+  const silent = now.getTime() - Date.parse(heartbeat) > STALE_MS;
+  // A start, restart or runtime update re-issues the credential and reinstalls
+  // the reporter, so until the first check-in after that issuance is due the
+  // computer is waiting for its first report, not stale. A renewal from a
+  // healthy reporter keeps its recent check-in and stays observed.
+  if (silent && withinFirstReportGrace && after(issuedAt!, heartbeat)) return { ...base, state: "configured", ...seen };
+  return { ...base, state: silent ? "stale" : "observed", ...seen };
 }
 
 const PRODUCER_NAMES: Array<[string, string]> = [["claude-code", "Claude Code"], ["codex", "Codex"]];
@@ -263,17 +270,26 @@ function agentTracingSource(entries: Array<{ agent: ActivityAgentRow; native: Ac
   const base = { id: "agent-tracing" as const, label: "Agent run reporting" };
   if (degraded) return { ...base, state: "degraded", detail: "Agent run reporting status could not be read." };
   const supported = entries.filter(({ native }) => native.state !== "unsupported");
-  if (!supported.length) return { ...base, state: "missing", detail: "Available for Claude Code and Codex computers on Hivra hosts; there are none in this account." };
+  if (!supported.length) {
+    // Claude Code or Codex on another host type is not the same as having none.
+    const otherHost = entries.some(({ native }) => native.reason === "substrate");
+    return { ...base, state: "missing", detail: otherHost
+      ? "Available for Claude Code and Codex computers on Hivra hosts; this account's Claude Code or Codex computers run on a host type that is not supported yet."
+      : "Available for Claude Code and Codex computers on Hivra hosts; there are none in this account." };
+  }
   const running = supported.filter(({ agent }) => agent.status === "running");
   if (!running.length) return { ...base, state: "missing", detail: "No Claude Code or Codex computer is running, so no reports are expected." };
   const count = (state: ActivityCapability["state"]) => running.filter(({ native }) => native.state === state).length;
   const producers = PRODUCER_NAMES.filter(([type]) => running.some(({ agent }) => agent.type === type)).map(([, name]) => name).join("/");
-  const observed = count("observed"), stale = count("stale"), expired = count("expired"), waiting = count("configured"), silent = count("missing");
+  const observed = count("observed"), stale = count("stale"), expired = count("expired"), waiting = count("configured");
+  const installFailed = running.filter(({ native }) => native.state === "missing" && native.reason === "install_failed").length;
+  const silent = count("missing") - installFailed;
   const detail = [
     `${observed} of ${running.length} running ${producers} computer${running.length === 1 ? "" : "s"} reporting.`,
     ...(stale ? [`${stale} stopped reporting.`] : []),
     ...(expired ? [`${expired} with an expired reporting credential.`] : []),
     ...(waiting ? [`${waiting} waiting for a first report.`] : []),
+    ...(installFailed ? [`${installFailed} could not install the reporter.`] : []),
     ...(silent ? [`${silent} not reporting.`] : []),
   ].join(" ");
   return { ...base, state: stale || expired ? "stale" : observed ? "active" : "missing", detail };

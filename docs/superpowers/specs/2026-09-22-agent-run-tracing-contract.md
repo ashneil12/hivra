@@ -187,9 +187,9 @@ Evaluated in order, first match wins:
 1. `degraded`: the collectors lane could not be read.
 2. `unsupported`: type is not `claude-code`/`codex`, or substrate is not `proxmox-kvm`.
 3. `not_running`: agent status is not `running` (silence expected).
-4. `expired`: `credential_expires_at <= now`, or the last rejection was `expired` after the last heartbeat.
+4. `expired`: `credential_expires_at <= now`, or an `expired` rejection was recorded after both the latest issuance and the latest heartbeat.
 5. `missing`: no collector row (launched before reporting existed, or issuance failed), or the last install attempt after issuance failed (explained as "could not be installed").
-6. `configured`: issued, no heartbeat yet, issued less than 10 min ago ("waiting for first report").
+6. `configured`: no heartbeat since the latest issuance, and that issuance was less than 10 min ago ("waiting for first report"; covers a fresh launch and a restart that re-issued the credential).
 7. `missing`: issued 10 min or more ago and never heard from.
 8. `stale`: last heartbeat older than 15 min.
 9. `observed`.

@@ -236,14 +236,45 @@ export function presentEvent(event: ActivityEvent) {
     warning: failed || event.needsAttention,
   };
 }
-export function sourceExplanation(source: ActivitySource) {
+/**
+ * What a source's state means. For agent run reporting, `resources` (the
+ * computers on the page) tells "none can report here" apart from "none is
+ * reporting right now".
+ */
+export function sourceExplanation(
+  source: ActivitySource,
+  resources?: ActivityResource[],
+) {
   if (source.state === "degraded")
     return "Hivra could not load these records. Refresh to try again; activity may be missing until the read succeeds.";
   if (source.id === "agent-tracing") {
     if (source.state === "stale")
-      return "At least one running Claude Code or Codex computer has stopped checking in, so some of its runs may be missing.";
-    if (source.state === "missing")
+      return "At least one running Claude Code or Codex computer has stopped checking in or has an expired reporting credential, so some of its runs may be missing.";
+    if (source.state === "missing") {
+      const tracing = (resources ?? []).flatMap((resource) =>
+        resource.capabilities
+          .filter((capability) => capability.key === "native_tracing")
+          .map((capability) => ({ resource, capability })),
+      );
+      const supported = tracing.filter(
+        ({ capability }) => capability.state !== "unsupported",
+      );
+      if (resources && !supported.length)
+        return tracing.some(
+          ({ resource, capability }) =>
+            nativeTracingReason(capability, {
+              agentType: resource.agentType,
+            }) === "substrate",
+        )
+          ? "Automatic run reporting works for Claude Code and Codex on Hivra-hosted computers. Your Claude Code or Codex computers run on a host type that isn’t supported yet, so none of them report runs."
+          : "Automatic run reporting covers Claude Code and Codex computers on Hivra hosts. There are none in this account, so no runs are reported.";
+      if (
+        resources &&
+        supported.every(({ capability }) => capability.state === "not_running")
+      )
+        return "No Claude Code or Codex computer is running, so no reports are expected.";
       return "No running Claude Code or Codex computer is reporting right now. Silence does not mean the agents were idle.";
+    }
     return "Claude Code and Codex computers report when tasks start and end and which tools they call. This is what the agent reports about itself, not an audit of the computer.";
   }
   if (source.state === "missing")
@@ -280,9 +311,11 @@ export function nativeTracingReason(
         ? "substrate"
         : "agent_type";
     case "missing":
-      return capability.issuedAt || capability.expiresAt
-        ? "never_checked_in"
-        : "not_set_up";
+      return capability.installFailedAt
+        ? "install_failed"
+        : capability.issuedAt || capability.expiresAt
+          ? "never_checked_in"
+          : "not_set_up";
     case "expired": {
       const expires = capability.expiresAt
         ? Date.parse(capability.expiresAt)
@@ -317,11 +350,14 @@ export function capabilityStateLabel(
   );
 }
 
+// The closed failure codes the launch installer and start helper emit.
 const installFailures: Record<string, string> = {
   timeout: "it timed out",
   transfer_failed: "it could not be copied to the computer",
   install_failed: "the installer reported an error",
   invalid_input: "its setup details were refused",
+  source_missing: "its files were not available on the host",
+  not_attempted: "the start did not reach the install step",
 };
 /** Plain-language cause of a failed reporter install, from its failure code. */
 export function installFailureText(code?: string): string | undefined {
@@ -364,8 +400,10 @@ export function capabilityExplanation(
     case "stale":
       return "Hasn’t checked in for 15+ min while running; runs in this gap may be missing.";
     case "expired":
+      // Only what the records show: an expired credential arrived after the
+      // latest issuance and check-in, while the recorded one is still valid.
       if (reason === "expired_credential_presented")
-        return "Hivra issued a new reporting credential, but the computer is still using an expired one, so new runs are not being recorded. Restart the computer again; if this keeps happening, contact support.";
+        return `The computer presented an expired reporting credential${capability.issuedAt ? " after its latest one was issued" : ""}, so new runs are not being recorded. Restarting the computer issues a fresh one; if this keeps happening, contact support.`;
       return "The reporting credential ran out, so new runs are not being recorded. Restarting the computer issues a new one.";
     case "unsupported":
       return reason === "substrate"

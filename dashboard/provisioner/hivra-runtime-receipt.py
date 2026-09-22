@@ -263,10 +263,11 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
         "/opt/bux/hivra-chat/server.js",
         "/usr/local/bin/hivra-agent-shell",
         "/usr/share/doc/hivra-caddy/LICENSE",
-        # Agent-run reporter (Claude Code/Codex only). Optional like every
-        # record here; its 0600 credential and state are never read.
-        "/opt/hivra/agent-trace/hivra-agent-trace.py",
-        "/etc/systemd/system/hivra-agent-trace.service",
+        # The agent-run reporter (/opt/hivra/agent-trace, hivra-agent-trace.service)
+        # is deliberately absent: this receipt is collected inside the runtime
+        # bootstrap, before the fail-open reporter install at launch and on every
+        # start, so any record of it here would describe a stale or pre-install
+        # state. Its evidence is the control plane's install marker and heartbeats.
         "/etc/hivra/deepseek-native.json",
         "/etc/hivra/deepseek-install.json",
         "/opt/hivra/deepseek-runtime/package.json",
@@ -291,7 +292,7 @@ def service_records(runner: Callable[[list[str], str | None], bytes | None]) -> 
     units = [
         "bux-aeon.service", "bux-box-ttyd.service", "bux-hivra-chat.service",
         "bux-local-browser.service", "bux-openclaw.service", "bux-ttyd.service",
-        "hivra-direct-access.service", "hivra-agent-trace.service",
+        "hivra-direct-access.service",
         "hivra-agent-zero.service", "hivra-novnc.service", "hivra-x11vnc.service", "hivra-xvfb.service",
     ]
     records = []

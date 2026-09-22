@@ -69,6 +69,22 @@ describe("native tracing coverage",()=>{
     expect(nativeState(agent(),collector({credential_expires_at:ago(1)}))).toMatchObject({state:"expired",reason:"credential_ran_out"});
   });
 
+  it("waits for the first report after a re-issue instead of calling a restarted computer stale",()=>{
+    const future=new Date(NOW.getTime()+7*86_400_000).toISOString();
+    // Checked in two days ago, restarted (re-issued) 4 minutes ago: waiting, not a Needs-attention gap.
+    expect(nativeState(agent(),collector({issued_at:ago(4),credential_expires_at:future,last_heartbeat_at:ago(2*24*60)}))).toMatchObject({state:"configured",issuedAt:ago(4),lastSeenAt:ago(2*24*60)});
+    // The grace ends: still silent since the re-issue, so it stopped reporting.
+    expect(nativeState(agent(),collector({issued_at:ago(11),credential_expires_at:future,last_heartbeat_at:ago(2*24*60)})).state).toBe("stale");
+    // A renewal from a healthy reporter keeps its recent check-in.
+    expect(nativeState(agent(),collector({issued_at:ago(1),credential_expires_at:future,last_heartbeat_at:ago(3)})).state).toBe("observed");
+    // The whole lifecycle: expired, then a restart re-issues, then the first check-in.
+    const expiredRow=collector({issued_at:ago(8*24*60),credential_expires_at:ago(60),last_heartbeat_at:ago(2*24*60),last_rejected_at:ago(30),last_rejected_reason:"expired"});
+    expect(nativeState(agent(),expiredRow)).toMatchObject({state:"expired",reason:"credential_ran_out"});
+    const reissued={...expiredRow,issued_at:ago(2),credential_expires_at:future};
+    expect(nativeState(agent(),reissued)).toMatchObject({state:"configured",expiresAt:future});
+    expect(nativeState(agent(),{...reissued,last_heartbeat_at:ago(1)}).state).toBe("observed");
+  });
+
   it("tells never set up, set up but never checked in, and could not be installed apart",()=>{
     expect(nativeState(agent())).toEqual({key:"native_tracing",label:"Agent run reporting",state:"missing",reason:"not_set_up"});
     expect(nativeState(agent(),collector({issued_at:null,last_heartbeat_at:null}))).toMatchObject({state:"missing",reason:"not_set_up"});
@@ -123,6 +139,21 @@ describe("native tracing coverage",()=>{
     expect(healthy.sources.find(s=>s.id==="agent-tracing")).toMatchObject({state:"active",detail:"1 of 1 running Codex computer reporting."});
     const idle=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent({status:"stopped"})],collectorRows:[]});
     expect(idle.sources.find(s=>s.id==="agent-tracing")?.state).toBe("missing");
+  });
+
+  it("names the host type when this account's Claude Code and Codex computers cannot report there",()=>{
+    const B="00000000-0000-4000-8000-00000000000b";
+    const provider=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent({type:"claude-code",computer_substrate:"provider-vm"}),agent({id:B,type:"aeon"})],collectorRows:[]});
+    expect(provider.sources.find(s=>s.id==="agent-tracing")).toMatchObject({state:"missing",detail:"Available for Claude Code and Codex computers on Hivra hosts; this account's Claude Code or Codex computers run on a host type that is not supported yet."});
+    const none=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent({type:"aeon"})],collectorRows:[]});
+    expect(none.sources.find(s=>s.id==="agent-tracing")?.detail).toBe("Available for Claude Code and Codex computers on Hivra hosts; there are none in this account.");
+  });
+
+  it("counts computers whose reporter could not be installed apart from ones that are silent",()=>{
+    const B="00000000-0000-4000-8000-00000000000b", C="00000000-0000-4000-8000-00000000000c";
+    const snapshot=buildActivitySnapshot({now:NOW,limit:20,eventRows:[],sessionRows:[],agentRows:[agent(),agent({id:B}),agent({id:C})],
+      collectorRows:[collector(),collector({agent_id:B,issued_at:ago(30),last_heartbeat_at:null,last_install_status:"failed",last_install_reason:"timeout",last_install_at:ago(29)}),collector({agent_id:C,issued_at:ago(30),last_heartbeat_at:null})]});
+    expect(snapshot.sources.find(s=>s.id==="agent-tracing")?.detail).toBe("1 of 3 running Codex computers reporting. 1 could not install the reporter. 1 not reporting.");
   });
 });
 

@@ -218,6 +218,40 @@ it("explains the agent run reporting source without treating silence as idleness
   );
 });
 
+it("says why no computer reports runs: none on a supported host, none at all, or none running", () => {
+  const source = {
+    id: "agent-tracing" as const,
+    label: "Agent run reporting",
+    state: "missing" as const,
+    detail: "",
+  };
+  const computer = (
+    id: string,
+    agentType: string,
+    capability: ActivityCapability,
+  ): ActivityResource => ({ id, name: id, agentType, capabilities: [capability] });
+  // Claude Code on a provider VM: the host type is the limit, not the agent.
+  const provider = sourceExplanation(source, [
+    computer("p", "claude-code", tracing("unsupported", { reason: "substrate" })),
+    computer("d", "linux-desktop", tracing("unsupported", { reason: "agent_type" })),
+  ]);
+  expect(provider).toMatch(/Your Claude Code or Codex computers run on a host type that isn’t supported yet/);
+  expect(provider).not.toMatch(/Silence|There are none/);
+  // An older response without a reason still infers the host type from the agent type.
+  expect(
+    sourceExplanation(source, [computer("c", "codex", tracing("unsupported"))]),
+  ).toMatch(/host type that isn’t supported yet/);
+  expect(
+    sourceExplanation(source, [computer("d", "linux-desktop", tracing("unsupported"))]),
+  ).toMatch(/There are none in this account/);
+  expect(
+    sourceExplanation(source, [computer("s", "codex", tracing("not_running"))]),
+  ).toBe("No Claude Code or Codex computer is running, so no reports are expected.");
+  expect(
+    sourceExplanation(source, [computer("m", "codex", tracing("missing", { reason: "not_set_up" }))]),
+  ).toMatch(/Silence does not mean the agents were idle/);
+});
+
 it("raises reporting alerts only for running computers that are stale or expired", () => {
   const resource = (
     id: string,
@@ -301,7 +335,19 @@ it("tells never set up, set up but silent, and could not be installed apart", ()
   expect(installFailureText("transfer_failed")).toBe(
     "it could not be copied to the computer",
   );
+  expect(installFailureText("source_missing")).toBe(
+    "its files were not available on the host",
+  );
+  expect(installFailureText("not_attempted")).toBe(
+    "the start did not reach the install step",
+  );
   expect(installFailureText("disk_full")).toBe("failure code disk_full");
+  // An older response without a reason: a recorded failed install still reads as one.
+  expect(
+    capabilityStateLabel(
+      tracing("missing", { installFailedAt: "2026-09-21T10:01:00Z", issuedAt: "2026-09-21T10:00:00Z" }),
+    ),
+  ).toBe("Reporter could not be installed");
   expect(installFailureText(undefined)).toBeUndefined();
 });
 
@@ -312,15 +358,18 @@ it("explains an expired credential the computer still presents after a re-issue"
     issuedAt: "2026-09-21T11:40:00Z",
   });
   expect(capabilityExplanation(presented)).toBe(
-    "Hivra issued a new reporting credential, but the computer is still using an expired one, so new runs are not being recorded. Restart the computer again; if this keeps happening, contact support.",
+    "The computer presented an expired reporting credential after its latest one was issued, so new runs are not being recorded. Restarting the computer issues a fresh one; if this keeps happening, contact support.",
   );
-  // An older response without a reason: a future expiry on an expired state means the same.
-  expect(
-    capabilityExplanation(
-      tracing("expired", { expiresAt: "2026-09-28T12:00:00Z" }),
-      { now: "2026-09-21T12:00:00Z" },
-    ),
-  ).toMatch(/still using an expired one/);
+  // It never claims the expiry ran out: the recorded credential is still valid.
+  expect(capabilityExplanation(presented)).not.toMatch(/ran out/);
+  // An older response without a reason: a future expiry on an expired state
+  // means the same; without an issuance it claims no re-issue.
+  const inferred = capabilityExplanation(
+    tracing("expired", { expiresAt: "2026-09-28T12:00:00Z" }),
+    { now: "2026-09-21T12:00:00Z" },
+  );
+  expect(inferred).toMatch(/^The computer presented an expired reporting credential, so new runs/);
+  expect(inferred).not.toMatch(/issued/);
   expect(
     capabilityExplanation(
       tracing("expired", { expiresAt: "2026-09-20T12:00:00Z" }),

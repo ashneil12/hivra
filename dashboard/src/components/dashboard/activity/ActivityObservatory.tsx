@@ -65,15 +65,26 @@ function CredentialLine({
   context: CapabilityContext;
 }) {
   const reason = nativeTracingReason(capability, context);
-  // A newer credential was issued but the computer still presents an expired
-  // one: "valid until" would describe a credential the computer is not using.
-  if (reason === "expired_credential_presented")
-    return capability.issuedAt ? (
+  // The computer presented an expired credential after the latest issuance:
+  // "valid until" would describe a credential it is not using.
+  if (reason === "expired_credential_presented") {
+    if (!capability.issuedAt) return null;
+    const issued = Date.parse(capability.issuedAt);
+    const checkedIn = capability.lastSeenAt
+      ? Date.parse(capability.lastSeenAt)
+      : NaN;
+    // Whether the computer ever checked in with the latest credential.
+    const neverUsed = Number.isNaN(checkedIn) || checkedIn < issued;
+    return (
       <p className={styles.meta}>
-        New reporting credential issued {timestamp(capability.issuedAt)}; the
-        computer has not started using it
+        {neverUsed ? "New" : "Latest"} reporting credential issued{" "}
+        {timestamp(capability.issuedAt)};{" "}
+        {neverUsed
+          ? "the computer has not checked in with it"
+          : "the computer has since presented an expired one"}
       </p>
-    ) : null;
+    );
+  }
   // Set up but not reporting: the credential exists only in Hivra's records.
   if (capability.state === "missing")
     return capability.issuedAt ? (
@@ -549,7 +560,9 @@ export function ActivityObservatory({
                   >
                     {monitoringStates[source.state]}
                   </span>
-                  <p className={styles.muted}>{sourceExplanation(source)}</p>
+                  <p className={styles.muted}>
+                    {sourceExplanation(source, data.resources)}
+                  </p>
                   <details className={styles.technical}>
                     <summary>Technical source details</summary>
                     <p>{source.label}</p>

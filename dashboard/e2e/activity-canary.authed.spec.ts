@@ -1,7 +1,13 @@
 import { expect, test } from "@playwright/test";
 import type { ActivitySnapshot } from "../src/lib/activity-observability/types";
-import { reportingAlerts } from "../src/components/dashboard/activity/presentation";
 import {
+  capabilityExplanation,
+  capabilityStateLabel,
+  reportingAlerts,
+} from "../src/components/dashboard/activity/presentation";
+import {
+  describeIncompleteRun,
+  describeRunCounts,
   describeRunStatus,
   groupActivityRuns,
 } from "../src/components/dashboard/activity/run-groups";
@@ -111,8 +117,26 @@ test.describe("Activity observatory (deployed canary)", () => {
         hasText: describeRunStatus(group).text,
       });
       await expect(run.first()).toBeVisible();
+      // "Load older events" is offered only when an older page exists.
       if (group.incomplete)
-        await expect(runs).toContainText("Started before the loaded records");
+        await expect(runs).toContainText(describeIncompleteRun(Boolean(data.nextCursor)));
+    }
+    // Searching for one tool picks the run but never trims it: its status and
+    // counts still come from every loaded record.
+    const searched = groups.find(
+      (group) =>
+        group.native &&
+        group.steps.some((step) => step.kind === "tool" && step.event.toolName),
+    );
+    const tool = searched?.steps.find((step) => step.kind === "tool" && step.event.toolName)?.event.toolName;
+    if (searched && tool) {
+      await activity.getByRole("searchbox").fill(tool);
+      const run = runs.getByRole("article").filter({ hasText: searched.agentName }).filter({
+        hasText: describeRunStatus(searched).text,
+      }).filter({ hasText: describeRunCounts(searched).join(" · ") });
+      await expect(run.first()).toBeVisible();
+      await expect(runs).toContainText("Showing runs with a step that matches your search");
+      await activity.getByRole("searchbox").fill("");
     }
     const steps = runs.getByRole("button");
     if (await steps.count()) {
@@ -134,6 +158,15 @@ test.describe("Activity observatory (deployed canary)", () => {
     if (alerts.length) {
       for (const { resource } of alerts) await expect(gaps).toContainText(resource.name);
     } else await expect(gaps).toHaveCount(0);
+    // The badge counts every item; a search that hides them all says so.
+    if (flagged + alerts.length) {
+      await activity.getByRole("searchbox").fill("__no_activity_match_fixture__");
+      await expect(activity).toContainText(
+        `${flagged + alerts.length} ${flagged + alerts.length === 1 ? "item needs" : "items need"} attention but`,
+      );
+      await activity.getByRole("button", { name: "Clear search and filters" }).click();
+      await expect(activity).not.toContainText("hidden by your search or filters");
+    }
     await activity
       .getByRole("button", { name: "What is monitored", exact: true })
       .click();
@@ -156,6 +189,15 @@ test.describe("Activity observatory (deployed canary)", () => {
       )
     )
       await expect(coverage).toContainText("Agent run reporting");
+    // Each computer's run reporting reads from its own recorded state and cause.
+    for (const resource of data.resources.slice(0, 20)) {
+      const native = resource.capabilities.find((capability) => capability.key === "native_tracing");
+      if (!native) continue;
+      const context = { status: resource.status, agentType: resource.agentType, now: data.generatedAt };
+      await expect(coverage).toContainText(capabilityStateLabel(native, context));
+      const explanation = capabilityExplanation(native, context);
+      if (explanation) await expect(coverage).toContainText(explanation);
+    }
     const refreshed = page.waitForResponse(
       (res) =>
         res.url().includes("/api/activity?") &&
