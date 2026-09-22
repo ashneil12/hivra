@@ -14,7 +14,9 @@
 -- Changes:
 --   yearly_token_quotes
 --     * status 'manual_review' — a payment was seen but cannot be credited
---       automatically (under-paid, far over-paid, or late); the transfer is in
+--       automatically (under-paid, far over-paid, late, left behind by the
+--       pre-attribution flow, or possibly already spent by that flow's
+--       balance-based settlement); the transfer is in
 --       yearly_token_reconciliation_items.
 --     * consumed_log_index, and (consumed_tx_hash, consumed_log_index) is
 --       unique: one Transfer log pays at most one quote. Keyed per log, not per
@@ -132,7 +134,9 @@ create table if not exists public.yearly_token_reconciliation_items (
     check (status in ('open', 'resolved', 'ignored')),
   -- underpaid | overpaid | late_payment | unattributed_late_transfer |
   -- extra_transfer | payment_after_review | legacy_subscription_exists |
-  -- contested_by_managed_venice_review
+  -- contested_by_managed_venice_review (a managed-Venice review recorded this
+  -- yearly payment: do not credit it there) | predates_legacy_settlement (the
+  -- balance-based flow may already have spent it: do not credit it blindly)
   reason text not null check (btrim(reason) <> ''),
   transaction_hash text,
   log_index integer,

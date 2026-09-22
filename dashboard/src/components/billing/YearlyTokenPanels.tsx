@@ -721,11 +721,14 @@ export function YearlyTokenPaymentModal({
   error,
   quote,
   onClose,
+  reviewPending = false,
 }: {
   isOpen: boolean;
   tier: "pro" | "power" | null;
   loading: boolean;
   error: string | null;
+  /** A payment for this tier is already under manual review. */
+  reviewPending?: boolean;
   quote: {
     id: string;
     tier: "pro" | "power";
@@ -836,7 +839,30 @@ export function YearlyTokenPaymentModal({
           />
         )}
 
-        {quote && !loading && (
+        {reviewPending && (
+          <div
+            role="note"
+            style={{ border: "1px solid var(--gold-leaf)", padding: "0.65rem 0.85rem", fontSize: 12.5, lineHeight: 1.5 }}
+          >
+            A payment for {tierName} is already under review. You don&apos;t need to pay again unless we ask you to —
+            we&apos;ll sort it out and email you.
+          </div>
+        )}
+
+        {quote && !loading && expired && (
+          <>
+            <div
+              role="status"
+              style={{ border: "1px solid rgba(179,38,30,0.5)", padding: "0.75rem 0.9rem", fontSize: 13, lineHeight: 1.5 }}
+            >
+              <strong>This quote expired.</strong> If you already sent the tokens, don&apos;t send them again: payments
+              that arrive up to 2 hours late are still found and reviewed. Otherwise, close this and start a fresh quote.
+            </div>
+            <BankrTrustFooter />
+          </>
+        )}
+
+        {quote && !loading && !expired && (
           <>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.55, fontWeight: 700 }}>
@@ -929,10 +955,8 @@ export function YearlyTokenPaymentModal({
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <span className="mono" style={{ fontSize: 11, color: expired ? "#b3261e" : "#16a34a" }}>
-                {expired
-                  ? "Quote expired. If you already sent the tokens, don't send them again — late payments are still found and reviewed."
-                  : `Expires in ${countdown}`}
+              <span className="mono" style={{ fontSize: 11, color: "#16a34a" }}>
+                {`Expires in ${countdown}`}
               </span>
               <span className="mono" style={{ fontSize: 9, opacity: 0.55, letterSpacing: "0.12em", textTransform: "uppercase" }}>
                 Quote locked
@@ -940,7 +964,7 @@ export function YearlyTokenPaymentModal({
             </div>
 
             <p style={{ fontSize: 11, color: "var(--text-muted, var(--text-secondary))", margin: 0, lineHeight: 1.55 }}>
-              Once your transfer lands, your {tierName} tier activates within ~5 minutes for 365 days. No auto-renewal — pay again next year if you want to extend.
+              Once your transfer lands, your {tierName} tier activates within ~5 minutes for 365 days. No auto-renewal — paying again before it ends adds another year after your current end date.
             </p>
 
             <BankrTrustFooter />

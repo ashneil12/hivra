@@ -234,6 +234,9 @@ function BillingPageContent() {
   const [yearlyTokenQuote, setYearlyTokenQuote] = useState<YearlyTokenQuotePayload | null>(null);
   const [yearlyTokenLoading, setYearlyTokenLoading] = useState(false);
   const [yearlyTokenError, setYearlyTokenError] = useState<string | null>(null);
+  // Captured when the modal opens: minting a new quote supersedes the pending
+  // review in the reloaded state, but the user should still see the warning.
+  const [yearlyTokenReviewPending, setYearlyTokenReviewPending] = useState(false);
   // Durable active-quotes state. Quotes survive a 20-min server lifetime
   // in `yearly_token_quotes`; we GET them on page mount so a refresh /
   // back-nav surfaces the same locked amount + countdown via the banner
@@ -751,6 +754,9 @@ function BillingPageContent() {
    * state after success so the durable banner shows up.
    */
   const handleYearlyTokenPay = async (tier: "pro" | "power") => {
+    setYearlyTokenReviewPending(
+      (tier === "pro" ? pendingYearlyQuotes.pro : pendingYearlyQuotes.power)?.status === "manual_review"
+    );
     setYearlyTokenTier(tier);
     setYearlyTokenLoading(true);
     setYearlyTokenError(null);
@@ -777,6 +783,7 @@ function BillingPageContent() {
   };
 
   const handleYearlyTokenClose = () => {
+    setYearlyTokenReviewPending(false);
     setYearlyTokenTier(null);
     setYearlyTokenQuote(null);
     setYearlyTokenError(null);
@@ -2151,6 +2158,7 @@ function BillingPageContent() {
         error={yearlyTokenError}
         quote={yearlyTokenQuote}
         onClose={handleYearlyTokenClose}
+        reviewPending={yearlyTokenReviewPending}
       />
     </motion.div>
   );

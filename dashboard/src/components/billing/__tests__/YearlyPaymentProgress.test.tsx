@@ -103,5 +103,19 @@ it("tells a user whose quote expired in the payment modal not to send the tokens
   );
 
   expect(screen.getByText(/If you already sent the tokens, don't send them again/)).toBeInTheDocument();
-  expect(screen.queryByText(/close and try again/)).not.toBeInTheDocument();
+  expect(screen.getByText(/up to 2 hours late/)).toBeInTheDocument();
+  expect(screen.getByText(/start a fresh quote/)).toBeInTheDocument();
+  // An expired quote must not keep inviting a payment.
+  expect(screen.queryByText(/Step 1 · Send exactly/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Step 2 · To this address/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/activates within ~5 minutes/)).not.toBeInTheDocument();
+});
+
+it("warns in the payment modal when a payment for the tier is already under review", () => {
+  render(
+    <YearlyTokenPaymentModal isOpen tier="pro" loading={false} error={null} quote={quote()} onClose={() => {}} reviewPending />
+  );
+
+  expect(screen.getByRole("note")).toHaveTextContent(/already under review/);
+  expect(screen.getByText(/Step 1 · Send exactly/)).toBeInTheDocument();
 });
