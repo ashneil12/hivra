@@ -458,6 +458,135 @@ async function findBlockForTimestamp(
   return side === "floor" ? Math.max(0, lo) : hi;
 }
 
+// ── Deposit Transfer logs ─────────────────────────────────────────────────
+
+// One incoming $HermesOS payment to a deposit address, as a Transfer log.
+interface DepositTransferLog {
+  transactionHash: string;
+  logIndex: number;
+  blockNumber: number;
+  amount: bigint;
+  logTimestampSec: number | null;
+}
+
+// The Transfer logs that count as payments to a deposit address: emitted by
+// the $HermesOS token contract, the ERC-20 Transfer event (topics[0]) to the
+// address (topics[2]), not sent by the address itself (topics[1]), with a
+// positive amount. The quote scan and the bearer delivery resolver both accept
+// exactly these logs, so a tx's first log to the address, which carries the
+// bare tx/address item key, is the same log on both paths. Null for any other
+// log, including one that does not parse.
+function parseDepositTransferLog(log: EvmLog, toTopic: string): DepositTransferLog | null {
+  try {
+    const address = typeof log.address === "string" ? normalizeEvmAddress(log.address) : "";
+    const transactionHash =
+      typeof log.transactionHash === "string" ? log.transactionHash.trim().toLowerCase() : "";
+    if (address !== HERMESOS_TOKEN_ADDRESS || !transactionHash) return null;
+    const topics = (Array.isArray(log.topics) ? log.topics : []).map((topic) =>
+      typeof topic === "string" ? topic.toLowerCase() : null
+    );
+    if (topics[0] !== ERC20_TRANSFER_TOPIC || topics[2] !== toTopic) return null;
+    if (topics[1] === toTopic) return null; // the wallet paying itself
+    const amount = decodeUint256LogData(log.data);
+    // Zero-value Transfer events are address-poisoning spam, not payments.
+    if (amount <= 0n) return null;
+    return {
+      transactionHash,
+      logIndex: parseRpcQuantity(log.logIndex, "log index"),
+      blockNumber: parseRpcQuantity(log.blockNumber, "log block number"),
+      amount,
+      logTimestampSec:
+        typeof log.blockTimestamp === "string" && /^0x[a-fA-F0-9]+$/.test(log.blockTimestamp)
+          ? Number.parseInt(log.blockTimestamp, 16)
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// The item dedupe log index of one of a tx's logs to a deposit address: null
+// (the bare tx/address key) for the tx's first log to the address, the log's
+// own index for a later one (see managedVeniceTokenTransferDedupeKey).
+function dedupeLogIndexOf(logIndex: number, firstLogIndex: number) {
+  return logIndex === firstLogIndex ? null : logIndex;
+}
+
+// ── Bearer delivery resolution ────────────────────────────────────────────
+// The bearer settle route receives (quote, tx, amount) without a log index. A
+// tx can pay one deposit address several times (a batched double-send), so a
+// tx alone does not name a transfer. Before anything is keyed, bound or
+// claimed, the delivery is resolved against the tx receipt to the one Transfer
+// log to the quote's address that carries the delivered amount, and gets the
+// same (log index, dedupe log index) identity the reconciler's scan gives that
+// log. Anything that cannot be resolved to exactly one log is refused as
+// retryable, with nothing written: the reconciler attributes the tx from its
+// own scan.
+
+export type ManagedVeniceTokenTransferLogRetryReason =
+  // No receipt: the tx is unknown to the RPC or not mined yet.
+  | "receipt_unavailable"
+  // The receipt's status is not success (the tx reverted).
+  | "transaction_failed"
+  // No accepted Transfer log to the address carries the delivered amount.
+  | "no_matching_log"
+  // Several accepted Transfer logs to the address carry the delivered amount.
+  | "ambiguous_log";
+
+export type ManagedVeniceTokenTransferLogResolution =
+  | { status: "resolved"; logIndex: number; dedupeLogIndex: number | null }
+  | { status: "retryable"; reason: ManagedVeniceTokenTransferLogRetryReason; matchingLogIndexes?: number[] };
+
+interface EvmTransactionReceipt {
+  status?: unknown;
+  logs?: unknown;
+}
+
+function isSuccessfulReceiptStatus(status: unknown) {
+  return typeof status === "string" && /^0x0*1$/i.test(status);
+}
+
+export async function resolveManagedVeniceTokenTransferLog(params: {
+  transactionHash: string;
+  depositAddress: string;
+  tokenAmountRaw: string | bigint;
+  rpcUrl?: string;
+  fetchImpl?: JsonRpcFetch;
+  rpcOptions?: RpcCallOptions;
+}): Promise<ManagedVeniceTokenTransferLogResolution> {
+  const chain = createBaseChainReader({
+    rpcUrl: params.rpcUrl || getBaseRpcUrl(),
+    fetchImpl: params.fetchImpl || (fetch as unknown as JsonRpcFetch),
+    rpcOptions: params.rpcOptions,
+  });
+  const transactionHash = params.transactionHash.trim().toLowerCase();
+  const receipt = await chain.call<EvmTransactionReceipt | null>("eth_getTransactionReceipt", [transactionHash]);
+  if (!receipt) return { status: "retryable", reason: "receipt_unavailable" };
+  if (!isSuccessfulReceiptStatus(receipt.status)) return { status: "retryable", reason: "transaction_failed" };
+  if (!Array.isArray(receipt.logs)) {
+    throw new Error("Invalid eth_getTransactionReceipt result from Base RPC");
+  }
+
+  const toTopic = encodeErc20TransferToTopic(params.depositAddress);
+  const accepted = new Map<number, DepositTransferLog>();
+  for (const log of receipt.logs as EvmLog[]) {
+    const transfer = parseDepositTransferLog(log, toTopic);
+    if (transfer && transfer.transactionHash === transactionHash) accepted.set(transfer.logIndex, transfer);
+  }
+  const amount = BigInt(params.tokenAmountRaw);
+  const matching = [...accepted.values()].filter((log) => log.amount === amount);
+  if (matching.length !== 1) {
+    return {
+      status: "retryable",
+      reason: matching.length === 0 ? "no_matching_log" : "ambiguous_log",
+      ...(matching.length > 1 ? { matchingLogIndexes: matching.map((log) => log.logIndex).sort((a, b) => a - b) } : {}),
+    };
+  }
+  const firstLogIndex = Math.min(...accepted.keys());
+  const { logIndex } = matching[0];
+  return { status: "resolved", logIndex, dedupeLogIndex: dedupeLogIndexOf(logIndex, firstLogIndex) };
+}
+
 // ── Transfer scan ─────────────────────────────────────────────────────────
 
 interface ScannedTransfer {
@@ -539,38 +668,14 @@ async function scanQuoteTransfers(params: {
     toBlock,
   });
 
-  const parsed = new Map<
-    string,
-    Omit<ScannedTransfer, "timestampMs" | "observedAt" | "firstLogIndex" | "dedupeLogIndex" | "txLogs"> & {
-      logTimestampSec: number | null;
-    }
-  >();
+  const parsed = new Map<string, DepositTransferLog & { confirmations: number }>();
   for (const log of logs) {
-    try {
-      const address = typeof log.address === "string" ? normalizeEvmAddress(log.address) : "";
-      const transactionHash =
-        typeof log.transactionHash === "string" ? log.transactionHash.trim().toLowerCase() : "";
-      if (address !== HERMESOS_TOKEN_ADDRESS || !transactionHash) continue;
-      const amount = decodeUint256LogData(log.data);
-      // Zero-value Transfer events are address-poisoning spam, not payments.
-      if (amount <= 0n) continue;
-      if (log.topics?.[1] === toTopic) continue; // the wallet paying itself
-      const blockNumber = parseRpcQuantity(log.blockNumber, "log block number");
-      const logIndex = parseRpcQuantity(log.logIndex, "log index");
-      parsed.set(`${transactionHash}:${logIndex}`, {
-        transactionHash,
-        logIndex,
-        blockNumber,
-        amount,
-        confirmations: Math.max(0, latest - blockNumber + 1),
-        logTimestampSec:
-          typeof log.blockTimestamp === "string" && /^0x[a-fA-F0-9]+$/.test(log.blockTimestamp)
-            ? Number.parseInt(log.blockTimestamp, 16)
-            : null,
-      });
-    } catch {
-      continue;
-    }
+    const transfer = parseDepositTransferLog(log, toTopic);
+    if (!transfer) continue;
+    parsed.set(`${transfer.transactionHash}:${transfer.logIndex}`, {
+      ...transfer,
+      confirmations: Math.max(0, latest - transfer.blockNumber + 1),
+    });
   }
 
   const blocksToFetch = new Set(
@@ -602,7 +707,7 @@ async function scanQuoteTransfers(params: {
       ...transfer,
       firstLogIndex,
       txLogs,
-      dedupeLogIndex: transfer.logIndex === firstLogIndex ? null : transfer.logIndex,
+      dedupeLogIndex: dedupeLogIndexOf(transfer.logIndex, firstLogIndex),
       timestampMs: timestampSec * 1000,
       observedAt: new Date(timestampSec * 1000).toISOString(),
     });
@@ -684,19 +789,16 @@ type BindingState = "unbound" | "bound" | "extra_log";
 
 // The log of `transfer`'s tx (to this deposit address) that a binding
 // accounts for:
-//   - its own log index, when it recorded one;
-//   - otherwise (a bearer settlement, which has no log index, or a legacy
-//     lot) the one scanned log of the tx whose amount equals the amount the
-//     binding recorded. A claim with no readable amount (a legacy settled
-//     quote) takes its own quote's lot for the same tx, which is the credit
-//     that exists. Without a unique amount match (no amount, or zero or
-//     several logs with it) it falls back to the tx's first log.
-//   - a review trigger without a log index always takes the tx's first log.
-//     Its item carries the bare tx/address key, which is the first log's key,
-//     so matching it by amount to a later log would let the first log's own
-//     item collide with the review's item and never be written. Known
-//     limitation: a bearer review of a multi-log tx is attributed to the
-//     tx's first log to the address, whatever amount it reported.
+//   - its own log index, when it recorded one. Every settlement and review
+//     records one: the reconciler's from its scan, the bearer route's from the
+//     tx receipt (resolveManagedVeniceTokenTransferLog);
+//   - otherwise (a record written without one: a legacy lot or settlement, or
+//     a claim-unrecoverable review, which records no amount) the one scanned
+//     log of the tx whose amount equals the amount the binding recorded. A
+//     claim with no readable amount (a legacy settled quote) takes its own
+//     quote's lot for the same tx, which is the credit that exists. Without a
+//     unique amount match (no amount, or zero or several logs with it) it
+//     falls back to the tx's first log.
 function boundLogIndex(
   binding: ManagedVeniceTransferBinding,
   siblings: ManagedVeniceTransferBinding[],
@@ -707,7 +809,7 @@ function boundLogIndex(
       ? siblings.find((other) => other.kind === "lot" && other.quoteId === binding.quoteId) ?? binding
       : binding;
   if (source.logIndex !== null) return source.logIndex;
-  if (source.kind !== "review_trigger" && source.tokenAmountRaw !== null) {
+  if (source.tokenAmountRaw !== null) {
     const amount = BigInt(source.tokenAmountRaw);
     const matching = transfer.txLogs.filter((log) => log.amount === amount);
     if (matching.length === 1) return matching[0].logIndex;
@@ -978,7 +1080,9 @@ function byChainOrder(left: ScannedTransfer, right: ScannedTransfer) {
 
 const DEPOSIT_REASONS = new Set<string>(Object.values(MANAGED_VENICE_TOKEN_DEPOSIT_REASONS));
 
-// The Transfer log that sent this quote to review (its review trigger).
+// The Transfer log that sent this quote to review (its review trigger). A
+// review records its trigger's log index; one without (a claim-unrecoverable
+// review) keyed its item with the bare tx/address key, i.e. the tx's first log.
 function isOwnReviewTrigger(quote: ManagedVeniceTokenQuote, transfer: ScannedTransfer) {
   return (
     quote.status === "manual_review_required" &&

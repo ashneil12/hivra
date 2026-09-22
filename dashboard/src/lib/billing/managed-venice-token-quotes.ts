@@ -188,8 +188,9 @@ export interface ManagedVeniceTokenQuote {
   // Why and by which transfer the quote was sent to review (review metadata).
   manualReviewReason?: string | null;
   reviewTransactionHash?: string | null;
-  // The review trigger's log index; null when the delivery had none (the
-  // bearer route), meaning the tx's first Transfer log to the address.
+  // The review trigger's log index; null when the review recorded none (a
+  // claim-unrecoverable review), meaning the tx's first Transfer log to the
+  // address.
   reviewLogIndex?: number | null;
   // The log index the review trigger's item is keyed by (see
   // managedVeniceTokenTransferDedupeKey): null for the bare tx/address key.
@@ -589,6 +590,15 @@ async function loadManagedVeniceTokenQuoteRecord(
   return { quote: asQuote(row), metadata: metadataRecord(row.metadata) };
 }
 
+// A quote by id, for a caller acting for no particular user (the bearer settle
+// route, which needs the quote's deposit address to resolve a delivery).
+export async function loadManagedVeniceTokenQuote(
+  quoteId: string,
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<ManagedVeniceTokenQuote | null> {
+  return (await loadManagedVeniceTokenQuoteRecord(requireDb(db), quoteId))?.quote ?? null;
+}
+
 export async function loadManagedVeniceTokenQuoteForUser(
   params: {
     quoteId: string;
@@ -700,10 +710,13 @@ function addressVariants(address: string) {
 // managed_venice_reconciliation_items.dedupe_key turns a repeat insert (every
 // cron tick, cron racing the user's check, a bearer redelivery) into a no-op.
 // The key is 'managed_venice_token_transfer:<tx>:<deposit address>' for a tx's
-// first Transfer log to the address, and that plus ':<logIndex>' for any later
-// log of the same tx to the same address. The bearer settle route has no log
-// index, so it always uses the bare key; the reconciler uses the bare key for
-// the first log too, so both key the same transfer identically.
+// first Transfer log to the address (the lowest log index among the tx's
+// $HermesOS Transfer logs that pay the address), and that plus ':<logIndex>'
+// for any later log of the same tx to the same address. The reconciler takes
+// the log from its scan; the bearer settle route resolves each delivery to its
+// log from the tx receipt first (resolveManagedVeniceTokenTransferLog), over
+// the same accepted logs. Both therefore key one log identically, whichever
+// path sees it first, and never key two logs alike.
 export function managedVeniceTokenTransferDedupeKey(
   transactionHash: string,
   depositAddress: string,
@@ -728,8 +741,9 @@ function affectedRowCount(data: unknown) {
 // user, who owns exactly one credit_deposit wallet): a tx claimed on another
 // address is a different transfer, which must still be credited or surfaced
 // here. Within one address the identity is per log: the binding's log index,
-// or, for a record without one (a bearer settlement, a legacy lot), the log
-// whose amount it recorded (see the reconciler's boundLogIndex).
+// or, for a record without one (a legacy lot or settlement, a
+// claim-unrecoverable review), the log whose amount it recorded (see the
+// reconciler's boundLogIndex).
 
 export type ManagedVeniceTransferBindingKind =
   | "quote_claim"
@@ -861,10 +875,14 @@ export function isManagedVeniceTransferBindingCounted(
   return !options.ignoreOwnQuote;
 }
 
-// The first binding that accounts for `transactionHash` on the quote's deposit
-// address (see isManagedVeniceTransferBindingCounted), or null. A delivery
-// without a log index is the tx's first log to the address, which any binding
-// of the tx on the address covers.
+// The first binding of `transactionHash` on the quote's deposit address (see
+// isManagedVeniceTransferBindingCounted), or null. This is per tx, not per
+// log: whichever log of the tx the binding holds, a delivered log of a tx
+// bound here is either that binding's own transfer or another log of it (a
+// batched double-send). No other quote on the address can claim or review
+// with that tx (the claim is unique per tx, and the address binding index
+// allows one claim or review per deposit address and tx), so the reconciler
+// only ever surfaces such a log, as an extra log.
 async function findSameAddressBinding(
   db: SupabaseLike,
   quote: BindingQuote,
@@ -1210,7 +1228,16 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
 // Review is the same shape: the CAS flip to manual_review_required (with
 // transfer_surfacing_pending := true) comes FIRST and its item after it. A
 // lost CAS writes nothing and re-evaluates, so a transfer that a concurrent
-// claim credits is never also left with an open item. A settled or reviewed
+// claim credits is never also left with an open item.
+//
+// Step 0 reads bindings with plain reads, so two quotes on one deposit address
+// can both pass it for the same tx (a bearer delivery naming one quote racing
+// the reconciler settling another). The address binding index
+// (uq_managed_venice_token_quotes_address_transfer_binding: one claim or
+// review trigger per deposit address and tx) refuses the second writer's CAS
+// with 23505, which writes nothing and re-evaluates to
+// transaction_already_claimed: a transfer is credited on one quote XOR
+// surfaced on one quote, never both. A settled or reviewed
 // quote is terminal here, so every transfer it attracts that is not credited
 // (one still confirming at the flip, one sent later, or one whose item insert
 // failed after the flip) is surfaced by the reconciler's surface-only pass
@@ -1351,11 +1378,15 @@ export async function settleManagedVeniceTokenQuote(
     tokenAmountRaw: string | bigint;
     observedAt: string;
     blockTimestamp?: string | null;
+    // The transfer's Transfer log. Every caller passes it: the reconciler from
+    // its scan, the bearer route from the tx receipt
+    // (resolveManagedVeniceTokenTransferLog). Omitted only by a recovery of a
+    // legacy claim or lot that recorded none.
     logIndex?: number | null;
     // The log index to key this transfer's item by (see
-    // managedVeniceTokenTransferDedupeKey): omitted / null for the tx's first
-    // Transfer log to the deposit address (every bearer delivery), the log's
-    // index for a later log of the same tx.
+    // managedVeniceTokenTransferDedupeKey): null for the tx's first Transfer
+    // log to the deposit address, the log's index for a later log of the same
+    // tx. Omitted / null together with logIndex means the tx's first log.
     dedupeLogIndex?: number | null;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
@@ -1439,18 +1470,7 @@ async function handleSettledQuote(
   quote: ManagedVeniceTokenQuote,
   transfer: SettlementTransfer
 ): Promise<ManagedVeniceTokenSettlementResult> {
-  // Idempotent redelivery of the SAME settled deposit. The amount can legally
-  // differ from the quote when the original settlement was an accepted
-  // over-send (quoted <= observed <= quoted*ceiling), so accept the same band
-  // here rather than requiring a byte-exact amount — otherwise a benign retry
-  // of an over-send would spuriously open a "replayed_after_settlement" item.
-  const quoted = BigInt(quote.tokenAmountRaw);
-  const observed = BigInt(transfer.tokenAmountRaw);
-  const amountWithinSettledBand = observed >= quoted && observed <= overSendCeiling(quoted);
-  if (
-    sameTransactionHash(quote.transactionHash, transfer.transactionHash) &&
-    (transfer.tokenAmountRaw === quote.tokenAmountRaw || amountWithinSettledBand)
-  ) {
+  if (isSettledTransferRedelivery(quote, transfer)) {
     return { status: "settled", quoteId: quote.id, idempotent: true };
   }
 
@@ -1460,6 +1480,26 @@ async function handleSettledQuote(
     await insertTransferItem(db, quote, transfer, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.replayedAfterSettlement);
   }
   return { status: "manual_review_required" };
+}
+
+// Whether `transfer` is a redelivery of the SAME transfer `quote` settled with.
+// When the delivery and the settlement claim both name their log, that is the
+// same log: another log of the credited tx is a different transfer (a batched
+// double-send) whatever its amount, even inside the settled band. A legacy
+// settlement without a log index falls back to the tx and the amount. The
+// amount can legally differ from the quote when the original settlement was an
+// accepted over-send (quoted <= observed <= quoted*ceiling), so the same band
+// is accepted rather than a byte-exact amount — otherwise a benign retry of an
+// over-send would spuriously open a "replayed_after_settlement" item.
+function isSettledTransferRedelivery(quote: ManagedVeniceTokenQuote, transfer: SettlementTransfer) {
+  if (!sameTransactionHash(quote.transactionHash, transfer.transactionHash)) return false;
+  const claim = quote.settlementClaim;
+  const claimLogIndex =
+    claim && sameTransactionHash(claim.transactionHash, quote.transactionHash) ? claim.logIndex : null;
+  if (claimLogIndex !== null && transfer.logIndex !== null) return claimLogIndex === transfer.logIndex;
+  const quoted = BigInt(quote.tokenAmountRaw);
+  const observed = BigInt(transfer.tokenAmountRaw);
+  return observed >= quoted && observed <= overSendCeiling(quoted);
 }
 
 async function handleClosedQuote(
@@ -1492,10 +1532,10 @@ async function handleClosedQuote(
   return { status };
 }
 
-// Whether a delivery to a quote in review is its review trigger. A delivery
-// without a log index (the bearer route) names the tx; one with a log index is
-// the trigger only when it is keyed like the trigger, so another log of the
-// same tx is still surfaced as its own transfer.
+// Whether a delivery to a quote in review is its review trigger: the same tx,
+// keyed like the trigger (the same dedupe log index), so another log of the
+// same tx is still surfaced as its own transfer. A delivery without a log index
+// (a recovery of a legacy claim) names only the tx and is taken as the trigger.
 function isReviewTriggerDelivery(quote: ManagedVeniceTokenQuote, transfer: SettlementTransfer) {
   if (!sameTransactionHash(quote.reviewTransactionHash, transfer.transactionHash)) return false;
   return transfer.logIndex === null || (transfer.dedupeLogIndex ?? null) === (quote.reviewDedupeLogIndex ?? null);
@@ -1539,6 +1579,22 @@ async function reviewUnclaimedQuote(
     .is("transaction_hash", null)
     .select("id");
 
+  // The address binding index: another quote on this deposit address claimed
+  // or reviewed with the tx after this pass read its bindings. Nothing was
+  // written; the next pass finds that binding and refuses the transfer
+  // (transaction_already_claimed), so it is never both credited there and
+  // surfaced here.
+  if (error?.code === "23505") {
+    log.warn("managed Venice token transfer was bound on the deposit address concurrently; re-evaluating", {
+      source: "managed-venice-token-quotes",
+      failureType: "managed_venice_token_transfer_bound_concurrently",
+      quoteId: quote.id,
+      transactionHash: transfer.transactionHash,
+      logIndex: transfer.logIndex,
+      reason,
+    });
+    return RETRY_SETTLEMENT;
+  }
   if (error) {
     throw new Error(error.message || "Failed to mark managed Venice token quote for review");
   }
@@ -1621,7 +1677,8 @@ async function claimAndSettle(
     .is("transaction_hash", null)
     .select("id");
 
-  // The unique tx index: another quote claimed this tx.
+  // The unique tx index (another quote claimed this tx) or the address
+  // binding index (another quote on this address claimed or reviewed with it).
   if (error?.code === "23505") return claimedElsewhere("quote");
   if (error) {
     throw new Error(error.message || "Failed to claim managed Venice token deposit");

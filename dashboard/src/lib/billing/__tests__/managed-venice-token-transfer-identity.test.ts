@@ -297,11 +297,12 @@ describe("managed Venice transfers: a binding without a log index on a two-log t
     amount: SMALL.toString(),
   });
 
-  it("a bearer settle binds the log whose amount it credited; the uncredited log is surfaced under the bare key", async () => {
+  it("a settlement recorded without a log index binds the log whose amount it credited; the uncredited log is surfaced under the bare key", async () => {
     const memory = seed();
     const rpc = batch();
 
-    // The bearer route has no log index: the claim and lot record only the amount.
+    // A settlement from before bearer deliveries were resolved to their log
+    // records no log index: the claim and lot hold only the amount.
     const bearer = await settleManagedVeniceTokenQuote(
       { quoteId: "quote_1", transactionHash: "0xbatch", tokenAmountRaw: QUOTED.toString(), observedAt: PAID_AT, blockTimestamp: PAID_AT },
       memory.db

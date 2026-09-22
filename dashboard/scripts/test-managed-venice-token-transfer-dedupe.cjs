@@ -1,7 +1,8 @@
 // Apply the real managed Venice migrations in PostgreSQL/WASM and exercise the
 // transfer-dedupe migration plus the SQL semantics settlement relies on
-// (claim compare-and-set, unique tx claim, one item per transfer, and the
-// transfer_surfacing_pending flag set by the terminal flips).
+// (claim compare-and-set, unique tx claim, one claim or review per deposit
+// address and tx, one item per transfer, and the transfer_surfacing_pending
+// flag set by the terminal flips).
 // Entirely in memory: no application credentials or live database are used.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -51,13 +52,13 @@ async function main() {
     await item(undefined);
 
     // Legacy quote rows that predate the migration: settled and in review.
-    const quote = async (id, status = "expired", tx = null) => db.query(
+    const quote = async (id, status = "expired", tx = null, depositAddress = "0xba5e") => db.query(
       `insert into public.managed_venice_token_quotes
         (id, account_id, user_id, token_amount_raw, snapshot_price_usd, locked_value_micro_usd,
          deposit_address, quoted_at, expires_at, status, source, transaction_hash)
-       values ($1, $2, 'user_1', 1000, '0.05', 50000000, '0xba5e',
+       values ($1, $2, 'user_1', 1000, '0.05', 50000000, $5,
          '2026-05-16T10:20:00Z', '2026-05-16T10:40:00Z', $3, 'dexscreener', $4)`,
-      [id, account, status, tx]
+      [id, account, status, tx, depositAddress]
     );
     const legacySettled = "00000000-0000-4000-8000-000000000001";
     const legacyReview = "00000000-0000-4000-8000-000000000002";
@@ -92,9 +93,14 @@ async function main() {
     const indexes = Object.fromEntries((await db.query(
       `select indexname, indexdef from pg_indexes where schemaname = 'public' and indexname in
         ('uq_managed_venice_reconciliation_items_dedupe_key', 'ix_managed_venice_token_quotes_deposit_address_quoted_at',
-         'ix_managed_venice_token_quotes_transfer_surfacing_pending')`
+         'ix_managed_venice_token_quotes_transfer_surfacing_pending',
+         'uq_managed_venice_token_quotes_address_transfer_binding')`
     )).rows.map((row) => [row.indexname, row.indexdef]));
     assert.match(indexes.uq_managed_venice_reconciliation_items_dedupe_key, /CREATE UNIQUE INDEX .*\(dedupe_key\) WHERE \(dedupe_key IS NOT NULL\)/);
+    assert.match(
+      indexes.uq_managed_venice_token_quotes_address_transfer_binding,
+      /CREATE UNIQUE INDEX .*lower\(deposit_address\), lower\(COALESCE\(transaction_hash,.*manual_review_required.*reviewTransactionHash.* WHERE \(COALESCE\(transaction_hash,.* IS NOT NULL\)$/s
+    );
     assert.match(indexes.ix_managed_venice_token_quotes_deposit_address_quoted_at, /\(deposit_address, quoted_at\)/);
     assert.match(indexes.ix_managed_venice_token_quotes_transfer_surfacing_pending, /\(created_at DESC\) WHERE transfer_surfacing_pending$/);
 
@@ -145,13 +151,51 @@ async function main() {
     assert.equal((await review(qb)).rows.length, 0);
     assert.equal((await claim(qb, "0xlate")).rows.length, 0); // Review is terminal for a claim.
 
+    // One claim or review trigger per deposit address and tx (case-insensitive
+    // on both), so a claim on one quote and a review of another quote on the
+    // same address can never both hold one transfer. A review records its
+    // trigger in metadata, never in transaction_hash.
+    const reviewWith = (id, tx) => db.query(
+      `update public.managed_venice_token_quotes
+       set status = 'manual_review_required', transfer_surfacing_pending = true,
+         metadata = metadata || jsonb_build_object('reviewTransactionHash', $2::text)
+       where id = $1 and status in ('active', 'expired') and transaction_hash is null returning id`,
+      [id, tx]
+    );
+    const [qc, qd, qe, qf] = [
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+      "55555555-5555-4555-8555-555555555555",
+      "66666666-6666-4666-8666-666666666666",
+    ];
+    await quote(qc);
+    await quote(qd);
+    await quote(qe, "expired", null, "0xD2D2");
+    await quote(qf, "expired", null, "0xd2d2");
+    assert.equal((await reviewWith(qc, "0xBOUND")).rows.length, 1);
+    await rejectsWith("23505", () => claim(qd, "0xbound")); // Claim after a review on the address.
+    await rejectsWith("23505", () => reviewWith(qd, "0xbound")); // A second review on the address.
+    assert.equal((await claim(qd, "0xclaimed_here")).rows.length, 1);
+    await rejectsWith("23505", () => reviewWith(qe, "0xclaimed_here").then(() => reviewWith(qf, "0xCLAIMED_HERE")));
+    // The same tx on another address (one tx paying several wallets) binds there.
+    assert.equal((await db.query(
+      "select count(*)::int as n from public.managed_venice_token_quotes where id = $1 and status = 'manual_review_required'", [qe]
+    )).rows[0].n, 1);
+    // Only a quote in review is bound by its review trigger: qf (expired, on
+    // qe's address) may carry the same trigger in its metadata.
+    assert.equal((await db.query(
+      `update public.managed_venice_token_quotes
+       set metadata = metadata || jsonb_build_object('reviewTransactionHash', '0xclaimed_here') where id = $1 returning id`,
+      [qf]
+    )).rows.length, 1);
+
     // The cron's surface-only candidates: flagged terminal quotes only.
     const candidates = async () => (await db.query(
       `select id from public.managed_venice_token_quotes
        where status in ('settled', 'manual_review_required') and transfer_surfacing_pending
        order by created_at desc limit 25`
     )).rows.map((row) => row.id).sort();
-    assert.deepEqual(await candidates(), [qa, qb].sort());
+    assert.deepEqual(await candidates(), [qa, qb, qc, qe].sort());
 
     // Clearing is a CAS on the flag: the second clear is a no-op.
     const clear = (id) => db.query(
@@ -161,14 +205,18 @@ async function main() {
     );
     assert.equal((await clear(qa)).rows.length, 1);
     assert.equal((await clear(qa)).rows.length, 0);
-    assert.deepEqual(await candidates(), [qb]);
-    assert.deepEqual(await flags(), { [legacySettled]: false, [legacyReview]: false, [qa]: false, [qb]: true });
+    assert.deepEqual(await candidates(), [qb, qc, qe].sort());
+    const expectedFlags = {
+      [legacySettled]: false, [legacyReview]: false, [qa]: false, [qb]: true,
+      [qc]: true, [qd]: false, [qe]: true, [qf]: false,
+    };
+    assert.deepEqual(await flags(), expectedFlags);
 
     // Rerun after data exists: nothing is rewritten.
     await db.exec(migration);
-    assert.deepEqual(await flags(), { [legacySettled]: false, [legacyReview]: false, [qa]: false, [qb]: true });
+    assert.deepEqual(await flags(), expectedFlags);
 
-    console.log("PASS managed Venice token transfer dedupe: rerun-safe migration, per-transfer (tx, address, log) unique item key, legacy rows kept, attribution index, claim CAS + unique tx, transfer_surfacing_pending flag + index");
+    console.log("PASS managed Venice token transfer dedupe: rerun-safe migration, per-transfer (tx, address, log) unique item key, legacy rows kept, attribution index, claim CAS + unique tx, one claim or review per (address, tx), transfer_surfacing_pending flag + index");
   } finally {
     await db.close();
   }

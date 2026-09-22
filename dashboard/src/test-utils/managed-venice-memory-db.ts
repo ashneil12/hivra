@@ -11,16 +11,18 @@
  *   - update(...).<filters>.select() resolves to the AFFECTED rows, so
  *     compare-and-set code can see "0 rows = lost the race";
  *   - 23505 emulation for the production unique indexes on the venice tables
- *     (quote tx hash, one deposit lot per quote, financial event idempotency
- *     key, reconciliation item dedupe key, one wallet account per user);
+ *     (quote tx hash, one claim-or-review binding per deposit address and tx,
+ *     one deposit lot per quote, financial event idempotency key,
+ *     reconciliation item dedupe key, one wallet account per user);
  *   - managed_venice_financial_events is append-only (update fails);
  *   - NOT NULL column defaults the code relies on (quotes'
  *     transfer_surfacing_pending = false) are applied on insert;
  *   - one-shot failure injection and stale-read views for crash/race tests.
  *
  * The RPC fake models Base: per-block timestamps (2 s blocks by default),
- * eth_getLogs honouring fromBlock/toBlock/address/topics, and the public
- * endpoint's 2,000-block range limit (HTTP 413 + JSON-RPC error body).
+ * eth_getLogs honouring fromBlock/toBlock/address/topics, the public
+ * endpoint's 2,000-block range limit (HTTP 413 + JSON-RPC error body), and
+ * eth_getTransactionReceipt carrying every log of the tx (null until mined).
  */
 
 import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
@@ -66,47 +68,57 @@ export interface InjectedFailure {
 
 interface UniqueIndex {
   name: string;
-  columns: string[];
-  where: (row: MemoryRow) => boolean;
+  // The indexed key of a row, or null when the row is outside the (partial)
+  // index. Two rows clash when their keys are element-wise equal.
+  key: (row: MemoryRow) => unknown[] | null;
+}
+
+function columnIndex(name: string, columns: string[], where: (row: MemoryRow) => boolean): UniqueIndex {
+  return { name, key: (row) => (where(row) ? columns.map((column) => row[column]) : null) };
+}
+
+function lowerText(value: unknown) {
+  return typeof value === "string" ? value.toLowerCase() : value == null ? null : String(value).toLowerCase();
+}
+
+// The quote a (deposit address, tx) is bound to: its settlement claim
+// (transaction_hash) or, for a quote in review without a claim, its review
+// trigger (metadata->>'reviewTransactionHash'). Mirrors the expression index
+// uq_managed_venice_token_quotes_address_transfer_binding.
+function addressTransferBindingKey(row: MemoryRow) {
+  const reviewTransactionHash =
+    row.status === "manual_review_required" ? readColumn(row, "metadata->>reviewTransactionHash") : null;
+  const transactionHash = lowerText(row.transaction_hash ?? reviewTransactionHash);
+  if (transactionHash == null) return null;
+  return [lowerText(row.deposit_address), transactionHash];
 }
 
 const UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
   managed_venice_token_quotes: [
-    {
-      name: "managed_venice_token_quotes_tx_hash_idx",
-      columns: ["transaction_hash"],
-      where: (row) => row.transaction_hash != null,
-    },
+    columnIndex("managed_venice_token_quotes_tx_hash_idx", ["transaction_hash"], (row) => row.transaction_hash != null),
+    { name: "uq_managed_venice_token_quotes_address_transfer_binding", key: addressTransferBindingKey },
   ],
   managed_venice_token_lots: [
-    {
-      name: "uq_managed_venice_token_lots_deposit_quote",
-      columns: ["quote_id"],
-      where: (row) => row.source === "hermesos_deposit" && row.quote_id != null,
-    },
+    columnIndex(
+      "uq_managed_venice_token_lots_deposit_quote",
+      ["quote_id"],
+      (row) => row.source === "hermesos_deposit" && row.quote_id != null
+    ),
   ],
   managed_venice_financial_events: [
-    {
-      name: "managed_venice_financial_events_idempotency_idx",
-      columns: ["idempotency_key"],
-      where: () => true,
-    },
+    columnIndex("managed_venice_financial_events_idempotency_idx", ["idempotency_key"], () => true),
   ],
   managed_venice_reconciliation_items: [
-    {
-      name: "uq_managed_venice_reconciliation_items_dedupe_key",
-      columns: ["dedupe_key"],
-      where: (row) => row.dedupe_key != null,
-    },
+    columnIndex("uq_managed_venice_reconciliation_items_dedupe_key", ["dedupe_key"], (row) => row.dedupe_key != null),
   ],
   managed_venice_wallet_accounts: [
-    {
-      name: "managed_venice_wallet_accounts_user_id_key",
-      columns: ["user_id"],
-      where: () => true,
-    },
+    columnIndex("managed_venice_wallet_accounts_user_id_key", ["user_id"], () => true),
   ],
 };
+
+function sameIndexKey(left: unknown[] | null, right: unknown[] | null) {
+  return Boolean(left && right && left.every((value, position) => value === right[position]));
+}
 
 const APPEND_ONLY_TABLES = new Set(["managed_venice_financial_events"]);
 
@@ -251,13 +263,9 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
 
   function uniqueViolation(tableName: string, candidate: MemoryRow, ignore: Set<MemoryRow>) {
     for (const index of UNIQUE_INDEXES[tableName] ?? []) {
-      if (!index.where(candidate)) continue;
-      const clash = tables[tableName].find(
-        (other) =>
-          !ignore.has(other) &&
-          index.where(other) &&
-          index.columns.every((column) => other[column] === candidate[column])
-      );
+      const key = index.key(candidate);
+      if (!key) continue;
+      const clash = tables[tableName].find((other) => !ignore.has(other) && sameIndexKey(index.key(other), key));
       if (clash) {
         return {
           code: "23505",
@@ -355,8 +363,9 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
 
   function uniqueViolationAgainst(tableName: string, candidate: MemoryRow, others: MemoryRow[]) {
     for (const index of UNIQUE_INDEXES[tableName] ?? []) {
-      if (!index.where(candidate)) continue;
-      if (others.some((other) => index.where(other) && index.columns.every((c) => other[c] === candidate[c]))) {
+      const key = index.key(candidate);
+      if (!key) continue;
+      if (others.some((other) => sameIndexKey(index.key(other), key))) {
         return { code: "23505", message: `duplicate key value violates unique constraint "${index.name}"` };
       }
     }
@@ -475,16 +484,25 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     return query;
   }
 
-  function makeClient(readOverrides: Record<string, () => MemoryRow[]> = {}) {
+  function makeClient(readOverrides: Record<string, () => MemoryRow[]> = {}, onWrite: () => void = () => undefined) {
     return {
       from(tableName: string) {
         const rows = requireTable(tableName);
-        const readRows = readOverrides[tableName] ?? (() => rows);
+        const readRows = () => (readOverrides[tableName] ?? (() => rows))();
         return {
           select: () => buildSelect(tableName, readRows),
-          insert: (input: MemoryRow | MemoryRow[]) => buildInsert(tableName, input),
-          upsert: (input: MemoryRow, options?: { onConflict?: string }) => buildUpsert(tableName, input, options),
-          update: (patch: MemoryRow) => buildUpdate(tableName, patch),
+          insert: (input: MemoryRow | MemoryRow[]) => {
+            onWrite();
+            return buildInsert(tableName, input);
+          },
+          upsert: (input: MemoryRow, options?: { onConflict?: string }) => {
+            onWrite();
+            return buildUpsert(tableName, input, options);
+          },
+          update: (patch: MemoryRow) => {
+            onWrite();
+            return buildUpdate(tableName, patch);
+          },
         };
       },
     };
@@ -509,10 +527,27 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     /**
      * A client whose reads of `tableName` return a frozen snapshot while every
      * write still hits the live tables: a deterministic read-then-write race.
+     * Pass a { table: snapshot } map to freeze several tables at once.
+     * `untilWrite` ends the stale view at this client's first write (insert,
+     * update or upsert, whether it succeeds or not), like READ COMMITTED: the
+     * reads ran before a concurrent writer committed, every later statement
+     * sees that commit.
      */
-    withStaleReads(tableName: string, snapshot: MemoryRow[]) {
-      const frozen = snapshot.map(clone);
-      return makeClient({ [tableName]: () => frozen });
+    withStaleReads(
+      tableName: string | Record<string, MemoryRow[]>,
+      snapshot: MemoryRow[] = [],
+      options: { untilWrite?: boolean } = {}
+    ) {
+      const snapshots = typeof tableName === "string" ? { [tableName]: snapshot } : tableName;
+      let stale = true;
+      const readOverrides: Record<string, () => MemoryRow[]> = {};
+      for (const [name, rows] of Object.entries(snapshots)) {
+        const frozen = rows.map(clone);
+        readOverrides[name] = () => (stale ? frozen : requireTable(name));
+      }
+      return makeClient(readOverrides, () => {
+        if (options.untilWrite) stale = false;
+      });
     },
   };
 }
@@ -564,6 +599,8 @@ export function createBaseRpcFake(options: {
   const maxLogRange = options.maxLogRangeBlocks ?? 2_000;
   let latestBlock = options.latestBlock;
   const transfers: FakeTransfer[] = [...(options.transfers ?? [])];
+  // Receipt status per lowercased tx hash; every other mined tx succeeded.
+  const receiptStatuses = new Map<string, string>();
   const failures: Array<FakeRpcFailure & { remaining: number }> = [];
   const requests: JsonRpcRequestBody[] = [];
 
@@ -621,6 +658,23 @@ export function createBaseRpcFake(options: {
       });
     }
 
+    if (request.method === "eth_getTransactionReceipt") {
+      const txHash = String(request.params[0]).toLowerCase();
+      const txTransfers = transfers
+        .filter((transfer) => transfer.txHash.toLowerCase() === txHash)
+        .sort((a, b) => (a.logIndex ?? 0) - (b.logIndex ?? 0));
+      // Unknown or not mined yet at the current head: no receipt.
+      if (txTransfers.length === 0 || txTransfers[0].block > latestBlock) return ok(null);
+      const block = txTransfers[0].block;
+      return ok({
+        transactionHash: txTransfers[0].txHash,
+        blockNumber: `0x${block.toString(16)}`,
+        blockHash: `0xblock${block}`,
+        status: receiptStatuses.get(txHash) ?? "0x1",
+        logs: txTransfers.map(toLog),
+      });
+    }
+
     if (request.method === "eth_getLogs") {
       const filter = request.params[0] as {
         address?: string;
@@ -667,6 +721,10 @@ export function createBaseRpcFake(options: {
     },
     addTransfer(transfer: FakeTransfer) {
       transfers.push(transfer);
+    },
+    /** The status eth_getTransactionReceipt reports for `txHash` (e.g. "0x0" = reverted). */
+    setReceiptStatus(txHash: string, status: string) {
+      receiptStatuses.set(txHash.toLowerCase(), status);
     },
     failNext(failure: FakeRpcFailure) {
       failures.push({ ...failure, remaining: failure.times ?? 1 });

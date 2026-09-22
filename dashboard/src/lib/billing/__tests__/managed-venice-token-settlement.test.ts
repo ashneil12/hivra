@@ -554,3 +554,167 @@ describe("managed Venice token settlement saga", () => {
     expect(quoteRow(memory, "quote_claimed").status).toBe("active");
   });
 });
+
+describe("managed Venice settlement: a claim and a review of one tx race on one deposit address", () => {
+  // T pays quote_1 in its window (10:20-10:40). quote_2 is the user's next
+  // quote on the same address (10:45-11:05). A bearer delivery names quote_2
+  // for T (a review: T predates quote_2) while the reconciler settles quote_1
+  // with T. Each settle reads its bindings before the other's write commits
+  // and writes after it. Whichever binds T first must win: quote_1 settled XOR
+  // quote_2 reviewed, and never an open item for a credited tx.
+  const PAID_AT = "2026-05-16T10:25:00.000Z";
+  const quote2 = () =>
+    managedVeniceQuoteRow({
+      id: "quote_2",
+      quoted_at: "2026-05-16T10:45:00.000Z",
+      expires_at: "2026-05-16T11:05:00.000Z",
+      created_at: "2026-05-16T10:45:00.000Z",
+    });
+  const seedBoth = () =>
+    createManagedVeniceMemoryDb({ managed_venice_token_quotes: [managedVeniceQuoteRow(), quote2()] });
+  // T's only Transfer log to the address, as both callers resolve it.
+  const deliver = (quoteId: string, db: ReturnType<typeof seedBoth>["db"]) =>
+    settleManagedVeniceTokenQuote(
+      {
+        quoteId,
+        transactionHash: "0xT",
+        tokenAmountRaw: QUOTED,
+        observedAt: PAID_AT,
+        blockTimestamp: PAID_AT,
+        logIndex: 0,
+        dedupeLogIndex: null,
+      },
+      db
+    );
+  // Every table a settle reads bindings from that the other writer writes, as
+  // it stood before that write.
+  const snapshotOf = (memory: ReturnType<typeof seedBoth>) =>
+    JSON.parse(
+      JSON.stringify({
+        managed_venice_token_quotes: memory.tables.managed_venice_token_quotes,
+        managed_venice_token_lots: memory.tables.managed_venice_token_lots,
+      })
+    ) as Record<string, MemoryRow[]>;
+
+  function expectCreditedXorSurfaced(memory: ReturnType<typeof seedBoth>) {
+    const settled = quoteRow(memory, "quote_1").status === "settled";
+    const reviewed = quoteRow(memory, "quote_2").status === "manual_review_required";
+    expect(settled !== reviewed).toBe(true);
+    const credited = memory.tables.managed_venice_token_lots.map((lot) => String(lot.transaction_hash).toLowerCase());
+    expect(
+      memory.tables.managed_venice_reconciliation_items.filter(
+        (item) =>
+          item.status === "open" &&
+          credited.includes(String((item.metadata as MemoryRow).transactionHash).toLowerCase())
+      )
+    ).toEqual([]);
+  }
+
+  // untilWrite: READ COMMITTED (a later statement sees the other commit).
+  // Otherwise the stale view lasts the whole call: only the database refuses
+  // the second writer, and the call gives up without writing anything.
+  const staleness = [
+    ["stale until its first write", true],
+    ["stale for the whole call", false],
+  ] as const;
+
+  it.each(staleness)(
+    "the review of quote_2 commits first; quote_1's claim (%s) is refused and writes nothing",
+    async (_label, untilWrite) => {
+      const memory = seedBoth();
+      const before = snapshotOf(memory);
+      const warn = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+
+      expect(await deliver("quote_2", memory.db)).toEqual({ status: "manual_review_required" });
+      const claim = deliver("quote_1", memory.withStaleReads(before, [], { untilWrite }));
+      if (untilWrite) {
+        expect(await claim).toEqual({ status: "transaction_already_claimed", quoteId: "quote_1" });
+      } else {
+        await expect(claim).rejects.toThrow("changed concurrently");
+      }
+      warn.mockRestore();
+
+      expect(quoteRow(memory, "quote_1")).toMatchObject({
+        status: "active",
+        transaction_hash: null,
+        transfer_surfacing_pending: false,
+      });
+      expect((quoteRow(memory, "quote_1").metadata as MemoryRow).settlementClaim).toBeUndefined();
+      expect(quoteRow(memory, "quote_2")).toMatchObject({
+        status: "manual_review_required",
+        transaction_hash: null,
+        metadata: expect.objectContaining({ reviewTransactionHash: "0xt" }),
+      });
+      expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
+      expect(memory.tables.managed_venice_financial_events).toHaveLength(0);
+      expect(
+        memory.tables.managed_venice_reconciliation_items.map((item) => [
+          item.dedupe_key,
+          item.reason,
+          (item.metadata as MemoryRow).quoteId,
+        ])
+      ).toEqual([[transferKey("0xt"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow, "quote_2"]]);
+      expectCreditedXorSurfaced(memory);
+    }
+  );
+
+  it.each(staleness)(
+    "the claim of quote_1 commits first; quote_2's review (%s) is refused and writes nothing",
+    async (_label, untilWrite) => {
+      const memory = seedBoth();
+      const before = snapshotOf(memory);
+      const warn = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+
+      expect(await deliver("quote_1", memory.db)).toEqual({ status: "settled", quoteId: "quote_1" });
+      const review = deliver("quote_2", memory.withStaleReads(before, [], { untilWrite }));
+      if (untilWrite) {
+        expect(await review).toEqual({ status: "transaction_already_claimed", quoteId: "quote_2" });
+      } else {
+        await expect(review).rejects.toThrow("changed concurrently");
+      }
+      // The review's CAS was refused by the database, not by a read.
+      expect(warn).toHaveBeenCalledWith(
+        "managed Venice token transfer was bound on the deposit address concurrently; re-evaluating",
+        expect.objectContaining({ quoteId: "quote_2", transactionHash: "0xt" })
+      );
+      warn.mockRestore();
+
+      expect(quoteRow(memory, "quote_1")).toMatchObject({ status: "settled", transaction_hash: "0xt" });
+      expect(memory.tables.managed_venice_token_lots).toEqual([
+        expect.objectContaining({ quote_id: "quote_1", transaction_hash: "0xt" }),
+      ]);
+      expect(quoteRow(memory, "quote_2")).toMatchObject({
+        status: "active",
+        transaction_hash: null,
+        transfer_surfacing_pending: false,
+      });
+      expect((quoteRow(memory, "quote_2").metadata as MemoryRow).reviewTransactionHash).toBeUndefined();
+      expect(memory.tables.managed_venice_reconciliation_items).toEqual([]);
+      expectCreditedXorSurfaced(memory);
+    }
+  );
+
+  it("the same tx may still bind a quote on another deposit address (one tx paying several wallets)", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        managedVeniceQuoteRow(),
+        managedVeniceQuoteRow({ id: "quote_d2", user_id: "user_2", account_id: "account_2", deposit_address: "0x000000000000000000000000000000000000d2d2" }),
+      ],
+    });
+
+    expect(await deliver("quote_1", memory.db)).toEqual({ status: "settled", quoteId: "quote_1" });
+    // quote_d2's transfer of the same tx cannot take the unique tx claim: it
+    // goes to review as a claim conflict, which the address index allows.
+    const warn = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+    expect(await deliver("quote_d2", memory.db)).toEqual({ status: "manual_review_required" });
+    warn.mockRestore();
+
+    expect(quoteRow(memory, "quote_d2")).toMatchObject({
+      status: "manual_review_required",
+      metadata: expect.objectContaining({
+        manualReviewReason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimConflict,
+        reviewTransactionHash: "0xt",
+      }),
+    });
+  });
+});

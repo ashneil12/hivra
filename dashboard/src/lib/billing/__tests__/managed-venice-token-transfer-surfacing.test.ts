@@ -451,7 +451,7 @@ describe("managed Venice settlement: surfacing relative to what actually happene
     ]);
   });
 
-  it("the bearer route and the reconciler key the same transfer identically: one item", async () => {
+  it("a bearer redelivery resolved to its log and the reconciler key the same transfer identically: one item", async () => {
     const memory = seed();
     const rpc = chain([
       transfer("0xpaid", QUOTED, "2026-05-16T10:21:00.000Z"),
@@ -464,13 +464,16 @@ describe("managed Venice settlement: surfacing relative to what actually happene
       { key: transferKey("0xagain"), reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer },
     ]);
 
-    // The bearer route redelivers the same transfer without a log index.
+    // The bearer route redelivers the same transfer, resolved from the tx
+    // receipt to log 7: the tx's first (only) log to the address.
     const bearer = await settleManagedVeniceTokenQuote(
       {
         quoteId: "quote_1",
         transactionHash: "0xAGAIN",
         tokenAmountRaw: QUOTED.toString(),
         observedAt: "2026-05-16T10:22:00.000Z",
+        logIndex: 7,
+        dedupeLogIndex: null,
       },
       memory.db
     );
