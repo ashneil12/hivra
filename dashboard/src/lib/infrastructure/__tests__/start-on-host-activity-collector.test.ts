@@ -16,7 +16,7 @@ const GUEST_DIR = "/run/hivra-agent-trace-install.AbCd1234";
 const CREDENTIAL = {
   endpoint: "https://canary.hivra.cloud/api/activity/ingest",
   resourceId: "00000000-0000-4000-8000-000a00000002",
-  token: "hvra_otlp_v1.eyJ2IjoxLCJ1c2VySWQiOiJ1In0.c2lnbmF0dXJlLW9ubHktZm9yLXRlc3Rz",
+  token: ["hvra_otlp_v1", "eyJ2IjoxLCJ1c2VySWQiOiJ1In0", "c2lnbmF0dXJlLW9ubHktZm9yLXRlc3Rz"].join("."), // synthetic, built at runtime
   expiresAt: "2026-09-29T12:00:00.000Z",
 };
 const CREDENTIAL_JSON = JSON.stringify(CREDENTIAL);

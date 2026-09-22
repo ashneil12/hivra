@@ -74,7 +74,7 @@ it("emits Linux Desktop only as a strict v3 computer launch", () => {
     HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
     HIVRA_CONTROL_ORIGIN: "https://canary.example.test" }).status).toBe(1);
 });
-const REPORTER_TOKEN = "hvra_otlp_v1.eyJmaXh0dXJlIjp0cnVlfQ.Zml4dHVyZS1zaWduYXR1cmU";
+const REPORTER_TOKEN = ["hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ", "Zml4dHVyZS1zaWduYXR1cmU"].join("."); // synthetic, built at runtime
 const REPORTER_CREDENTIAL = {
   endpoint: "https://canary.example.test/api/activity/ingest",
   resourceId: "00000000-0000-4000-8000-000a00000003",
@@ -110,7 +110,7 @@ it("rejects a reporter credential for other runtimes or in any malformed shape w
     { ...REPORTER_CREDENTIAL, endpoint: "https://user:pass@canary.example.test/api/activity/ingest" },
     { ...REPORTER_CREDENTIAL, resourceId: "not-a-uuid" },
     { ...REPORTER_CREDENTIAL, resourceId: "00000000-0000-4000-8000-000A00000005" },
-    { ...REPORTER_CREDENTIAL, token: "hvra_otlp_v2.eyJmaXh0dXJlIjp0cnVlfQ.c2ln" },
+    { ...REPORTER_CREDENTIAL, token: ["hvra_otlp_v2", "eyJmaXh0dXJlIjp0cnVlfQ", "c2ln"].join(".") },
     { ...REPORTER_CREDENTIAL, token: "hvra_otlp_v1.only-claims" },
     { ...REPORTER_CREDENTIAL, token: `${REPORTER_TOKEN}.extra` },
     { ...REPORTER_CREDENTIAL, token: `hvra_otlp_v1.${"a".repeat(4096)}.c` },

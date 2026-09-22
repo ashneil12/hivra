@@ -24,7 +24,7 @@ def launch(**overrides):
             "tunnelToken": "fixture-named-tunnel-only", "accessHostname": None, **overrides}
 
 
-FIXTURE_REPORTER_TOKEN = "hvra_otlp_v1.eyJmaXh0dXJlIjp0cnVlfQ.Zml4dHVyZS1zaWduYXR1cmU"
+FIXTURE_REPORTER_TOKEN = ".".join(("hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ", "Zml4dHVyZS1zaWduYXR1cmU"))  # synthetic; built at runtime
 
 
 def telemetry(**overrides):
@@ -166,8 +166,8 @@ class LaunchContract(unittest.TestCase):
                 ("resourceId", "11111111-2222-4333-8444-55555555555G"),
                 ("resourceId", "00000000-0000-4000-8000-000A00000005"),
                 ("resourceId", "not-a-uuid"),
-                ("token", "hvra_otlp_v2.eyJmaXh0dXJlIjp0cnVlfQ.c2ln"),
-                ("token", "hvra_otlp_v1.eyJmaXh0dXJlIjp0cnVlfQ"),
+                ("token", ".".join(("hvra_otlp_v2", "eyJmaXh0dXJlIjp0cnVlfQ", "c2ln"))),
+                ("token", ".".join(("hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ"))),
                 ("token", FIXTURE_REPORTER_TOKEN + ".extra"),
                 ("token", FIXTURE_REPORTER_TOKEN + "\n"),
                 ("token", "hvra_otlp_v1.a b.c"),

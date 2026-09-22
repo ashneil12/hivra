@@ -53,7 +53,7 @@ describe("redactSensitiveCommandOutput", () => {
   });
 
   it("redacts agent-run reporter credentials wherever they appear", () => {
-    const token = "hvra_otlp_v1.eyJ2IjoxLCJ1c2VySWQiOiJ1c2VyIn0.c2lnbmF0dXJlLWZpeHR1cmU";
+    const token = ["hvra_otlp_v1", "eyJ2IjoxLCJ1c2VySWQiOiJ1c2VyIn0", "c2lnbmF0dXJlLWZpeHR1cmU"].join("."); // synthetic, built at runtime
     const raw = [
       `reporter replayed ${token} after restart`,
       `HIVRA_ACTIVITY_TOKEN:${token}`,

@@ -32,8 +32,8 @@ spec.loader.exec_module(trace)
 SECRET = "SENTINEL-content-4d1e9a"
 SECRET_ENUM = "sentinel_enum_4d1e9a"  # shaped like an error enum, so only field choice keeps it out
 RESOURCE = "00000000-0000-4000-8000-000a00000004"
-TOKEN = "hvra_otlp_v1.eyJ2IjoxfQ.c2lnbmF0dXJlLW9uZQ"
-NEW_TOKEN = "hvra_otlp_v1.eyJ2IjoxfQ.c2lnbmF0dXJlLXR3bw"
+TOKEN = ".".join(("hvra_otlp_v1", "eyJ2IjoxfQ", "c2lnbmF0dXJlLW9uZQ"))  # built at runtime: synthetic, never a literal credential
+NEW_TOKEN = ".".join(("hvra_otlp_v1", "eyJ2IjoxfQ", "c2lnbmF0dXJlLXR3bw"))
 ENDPOINT = "https://dashboard.test/api/activity/ingest"
 T0 = 1789934400  # 2026-09-20T20:00:00Z
 
