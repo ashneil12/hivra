@@ -54,6 +54,11 @@ export type ManagedVeniceTokenQuoteStatus =
 // already settled / in review / cancelled can never be moved again.
 const OPEN_QUOTE_STATUSES = ["active", "expired"] as const;
 
+// Terminal statuses whose flip sets transfer_surfacing_pending: the reconciler
+// keeps rescanning such a quote's range, surface-only, until every transfer
+// that did not settle or review it has been surfaced at full confirmations.
+export const MANAGED_VENICE_TRANSFER_SURFACING_STATUSES = ["settled", "manual_review_required"] as const;
+
 // Reconciliation item reasons for token deposits. Every item for an on-chain
 // transfer carries one dedupe key per transfer (see
 // managedVeniceTokenTransferDedupeKey), so the same transfer is surfaced once
@@ -135,6 +140,7 @@ interface TokenQuoteRow {
   cross_check_last_updated_at?: string | null;
   transaction_hash?: string | null;
   settled_at?: string | null;
+  transfer_surfacing_pending?: boolean | null;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -167,6 +173,13 @@ export interface ManagedVeniceTokenQuote {
   // will be credited with. Present while a claimed quote is being completed and
   // kept on settled quotes as the audit record of what was credited.
   settlementClaim?: ManagedVeniceTokenSettlementClaim | null;
+  // Set in the same compare-and-set that settles the quote or sends it to
+  // review; cleared once the reconciler's surface-only pass has covered the
+  // quote's whole attribution range at full confirmations.
+  transferSurfacingPending?: boolean;
+  // Why and by which transfer the quote was sent to review (review metadata).
+  manualReviewReason?: string | null;
+  reviewTransactionHash?: string | null;
 }
 
 export interface ManagedVeniceTokenSettlementClaim {
@@ -185,7 +198,8 @@ const SELECT_COLUMNS =
   "id, account_id, user_id, token_amount_raw::text, snapshot_price_usd, " +
   "locked_value_micro_usd, deposit_address, quoted_at, expires_at, status, " +
   "source, cross_check_source, cross_check_price_usd, price_last_updated_at, " +
-  "cross_check_last_updated_at, transaction_hash, settled_at, metadata";
+  "cross_check_last_updated_at, transaction_hash, settled_at, " +
+  "transfer_surfacing_pending, metadata";
 
 export class ManagedVeniceTokenQuotePriceError extends Error {
   constructor(message: string) {
@@ -340,7 +354,14 @@ function asQuote(row: TokenQuoteRow): ManagedVeniceTokenQuote {
     launchBonusMicroUsd,
     standardBonusMicroUsd,
     settlementClaim: readSettlementClaim(metadata.settlementClaim),
+    transferSurfacingPending: row.transfer_surfacing_pending === true,
+    manualReviewReason: nonEmptyString(metadata.manualReviewReason),
+    reviewTransactionHash: nonEmptyString(metadata.reviewTransactionHash),
   };
+}
+
+function nonEmptyString(value: unknown) {
+  return typeof value === "string" && value ? value : null;
 }
 
 function readSettlementClaim(value: unknown): ManagedVeniceTokenSettlementClaim | null {
@@ -932,10 +953,20 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
 //               before the claim is durable.
 //   2. LOT    — one spendable lot (unique per quote), from the claim values.
 //   3. EVENTS — token_deposit + subsidy_applied, keyed by quote + claimed tx.
-//   4. FLIP   — status := settled (CAS: open status, tx = claimed tx).
+//   4. FLIP   — status := settled (CAS: open status, tx = claimed tx), and
+//               transfer_surfacing_pending := true in the same write.
 // A crash anywhere leaves either an unclaimed quote (nothing credited) or a
 // claimed/credited one that any later call converges on the SAME tx and
 // values. A different transfer seen by a retry is surfaced, never credited.
+//
+// Review is the same shape: the CAS flip to manual_review_required (with
+// transfer_surfacing_pending := true) comes FIRST and its item after it. A
+// lost CAS writes nothing and re-evaluates, so a transfer that a concurrent
+// claim credits is never also left with an open item. A settled or reviewed
+// quote is terminal here, so every transfer it attracts that is not credited
+// (one still confirming at the flip, one sent later, or one whose item insert
+// failed after the flip) is surfaced by the reconciler's surface-only pass
+// until the flag is cleared.
 
 export type ManagedVeniceTokenSettlementResult =
   | { status: "settled"; quoteId: string; idempotent?: true }
@@ -1173,16 +1204,28 @@ async function handleClosedQuote(
   record: ManagedVeniceTokenQuoteRecord,
   transfer: SettlementTransfer
 ): Promise<ManagedVeniceTokenSettlementResult> {
-  const { quote, metadata } = record;
+  const { quote } = record;
   const status = quote.status === "cancelled" ? "cancelled" : "manual_review_required";
   // Review and cancelled are terminal for automation: never settle, never
-  // re-review. The transfer that caused the review already has its item.
-  const reviewTransactionHash =
-    typeof metadata.reviewTransactionHash === "string" ? metadata.reviewTransactionHash : null;
-  if (
-    !sameTransactionHash(reviewTransactionHash, transfer.transactionHash) &&
-    !(await isTransactionBound(db, transfer.transactionHash))
-  ) {
+  // re-review.
+  if (sameTransactionHash(quote.reviewTransactionHash, transfer.transactionHash)) {
+    // The transfer that caused the review. Its item is written right after the
+    // review flip; while the quote still owes surfacing that insert may have
+    // failed, so a redelivery (re)writes it (a no-op once it exists). Legacy
+    // reviews (flag false) wrote theirs before this flag existed.
+    if (quote.transferSurfacingPending) {
+      await insertTransferItem(
+        db,
+        quote,
+        transfer,
+        (quote.manualReviewReason as ManagedVeniceTokenDepositReason | null) ??
+          classifyTransfer(quote, transfer) ??
+          MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.afterQuoteClosed
+      );
+    }
+    return { status };
+  }
+  if (!(await isTransactionBound(db, transfer.transactionHash))) {
     await insertTransferItem(
       db,
       quote,
@@ -1200,18 +1243,19 @@ async function reviewUnclaimedQuote(
   reason: ManagedVeniceTokenDepositReason
 ): Promise<SettlementPass> {
   const { quote } = record;
-  // Item FIRST: if the insert fails nothing changes and the next pass retries;
-  // if the status flip then fails or loses its race, the transfer is still
-  // surfaced (it was never credited through this quote either way). A review
-  // can therefore never be invisible.
-  await insertTransferItem(db, quote, transfer, reason);
-
   const now = new Date().toISOString();
+  // Flip FIRST, item after. A lost CAS (the quote was claimed, settled or
+  // reviewed concurrently) writes nothing and re-evaluates: the transfer may
+  // be the very one a concurrent claim is crediting, and must not also get an
+  // open item. If the item insert fails after the flip, the flag set here
+  // makes the reconciler's surface-only pass (or a redelivery of this
+  // transfer) write it, so a review is never invisible for long.
   // The rejected tx is NOT written to transaction_hash: that column is the
   // unique settlement claim, and a foreign transfer must never occupy it.
   const { data, error } = await table(db, "managed_venice_token_quotes")
     .update({
       status: "manual_review_required" satisfies ManagedVeniceTokenQuoteStatus,
+      transfer_surfacing_pending: true,
       updated_at: now,
       metadata: {
         ...record.metadata,
@@ -1231,6 +1275,8 @@ async function reviewUnclaimedQuote(
     throw new Error(error.message || "Failed to mark managed Venice token quote for review");
   }
   if (affectedRowCount(data) === 0) return RETRY_SETTLEMENT;
+
+  await insertTransferItem(db, quote, transfer, reason);
   return { status: "manual_review_required" };
 }
 
@@ -1486,6 +1532,7 @@ async function completeClaimedSettlement(
   const { data, error: quoteError } = await table(db, "managed_venice_token_quotes")
     .update({
       status: "settled" satisfies ManagedVeniceTokenQuoteStatus,
+      transfer_surfacing_pending: true,
       settled_at: now,
       updated_at: now,
       metadata: {
@@ -1564,4 +1611,23 @@ export async function retireManagedVeniceTokenQuote(
   if (affectedRowCount(data) === 1) return { status: "cancelled" };
   const current = await loadManagedVeniceTokenQuoteRecord(client, quote.id);
   return { status: current?.quote.status ?? quote.status };
+}
+
+// Clear a terminal quote's transfer-surfacing obligation once the reconciler
+// has surfaced every transfer in its fully confirmed attribution range. A
+// compare-and-set on the flag, so a concurrent pass clearing it is harmless.
+export async function completeManagedVeniceTokenTransferSurfacing(
+  params: { quoteId: string },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ cleared: boolean }> {
+  const { data, error } = await table(requireDb(db), "managed_venice_token_quotes")
+    .update({ transfer_surfacing_pending: false, updated_at: new Date().toISOString() })
+    .eq("id", params.quoteId)
+    .eq("transfer_surfacing_pending", true)
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message || "Failed to complete managed Venice token transfer surfacing");
+  }
+  return { cleared: affectedRowCount(data) === 1 };
 }

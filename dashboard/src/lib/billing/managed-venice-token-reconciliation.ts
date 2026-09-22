@@ -5,6 +5,7 @@ import {
   normalizeEvmAddress,
 } from "@/lib/billing/token-holdings";
 import {
+  completeManagedVeniceTokenTransferSurfacing,
   loadManagedVeniceTokenDepositLot,
   loadManagedVeniceTokenQuoteForUser,
   managedVeniceTokenQuoteWindow,
@@ -14,6 +15,7 @@ import {
   MANAGED_VENICE_MAX_OVERSEND_NUMERATOR,
   MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR,
   MANAGED_VENICE_TOKEN_DEPOSIT_REASONS,
+  MANAGED_VENICE_TRANSFER_SURFACING_STATUSES,
   type ManagedVeniceTokenDepositLot,
   type ManagedVeniceTokenDepositReason,
   type ManagedVeniceTokenQuote,
@@ -109,6 +111,12 @@ const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
 const DEFAULT_MIN_CONFIRMATIONS = 3;
 const DEFAULT_PENDING_QUOTE_RECONCILIATION_LIMIT = 25;
 const MAX_PENDING_QUOTE_RECONCILIATION_LIMIT = 100;
+// Settled / in-review quotes given a surface-only pass per batch, after the
+// open quotes. A quote only carries transfer_surfacing_pending until its
+// window + grace (or the start of the user's next payment session) is
+// confirmed, a few hours, so this set stays small; newest first keeps a stuck
+// old one from pinning it.
+const TRANSFER_SURFACING_LIMIT = 25;
 
 // ── Quote-anchored scanning ───────────────────────────────────────────────
 // Each quote is scanned over ITS OWN time range, not "the latest N blocks":
@@ -120,6 +128,12 @@ const MAX_PENDING_QUOTE_RECONCILIATION_LIMIT = 100;
 // grace is still attributed to the quote (and goes to manual review when it is
 // in the qualifying amount band). Once the whole window + grace is scanned at
 // full confirmations with nothing to act on, the quote retires to 'cancelled'.
+//
+// Accepted limitation: a payment mined AFTER window + grace is never scanned
+// by any quote. For a quote that retired (or whose surface-only pass already
+// cleared its flag) such a transfer is not detected or surfaced at all.
+// Catching it needs an address-level unsolicited-deposit detector that scans
+// each credit_deposit wallet independently of quotes (follow-up).
 export const LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
 // Base produces a block every 2 s; used to estimate a block from a timestamp.
 // Every estimate is verified against eth_getBlockByNumber before it is used.
@@ -162,6 +176,16 @@ export interface ManagedVeniceTokenQuoteBatchReconciliationResult {
   cancelled: number;
   skipped: number;
   failed: number;
+  // Surface-only passes over settled / in-review quotes that still owe one.
+  // Counted apart from the open-quote fields above so a quote already in
+  // review is not re-reported as a new manual review every tick; a failed
+  // pass is also counted in `failed` and listed in `results`.
+  transferSurfacing: {
+    checked: number;
+    complete: number;
+    pending: number;
+    failed: number;
+  };
   results: Array<{
     quoteId: string;
     userId: string;
@@ -594,6 +618,60 @@ function classifyTransfer(
   return transfer.amount > quote.ceiling ? "over" : "under";
 }
 
+// The transfers attributable to a quote: its own anchored range, cut at the
+// user's next $HermesOS payment session, minus every tx already bound to a
+// settlement anywhere. Shared by the open-quote reconcile and the
+// surface-only pass so both see exactly the same set.
+async function scanAttributableTransfers(params: {
+  db: SupabaseLike;
+  chain: BaseChainReader;
+  quote: ManagedVeniceTokenQuote;
+  minConfirmations: number;
+}) {
+  const { db, quote } = params;
+  const window = managedVeniceTokenQuoteWindow(quote);
+  const quotedAtMs = window.quotedAt.getTime();
+  const expiresAtMs = window.effectiveExpiresAt.getTime();
+  const graceEndMs = expiresAtMs + LATE_PAYMENT_GRACE_MS;
+
+  const scan = await scanQuoteTransfers({
+    chain: params.chain,
+    quote,
+    quotedAtMs,
+    graceEndMs,
+    minConfirmations: params.minConfirmations,
+  });
+  const boundaryMs = await loadAttributionBoundaryMs(db, quote);
+  const inRange = scan.transfers.filter(
+    (transfer) =>
+      transfer.timestampMs >= quotedAtMs &&
+      transfer.timestampMs <= graceEndMs &&
+      (boundaryMs === null || transfer.timestampMs < boundaryMs)
+  );
+  const bound = await loadBoundTransactionHashes(
+    db,
+    inRange.map((transfer) => transfer.transactionHash)
+  );
+
+  const quoted = BigInt(quote.tokenAmountRaw);
+  const band = {
+    quoted,
+    ceiling: (quoted * MANAGED_VENICE_MAX_OVERSEND_NUMERATOR) / MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR,
+    expiresAtMs,
+  };
+  return {
+    attributable: inRange.filter((transfer) => !bound.has(transfer.transactionHash)),
+    confirmedHeadMs: scan.confirmedHeadMs,
+    expiresAtMs,
+    graceEndMs,
+    // Where attribution to this quote stops: the grace end, or the user's next
+    // payment session if that starts first.
+    attributionEndMs: boundaryMs === null ? graceEndMs : Math.min(graceEndMs, boundaryMs),
+    classOf: (transfer: ScannedTransfer) => classifyTransfer(transfer, band),
+    isConfirmed: (transfer: ScannedTransfer) => transfer.confirmations >= params.minConfirmations,
+  };
+}
+
 function quotePayload(
   quote: Omit<ManagedVeniceTokenQuote, "status"> & { status: string }
 ) {
@@ -614,6 +692,18 @@ function quotePayload(
   };
 }
 
+function quoteCandidates(data: unknown) {
+  return (Array.isArray(data) ? data : [])
+    .map((row): { id: string; userId: string } | null => {
+      const candidate = row as PendingQuoteCandidateRow;
+      if (typeof candidate.id !== "string" || typeof candidate.user_id !== "string") {
+        return null;
+      }
+      return { id: candidate.id, userId: candidate.user_id };
+    })
+    .filter((candidate): candidate is { id: string; userId: string } => Boolean(candidate));
+}
+
 async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   db: SupabaseLike;
   limit: number;
@@ -630,35 +720,55 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   if (error) {
     throw new Error(error.message || "Failed to load pending managed Venice token quotes");
   }
-
-  return (Array.isArray(data) ? data : [])
-    .map((row): { id: string; userId: string } | null => {
-      const candidate = row as PendingQuoteCandidateRow;
-      if (typeof candidate.id !== "string" || typeof candidate.user_id !== "string") {
-        return null;
-      }
-      return { id: candidate.id, userId: candidate.user_id };
-    })
-    .filter((candidate): candidate is { id: string; userId: string } => Boolean(candidate));
+  return quoteCandidates(data);
 }
 
+// Settled / in-review quotes whose flip set transfer_surfacing_pending and
+// whose range is not yet fully confirmed. Legacy terminal quotes (flag false)
+// are never selected, so they are never rescanned.
+async function loadTransferSurfacingCandidates(params: { db: SupabaseLike; limit: number }) {
+  const { data, error } = await (params.db.from("managed_venice_token_quotes") as DbQuery)
+    .select("id, user_id, status")
+    .in("status", [...MANAGED_VENICE_TRANSFER_SURFACING_STATUSES])
+    .eq("transfer_surfacing_pending", true)
+    .order("created_at", { ascending: false })
+    .limit(params.limit);
+
+  if (error) {
+    throw new Error(error.message || "Failed to load managed Venice token quotes awaiting transfer surfacing");
+  }
+  return quoteCandidates(data);
+}
+
+function isOpenQuoteStatus(status: ManagedVeniceTokenQuote["status"]) {
+  return status === "active" || status === "expired";
+}
+
+// The reconcile result after a settle call, from the quote as it is NOW (it is
+// re-read after the call): if a competing settle or review won, the status,
+// tx and payload say what actually happened, not what this call attempted.
 function settlementOutcome(
-  quote: ManagedVeniceTokenQuote,
+  current: ManagedVeniceTokenQuote,
   settlement: ManagedVeniceTokenSettlementResult,
-  transfer: { transactionHash: string; confirmations?: number },
-  now: Date
+  transfer: { transactionHash: string; confirmations?: number }
 ) {
-  const settled = settlement.status === "settled";
+  // Still open: the settle refused the transfer (it belongs to another quote).
+  const status = isOpenQuoteStatus(current.status)
+    ? settlement.status
+    : (current.status as Exclude<ManagedVeniceTokenQuote["status"], "active" | "expired">);
+  const transactionHash =
+    status === "settled"
+      ? current.transactionHash
+      : status === "manual_review_required"
+        ? current.reviewTransactionHash ?? current.transactionHash ?? transfer.transactionHash
+        : status === "cancelled"
+          ? null
+          : transfer.transactionHash;
   return {
-    status: settlement.status,
-    quote: quotePayload({
-      ...quote,
-      status: settlement.status === "transaction_already_claimed" ? quote.status : settlement.status,
-      transactionHash: settled ? transfer.transactionHash : quote.transactionHash,
-      settledAt: settled ? now.toISOString() : quote.settledAt,
-    }),
-    confirmations: transfer.confirmations,
-    transactionHash: transfer.transactionHash,
+    status,
+    quote: quotePayload(current),
+    confirmations: sameTransactionHash(transactionHash, transfer.transactionHash) ? transfer.confirmations : undefined,
+    transactionHash,
   };
 }
 
@@ -707,6 +817,88 @@ async function surfaceTransfers(
   }
 }
 
+function sameTransactionHash(left: string | null | undefined, right: string | null | undefined) {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+// The item reason for a transfer surfaced against a settled / in-review quote
+// (by the surface-only pass, or right after the settle / review flip): an
+// in-window in-band transfer is an extra transfer, anything else keeps its
+// class reason. The same rule on every path, so an item's reason does not
+// depend on which pass saw the transfer first.
+function surfacedTransferReason(transferClass: TransferClass): ManagedVeniceTokenDepositReason {
+  return CLASS_REASON[transferClass];
+}
+
+// Surface-only pass for a settled / in-review quote that still owes one
+// (transfer_surfacing_pending). Rescans the quote's own attribution range with
+// the same scan / boundary logic as the open-quote reconcile and surfaces every
+// confirmed attributable transfer whose tx is not bound to any quote or lot:
+// the quote's own credited tx is excluded, the review trigger is included
+// (dedupe makes it a no-op once its item exists). It never settles, reviews,
+// or changes the quote's status. The flag is cleared (CAS on the flag) only
+// once the confirmed head covers the whole range end and nothing attributable
+// in range is still waiting for confirmations.
+async function surfaceTerminalQuoteTransfers(params: {
+  db: SupabaseLike;
+  chain: BaseChainReader;
+  quote: ManagedVeniceTokenQuote;
+  minConfirmations: number;
+}): Promise<"complete" | "pending"> {
+  const { db, quote } = params;
+
+  const scan = await scanAttributableTransfers(params);
+  await surfaceTransfers(db, quote, scan.attributable.filter(scan.isConfirmed), (transfer) =>
+    surfacedTransferReason(scan.classOf(transfer))
+  );
+
+  const fullyConfirmed =
+    scan.confirmedHeadMs >= scan.attributionEndMs && scan.attributable.every(scan.isConfirmed);
+  if (!fullyConfirmed) return "pending";
+  await completeManagedVeniceTokenTransferSurfacing({ quoteId: quote.id }, db);
+  return "complete";
+}
+
+// After a settle / review call from the reconciler: re-read the quote and, if
+// it is now terminal and owes surfacing, surface the other confirmed transfers
+// this reconcile scanned. Bound hashes are re-read AFTER the call, so the tx
+// the quote actually settled with (this call's, or a competing settle's) is
+// never surfaced as an extra. If the quote is still open (the transfer belongs
+// to another quote) nothing is written: those transfers may be a later tick's
+// candidates. A failed item insert throws; the flag set by the flip makes the
+// surface-only pass finish the job.
+async function finishSettlement(params: {
+  db: SupabaseLike;
+  quote: ManagedVeniceTokenQuote;
+  settlement: ManagedVeniceTokenSettlementResult;
+  transfer: { transactionHash: string; confirmations?: number };
+  surface?: { transfers: ScannedTransfer[]; classOf: (transfer: ScannedTransfer) => TransferClass };
+}) {
+  const { db, quote, surface } = params;
+  const current =
+    (await loadManagedVeniceTokenQuoteForUser({ quoteId: quote.id, userId: quote.userId }, db)) ?? quote;
+
+  if (
+    surface &&
+    surface.transfers.length > 0 &&
+    current.transferSurfacingPending &&
+    (current.status === "settled" || current.status === "manual_review_required")
+  ) {
+    const bound = await loadBoundTransactionHashes(
+      db,
+      surface.transfers.map((transfer) => transfer.transactionHash)
+    );
+    await surfaceTransfers(
+      db,
+      current,
+      surface.transfers.filter((transfer) => !bound.has(transfer.transactionHash)),
+      (transfer) => surfacedTransferReason(surface.classOf(transfer))
+    );
+  }
+
+  return settlementOutcome(current, params.settlement, params.transfer);
+}
+
 export async function reconcileManagedVeniceTokenQuote(params: {
   quoteId: string;
   userId: string;
@@ -730,7 +922,27 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     return { status: "not_found" as const };
   }
 
-  if (quote.status !== "active" && quote.status !== "expired") {
+  const chain =
+    params.chain ??
+    createBaseChainReader({
+      rpcUrl: params.rpcUrl || getBaseRpcUrl(),
+      fetchImpl: params.fetchImpl || (fetch as unknown as JsonRpcFetch),
+      rpcOptions: params.rpcOptions,
+    });
+  const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
+
+  if (!isOpenQuoteStatus(quote.status)) {
+    // Settled / in review since the flag was introduced: finish surfacing
+    // whatever else reached the quote. Legacy terminal quotes (flag false) and
+    // cancelled quotes return as-is, without a scan.
+    if (quote.transferSurfacingPending) {
+      const transferSurfacing = await surfaceTerminalQuoteTransfers({ db, chain, quote, minConfirmations });
+      return {
+        status: quote.status,
+        quote: quotePayload(quote),
+        transferSurfacing,
+      };
+    }
     return {
       status: quote.status,
       quote: quotePayload(quote),
@@ -742,48 +954,18 @@ export async function reconcileManagedVeniceTokenQuote(params: {
 
   const lot = await loadManagedVeniceTokenDepositLot(quote.id, db);
   if (quote.transactionHash || lot) {
+    // The flip sets transfer_surfacing_pending, so any extra transfer this
+    // recovery does not scan for is surfaced by the surface-only pass.
     const recovery = recoveryTransfer(quote, lot, now);
     const settlement = await settle(recovery, db);
-    return settlementOutcome(quote, settlement, recovery, now);
+    return finishSettlement({ db, quote, settlement, transfer: recovery });
   }
 
-  const chain =
-    params.chain ??
-    createBaseChainReader({
-      rpcUrl: params.rpcUrl || getBaseRpcUrl(),
-      fetchImpl: params.fetchImpl || (fetch as unknown as JsonRpcFetch),
-      rpcOptions: params.rpcOptions,
-    });
-  const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
-  const window = managedVeniceTokenQuoteWindow(quote);
-  const quotedAtMs = window.quotedAt.getTime();
-  const expiresAtMs = window.effectiveExpiresAt.getTime();
-  const graceEndMs = expiresAtMs + LATE_PAYMENT_GRACE_MS;
-
-  const scan = await scanQuoteTransfers({ chain, quote, quotedAtMs, graceEndMs, minConfirmations });
-  const boundaryMs = await loadAttributionBoundaryMs(db, quote);
-  const inRange = scan.transfers.filter(
-    (transfer) =>
-      transfer.timestampMs >= quotedAtMs &&
-      transfer.timestampMs <= graceEndMs &&
-      (boundaryMs === null || transfer.timestampMs < boundaryMs)
-  );
-  const bound = await loadBoundTransactionHashes(
-    db,
-    inRange.map((transfer) => transfer.transactionHash)
-  );
-  const attributable = inRange.filter((transfer) => !bound.has(transfer.transactionHash));
-
-  const quoted = BigInt(quote.tokenAmountRaw);
-  const band = {
-    quoted,
-    ceiling: (quoted * MANAGED_VENICE_MAX_OVERSEND_NUMERATOR) / MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR,
-    expiresAtMs,
-  };
-  const classOf = (transfer: ScannedTransfer) => classifyTransfer(transfer, band);
-  const isConfirmed = (transfer: ScannedTransfer) => transfer.confirmations >= minConfirmations;
-  const settleWith = (transfer: ScannedTransfer) =>
-    settle(
+  const scan = await scanAttributableTransfers({ db, chain, quote, minConfirmations });
+  const { attributable, classOf, isConfirmed, expiresAtMs, graceEndMs } = scan;
+  const confirmed = attributable.filter(isConfirmed);
+  const settleWith = async (transfer: ScannedTransfer) => {
+    const settlement = await settle(
       {
         quoteId: quote.id,
         transactionHash: transfer.transactionHash,
@@ -796,10 +978,19 @@ export async function reconcileManagedVeniceTokenQuote(params: {
       },
       db
     );
+    // The other transfers are surfaced only AFTER the settle / review flip,
+    // relative to what the quote actually settled with; see finishSettlement.
+    return finishSettlement({ db, quote, settlement, transfer, surface: { transfers: confirmed, classOf } });
+  };
 
   // 1. The settlement candidate is the EARLIEST qualifying in-window transfer
   //    in chain order. New arrivals can never displace it, and an
-  //    under-confirmed candidate is waited for, never skipped.
+  //    under-confirmed candidate is waited for, never skipped. Extras are
+  //    surfaced only AFTER the settle: if the claim loses a race, an extra may
+  //    become the next tick's candidate and must not be credited AND surfaced.
+  //    The settle flip sets transfer_surfacing_pending, so an extra whose item
+  //    insert fails here (or that confirms later) is surfaced by the
+  //    surface-only pass.
   const candidate = attributable.find((transfer) => classOf(transfer) === "qualifying");
   if (candidate) {
     if (!isConfirmed(candidate)) {
@@ -809,37 +1000,23 @@ export async function reconcileManagedVeniceTokenQuote(params: {
         confirmations: candidate.confirmations,
       };
     }
-    const settlement = await settleWith(candidate);
-    if (settlement.status === "settled") {
-      await surfaceTransfers(
-        db,
-        quote,
-        attributable.filter((transfer) => transfer !== candidate && isConfirmed(transfer)),
-        () => MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer
-      );
-    }
-    return settlementOutcome(quote, settlement, candidate, now);
+    return settleWith(candidate);
   }
 
   // 2. No qualifying transfer: confirmed non-qualifying ones go to review.
   //    Above-ceiling and late in-band transfers review now; an under-payment
   //    only once the window has closed on a confirmed chain, so the user can
-  //    still send the full amount until then.
-  const confirmed = attributable.filter(isConfirmed);
+  //    still send the full amount until then. The review CAS flip comes first
+  //    (settle writes the trigger's item after it), then the other transfers'
+  //    items. A lost flip writes nothing; a failed insert after the flip is
+  //    finished by the surface-only pass (the flip set the flag).
   const windowClosed = now.getTime() > expiresAtMs && scan.confirmedHeadMs >= expiresAtMs;
   const reviewTrigger =
     confirmed.find((transfer) => classOf(transfer) === "over") ??
     confirmed.find((transfer) => classOf(transfer) === "late_qualifying") ??
     (windowClosed ? confirmed.find((transfer) => classOf(transfer) === "under") : undefined);
   if (reviewTrigger) {
-    const settlement = await settleWith(reviewTrigger);
-    await surfaceTransfers(
-      db,
-      quote,
-      confirmed.filter((transfer) => transfer !== reviewTrigger),
-      (transfer) => CLASS_REASON[classOf(transfer)]
-    );
-    return settlementOutcome(quote, settlement, reviewTrigger, now);
+    return settleWith(reviewTrigger);
   }
 
   // Late out-of-band transfers never settle or review the quote: item only.
@@ -928,17 +1105,29 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     cancelled: 0,
     skipped: 0,
     failed: 0,
+    transferSurfacing: { checked: 0, complete: 0, pending: 0, failed: 0 },
     results: [],
   };
 
   let index = 0;
-  for (const candidate of candidates) {
-    // Throttle between quotes (not before the first) to keep the per-tick
-    // request rate under the public Base RPC endpoint's rate-limit threshold.
+  // Throttle between quotes (not before the first) to keep the per-tick
+  // request rate under the public Base RPC endpoint's rate-limit threshold.
+  const throttle = async () => {
     if (index > 0 && interQuoteDelayMs > 0) {
       await sleepImpl(interQuoteDelayMs);
     }
     index += 1;
+  };
+  const failure = (candidate: { id: string; userId: string }, error: unknown) => ({
+    quoteId: candidate.id,
+    userId: candidate.userId,
+    status: "failed" as const,
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorMessage: error instanceof Error ? error.message : String(error),
+  });
+
+  for (const candidate of candidates) {
+    await throttle();
     summary.checked += 1;
     try {
       const result = await reconcileManagedVeniceTokenQuote({
@@ -968,13 +1157,36 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
       });
     } catch (error) {
       summary.failed += 1;
-      summary.results.push({
+      summary.results.push(failure(candidate, error));
+    }
+  }
+
+  // Surface-only pass over settled / in-review quotes that still owe one,
+  // including any the loop above just made terminal: a transfer that was still
+  // confirming at the flip, arrived after it, or whose item insert failed
+  // after it is surfaced here, once, until the quote's range is confirmed.
+  const surfacingCandidates = await loadTransferSurfacingCandidates({ db, limit: TRANSFER_SURFACING_LIMIT });
+  for (const candidate of surfacingCandidates) {
+    await throttle();
+    summary.transferSurfacing.checked += 1;
+    try {
+      const result = await reconcileManagedVeniceTokenQuote({
         quoteId: candidate.id,
         userId: candidate.userId,
-        status: "failed",
-        errorName: error instanceof Error ? error.name : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
+        db,
+        minConfirmations: params.minConfirmations,
+        settleQuote: params.settleQuote,
+        now: params.now,
+        rpcOptions,
+        chain,
       });
+      // No surfacing result = the flag was cleared since the candidate query.
+      const outcome = ("transferSurfacing" in result && result.transferSurfacing) || "complete";
+      summary.transferSurfacing[outcome] += 1;
+    } catch (error) {
+      summary.failed += 1;
+      summary.transferSurfacing.failed += 1;
+      summary.results.push(failure(candidate, error));
     }
   }
 

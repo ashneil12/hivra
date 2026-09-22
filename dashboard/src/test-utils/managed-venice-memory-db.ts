@@ -13,6 +13,8 @@
  *     (quote tx hash, one deposit lot per quote, financial event idempotency
  *     key, reconciliation item dedupe key, one wallet account per user);
  *   - managed_venice_financial_events is append-only (update fails);
+ *   - NOT NULL column defaults the code relies on (quotes'
+ *     transfer_surfacing_pending = false) are applied on insert;
  *   - one-shot failure injection and stale-read views for crash/race tests.
  *
  * The RPC fake models Base: per-block timestamps (2 s blocks by default),
@@ -106,6 +108,11 @@ const UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
 };
 
 const APPEND_ONLY_TABLES = new Set(["managed_venice_financial_events"]);
+
+// Column defaults applied on insert, like the schema's NOT NULL DEFAULTs.
+const COLUMN_DEFAULTS: Record<string, MemoryRow> = {
+  managed_venice_token_quotes: { transfer_surfacing_pending: false },
+};
 
 const DEFAULT_TABLES = [
   "managed_venice_wallet_accounts",
@@ -214,7 +221,7 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
   function nextDefaults(tableName: string) {
     sequence += 1;
     const stamp = new Date(Date.UTC(2026, 0, 1) + sequence * 1000).toISOString();
-    return { id: `${tableName}_${sequence}`, created_at: stamp, updated_at: stamp };
+    return { id: `${tableName}_${sequence}`, created_at: stamp, updated_at: stamp, ...COLUMN_DEFAULTS[tableName] };
   }
 
   function takeFailure(tableName: string, op: MutationKind, payload: MemoryRow) {
@@ -689,6 +696,8 @@ export function managedVeniceQuoteRow(overrides: MemoryRow = {}): MemoryRow {
     cross_check_last_updated_at: null,
     transaction_hash: null,
     settled_at: null,
+    // NOT NULL DEFAULT false in the schema; only a settle / review flip sets it.
+    transfer_surfacing_pending: false,
     sweep_status: "pending",
     metadata: {
       primaryRaw: { pairAddress: "0xpair" },

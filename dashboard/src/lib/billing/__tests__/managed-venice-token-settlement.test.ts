@@ -266,7 +266,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
   });
 
-  it("never leaves an invisible review: a failed item insert keeps the quote reviewable and the retry writes one item", async () => {
+  it("flips the review first: a failed item insert after the flip leaves the surfacing flag, and a redelivery writes one item", async () => {
     const memory = seed();
     memory.failNext({ table: "managed_venice_reconciliation_items", op: "insert" });
     await expect(
@@ -275,17 +275,65 @@ describe("managed Venice token settlement saga", () => {
         memory.db
       )
     ).rejects.toThrow();
-    expect(quoteRow(memory).status).toBe("active");
+    // Terminal and owing surfacing: the reconciler's surface-only pass (or a
+    // redelivery, below) writes the missing item.
+    expect(quoteRow(memory)).toMatchObject({
+      status: "manual_review_required",
+      transaction_hash: null,
+      transfer_surfacing_pending: true,
+      metadata: expect.objectContaining({
+        manualReviewReason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
+        reviewTransactionHash: "0xfat",
+      }),
+    });
+    expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
 
-    const retry = await settleManagedVeniceTokenQuote(
-      { quoteId: "quote_1", transactionHash: "0xfat", tokenAmountRaw: "3000000000000000000000", observedAt: IN_WINDOW },
+    for (let delivery = 0; delivery < 2; delivery += 1) {
+      const retry = await settleManagedVeniceTokenQuote(
+        { quoteId: "quote_1", transactionHash: "0xfat", tokenAmountRaw: "3000000000000000000000", observedAt: IN_WINDOW },
+        memory.db
+      );
+      expect(retry.status).toBe("manual_review_required");
+    }
+    expect(memory.tables.managed_venice_reconciliation_items).toEqual([
+      expect.objectContaining({
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xfat"),
+      }),
+    ]);
+  });
+
+  it("a review that loses its CAS to a claim of the same transfer writes no item: never credited AND surfaced", async () => {
+    const memory = seed();
+    // A bearer delivery claims 0xpaid (in window) and dies before the lot.
+    memory.failNext({ table: "managed_venice_token_lots", op: "insert" });
+    await expect(
+      settleManagedVeniceTokenQuote(
+        { quoteId: "quote_1", transactionHash: "0xpaid", tokenAmountRaw: QUOTED, observedAt: IN_WINDOW },
+        memory.db
+      )
+    ).rejects.toThrow();
+    const unclaimedSnapshot = memory.tables.managed_venice_token_quotes.map((row) => ({ ...row, transaction_hash: null }));
+
+    // A stale reader saw the same transfer as late (outside the window) and
+    // tries to review with it: its CAS loses to the claim on both passes.
+    await expect(
+      settleManagedVeniceTokenQuote(
+        { quoteId: "quote_1", transactionHash: "0xpaid", tokenAmountRaw: QUOTED, observedAt: "2026-05-16T11:00:00.000Z" },
+        memory.withStaleReads("managed_venice_token_quotes", unclaimedSnapshot)
+      )
+    ).rejects.toThrow("changed concurrently");
+    expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+
+    // The claim completes: 0xpaid is credited and has no open item.
+    const completed = await settleManagedVeniceTokenQuote(
+      { quoteId: "quote_1", transactionHash: "0xpaid", tokenAmountRaw: QUOTED, observedAt: IN_WINDOW },
       memory.db
     );
-    expect(retry.status).toBe("manual_review_required");
-    expect(quoteRow(memory).metadata).toMatchObject({
-      manualReviewReason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
-    });
-    expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(1);
+    expect(completed.status).toBe("settled");
+    expect(quoteRow(memory)).toMatchObject({ status: "settled", transaction_hash: "0xpaid" });
+    expect(memory.tables.managed_venice_token_lots).toHaveLength(1);
+    expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
 
   it("surfaces a different tx against a settled quote exactly once and never mutates the quote", async () => {

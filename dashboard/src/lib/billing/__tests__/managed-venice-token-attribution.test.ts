@@ -136,9 +136,11 @@ describe("managed Venice reconciler: attribution and selection", () => {
     const settled = await reconcileAt(memory, rpc, "2026-05-16T10:25:10.000Z");
     expect(settled.status).toBe("settled");
     expect(quote(memory).transaction_hash).toBe("0xexact");
+    // Surfaced after the settle with its class reason (above the 2x ceiling),
+    // the same reason the surface-only pass would give it.
     expect(items(memory)).toEqual([
       expect.objectContaining({
-        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
         dedupe_key: "managed_venice_token_transfer:0xfat",
       }),
     ]);
