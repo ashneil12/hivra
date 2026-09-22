@@ -19,7 +19,10 @@
  *      a bounded window.
  *
  * Transitions are compare-and-set in the UPDATE itself, so a renewal that
- * lands between reads and writes is never moved (and never emailed).
+ * lands between reads and writes is never moved. The warning email is
+ * claimed (stamped while still 'active') before it is sent and released if
+ * the send fails; the "ended" email is skipped for a user who has paid for a
+ * new year since.
  * Re-running on the same tick is a no-op.
  */
 
@@ -127,24 +130,39 @@ async function runYearlyTokenExpiry(
 
   let warnSent = 0;
   let warnFailed = 0;
+  const warnStamp = now.toISOString();
   for (const row of (warnRows as SubRow[] | null) ?? []) {
+    // Claim the warning first (still active, not yet warned), so a renewal
+    // that landed after the read, or an overlapping run, never gets it.
+    const { data: claimedWarning, error: claimErr } = await supabaseAdmin
+      .from("yearly_token_subscriptions")
+      .update({ expiry_warning_email_sent_at: warnStamp, updated_at: warnStamp })
+      .eq("id", row.id)
+      .eq("status", "active")
+      .is("expiry_warning_email_sent_at", null)
+      .select("id");
+    if (claimErr) {
+      throw new Error(`warning claim failed: ${claimErr.message || claimErr.code || "unknown"}`);
+    }
+    if (!Array.isArray(claimedWarning) || claimedWarning.length === 0) continue;
+
     const result = await sendYearlyTokenSubscriptionNotification({
       userId: row.user_id,
       tier: row.tier,
       transition: "expiring_soon",
       expiresAt: new Date(row.expires_at),
-    });
+    }).catch(() => ({ sent: false as const }));
     if (result.sent) {
       warnSent += 1;
-      // Only stamp on a SUCCESSFUL send, so a Resend outage is retried next
-      // tick (the window is days wide).
-      await supabaseAdmin
-        .from("yearly_token_subscriptions")
-        .update({ expiry_warning_email_sent_at: now.toISOString(), updated_at: now.toISOString() })
-        .eq("id", row.id)
-        .is("expiry_warning_email_sent_at", null);
     } else {
       warnFailed += 1;
+      // Release the claim so a Resend outage is retried next tick (the window
+      // is days wide).
+      await supabaseAdmin
+        .from("yearly_token_subscriptions")
+        .update({ expiry_warning_email_sent_at: null, updated_at: now.toISOString() })
+        .eq("id", row.id)
+        .eq("expiry_warning_email_sent_at", warnStamp);
     }
   }
 
@@ -186,9 +204,32 @@ async function runYearlyTokenExpiry(
     throw new Error(`ended-email query failed: ${emailErr.message || emailErr.code || "unknown"}`);
   }
 
+  // A user who has paid for a new year since (a new live row for the tier)
+  // must not be told their subscription ended.
+  const candidates = (emailRows as SubRow[] | null) ?? [];
+  const renewedKeys = new Set<string>();
+  if (candidates.length > 0) {
+    const { data: liveRows, error: liveErr } = await supabaseAdmin
+      .from("yearly_token_subscriptions")
+      .select("user_id, tier")
+      .in("user_id", Array.from(new Set(candidates.map((row) => row.user_id))))
+      .in("status", ["active", "grace"]);
+    if (liveErr) {
+      throw new Error(`live-subscription query failed: ${liveErr.message || liveErr.code || "unknown"}`);
+    }
+    for (const live of (liveRows as Array<{ user_id: string; tier: string }> | null) ?? []) {
+      renewedKeys.add(`${live.user_id}:${live.tier}`);
+    }
+  }
+
   let expiredEmailSent = 0;
   let expiredEmailFailed = 0;
-  for (const row of (emailRows as SubRow[] | null) ?? []) {
+  let expiredEmailSkipped = 0;
+  for (const row of candidates) {
+    if (renewedKeys.has(`${row.user_id}:${row.tier}`)) {
+      expiredEmailSkipped += 1;
+      continue;
+    }
     try {
       const result = await sendYearlyTokenSubscriptionNotification({
         userId: row.user_id,
@@ -216,6 +257,6 @@ async function runYearlyTokenExpiry(
     warningEmails: { sent: warnSent, failed: warnFailed },
     movedToGrace,
     expired,
-    expiredEmails: { sent: expiredEmailSent, failed: expiredEmailFailed },
+    expiredEmails: { sent: expiredEmailSent, failed: expiredEmailFailed, skippedRenewed: expiredEmailSkipped },
   });
 }

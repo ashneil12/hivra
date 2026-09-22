@@ -131,3 +131,43 @@ describe("YR-7: expiry transitions are compare-and-set", () => {
     expect(row(memory, "ys_due")).toMatchObject({ status: "grace" });
   });
 });
+
+describe("expiry emails match what the user actually has", () => {
+  it("does not send 'expiring soon' for a subscription renewed after the candidate read", async () => {
+    const readBeforeRenewal = yearlySubscriptionRow({ id: "ys_old", status: "active", expires_at: at(3 * DAY_MS) });
+    const memory = setup([
+      { ...readBeforeRenewal, status: "renewed" },
+      yearlySubscriptionRow({ id: "ys_new", status: "active", expires_at: at(368 * DAY_MS) }),
+    ]);
+    mockState.client = memory.withStaleReads("yearly_token_subscriptions", [readBeforeRenewal]);
+
+    await runCron();
+
+    expect(mockSend).not.toHaveBeenCalledWith(expect.objectContaining({ transition: "expiring_soon" }));
+    expect(row(memory, "ys_old")).toMatchObject({ status: "renewed", expiry_warning_email_sent_at: null });
+  });
+
+  it("releases the warning claim when the send fails, so the next run retries it", async () => {
+    const memory = setup([yearlySubscriptionRow({ id: "ys_due", status: "active", expires_at: at(3 * DAY_MS) })]);
+    mockSend.mockResolvedValueOnce({ sent: false, reason: "send_failed" });
+
+    await runCron();
+    expect(row(memory, "ys_due")).toMatchObject({ expiry_warning_email_sent_at: null });
+
+    await runCron();
+    expect(row(memory, "ys_due")?.expiry_warning_email_sent_at).toEqual(expect.any(String));
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not tell a user who has paid for a new year that their subscription ended", async () => {
+    const memory = setup([
+      yearlySubscriptionRow({ id: "ys_ended", status: "expired", expires_at: at(-9 * DAY_MS) }),
+      yearlySubscriptionRow({ id: "ys_new", status: "active", paid_at: at(-1 * DAY_MS), expires_at: at(364 * DAY_MS) }),
+    ]);
+
+    await runCron();
+
+    expect(mockSend).not.toHaveBeenCalledWith(expect.objectContaining({ transition: "expired" }));
+    expect(row(memory, "ys_ended")).toMatchObject({ expired_email_sent_at: null });
+  });
+});
