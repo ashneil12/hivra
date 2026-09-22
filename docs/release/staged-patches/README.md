@@ -14,6 +14,14 @@ emitted only a fixed arrow on this external Hyprland capture path.
 
 The initial consolidation changed `remote-desktop/broker.cjs` while retaining the sealed `2026.09.15.2` release manifest. That breaks exact-byte installation verification and changes the desktop capability digest. The source release restores the manifest-matching broker; the staged candidate retains the newer work without silently rewriting an existing release.
 
+Release `2026.09.21.1` activates only the local-cursor part of this work in
+the sealed installer broker (`dashboard/provisioner/remote-desktop/broker.cjs`)
+and the Omarchy installer, with its own immutable manifest. The stream-profile
+changes in `broker.staged.cjs` remain staged. That release was verified by an
+explicit re-preparation of one existing canary Omarchy computer and a real
+short-lived desktop handoff; fresh installation and provider SQL admission for
+the new identity were not certified.
+
 Before activating this candidate for fresh installations:
 
 1. Create a new provisioner version and immutable manifest.
