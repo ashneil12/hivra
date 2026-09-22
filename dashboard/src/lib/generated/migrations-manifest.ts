@@ -343,6 +343,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260922180543", name: "crypto_topup_reconciliation_items" },
   { version: "20260922185029", name: "credit_deposit_sweep_state" },
   { version: "20260922190915", name: "hivra_activity_collectors" },
-  { version: "20260922193033", name: "managed_venice_token_transfer_dedupe" },
   { version: "20260922201510", name: "provider_release_admission_2026_09_22" },
+  { version: "20260922224500", name: "managed_venice_token_transfer_dedupe" },
 ];
