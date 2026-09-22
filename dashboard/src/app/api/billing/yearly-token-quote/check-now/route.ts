@@ -7,9 +7,11 @@
  * "did my payment land?" right now.
  *
  * Behaviour mirrors the cron exactly:
- *   1. Reconcile the user's yearly quotes that can still be paid ('active' or
- *      'expired' within the late-payment grace): bind the on-chain transfer
- *      that paid the quote and activate or renew the subscription.
+ *   1. Reconcile the user's yearly quotes whose attribution range is still
+ *      open: bind the on-chain Transfer log that paid an open quote and
+ *      activate or renew the subscription, and surface transfers that need an
+ *      operator (including ones reaching an already settled or reviewed
+ *      quote's range).
  *   2. Sweep the user's newly activated subscriptions to the treasury.
  *
  * Idempotent and compare-and-set — safe to race the cron. Heavy on-chain RPC

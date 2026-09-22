@@ -12,6 +12,7 @@ jest.mock("@/lib/ops-events", () => ({
 }));
 
 import {
+  flagYearlyPaymentsInManagedVeniceReviews,
   reconcilePendingYearlyTokenQuotes,
   reconcileYearlyTokenQuote,
   yearlyTransferDedupeKey,
@@ -24,7 +25,7 @@ import {
   yearlyQuoteRow,
   yearlySubscriptionRow,
 } from "@/test-utils/yearly-token-memory-db";
-import { createYearlyTokenWorld, HOUR_MS, MINUTE_MS, type YearlyTokenWorld } from "@/test-utils/yearly-token-world";
+import { createYearlyTokenWorld, DAY_MS, HOUR_MS, MINUTE_MS, type YearlyTokenWorld } from "@/test-utils/yearly-token-world";
 
 const REQUIRED = 1_000n * 10n ** 18n;
 const noDelay = async () => {};
@@ -574,5 +575,81 @@ describe("session boundaries use raw milliseconds", () => {
 
     expect(await reconcile(world, "yq_next")).toMatchObject({ status: "no_match" });
     expect(await reconcile(world, "yq_1")).toMatchObject({ status: "manual_review", reason: "late_payment" });
+  });
+});
+
+describe("ranges the pre-attribution flow may already have spent", () => {
+  it("routes a transfer in an earlier quote's range to an operator when a later quote was settled from the balance", async () => {
+    const world = createYearlyTokenWorld();
+    // Q_a was paid near its expiry; the old cron missed it, and the old flow
+    // then consumed the user's next quote Q_b from the wallet balance.
+    openQuote(world, { id: "yq_a", quoted_at: world.at(-60 * MINUTE_MS), expires_at: world.at(-40 * MINUTE_MS), status: "expired" });
+    world.pay({ tx: txHash(0x51), amountRaw: REQUIRED, offsetMs: -42 * MINUTE_MS });
+    openQuote(world, {
+      id: "yq_b",
+      quoted_at: world.at(-30 * MINUTE_MS),
+      expires_at: world.at(-10 * MINUTE_MS),
+      status: "consumed",
+      consumed_tx_hash: null,
+      consumed_at: world.at(-28 * MINUTE_MS),
+      attribution_closed_at: world.at(-1 * MINUTE_MS),
+    });
+    world.memory.insertRow(
+      "yearly_token_subscriptions",
+      yearlySubscriptionRow({ id: "ys_legacy", yearly_quote_id: "yq_b", deposit_tx_hash: null, expires_at: world.at(364 * DAY_MS) })
+    );
+
+    const result = await reconcile(world, "yq_a");
+
+    expect(result).toMatchObject({ status: "manual_review", reason: "predates_legacy_settlement" });
+    expect(world.subscriptions()).toEqual([expect.objectContaining({ id: "ys_legacy", status: "active" })]);
+    expect(world.items()).toEqual([
+      expect.objectContaining({ reason: "predates_legacy_settlement", transaction_hash: txHash(0x51) }),
+    ]);
+  });
+});
+
+describe("managed-Venice reviews recorded after a yearly range closed", () => {
+  it("are cross-checked independently of the yearly range, once per transfer", async () => {
+    const world = createYearlyTokenWorld();
+    openQuote(world, { quoted_at: world.at(-4 * HOUR_MS), expires_at: world.at(-4 * HOUR_MS + 20 * MINUTE_MS), status: "expired" });
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -4 * HOUR_MS + 5 * MINUTE_MS });
+    expect(await reconcile(world)).toMatchObject({ status: "activated" });
+    Object.assign(world.quote("yq_1")!, { status: "consumed" });
+    expect(await reconcile(world)).toMatchObject({ status: "closed" });
+
+    // Hours later canary's Venice reconciler puts the same transfer in a review.
+    world.memory.insertRow(
+      "managed_venice_token_quotes",
+      managedVeniceQuoteRow({ quoted_at: world.at(-10 * MINUTE_MS), status: "manual_review_required", transaction_hash: txHash(1) })
+    );
+
+    expect(await flagYearlyPaymentsInManagedVeniceReviews({ db: world.memory.db })).toEqual({ flagged: 1 });
+    expect(await flagYearlyPaymentsInManagedVeniceReviews({ db: world.memory.db })).toEqual({ flagged: 0 });
+    expect(world.items()).toEqual([
+      expect.objectContaining({
+        reason: "contested_by_managed_venice_review",
+        transaction_hash: txHash(1),
+        subscription_id: world.subscriptions()[0].id,
+        quote_id: "yq_1",
+      }),
+    ]);
+  });
+
+  it("ignores a Venice review of the same tx on another wallet", async () => {
+    const world = createYearlyTokenWorld();
+    openQuote(world);
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS });
+    await reconcile(world);
+    world.memory.insertRow(
+      "managed_venice_token_quotes",
+      managedVeniceQuoteRow({
+        deposit_address: "0x00000000000000000000000000000000000000b2",
+        status: "manual_review_required",
+        transaction_hash: txHash(1),
+      })
+    );
+
+    expect(await flagYearlyPaymentsInManagedVeniceReviews({ db: world.memory.db })).toEqual({ flagged: 0 });
   });
 });

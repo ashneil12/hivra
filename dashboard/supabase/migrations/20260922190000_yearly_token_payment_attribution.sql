@@ -204,8 +204,10 @@ revoke all on public.yearly_token_reconciliation_items from anon, authenticated;
 --      ('active' / 'grace') one -> it becomes 'renewed' and a new row runs
 --      365 days from max(its expires_at, now);
 --   4. mark the quote consumed with the tx.
--- A concurrent claim of the same tx trips a unique index and the whole call
--- rolls back to 'transaction_already_claimed'.
+-- A concurrent claim of the same Transfer log (tx hash + log index) trips a
+-- unique index and the whole call rolls back to 'transaction_already_claimed'.
+-- Other logs of the same tx (a multi-send to other wallets) are other
+-- transfers and are not blocked.
 create or replace function public.settle_yearly_token_payment(
   p_quote_id uuid,
   p_transaction_hash text,

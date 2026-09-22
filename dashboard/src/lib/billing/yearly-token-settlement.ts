@@ -17,7 +17,7 @@
  *
  *   'active' / 'expired' quotes
  *     1. The EARLIEST confirmed in-window transfer of 1x..2x the quote settles
- *        it through settle_yearly_token_payment, which claims the tx,
+ *        it through settle_yearly_token_payment, which claims the Transfer log,
  *        activates or renews the subscription and consumes the quote in one
  *        transaction.
  *     2. Nothing qualifying: over-ceiling transfers are surfaced for review as
@@ -80,7 +80,8 @@ export type YearlyReviewReason =
   | "extra_transfer"
   | "payment_after_review"
   | "legacy_subscription_exists"
-  | "contested_by_managed_venice_review";
+  | "contested_by_managed_venice_review"
+  | "predates_legacy_settlement";
 
 export type YearlyReconcileStatus =
   | "activated"
@@ -137,6 +138,7 @@ type DbQuery = {
   eq: (...args: unknown[]) => DbQuery;
   in: (...args: unknown[]) => DbQuery;
   is: (...args: unknown[]) => DbQuery;
+  gt: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
   maybeSingle: () => Promise<{ data: unknown; error: QueryError }>;
@@ -225,38 +227,40 @@ export function yearlyTransferDedupeKey(transfer: Pick<ScannedTransfer, "transac
   return `yearly_token_transfer:${transfer.transactionHash.toLowerCase()}:${transfer.logIndex}`;
 }
 
+interface ReviewItem {
+  userId: string;
+  quoteId: string | null;
+  subscriptionId: string | null;
+  reason: YearlyReviewReason;
+  transactionHash: string;
+  logIndex: number;
+  tokenAmountRaw: string;
+  tokensRequiredRaw: string | null;
+  depositAddress: string;
+  observedAt: string | null;
+  metadata: Record<string, unknown>;
+}
+
 /**
  * Record a transfer an operator has to look at. One row per transfer: a
  * repeat (every cron tick, the cron racing a user's check) hits the unique
  * dedupe key and is treated as already surfaced. Returns true when new.
  */
-async function surfaceTransfer(
-  db: YearlySettlementDb,
-  quote: YearlyTokenQuote,
-  transfer: ScannedTransfer,
-  reason: YearlyReviewReason,
-  subscriptionId: string | null = null
-) {
+async function insertReviewItem(db: YearlySettlementDb, item: ReviewItem) {
   const { error } = await table(db, "yearly_token_reconciliation_items").insert({
-    user_id: quote.userId,
-    quote_id: quote.id,
-    subscription_id: subscriptionId,
+    user_id: item.userId,
+    quote_id: item.quoteId,
+    subscription_id: item.subscriptionId,
     status: "open",
-    reason,
-    transaction_hash: transfer.transactionHash,
-    log_index: transfer.logIndex,
-    token_amount_raw: transfer.amount.toString(),
-    tokens_required_raw: quote.tokensRequiredRaw.toString(),
-    deposit_address: normalizeEvmAddress(quote.depositAddress),
-    observed_at: transfer.observedAt,
-    dedupe_key: yearlyTransferDedupeKey(transfer),
-    metadata: {
-      tier: quote.tier,
-      quoteStatus: quote.status,
-      blockNumber: transfer.blockNumber,
-      confirmations: transfer.confirmations,
-      quoteExpiresAt: quote.expiresAt,
-    },
+    reason: item.reason,
+    transaction_hash: item.transactionHash,
+    log_index: item.logIndex,
+    token_amount_raw: item.tokenAmountRaw,
+    tokens_required_raw: item.tokensRequiredRaw,
+    deposit_address: normalizeEvmAddress(item.depositAddress),
+    observed_at: item.observedAt,
+    dedupe_key: yearlyTransferDedupeKey(item),
+    metadata: item.metadata,
   });
   if (error) {
     if (error.code === "23505") return false;
@@ -268,20 +272,108 @@ async function surfaceTransfer(
     title: "Yearly $HermesOS payment needs review",
     message:
       `A $HermesOS transfer to a yearly quote's deposit wallet needs an operator ` +
-      `(${reason}). It is recorded in yearly_token_reconciliation_items.`,
-    userId: quote.userId,
+      `(${item.reason}). It is recorded in yearly_token_reconciliation_items.`,
+    userId: item.userId,
     metadata: {
       failureType: "yearly_token_payment_review",
-      reason,
-      quoteId: quote.id,
-      subscriptionId,
-      transactionHash: transfer.transactionHash,
-      logIndex: transfer.logIndex,
-      tokenAmountRaw: transfer.amount.toString(),
-      tokensRequiredRaw: quote.tokensRequiredRaw.toString(),
+      reason: item.reason,
+      quoteId: item.quoteId,
+      subscriptionId: item.subscriptionId,
+      transactionHash: item.transactionHash,
+      logIndex: item.logIndex,
+      tokenAmountRaw: item.tokenAmountRaw,
+      tokensRequiredRaw: item.tokensRequiredRaw,
     },
   });
   return true;
+}
+
+function surfaceTransfer(
+  db: YearlySettlementDb,
+  quote: YearlyTokenQuote,
+  transfer: ScannedTransfer,
+  reason: YearlyReviewReason,
+  subscriptionId: string | null = null
+) {
+  return insertReviewItem(db, {
+    userId: quote.userId,
+    quoteId: quote.id,
+    subscriptionId,
+    reason,
+    transactionHash: transfer.transactionHash,
+    logIndex: transfer.logIndex,
+    tokenAmountRaw: transfer.amount.toString(),
+    tokensRequiredRaw: quote.tokensRequiredRaw.toString(),
+    depositAddress: quote.depositAddress,
+    observedAt: transfer.observedAt,
+    metadata: {
+      tier: quote.tier,
+      quoteStatus: quote.status,
+      blockNumber: transfer.blockNumber,
+      confirmations: transfer.confirmations,
+      quoteExpiresAt: quote.expiresAt,
+    },
+  });
+}
+
+/**
+ * canary's pre-attribution managed-Venice reconciler rescans ~11 h of
+ * transfers with no time window and, when it sends a stale quote to review,
+ * writes the transfer it REJECTED into that quote's transaction_hash. If that
+ * transfer paid a yearly subscription, an operator working the Venice review
+ * could credit it a second time. This pass flags every such yearly payment
+ * (one item per transfer), whenever the Venice review appears — also long
+ * after the yearly quote's range has closed.
+ */
+export async function flagYearlyPaymentsInManagedVeniceReviews(params: { db?: unknown; limit?: number } = {}) {
+  const db = asSettlementDb(params.db ?? supabaseAdmin);
+  const { data: reviews, error: reviewsError } = await table(db, "managed_venice_token_quotes")
+    .select("id, transaction_hash, deposit_address, status")
+    .eq("status", "manual_review_required")
+    .order("updated_at", { ascending: false })
+    .limit(Math.max(1, Math.min(500, Math.floor(params.limit ?? 200))));
+  if (reviewsError) {
+    throw new Error(`Failed to load managed Venice reviews: ${reviewsError.message || "unknown error"}`);
+  }
+  const reviewed = new Map<string, Set<string>>(); // tx -> wallets under review
+  for (const row of (Array.isArray(reviews) ? reviews : []) as Array<Record<string, unknown>>) {
+    if (typeof row.transaction_hash !== "string" || typeof row.deposit_address !== "string") continue;
+    const tx = row.transaction_hash.toLowerCase();
+    const wallets = reviewed.get(tx) ?? new Set<string>();
+    wallets.add(row.deposit_address.toLowerCase());
+    reviewed.set(tx, wallets);
+  }
+  if (reviewed.size === 0) return { flagged: 0 };
+
+  const hashes = Array.from(reviewed.keys());
+  const { data: subs, error: subsError } = await table(db, "yearly_token_subscriptions")
+    .select("id, user_id, yearly_quote_id, deposit_tx_hash, deposit_log_index, deposit_address, amount_received_raw::text, paid_at, metadata")
+    .in("deposit_tx_hash", hashes);
+  if (subsError) throw new Error(`Failed to load yearly subscriptions: ${subsError.message || "unknown error"}`);
+
+  let flagged = 0;
+  for (const sub of (Array.isArray(subs) ? subs : []) as Array<Record<string, unknown>>) {
+    const tx = typeof sub.deposit_tx_hash === "string" ? sub.deposit_tx_hash.toLowerCase() : "";
+    const wallet = typeof sub.deposit_address === "string" ? sub.deposit_address.toLowerCase() : "";
+    if (typeof sub.deposit_log_index !== "number" || !reviewed.get(tx)?.has(wallet)) continue;
+    const metadata = (sub.metadata ?? {}) as Record<string, unknown>;
+    const inserted = await insertReviewItem(db, {
+      userId: String(sub.user_id),
+      quoteId: typeof sub.yearly_quote_id === "string" ? sub.yearly_quote_id : null,
+      subscriptionId: String(sub.id),
+      reason: "contested_by_managed_venice_review",
+      transactionHash: tx,
+      logIndex: sub.deposit_log_index,
+      tokenAmountRaw: String(sub.amount_received_raw),
+      tokensRequiredRaw: typeof metadata.tokensRequiredRaw === "string" ? metadata.tokensRequiredRaw : null,
+      depositAddress: wallet,
+      observedAt:
+        typeof metadata.blockTimestamp === "string" ? metadata.blockTimestamp : typeof sub.paid_at === "string" ? sub.paid_at : null,
+      metadata: { source: "managed_venice_review_cross_check" },
+    });
+    if (inserted) flagged += 1;
+  }
+  return { flagged };
 }
 
 /**
@@ -311,6 +403,24 @@ async function closeAttribution(db: YearlySettlementDb, quoteId: string, now: Da
     .is("attribution_closed_at", null)
     .select("id");
   if (error) throw new Error(`Failed to close yearly quote attribution: ${error.message || "unknown error"}`);
+}
+
+/**
+ * Did the pre-attribution (balance-based) flow settle a LATER quote of this
+ * user? That flow consumed quotes from the wallet balance, so it may have
+ * spent a transfer that lies in this earlier quote's range (a payment it
+ * missed here and then counted there). Such a range must never auto-credit.
+ */
+async function hasLegacySettlementAfter(db: YearlySettlementDb, quote: YearlyTokenQuote) {
+  const { data, error } = await table(db, "yearly_token_quotes")
+    .select("id")
+    .eq("user_id", quote.userId)
+    .eq("status", "consumed")
+    .is("consumed_tx_hash", null)
+    .gt("quoted_at", quote.quotedAt)
+    .limit(1);
+  if (error) throw new Error(`Failed to check for legacy yearly settlements: ${error.message || "unknown error"}`);
+  return Array.isArray(data) && data.length > 0;
 }
 
 async function subscriptionIdForQuote(db: YearlySettlementDb, quoteId: string) {
@@ -439,6 +549,28 @@ export async function reconcileYearlyTokenQuote(params: {
       return { ...base, status: "closed", quoteStatus: quote.status };
     }
     return { ...base, status: "watching", quoteStatus: quote.status };
+  }
+
+  // A later quote was settled from the wallet balance by the pre-attribution
+  // flow, which may already have spent a transfer in this range. Crediting it
+  // here could grant a second year for one payment, and dropping it could lose
+  // a real one: hand every transfer in the range to an operator.
+  if (await hasLegacySettlementAfter(db, quote)) {
+    for (const transfer of confirmed) {
+      await surfaceTransfer(db, quote, transfer, "predates_legacy_settlement");
+    }
+    if (confirmed.length > 0) {
+      await closeQuote(db, quote.id, "manual_review", now);
+      return { ...base, status: "manual_review", reason: "predates_legacy_settlement" };
+    }
+    if (attributable.length > 0) {
+      return { ...base, status: "underconfirmed", confirmations: Math.max(...attributable.map((t) => t.confirmations)) };
+    }
+    if (rangeScanned) {
+      await closeQuote(db, quote.id, "cancelled", now);
+      return { ...base, status: "cancelled" };
+    }
+    return { ...base, status: "no_match" };
   }
 
   // 1. The EARLIEST qualifying in-window transfer in chain order settles the
