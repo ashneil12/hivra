@@ -1,0 +1,87 @@
+import "server-only";
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { mintActivityCollectorToken } from "./auth";
+import { NATIVE_TRACING_AGENT_TYPES } from "./types";
+
+// Guest agent-run reporter credentials and per-computer reporter state.
+// Contract: docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md
+
+export const ACTIVITY_COLLECTOR_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const ACTIVITY_INGEST_PATH = "/api/activity/ingest";
+export const ACTIVITY_RENEW_PATH = "/api/activity/collector/renew";
+
+export type ActivityCollectorIssueReason = "launch" | "start" | "renew";
+
+export interface ActivityCollectorCredential {
+  endpoint: string;
+  resourceId: string;
+  token: string;
+  expiresAt: string;
+}
+
+/** Exact public https origin of this dashboard deployment, or null when it cannot receive guest traffic. */
+export function activityControlOrigin(value = process.env.NEXT_PUBLIC_APP_URL): string | null {
+  const raw = value?.trim() ?? "";
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" && parsed.origin === raw && !parsed.username && !parsed.password
+      ? parsed.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether this computer has a verified native producer (Claude Code or Codex on Proxmox). */
+export function supportsNativeTracing(agent: { type?: string | null; computer_substrate?: string | null }): boolean {
+  return !!agent.type && NATIVE_TRACING_AGENT_TYPES.has(agent.type)
+    && (agent.computer_substrate ?? "proxmox-kvm") === "proxmox-kvm";
+}
+
+/**
+ * Mint a 7-day credential scoped to exactly one computer. Returns null (never
+ * throws) when this deployment has no public origin or no signing secret, so a
+ * missing reporter can never fail a launch or start; Activity then shows the
+ * computer as missing coverage.
+ */
+export function issueActivityCollectorCredential(input: {
+  userId: string;
+  agentId: string;
+  nowSeconds?: number;
+  origin?: string | null;
+}): ActivityCollectorCredential | null {
+  const origin = input.origin === undefined ? activityControlOrigin() : input.origin;
+  if (!origin) return null;
+  const iat = input.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const exp = iat + ACTIVITY_COLLECTOR_TTL_SECONDS;
+  const resourceId = input.agentId.trim().toLowerCase();
+  try {
+    const token = mintActivityCollectorToken({ userId: input.userId, resourceIds: [resourceId], iat, exp });
+    return { endpoint: `${origin}${ACTIVITY_INGEST_PATH}`, resourceId, token, expiresAt: new Date(exp * 1000).toISOString() };
+  } catch {
+    return null;
+  }
+}
+
+/** Record an issuance. Best effort: returns false instead of throwing. */
+export async function recordActivityCollectorIssued(
+  client: SupabaseClient,
+  input: { agentId: string; userId: string; expiresAt: string; reason: ActivityCollectorIssueReason; issuedAt?: Date },
+): Promise<boolean> {
+  const now = (input.issuedAt ?? new Date()).toISOString();
+  try {
+    const { error } = await client.from("hivra_activity_collectors").upsert({
+      agent_id: input.agentId,
+      user_id: input.userId,
+      issued_at: now,
+      credential_expires_at: input.expiresAt,
+      issue_reason: input.reason,
+      updated_at: now,
+    }, { onConflict: "agent_id" });
+    return !error;
+  } catch {
+    return false;
+  }
+}
