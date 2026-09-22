@@ -61,6 +61,9 @@ it("ships the agent-run reporter only in a new release, never its tests or into 
   // Credentials are issued only to a host bundle known to carry the reporter.
   expect(provisionerSupportsActivityTelemetry(PORTABLE_HIVRA_PROVISIONER_VERSION)).toBe(true);
   expect(provisionerSupportsActivityTelemetry("2026.09.15.2")).toBe(false);
+  expect(omarchyCursorRelease.version).toBe("2026.09.21.1");
+  expect(omarchyCursorRelease.files.map(file => file.path)).not.toContain("hivra-agent-trace.py");
+  expect(provisionerSupportsActivityTelemetry("2026.09.21.1")).toBe(false);
 });
 
 it("keeps the retained provider predecessor bound to its independently sealed bundle", () => {

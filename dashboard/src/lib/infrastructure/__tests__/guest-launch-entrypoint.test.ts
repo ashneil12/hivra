@@ -178,7 +178,7 @@ it("forwards the guest installer's reporter marker into the host provisioning lo
   const directory = mkdtempSync(path.join(tmpdir(), "hivra-provision-log-"));
   try {
     const log = path.join(directory, "hivra-prov-1090.log");
-    const guest = (status: string, reason: string) => `set -euo pipefail
+    const guest = () => `set -euo pipefail
 guest_launch_document() { printf 'document'; }
 guest() {
   cat >/dev/null
@@ -204,7 +204,7 @@ grep -E "$PATTERN" "$LOG"
       ["failed", "timeout", "HIVRA_ACTIVITY_COLLECTOR status=failed reason=timeout"],
     ]) {
       writeFileSync(log, "", { mode: 0o600 });
-      const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", guest(status, reason)], {
+      const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", guest()], {
         env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", HOME: "/tmp", LOG: log, PATTERN: String(pattern),
           INSTALLER: installer, STATUS: status, REASON: reason },
         encoding: "utf8", timeout: 10_000,
