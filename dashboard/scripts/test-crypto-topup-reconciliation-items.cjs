@@ -14,7 +14,7 @@ const PREREQUISITES = [
   "20260425140000_crypto_deposit_receipts.sql",
   "20260426183000_bankr_deposit_wallets.sql",
 ];
-const MIGRATION = "20260922130000_crypto_topup_reconciliation_items.sql";
+const MIGRATION = "20260922180543_crypto_topup_reconciliation_items.sql";
 
 const read = (name) => fs.readFileSync(path.join(MIGRATIONS, name), "utf8");
 
