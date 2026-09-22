@@ -30,7 +30,7 @@ trace = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(trace)
 
 SECRET = "SENTINEL-content-4d1e9a"
-SECRET_ENUM = "sentinel_enum_4d1e9a"  # shaped like an error enum, so only field choice keeps it out
+SENTINEL_ENUM = "sentinel_enum_4d1e9a"  # shaped like an error enum, so only field choice keeps it out
 RESOURCE = "00000000-0000-4000-8000-000a00000004"
 TOKEN = ".".join(("hvra_otlp_v1", "eyJ2IjoxfQ", "c2lnbmF0dXJlLW9uZQ"))  # built at runtime: synthetic, never a literal credential
 NEW_TOKEN = ".".join(("hvra_otlp_v1", "eyJ2IjoxfQ", "c2lnbmF0dXJlLXR3bw"))
@@ -282,7 +282,7 @@ class CodexParserTest(unittest.TestCase):
     def test_error_end_uses_enum_only_and_abort_is_stopped(self):
         out, _ = feed(trace.parse_codex, [
             codex_meta(),
-            *codex_turn("turn-1", error={"message": SECRET_ENUM, "codex_error_info": "server_overloaded"}),
+            *codex_turn("turn-1", error={"message": SENTINEL_ENUM, "codex_error_info": "server_overloaded"}),
             *codex_turn("turn-2", start=T0 + 20, error={"message": SECRET, "codex_error_info": "Not An Enum"}),
             codex("event_msg", T0 + 30, {"type": "task_started", "turn_id": "turn-3", "started_at": T0 + 30}),
             codex("event_msg", T0 + 33, {"type": "turn_aborted", "turn_id": "turn-3", "reason": SECRET,
@@ -295,7 +295,7 @@ class CodexParserTest(unittest.TestCase):
         self.assertNotIn("error.type", ends[1])
         self.assertEqual(ends[2]["duration_ms"], 3000)
         self.assertEqual([r["severityNumber"] for r in out if attrs(r)["event.name"] == "run.failed"], [17, 17])
-        self.assertNotIn(SECRET_ENUM, json.dumps(out))
+        self.assertNotIn(SENTINEL_ENUM, json.dumps(out))
 
     def test_new_task_stops_a_run_that_never_ended(self):
         out, _ = feed(trace.parse_codex, [
@@ -1170,10 +1170,10 @@ class ReporterTest(unittest.TestCase):
             codex("event_msg", T0 + 6, {"type": "agent_message", "message": SECRET}),
             codex("compacted", T0 + 6, {"message": SECRET, "replacement_history": [SECRET]}),
             codex("event_msg", T0 + 7, {"type": "task_complete", "turn_id": "turn-1", "duration_ms": 6000,
-                                        "last_agent_message": SECRET_ENUM,
-                                        "error": {"message": SECRET_ENUM, "codex_error_info": "other"}}),
+                                        "last_agent_message": SENTINEL_ENUM,
+                                        "error": {"message": SENTINEL_ENUM, "codex_error_info": "other"}}),
             codex("event_msg", T0 + 8, {"type": "task_started", "turn_id": "turn-2", "started_at": T0 + 8}),
-            codex("event_msg", T0 + 9, {"type": "turn_aborted", "turn_id": "turn-2", "reason": SECRET_ENUM}),
+            codex("event_msg", T0 + 9, {"type": "turn_aborted", "turn_id": "turn-2", "reason": SENTINEL_ENUM}),
         ])
         self.write("s.jsonl", [
             {"type": "queue-operation", "operation": "enqueue", "content": SECRET, "sessionId": "5a1c-session",
@@ -1191,7 +1191,7 @@ class ReporterTest(unittest.TestCase):
             {"type": "custom-title", "customTitle": SECRET, "sessionId": "5a1c-session"},
             {"type": "summary", "summary": SECRET, "leafUuid": "x"},
             prompt(T0 + 10, "p-2"),
-            text(T0 + 11, stop="stop_sequence", isApiErrorMessage=True, error=SECRET_ENUM + "_x"),
+            text(T0 + 11, stop="stop_sequence", isApiErrorMessage=True, error=SENTINEL_ENUM + "_x"),
         ], directory=self.projects)
         self.write("agent-a1.jsonl", [prompt(T0 + 1, "p-1", isSidechain=True, agentId="a1"),
                                       text(T0 + 2, isSidechain=True, agentId="a1")],
@@ -1200,11 +1200,11 @@ class ReporterTest(unittest.TestCase):
         records = self.all_records()
         self.assertEqual(roles(records).count("run.started"), 5)
         self.assertEqual([attrs(r).get("error.type") for r in records if attrs(r)["event.name"] == "run.failed"],
-                         ["other", SECRET_ENUM + "_x"])
+                         ["other", SENTINEL_ENUM + "_x"])
         for _, headers, body in self.mock.requests:
             for value in (body.decode("utf-8"), json.dumps(headers)):
                 self.assertNotIn(SECRET, value)
-                self.assertNotIn(SECRET_ENUM + '"', value.replace(SECRET_ENUM + '_x"', ""))
+                self.assertNotIn(SENTINEL_ENUM + '"', value.replace(SENTINEL_ENUM + '_x"', ""))
         with open(os.path.join(self.state_dir, "state.json")) as stream:
             self.assertNotIn(SECRET, stream.read())
         self.assertNotIn(SECRET, json.dumps(self.logs))
