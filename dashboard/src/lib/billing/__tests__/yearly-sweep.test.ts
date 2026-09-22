@@ -51,6 +51,7 @@ function pendingSub(world: YearlyTokenWorld, overrides: Record<string, unknown> 
       id: "ys_1",
       paid_at: world.at(-1 * MINUTE_MS),
       deposit_tx_hash: txHash(1),
+      deposit_log_index: 0,
       amount_received_raw: REQUIRED.toString(),
       sweep_status: "pending",
       ...overrides,
@@ -102,6 +103,19 @@ describe("parks for an operator instead of guessing", () => {
     expect(mockReportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: expect.objectContaining({ failureType: "yearly_token_sweep_needs_operator" }) })
     );
+  });
+
+  it("a manual grant recorded with another asset's tx and no transfer log", async () => {
+    const world = createYearlyTokenWorld();
+    // e.g. an operator's grant for a USDC payment: tx hash set, no log index.
+    pendingSub(world, { deposit_tx_hash: txHash(0x55), deposit_log_index: null, amount_received_raw: "49000000" });
+    world.pay({ tx: txHash(0x77), amountRaw: REQUIRED, offsetMs: -60 * MINUTE_MS }); // someone else's deposit
+
+    expect((await sweepYearlyTokenSubscription({ id: "ys_1", user_id: "user_1" }, options(world))).outcome).toBe(
+      "needs_operator"
+    );
+    expect(world.submitted).toHaveLength(0);
+    expect(world.chain.balanceOf(TEST_DEPOSIT_ADDRESS)).toBe(REQUIRED);
   });
 
   it("a deposit wallet that resolves to a hermesos_lock credential", async () => {

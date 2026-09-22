@@ -126,11 +126,12 @@ interface ClaimedRow {
   amount_received_raw: string | number;
   deposit_address: string | null;
   deposit_tx_hash: string | null;
+  deposit_log_index: number | null;
   metadata: Record<string, unknown> | null;
 }
 
 const SWEEP_ROW_COLUMNS =
-  "id, user_id, amount_received_raw::text, deposit_address, deposit_tx_hash, metadata, " +
+  "id, user_id, amount_received_raw::text, deposit_address, deposit_tx_hash, deposit_log_index, metadata, " +
   "sweep_status, sweep_attempted_at, sweep_submitted_at, paid_at";
 
 function table(db: SupabaseLike, name: string) {
@@ -274,10 +275,13 @@ export async function sweepYearlyTokenSubscription(
 
   const amountRaw = BigInt(normalizeNumericToBigIntString(String(row.amount_received_raw ?? "0")));
   const depositAddress = depositAddressOf(row);
-  if (!row.deposit_tx_hash || !depositAddress || amountRaw <= 0n) {
-    // Pre-attribution rows recorded the wallet's whole balance, not a transfer:
-    // sweeping that amount could take another flow's tokens.
-    const reason = "no attributed deposit transfer recorded for this subscription";
+  // Only settle_yearly_token_payment writes an attributed $HermesOS transfer,
+  // and it always records the log index. Pre-attribution rows recorded the
+  // wallet's whole balance, and manual grants may carry another asset's tx
+  // (e.g. a USDC payment): sweeping their amount could take another flow's
+  // tokens from the shared wallet.
+  if (!row.deposit_tx_hash || row.deposit_log_index == null || !depositAddress || amountRaw <= 0n) {
+    const reason = "no attributed $HermesOS deposit transfer recorded for this subscription";
     await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }

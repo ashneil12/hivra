@@ -381,6 +381,7 @@ describe("YR-6: sweep retries do not starve newer subscriptions", () => {
         paid_at: world.at(-1 * MINUTE_MS),
         expires_at: world.at(YEAR_MS),
         deposit_tx_hash: txHash(1),
+        deposit_log_index: 0,
         sweep_status: "pending",
       })
     );
@@ -415,6 +416,7 @@ describe("YR-7: sweep transitions are compare-and-set", () => {
         paid_at: world.at(-1 * MINUTE_MS),
         expires_at: world.at(YEAR_MS),
         deposit_tx_hash: txHash(1),
+        deposit_log_index: 0,
         deposit_address: legacyWallet,
         sweep_status: "pending",
       })
