@@ -1,7 +1,8 @@
 import "server-only";
 import { z } from "zod";
 
-import currentRelease from "../../../provisioner-releases/2026.09.22.1.json";
+import currentRelease from "../../../provisioner-releases/2026.09.22.2.json";
+import activityTracingRelease from "../../../provisioner-releases/2026.09.22.1.json";
 import capacityRelease from "../../../provisioner-releases/2026.09.15.2.json";
 import omarchyCursorRelease from "../../../provisioner-releases/2026.09.21.1.json";
 import priorFifteenRelease from "../../../provisioner-releases/2026.09.15.1.json";
@@ -45,6 +46,7 @@ const desktopRevisionByVersion = {
   "2026.09.15.2": "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca",
   "2026.09.21.1": REMOTE_DESKTOP_BUNDLE_REVISION,
   "2026.09.22.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.09.22.2": REMOTE_DESKTOP_BUNDLE_REVISION,
 } satisfies Record<ProviderDesktopWorkerIdentity["bundle"]["provisionerVersion"], string>;
 const ControlOrigin = z.string().max(300).refine(value => {
   try { const url = new URL(value); return url.protocol === "https:" && url.origin === value; } catch { return false; }
@@ -71,7 +73,7 @@ export function buildProviderDesktopPowerProbe(input: ProviderDesktopRuntimeProb
 /** Releases whose installed gateway speaks hivra-workspace-v1. The probe,
  * receipt parser and session issuer must share one list so a release bump
  * cannot admit a probe the issuer then refuses. */
-export const PROVIDER_WORKSPACE_PROTOCOL_VERSIONS = ["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"] as const;
+export const PROVIDER_WORKSPACE_PROTOCOL_VERSIONS = ["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2"] as const;
 /** Workspace grants require installed code and the running gateway's original
  * identity/configuration, not a release label or unauthenticated HTML alone. */
 export function buildProviderWorkspaceRuntimeProbe(input: ProviderWorkspaceRuntimeProbe): string {
@@ -81,7 +83,8 @@ export function buildProviderWorkspaceRuntimeProbe(input: ProviderWorkspaceRunti
 function buildProbe(input: ProviderDesktopRuntimeProbe, captureBootId: boolean, workspaceControlOrigin?: string): string {
   try {
     const expected = checked(input);
-    const release = expected.identity.bundle.provisionerVersion === "2026.09.22.1" ? currentRelease
+    const release = expected.identity.bundle.provisionerVersion === "2026.09.22.2" ? currentRelease
+    : expected.identity.bundle.provisionerVersion === "2026.09.22.1" ? activityTracingRelease
     : expected.identity.bundle.provisionerVersion === "2026.09.21.1" ? omarchyCursorRelease
     : expected.identity.bundle.provisionerVersion === "2026.09.15.2" ? capacityRelease
     : expected.identity.bundle.provisionerVersion === "2026.09.15.1" ? priorFifteenRelease
@@ -181,7 +184,7 @@ try:
  workspace_process=[]
  def workspace_observe(services):
   if WORKSPACE_CONTROL is None: return
-  if preparation['controlOrigin']!=WORKSPACE_CONTROL or len(WORKSPACE_FILES)!=${["2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"].includes(expected.identity.bundle.provisionerVersion) ? 11 : 10}: reject()
+  if preparation['controlOrigin']!=WORKSPACE_CONTROL or len(WORKSPACE_FILES)!=${["2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2"].includes(expected.identity.bundle.provisionerVersion) ? 11 : 10}: reject()
   for entry in WORKSPACE_FILES:
    raw=read(pathlib.Path('/opt/bux')/entry['path'],entry['bytes'],0o644)
    if len(raw)!=entry['bytes'] or hashlib.sha256(raw).hexdigest()!=entry['sha256']: reject()

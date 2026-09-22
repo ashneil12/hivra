@@ -20,6 +20,7 @@ import {
   isCompatibleProviderVmProvisionerVersion,
   supportsModelSettingsProvisionerVersion,
   isCompatibleProxmoxProvisionerVersion,
+  provisionerSupportsWindowsInstaller,
   providerProvisionerSupportsCatalogRuntime,
 } from "../portable-provisioner-contract";
 
@@ -100,13 +101,18 @@ describe("portable provisioner source contract", () => {
     expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: prior })?.provisionerVersion).toBe(prior);
   });
-  it("keeps the immediately prior 2026.09.15.x releases compatible after a version bump", () => {
+  it("keeps the immediately prior releases compatible after a version bump", () => {
     // Regression: the lists end with the current-version constant, so bumping it
     // to 2026.09.21.1 silently dropped installed 2026.09.15.2 computers.
-    for (const prior of ["2026.09.15.1", "2026.09.15.2"]) {
+    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"]) {
       expect(isCompatibleProviderVmProvisionerVersion(prior)).toBe(true);
       expect(supportsModelSettingsProvisionerVersion(prior)).toBe(true);
     }
+    // 2026.09.22.2 changes only the provider-VM desktop planner, so hosts on
+    // 2026.09.22.1 keep the identical Proxmox lifecycle ABI and capabilities.
+    expect(isCompatibleProxmoxProvisionerVersion("2026.09.22.1")).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.09.22.1", "linux-desktop")).toBe(true);
+    expect(provisionerSupportsWindowsInstaller("2026.09.22.1")).toBe(true);
   });
   it("does not confuse native launch compatibility with model-settings delivery", () => {
     expect(supportsModelSettingsProvisionerVersion("2026.08.28.2")).toBe(true);
