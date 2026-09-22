@@ -1,36 +1,37 @@
 /**
- * Yearly token-payment sweep + activation.
+ * Yearly $HermesOS treasury sweep.
  *
- * Two responsibilities:
+ * Settlement (yearly-token-settlement) grants the tier as soon as a transfer
+ * is bound to a quote. This module is the custody follow-up: move THAT
+ * transfer's amount (subscription.amount_received_raw) out of the wallet the
+ * quote pointed the user at (subscription.deposit_address) to
+ * HERMES_TREASURY_ADDRESS.
  *
- *   1. Detect deposits — for each active yearly_token_quote, read the
- *      yearly_subscription wallet's on-chain balance. If balance ≥
- *      tokens_required, mark the quote `consumed` and insert a
- *      `yearly_token_subscriptions` row with paid_at=now,
- *      expires_at=paid_at+365d, sweep_status='pending'. Subscription
- *      activation succeeds even if the sweep later fails — we'd rather
- *      a stuck sweep than a user who paid and didn't get their tier.
+ * The wallet is usually the user's shared credit_deposit wallet, which may
+ * also hold managed-Venice deposits awaiting their own sweep, so a sweep never
+ * moves "the balance" — only the subscription's own amount.
  *
- *   2. Sweep — for each yearly sub with sweep_status='pending', mint a
- *      Bankr API key scoped to HERMES_TREASURY_ADDRESS only, transfer
- *      the wallet's full balance there, mark sweep_status='swept' with
- *      the resulting tx hash. On failure flip to 'failed' with an
- *      error message; the cron retries automatically next tick.
+ * Every transition is compare-and-set:
+ *   pending|failed --claim--> sweeping --> swept
+ *                                      --> failed          (definitely nothing
+ *                                                           sent; retried after
+ *                                                           a backoff)
+ *                                      --> needs_operator  (terminal: outcome
+ *                                                           unknown, or the
+ *                                                           sweep cannot be
+ *                                                           automated)
+ * A cron tick and a user's check-now can race; only the claimant moves money.
+ * sweep_submitted_at is stamped (under the claim) right before the Bankr
+ * transfer is submitted, so a claim that goes stale is retried only when no
+ * transfer was sent.
  *
- * Wallet purpose: yearly_subscription. Distinct from credit_deposit
- * (USDC top-ups → platform credits) and hermesos_lock (held tokens for
- * tier eligibility). Keeping subscription revenue in its own wallet
- * means clean treasury accounting and no risk of cross-flow mix-ups.
- *
- * Sweep destination: HERMES_TREASURY_ADDRESS (env var), the operator's
- * Bankr trading wallet — same place creator fees land.
- *
- * Anti-misuse: the scoped API key is restricted to ONE recipient
- * (the treasury). Even if the key leaked, the only place tokens could
- * flow is the treasury address — there's no way to redirect funds to
- * an attacker.
+ * The scoped Bankr API key can only pay HERMES_TREASURY_ADDRESS, so even a
+ * leaked key cannot redirect funds.
  */
 
+import { requireDb } from "@/lib/billing/db-utils";
+import { log } from "@/lib/logger";
+import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   HERMESOS_TOKEN_ADDRESS,
@@ -39,41 +40,31 @@ import {
   formatRawTokenBalance,
   normalizeNumericToBigIntString,
 } from "./token-holdings";
-import { getBankrDepositWalletCredentialForUser } from "./bankr-deposit-wallets";
+import { getBankrDepositWalletCredentialForAddress } from "./bankr-deposit-wallets";
 import { getBankrPartnerConfig } from "./bankr-wallets";
 import { mintScopedTransferApiKey, submitBankrTransfer } from "./bankr-withdraw";
-import {
-  consumeYearlyTokenQuote,
-  type YearlyTokenQuote,
-} from "./yearly-token-quotes";
-import { ensureWalletHasGas } from "./treasury-gas";
+import { ensureWalletHasGas, type EnsureWalletGasResult } from "./treasury-gas";
 
-const YEARLY_SUBSCRIPTION_DURATION_MS = 365 * 24 * 60 * 60 * 1000;
-
-type DetectionOutcome =
-  | "no_balance"
-  | "insufficient_balance"
-  | "activated"
-  | "already_active"
-  | "error";
+/** A failed sweep attempted within this window is left alone this tick. */
+export const YEARLY_SWEEP_RETRY_BACKOFF_MS = 30 * 60 * 1000;
+/**
+ * A 'sweeping' claim older than this belongs to a sweeper that died (function
+ * timeout, crash). Serverless functions here run for minutes at most.
+ */
+export const YEARLY_SWEEP_CLAIM_STALE_MS = 15 * 60 * 1000;
+/** A subscription still unswept this long after activation is worth an alert. */
+export const YEARLY_SWEEP_STUCK_ALERT_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_SWEEP_BATCH_LIMIT = 50;
+const MAX_SWEEP_BATCH_LIMIT = 200;
 
 type SweepOutcome =
   | "swept"
-  | "no_balance"
+  | "claimed_elsewhere"
+  | "needs_operator"
   | "no_treasury_configured"
   | "no_credentials"
   | "transfer_failed"
   | "gas_topup_failed";
-
-export interface DetectionResult {
-  quoteId: string;
-  userId: string;
-  tier: "pro" | "power";
-  outcome: DetectionOutcome;
-  subscriptionId?: string;
-  amountReceivedRaw?: string;
-  error?: string;
-}
 
 export interface SweepResult {
   subscriptionId: string;
@@ -84,349 +75,456 @@ export interface SweepResult {
   error?: string;
 }
 
+type QueryError = { code?: string; message?: string } | null;
+
+type DbQuery = {
+  select: (...args: unknown[]) => DbQuery;
+  eq: (...args: unknown[]) => DbQuery;
+  in: (...args: unknown[]) => DbQuery;
+  is: (...args: unknown[]) => DbQuery;
+  lt: (...args: unknown[]) => DbQuery;
+  order: (...args: unknown[]) => DbQuery;
+  limit: (...args: unknown[]) => DbQuery;
+  maybeSingle: () => Promise<{ data: unknown; error: QueryError }>;
+  then: Promise<{ data?: unknown; error: QueryError }>["then"];
+};
+
+type DbTable = {
+  select: (...args: unknown[]) => DbQuery;
+  update: (patch: unknown) => DbQuery;
+};
+
+type SupabaseLike = {
+  from: (name: string) => unknown;
+};
+
+type JsonFetch = typeof fetch;
+
+export interface YearlySweepOptions {
+  db?: SupabaseLike | null;
+  now?: Date;
+  rpcUrl?: string;
+  env?: Record<string, string | undefined>;
+  fetchImpl?: JsonFetch;
+  readHermesBalance?: (params: {
+    walletAddress: string;
+    rpcUrl?: string;
+    env?: Record<string, string | undefined>;
+  }) => Promise<{ balanceRaw: unknown }>;
+  ensureGas?: (params: {
+    walletAddress: string;
+    rpcUrl?: string;
+    env?: Record<string, string | undefined>;
+  }) => Promise<EnsureWalletGasResult>;
+  mintApiKey?: typeof mintScopedTransferApiKey;
+  submitTransfer?: typeof submitBankrTransfer;
+}
+
+interface ClaimedRow {
+  id: string;
+  user_id: string;
+  amount_received_raw: string | number;
+  deposit_address: string | null;
+  deposit_tx_hash: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+const SWEEP_ROW_COLUMNS =
+  "id, user_id, amount_received_raw::text, deposit_address, deposit_tx_hash, metadata, " +
+  "sweep_status, sweep_attempted_at, sweep_submitted_at, paid_at";
+
+function table(db: SupabaseLike, name: string) {
+  return db.from(name) as DbTable;
+}
+
+function safeErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Resolve the operator's treasury address from env. */
-function getTreasuryAddress(env: Record<string, string | undefined> = process.env): string | null {
+function getTreasuryAddress(env: Record<string, string | undefined>): string | null {
   const raw = env.HERMES_TREASURY_ADDRESS?.trim();
-  if (!raw) return null;
-  if (!/^0x[0-9a-fA-F]{40}$/.test(raw)) return null;
+  if (!raw || !/^0x[0-9a-fA-F]{40}$/.test(raw)) return null;
   return raw.toLowerCase();
 }
 
-/**
- * Per-quote: read the on-chain balance, and if it meets the locked
- * tokens_required, consume the quote + activate the yearly sub.
- */
-export async function detectAndActivateYearlyDeposit(
-  quote: YearlyTokenQuote,
-  options: { now?: Date; rpcUrl?: string } = {}
-): Promise<DetectionResult> {
-  if (!supabaseAdmin) {
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "error",
-      error: "supabase admin not configured",
-    };
-  }
-  const now = options.now ?? new Date();
+function depositAddressOf(row: ClaimedRow) {
+  const recorded = row.deposit_address || (typeof row.metadata?.depositAddress === "string" ? row.metadata.depositAddress : "");
+  return recorded.trim().toLowerCase() || null;
+}
 
-  // Idempotency guard: if an active/grace yearly sub already exists for
-  // this user/tier, skip — the prior cron run already handled this user.
-  const { data: existingSub } = await supabaseAdmin
-    .from("yearly_token_subscriptions")
-    .select("id")
-    .eq("user_id", quote.userId)
-    .eq("tier", quote.tier)
-    .in("status", ["active", "grace"])
-    .maybeSingle();
-  if (existingSub) {
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "already_active",
-    };
-  }
+// A Bankr 4xx (other than a timeout) is a definite rejection: nothing was
+// sent, so the sweep can be retried. Anything else (5xx, network error,
+// timeout) may or may not have moved the tokens.
+function isDefiniteTransferRejection(error: unknown) {
+  const match = /status=(\d{3})/.exec(safeErrorMessage(error));
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status >= 400 && status < 500 && status !== 408;
+}
 
-  const balance = await fetchHermesTokenBalance({
-    walletAddress: quote.depositAddress,
-    rpcUrl: options.rpcUrl,
-  }).catch((err) => {
-    return { error: err instanceof Error ? err.message : String(err) } as const;
+async function transition(
+  db: SupabaseLike,
+  subscriptionId: string,
+  from: string,
+  patch: Record<string, unknown>
+) {
+  const { data, error } = await table(db, "yearly_token_subscriptions")
+    .update(patch)
+    .eq("id", subscriptionId)
+    .eq("sweep_status", from)
+    .select("id");
+  if (error) throw new Error(`Failed to update yearly sweep ${subscriptionId}: ${error.message || "unknown error"}`);
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function releaseAsFailed(db: SupabaseLike, subscriptionId: string, message: string, now: Date) {
+  await transition(db, subscriptionId, "sweeping", {
+    sweep_status: "failed",
+    sweep_error: message,
+    sweep_submitted_at: null,
+    sweep_attempted_at: now.toISOString(),
+    updated_at: now.toISOString(),
   });
-  if ("error" in balance) {
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "error",
-      error: `balance read failed: ${balance.error}`,
-    };
-  }
-
-  const balanceRaw = BigInt(normalizeNumericToBigIntString(balance.balanceRaw));
-  if (balanceRaw === 0n) {
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "no_balance",
-    };
-  }
-  if (balanceRaw < quote.tokensRequiredRaw) {
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "insufficient_balance",
-    };
-  }
-
-  // ORDER MATTERS: insert the subscription row FIRST, then consume the
-  // quote. The previous order (consume → insert) had a partial-failure
-  // BLOCKER: if the insert failed, the quote was already 'consumed' and
-  // the user got nothing — the Pass 1 cron query only loads
-  // `status='active'` quotes, so they were never re-examined and the
-  // user's deposit sat in their wallet forever. By inserting first:
-  //   - on insert success + consume failure → next cron tick sees the
-  //     active quote AND the existing active subscription, hits the
-  //     `existingSub` idempotency guard above, and re-tries the consume.
-  //   - the unique partial index on (user_id, tier) WHERE status IN
-  //     ('active','grace') prevents duplicate activations on re-run.
-  const expiresAt = new Date(now.getTime() + YEARLY_SUBSCRIPTION_DURATION_MS);
-  const { data: insertedSub, error: insertError } = await supabaseAdmin
-    .from("yearly_token_subscriptions")
-    .insert({
-      user_id: quote.userId,
-      tier: quote.tier,
-      yearly_quote_id: quote.id,
-      paid_at: now.toISOString(),
-      expires_at: expiresAt.toISOString(),
-      amount_received_raw: balanceRaw.toString(),
-      sweep_status: "pending",
-      status: "active",
-      metadata: {
-        priceUsdAtQuote: quote.priceUsdAtQuote,
-        usdTargetCents: quote.usdTargetCents,
-        depositAddress: quote.depositAddress,
-      },
-    })
-    .select("id")
-    .single<{ id: string }>();
-
-  if (insertError || !insertedSub) {
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "error",
-      error: `subscription insert failed: ${insertError?.message ?? "unknown"}`,
-    };
-  }
-
-  // Conversion stamp (write-once): a yearly token payment flips the user's
-  // entitlement without ever touching hermes_subscriptions.plan, so the
-  // funnel's upgraded_at must be stamped here. `.is("upgraded_at", null)`
-  // makes it write-once — an already-converted user (card or earlier token
-  // payment) keeps their original timestamp. Best-effort: a failed stamp
-  // never blocks the activation the user paid for.
-  try {
-    await supabaseAdmin
-      .from("hermes_subscriptions")
-      .update({
-        upgraded_at: now.toISOString(),
-        upgrade_source: "token_payment",
-      })
-      .eq("user_id", quote.userId)
-      .is("upgraded_at", null);
-  } catch {
-    // Analytics stamp only — activation already succeeded.
-  }
-
-  // Best-effort: mark the quote consumed. If this throws, the
-  // subscription row is already live for the user — next tick will see
-  // the active sub via the idempotency guard, treat it as
-  // 'already_active', and re-attempt the consume on the still-active
-  // quote on a later tick. Either way the user keeps their tier.
-  try {
-    await consumeYearlyTokenQuote({
-      quoteId: quote.id,
-      consumedBalanceRaw: balanceRaw,
-      now,
-    });
-  } catch (consumeErr) {
-    // Don't fail the activation result — the user has their tier. Log
-    // the inconsistency for the operator; the next tick will retry
-    // because the subscription's `existingSub` guard fires before this
-    // path runs again.
-    return {
-      quoteId: quote.id,
-      userId: quote.userId,
-      tier: quote.tier,
-      outcome: "activated",
-      subscriptionId: insertedSub.id,
-      amountReceivedRaw: balanceRaw.toString(),
-      // Surface the soft failure so callers can log without treating
-      // the result as an error. Missing field on success path; an
-      // optional addition below.
-      error: `quote_consume_post_insert_failed: ${consumeErr instanceof Error ? consumeErr.message : String(consumeErr)}`,
-    };
-  }
-
-  return {
-    quoteId: quote.id,
-    userId: quote.userId,
-    tier: quote.tier,
-    outcome: "activated",
-    subscriptionId: insertedSub.id,
-    amountReceivedRaw: balanceRaw.toString(),
-  };
 }
 
-interface PendingSweepRow {
-  id: string;
-  user_id: string;
-  amount_received_raw: string;
+async function parkForOperator(
+  db: SupabaseLike,
+  row: { id: string; user_id: string },
+  reason: string,
+  now: Date,
+  from = "sweeping"
+) {
+  const parked = await transition(db, row.id, from, {
+    sweep_status: "needs_operator",
+    sweep_error: reason,
+    updated_at: now.toISOString(),
+  });
+  if (parked) {
+    await reportOpsEvent({
+      source: "cron.yearly-token-sweep",
+      severity: "warn",
+      title: "Yearly $HermesOS sweep needs an operator",
+      message:
+        `A yearly subscription's treasury sweep was parked (${reason}). The user's tier is unaffected; ` +
+        `verify the deposit wallet and the treasury on chain, then sweep or resolve it by hand.`,
+      route: "/api/cron/yearly-token-sweep",
+      userId: row.user_id,
+      metadata: { failureType: "yearly_token_sweep_needs_operator", subscriptionId: row.id, reason },
+    });
+  }
+  return parked;
 }
 
 /**
- * Per-subscription: sweep the credit_deposit wallet's balance to the
- * treasury. Idempotent — re-running with sweep_status='swept' is a no-op.
+ * Claim one subscription's sweep and, if the claim is won, move its amount to
+ * the treasury. Safe to call concurrently for the same row.
  */
-export async function sweepActivatedSubscription(
-  sub: PendingSweepRow,
-  options: { now?: Date; rpcUrl?: string; env?: Record<string, string | undefined> } = {}
+export async function sweepYearlyTokenSubscription(
+  subscription: { id: string; user_id: string },
+  options: YearlySweepOptions = {}
 ): Promise<SweepResult> {
-  if (!supabaseAdmin) {
-    return { subscriptionId: sub.id, userId: sub.user_id, outcome: "transfer_failed", error: "supabase not configured" };
-  }
+  const db = requireDb(options.db ?? supabaseAdmin) as SupabaseLike;
   const now = options.now ?? new Date();
   const env = options.env ?? process.env;
+  const base = { subscriptionId: subscription.id, userId: subscription.user_id };
+
+  // Claim (CAS). Only 'pending' or 'failed' rows can be claimed, by one caller.
+  const { data: claimed, error: claimError } = await table(db, "yearly_token_subscriptions")
+    .update({
+      sweep_status: "sweeping",
+      sweep_attempted_at: now.toISOString(),
+      sweep_submitted_at: null,
+      sweep_error: null,
+      updated_at: now.toISOString(),
+    })
+    .eq("id", subscription.id)
+    .in("sweep_status", ["pending", "failed"])
+    .select(SWEEP_ROW_COLUMNS)
+    .maybeSingle();
+  if (claimError) throw new Error(`Failed to claim yearly sweep ${subscription.id}: ${claimError.message || "unknown error"}`);
+  if (!claimed) return { ...base, outcome: "claimed_elsewhere" };
+  const row = claimed as ClaimedRow;
 
   const treasury = getTreasuryAddress(env);
   if (!treasury) {
-    await markSweepFailed(sub.id, "HERMES_TREASURY_ADDRESS not configured", now);
-    return {
-      subscriptionId: sub.id,
-      userId: sub.user_id,
-      outcome: "no_treasury_configured",
-      error: "HERMES_TREASURY_ADDRESS missing or invalid",
-    };
+    const message = "HERMES_TREASURY_ADDRESS missing or invalid";
+    await releaseAsFailed(db, row.id, message, now);
+    return { ...base, outcome: "no_treasury_configured", error: message };
   }
 
-  const credential = await getBankrDepositWalletCredentialForUser({
-    userId: sub.user_id,
-    purpose: "yearly_subscription",
-  });
+  const amountRaw = BigInt(normalizeNumericToBigIntString(String(row.amount_received_raw ?? "0")));
+  const depositAddress = depositAddressOf(row);
+  if (!row.deposit_tx_hash || !depositAddress || amountRaw <= 0n) {
+    // Pre-attribution rows recorded the wallet's whole balance, not a transfer:
+    // sweeping that amount could take another flow's tokens.
+    const reason = "no attributed deposit transfer recorded for this subscription";
+    await parkForOperator(db, row, reason, now);
+    return { ...base, outcome: "needs_operator", error: reason };
+  }
+
+  const credential = await getBankrDepositWalletCredentialForAddress({ address: depositAddress, db });
   if (!credential?.bankrWalletId) {
-    await markSweepFailed(sub.id, "yearly_subscription credential missing", now);
-    return {
-      subscriptionId: sub.id,
-      userId: sub.user_id,
-      outcome: "no_credentials",
-      error: "no Bankr yearly_subscription credential",
-    };
+    const reason = `no Bankr credential for deposit wallet ${depositAddress}`;
+    await parkForOperator(db, row, reason, now);
+    return { ...base, outcome: "needs_operator", error: reason };
   }
-
+  // Address lookups are purpose-agnostic; a hermesos_lock wallet holds the
+  // user's own tier-eligibility tokens and must never be swept.
+  if (credential.purpose === "hermesos_lock") {
+    const reason = "refused to sweep a hermesos_lock wallet";
+    await parkForOperator(db, row, reason, now);
+    return { ...base, outcome: "needs_operator", error: reason };
+  }
   const walletAddress = credential.evmAddress;
-  const liveBalance = await fetchHermesTokenBalance({
-    walletAddress,
-    rpcUrl: options.rpcUrl,
-  }).catch((err) => ({ error: err instanceof Error ? err.message : String(err) } as const));
-  if ("error" in liveBalance) {
-    await markSweepFailed(sub.id, `balance read failed: ${liveBalance.error}`, now);
-    return {
-      subscriptionId: sub.id,
-      userId: sub.user_id,
-      outcome: "transfer_failed",
-      error: liveBalance.error,
-    };
-  }
 
-  if (BigInt(normalizeNumericToBigIntString(liveBalance.balanceRaw)) === 0n) {
-    // Nothing to sweep — mark as swept with no tx (already drained).
-    await supabaseAdmin
-      .from("yearly_token_subscriptions")
-      .update({
-        sweep_status: "skipped",
-        sweep_attempted_at: now.toISOString(),
-        sweep_error: "wallet drained before sweep",
-        updated_at: now.toISOString(),
-      })
-      .eq("id", sub.id);
-    return { subscriptionId: sub.id, userId: sub.user_id, outcome: "no_balance" };
-  }
-
-  // Top up gas if the wallet has none. Same primitive as the user-side
-  // withdraw flow — works on any Bankr wallet.
+  const readBalance = options.readHermesBalance ?? fetchHermesTokenBalance;
+  let liveBalanceRaw: bigint;
   try {
-    await ensureWalletHasGas({ walletAddress, env });
-  } catch (gasErr) {
-    const message = gasErr instanceof Error ? gasErr.message : String(gasErr);
-    await markSweepFailed(sub.id, `gas top-up failed: ${message}`, now);
-    return {
-      subscriptionId: sub.id,
-      userId: sub.user_id,
-      outcome: "gas_topup_failed",
-      error: message,
-    };
+    const liveBalance = await readBalance({ walletAddress, rpcUrl: options.rpcUrl, env });
+    liveBalanceRaw = BigInt(normalizeNumericToBigIntString(String(liveBalance.balanceRaw)));
+  } catch (error) {
+    const message = `balance read failed: ${safeErrorMessage(error)}`;
+    await releaseAsFailed(db, row.id, message, now);
+    return { ...base, outcome: "transfer_failed", error: message };
+  }
+  if (liveBalanceRaw < amountRaw) {
+    // The subscription's tokens are no longer all there (moved by hand, or
+    // another sweep took them). Retrying cannot fix that.
+    const reason = `live balance ${liveBalanceRaw.toString()} < subscription amount ${amountRaw.toString()}`;
+    await parkForOperator(db, row, reason, now);
+    return { ...base, outcome: "needs_operator", error: reason };
   }
 
-  const apiKey = await mintScopedTransferApiKey({
+  const ensureGas = options.ensureGas ?? ensureWalletHasGas;
+  try {
+    const gas = await ensureGas({ walletAddress, rpcUrl: options.rpcUrl, env });
+    // not_configured still lets Bankr's own gas sponsorship cover the
+    // transfer; only a drained treasury hot wallet is a hard failure.
+    if (gas.status === "treasury_drained") {
+      const message = `gas top-up ${gas.status}: ${gas.reason || "treasury hot wallet drained"}`;
+      await releaseAsFailed(db, row.id, message, now);
+      return { ...base, outcome: "gas_topup_failed", error: message };
+    }
+  } catch (error) {
+    const message = `gas top-up failed: ${safeErrorMessage(error)}`;
+    await releaseAsFailed(db, row.id, message, now);
+    return { ...base, outcome: "gas_topup_failed", error: message };
+  }
+
+  const mintApiKey = options.mintApiKey ?? mintScopedTransferApiKey;
+  const apiKey = await mintApiKey({
     bankrWalletId: credential.bankrWalletId,
     recipientAddress: treasury,
     env,
+    fetchImpl: options.fetchImpl,
   });
   if (!apiKey) {
-    // mintScopedTransferApiKey returns null in two distinct cases.
-    // Check which one so the recorded sweep_error is actually useful
-    // when ops debugs this later — "Bankr partner key not configured"
-    // sent us hunting for a missing env var that was actually set; the
-    // real culprit was Bankr's per-wallet 20-key cap.
-    const partnerConfigured = Boolean(getBankrPartnerConfig(env).partnerKey);
-    const reason = partnerConfigured
+    // Two distinct causes; say which so ops isn't sent hunting for an env var.
+    const reason = getBankrPartnerConfig(env).partnerKey
       ? "Bankr API key mint returned null (likely per-wallet 20-key cap — revoke stale keys on Bankr)"
       : "Bankr partner key not configured (BANKR_PARTNER_KEY env var missing)";
-    await markSweepFailed(sub.id, reason, now);
-    return {
-      subscriptionId: sub.id,
-      userId: sub.user_id,
-      outcome: "no_credentials",
-      error: reason,
-    };
+    await releaseAsFailed(db, row.id, reason, now);
+    return { ...base, outcome: "no_credentials", error: reason };
   }
 
-  const amountDisplay = formatRawTokenBalance(liveBalance.balanceRaw, HERMESOS_TOKEN_DECIMALS);
-  let txHash: string | null = null;
+  // Mark the submit under the claim. Losing the claim here means another
+  // sweeper recovered this row; nothing has been sent by us.
+  const stillClaimed = await transition(db, row.id, "sweeping", { sweep_submitted_at: now.toISOString() });
+  if (!stillClaimed) return { ...base, outcome: "claimed_elsewhere" };
+
+  const amountDisplay = formatRawTokenBalance(amountRaw, HERMESOS_TOKEN_DECIMALS);
+  const submitTransfer = options.submitTransfer ?? submitBankrTransfer;
+  let txHash: string | null;
   try {
-    txHash = await submitBankrTransfer({
+    txHash = await submitTransfer({
       apiKey,
       tokenAddress: HERMESOS_TOKEN_ADDRESS,
       recipientAddress: treasury,
       amountDisplay,
       env,
+      fetchImpl: options.fetchImpl,
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await markSweepFailed(sub.id, `transfer failed: ${message}`, now);
-    return {
-      subscriptionId: sub.id,
-      userId: sub.user_id,
-      outcome: "transfer_failed",
-      error: message,
-    };
+  } catch (error) {
+    const message = `transfer failed: ${safeErrorMessage(error)}`;
+    if (isDefiniteTransferRejection(error)) {
+      await releaseAsFailed(db, row.id, message, now);
+      return { ...base, outcome: "transfer_failed", error: message };
+    }
+    const reason = `treasury transfer outcome unknown (${message})`;
+    await parkForOperator(db, row, reason, now);
+    return { ...base, outcome: "needs_operator", error: reason };
   }
 
-  await supabaseAdmin
-    .from("yearly_token_subscriptions")
-    .update({
-      sweep_status: "swept",
-      sweep_tx_hash: txHash,
-      sweep_attempted_at: now.toISOString(),
-      sweep_error: null,
-      updated_at: now.toISOString(),
-    })
-    .eq("id", sub.id);
-
-  return {
-    subscriptionId: sub.id,
-    userId: sub.user_id,
-    outcome: "swept",
-    txHash,
-    amountSweptDisplay: amountDisplay,
-  };
+  await transition(db, row.id, "sweeping", {
+    sweep_status: "swept",
+    sweep_tx_hash: txHash,
+    sweep_error: null,
+    updated_at: now.toISOString(),
+  });
+  return { ...base, outcome: "swept", txHash, amountSweptDisplay: amountDisplay };
 }
 
-async function markSweepFailed(subId: string, error: string, now: Date) {
-  if (!supabaseAdmin) return;
-  await supabaseAdmin
-    .from("yearly_token_subscriptions")
-    .update({
-      sweep_status: "failed",
-      sweep_attempted_at: now.toISOString(),
-      sweep_error: error,
-      updated_at: now.toISOString(),
-    })
-    .eq("id", subId);
+interface QueueRow {
+  id: string;
+  user_id: string;
+  sweep_status: string;
+  sweep_attempted_at: string | null;
+  sweep_submitted_at: string | null;
+  paid_at: string | null;
+}
+
+async function loadQueue(db: SupabaseLike, build: (query: DbQuery) => DbQuery) {
+  const { data, error } = await build(table(db, "yearly_token_subscriptions").select(SWEEP_ROW_COLUMNS));
+  if (error) throw new Error(`Failed to load yearly sweep queue: ${error.message || "unknown error"}`);
+  return (Array.isArray(data) ? data : []) as QueueRow[];
+}
+
+/**
+ * A 'sweeping' claim whose sweeper died: retry it if no transfer was
+ * submitted under it, otherwise hand it to an operator (the transfer may have
+ * gone through).
+ */
+async function recoverStaleClaims(db: SupabaseLike, now: Date, limit: number) {
+  const staleBefore = new Date(now.getTime() - YEARLY_SWEEP_CLAIM_STALE_MS).toISOString();
+  const rows = await loadQueue(db, (query) =>
+    query.eq("sweep_status", "sweeping").lt("sweep_attempted_at", staleBefore).order("sweep_attempted_at", { ascending: true }).limit(limit)
+  );
+  let released = 0;
+  let parked = 0;
+  for (const row of rows) {
+    if (row.sweep_submitted_at) {
+      if (await parkForOperator(db, row, "sweep claim went stale after a treasury transfer was submitted", now)) parked += 1;
+    } else if (
+      await transition(db, row.id, "sweeping", {
+        sweep_status: "failed",
+        sweep_error: "sweep claim went stale before a transfer was submitted",
+        updated_at: now.toISOString(),
+      })
+    ) {
+      released += 1;
+    }
+  }
+  return { released, parked };
+}
+
+export interface YearlySweepBatchResult {
+  examined: number;
+  swept: number;
+  failed: number;
+  needsOperator: number;
+  claimedElsewhere: number;
+  treasuryNotConfigured: number;
+  backoffSkipped: number;
+  staleClaimsReleased: number;
+  staleClaimsParked: number;
+  stuck: number;
+  results: SweepResult[];
+}
+
+/**
+ * One sweep pass. Fresh 'pending' rows go first (oldest activation first),
+ * then 'failed' rows by least recently attempted, skipping those still inside
+ * the retry backoff. Attempting a row moves it to the back of the failed
+ * queue, so no set of persistently failing rows can starve the rest.
+ */
+export async function sweepPendingYearlyTokenSubscriptions(
+  options: YearlySweepOptions & { limit?: number; userId?: string } = {}
+): Promise<YearlySweepBatchResult> {
+  const db = requireDb(options.db ?? supabaseAdmin) as SupabaseLike;
+  const now = options.now ?? new Date();
+  const limit = Math.max(1, Math.min(MAX_SWEEP_BATCH_LIMIT, Math.floor(options.limit ?? DEFAULT_SWEEP_BATCH_LIMIT)));
+  const forUser = (query: DbQuery) => (options.userId ? query.eq("user_id", options.userId) : query);
+
+  const stale = await recoverStaleClaims(db, now, limit);
+
+  const pending = await loadQueue(db, (query) =>
+    forUser(query.eq("sweep_status", "pending")).order("paid_at", { ascending: true }).limit(limit)
+  );
+  const failedQueue =
+    pending.length < limit
+      ? await loadQueue(db, (query) =>
+          forUser(query.eq("sweep_status", "failed"))
+            .order("sweep_attempted_at", { ascending: true, nullsFirst: true })
+            .limit(limit - pending.length)
+        )
+      : [];
+  const backoffCutoff = now.getTime() - YEARLY_SWEEP_RETRY_BACKOFF_MS;
+  const retryable = failedQueue.filter(
+    (row) => !row.sweep_attempted_at || Date.parse(row.sweep_attempted_at) < backoffCutoff
+  );
+
+  const summary: YearlySweepBatchResult = {
+    examined: 0,
+    swept: 0,
+    failed: 0,
+    needsOperator: stale.parked,
+    claimedElsewhere: 0,
+    treasuryNotConfigured: 0,
+    backoffSkipped: failedQueue.length - retryable.length,
+    staleClaimsReleased: stale.released,
+    staleClaimsParked: stale.parked,
+    stuck: 0,
+    results: [],
+  };
+
+  const stuckBefore = now.getTime() - YEARLY_SWEEP_STUCK_ALERT_MS;
+  const stuck: Array<{ subscriptionId: string; userId: string }> = [];
+  for (const row of [...pending, ...retryable]) {
+    summary.examined += 1;
+    let result: SweepResult;
+    try {
+      result = await sweepYearlyTokenSubscription(row, { ...options, db, now });
+    } catch (error) {
+      // One bad sweep must not take out the pass; a claim it left behind is
+      // recovered as stale.
+      log.error("yearly token sweep crashed unexpectedly; continuing", error, {
+        source: "yearly-token-sweep",
+        subscriptionId: row.id,
+        userId: row.user_id,
+        failureType: "sweep_uncaught_error",
+      });
+      result = { subscriptionId: row.id, userId: row.user_id, outcome: "transfer_failed", error: safeErrorMessage(error) };
+    }
+    summary.results.push(result);
+    if (result.outcome === "swept") summary.swept += 1;
+    else if (result.outcome === "claimed_elsewhere") summary.claimedElsewhere += 1;
+    else if (result.outcome === "needs_operator") summary.needsOperator += 1;
+    else if (result.outcome === "no_treasury_configured") summary.treasuryNotConfigured += 1;
+    else summary.failed += 1;
+
+    const paidAtMs = row.paid_at ? Date.parse(row.paid_at) : Number.NaN;
+    if (
+      result.outcome !== "swept" &&
+      result.outcome !== "claimed_elsewhere" &&
+      result.outcome !== "needs_operator" &&
+      Number.isFinite(paidAtMs) &&
+      paidAtMs < stuckBefore
+    ) {
+      stuck.push({ subscriptionId: row.id, userId: row.user_id });
+    }
+  }
+
+  summary.stuck = stuck.length;
+  if (stuck.length > 0) {
+    // A sweep still failing hours after activation is a real funds-movement
+    // problem (usually config): surface it instead of retrying silently.
+    await reportOpsEvent({
+      source: "cron.yearly-token-sweep",
+      severity: "warn",
+      title: `${stuck.length} yearly-token sweep(s) stuck failing`,
+      message:
+        `${stuck.length} yearly-token subscription sweep(s) are still failing more than ` +
+        `${Math.round(YEARLY_SWEEP_STUCK_ALERT_MS / 3_600_000)}h after activation. Their $HermesOS is not ` +
+        `reaching the treasury. This usually means a misconfig (e.g. HERMES_TREASURY_ADDRESS, Bankr keys).`,
+      route: "/api/cron/yearly-token-sweep",
+      metadata: {
+        failureType: "yearly_token_sweep_stuck",
+        stuckCount: stuck.length,
+        sample: stuck.slice(0, 25),
+      },
+    });
+  }
+
+  return summary;
 }
