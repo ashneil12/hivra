@@ -977,4 +977,139 @@ describe("HivraChat", () => {
     expect(screen.queryByText("Waiting for response")).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Response stopped" })).toBeInTheDocument();
   });
+
+  // ── Streaming autoscroll: user scroll intent always wins ──────────────
+  function controlledStream() {
+    const queue: ReturnType<typeof deferred<{ done: boolean; value?: Uint8Array }>>[] = [];
+    let cursor = 0;
+    const slot = (i: number) => (queue[i] ??= deferred<{ done: boolean; value?: Uint8Array }>());
+    const read = jest.fn(() => slot(cursor++).promise);
+    let pushed = 0;
+    return {
+      read,
+      push: async (...events: unknown[]) => { await act(async () => { slot(pushed++).resolve(eventChunk(...events)); }); },
+      end: async () => { await act(async () => { slot(pushed++).resolve({ done: true }); }); },
+    };
+  }
+
+  function scrollablePane() {
+    const pane = screen.getByRole("region", { name: "Conversation" });
+    let top = 0;
+    let height = 1500;
+    Object.defineProperties(pane, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, height - 500)); } },
+    });
+    return {
+      pane,
+      get top() { return top; },
+      grow: (px: number) => { height += px; },
+      userScrollTo: (v: number) => { pane.scrollTop = v; fireEvent.scroll(pane); },
+      bottom: () => height - 500,
+    };
+  }
+
+  async function withFrames(run: (flush: () => void) => Promise<void>) {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const request = jest.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { frames.set(nextFrame, cb); return nextFrame++; });
+    const cancel = jest.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id); });
+    const flush = () => act(() => { const pending = Array.from(frames.values()); frames.clear(); pending.forEach((cb) => cb(0)); });
+    try { await run(flush); } finally { request.mockRestore(); cancel.mockRestore(); }
+  }
+
+  it("keeps the user's reading position while streaming, for small and large scroll-ups, until they return to the bottom", async () => {
+    await withFrames(async (flush) => {
+      const stream = controlledStream();
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="scroll-stream" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const view = scrollablePane();
+      await sendMessage("write a long answer");
+      await stream.push(claudeText("First paragraph. "));
+      flush();
+      expect(view.top).toBe(view.bottom());
+
+      // A small trackpad / arrow-key scroll-up (well under the 80px threshold).
+      view.userScrollTo(view.bottom() - 30);
+      const reading = view.top;
+      view.grow(100);
+      await stream.push(claudeText("More text. "));
+      flush();
+      expect(view.top).toBe(reading);
+      expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+
+      // A large scroll-up also sticks.
+      view.userScrollTo(300);
+      view.grow(100);
+      await stream.push(claudeText("Even more. "));
+      flush();
+      expect(view.top).toBe(300);
+
+      // Moving back down without reaching the bottom does not re-stick.
+      view.userScrollTo(view.bottom() - 40);
+      const almost = view.top;
+      view.grow(100);
+      await stream.push(claudeText("Still more. "));
+      flush();
+      expect(view.top).toBe(almost);
+
+      // Returning to the bottom re-engages following.
+      view.userScrollTo(view.bottom());
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      view.grow(100);
+      await stream.push(claudeText("Last bit."), exitEvent(0));
+      flush();
+      expect(view.top).toBe(view.bottom());
+      await stream.end();
+    });
+  });
+
+  it("unsticks on wheel-up and keyboard scroll intent before any scroll event lands", async () => {
+    await withFrames(async (flush) => {
+      const stream = controlledStream();
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="scroll-intent" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const view = scrollablePane();
+      await sendMessage("stream");
+      await stream.push(claudeText("a "));
+      flush();
+      const atBottom = view.top;
+      fireEvent.wheel(view.pane, { deltaY: -4 });
+      view.grow(100);
+      await stream.push(claudeText("b "));
+      flush();
+      expect(view.top).toBe(atBottom);
+
+      view.userScrollTo(view.bottom());
+      flush();
+      fireEvent.keyDown(view.pane, { key: "ArrowUp" });
+      const beforeToken = view.top;
+      view.grow(100);
+      await stream.push(claudeText("c "));
+      flush();
+      expect(view.top).toBe(beforeToken);
+      expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+      await stream.end();
+    });
+  });
+
+  it("moves focus to the composer when 'Return to latest' is activated", async () => {
+    await withFrames(async (flush) => {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="latest-focus" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const view = scrollablePane();
+      flush();
+      view.userScrollTo(100);
+      const latest = screen.getByRole("button", { name: "Return to latest" });
+      latest.focus();
+      fireEvent.click(latest);
+      flush();
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Message Atlas" })).toHaveFocus();
+      expect(view.top).toBe(view.bottom());
+    });
+  });
 });

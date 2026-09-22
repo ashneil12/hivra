@@ -195,6 +195,10 @@ function boxMsgToChat(m: BoxMessage): ChatMessage {
 }
 
 const MAX_SESSIONS = 30;
+// Autoscroll: within this many px of the bottom counts as "at the bottom".
+const AT_BOTTOM_PX = 4;
+// A jump this far from the bottom (scrollbar drag, PageUp, a flick) always unsticks.
+const FAR_FROM_BOTTOM_PX = 80;
 
 // Per-session draft key — the half-typed message survives reloads + session switches.
 function draftKey(sk: string, sessionId: string): string {
@@ -605,19 +609,44 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [boxUrl, token],
  );
 
- // Smart autoscroll: follow the stream only while the user is at (or near) the
- // bottom. Scrolling up to re-read mid-stream pins the view; returning to the
- // bottom re-engages following. `force` is for user-initiated sends.
+ // Smart autoscroll: follow the stream only while the user is at the bottom.
+ // ANY user scroll-up (a 3px trackpad nudge, ArrowUp, wheel) unsticks at once;
+ // only returning to the bottom re-engages following. Our own scrolls only ever
+ // move down to the bottom, so they never read as intent. `force` is for
+ // user-initiated sends and "Return to latest".
  const stickToBottomRef = useRef(true);
  const scrollFrameRef = useRef<number | null>(null);
+ // Last observed position/height, to tell a user scroll-up from our own scroll
+ // or from the browser clamping scrollTop when content shrinks.
+ const lastScrollRef = useRef({ top: 0, height: 0 });
  const [showLatest, setShowLatest] = useState(false);
+ const unstick = useCallback(() => {
+ stickToBottomRef.current = false;
+ setShowLatest(true);
+ }, []);
  const onScrollPane = useCallback(() => {
  const el = scrollRef.current;
  if (!el) return;
- const following = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
- stickToBottomRef.current = following;
- setShowLatest(!following);
- }, []);
+ const last = lastScrollRef.current;
+ const top = el.scrollTop;
+ lastScrollRef.current = { top, height: el.scrollHeight };
+ const distance = el.scrollHeight - top - el.clientHeight;
+ if (distance <= AT_BOTTOM_PX) {
+ stickToBottomRef.current = true;
+ setShowLatest(false);
+ return;
+ }
+ const scrolledUp = top < last.top - 1 && el.scrollHeight >= last.height;
+ if (scrolledUp || distance >= FAR_FROM_BOTTOM_PX) unstick();
+ else setShowLatest(!stickToBottomRef.current);
+ }, [unstick]);
+ // Intent signals that arrive before (or without) a scroll event.
+ const onWheelPane = useCallback((e: React.WheelEvent) => {
+ if (e.deltaY < 0) unstick();
+ }, [unstick]);
+ const onKeyDownPane = useCallback((e: React.KeyboardEvent) => {
+ if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") unstick();
+ }, [unstick]);
  const scrollDown = useCallback((force?: boolean) => {
  if (force) {
  stickToBottomRef.current = true;
@@ -629,7 +658,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // A scroll-up between the stream event and this frame must win.
  if (!stickToBottomRef.current) return;
  const el = scrollRef.current;
- if (el) el.scrollTop = el.scrollHeight;
+ if (!el) return;
+ el.scrollTop = el.scrollHeight;
+ lastScrollRef.current = { top: el.scrollTop, height: el.scrollHeight };
  });
  }, []);
  useEffect(() => {
@@ -1032,7 +1063,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} role="region" aria-label="Conversation" onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
+ <div ref={scrollRef} className="hivra-chat-scroll" role="region" aria-label="Conversation" tabIndex={0} onScroll={onScrollPane} onWheel={onWheelPane} onKeyDown={onKeyDownPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
@@ -1119,7 +1150,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
 
  <div className="relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 pb-3 pt-3">
  {showLatest ? (
- <button type="button" onClick={() => scrollDown(true)} className="hivra-chat-latest">
+ <button
+ type="button"
+ onClick={() => {
+ scrollDown(true);
+ // This button unmounts on activation; keep keyboard focus in the chat.
+ composerRef.current?.focus();
+ }}
+ className="hivra-chat-latest"
+ >
  <ChevronDown size={14} aria-hidden /> Return to latest
  </button>
  ) : null}
