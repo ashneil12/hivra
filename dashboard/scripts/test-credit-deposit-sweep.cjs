@@ -35,7 +35,7 @@ const PREREQUISITES = [
   "20260430062000_bankr_deposit_credentials_purpose.sql",
   "20260501100000_bankr_deposit_credentials_yearly_subscription_purpose.sql",
 ];
-const SWEEP_MIGRATION = "20260922190000_credit_deposit_sweep_state.sql";
+const SWEEP_MIGRATION = "20260922185029_credit_deposit_sweep_state.sql";
 
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";

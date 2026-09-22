@@ -9,7 +9,7 @@
  * stuck sweep never undoes the credit grant.
  *
  * Sweep state lives on the receipt row (migration
- * 20260922190000_credit_deposit_sweep_state.sql):
+ * 20260922185029_credit_deposit_sweep_state.sql):
  *
  *   not_required  Not owed. A trigger moves a settled checkout/open_credit
  *                 Base-USDC receipt to 'pending', whichever code settles it.
