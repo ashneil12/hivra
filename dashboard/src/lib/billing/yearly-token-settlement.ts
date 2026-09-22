@@ -41,11 +41,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
 import {
   createBaseChainReader,
-  scanTokenTransfersTo,
+  scanErc20TransfersInWindow,
   type BaseChainReader,
   type JsonRpcFetch,
   type ScannedTransfer,
-} from "@/lib/billing/base-token-transfers";
+} from "@/lib/billing/base-transfer-scan";
 import {
   loadHermesosTransferOwnership,
   loadNextHermesosPaymentSessionMs,
@@ -376,19 +376,23 @@ export async function reconcileYearlyTokenQuote(params: {
   // A transfer at or after the next session's start belongs to that session.
   const rangeEndMs = boundaryMs === null ? graceEndMs : Math.min(graceEndMs, boundaryMs - 1);
 
-  const scan = await scanTokenTransfersTo({
+  const scan = await scanErc20TransfersInWindow({
     chain,
     tokenAddress: HERMESOS_TOKEN_ADDRESS,
-    recipient: quote.depositAddress,
+    toAddress: quote.depositAddress,
     fromMs: quotedAtMs,
     toMs: rangeEndMs,
     minConfirmations,
   });
+  // The scan pads its block range on the safe side; the range is exact here.
+  const inRange = scan.transfers.filter(
+    (transfer) => transfer.timestampMs >= quotedAtMs && transfer.timestampMs <= rangeEndMs
+  );
   const ownership = await loadHermesosTransferOwnership(
     db,
-    scan.transfers.map((transfer) => transfer.transactionHash)
+    inRange.map((transfer) => transfer.transactionHash)
   );
-  const attributable = scan.transfers.filter((transfer) => !ownership.bound.has(transfer.transactionHash));
+  const attributable = inRange.filter((transfer) => !ownership.bound.has(transfer.transactionHash));
 
   const required = quote.tokensRequiredRaw;
   const band = {

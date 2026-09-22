@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { createBaseChainReader, type JsonRpcFetch } from "@/lib/billing/base-token-transfers";
+import { createBaseChainReader, type JsonRpcFetch } from "@/lib/billing/base-transfer-scan";
 
 const noDelay = async () => {};
 

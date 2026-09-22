@@ -401,6 +401,20 @@ describe("range edges", () => {
     expect(world.subscriptions()).toHaveLength(0);
   });
 
+  it("uses the exact range even when the scanned block range is padded", async () => {
+    // 1 s blocks: the scanner's 2 s/block estimate misses and it may return
+    // blocks up to a minute outside the range, as it can on a real chain.
+    const world = createYearlyTokenWorld({ blockTimeSec: 1 });
+    openQuote(world, { quoted_at: world.at(-60 * MINUTE_MS), expires_at: world.at(-40 * MINUTE_MS), status: "expired" });
+    openQuote(world, { id: "yq_next", quoted_at: world.at(-20 * MINUTE_MS), expires_at: world.at(0) });
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -60 * MINUTE_MS - 20_000 });
+    world.pay({ tx: txHash(2), amountRaw: REQUIRED, offsetMs: -20 * MINUTE_MS + 20_000 });
+
+    expect(await reconcile(world, "yq_1")).toMatchObject({ status: "cancelled" });
+    expect(world.items()).toHaveLength(0);
+    expect(world.subscriptions()).toHaveLength(0);
+  });
+
   it("leaves a transfer after the user's next yearly quote to that quote", async () => {
     const world = createYearlyTokenWorld();
     openQuote(world, { quoted_at: world.at(-60 * MINUTE_MS), expires_at: world.at(-40 * MINUTE_MS), status: "expired" });

@@ -19,11 +19,14 @@ export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
 export const YEAR_MS = 365 * DAY_MS;
 
-export function createYearlyTokenWorld(options: { nowMs?: number } = {}) {
+export function createYearlyTokenWorld(options: { nowMs?: number; blockTimeSec?: number } = {}) {
   const nowMs = options.nowMs ?? Date.now();
   const chain = createBaseRpcFake({
     latestBlock: 20_000_000,
     latestTimestamp: new Date(Math.floor(nowMs / 1000) * 1000).toISOString(),
+    // Base makes a block every 2 s; other spacings make the scanner's block
+    // estimate miss, so its block range is padded like on a real chain.
+    blockTimeSec: options.blockTimeSec,
   });
   const memory = createYearlyTokenMemoryDb({
     bankr_deposit_wallet_credentials: [depositCredentialRow()],
