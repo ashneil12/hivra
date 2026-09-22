@@ -100,12 +100,50 @@ interface ToolChip {
  result?: string;
 }
 
+// How a turn ended, from what was actually observed:
+//   complete    — the box reported the agent process exited 0 (`_done`).
+//   error       — the agent reported a terminal failure, the process exited
+//                 non-zero / was killed, or the request/transport failed.
+//   stopped     — the user pressed Stop.
+//   interrupted — the chat itself aborted the turn (box URL changed, chat deleted).
+//   unconfirmed — the stream closed without the box's exit report.
+type TurnOutcome = "complete" | "error" | "stopped" | "interrupted" | "unconfirmed";
+
 interface ChatMessage {
+  /** Stable render key (index keys leak per-message UI state across sessions). */
+  id?: string;
   role: "user" | "assistant";
   text: string;
   tools: ToolChip[];
   streaming?: boolean;
-  outcome?: "complete" | "error" | "stopped";
+  outcome?: TurnOutcome;
+  /** Non-fatal notices surfaced during the turn. Kept apart from `text` so an
+   * agent that re-sends its full text (codex setText) cannot wipe them. */
+  warnings?: string[];
+  /** Why the turn failed (terminal), shown with the failed state. */
+  failure?: string;
+  /** Restored from the box's own session store, which keeps only tool names. */
+  historical?: boolean;
+}
+
+// One in-flight request (a chat turn or the auto-welcome). Every stream update
+// is addressed to (sessionId, messageId), never to "the active session's last
+// message", so a turn can only ever write into its own bubble.
+interface ActiveTurn {
+  kind: "chat" | "welcome";
+  controller: AbortController;
+  sessionId: string;
+  messageId: string;
+  /** Per-turn scratch state for the agent's parser (e.g. codex's id→segment map). */
+  parserState: Record<string, unknown>;
+  /** Exit code from the box's `_done` event; undefined until it arrives. */
+  exitCode?: number | null;
+}
+
+function exitFailure(code: number | null): string {
+  return code === null
+    ? "Agent process was killed before it finished"
+    : `Agent process exited unexpectedly (code ${code})`;
 }
 
 interface Session {
@@ -148,9 +186,11 @@ export interface HivraChatProps {
 // Map a box session message (from the VM's own session store) to a ChatMessage.
 function boxMsgToChat(m: BoxMessage): ChatMessage {
  return {
+ id: newId(),
  role: m.role,
  text: m.text || "",
  tools: (m.tools || []).map((name) => ({ name, detail: "", status: "unknown" as const })),
+ historical: true,
  };
 }
 
@@ -193,7 +233,16 @@ function loadSessions(boxUrl: string): Session[] {
  return parsed
  // Drop any hidden welcome-generation session persisted before the rail filter landed.
  .filter((s) => !isHiddenWelcomeTitle(s.title))
- .map((s) => ({ ...s, messages: (s.messages || []).map((m) => ({ ...m, streaming: false })) }));
+ .map((s) => ({
+ ...s,
+ messages: (s.messages || []).map((m) => ({
+ ...m,
+ id: m.id || newId(),
+ streaming: false,
+ // A turn persisted mid-stream never observed its end.
+ outcome: m.streaming && !m.outcome ? "unconfirmed" : m.outcome,
+ })),
+ }));
  } catch {
  return [];
  }
@@ -223,12 +272,14 @@ function toolIcon(name: string): string {
 }
 // A single tool card. Collapsed by default — header shows ⚙ name + command +
 // status; click to expand the output (when there is one).
-function ToolCard({ tool, streaming = false, interrupted = false }: { tool: ToolChip; streaming?: boolean; interrupted?: boolean }) {
+function ToolCard({ tool, streaming = false, interrupted = false, historical = false }: { tool: ToolChip; streaming?: boolean; interrupted?: boolean; historical?: boolean }) {
   const [open, setOpen] = useState(false);
   const hasResult = Boolean(tool.result);
   const disclosureId = `tool-result-${useId().replace(/:/g, "")}`;
   const unconfirmed = tool.status === "unknown" || (!streaming && tool.status === "running");
-  const statusLabel = unconfirmed ? (interrupted ? "Interrupted" : "Unconfirmed") : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
+  const statusLabel = unconfirmed
+    ? (historical && tool.status === "unknown" ? "Result not stored" : interrupted ? "Interrupted" : "Unconfirmed")
+    : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
   return (
     <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
       <button
@@ -272,25 +323,58 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  );
 }
 
-function AssistantActivity({ tools, streaming, outcome, text }: { tools: ToolChip[]; streaming?: boolean; outcome?: ChatMessage["outcome"]; text: string }) {
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function AssistantActivity({ message, live }: { message: ChatMessage; live: boolean }) {
+  const { tools, streaming, outcome, text } = message;
   if (!streaming && tools.length === 0) return null;
   const runningTools = streaming ? tools.filter((tool) => tool.status === "running") : [];
   const running = runningTools[runningTools.length - 1];
   const failed = tools.some((tool) => tool.status === "error");
-  const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
-  const summary = streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
+  const unconfirmed = outcome === "unconfirmed" || tools.some((tool) => tool.status === "running" || tool.status === "unknown");
+  // Box history keeps only tool names: say so plainly rather than implying the
+  // reply did not finish.
+  const historical = !streaming && message.historical;
+  const summary = historical ? plural(tools.length, "earlier action")
+    : streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
     : outcome === "stopped" ? "Activity stopped"
+    : outcome === "interrupted" ? "Activity interrupted"
     : outcome === "error" ? "Response failed"
     : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
-  const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? `${tools.length} action${tools.length === 1 ? "" : "s"}` : "";
-  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" ? "is-muted" : "is-done";
+  const detail = historical ? "results not stored"
+    : running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? plural(tools.length, "action") : "";
+  const dot = streaming ? "is-running" : historical ? "is-muted" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "interrupted" ? "is-muted" : "is-done";
+  // Only the current turn is a live region; history must not queue stale
+  // announcements when a session is opened.
+  const liveProps = live ? { role: "status", "aria-live": "polite" as const, "aria-atomic": true } : {};
   return (
-    <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
+    <div className="hivra-chat-activity" {...liveProps}>
       <span className={`hivra-chat-activity-dot ${dot}`} aria-hidden />
       <span className="hivra-chat-activity-label">{summary}</span>
       <span className="hivra-chat-activity-detail">{detail}</span>
     </div>
   );
+}
+
+const TURN_STATES: Partial<Record<TurnOutcome, { name: string; label: string }>> = {
+ stopped: { name: "Response stopped", label: "Stopped" },
+ interrupted: { name: "Response interrupted", label: "Interrupted" },
+ error: { name: "Response failed", label: "Could not complete response" },
+ unconfirmed: { name: "Response unconfirmed", label: "Connection closed before the agent confirmed it finished" },
+};
+
+// Turn-level end state under a reply. A terminal failure is shown as soon as
+// the agent reports it, even while the CLI is still shutting down.
+function TurnState({ message, live }: { message: ChatMessage; live: boolean }) {
+ const outcome: TurnOutcome | undefined = message.streaming ? (message.failure ? "error" : undefined) : message.outcome;
+ const state = outcome ? TURN_STATES[outcome] : undefined;
+ if (!state) return null;
+ return (
+ <div className="hivra-chat-turn-state" role={live ? "status" : "note"} aria-label={state.name}>
+ <span>{state.label}</span>
+ {outcome === "error" && message.failure ? <span className="hivra-chat-turn-reason"> · {message.failure}</span> : null}
+ </div>
+ );
 }
 
 function ToolHistory({ message }: { message: ChatMessage }) {
@@ -305,7 +389,7 @@ function ToolHistory({ message }: { message: ChatMessage }) {
  </button>
  <div id={id} hidden={!open}>
  <div className="hivra-chat-tool-history-list">
- {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped"} />)}
+ {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped" || message.outcome === "interrupted"} historical={message.historical} />)}
  </div>
  </div>
  </div>
@@ -341,16 +425,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const activeIdRef = useRef<string>("");
  const scrollRef = useRef<HTMLDivElement>(null);
  const autoWelcomeAttemptedRef = useRef(false);
- // Per-turn scratch state for the active agent's parser (e.g. codex's id→text
- // segment map). Reset at the start of each send().
- const turnStateRef = useRef<Record<string, unknown>>({});
- // Aborts the in-flight turn. The box kills the CLI when the client disconnects,
- // so aborting the fetch genuinely stops the agent (not just the UI).
-  const abortRef = useRef<AbortController | null>(null);
- // Every async turn captures the current generation. Changing the backing box
- // or stable storage identity invalidates that generation before aborting so a
- // late fetch result or reader callback cannot target the replacement chat.
- const requestGenerationRef = useRef(0);
+ // The in-flight turn. Aborting its controller disconnects from the box, which
+ // kills the CLI (a real interrupt, not just a UI reset). A turn is "current"
+ // only while turnRef points at it: replacing or clearing the ref invalidates
+ // every late fetch result or reader callback of the old turn.
+ const turnRef = useRef<ActiveTurn | null>(null);
+ // The message of the most recent turn started here — the only live region.
+ const [liveMessageId, setLiveMessageId] = useState<string | null>(null);
  // Last user message of the active turn, so a failed turn can offer a one-tap retry.
  const [lastFailed, setLastFailed] = useState<string | null>(null);
  // Thumbs up/down selection per assistant message, keyed by `${sessionId}:${index}`
@@ -377,23 +458,47 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (typeof window !== "undefined" && window.innerWidth < 720) setShowRail(false);
  }, []);
 
+ const updateSession = useCallback((sessionId: string, fn: (s: Session) => Session) => {
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? fn(s) : s)));
+ }, []);
+ const updateMessage = useCallback((sessionId: string, messageId: string, fn: (m: ChatMessage) => ChatMessage) => {
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, messages: s.messages.map((m) => (m.id === messageId ? fn(m) : m)) } : s)));
+ }, []);
+
+ // Settle the turn's own message and release the composer. No-op for a turn
+ // that is no longer current (stopped, interrupted, or superseded).
+ const finishTurn = useCallback((turn: ActiveTurn, fn: (m: ChatMessage) => ChatMessage) => {
+ if (turnRef.current !== turn) return false;
+ turnRef.current = null;
+ updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? fn(m) : m));
+ setBusy(false);
+ return true;
+ }, [updateMessage]);
+
+ // Abort the in-flight turn and settle its message. An agent failure that was
+ // already observed stays a failure: the stop/abort did not cause it.
+ const interruptTurn = useCallback((outcome: "stopped" | "interrupted") => {
+ const turn = turnRef.current;
+ if (!turn) return;
+ turnRef.current = null;
+ turn.controller.abort();
+ if (turn.kind === "welcome" && outcome === "interrupted") {
+ // Same as a failed welcome: drop the empty bubble so it can run again.
+ updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
+ } else {
+ updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? { ...m, streaming: false, outcome: m.failure ? "error" : outcome } : m));
+ }
+ setBusy(false);
+ }, [updateMessage, updateSession]);
+
  useEffect(() => {
- requestGenerationRef.current += 1;
- const controller = abortRef.current;
- abortRef.current = null;
- controller?.abort();
- turnStateRef.current = {};
  autoWelcomeAttemptedRef.current = false;
  setBusy(false);
  setLastFailed(null);
-
- return () => {
- requestGenerationRef.current += 1;
- const activeController = abortRef.current;
- abortRef.current = null;
- activeController?.abort();
- };
- }, [boxUrl, skey]);
+ // Changing the backing box or storage identity (and unmounting) aborts the
+ // turn and settles its bubble so it can never read "Working" forever.
+ return () => interruptTurn("interrupted");
+ }, [boxUrl, skey, interruptTurn]);
 
  const uploadAttachment = useCallback(async (file: File) => {
  if (!token || uploading || attachmentsRef.current.length >= 5) return;
@@ -535,10 +640,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  };
  }, [activeId, scrollDown]);
 
- const updateActive = useCallback((fn: (s: Session) => Session) => {
- setSessions((prev) => prev.map((s) => (s.id === activeIdRef.current ? fn(s) : s)));
- }, []);
-
  useEffect(() => {
  if (!boxHistoryChecked || hasBoxHistory || busy || autoWelcomeAttemptedRef.current) return;
  if (!active || active.messages.length > 0) return;
@@ -550,14 +651,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }
 
  autoWelcomeAttemptedRef.current = true;
- const welcomeGeneration = requestGenerationRef.current;
- const isCurrentWelcome = () => requestGenerationRef.current === welcomeGeneration;
+ const turn: ActiveTurn = { kind: "welcome", controller: new AbortController(), sessionId: active.id, messageId: newId(), parserState: {} };
+ turnRef.current = turn;
+ setLiveMessageId(turn.messageId);
  setBusy(true);
  const hasFirstTask = Boolean((firstTask || "").trim());
- updateActive((s) => ({
+ updateSession(turn.sessionId, (s) => ({
  ...s,
  title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text: "", tools: [], streaming: true }],
+ messages: [{ id: turn.messageId, role: "assistant", text: "", tools: [], streaming: true }],
  }));
 
  // The agent opens the conversation on its own — and when a first task was
@@ -585,78 +687,61 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  context,
  firstTask,
  channel: "chat",
+ signal: turn.controller.signal,
  })
  .then((text) => {
- if (!isCurrentWelcome()) return;
- updateActive((s) => ({
- ...s,
- title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text, tools: [], streaming: false }],
- }));
+ if (!finishTurn(turn, (m) => ({ ...m, text, streaming: false }))) return;
  try {
  window.localStorage.setItem(flagKey, "1");
  } catch {
  // Best-effort duplicate guard only.
  }
+ scrollDown();
  })
  .catch((err) => {
- if (!isCurrentWelcome()) return;
+ if (turnRef.current !== turn) return; // stopped or interrupted: already settled
  clientLog.warn("agent first message generation failed", {
  source: "hivra-chat",
  failureType: "hivra_chat_welcome_generation_failed",
  agentKind,
  agentName,
  }, err);
- updateActive((s) => ({ ...s, messages: [] }));
- })
- .finally(() => {
- if (!isCurrentWelcome()) return;
+ turnRef.current = null;
+ updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
  setBusy(false);
- scrollDown();
  });
- }, [agentKind, agentName, active, boxHistoryChecked, boxUrl, busy, context, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateActive]);
+ }, [agentKind, agentName, active, boxHistoryChecked, boxUrl, busy, context, finishTurn, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateSession]);
 
- const updateAssistant = useCallback(
- (fn: (msg: ChatMessage) => ChatMessage) => {
- updateActive((s) => {
- const messages = s.messages.slice();
- const last = messages.length - 1;
- if (last >= 0 && messages[last].role === "assistant") messages[last] = fn(messages[last]);
- return { ...s, messages };
- });
- },
- [updateActive],
- );
-
- const upsertTool = useCallback(
- (id: string | undefined, patch: Partial<ToolChip>) => {
- updateAssistant((m) => {
+ // One stream event → UI. The per-agent parsing lives in the adapter registry
+ // (agent-adapters), which the welcome path shares — so live + welcome can't
+ // diverge. This component only provides a sink bound to ONE turn's message.
+ const handleEvent = useCallback(
+ (turn: ActiveTurn, ev: Record<string, unknown>) => {
+ const update = (fn: (m: ChatMessage) => ChatMessage) => updateMessage(turn.sessionId, turn.messageId, fn);
+ const sink: ChatSink = {
+ setSessionId: (id) => updateSession(turn.sessionId, (s) => ({ ...s, claudeSessionId: id })),
+ appendText: (t) => update((m) => ({ ...m, text: m.text + t })),
+ setText: (t) => update((m) => ({ ...m, text: t })),
+ upsertTool: (id, patch) => update((m) => {
  const tools = m.tools.slice();
  const idx = id ? tools.findIndex((t) => t.id === id) : -1;
  if (idx >= 0) tools[idx] = { ...tools[idx], ...patch };
  else tools.push({ id, name: "tool", detail: "", status: "running", ...patch });
  return { ...m, tools };
- });
+ }),
+ appendWarning: (t) => {
+ const warning = t.trim();
+ if (warning) update((m) => ({ ...m, warnings: [...(m.warnings || []), warning] }));
  },
- [updateAssistant],
- );
-
- // One stream event → UI. The per-agent parsing lives in the adapter registry
- // (agent-adapters), which the welcome path shares — so live + welcome can't
- // diverge. This component only provides the sink that maps parser intents onto
- // React state, plus the per-turn scratch state in turnStateRef.
- const handleEvent = useCallback(
- (ev: Record<string, unknown>) => {
- const sink: ChatSink = {
- setSessionId: (id) => updateActive((s) => ({ ...s, claudeSessionId: id })),
- appendText: (t) => updateAssistant((m) => ({ ...m, text: m.text + t })),
- setText: (t) => updateAssistant((m) => ({ ...m, text: t })),
- upsertTool: (id, patch) => upsertTool(id, patch),
- appendWarning: (t) => updateAssistant((m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
+ // The first terminal cause reported is the one shown.
+ fail: (reason) => update((m) => ({ ...m, failure: m.failure || reason })),
+ exit: (code) => {
+ turn.exitCode = code;
+ },
  };
- getAdapter(agentKind).parseEvent(ev, sink, turnStateRef.current);
+ getAdapter(agentKind).parseEvent(ev, sink, turn.parserState);
  },
- [agentKind, updateActive, updateAssistant, upsertTool],
+ [agentKind, updateMessage, updateSession],
  );
 
  const send = useCallback(
@@ -664,32 +749,36 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (busy) return;
  const text = raw.trim();
  if (!text) return;
- const session = sessions.find((s) => s.id === activeIdRef.current);
- const resumeId = session?.claudeSessionId || null;
+ const session = sessions.find((s) => s.id === activeIdRef.current) || active;
+ if (!session) return;
+ const resumeId = session.claudeSessionId || null;
  const images = attachmentsRef.current.map((a) => a.path);
  setInput("");
  setAttachments([]);
- try { window.localStorage.removeItem(draftKey(skey, activeIdRef.current)); } catch { /* ignore */ }
-    setBusy(true);
-    setLastFailed(null);
- const controller = new AbortController();
- const requestGeneration = ++requestGenerationRef.current;
- const isCurrentRequest = () =>
- requestGenerationRef.current === requestGeneration && abortRef.current === controller;
- abortRef.current = controller;
- turnStateRef.current = getAdapter(agentKind).createTurnState(); // fresh per-turn parser state
+ try { window.localStorage.removeItem(draftKey(skey, session.id)); } catch { /* ignore */ }
+ setBusy(true);
+ setLastFailed(null);
+ const turn: ActiveTurn = {
+ kind: "chat",
+ controller: new AbortController(),
+ sessionId: session.id,
+ messageId: newId(),
+ parserState: getAdapter(agentKind).createTurnState(), // fresh per-turn parser state
+ };
+ turnRef.current = turn;
+ setLiveMessageId(turn.messageId);
+ const isCurrentRequest = () => turnRef.current === turn;
  const shownText = images.length ? text + "\n\n📎 " + images.map((p) => p.split("/").pop()).join(", ") : text;
- updateActive((s) => ({
+ updateSession(turn.sessionId, (s) => ({
  ...s,
  title: s.messages.length === 0 ? text.slice(0, 42) : s.title,
  messages: [
  ...s.messages,
- { role: "user", text: shownText, tools: [] },
- { role: "assistant", text: "", tools: [], streaming: true },
+ { id: newId(), role: "user", text: shownText, tools: [] },
+ { id: turn.messageId, role: "assistant", text: "", tools: [], streaming: true },
  ],
  }));
- stickToBottomRef.current = true; // a fresh send re-engages following
- scrollDown(true);
+ scrollDown(true); // a fresh send re-engages following
 
  let resp: Response;
  try {
@@ -706,28 +795,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // string like the cron path's, or `--model`-style flags?) and align this
  // key + the TaskModal cron path so chat and scheduled tasks match.
  body: JSON.stringify({ message: text, sessionId: resumeId, ...(images.length ? { images } : {}), ...(thinkRef.current ? { reasoning: true } : {}) }),
- signal: controller.signal,
+ signal: turn.controller.signal,
  });
  } catch (e) {
+ // Stops and interrupts clear turnRef before aborting, so any failure of a
+ // still-current request is unexpected.
  if (!isCurrentRequest()) return;
- abortRef.current = null;
- // User stops invalidate this request before aborting. Any current failure
- // here is an unexpected transport error.
  if ((e as Error).name === "AbortError") {
-      updateAssistant((m) => ({ ...m, streaming: false, outcome: "error" }));
-    } else {
-      updateAssistant((m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: m.failure || "The request was cancelled before your agent responded." }));
+ } else {
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: "Couldn't reach your agent. It may be starting up — try again in a moment." }));
  setLastFailed(text);
  }
- setBusy(false);
  return;
  }
  if (!isCurrentRequest()) return;
  if (!resp.ok || !resp.body) {
- abortRef.current = null;
-    updateAssistant((m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: "Your agent hit an error (HTTP " + resp.status + "). Try again." }));
  setLastFailed(text);
- setBusy(false);
  return;
  }
 
@@ -759,7 +844,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const event = parseNdjsonLine(line);
  if (!event) return true;
  try {
- handleEvent(event);
+ handleEvent(turn, event);
  } catch {
  /* skip malformed or unsupported event */
  }
@@ -786,37 +871,29 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  buf = "";
  break;
  }
-  } catch {
-    if (!isCurrentRequest()) return;
-    abortRef.current = null;
-    updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "error" } : m)) }));
-    setBusy(false);
-    return;
-  }
-  if (!isCurrentRequest()) return;
-  abortRef.current = null;
-  updateAssistant((m) => ({ ...m, streaming: false, outcome: m.outcome || "complete" }));
-  updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: m.outcome || "complete" } : m)) }));
- setBusy(false);
+ } catch {
+ if (!isCurrentRequest()) return;
+ finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: m.failure || "The connection to your agent was lost before the response finished." }));
+ return;
+ }
+ if (!isCurrentRequest()) return;
+ // The outcome comes from what the agent and the box reported, never from the
+ // transport closing: only a 0 exit in the box's `_done` confirms completion.
+ const exit = turn.exitCode;
+ finishTurn(turn, (m) => {
+ if (m.failure) return { ...m, streaming: false, outcome: "error" };
+ if (exit === undefined) return { ...m, streaming: false, outcome: "unconfirmed" };
+ if (exit === 0) return { ...m, streaming: false, outcome: "complete" };
+ return { ...m, streaming: false, outcome: "error", failure: exitFailure(exit) };
+ });
  scrollDown();
  },
- [agentKind, boxUrl, busy, handleEvent, scrollDown, sessions, updateActive, updateAssistant, token, skey],
+ [active, agentKind, boxUrl, busy, finishTurn, handleEvent, scrollDown, sessions, skey, token, updateSession],
  );
 
- // Stop the in-flight turn. Aborting the fetch disconnects from the box, which
- // kills the underlying CLI process — a real interrupt, not just a UI reset.
-  const stop = useCallback(() => {
-    const controller = abortRef.current;
-    if (!controller) return;
-    requestGenerationRef.current += 1;
-    abortRef.current = null;
-    controller.abort();
-    updateActive((s) => ({
-      ...s,
-      messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
-    }));
-    setBusy(false);
-  }, [updateActive]);
+ // Stop the in-flight turn (chat or auto-welcome). Aborting the fetch
+ // disconnects from the box, which kills the underlying CLI process.
+ const stop = useCallback(() => interruptTurn("stopped"), [interruptTurn]);
 
  // Record a thumbs up/down on an assistant message and fire the funnel event.
  // Toggling the same thumb clears it (and emits rating "none"); the capture goes
@@ -853,6 +930,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
 
  const deleteChat = useCallback(
  (id: string) => {
+ // Deleting the chat a turn is streaming into ends that turn first, so its
+ // late events (text, resume id) can never land in another session.
+ if (turnRef.current?.sessionId === id) interruptTurn("interrupted");
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
  const final = next.length ? next : [emptySession()];
@@ -860,7 +940,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return final;
  });
  },
- [],
+ [interruptTurn],
  );
 
  useEffect(() => {
@@ -986,7 +1066,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {messages.map((m, i) => {
  const isUser = m.role === "user";
  return (
- <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
+ <div key={m.id ?? i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
  <div
  style={{
  width: 26,
@@ -1007,7 +1087,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
- {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
+ {m.role === "assistant" ? <AssistantActivity message={m} live={m.id === liveMessageId} /> : null}
  <div className="hivra-md" style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
  {m.role === "assistant" ? (
  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
@@ -1015,12 +1095,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
  </div>
- {m.role === "assistant" ? <ToolHistory message={m} /> : null}
- {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error") ? (
- <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : "Response failed"}>
- {m.outcome === "stopped" ? "Stopped" : "Could not complete response"}
- </div>
+ {m.role === "assistant" && m.warnings?.length ? (
+ <ul className="hivra-chat-warnings" aria-label="Agent warnings">
+ {m.warnings.map((w, wi) => (
+ <li key={wi}><span aria-hidden>⚠</span> {w}</li>
+ ))}
+ </ul>
  ) : null}
+ {m.role === "assistant" ? <ToolHistory message={m} /> : null}
+ {m.role === "assistant" ? <TurnState message={m} live={m.id === liveMessageId} /> : null}
  {m.role === "assistant" && m.text && !m.streaming ? (
  <span style={{ display: "inline-flex", alignItems: "center" }}>
  <MessageCopy text={m.text} />

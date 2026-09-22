@@ -12,6 +12,8 @@ function recorder() {
   let text = "";
   const tools = new Map<string | undefined, ToolPatch>();
   const warnings: string[] = [];
+  const failures: string[] = [];
+  const exits: (number | null)[] = [];
   let sessionId: string | null = null;
   const sink: ChatSink = {
     setSessionId: (id) => {
@@ -34,11 +36,21 @@ function recorder() {
       warnings.push(t);
       calls.push("warn:" + t);
     },
+    fail: (reason) => {
+      failures.push(reason);
+      calls.push("fail:" + reason);
+    },
+    exit: (code) => {
+      exits.push(code);
+      calls.push("exit:" + code);
+    },
   };
   return {
     sink,
     calls,
     warnings,
+    failures,
+    exits,
     get text() {
       return text;
     },
@@ -113,13 +125,14 @@ describe("agent-adapters", () => {
       expect(r.warnings).toEqual(["token invalidated / unauthorized"]);
     });
 
-    it("surfaces an is_error result (e.g. invalid --model → API 404) as a warning", () => {
+    it("reports an is_error result (e.g. invalid --model → API 404) as a terminal failure", () => {
       // Gotcha shape: subtype stays "success" on API failures — is_error is the signal.
       const r = run(getAdapter("claude"), [
         { type: "result", subtype: "success", is_error: true, api_error_status: 404, session_id: "sid-1", result: "There's an issue with the selected model (bogus). It may not exist or you may not have access to it." },
       ]);
       expect(r.sessionId).toBe("sid-1");
-      expect(r.warnings).toEqual(["There's an issue with the selected model (bogus). It may not exist or you may not have access to it."]);
+      expect(r.failures).toEqual(["There's an issue with the selected model (bogus). It may not exist or you may not have access to it."]);
+      expect(r.warnings).toEqual([]);
     });
 
     it("stays silent on a successful result", () => {
@@ -127,6 +140,16 @@ describe("agent-adapters", () => {
         { type: "result", subtype: "success", is_error: false, session_id: "sid-2", result: "done" },
       ]);
       expect(r.warnings).toEqual([]);
+      expect(r.failures).toEqual([]);
+    });
+
+    it("keeps error-ish stderr (e.g. an MCP server connection error) non-fatal", () => {
+      const r = run(getAdapter("claude"), [
+        { type: "_stderr", text: "[MCP] server 'docs' connection error, continuing without it\n" },
+        { type: "result", subtype: "success", is_error: false, session_id: "sid-3" },
+      ]);
+      expect(r.warnings).toEqual(["[MCP] server 'docs' connection error, continuing without it"]);
+      expect(r.failures).toEqual([]);
     });
   });
 
@@ -156,20 +179,64 @@ describe("agent-adapters", () => {
       expect(r.tool("c2")).toMatchObject({ status: "error" });
     });
 
-    it("surfaces turn.failed as a warning", () => {
+    it("reports turn.failed as a terminal failure", () => {
       const r = run(getAdapter("codex"), [{ type: "turn.failed", error: { message: "rate limited" } }]);
-      expect(r.warnings).toEqual(["rate limited"]);
+      expect(r.failures).toEqual(["rate limited"]);
+      expect(r.warnings).toEqual([]);
+    });
+
+    it("keeps a retryable stream error non-fatal and a fatal error terminal", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "error", message: "Reconnecting... 1/5" },
+        { type: "error", message: "stream disconnected before completion; retrying 2/5 in 400ms" },
+        { type: "item.completed", item: { id: "w", type: "error", message: "MCP server docs failed to start" } },
+        { type: "error", message: "unexpected status 401 Unauthorized" },
+      ]);
+      expect(r.warnings).toEqual([
+        "Reconnecting... 1/5",
+        "stream disconnected before completion; retrying 2/5 in 400ms",
+        "MCP server docs failed to start",
+      ]);
+      expect(r.failures).toEqual(["unexpected status 401 Unauthorized"]);
+    });
+
+    it("keeps ERROR-level stderr tracing non-fatal", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "_stderr", text: "2026-09-22T10:00:00Z ERROR codex_core::mcp: MCP client for `docs` failed to start" },
+      ]);
+      expect(r.warnings).toHaveLength(1);
+      expect(r.failures).toEqual([]);
+    });
+
+    it("maps failed, declined and non-zero-exit completed items to error", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "item.completed", item: { id: "m1", type: "mcp_tool_call", server: "docs", tool: "search", status: "failed", error: { message: "boom" } } },
+        { type: "item.completed", item: { id: "f1", type: "file_change", changes: [{ path: "a.ts", kind: "update" }], status: "failed" } },
+        { type: "item.completed", item: { id: "c1", type: "command_execution", command: "rm x", aggregated_output: "", exit_code: null, status: "declined" } },
+        { type: "item.completed", item: { id: "c2", type: "command_execution", command: "false", aggregated_output: "", exit_code: 2, status: "failed" } },
+        { type: "item.completed", item: { id: "c3", type: "command_execution", command: "ls", aggregated_output: "ok", exit_code: 0, status: "completed" } },
+        { type: "item.completed", item: { id: "f2", type: "file_change", changes: [{ path: "b.ts", kind: "add" }], status: "completed" } },
+        { type: "item.completed", item: { id: "m2", type: "mcp_tool_call", server: "docs", tool: "read", status: "completed" } },
+      ]);
+      expect(r.tool("m1")).toMatchObject({ status: "error" });
+      expect(r.tool("f1")).toMatchObject({ status: "error" });
+      expect(r.tool("c1")).toMatchObject({ status: "error" });
+      expect(r.tool("c2")).toMatchObject({ status: "error" });
+      expect(r.tool("c3")).toMatchObject({ status: "done" });
+      expect(r.tool("f2")).toMatchObject({ status: "done" });
+      expect(r.tool("m2")).toMatchObject({ status: "done" });
     });
   });
 
   describe("generic adapter", () => {
-    it("streams plain _text and ignores _done", () => {
+    it("streams plain _text and reports the box's _done exit code", () => {
       const r = run(getAdapter("generic"), [
         { type: "_text", text: "thinking" },
         { type: "_text", text: "... done." },
         { type: "_done", code: 0 },
       ]);
       expect(r.text).toBe("thinking... done.");
+      expect(r.exits).toEqual([0]);
     });
 
     it("surfaces error-ish stderr only", () => {
@@ -178,6 +245,14 @@ describe("agent-adapters", () => {
         { type: "_stderr", text: "Traceback (most recent call last)" },
       ]);
       expect(r.warnings).toEqual(["Traceback (most recent call last)"]);
+    });
+  });
+
+  describe("box _done event", () => {
+    it.each(["claude", "codex", "generic", "operatoros"])("%s reports the child exit code, including a signal kill (null)", (kind) => {
+      expect(run(getAdapter(kind), [{ type: "_done", code: 137 }]).exits).toEqual([137]);
+      expect(run(getAdapter(kind), [{ type: "_done", code: null }]).exits).toEqual([null]);
+      expect(run(getAdapter(kind), [{ type: "_done", code: 0 }]).exits).toEqual([0]);
     });
   });
 

@@ -37,8 +37,26 @@ export interface ChatSink {
   setText(text: string): void;
   /** Create or update a tool card by id. */
   upsertTool(id: string | undefined, patch: ToolPatch): void;
-  /** Surface a warning inline (rendered as "⚠ …" under the message). */
+  /**
+   * Surface a NON-FATAL notice (rendered as "⚠ …" under the message). The turn
+   * may still finish successfully — e.g. an MCP server that failed to connect,
+   * codex ERROR-level tracing, or a retryable "Reconnecting... 1/5". A warning
+   * must never, on its own, mark the turn as failed.
+   */
   appendWarning(text: string): void;
+  /**
+   * The agent reported that the turn FAILED (terminal): claude `result` with
+   * is_error, codex `turn.failed` or a non-retryable `error`. `reason` is the
+   * human-readable cause shown with the failed turn.
+   */
+  fail(reason: string): void;
+  /**
+   * The box reported that the agent process exited (`{type:"_done", code}` —
+   * written by the box on child close). `null` means the process was killed by
+   * a signal. Only a 0 exit confirms the turn completed; anything else is a
+   * failure even if the transport then closes cleanly.
+   */
+  exit(code: number | null): void;
 }
 
 export interface AgentAdapter {
@@ -93,6 +111,37 @@ function textFromContent(content: unknown): string {
     .join("");
 }
 
+// Box-level protocol events, shared by every adapter. Returns true when the
+// event was consumed.
+function parseBoxEvent(ev: Record<string, unknown>, sink: ChatSink): boolean {
+  if (ev.type !== "_done") return false;
+  sink.exit(typeof ev.code === "number" ? ev.code : null);
+  return true;
+}
+
+// Codex item statuses (exec_events: CommandExecutionStatus / PatchApplyStatus /
+// McpToolCallStatus). Only an observed success maps to "done".
+function codexItemStatus(item: Record<string, unknown>, completed: boolean): ToolStatus {
+  const status = typeof item.status === "string" ? item.status : "";
+  if (status === "failed" || status === "declined") return "error";
+  if (item.error && typeof item.error === "object") return "error";
+  if ("exit_code" in item && item.exit_code !== undefined) {
+    const exit = item.exit_code;
+    if (typeof exit === "number" && exit !== 0) return "error";
+    // A finished command with no exit code was never run to completion.
+    if (completed && exit === null) return "error";
+  }
+  if (!completed || status === "in_progress") return "running";
+  return "done";
+}
+
+// Codex emits top-level `{type:"error"}` both for fatal errors and for
+// retryable stream errors ("Reconnecting... 1/5", "...; retrying 2/5 in 400ms").
+// Only the latter are non-fatal.
+function isRetryableCodexError(message: string): boolean {
+  return /reconnecting|retrying/i.test(message);
+}
+
 // ---- claude: `claude -p --output-format stream-json --include-partial-messages` ----
 const claudeAdapter: AgentAdapter = {
   kind: "claude",
@@ -100,6 +149,7 @@ const claudeAdapter: AgentAdapter = {
   createTurnState: () => ({ seenText: false }),
   parseEvent(ev, sink, state) {
     const type = ev.type as string;
+    if (parseBoxEvent(ev, sink)) return;
 
     if (type === "system" && ev.subtype === "init") {
       const sid = ev.session_id as string | undefined;
@@ -153,7 +203,7 @@ const claudeAdapter: AgentAdapter = {
       // Without this the turn just ends silently with an empty assistant bubble.
       if (ev.is_error) {
         const msg = typeof ev.result === "string" && ev.result ? ev.result : "The request failed.";
-        sink.appendWarning(msg);
+        sink.fail(msg);
       }
     } else if (type === "_stderr") {
       const text = String(ev.text || "");
@@ -170,6 +220,7 @@ const codexAdapter: AgentAdapter = {
   parseEvent(ev, sink, state) {
     const type = ev.type as string;
     const segments = state.segments as Map<string, string>;
+    if (parseBoxEvent(ev, sink)) return;
 
     if (type === "thread.started") {
       const tid = ev.thread_id as string | undefined;
@@ -192,28 +243,29 @@ const codexAdapter: AgentAdapter = {
       } else if (itype === "command_execution") {
         const cmd = String(item.command || "");
         const out = String(item.aggregated_output || item.output || "");
-        const exit = item.exit_code;
-        const status: ToolStatus = done ? (typeof exit === "number" && exit !== 0 ? "error" : "done") : "running";
-        sink.upsertTool(id, { name: "Bash", detail: cmd.slice(0, 130), status, result: out ? out.slice(0, 2000) : undefined });
+        sink.upsertTool(id, { name: "Bash", detail: cmd.slice(0, 130), status: codexItemStatus(item, done), result: out ? out.slice(0, 2000) : undefined });
       } else if (itype === "file_change" || itype === "patch" || itype === "patch_apply") {
-        sink.upsertTool(id, { name: "Edit", detail: fmtCodexFiles(item), status: done ? "done" : "running" });
+        sink.upsertTool(id, { name: "Edit", detail: fmtCodexFiles(item), status: codexItemStatus(item, done) });
       } else if (itype === "web_search") {
-        sink.upsertTool(id, { name: "WebSearch", detail: String(item.query || "").slice(0, 130), status: done ? "done" : "running" });
+        sink.upsertTool(id, { name: "WebSearch", detail: String(item.query || "").slice(0, 130), status: codexItemStatus(item, done) });
       } else if (itype === "mcp_tool_call") {
-        sink.upsertTool(id, { name: String(item.tool || item.name || "mcp"), detail: String(item.server || ""), status: done ? "done" : "running" });
+        sink.upsertTool(id, { name: String(item.tool || item.name || "mcp"), detail: String(item.server || ""), status: codexItemStatus(item, done) });
       } else if (itype === "error") {
+        // Codex's non-fatal warnings arrive as `error` items.
         sink.appendWarning(String(item.message || "error"));
       }
       return;
     }
     if (type === "turn.failed") {
       const err = (ev.error as Record<string, unknown>) || {};
-      sink.appendWarning(String(err.message || "turn failed"));
+      sink.fail(String(err.message || "turn failed"));
       return;
     }
     if (type === "error") {
       const msg = String(ev.message || "");
-      if (msg) sink.appendWarning(msg);
+      if (!msg) return;
+      if (isRetryableCodexError(msg)) sink.appendWarning(msg);
+      else sink.fail(msg);
       return;
     }
     if (type === "_stderr") {
@@ -221,7 +273,7 @@ const codexAdapter: AgentAdapter = {
       if (/error|invalid|denied|expired|unauthor/i.test(text)) sink.appendWarning(text.trim());
       return;
     }
-    // ignore turn.started / _done / unrecognised
+    // ignore turn.started / turn.completed / unrecognised
   },
 };
 
@@ -235,6 +287,7 @@ const genericAdapter: AgentAdapter = {
   createTurnState: () => ({}),
   parseEvent(ev, sink) {
     const type = ev.type as string;
+    if (parseBoxEvent(ev, sink)) return;
     if (type === "_text") {
       const t = String(ev.text || "");
       if (t) sink.appendText(t);
@@ -245,7 +298,7 @@ const genericAdapter: AgentAdapter = {
       if (/error|invalid|denied|expired|unauthor|fatal|traceback/i.test(text)) sink.appendWarning(text.trim());
       return;
     }
-    // ignore _done and anything unrecognised
+    // ignore anything unrecognised
   },
 };
 
@@ -282,6 +335,8 @@ export function extractAssistantText(events: Record<string, unknown>[], kind: st
     },
     upsertTool: () => {},
     appendWarning: () => {},
+    fail: () => {},
+    exit: () => {},
   };
   for (const ev of events) adapter.parseEvent(ev, sink, state);
   return text;
