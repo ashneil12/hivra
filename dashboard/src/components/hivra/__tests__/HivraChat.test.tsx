@@ -69,7 +69,7 @@ describe("HivraChat", () => {
     (listBoxSessions as jest.Mock).mockResolvedValue([]);
     (readBoxSession as jest.Mock).mockResolvedValue([]);
     (stampAgentFirstUsage as jest.Mock).mockResolvedValue(undefined);
-    (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue("Atlas here, ready to grow the SaaS.");
+    (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue({ text: "Atlas here, ready to grow the SaaS.", warnings: [], outcome: "complete" });
   });
 
   it("starts an empty regular chat with the personalized assistant first message", async () => {
@@ -750,9 +750,14 @@ describe("HivraChat", () => {
       Object.defineProperties(pane, {
         scrollHeight: { configurable: true, value: 1500 },
         clientHeight: { configurable: true, value: 500 },
-        scrollTop: { configurable: true, writable: true, value: 200 },
+        scrollTop: { configurable: true, writable: true, value: 1000 },
       });
+      fireEvent.scroll(pane); // at the bottom
+      // The user drags the scrollbar up while a pin is still pending.
+      fireEvent.pointerDown(pane);
+      pane.scrollTop = 200;
       fireEvent.scroll(pane);
+      fireEvent.pointerUp(window);
       expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
       act(() => frames[pendingFrame](0));
       expect(pane.scrollTop).toBe(200);
@@ -900,6 +905,8 @@ describe("HivraChat", () => {
     expect(screen.queryByText("Working")).not.toBeInTheDocument();
     expect(activityLabels()).toEqual(["Activity interrupted"]);
     expect(turnStates()).toEqual(["Interrupted"]);
+    fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+    expect(screen.getByRole("button", { name: "Bash · sleep 99 — Interrupted" })).toBeInTheDocument();
     await sendMessage("second");
     await screen.findByText("second answer");
     await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
@@ -1008,17 +1015,24 @@ describe("HivraChat", () => {
     const pane = screen.getByRole("region", { name: "Conversation" });
     let top = 0;
     let height = 1500;
+    let client = 500;
+    const clamp = () => { top = Math.max(0, Math.min(top, height - client)); };
     Object.defineProperties(pane, {
       scrollHeight: { configurable: true, get: () => height },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, height - 500)); } },
+      clientHeight: { configurable: true, get: () => client },
+      scrollTop: { configurable: true, get: () => top, set: (v: number) => { top = v; clamp(); } },
     });
     return {
       pane,
       get top() { return top; },
-      grow: (px: number) => { height += px; },
-      userScrollTo: (v: number) => { pane.scrollTop = v; fireEvent.scroll(pane); },
-      bottom: () => height - 500,
+      grow: (px: number) => { height += px; clamp(); },
+      // The pane itself resizes (composer or banner height changes).
+      resizePane: (px: number) => { client = px; clamp(); },
+      // A scroll the user drives (trackpad / touch drag / scrollbar).
+      userScrollTo: (v: number) => { fireEvent.pointerDown(pane); pane.scrollTop = v; fireEvent.scroll(pane); fireEvent.pointerUp(window); },
+      // The scroll event the browser fires on its own (layout, content, clamp).
+      layoutScroll: () => { fireEvent.scroll(pane); },
+      bottom: () => height - client,
     };
   }
 
@@ -1108,7 +1122,7 @@ describe("HivraChat", () => {
     });
   });
 
-  it("moves focus to the composer when 'Return to latest' is activated", async () => {
+  it("moves focus to the conversation, not the composer, when 'Return to latest' is activated", async () => {
     await withFrames(async (flush) => {
       render(<HivraChat boxUrl="https://box.example.com" storageKey="latest-focus" agentName="Atlas" />);
       await screen.findByText("Atlas here, ready to grow the SaaS.");
@@ -1120,7 +1134,10 @@ describe("HivraChat", () => {
       fireEvent.click(latest);
       flush();
       expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
-      expect(screen.getByRole("textbox", { name: "Message Atlas" })).toHaveFocus();
+      // Focusing the textarea from a tap would open the soft keyboard over the
+      // latest output; focus lands on the conversation the user asked to see.
+      expect(view.pane).toHaveFocus();
+      expect(screen.getByRole("textbox", { name: "Message Atlas" })).not.toHaveFocus();
       expect(view.top).toBe(view.bottom());
     });
   });
@@ -1220,7 +1237,7 @@ describe("HivraChat", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   });
 
-  it("refits the composer height when its width changes, not only when the text changes", async () => {
+  it("refits the composer height on the next frame after its width changes, never inside the observer callback", async () => {
     const observers: { cb: ResizeObserverCallback; el?: Element }[] = [];
     const original = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
@@ -1231,24 +1248,38 @@ describe("HivraChat", () => {
       disconnect() {}
     };
     try {
-      render(<HivraChat boxUrl="https://box.example.com" storageKey="composer-width" agentName="Atlas" />);
-      await screen.findByText("Atlas here, ready to grow the SaaS.");
-      const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
-      const observer = observers.find((o) => o.el === textarea);
-      expect(observer).toBeDefined();
-      const resize = (width: number) => act(() => observer!.cb([{ target: textarea, contentRect: { width } } as unknown as ResizeObserverEntry], {} as ResizeObserver));
-      Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 100 });
-      fireEvent.change(textarea, { target: { value: "a long draft that wraps" } });
-      expect(textarea).toHaveStyle({ height: "100px", overflowY: "hidden" });
-      resize(600);
-      // The rail opens: narrower textarea, more wrapped lines.
-      Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 200 });
-      resize(400);
-      expect(textarea).toHaveStyle({ height: "160px", overflowY: "auto" });
-      // Wider again: the extra height is released.
-      Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 70 });
-      resize(700);
-      expect(textarea).toHaveStyle({ height: "70px", overflowY: "hidden" });
+      await withFrames(async (flush) => {
+        const { unmount } = render(<HivraChat boxUrl="https://box.example.com" storageKey="composer-width" agentName="Atlas" />);
+        await screen.findByText("Atlas here, ready to grow the SaaS.");
+        flush();
+        const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+        const observer = observers.find((o) => o.el === textarea);
+        expect(observer).toBeDefined();
+        const resize = (width: number) => act(() => observer!.cb([{ target: textarea, contentRect: { width } } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+        Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 100 });
+        fireEvent.change(textarea, { target: { value: "a long draft that wraps" } });
+        expect(textarea).toHaveStyle({ height: "100px", overflowY: "hidden" });
+        resize(600);
+        // The rail opens: narrower textarea, more wrapped lines.
+        Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 200 });
+        resize(400);
+        // Writing the observed element's height inside its own callback raises a
+        // "ResizeObserver loop" window error: the refit waits for the frame.
+        expect(textarea).toHaveStyle({ height: "100px" });
+        flush();
+        expect(textarea).toHaveStyle({ height: "160px", overflowY: "auto" });
+        // Wider again: the extra height is released.
+        Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 70 });
+        resize(700);
+        flush();
+        expect(textarea).toHaveStyle({ height: "70px", overflowY: "hidden" });
+        // A refit still pending at unmount is cancelled.
+        resize(500);
+        const cancel = window.cancelAnimationFrame as jest.Mock;
+        const cancelledBefore = cancel.mock.calls.length;
+        unmount();
+        expect(cancel.mock.calls.length).toBeGreaterThan(cancelledBefore);
+      });
     } finally {
       (globalThis as { ResizeObserver?: unknown }).ResizeObserver = original;
     }
@@ -1404,5 +1435,359 @@ describe("HivraChat", () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.headers).not.toHaveProperty("Authorization");
     expect(JSON.parse(init.body as string)).toEqual({ message: "hello", sessionId: null });
+  });
+  // ── Review round 3 ─────────────────────────────────────────────────────
+  it("reads a codex turn complete when a top-level error of any wording is followed by turn.completed and exit 0", async () => {
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(
+      { type: "thread.started", thread_id: "th1" },
+      { type: "turn.started" },
+      { type: "error", message: "stream disconnected before completion: idle timeout waiting for SSE" },
+      { type: "error", message: "Falling back from WebSockets to HTTPS transport." },
+      { type: "item.completed", item: { id: "i1", type: "agent_message", text: "All done." } },
+      { type: "turn.completed", usage: {} },
+      exitEvent(0),
+    )).mockResolvedValueOnce({ done: true });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="codex-fallback" agentName="Atlas" agentKind="codex" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("go");
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    expect(screen.getByText("All done.")).toBeInTheDocument();
+    expect(screen.getByText(/Falling back from WebSockets to HTTPS transport\./)).toBeVisible();
+    expect(turnStates()).toEqual([]);
+    expect(screen.queryByText("Could not complete response")).not.toBeInTheDocument();
+  });
+
+  it("fails a codex turn with its last error when the process exits without completing the turn", async () => {
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(
+      { type: "turn.started" },
+      { type: "error", message: "unexpected status 401 Unauthorized" },
+      exitEvent(1),
+    )).mockResolvedValueOnce({ done: true });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="codex-fatal" agentName="Atlas" agentKind="codex" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("go");
+    expect(await screen.findByRole("status", { name: "Response failed" })).toHaveTextContent("unexpected status 401 Unauthorized");
+  });
+
+  it("keeps a turn the box reported as exited 0 complete when the connection then drops", async () => {
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(claudeText("Full answer."), { type: "result", subtype: "success", is_error: false }, exitEvent(0)))
+      .mockRejectedValueOnce(new TypeError("network error"));
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="done-then-reset" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("go");
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    expect(screen.getByText("Full answer.")).toBeInTheDocument();
+    expect(turnStates()).toEqual([]);
+    expect(screen.queryByText(/connection to your agent was lost/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a turn the box reported as exited complete when Stop is pressed before the stream closes", async () => {
+    const pending = deferred<{ done: boolean }>();
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(claudeText("Full answer."), { type: "result", subtype: "success", is_error: false }, exitEvent(0)))
+      .mockImplementationOnce(() => pending.promise);
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="done-then-stop" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("go");
+    await screen.findByText("Full answer.");
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(turnStates()).toEqual([]);
+    expect(activityLabels()).toEqual([]);
+    expect(screen.queryByText("Stopped")).not.toBeInTheDocument();
+  });
+
+  it("does not say 'Responding' next to an agent failure reported while the CLI is still exiting", async () => {
+    const pending = deferred<{ done: boolean }>();
+    const read = jest.fn().mockResolvedValueOnce(eventChunk(claudeText("Partial"), { type: "result", is_error: true, result: "boom" }))
+      .mockImplementationOnce(() => pending.promise);
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="fail-while-streaming" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("go");
+    await screen.findByText(/boom/);
+    expect(activityLabels()).toEqual(["Response failed"]);
+    expect(turnStates()).toEqual(["Could not complete response · boom"]);
+    expect(document.querySelector(".hivra-chat-activity-dot")).toHaveClass("is-error");
+    expect(screen.queryByText(/Responding|Working/)).not.toBeInTheDocument();
+    await act(async () => pending.resolve({ done: true }));
+  });
+
+  it("shows a killed first-task turn as failed, not as a finished welcome, and lets it run again", async () => {
+    (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue({
+      text: "Hi, I'm Atlas. Pulling your competitor list now — first I'll", warnings: [], outcome: "error", failure: "Agent process was killed before it finished",
+    });
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-killed" agentName="Atlas" firstTask="Pull my competitor list" />);
+    const failed = await screen.findByRole("status", { name: "Response failed" });
+    expect(failed).toHaveTextContent("Agent process was killed before it finished");
+    expect(screen.getByText(/Pulling your competitor list now/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    expect(window.localStorage.getItem("hivra:first-welcome:welcome-killed")).toBeNull();
+  });
+
+  it("shows a welcome the agent reported as failed (logged out) as failed, without marking the welcome sent", async () => {
+    (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue({
+      text: "", warnings: [], outcome: "error", failure: "Invalid API key · Please run /login",
+    });
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-logged-out" agentName="Atlas" />);
+    expect(await screen.findByRole("status", { name: "Response failed" })).toHaveTextContent("Invalid API key · Please run /login");
+    expect(screen.queryByRole("button", { name: "Copy message" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("hivra:first-welcome:welcome-logged-out")).toBeNull();
+  });
+
+  it("marks the welcome sent only after a confirmed-complete welcome turn", async () => {
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-ok" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await waitFor(() => expect(window.localStorage.getItem("hivra:first-welcome:welcome-ok")).toBe("1"));
+    expect(turnStates()).toEqual([]);
+  });
+
+  it("drops an unconfirmed welcome that produced nothing, so it can run again", async () => {
+    (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue({ text: "", warnings: [], outcome: "unconfirmed" });
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-empty" agentName="Atlas" />);
+    await waitFor(() => expect(requestAgentWelcomeMessage).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    expect(document.querySelectorAll(".hivra-chat-message")).toHaveLength(0);
+    expect(window.localStorage.getItem("hivra:first-welcome:welcome-empty")).toBeNull();
+  });
+
+  it("removes an interrupted welcome on a box URL change and runs the welcome again on the new box", async () => {
+    let calls = 0;
+    (requestAgentWelcomeMessage as jest.Mock).mockImplementation(({ signal }: { signal?: AbortSignal }) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+        });
+      }
+      return Promise.resolve({ text: "Welcome from the new box.", warnings: [], outcome: "complete" });
+    });
+    const { rerender } = render(<HivraChat boxUrl="https://tunnel-1.example.com" storageKey="welcome-move" agentName="Atlas" firstTask="Do it" />);
+    expect(await screen.findByText("Waiting for response")).toBeInTheDocument();
+    rerender(<HivraChat boxUrl="https://tunnel-2.example.com" storageKey="welcome-move" agentName="Atlas" firstTask="Do it" />);
+    expect(await screen.findByText("Welcome from the new box.")).toBeInTheDocument();
+    expect(requestAgentWelcomeMessage).toHaveBeenCalledTimes(2);
+    expect((requestAgentWelcomeMessage as jest.Mock).mock.calls[1][0]).toMatchObject({ boxUrl: "https://tunnel-2.example.com", firstTask: "Do it" });
+    expect(screen.queryByText("Activity interrupted")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".hivra-chat-message")).toHaveLength(1);
+  });
+
+  it("refuses a codex message too long for one argv element, keeping the draft, and still sends it to other agents", async () => {
+    const fetchMock = mockChatFetchOk();
+    const huge = "x".repeat(128 * 1024);
+    const { unmount } = render(<HivraChat boxUrl="https://box.example.com" storageKey="codex-huge" token="t" agentName="Atlas" agentKind="codex" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage(huge);
+    expect(await screen.findByRole("alert")).toHaveTextContent("This message is too long for Atlas to receive (128 KB; the limit is 127 KB). Attach it as a file instead.");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox", { name: "Message Atlas" }) as HTMLTextAreaElement).value).toBe(huge);
+    // Editing the draft clears the notice; a message at the limit is sent.
+    fireEvent.change(screen.getByRole("textbox", { name: "Message Atlas" }), { target: { value: "x".repeat(128 * 1024 - 1) } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Send message"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    unmount();
+    // Multibyte text is measured in bytes, as argv is.
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="codex-huge-utf8" agentName="Atlas" agentKind="codex" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("é".repeat(70 * 1024));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Split it into shorter messages instead.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not limit message size for agents that read the prompt from stdin", async () => {
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="claude-huge" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("x".repeat(200 * 1024));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  // Autoscroll with no user input: content and layout changes never unstick.
+  it("keeps following when content or layout moves the pane without any user input", async () => {
+    await withFrames(async (flush) => {
+      const stream = controlledStream();
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="scroll-layout" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const view = scrollablePane();
+      await sendMessage("stream");
+      await stream.push(claudeText("a line "));
+      flush();
+      expect(view.top).toBe(view.bottom());
+      view.layoutScroll();
+
+      // (a) A code block lands before the next frame: the browser's scroll event
+      // reports the old position, 110px from the new bottom.
+      view.grow(110);
+      view.layoutScroll();
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      flush();
+      expect(view.top).toBe(view.bottom());
+      view.layoutScroll();
+
+      // (c) The pane grows (composer loses a line): the clamp moves scrollTop
+      // up, then a token lands before the scroll event.
+      view.resizePane(521);
+      view.grow(22);
+      view.layoutScroll();
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      flush();
+      expect(view.top).toBe(view.bottom());
+      view.layoutScroll();
+
+      // (d) The pane shrinks by 116px (a multi-line draft, the memory banner).
+      view.resizePane(405);
+      view.layoutScroll();
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      flush();
+      expect(view.top).toBe(view.bottom());
+
+      await stream.push(claudeText("more "), exitEvent(0));
+      view.grow(200);
+      flush();
+      expect(view.top).toBe(view.bottom());
+      await stream.end();
+    });
+  });
+
+  it("does not unstick on a wheel-up or scroll key the conversation cannot follow", async () => {
+    await withFrames(async (flush) => {
+      const stream = controlledStream();
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="scroll-cannot" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const pane = screen.getByRole("region", { name: "Conversation" });
+      // A short conversation: nothing to scroll.
+      let height = 400;
+      let top = 0;
+      Object.defineProperties(pane, {
+        scrollHeight: { configurable: true, get: () => height },
+        clientHeight: { configurable: true, value: 500 },
+        scrollTop: { configurable: true, get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, Math.max(0, height - 500))); } },
+      });
+      await sendMessage("stream");
+      fireEvent.wheel(pane, { deltaY: -3 });
+      fireEvent.keyDown(pane, { key: "ArrowUp" });
+      fireEvent.keyDown(pane, { key: "PageUp" });
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      // The reply grows past the pane: still followed.
+      height = 1500;
+      await stream.push(runningToolEvent("t1", "cat big.log"), toolResult("t1", "line\n".repeat(80)), claudeText("Long reply "));
+      flush();
+      expect(top).toBe(1000);
+
+      // Inside the expanded tool output, which can itself scroll up.
+      fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+      const output = document.querySelector("[id^='tool-result-']") as HTMLElement;
+      fireEvent.click(screen.getByRole("button", { name: /^Bash · cat big\.log/ }));
+      Object.defineProperties(output, {
+        scrollHeight: { configurable: true, value: 900 },
+        clientHeight: { configurable: true, value: 220 },
+        scrollTop: { configurable: true, writable: true, value: 300 },
+      });
+      fireEvent.wheel(output, { deltaY: -3 });
+      // A mostly-horizontal swipe (a wide code block) and a pinch-zoom.
+      fireEvent.wheel(pane, { deltaX: 40, deltaY: -0.5 });
+      fireEvent.wheel(pane, { deltaY: -12, ctrlKey: true });
+      height = 1600;
+      await stream.push(claudeText("more "));
+      flush();
+      expect(top).toBe(1100);
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+
+      // Once the tool output is at its own top, the wheel goes to the pane.
+      output.scrollTop = 0;
+      fireEvent.wheel(output, { deltaY: -3 });
+      expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+      await stream.push(exitEvent(0));
+      await stream.end();
+    });
+  });
+
+  it.each(["PageUp", "Home"])("unsticks on %s before any scroll event lands", async (key) => {
+    await withFrames(async (flush) => {
+      const stream = controlledStream();
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey={`scroll-${key}`} agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const view = scrollablePane();
+      await sendMessage("stream");
+      await stream.push(claudeText("a "));
+      flush();
+      const atBottom = view.top;
+      fireEvent.keyDown(view.pane, { key });
+      view.grow(100);
+      await stream.push(claudeText("b "));
+      flush();
+      expect(view.top).toBe(atBottom);
+      expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+      await stream.end();
+    });
+  });
+
+  it("moves focus to the neighbouring chat when a chat is deleted from the keyboard", async () => {
+    seedSessions("delete-focus", [
+      { id: "a", title: "Chat A", claudeSessionId: null, createdAt: 3, messages: [{ role: "user", text: "qa", tools: [] }, { role: "assistant", text: "answer A", tools: [] }] },
+      { id: "b", title: "Chat B", claudeSessionId: null, createdAt: 2, messages: [{ role: "user", text: "qb", tools: [] }, { role: "assistant", text: "answer B", tools: [] }] },
+      { id: "c", title: "Chat C", claudeSessionId: null, createdAt: 1, messages: [{ role: "user", text: "qc", tools: [] }, { role: "assistant", text: "answer C", tools: [] }] },
+    ], "a");
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="delete-focus" agentName="Atlas" />);
+    await screen.findByText("answer A");
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    const deleteB = screen.getByRole("button", { name: "Delete chat: Chat B" });
+    deleteB.focus();
+    fireEvent.click(deleteB);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Chat B" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Chat C" })).toHaveFocus();
+    // The last row falls back to the previous one.
+    const deleteC = screen.getByRole("button", { name: "Delete chat: Chat C" });
+    deleteC.focus();
+    fireEvent.click(deleteC);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Chat C" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Chat A" })).toHaveFocus();
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("disables switching and creating chats while a turn streams, and re-enables them after", async () => {
+    seedSessions("rail-busy", [
+      { id: "a", title: "Chat A", claudeSessionId: null, createdAt: 2, messages: [{ role: "user", text: "qa", tools: [] }, { role: "assistant", text: "answer A", tools: [] }] },
+      { id: "b", title: "Chat B", claudeSessionId: null, createdAt: 1, messages: [{ role: "user", text: "qb", tools: [] }, { role: "assistant", text: "answer B", tools: [] }] },
+    ], "a");
+    const stream = controlledStream();
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-busy" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("answer A");
+    await sendMessage("stream in A");
+    await stream.push(claudeText("A streaming"));
+    // The floating New chat (rail hidden), then the rail's own controls.
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    expect(screen.getByRole("button", { name: "Chat B" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Chat A" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /New chat/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Chat B" }));
+    expect(screen.queryByText("answer B")).not.toBeInTheDocument();
+    await stream.push(exitEvent(0));
+    await stream.end();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Chat B" })).toBeEnabled());
+    expect(screen.getByText("A streaming")).toBeInTheDocument();
+  });
+
+  it("loads a message persisted mid-stream as unconfirmed, not as streaming or complete", async () => {
+    seedSessions("persisted-streaming", [
+      { id: "a", title: "Chat A", claudeSessionId: null, createdAt: 1, messages: [
+        { role: "user", text: "q", tools: [] },
+        { role: "assistant", text: "half an ans", tools: [{ id: "t", name: "Bash", detail: "make", status: "running" }], streaming: true },
+      ] },
+    ], "a");
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="persisted-streaming" agentName="Atlas" />);
+    await screen.findByText("half an ans");
+    expect(screen.getByRole("note", { name: "Response unconfirmed" })).toBeInTheDocument();
+    expect(activityLabels()).toEqual(["Completion unconfirmed"]);
+    expect(screen.queryByText(/Working|Responding/)).not.toBeInTheDocument();
   });
 });

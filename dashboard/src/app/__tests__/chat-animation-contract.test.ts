@@ -97,6 +97,12 @@ describe("Hivra chat motion accessibility", () => {
     const chatControls = css.nodes.find((n): n is postcss.Rule => n.type === "rule" && ["button", "textarea", "input", "a"].every((el) => n.selectors.includes(`.hivra-chat-root ${el}`)));
     expect(chatControls).toBeDefined();
     expect(isUnlayered(chatControls!)).toBe(true);
+    // The properties decide what animates at all: the rail's delete control fades
+    // in via opacity, and hover/focus change colours, borders and focus rings.
+    let properties: string[] = [];
+    chatControls!.walkDecls("transition-property", (decl) => { properties = decl.value.split(",").map((p) => p.trim()); });
+    expect(properties).toEqual(expect.arrayContaining(["color", "background-color", "border-color", "opacity", "box-shadow"]));
+    expect(properties).not.toContain("all");
     let durations: number[] = [];
     chatControls!.walkDecls("transition-duration", (decl) => { durations = ms(decl.value); });
     expect(durations.length).toBeGreaterThan(0);

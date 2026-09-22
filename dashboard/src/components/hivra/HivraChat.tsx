@@ -14,7 +14,7 @@ import { Send, Loader2, Check, X, Plus, MessageSquare, Trash2, ChevronRight, Che
 import { listBoxSessions, readBoxSession, stampAgentFirstUsage, uploadBoxFile, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
 import { requestAgentWelcomeMessage, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
-import { getAdapter, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
+import { getAdapter, settleTurn, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
@@ -140,12 +140,6 @@ interface ActiveTurn {
   exitCode?: number | null;
 }
 
-function exitFailure(code: number | null): string {
-  return code === null
-    ? "Agent process was killed before it finished"
-    : `Agent process exited unexpectedly (code ${code})`;
-}
-
 interface Session {
  id: string;
  title: string;
@@ -195,10 +189,31 @@ function boxMsgToChat(m: BoxMessage): ChatMessage {
 }
 
 const MAX_SESSIONS = 30;
+// The largest single argv element Linux accepts (MAX_ARG_STRLEN = 32 pages of
+// 4 KiB, including the terminating NUL). The box passes a codex message as one.
+const CODEX_MAX_MESSAGE_BYTES = 128 * 1024 - 1;
 // Autoscroll: within this many px of the bottom counts as "at the bottom".
 const AT_BOTTOM_PX = 4;
-// A jump this far from the bottom (scrollbar drag, PageUp, a flick) always unsticks.
-const FAR_FROM_BOTTOM_PX = 80;
+// A scroll event this soon after the user's input (wheel, touch, key, pointer
+// release) is theirs; smooth wheel scrolling and key repeat stay inside it.
+const USER_SCROLL_INTENT_MS = 250;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+function isEditable(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT");
+}
+
+// True when an element between `target` and `pane` can itself scroll up, so an
+// upward wheel/key goes to it (tool output, a tall code block) and not the pane.
+function nestedScrollerTakes(target: EventTarget | null, pane: HTMLElement): boolean {
+  for (let node = target instanceof Element ? target : null; node && node !== pane; node = node.parentElement) {
+    if (!(node instanceof HTMLElement) || node.scrollHeight <= node.clientHeight || node.scrollTop <= 0) continue;
+    const style = window.getComputedStyle(node);
+    const overflowY = style.overflowY || style.overflow;
+    if (/(auto|scroll)/.test(overflowY)) return true;
+  }
+  return false;
+}
 
 // Per-session draft key — the half-typed message survives reloads + session switches.
 function draftKey(sk: string, sessionId: string): string {
@@ -347,7 +362,11 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 function AssistantActivity({ message, live }: { message: ChatMessage; live: boolean }) {
   const { tools, streaming, outcome, text } = message;
   if (!streaming && tools.length === 0) return null;
-  const runningTools = streaming ? tools.filter((tool) => tool.status === "running") : [];
+  // The agent already reported a terminal failure while its CLI is still
+  // shutting down: say so, in agreement with the turn-state row, rather than
+  // "Responding" / "Working".
+  const failing = Boolean(streaming && message.failure);
+  const runningTools = streaming && !failing ? tools.filter((tool) => tool.status === "running") : [];
   const running = runningTools[runningTools.length - 1];
   const failed = tools.some((tool) => tool.status === "error");
   const unconfirmed = outcome === "unconfirmed" || tools.some((tool) => tool.status === "running" || tool.status === "unknown");
@@ -355,6 +374,7 @@ function AssistantActivity({ message, live }: { message: ChatMessage; live: bool
   // reply did not finish.
   const historical = !streaming && message.historical;
   const summary = historical ? plural(tools.length, "earlier action")
+    : failing ? "Response failed"
     : streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
     : outcome === "stopped" ? "Activity stopped"
     : outcome === "interrupted" ? "Activity interrupted"
@@ -362,7 +382,7 @@ function AssistantActivity({ message, live }: { message: ChatMessage; live: bool
     : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
   const detail = historical ? "results not stored"
     : running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? plural(tools.length, "action") : "";
-  const dot = streaming ? "is-running" : historical ? "is-muted" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "interrupted" ? "is-muted" : "is-done";
+  const dot = failing ? "is-error" : streaming ? "is-running" : historical ? "is-muted" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "interrupted" ? "is-muted" : "is-done";
   // Only the current turn is a live region; history must not queue stale
   // announcements when a session is opened.
   const liveProps = live ? { role: "status", "aria-live": "polite" as const, "aria-atomic": true } : {};
@@ -453,6 +473,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const [liveMessageId, setLiveMessageId] = useState<string | null>(null);
  // Last user message of the active turn, so a failed turn can offer a one-tap retry.
  const [lastFailed, setLastFailed] = useState<string | null>(null);
+ // Why the composer's message was not sent (it stays in the composer).
+ const [composerError, setComposerError] = useState<string | null>(null);
  // Thumbs up/down selection per assistant message, keyed by `${sessionId}:${index}`
  // so a rating sticks to its message and survives session switches. UI-only state
  // (the event itself goes to PostHog) — not persisted across reloads.
@@ -478,15 +500,26 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
    const textarea = composerRef.current;
    if (!textarea || typeof ResizeObserver === "undefined") return;
    let lastWidth: number | null = null;
+   let frame: number | null = null;
    const observer = new ResizeObserver((entries) => {
      const width = entries[entries.length - 1]?.contentRect.width;
      if (width === undefined || width === lastWidth) return;
      const first = lastWidth === null;
      lastWidth = width;
-     if (!first) fitComposer();
+     if (first || frame !== null) return;
+     // Refit on the next frame, not inside the callback: resizing the observed
+     // element from its own callback makes the browser raise a "ResizeObserver
+     // loop" window error (reported to telemetry as an unhandled client error).
+     frame = requestAnimationFrame(() => {
+       frame = null;
+       fitComposer();
+     });
    });
    observer.observe(textarea);
-   return () => observer.disconnect();
+   return () => {
+     observer.disconnect();
+     if (frame !== null) cancelAnimationFrame(frame);
+   };
  }, [fitComposer]);
  // IME: Safari fires compositionend BEFORE the Enter that commits a candidate
  // (with isComposing false, keyCode 229), so track composition ourselves and
@@ -530,6 +563,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (turn.kind === "welcome" && outcome === "interrupted") {
  // Same as a failed welcome: drop the empty bubble so it can run again.
  updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
+ } else if (turn.exitCode !== undefined) {
+ // The box already reported how the agent exited: the turn ended there, and
+ // the stop/abort only closed the stream after it.
+ updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? { ...m, streaming: false, ...settleTurn({ failure: m.failure, exitCode: turn.exitCode }) } : m));
  } else {
  updateMessage(turn.sessionId, turn.messageId, (m) => (m.streaming ? { ...m, streaming: false, outcome: m.failure ? "error" : outcome } : m));
  }
@@ -651,43 +688,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  );
 
  // Smart autoscroll: follow the stream only while the user is at the bottom.
- // ANY user scroll-up (a 3px trackpad nudge, ArrowUp, wheel) unsticks at once;
- // only returning to the bottom re-engages following. Our own scrolls only ever
- // move down to the bottom, so they never read as intent. `force` is for
+ // A scroll-up by the USER (any size) unsticks at once; only returning to the
+ // bottom re-engages following. A scroll event alone cannot say who moved the
+ // pane — content growth, a code block landing before the next frame, the
+ // composer or banner resizing the pane, and our own pins all fire one — so a
+ // scroll only counts as the user's when it follows their input (wheel, touch,
+ // pointer on the pane or its scrollbar, scroll keys, focus moving into the
+ // conversation). Any other scroll while following just re-pins. `force` is for
  // user-initiated sends and "Return to latest".
  const stickToBottomRef = useRef(true);
  const scrollFrameRef = useRef<number | null>(null);
- // Last observed position/height, to tell a user scroll-up from our own scroll
- // or from the browser clamping scrollTop when content shrinks.
- const lastScrollRef = useRef({ top: 0, height: 0 });
+ // Last observed position and scroll range, to tell a user scroll-up from the
+ // browser clamping scrollTop when the scroll range shrinks.
+ const lastScrollRef = useRef({ top: 0, maxTop: 0 });
+ // Until when a scroll event is attributed to the user's input.
+ const userIntentUntilRef = useRef(0);
+ const pointerHeldRef = useRef(false);
  const [showLatest, setShowLatest] = useState(false);
  const unstick = useCallback(() => {
  stickToBottomRef.current = false;
  setShowLatest(true);
  }, []);
- const onScrollPane = useCallback(() => {
- const el = scrollRef.current;
- if (!el) return;
- const last = lastScrollRef.current;
- const top = el.scrollTop;
- lastScrollRef.current = { top, height: el.scrollHeight };
- const distance = el.scrollHeight - top - el.clientHeight;
- if (distance <= AT_BOTTOM_PX) {
- stickToBottomRef.current = true;
- setShowLatest(false);
- return;
- }
- const scrolledUp = top < last.top - 1 && el.scrollHeight >= last.height;
- if (scrolledUp || distance >= FAR_FROM_BOTTOM_PX) unstick();
- else setShowLatest(!stickToBottomRef.current);
- }, [unstick]);
- // Intent signals that arrive before (or without) a scroll event.
- const onWheelPane = useCallback((e: React.WheelEvent) => {
- if (e.deltaY < 0) unstick();
- }, [unstick]);
- const onKeyDownPane = useCallback((e: React.KeyboardEvent) => {
- if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") unstick();
- }, [unstick]);
+ const markUserIntent = useCallback(() => {
+ userIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
+ }, []);
  const scrollDown = useCallback((force?: boolean) => {
  if (force) {
  stickToBottomRef.current = true;
@@ -701,9 +725,77 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const el = scrollRef.current;
  if (!el) return;
  el.scrollTop = el.scrollHeight;
- lastScrollRef.current = { top: el.scrollTop, height: el.scrollHeight };
+ lastScrollRef.current = { top: el.scrollTop, maxTop: el.scrollHeight - el.clientHeight };
  });
  }, []);
+ const onScrollPane = useCallback(() => {
+ const el = scrollRef.current;
+ if (!el) return;
+ const last = lastScrollRef.current;
+ const top = el.scrollTop;
+ const maxTop = el.scrollHeight - el.clientHeight;
+ lastScrollRef.current = { top, maxTop };
+ if (maxTop - top <= AT_BOTTOM_PX) {
+ stickToBottomRef.current = true;
+ setShowLatest(false);
+ return;
+ }
+ if (!stickToBottomRef.current) {
+ setShowLatest(true);
+ return;
+ }
+ // Moved up by the user, and not the browser clamping a shrunken range.
+ const scrolledUp = top < last.top - 1 && maxTop >= last.maxTop - 1;
+ const userInput = pointerHeldRef.current || Date.now() <= userIntentUntilRef.current;
+ if (scrolledUp && userInput) unstick();
+ // Not the user: content or layout moved the bottom. Keep following.
+ else scrollDown();
+ }, [scrollDown, unstick]);
+ // Intent signals. A wheel-up or scroll key that will actually move THIS pane
+ // up unsticks at once, before its scroll event lands, so a pin scheduled for
+ // the next token cannot undo it. A gesture the pane cannot follow does not:
+ // nothing above to scroll to, a nested scroller (tool output, code block)
+ // takes it, a mostly-horizontal swipe, or a pinch-zoom (ctrl+wheel).
+ const onWheelPane = useCallback((e: React.WheelEvent) => {
+ if (e.ctrlKey) return;
+ markUserIntent();
+ const pane = scrollRef.current;
+ if (!pane || e.deltaY >= 0 || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+ if (pane.scrollTop > 0 && !nestedScrollerTakes(e.target, pane)) unstick();
+ }, [markUserIntent, unstick]);
+ const onKeyDownPane = useCallback((e: React.KeyboardEvent) => {
+ if (!SCROLL_KEYS.has(e.key) || isEditable(e.target)) return;
+ markUserIntent();
+ const pane = scrollRef.current;
+ if (!pane || !(e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home")) return;
+ if (pane.scrollTop > 0 && !nestedScrollerTakes(e.target, pane)) unstick();
+ }, [markUserIntent, unstick]);
+ const onPointerDownPane = useCallback(() => {
+ pointerHeldRef.current = true;
+ markUserIntent();
+ }, [markUserIntent]);
+ useEffect(() => {
+ // A pointer released anywhere (a scrollbar drag often ends outside the pane).
+ const release = () => {
+ if (!pointerHeldRef.current) return;
+ pointerHeldRef.current = false;
+ markUserIntent();
+ };
+ window.addEventListener("pointerup", release);
+ window.addEventListener("pointercancel", release);
+ return () => {
+ window.removeEventListener("pointerup", release);
+ window.removeEventListener("pointercancel", release);
+ };
+ }, [markUserIntent]);
+ const onTouchEndPane = useCallback(() => {
+ pointerHeldRef.current = false;
+ markUserIntent();
+ }, [markUserIntent]);
+ const onFocusPane = useCallback((e: React.FocusEvent) => {
+ // Focus moving to something in the conversation scrolls it into view.
+ if (e.target !== scrollRef.current) markUserIntent();
+ }, [markUserIntent]);
  useEffect(() => {
  scrollDown(true);
  return () => {
@@ -761,13 +853,38 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  channel: "chat",
  signal: turn.controller.signal,
  })
- .then((text) => {
- if (!finishTurn(turn, (m) => ({ ...m, text, streaming: false }))) return;
+ .then((result) => {
+ if (turnRef.current !== turn) return; // stopped or interrupted: already settled
+ const { text, warnings, outcome, failure } = result;
+ if (outcome === "complete" && text) {
+ finishTurn(turn, (m) => ({ ...m, text, warnings, outcome, streaming: false }));
+ // Only a welcome the agent and box confirmed finished counts as sent.
  try {
  window.localStorage.setItem(flagKey, "1");
  } catch {
  // Best-effort duplicate guard only.
  }
+ scrollDown();
+ return;
+ }
+ clientLog.warn("agent first message did not complete", {
+ source: "hivra-chat",
+ failureType: "hivra_chat_welcome_incomplete",
+ agentKind,
+ agentName,
+ outcome,
+ failure,
+ });
+ if (!text && !failure) {
+ // Nothing to show and no reason to give: drop the bubble.
+ turnRef.current = null;
+ updateSession(turn.sessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.id !== turn.messageId) }));
+ setBusy(false);
+ return;
+ }
+ // A partial or failed first task is shown as exactly that, never as a
+ // finished deliverable, and the welcome stays eligible to run again.
+ finishTurn(turn, (m) => ({ ...m, text, warnings, outcome, failure, streaming: false }));
  scrollDown();
  })
  .catch((err) => {
@@ -821,8 +938,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (busy) return;
  const text = raw.trim();
  if (!text) return;
- const session = sessions.find((s) => s.id === activeIdRef.current) || active;
+ // The chat on screen. The rail and New chat are disabled while busy, so it
+ // cannot change under a turn; the turn is bound to it by id from here on.
+ const session = active;
  if (!session) return;
+ // Codex receives the message as one argv element, and Linux caps a single
+ // argument at 128 KiB (MAX_ARG_STRLEN): the box's spawn() would throw E2BIG
+ // and take its chat server down. Say so here instead of sending it.
+ const overLimit = agentKind === "codex" ? new TextEncoder().encode(text).length - CODEX_MAX_MESSAGE_BYTES : 0;
+ if (overLimit > 0) {
+ setComposerError(`This message is too long for ${agentName} to receive (${Math.ceil((CODEX_MAX_MESSAGE_BYTES + overLimit) / 1024)} KB; the limit is ${Math.floor(CODEX_MAX_MESSAGE_BYTES / 1024)} KB). ${token ? "Attach it as a file" : "Split it into shorter messages"} instead.`);
+ return;
+ }
+ setComposerError(null);
  const resumeId = session.claudeSessionId || null;
  const images = attachmentsRef.current.map((a) => a.path);
  setInput("");
@@ -945,22 +1073,22 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }
  } catch {
  if (!isCurrentRequest()) return;
- finishTurn(turn, (m) => ({ ...m, streaming: false, outcome: "error", failure: m.failure || "The connection to your agent was lost before the response finished." }));
+ // A connection lost after the box reported the exit does not change how
+ // the turn ended; before it, the end was never observed.
+ const exitCode = turn.exitCode;
+ finishTurn(turn, (m) => exitCode !== undefined
+ ? { ...m, streaming: false, ...settleTurn({ failure: m.failure, exitCode }) }
+ : { ...m, streaming: false, outcome: "error", failure: m.failure || "The connection to your agent was lost before the response finished." });
  return;
  }
  if (!isCurrentRequest()) return;
  // The outcome comes from what the agent and the box reported, never from the
  // transport closing: only a 0 exit in the box's `_done` confirms completion.
- const exit = turn.exitCode;
- finishTurn(turn, (m) => {
- if (m.failure) return { ...m, streaming: false, outcome: "error" };
- if (exit === undefined) return { ...m, streaming: false, outcome: "unconfirmed" };
- if (exit === 0) return { ...m, streaming: false, outcome: "complete" };
- return { ...m, streaming: false, outcome: "error", failure: exitFailure(exit) };
- });
+ const exitCode = turn.exitCode;
+ finishTurn(turn, (m) => ({ ...m, streaming: false, ...settleTurn({ failure: m.failure, exitCode }) }));
  scrollDown();
  },
- [active, agentKind, boxUrl, busy, finishTurn, handleEvent, scrollDown, sessions, skey, token, updateSession],
+ [active, agentKind, agentName, boxUrl, busy, finishTurn, handleEvent, scrollDown, skey, token, updateSession],
  );
 
  // Stop the in-flight turn (chat or auto-welcome). Aborting the fetch
@@ -1000,11 +1128,20 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setInput("");
  }, [busy]);
 
+ // Where focus goes after the focused delete control is removed with its row.
+ const railRef = useRef<HTMLDivElement>(null);
+ const pendingRailFocusRef = useRef<string | null>(null);
  const deleteChat = useCallback(
- (id: string) => {
+ (id: string, control?: HTMLElement) => {
  // Deleting the chat a turn is streaming into ends that turn first, so its
  // late events (text, resume id) can never land in another session.
  if (turnRef.current?.sessionId === id) interruptTurn("interrupted");
+ if (control && document.activeElement === control) {
+ // Keep a keyboard / screen-reader user in the rail: the next chat, else
+ // the previous one.
+ const index = sessions.findIndex((s) => s.id === id);
+ pendingRailFocusRef.current = (sessions[index + 1] || sessions[index - 1])?.id ?? "";
+ }
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
  const final = next.length ? next : [emptySession()];
@@ -1012,8 +1149,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return final;
  });
  },
- [interruptTurn],
+ [interruptTurn, sessions],
  );
+ useEffect(() => {
+ const target = pendingRailFocusRef.current;
+ if (target === null) return;
+ pendingRailFocusRef.current = null;
+ const rail = railRef.current;
+ const row = Array.from(rail?.querySelectorAll<HTMLElement>("[data-session-row]") || []).find((el) => el.dataset.sessionRow === target);
+ // A row is disabled while a turn streams; then its delete control, then New
+ // chat, then the conversation itself.
+ const candidates = [row, row?.parentElement?.querySelector<HTMLElement>("[data-session-delete]"), rail?.querySelector<HTMLElement>("[data-new-chat]"), scrollRef.current];
+ candidates.find((el): el is HTMLElement => Boolean(el) && !(el as HTMLButtonElement).disabled)?.focus();
+ }, [sessions]);
 
  useEffect(() => {
  scrollDown();
@@ -1030,9 +1178,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)" }}>
  {/* Sessions sidebar */}
  {showRail ? (
- <div className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">
+ <div ref={railRef} className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">
  <button
  type="button"
+ data-new-chat
  onClick={newChat}
  disabled={busy}
  className="mx-3 mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] disabled:opacity-50"
@@ -1057,6 +1206,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  >
  <button
  type="button"
+ data-session-row={s.id}
  onClick={() => selectSession(s)}
  disabled={busy}
  aria-current={isActive ? "true" : undefined}
@@ -1070,8 +1220,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {sessions.length > 1 ? (
  <button
  type="button"
+ data-session-delete
  aria-label={`Delete chat: ${title}`}
- onClick={() => deleteChat(s.id)}
+ onClick={(e) => deleteChat(s.id, e.currentTarget)}
  className="mr-1.5 inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
  >
  <Trash2 size={12} />
@@ -1110,7 +1261,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} className="hivra-chat-scroll" role="region" aria-label="Conversation" tabIndex={0} onScroll={onScrollPane} onWheel={onWheelPane} onKeyDown={onKeyDownPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
+ <div ref={scrollRef} className="hivra-chat-scroll" role="region" aria-label="Conversation" tabIndex={0} onScroll={onScrollPane} onWheel={onWheelPane} onKeyDown={onKeyDownPane} onPointerDown={onPointerDownPane} onTouchStart={onPointerDownPane} onTouchMove={markUserIntent} onTouchEnd={onTouchEndPane} onTouchCancel={onTouchEndPane} onFocus={onFocusPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
@@ -1201,8 +1352,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="button"
  onClick={() => {
  scrollDown(true);
- // This button unmounts on activation; keep keyboard focus in the chat.
- composerRef.current?.focus();
+ // This button unmounts on activation; keep focus in the chat, on the
+ // conversation the user asked to see. Not the composer: focusing a
+ // textarea from a tap opens the on-screen keyboard over the latest output.
+ scrollRef.current?.focus({ preventScroll: true });
  }}
  className="hivra-chat-latest"
  >
@@ -1224,6 +1377,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </button>
  </div>
  ) : null}
+ {composerError ? (
+ <div role="alert" className="mx-auto mb-2 w-full max-w-[760px] text-[12.5px] text-[#c0392b]">
+ {composerError}
+ </div>
+ ) : null}
  <form
  onSubmit={(e) => {
  e.preventDefault();
@@ -1235,7 +1393,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  ref={composerRef}
  aria-label={`Message ${agentName}`}
  value={input}
- onChange={(e) => setInput(e.target.value)}
+ onChange={(e) => { setInput(e.target.value); setComposerError(null); }}
  onCompositionStart={() => {
  if (compositionEndTimerRef.current !== null) window.clearTimeout(compositionEndTimerRef.current);
  compositionEndTimerRef.current = null;

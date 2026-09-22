@@ -1,6 +1,7 @@
 import {
   getAdapter,
-  extractAssistantText,
+  extractAssistantTurn,
+  settleTurn,
   type AgentAdapter,
   type ChatSink,
   type ToolPatch,
@@ -185,19 +186,42 @@ describe("agent-adapters", () => {
       expect(r.warnings).toEqual([]);
     });
 
-    it("keeps a retryable stream error non-fatal and a fatal error terminal", () => {
+    it("keeps top-level errors non-fatal when the turn then completes (retry notices of any wording)", () => {
       const r = run(getAdapter("codex"), [
+        { type: "thread.started", thread_id: "th-r" },
+        { type: "turn.started" },
         { type: "error", message: "Reconnecting... 1/5" },
-        { type: "error", message: "stream disconnected before completion; retrying 2/5 in 400ms" },
+        { type: "error", message: "Falling back from WebSockets to HTTPS transport." },
+        { type: "error", message: "stream disconnected before completion: idle timeout waiting for SSE" },
         { type: "item.completed", item: { id: "w", type: "error", message: "MCP server docs failed to start" } },
-        { type: "error", message: "unexpected status 401 Unauthorized" },
+        { type: "item.completed", item: { id: "a", type: "agent_message", text: "All done." } },
+        { type: "turn.completed", usage: {} },
+        { type: "_done", code: 0 },
       ]);
       expect(r.warnings).toEqual([
         "Reconnecting... 1/5",
-        "stream disconnected before completion; retrying 2/5 in 400ms",
+        "Falling back from WebSockets to HTTPS transport.",
+        "stream disconnected before completion: idle timeout waiting for SSE",
         "MCP server docs failed to start",
       ]);
+      expect(r.failures).toEqual([]);
+      expect(r.exits).toEqual([0]);
+    });
+
+    it("fails with the last top-level error when the process ends without turn.completed", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "turn.started" },
+        { type: "error", message: "Reconnecting... 5/5" },
+        { type: "error", message: "unexpected status 401 Unauthorized" },
+        { type: "_done", code: 1 },
+      ]);
       expect(r.failures).toEqual(["unexpected status 401 Unauthorized"]);
+      expect(r.calls.slice(-2)).toEqual(["fail:unexpected status 401 Unauthorized", "exit:1"]);
+      // Even a 0 exit does not confirm a turn that never completed after an error.
+      const zero = run(getAdapter("codex"), [{ type: "error", message: "stream error" }, { type: "_done", code: 0 }]);
+      expect(zero.failures).toEqual(["stream error"]);
+      // No error seen: the exit code alone decides (no invented failure).
+      expect(run(getAdapter("codex"), [{ type: "_done", code: 0 }]).failures).toEqual([]);
     });
 
     it("keeps ERROR-level stderr tracing non-fatal", () => {
@@ -225,6 +249,22 @@ describe("agent-adapters", () => {
       expect(r.tool("c3")).toMatchObject({ status: "done" });
       expect(r.tool("f2")).toMatchObject({ status: "done" });
       expect(r.tool("m2")).toMatchObject({ status: "done" });
+    });
+
+    // Each failure signal on its own, so no branch is masked by another.
+    it.each([
+      ["status declined alone", { id: "d", type: "file_change", changes: [{ path: "a.ts" }], status: "declined" }],
+      ["an error object alone", { id: "e", type: "mcp_tool_call", server: "docs", tool: "search", status: "completed", error: { message: "boom" } }],
+      ["a completed command with a null exit code alone", { id: "n", type: "command_execution", command: "sleep 9", aggregated_output: "", exit_code: null, status: "completed" }],
+      ["a non-zero exit code alone", { id: "x", type: "command_execution", command: "false", aggregated_output: "", exit_code: 1, status: "completed" }],
+    ])("maps %s to error", (_label, item) => {
+      const r = run(getAdapter("codex"), [{ type: "item.completed", item }]);
+      expect(r.tool(String(item.id))).toMatchObject({ status: "error" });
+    });
+
+    it("keeps an in-progress command with no exit code yet running", () => {
+      const r = run(getAdapter("codex"), [{ type: "item.started", item: { id: "p", type: "command_execution", command: "sleep 9", exit_code: null, status: "in_progress" } }]);
+      expect(r.tool("p")).toMatchObject({ status: "running" });
     });
   });
 
@@ -262,33 +302,61 @@ describe("agent-adapters", () => {
     });
   });
 
-  describe("extractAssistantText (welcome path shares the live parser)", () => {
+  describe("extractAssistantTurn (welcome path shares the live parser)", () => {
+    const done = { type: "_done", code: 0 };
     it("claude: single copy from deltas", () => {
-      const text = extractAssistantText(
+      const turn = extractAssistantTurn(
         [
           { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Welcome " } } },
           { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "aboard." } } },
           { type: "assistant", message: { content: [{ type: "text", text: "Welcome aboard." }] } },
+          done,
         ],
         "claude",
       );
-      expect(text).toBe("Welcome aboard.");
+      expect(turn).toEqual({ text: "Welcome aboard.", warnings: [], outcome: "complete" });
     });
 
     it("codex: joined segments", () => {
-      const text = extractAssistantText(
+      const turn = extractAssistantTurn(
         [
           { type: "item.completed", item: { id: "a", item_type: "agent_message", text: "Forge here." } },
           { type: "item.completed", item: { id: "b", item_type: "agent_message", text: " What first?" } },
+          { type: "turn.completed" },
+          done,
         ],
         "codex",
       );
-      expect(text).toBe("Forge here.\n\nWhat first?");
+      expect(turn.text).toBe("Forge here.\n\nWhat first?");
+      expect(turn.outcome).toBe("complete");
     });
 
     it("generic: plain text", () => {
-      const text = extractAssistantText([{ type: "_text", text: "hi there" }], "generic");
-      expect(text).toBe("hi there");
+      expect(extractAssistantTurn([{ type: "_text", text: "hi there" }, done], "generic").text).toBe("hi there");
+    });
+
+    it("reports a killed, failed or unconfirmed turn instead of passing its text off as finished", () => {
+      const delta = { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Pulling your list now" } } };
+      expect(extractAssistantTurn([delta, { type: "_done", code: null }], "claude")).toEqual({
+        text: "Pulling your list now", warnings: [], outcome: "error", failure: "Agent process was killed before it finished",
+      });
+      expect(extractAssistantTurn([
+        { type: "assistant", message: { content: [{ type: "text", text: "Invalid API key · Please run /login" }] } },
+        { type: "result", is_error: true, result: "Invalid API key · Please run /login" },
+        { type: "_done", code: 1 },
+      ], "claude")).toMatchObject({ outcome: "error", failure: "Invalid API key · Please run /login" });
+      expect(extractAssistantTurn([delta], "claude").outcome).toBe("unconfirmed");
+      expect(extractAssistantTurn([{ type: "_stderr", text: "token expired" }, delta, done], "claude").warnings).toEqual(["token expired"]);
+    });
+  });
+
+  describe("settleTurn", () => {
+    it("lets a reported failure win, and confirms completion only on a 0 exit", () => {
+      expect(settleTurn({ failure: "boom", exitCode: 0 })).toEqual({ outcome: "error", failure: "boom" });
+      expect(settleTurn({})).toEqual({ outcome: "unconfirmed" });
+      expect(settleTurn({ exitCode: 0 })).toEqual({ outcome: "complete" });
+      expect(settleTurn({ exitCode: 137 })).toEqual({ outcome: "error", failure: "Agent process exited unexpectedly (code 137)" });
+      expect(settleTurn({ exitCode: null })).toEqual({ outcome: "error", failure: "Agent process was killed before it finished" });
     });
   });
 });
