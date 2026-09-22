@@ -1294,4 +1294,11 @@ describe("HivraChat", () => {
       restore();
     }
   });
+
+  it("renders inside the .hivra-chat-root element that the reduced-motion scope targets", async () => {
+    const { container } = render(<HivraChat boxUrl="https://box.example.com" storageKey="root-class" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    expect(container.firstElementChild).toHaveClass("hivra-chat-root");
+    expect(container.firstElementChild).toContainElement(screen.getByRole("textbox", { name: "Message Atlas" }));
+  });
 });
