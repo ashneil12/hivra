@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle, Copy, Loader2, RefreshCw, Sparkles, Wallet } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle, Copy, Loader2, RefreshCw, Sparkles, Wallet } from "lucide-react";
 
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { clientLog } from "@/lib/client/logger";
@@ -27,6 +27,9 @@ const INITIAL_BACKGROUND_CHECK_DELAY_MS = 15_000;
 const INITIAL_POLL_MESSAGE = "Send the exact Base transfer, then keep this page open or press Verify payment.";
 const CHECKING_POLL_MESSAGE = "Checking Base for your transfer...";
 const CHECK_UNAVAILABLE_MESSAGE = "We couldn't check Base right now. Your quote is still active; press Verify payment again in a moment.";
+// Shown once a quote's window + late-payment grace has been fully checked with
+// no matching payment: the quote is closed server-side and will never settle.
+const QUOTE_CLOSED_MESSAGE = "This quote closed without a matching payment. Request a new quote to top up.";
 
 export function ManagedVeniceTokenQuotePanel({
   quote,
@@ -47,6 +50,9 @@ export function ManagedVeniceTokenQuotePanel({
   const [pollMessage, setPollMessage] = useState(INITIAL_POLL_MESSAGE);
   const [polling, setPolling] = useState(false);
   const [manualChecking, setManualChecking] = useState(false);
+  // Set when a check reports the quote closed, so polling stops even if the
+  // parent does not feed the updated quote back in.
+  const [closedByCheck, setClosedByCheck] = useState(false);
   const checkInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -106,6 +112,11 @@ export function ManagedVeniceTokenQuotePanel({
         setPollMessage("Transfer found, but it needs review because the amount or timing did not match the quote.");
         return;
       }
+      if (result.status === "cancelled") {
+        setClosedByCheck(true);
+        setPollMessage(QUOTE_CLOSED_MESSAGE);
+        return;
+      }
       setPollMessage(
         manual
           ? "No matching transfer found yet. Confirm you sent it on Base to this address for the exact amount, then try again."
@@ -120,8 +131,10 @@ export function ManagedVeniceTokenQuotePanel({
     }
   }, [onQuoteUpdate, onSettled, quote.id]);
 
+  const quoteClosed = quote.status === "cancelled" || closedByCheck;
+
   useEffect(() => {
-    if (quote.status !== "active" && quote.status !== "expired") return;
+    if ((quote.status !== "active" && quote.status !== "expired") || quoteClosed) return;
     let cancelled = false;
 
     const initialHandle = window.setTimeout(() => void checkQuote({ isCancelled: () => cancelled }), INITIAL_BACKGROUND_CHECK_DELAY_MS);
@@ -131,7 +144,7 @@ export function ManagedVeniceTokenQuotePanel({
       window.clearTimeout(initialHandle);
       window.clearInterval(intervalHandle);
     };
-  }, [checkQuote, quote.status]);
+  }, [checkQuote, quote.status, quoteClosed]);
 
   const remainingMs = Math.max(0, Date.parse(quote.expiresAt) - now);
   const expired = remainingMs <= 0;
@@ -260,6 +273,22 @@ export function ManagedVeniceTokenQuotePanel({
             <ArrowRight size={13} />
           </button>
         )}
+      </div>
+    );
+  }
+
+  if (quoteClosed) {
+    return (
+      <div style={{ border: "1px solid #b3261e", padding: "14px 16px", display: "grid", gap: 10, marginTop: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#b3261e" }}>
+          <AlertCircle size={14} />
+          <span className="mono" style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            Quote closed
+          </span>
+        </div>
+        <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--text-secondary)" }}>
+          {QUOTE_CLOSED_MESSAGE}
+        </p>
       </div>
     );
   }
