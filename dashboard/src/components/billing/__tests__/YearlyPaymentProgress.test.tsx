@@ -66,3 +66,26 @@ it("shows the year as live once the subscription this payment created arrives", 
   expect(screen.getByText(/Pro tier active/)).toBeInTheDocument();
   expect(screen.getByText("Detected on chain")).toBeInTheDocument();
 });
+
+it("tells the user not to pay again while a payment is under review", () => {
+  renderProgress({
+    quote: { ...quote(), status: "manual_review", expiresAt: new Date(Date.now() - 60 * 60_000).toISOString() },
+    subscription: null,
+  });
+
+  expect(screen.getByText("Payment under review")).toBeInTheDocument();
+  expect(screen.getByText(/Please don't send another payment/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Check now/ })).not.toBeInTheDocument();
+});
+
+it("keeps checking for a late payment after the countdown ends instead of prompting a new quote", () => {
+  renderProgress({
+    quote: { ...quote(), status: "expired", expiresAt: new Date(Date.now() - 5 * 60_000).toISOString() },
+    subscription: null,
+  });
+
+  expect(screen.getByText("Watching for a late payment")).toBeInTheDocument();
+  expect(screen.getByText(/If you already sent the tokens, don't send them again/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Check now/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Open quote/ })).not.toBeInTheDocument();
+});

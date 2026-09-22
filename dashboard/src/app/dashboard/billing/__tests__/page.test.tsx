@@ -492,6 +492,67 @@ describe("BillingPage", () => {
     }
   });
 
+  describe("yearly $HermesOS payment banner", () => {
+    const yearlyQuote = (overrides: Record<string, unknown> = {}) => ({
+      id: "yq_renewal",
+      tier: "pro",
+      usdTargetCents: 4900,
+      priceUsdAtQuote: "0.0000025",
+      tokensRequiredDisplay: "19600000",
+      tokenSymbol: "Hivra",
+      depositAddress: "0x000000000000000000000000000000000000ba5e",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      status: "active",
+      ...overrides,
+    });
+    const currentYear = {
+      id: "ys_1",
+      tier: "pro",
+      yearlyQuoteId: "yq_first_year",
+      paidAt: "2025-10-01T00:00:00.000Z",
+      expiresAt: "2026-10-01T00:00:00.000Z",
+      status: "active",
+      sweepStatus: "swept",
+      sweepTxHash: null,
+      amountReceivedRaw: "1",
+    };
+
+    function withYearlyResponse(data: Record<string, unknown>) {
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(input);
+        if (url.includes("/api/billing/yearly-token-quote") && requestMethod(input, init) === "GET") {
+          return Promise.resolve(apiResponse({ success: true, data }));
+        }
+        return base(input, init);
+      });
+    }
+
+    it("shows a subscriber the progress of a renewal they are paying", async () => {
+      withYearlyResponse({ pro: yearlyQuote(), power: null, proSubscription: currentYear, powerSubscription: null });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText(/Yearly \$HermesOS · Pro/)).toBeInTheDocument();
+      expect(screen.getByText("Waiting…")).toBeInTheDocument();
+    });
+
+    it("tells the user a payment is under review instead of hiding the quote", async () => {
+      withYearlyResponse({
+        pro: null,
+        power: null,
+        proPending: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        powerPending: null,
+        proSubscription: null,
+        powerSubscription: null,
+      });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText("Payment under review")).toBeInTheDocument();
+    });
+  });
+
   it("shows credits, plan grant, and top-up packages for subscribed users", async () => {
     render(<BillingPage />);
 

@@ -49,7 +49,10 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
 function buildEmail(params: SendParams): { subject: string; body: string } {
   const tierLabel = params.tier === "power" ? "Power" : "Pro";
   const expiresLabel = params.expiresAt.toUTCString();
-  const renewUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://hivra.cloud"}/dashboard/billing`;
+  // Deep link straight into the $HermesOS yearly payment for this tier: the
+  // billing page opens the quote modal for it, including for a subscriber
+  // whose current year is still live (renewal).
+  const renewUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://hivra.cloud"}/dashboard/billing?plan=${params.tier}&yearly_token=1`;
 
   if (params.transition === "expiring_soon") {
     return {

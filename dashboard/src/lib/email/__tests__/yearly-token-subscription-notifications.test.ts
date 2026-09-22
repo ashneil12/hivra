@@ -45,6 +45,9 @@ it("tells the user a renewal before expiry adds a year on top of the current end
   expect(email.text).toContain("adds a full year on top of your current end date");
   expect(email.text).toContain("a payment made then runs for a year from the day you pay");
   expect(email.text).not.toContain("mint a fresh quote");
+  // The link opens the $HermesOS payment for this tier directly (the billing
+  // page's Active Plan view has no pay-with-token control of its own).
+  expect(email.text).toMatch(/\/dashboard\/billing\?plan=pro&yearly_token=1/);
 });
 
 it("reports not_configured without sending when Resend is not set up", async () => {

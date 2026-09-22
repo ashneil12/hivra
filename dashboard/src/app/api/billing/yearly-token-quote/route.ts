@@ -24,6 +24,7 @@ import {
   createYearlyTokenQuote,
   getActiveYearlyTokenQuote,
   getActiveYearlyTokenQuotes,
+  getPendingYearlyTokenQuotes,
   type YearlyTokenQuote,
 } from "@/lib/billing/yearly-token-quotes";
 import {
@@ -127,25 +128,38 @@ export async function GET(req: NextRequest) {
     const tierParam = url.searchParams.get("tier");
     const tier = tierParam && isValidTier(tierParam) ? tierParam : null;
 
+    // Quotes that can no longer be paid but still matter: expired inside the
+    // late-payment grace, or a payment under manual review. The banner shows
+    // them so the user is not prompted to pay a second time.
+    const pendingFor = (pending: YearlyTokenQuote[], forTier: TierKey) => {
+      const quote = pending.find((q) => q.tier === forTier);
+      return quote ? serializeQuote(quote) : null;
+    };
+
     if (tier) {
-      const [quote, subs] = await Promise.all([
+      const [quote, subs, pending] = await Promise.all([
         getActiveYearlyTokenQuote({ userId, tier }),
         loadRecentSubscriptions(userId),
+        getPendingYearlyTokenQuotes(userId),
       ]);
       return apiSuccess({
         quote: quote ? serializeQuote(quote) : null,
+        pendingQuote: pendingFor(pending, tier),
         subscription: serializeSub(tier === "pro" ? subs.pro : subs.power),
         tier,
       });
     }
 
-    const [quotes, subs] = await Promise.all([
+    const [quotes, subs, pending] = await Promise.all([
       getActiveYearlyTokenQuotes(userId),
       loadRecentSubscriptions(userId),
+      getPendingYearlyTokenQuotes(userId),
     ]);
     const proQuote = quotes.find((q) => q.tier === "pro") ?? null;
     const powerQuote = quotes.find((q) => q.tier === "power") ?? null;
     return apiSuccess({
+      proPending: pendingFor(pending, "pro"),
+      powerPending: pendingFor(pending, "power"),
       quotes: quotes.map(serializeQuote),
       pro: proQuote ? serializeQuote(proQuote) : null,
       power: powerQuote ? serializeQuote(powerQuote) : null,

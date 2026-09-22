@@ -15,6 +15,7 @@ import { NextRequest } from "next/server";
 
 const mockGetActiveYearlyQuote = jest.fn();
 const mockGetActiveYearlyQuotes = jest.fn();
+const mockGetPendingYearlyQuotes = jest.fn();
 const mockCreateYearlyQuote = jest.fn();
 const mockGetCredential = jest.fn();
 const mockEnsureWallet = jest.fn();
@@ -29,6 +30,7 @@ jest.mock("@/lib/billing/yearly-token-quotes", () => ({
   createYearlyTokenQuote: (...args: unknown[]) => mockCreateYearlyQuote(...args),
   getActiveYearlyTokenQuote: (...args: unknown[]) => mockGetActiveYearlyQuote(...args),
   getActiveYearlyTokenQuotes: (...args: unknown[]) => mockGetActiveYearlyQuotes(...args),
+  getPendingYearlyTokenQuotes: (...args: unknown[]) => mockGetPendingYearlyQuotes(...args),
 }));
 
 jest.mock("@/lib/billing/bankr-deposit-wallets", () => ({
@@ -86,6 +88,7 @@ describe("/api/billing/yearly-token-quote", () => {
     jest.clearAllMocks();
     mockBillingEnabled.mockReturnValue(true);
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
+    mockGetPendingYearlyQuotes.mockResolvedValue([]);
     mockGetCredential.mockResolvedValue({
       id: "cred_1",
       userId: "user_a",
@@ -108,6 +111,22 @@ describe("/api/billing/yearly-token-quote", () => {
       (auth as unknown as jest.Mock).mockResolvedValueOnce({ userId: null });
       const response = await GET(makeReq("http://localhost/api/billing/yearly-token-quote"));
       expect(response.status).toBe(401);
+    });
+
+    it("returns a quote under review so the banner can tell the user not to pay again", async () => {
+      mockGetActiveYearlyQuotes.mockResolvedValueOnce([]);
+      mockGetPendingYearlyQuotes.mockResolvedValueOnce([{ ...stubQuote, status: "manual_review" }]);
+      const response = await GET(makeReq("http://localhost/api/billing/yearly-token-quote"));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.data.pro).toBeNull();
+      expect(body.data.proPending).toMatchObject({ id: "yq_1", status: "manual_review" });
+      expect(body.data.powerPending).toBeNull();
+
+      mockGetActiveYearlyQuote.mockResolvedValueOnce(null);
+      mockGetPendingYearlyQuotes.mockResolvedValueOnce([{ ...stubQuote, status: "expired" }]);
+      const tierBody = await (await GET(makeReq("http://localhost/api/billing/yearly-token-quote?tier=pro"))).json();
+      expect(tierBody.data.pendingQuote).toMatchObject({ id: "yq_1", status: "expired" });
     });
 
     it("returns null per-tier when no active yearly quotes exist", async () => {

@@ -240,6 +240,13 @@ function BillingPageContent() {
     pro: YearlyTokenQuotePayload | null;
     power: YearlyTokenQuotePayload | null;
   }>({ pro: null, power: null });
+  // Quotes that can no longer be paid but still matter, per tier: expired
+  // inside the late-payment grace (a payment on its way is still picked up)
+  // or a payment under manual review. Shown so nobody pays twice.
+  const [pendingYearlyQuotes, setPendingYearlyQuotes] = useState<{
+    pro: YearlyTokenQuotePayload | null;
+    power: YearlyTokenQuotePayload | null;
+  }>({ pro: null, power: null });
   // Most-recent activated yearly_token_subscriptions row per tier.
   // Drives the post-pay progress stepper — once paid_at is recent the
   // banner switches from "waiting for deposit" to "activated · sweeping"
@@ -367,6 +374,7 @@ function BillingPageContent() {
       const res = await fetch("/api/billing/yearly-token-quote", { method: "GET" });
       if (!res.ok) {
         setActiveYearlyQuotes({ pro: null, power: null });
+        setPendingYearlyQuotes({ pro: null, power: null });
         setRecentYearlySubs({ pro: null, power: null });
         return;
       }
@@ -375,6 +383,10 @@ function BillingPageContent() {
         setActiveYearlyQuotes({
           pro: (body.data?.pro as YearlyTokenQuotePayload | null) ?? null,
           power: (body.data?.power as YearlyTokenQuotePayload | null) ?? null,
+        });
+        setPendingYearlyQuotes({
+          pro: (body.data?.proPending as YearlyTokenQuotePayload | null) ?? null,
+          power: (body.data?.powerPending as YearlyTokenQuotePayload | null) ?? null,
         });
         setRecentYearlySubs({
           pro: (body.data?.proSubscription as YearlyTokenSubscriptionPayload | null) ?? null,
@@ -640,17 +652,20 @@ function BillingPageContent() {
     setYearlyTokenLoading(false);
   };
 
-  // While a yearly $HermesOS quote is active OR an activated sub still
-  // has sweep_status='pending', poll every 15 s so the dashboard banner
-  // animates through stages (waiting → activated → swept) without the
-  // user refreshing. The interval auto-stops when nothing's in flight.
+  // While a yearly $HermesOS quote is active, an expired quote may still
+  // receive a late payment, OR an activated sub still has
+  // sweep_status='pending', poll every 15 s so the dashboard banner animates
+  // through stages (waiting → activated → swept) without the user
+  // refreshing. The interval auto-stops when nothing's in flight.
   useEffect(() => {
     const hasActiveQuote =
       activeYearlyQuotes.pro !== null || activeYearlyQuotes.power !== null;
+    const hasLatePaymentWatch =
+      pendingYearlyQuotes.pro?.status === "expired" || pendingYearlyQuotes.power?.status === "expired";
     const hasPendingSweep =
       (recentYearlySubs.pro !== null && recentYearlySubs.pro.sweepStatus === "pending") ||
       (recentYearlySubs.power !== null && recentYearlySubs.power.sweepStatus === "pending");
-    if (!hasActiveQuote && !hasPendingSweep) return;
+    if (!hasActiveQuote && !hasLatePaymentWatch && !hasPendingSweep) return;
     const handle = window.setInterval(() => {
       void loadYearlyQuotes();
     }, 15_000);
@@ -658,10 +673,52 @@ function BillingPageContent() {
   }, [
     activeYearlyQuotes.pro,
     activeYearlyQuotes.power,
+    pendingYearlyQuotes.pro,
+    pendingYearlyQuotes.power,
     recentYearlySubs.pro,
     recentYearlySubs.power,
     loadYearlyQuotes,
   ]);
+
+  // The payment-progress banner, shown to subscribed users too (a renewal is
+  // paid while the current year is still live). Active quote first, then a
+  // quote that is under review or watching for a late payment, then a
+  // subscription that just activated or is still sweeping.
+  const renderYearlyPaymentBanner = () => {
+    const candidates = [
+      {
+        quote: activeYearlyQuotes.pro ?? pendingYearlyQuotes.pro,
+        sub: recentYearlySubs.pro,
+        tier: "pro" as const,
+      },
+      {
+        quote: activeYearlyQuotes.power ?? pendingYearlyQuotes.power,
+        sub: recentYearlySubs.power,
+        tier: "power" as const,
+      },
+    ];
+    let chosen = candidates.find((c) => c.quote);
+    if (!chosen) {
+      const fiveMinAgo = Date.now() - 5 * 60_000;
+      chosen = candidates.find(
+        (c) => c.sub && (c.sub.sweepStatus === "pending" || Date.parse(c.sub.paidAt) > fiveMinAgo),
+      );
+    }
+    if (!chosen || (!chosen.quote && !chosen.sub)) return null;
+    const chosenTier = chosen.tier;
+    return (
+      <motion.div variants={sectionVariants} style={{ marginBottom: "1.5rem" }}>
+        <YearlyPaymentProgress
+          tier={chosenTier}
+          quote={chosen.quote ?? null}
+          subscription={chosen.sub ?? null}
+          onResume={() => handleResumeYearlyQuote(chosenTier)}
+          onCheckNow={() => void handleCheckNow()}
+          checkingNow={yearlyCheckingNow}
+        />
+      </motion.div>
+    );
+  };
 
   /**
    * Open the "Pay yearly with $HermesOS" modal. POST mints a fresh
@@ -1180,6 +1237,9 @@ function BillingPageContent() {
 
       {data?.subscribed && data.plan && data.usage ? (
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants}>
+          {/* ── Yearly $HermesOS payment in flight (e.g. a renewal) ───── */}
+          {renderYearlyPaymentBanner()}
+
           {/* ── Active Plan Panel ─────────────────────────────────────────── */}
           <motion.div variants={sectionVariants} style={{
             border: "1px solid var(--ink-black)", background: "var(--bg-surface)",
@@ -1630,44 +1690,7 @@ function BillingPageContent() {
       ) : (
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants}>
           {/* ── Active yearly $HermesOS quote (durable across reload) ─── */}
-          {(() => {
-            // Resolve the most-relevant tier to surface in the banner.
-            // Active quote wins over a recent sub; if both quotes
-            // exist, surface whichever has the soonest expiry. If no
-            // quote but a recent sub exists with sweep_status pending,
-            // surface that so the user sees activation-in-progress.
-            const candidates = [
-              { quote: activeYearlyQuotes.pro, sub: recentYearlySubs.pro, tier: "pro" as const },
-              { quote: activeYearlyQuotes.power, sub: recentYearlySubs.power, tier: "power" as const },
-            ];
-            // Prefer the one with an active quote.
-            let chosen = candidates.find((c) => c.quote);
-            // Otherwise, surface a sub whose sweep is still pending OR
-            // a sub that just activated (paid_at within 5 minutes) so
-            // the user sees the celebration.
-            if (!chosen) {
-              const fiveMinAgo = Date.now() - 5 * 60_000;
-              chosen = candidates.find(
-                (c) =>
-                  c.sub &&
-                  (c.sub.sweepStatus === "pending" ||
-                    Date.parse(c.sub.paidAt) > fiveMinAgo),
-              );
-            }
-            if (!chosen || (!chosen.quote && !chosen.sub)) return null;
-            return (
-              <motion.div variants={sectionVariants} style={{ marginBottom: "1.5rem" }}>
-                <YearlyPaymentProgress
-                  tier={chosen.tier}
-                  quote={chosen.quote ?? null}
-                  subscription={chosen.sub ?? null}
-                  onResume={() => handleResumeYearlyQuote(chosen!.tier)}
-                  onCheckNow={() => void handleCheckNow()}
-                  checkingNow={yearlyCheckingNow}
-                />
-              </motion.div>
-            );
-          })()}
+          {renderYearlyPaymentBanner()}
 
           {/* ── No Subscription — Plan Selection ────────────────────────── */}
           <motion.div variants={sectionVariants} style={{ textAlign: "center", marginBottom: "3rem" }}>

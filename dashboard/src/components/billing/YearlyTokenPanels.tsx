@@ -102,6 +102,12 @@ export function YearlyPaymentProgress({
   // belongs to an earlier payment and must not mark the new one as done.
   const subActive =
     subscription !== null && (!quote || subscription.yearlyQuoteId === quote.id);
+  // A payment reached this quote but needs an operator (a different amount,
+  // or it arrived after the quote expired). The user must not pay again.
+  const underReview = quote?.status === "manual_review" && !subActive;
+  // Past the countdown the quote can no longer be paid, but a payment already
+  // on its way is still picked up (and reviewed) during the late grace.
+  const watchingLate = quoteExpired && !underReview && !subActive;
   // Three user-visible stages. "Settled" (the treasury sweep) used to
   // be a fourth stage but it's an operator concern — once the tier is
   // active, the user is done. Sweep status stays in the DB for ops
@@ -116,14 +122,14 @@ export function YearlyPaymentProgress({
     {
       key: "received",
       label: "Tokens received",
-      sub: subActive ? "Detected on chain" : quoteExpired ? "Quote expired" : "Waiting…",
-      status: subActive
-        ? "done"
-        : quoteExpired
-          ? "failed"
-          : quote
-            ? "active"
-            : "pending",
+      sub: subActive
+        ? "Detected on chain"
+        : underReview
+          ? "Under review"
+          : watchingLate
+            ? "Watching for a late payment"
+            : "Waiting…",
+      status: subActive ? "done" : quote ? "active" : "pending",
     },
     {
       key: "active",
@@ -182,7 +188,9 @@ export function YearlyPaymentProgress({
             <Coins size={11} />
             {allDone
               ? `${tierName} tier active`
-              : quoteExpired
+              : underReview
+                ? "Payment under review"
+                : quoteExpired
                 ? "Quote expired"
                 : subActive
                   ? `Activating ${tierName}`
@@ -201,9 +209,11 @@ export function YearlyPaymentProgress({
                 }.`
               : subActive
                 ? `Tokens received · finishing up activation`
-                : quoteExpired
-                  ? `Mint a fresh quote to continue.`
-                  : `Send tokens to your deposit address. Cron checks every 5 min, or hit "Check now" once your tx confirms.`}
+                : underReview
+                  ? `We received a payment for this quote that needs a quick manual check (a different amount, or it arrived after the quote expired). Please don't send another payment — we'll sort it out and email you.`
+                  : quoteExpired
+                    ? `If you already sent the tokens, don't send them again: payments that arrive up to 2 hours late are still found and reviewed. Otherwise, start a fresh quote.`
+                    : `Send tokens to your deposit address. Cron checks every 5 min, or hit "Check now" once your tx confirms.`}
           </span>
         </div>
 
@@ -225,7 +235,7 @@ export function YearlyPaymentProgress({
               {countdown}
             </span>
           )}
-          {quote && !subActive && (
+          {quote && !subActive && !underReview && (
             <>
               <button
                 type="button"
@@ -256,27 +266,29 @@ export function YearlyPaymentProgress({
                 )}
                 Check now
               </button>
-              <button
-                type="button"
-                onClick={onResume}
-                style={{
-                  padding: "10px 16px",
-                  background: "var(--ink-black)",
-                  color: "var(--bg-surface)",
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-mono), monospace",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.12em",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                Open quote <ArrowRight size={11} />
-              </button>
+              {!quoteExpired && (
+                <button
+                  type="button"
+                  onClick={onResume}
+                  style={{
+                    padding: "10px 16px",
+                    background: "var(--ink-black)",
+                    color: "var(--bg-surface)",
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "var(--font-mono), monospace",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.12em",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  Open quote <ArrowRight size={11} />
+                </button>
+              )}
             </>
           )}
         </div>
