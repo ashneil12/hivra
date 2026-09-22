@@ -12,7 +12,7 @@
 
 import { NextRequest } from "next/server";
 import { reconcilePendingCryptoTopUps } from "@/lib/billing/crypto-reconciliation";
-import { createCryptoTopUpIntent } from "@/lib/billing/crypto-topups";
+import { USDC_BASE_TOKEN_ADDRESS, createCryptoTopUpIntent } from "@/lib/billing/crypto-topups";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
   createBaseRpcFake,
@@ -541,7 +541,7 @@ describe("CT-4: settlement cannot be replayed, rewritten, or done without a veri
       provider: "bankr",
       reference_id: ref,
       chain_id: 8453,
-      token_address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      token_address: USDC_BASE_TOKEN_ADDRESS,
       token_symbol: "USDC",
       token_decimals: 6,
       deposit_address: address,
