@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { POST } from "../route";
-import { settleCryptoTopUpIntent } from "@/lib/billing/crypto-topups";
+import { reconcileCryptoTopUpByReference } from "@/lib/billing/crypto-reconciliation";
 
-jest.mock("@/lib/billing/crypto-topups", () => ({
-  settleCryptoTopUpIntent: jest.fn(),
+jest.mock("@/lib/billing/crypto-reconciliation", () => ({
+  reconcileCryptoTopUpByReference: jest.fn(),
 }));
 
 describe("POST /api/internal/billing/crypto/top-up/settle", () => {
@@ -12,8 +12,10 @@ describe("POST /api/internal/billing/crypto/top-up/settle", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env = { ...originalEnv, BILLING_SETTLEMENT_SECRET: "settlement-secret" };
-    (settleCryptoTopUpIntent as jest.Mock).mockResolvedValue({
+    (reconcileCryptoTopUpByReference as jest.Mock).mockResolvedValue({
       status: "settled",
+      referenceId: "bankr_crypto_topup:test",
+      transactionHash: "0xabc123",
       inserted: true,
       balance: 1500,
     });
@@ -53,7 +55,7 @@ describe("POST /api/internal/billing/crypto/top-up/settle", () => {
     const response = await POST(createRequest(undefined, "Bearer wrong-secret"));
 
     expect(response.status).toBe(401);
-    expect(settleCryptoTopUpIntent).not.toHaveBeenCalled();
+    expect(reconcileCryptoTopUpByReference).not.toHaveBeenCalled();
   });
 
   it("rejects requests when no settlement secret is configured", async () => {
@@ -64,7 +66,7 @@ describe("POST /api/internal/billing/crypto/top-up/settle", () => {
 
     expect(response.status).toBe(500);
     expect(body.error).toBe("Settlement secret is not configured");
-    expect(settleCryptoTopUpIntent).not.toHaveBeenCalled();
+    expect(reconcileCryptoTopUpByReference).not.toHaveBeenCalled();
   });
 
   it("does NOT fall back to CRON_SECRET (billing-auth blast-radius scoping)", async () => {
@@ -78,7 +80,7 @@ describe("POST /api/internal/billing/crypto/top-up/settle", () => {
     const response = await POST(createRequest(undefined, "Bearer the-cron-secret"));
 
     expect(response.status).toBe(500);
-    expect(settleCryptoTopUpIntent).not.toHaveBeenCalled();
+    expect(reconcileCryptoTopUpByReference).not.toHaveBeenCalled();
   });
 
   it("rejects malformed JSON", async () => {
@@ -87,49 +89,67 @@ describe("POST /api/internal/billing/crypto/top-up/settle", () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toBe("Invalid JSON body");
-    expect(settleCryptoTopUpIntent).not.toHaveBeenCalled();
+    expect(reconcileCryptoTopUpByReference).not.toHaveBeenCalled();
   });
 
-  it("settles a crypto top-up with the internal actor", async () => {
+  it("settles only through on-chain verification, ignoring caller-supplied transfer details", async () => {
     const response = await POST(createRequest());
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.data).toEqual({
       status: "settled",
+      referenceId: "bankr_crypto_topup:test",
+      transactionHash: "0xabc123",
       inserted: true,
       balance: 1500,
     });
-    expect(settleCryptoTopUpIntent).toHaveBeenCalledWith({
-      referenceId: "bankr_crypto_topup:test",
-      transactionHash: "0xabc123",
-      detectedAt: "2026-04-24T12:02:00.000Z",
-      actor: "bankr_reconciler",
-    });
+    expect(reconcileCryptoTopUpByReference).toHaveBeenCalledWith({ referenceId: "bankr_crypto_topup:test" });
   });
 
-  it("maps missing and non-settleable intents to safe errors", async () => {
-    (settleCryptoTopUpIntent as jest.Mock).mockResolvedValueOnce({
+  it("refuses a hash that differs from the transfer the intent was settled with", async () => {
+    const response = await POST(
+      createRequest({ referenceId: "bankr_crypto_topup:test", transactionHash: "0xsomething-else" })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.status).toBe("transaction_mismatch");
+    expect(body.transactionHash).toBe("0xabc123");
+  });
+
+  it("maps missing, closed, and unpaid intents to safe errors", async () => {
+    (reconcileCryptoTopUpByReference as jest.Mock).mockResolvedValueOnce({
       status: "not_found",
+      referenceId: "bankr_crypto_topup:test",
     });
     const missing = await POST(createRequest());
     expect(missing.status).toBe(404);
 
-    (settleCryptoTopUpIntent as jest.Mock).mockResolvedValueOnce({
-      status: "not_settleable",
-      paymentStatus: "failed",
+    (reconcileCryptoTopUpByReference as jest.Mock).mockResolvedValueOnce({
+      status: "closed",
+      referenceId: "bankr_crypto_topup:test",
+      paymentStatus: "refunded",
     });
-    const failed = await POST(createRequest());
-    const body = await failed.json();
+    const closed = await POST(createRequest());
+    const closedBody = await closed.json();
+    expect(closed.status).toBe(409);
+    expect(closedBody.error).toBe("Crypto top-up intent is not settleable");
+    expect(closedBody.paymentStatus).toBe("refunded");
 
-    expect(failed.status).toBe(409);
-    expect(body.error).toBe("Crypto top-up intent is not settleable");
-    expect(body.paymentStatus).toBe("failed");
+    (reconcileCryptoTopUpByReference as jest.Mock).mockResolvedValueOnce({
+      status: "no_match",
+      referenceId: "bankr_crypto_topup:test",
+    });
+    const unpaid = await POST(createRequest());
+    const unpaidBody = await unpaid.json();
+    expect(unpaid.status).toBe(409);
+    expect(unpaidBody.status).toBe("no_match");
   });
 
   it("does not leak backend errors", async () => {
     const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-    (settleCryptoTopUpIntent as jest.Mock).mockRejectedValueOnce(
+    (reconcileCryptoTopUpByReference as jest.Mock).mockRejectedValueOnce(
       new Error("settlement-secret should stay private")
     );
 
