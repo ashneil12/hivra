@@ -118,9 +118,12 @@ function createInsert(rows: Row[]) {
   };
 }
 
-function createMemoryDb(initialQuotes: Row[] = []) {
+function createMemoryDb(initialQuotes: Row[] = [], initialLots: Row[] = []) {
   const tables: Record<string, Row[]> = {
     managed_venice_token_quotes: initialQuotes,
+    // Deposit lots hold the RECEIVED token amount the sweep moves. Quotes with
+    // no lot row (legacy settlements) fall back to the quoted amount.
+    managed_venice_token_lots: initialLots,
     managed_venice_financial_events: [],
     bankr_deposit_wallet_credentials: [
       {
@@ -236,6 +239,71 @@ describe("managed Venice token treasury sweeps", () => {
         amount_micro_usd: 50_000_000,
       })
     );
+  });
+
+  it("sweeps the RECEIVED amount from the deposit lot so an accepted over-send is not stranded", async () => {
+    const receivedRaw = "1100000000000000000000"; // 1.1x the quoted 1000 tokens
+    const { db, tables } = createMemoryDb(
+      [{ ...baseQuote }],
+      [
+        {
+          id: "lot_1",
+          quote_id: "quote_1",
+          source: "hermesos_deposit",
+          token_amount_raw: receivedRaw,
+          original_value_micro_usd: 55_000_000,
+          transaction_hash: "0xdeposit",
+          metadata: { observedAt: "2026-05-16T11:58:00.000Z" },
+        },
+      ]
+    );
+    const submitTransfer = jest.fn(async () => "0xsweep");
+
+    const result = await sweepManagedVeniceTokenQuote(baseQuote, {
+      db,
+      env: { MANAGED_VENICE_TREASURY_BASE_ADDRESS: treasuryAddress },
+      now,
+      readHermesBalance: jest.fn(async () => ({ balanceRaw: receivedRaw })),
+      ensureGas: jest.fn(async () => ({ status: "already_funded" as const })),
+      mintApiKey: jest.fn(async () => "bk_scoped"),
+      submitTransfer,
+    });
+
+    expect(result).toMatchObject({ outcome: "swept", amountSweptDisplay: "1100" });
+    expect(submitTransfer).toHaveBeenCalledWith(expect.objectContaining({ amountDisplay: "1100" }));
+    expect(tables.managed_venice_financial_events).toContainEqual(
+      expect.objectContaining({
+        event_type: "treasury_sweep",
+        token_amount_raw: receivedRaw,
+        amount_micro_usd: 55_000_000,
+      })
+    );
+  });
+
+  it("still skips when the wallet holds less than the received amount", async () => {
+    const receivedRaw = "1100000000000000000000";
+    const { db, tables } = createMemoryDb(
+      [{ ...baseQuote }],
+      [{ id: "lot_1", quote_id: "quote_1", source: "hermesos_deposit", token_amount_raw: receivedRaw, original_value_micro_usd: 55_000_000 }]
+    );
+    const submitTransfer = jest.fn();
+
+    const result = await sweepManagedVeniceTokenQuote(baseQuote, {
+      db,
+      env: { MANAGED_VENICE_TREASURY_BASE_ADDRESS: treasuryAddress },
+      now,
+      readHermesBalance: jest.fn(async () => ({ balanceRaw: tokenAmountRaw })),
+      ensureGas: jest.fn(),
+      mintApiKey: jest.fn(),
+      submitTransfer,
+    });
+
+    expect(result.outcome).toBe("no_balance");
+    expect(submitTransfer).not.toHaveBeenCalled();
+    expect(tables.managed_venice_token_quotes[0]).toMatchObject({
+      sweep_status: "skipped",
+      sweep_error: `live balance ${tokenAmountRaw} < expected ${receivedRaw}`,
+    });
   });
 
   it("sweeps managed Venice deposits from the shared credit_deposit Bankr wallet", async () => {

@@ -30,6 +30,7 @@ import {
 import { USDC_BASE_TOKEN_ADDRESS } from "@/lib/billing/crypto-topups";
 import { reconcileManagedVeniceTokenQuote } from "@/lib/billing/managed-venice-token-reconciliation";
 import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
+import { createManagedVeniceMemoryDb, managedVeniceQuoteRow } from "@/test-utils/managed-venice-memory-db";
 
 const PUBLIC_BASE_RPC_LOG_RANGE_LIMIT = 2_000;
 const LATEST_BLOCK = 51_655_528;
@@ -37,7 +38,6 @@ const now = new Date("2026-09-22T12:00:00.000Z");
 const usdcDepositAddress = "0x000000000000000000000000000000000000dead";
 const veniceDepositAddress = "0x000000000000000000000000000000000000ba5e";
 
-type Row = Record<string, unknown>;
 type FakeLog = {
   address: string;
   topics: string[];
@@ -189,7 +189,14 @@ function expectContiguousWithinLimit(ranges: LogRange[], fromBlock: number, toBl
   expect(ranges[ranges.length - 1].toBlock).toBe(toBlock);
 }
 
-const veniceQuoteRow = {
+// The managed Venice reconciler scans each quote's own anchored range: its
+// window plus the 2 h late-payment grace. Quoted 6 h before the head, the whole
+// range (~4,200 blocks) is behind the head, so the scan spans several chunks.
+const veniceQuotedAt = new Date(now.getTime() - 6 * 3_600_000);
+const veniceQuotedAtBlock = LATEST_BLOCK - (6 * 3_600) / 2;
+const veniceGraceEndBlock = veniceQuotedAtBlock + ((20 + 120) * 60) / 2;
+
+const veniceQuoteRow = managedVeniceQuoteRow({
   id: "quote_1",
   account_id: "account_1",
   user_id: "user_1",
@@ -197,16 +204,10 @@ const veniceQuoteRow = {
   snapshot_price_usd: "0.000009988",
   locked_value_micro_usd: 10_000_005,
   deposit_address: veniceDepositAddress,
-  quoted_at: "2026-09-22T11:20:00.000Z",
-  expires_at: "2026-09-22T11:40:00.000Z",
-  status: "active",
-  source: "dexscreener",
-  cross_check_source: null,
-  cross_check_price_usd: null,
-  price_last_updated_at: "2026-09-22T11:19:30.000Z",
-  cross_check_last_updated_at: null,
-  transaction_hash: null,
-  settled_at: null,
+  quoted_at: veniceQuotedAt.toISOString(),
+  expires_at: new Date(veniceQuotedAt.getTime() + 20 * 60_000).toISOString(),
+  status: "expired",
+  created_at: veniceQuotedAt.toISOString(),
   metadata: {
     managedVeniceTopUp: {
       paidValueMicroUsd: 10_000_000,
@@ -214,34 +215,7 @@ const veniceQuoteRow = {
       bonusValueMicroUsd: 2_000_000,
     },
   },
-};
-
-function createVeniceDb(rows: Row[]) {
-  return {
-    from: (name: string) => {
-      if (name !== "managed_venice_token_quotes") throw new Error(`Unexpected table ${name}`);
-      return {
-        select: () => {
-          const filters: Record<string, unknown> = {};
-          const query = {
-            eq: (column: string, value: unknown) => {
-              filters[column] = value;
-              return query;
-            },
-            maybeSingle: async () => ({
-              data:
-                rows.find((row) =>
-                  Object.entries(filters).every(([column, value]) => row[column] === value)
-                ) ?? null,
-              error: null,
-            }),
-          };
-          return query;
-        },
-      };
-    },
-  };
-}
+});
 
 describe("getLogsInBlockChunks", () => {
   const filter = { address: USDC_BASE_TOKEN_ADDRESS, topics: [ERC20_TRANSFER_TOPIC, null, "0xto"] };
@@ -424,15 +398,14 @@ describe("USDC top-up transfer scan within Base's 2,000-block eth_getLogs limit"
 });
 
 describe("managed Venice token reconciliation within Base's 2,000-block eth_getLogs limit", () => {
-  it("finds a transfer in the oldest block of the maximum 100,000-block lookback", async () => {
-    const oldestScannedBlock = LATEST_BLOCK - 100_000 + 1;
+  it("finds a transfer in the first block of the quote's window + grace scan", async () => {
     const { fetchImpl, ranges } = createRangeLimitedBaseRpc({
       logs: [
         transferLog({
           token: HERMESOS_TOKEN_ADDRESS,
           to: veniceDepositAddress,
-          amount: BigInt(veniceQuoteRow.token_amount_raw),
-          blockNumber: oldestScannedBlock,
+          amount: BigInt(veniceQuoteRow.token_amount_raw as string),
+          blockNumber: veniceQuotedAtBlock,
           transactionHash: "0xhermes",
         }),
       ],
@@ -442,10 +415,9 @@ describe("managed Venice token reconciliation within Base's 2,000-block eth_getL
     const result = await reconcileManagedVeniceTokenQuote({
       quoteId: "quote_1",
       userId: "user_1",
-      db: createVeniceDb([veniceQuoteRow]),
+      db: createManagedVeniceMemoryDb({ managed_venice_token_quotes: [veniceQuoteRow] }).db,
       rpcUrl: "https://base.test",
       fetchImpl,
-      lookbackBlocks: 1_000_000,
       settleQuote,
       now,
     });
@@ -455,8 +427,10 @@ describe("managed Venice token reconciliation within Base's 2,000-block eth_getL
       expect.objectContaining({ quoteId: "quote_1", transactionHash: "0xhermes" }),
       expect.anything()
     );
-    expect(ranges).toHaveLength(50);
-    expectContiguousWithinLimit(ranges, oldestScannedBlock, LATEST_BLOCK);
+    expect(ranges.length).toBeGreaterThanOrEqual(3);
+    expectContiguousWithinLimit(ranges, ranges[0].fromBlock, ranges[ranges.length - 1].toBlock);
+    expect(ranges[0].fromBlock).toBeLessThanOrEqual(veniceQuotedAtBlock);
+    expect(ranges[ranges.length - 1].toBlock).toBeGreaterThanOrEqual(veniceGraceEndBlock);
   });
 });
 
