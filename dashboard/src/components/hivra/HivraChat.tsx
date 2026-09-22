@@ -5,7 +5,7 @@
 // CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
 // box in localStorage; each session resumes its own Claude session_id.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -268,18 +268,18 @@ function saveActiveId(boxUrl: string, id: string) {
 }
 
 // True on touch-first (coarse pointer) devices; follows changes (e.g. a tablet
-// keyboard/trackpad attached). False when matchMedia is unavailable.
+// keyboard/trackpad attached). False when matchMedia is unavailable (SSR, tests).
+const COARSE_POINTER_QUERY = "(pointer: coarse)";
+function coarsePointerQuery(): MediaQueryList | null {
+ return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(COARSE_POINTER_QUERY) : null;
+}
+function subscribeCoarsePointer(onChange: () => void): () => void {
+ const query = coarsePointerQuery();
+ query?.addEventListener?.("change", onChange);
+ return () => query?.removeEventListener?.("change", onChange);
+}
 function useCoarsePointer(): boolean {
- const [coarse, setCoarse] = useState(false);
- useEffect(() => {
- if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
- const query = window.matchMedia("(pointer: coarse)");
- setCoarse(query.matches);
- const onChange = (e: MediaQueryListEvent) => setCoarse(e.matches);
- query.addEventListener?.("change", onChange);
- return () => query.removeEventListener?.("change", onChange);
- }, []);
- return coarse;
+ return useSyncExternalStore(subscribeCoarsePointer, () => Boolean(coarsePointerQuery()?.matches), () => false);
 }
 
 function toolIcon(name: string): string {
