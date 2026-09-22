@@ -224,6 +224,38 @@ describe("agent-adapters", () => {
       expect(run(getAdapter("codex"), [{ type: "_done", code: 0 }]).failures).toEqual([]);
     });
 
+    it("drops a top-level error the agent recovered from, so a later kill or crash is reported as itself", () => {
+      const cmdStart = { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test", exit_code: null, status: "in_progress" } };
+      const cmdDone = { type: "item.completed", item: { id: "c1", type: "command_execution", command: "npm test", exit_code: 0, status: "completed" } };
+      const msg = { type: "item.completed", item: { id: "m1", type: "agent_message", text: "Half way there" } };
+      const killed = run(getAdapter("codex"), [
+        { type: "turn.started" },
+        { type: "error", message: "Reconnecting... 1/5" },
+        cmdStart, cmdDone, msg,
+        { type: "_done", code: null },
+      ]);
+      expect(killed.failures).toEqual([]);
+      expect(killed.exits).toEqual([null]);
+      expect(settleTurn({ failure: killed.failures[0], exitCode: null })).toEqual({ outcome: "error", failure: "Agent process was killed before it finished" });
+      // The welcome path settles the same way.
+      expect(extractAssistantTurn([
+        { type: "error", message: "Falling back from WebSockets to HTTPS transport." },
+        cmdStart, cmdDone, msg,
+        { type: "_done", code: 101 },
+      ], "codex")).toMatchObject({ outcome: "error", failure: "Agent process exited unexpectedly (code 101)" });
+      // A single progress event is enough: the agent carried on after the notice.
+      expect(run(getAdapter("codex"), [{ type: "error", message: "Reconnecting... 2/5" }, cmdStart, { type: "_done", code: 137 }]).failures).toEqual([]);
+      // A warning item is not progress.
+      expect(run(getAdapter("codex"), [
+        { type: "error", message: "unexpected status 401 Unauthorized" },
+        { type: "item.completed", item: { id: "w", type: "error", message: "MCP server docs failed to start" } },
+        { type: "_done", code: 1 },
+      ]).failures).toEqual(["unexpected status 401 Unauthorized"]);
+      // An error AFTER the last progress is still the reason.
+      expect(run(getAdapter("codex"), [cmdStart, cmdDone, { type: "error", message: "unexpected status 401 Unauthorized" }, { type: "_done", code: 1 }]).failures)
+        .toEqual(["unexpected status 401 Unauthorized"]);
+    });
+
     it("keeps ERROR-level stderr tracing non-fatal", () => {
       const r = run(getAdapter("codex"), [
         { type: "_stderr", text: "2026-09-22T10:00:00Z ERROR codex_core::mcp: MCP client for `docs` failed to start" },

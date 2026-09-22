@@ -226,8 +226,8 @@ const codexAdapter: AgentAdapter = {
     const type = ev.type as string;
     const segments = state.segments as Map<string, string>;
     if (type === "_done" && !state.turnCompleted && typeof state.lastError === "string") {
-      // The process ended without finishing the turn after reporting an error:
-      // that error is why the turn did not complete.
+      // The process ended without finishing the turn, and the last thing it
+      // reported was an error it never moved past: that error is why.
       sink.fail(state.lastError);
     }
     if (parseBoxEvent(ev, sink)) return;
@@ -240,6 +240,10 @@ const codexAdapter: AgentAdapter = {
     if (type === "item.started" || type === "item.updated" || type === "item.completed") {
       const item = (ev.item as Record<string, unknown>) || {};
       const itype = String(item.item_type || item.type || "");
+      // Any item but a warning means the agent is working again, so an earlier
+      // top-level error (a retry notice) was recovered from and is not why the
+      // turn may later end: a kill or crash after this is its exit code.
+      if (itype !== "error") state.lastError = undefined;
       const id = String(item.id || itype);
       const done = type === "item.completed";
       if (itype === "agent_message" || itype === "assistant_message") {
@@ -283,8 +287,8 @@ const codexAdapter: AgentAdapter = {
       // recover from, and the wording is not a stable contract. So an `error` is
       // never terminal on its own: it is shown as a notice, and it becomes the
       // turn's failure reason only if the turn then ends without turn.completed
-      // (see `_done` below). A fatal error also arrives as turn.failed or a
-      // non-zero exit.
+      // (see `_done` above) with no progress after it. A fatal error also
+      // arrives as turn.failed or a non-zero exit.
       const msg = String(ev.message || "");
       if (!msg) return;
       sink.appendWarning(msg);
