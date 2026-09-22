@@ -39,7 +39,7 @@ jest.mock("@/components/ui/animate-in", () => ({
 }));
 
 describe("HeroSection", () => {
-  it("offers sibling agent and computer launch routes from the approved headline", () => {
+  it("offers agent launch and app downloads with explicit availability", () => {
     render(<HeroSection />);
 
     // The English display follows the final litepaper; localized headings remain intact.
@@ -59,10 +59,11 @@ describe("HeroSection", () => {
         name: /why i.m building Hivra/i,
       })
     ).toHaveAttribute("href", "#founder");
-    expect(screen.getByRole("link", { name: /Download the app/i })).toHaveAttribute("href", "#downloads");
-    expect(screen.getByRole("link", { name: /The tokenomics/i })).toHaveAttribute("href", "#tokenomics");
+    expect(screen.getByRole("link", { name: /Download the app/i })).toHaveAttribute("href", "/download");
+    expect(screen.getByText(/Mac and Windows apps are coming soon/)).toBeVisible();
+    expect(screen.getByRole("link", { name: /Explore the ecosystem/i })).toHaveAttribute("href", "/ecosystem");
 
-    expect(screen.getByRole("link", { name: /launch a computer/i })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1");
+    expect(screen.queryByRole("link", { name: /launch a computer/i })).not.toBeInTheDocument();
     expect(screen.getByText(/Ubuntu, Windows or Omarchy/)).toBeInTheDocument();
     expect(screen.queryByText(/no terminals/i)).not.toBeInTheDocument();
   });
@@ -79,6 +80,7 @@ describe("HeroSection", () => {
       "href",
       "/get-started?plan=free"
     );
+    expect(screen.getAllByRole("link").some(link => link.getAttribute("href") === "#launch")).toBe(true);
     expect(screen.getByText(/免费层级始终可用/i)).toBeInTheDocument();
   });
 });

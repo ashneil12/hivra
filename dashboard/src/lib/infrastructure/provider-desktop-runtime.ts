@@ -1,7 +1,9 @@
 import "server-only";
 import { z } from "zod";
 
-import currentRelease from "../../../provisioner-releases/2026.09.15.2.json";
+import currentRelease from "../../../provisioner-releases/2026.09.22.1.json";
+import capacityRelease from "../../../provisioner-releases/2026.09.15.2.json";
+import omarchyCursorRelease from "../../../provisioner-releases/2026.09.21.1.json";
 import priorFifteenRelease from "../../../provisioner-releases/2026.09.15.1.json";
 import handoffReductionRelease from "../../../provisioner-releases/2026.09.08.3.json";
 import handoffLatencyRelease from "../../../provisioner-releases/2026.09.08.2.json";
@@ -40,7 +42,9 @@ const desktopRevisionByVersion = {
   "2026.09.08.2": "2e6b817785d4788e6292087c89e091db6703095b7c196e19ba66a50379618251",
   "2026.09.08.3": REMOTE_DESKTOP_BUNDLE_REVISION,
   "2026.09.15.1": REMOTE_DESKTOP_BUNDLE_REVISION,
-  "2026.09.15.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.09.15.2": "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca",
+  "2026.09.21.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.09.22.1": REMOTE_DESKTOP_BUNDLE_REVISION,
 } satisfies Record<ProviderDesktopWorkerIdentity["bundle"]["provisionerVersion"], string>;
 const ControlOrigin = z.string().max(300).refine(value => {
   try { const url = new URL(value); return url.protocol === "https:" && url.origin === value; } catch { return false; }
@@ -67,13 +71,15 @@ export function buildProviderDesktopPowerProbe(input: ProviderDesktopRuntimeProb
 /** Workspace grants require installed code and the running gateway's original
  * identity/configuration, not a release label or unauthenticated HTML alone. */
 export function buildProviderWorkspaceRuntimeProbe(input: ProviderWorkspaceRuntimeProbe): string {
-  if (!["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2"].includes(checked(input).identity.bundle.provisionerVersion)) throw new Error("Workspace protocol unavailable");
+  if (!["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"].includes(checked(input).identity.bundle.provisionerVersion)) throw new Error("Workspace protocol unavailable");
   return buildProbe(input, false, ControlOrigin.parse(input.controlOrigin));
 }
 function buildProbe(input: ProviderDesktopRuntimeProbe, captureBootId: boolean, workspaceControlOrigin?: string): string {
   try {
     const expected = checked(input);
-    const release = expected.identity.bundle.provisionerVersion === "2026.09.15.2" ? currentRelease
+    const release = expected.identity.bundle.provisionerVersion === "2026.09.22.1" ? currentRelease
+    : expected.identity.bundle.provisionerVersion === "2026.09.21.1" ? omarchyCursorRelease
+    : expected.identity.bundle.provisionerVersion === "2026.09.15.2" ? capacityRelease
     : expected.identity.bundle.provisionerVersion === "2026.09.15.1" ? priorFifteenRelease
       : expected.identity.bundle.provisionerVersion === "2026.09.08.3" ? handoffReductionRelease
       : expected.identity.bundle.provisionerVersion === "2026.09.08.2" ? handoffLatencyRelease
@@ -171,7 +177,7 @@ try:
  workspace_process=[]
  def workspace_observe(services):
   if WORKSPACE_CONTROL is None: return
-  if preparation['controlOrigin']!=WORKSPACE_CONTROL or len(WORKSPACE_FILES)!=${["2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2"].includes(expected.identity.bundle.provisionerVersion) ? 11 : 10}: reject()
+  if preparation['controlOrigin']!=WORKSPACE_CONTROL or len(WORKSPACE_FILES)!=${["2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"].includes(expected.identity.bundle.provisionerVersion) ? 11 : 10}: reject()
   for entry in WORKSPACE_FILES:
    raw=read(pathlib.Path('/opt/bux')/entry['path'],entry['bytes'],0o644)
    if len(raw)!=entry['bytes'] or hashlib.sha256(raw).hexdigest()!=entry['sha256']: reject()
@@ -313,7 +319,7 @@ export function parseProviderDesktopPowerReceipt(output: string, input: Provider
 export function parseProviderWorkspaceRuntimeReceipt(output: string, input: ProviderWorkspaceRuntimeProbe) {
   try {
     const expected = checked(input), controlOrigin = ControlOrigin.parse(input.controlOrigin), marker = "HIVRA_PROVIDER_WORKSPACE_V1 ";
-    if (!["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2"].includes(expected.identity.bundle.provisionerVersion) || Buffer.byteLength(output) > 8192
+    if (!["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"].includes(expected.identity.bundle.provisionerVersion) || Buffer.byteLength(output) > 8192
       || !output.startsWith(marker) || !output.endsWith("\n") || output.indexOf("\n") !== output.length - 1 || output.includes("\r")) throw new Error();
     const value = z.object({ protocol: z.literal("hivra-workspace-v1"), computerId: z.string().uuid(), operationId: z.string().uuid(),
       publicOrigin: z.string(), controlOrigin: z.string(), capabilityOutput: z.string().max(4096) }).strict().parse(JSON.parse(output.slice(marker.length)));

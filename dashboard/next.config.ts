@@ -154,6 +154,23 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
+      // A standalone installation is an application, not a mirror of Hivra's
+      // commercial website. Keep these temporary so operators can change mode.
+      ...(selfHostAuthEnabled
+        ? [
+            "/",
+            "/blog/:path*",
+            "/features/:path*",
+            "/compare/:path*",
+            "/token",
+            "/tokenomics",
+            "/why-hivra/:path*",
+          ].map(source => ({
+            source,
+            destination: "/dashboard",
+            permanent: false as const,
+          }))
+        : []),
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
@@ -211,6 +228,9 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: [
+          // Configuration headers also cover auth redirects and static assets,
+          // which do not all pass through the application proxy.
+          ...(selfHostAuthEnabled ? [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] : []),
           { key: "X-DNS-Prefetch-Control", value: "on" },
           { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
           { key: "X-Frame-Options", value: "SAMEORIGIN" },

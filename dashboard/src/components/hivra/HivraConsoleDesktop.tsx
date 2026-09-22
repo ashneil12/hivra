@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { Loader2, Maximize2, MonitorUp, RefreshCw, ShieldCheck } from "lucide-react";
+import styles from "./HivraRemoteDesktop.module.css";
 
 import {
   activateNativeOmarchyDesktop,
@@ -124,6 +126,10 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   const [windowsPreparationMessage, setWindowsPreparationMessage] = useState("");
   const [windowsLaunchState, setWindowsLaunchState] = useState<WindowsLaunchState>("idle");
   const [windowsLaunchUrl, setWindowsLaunchUrl] = useState<string | null>(null);
+  const [windowsLaunchMode, setWindowsLaunchMode] = useState<StreamMode | null>(null);
+  const [windowsFrameLoaded, setWindowsFrameLoaded] = useState(false);
+  const [windowsFrameRevision, setWindowsFrameRevision] = useState(0);
+  const [windowsFrameLoading, setWindowsFrameLoading] = useState(false);
   const windowsFrameRef = useRef<HTMLIFrameElement>(null);
   const windowsAttemptRef = useRef(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -136,6 +142,9 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   useEffect(() => {
     windowsAttemptRef.current += 1;
     setWindowsLaunchUrl(null);
+    setWindowsLaunchMode(null);
+    setWindowsFrameLoaded(false);
+    setWindowsFrameLoading(false);
     setWindowsLaunchState("idle");
     setWindowsPreparationState("idle");
     setWindowsPreparationMessage("");
@@ -630,6 +639,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   };
 
   const requestWindowsDesktop = async (attempt: number): Promise<"opened" | "prepare_required" | "failed"> => {
+    const requestedMode = streamModeRef.current;
     const panel = viewportRef.current;
     const viewport = panel && panel.clientWidth > 0 && panel.clientHeight > 0
       ? { width: panel.clientWidth, height: panel.clientHeight } : undefined;
@@ -637,7 +647,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ streamingMode: streamModeRef.current, viewport }),
+      body: JSON.stringify({ streamingMode: requestedMode, viewport }),
     });
     const payload = await response.json().catch(() => null) as {
       success?: boolean;
@@ -659,7 +669,13 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
     }
     // Keep the authenticated handoff only in memory. The same frame survives
     // tab changes and browser fullscreen exit without reconnecting the guest.
+    setWindowsFrameLoading(true);
     setWindowsLaunchUrl(launchUrl.toString());
+    // An explicit reconnect must reload even if the gateway reissues the same
+    // URL. Ordinary tab/fullscreen changes retain this frame revision.
+    setWindowsFrameRevision(revision => revision + 1);
+    setWindowsLaunchMode(requestedMode);
+    setWindowsFrameLoaded(false);
     setWindowsLaunchState("idle");
     setMessage("Windows desktop is opening inline");
     setWindowsPreparationMessage("");
@@ -700,8 +716,47 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
     windowsFastOpenButtonRef.current?.click();
   }, [active, autoOpenFast, profile]);
 
+  const windowsBusy = windowsLaunchState === "opening" || windowsPreparationState === "preparing";
+  const windowsQualityChanged = windowsLaunchUrl !== null && windowsLaunchMode !== streamMode;
+  const windowsStatus = windowsBusy ? "Opening" : windowsLaunchState === "failed" ? "Couldn’t open"
+    : windowsLaunchUrl ? windowsFrameLoaded ? "Open" : "Opening" : "Ready";
+  const windowsDiagnostic = windowsPreparationMessage || (windowsLaunchState === "failed" ? message
+    : windowsQualityChanged ? "Reconnect to apply the selected quality."
+    : windowsLaunchUrl ? windowsFrameLoaded ? "Windows desktop gateway loaded · Full screen is optional" : "Windows desktop is opening inline"
+    : "Open your Windows desktop here.");
+
   return (
     <div ref={shellRef} hidden={!active} style={{ height: "100%", minHeight: 0, display: active ? "flex" : "none", flexDirection: "column", background: "#090909" }}>
+      {profile === "windows" ? (
+        <header className={styles.strip}>
+          <span className={styles.stripStatus} aria-hidden="true">
+            {windowsStatus === "Opening" ? <Loader2 size={13} className="animate-spin" /> : <MonitorUp size={13} />}
+          </span>
+          <span className={styles.stripLabel}>{windowsStatus}</span>
+          <span className={styles.stripMessage} role="status" title={windowsDiagnostic}>{windowsDiagnostic}</span>
+          <span className={styles.stripSpacer} />
+          <label className={styles.stripField}>
+            <span className={styles.stripFieldLabel}>Quality</span>
+            <select aria-label="Desktop quality" value={streamMode} disabled={windowsBusy}
+              onChange={event => chooseStreamMode(event.target.value as StreamMode)}
+              className={`mono ${styles.stripSelect}`}>
+              {DESKTOP_STREAMING_MODES.map(mode => (
+                <option key={mode} value={mode} title={STREAM_MODE_DETAILS[mode].status}>{STREAM_MODE_DETAILS[mode].label}</option>
+              ))}
+            </select>
+          </label>
+          <button ref={windowsFastOpenButtonRef} type="button" onClick={() => void openWindowsDesktop()}
+            disabled={windowsBusy} className={styles.stripAction}
+            aria-label={windowsLaunchState === "failed" ? "Try again" : windowsLaunchUrl ? "Reconnect Windows desktop" : "Open fast Windows desktop"}
+            title={windowsQualityChanged ? "Reconnect to apply the selected quality" : "Open Windows over the verified private RDP gateway"}>
+            {windowsBusy ? "Opening" : windowsLaunchState === "failed" ? "Try again" : windowsLaunchUrl ? "Reconnect" : "Open"}
+            {windowsLaunchUrl || windowsLaunchState === "failed" ? <RefreshCw size={11} /> : <MonitorUp size={11} />}
+          </button>
+          <button type="button" onClick={() => void fullscreen()} className={styles.stripIcon}
+            aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
+            title={isFullscreen ? "Return to inline desktop" : "Expand desktop; Escape returns here"}><Maximize2 size={13} /></button>
+        </header>
+      ) : (
       <div style={{ minHeight: 46, display: "flex", alignItems: "center", gap: 10, padding: "0 16px", borderBottom: "1px solid rgba(255,255,255,.12)", color: "#eee" }}>
         {state === "connecting" ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} color={state === "connected" ? "#63d49b" : "#aaa"} />}
         <strong style={{ fontSize: 12 }}>{message}</strong>
@@ -716,8 +771,6 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
               onClick={() => chooseStreamMode(mode)}
               title={nativeActivation && nativeActivation.streamingMode !== mode
                 ? `Safely restart this native desktop in ${STREAM_MODE_DETAILS[mode].status}`
-                : profile === "windows" && windowsLaunchUrl
-                  ? `${STREAM_MODE_DETAILS[mode].status}. Reconnect Windows to apply a changed quality.`
                 : `${STREAM_MODE_DETAILS[mode].status}. Fast desktop quality.`}
               style={{ border: 0, borderRight: index < DESKTOP_STREAMING_MODES.length - 1 ? "1px solid #333" : 0, background: streamMode === mode ? "#eee" : "transparent", color: streamMode === mode ? "#111" : "#bbb", padding: "7px 8px", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", cursor: nativeState === "opening" || nativeState === "switching" || nativeState === "stopping" ? "wait" : "pointer", opacity: nativeState === "opening" || nativeState === "switching" || nativeState === "stopping" ? 0.75 : 1, whiteSpace: "nowrap" }}
             >
@@ -749,50 +802,43 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
             {nativeState === "stopping" ? "Stopping" : nativeState === "stop-failed" ? "Retry stop" : "Stop native"}
           </button>
         </> : null}
-        {profile === "windows" ? (
-          <button ref={windowsFastOpenButtonRef} type="button" onClick={() => void openWindowsDesktop()}
-            disabled={windowsLaunchState === "opening" || windowsPreparationState === "preparing"}
-            aria-label={windowsLaunchUrl ? "Reconnect Windows desktop" : "Open fast Windows desktop"}
-            title="Open Windows over the verified private RDP gateway"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 9px", color: "#111", background: "#eee", border: "1px solid #eee", opacity: windowsLaunchState === "opening" ? 0.7 : 1 }}>
-            {windowsLaunchState === "opening" || windowsPreparationState === "preparing" ? <Loader2 size={14} className="spin" /> : <MonitorUp size={14} />}
-            {windowsPreparationState === "preparing" ? "Preparing Windows" : windowsLaunchState === "opening" ? "Opening Windows" : windowsLaunchUrl ? "Reconnect Windows" : "Open fast desktop"}
-          </button>
-        ) : null}
         {!fastProfile ? <button type="button" onClick={() => void connect()}
           aria-label="Reconnect desktop" title="Reconnect desktop"
           style={{ padding: 7, color: "inherit", background: "transparent", border: "1px solid #333" }}><RefreshCw size={14} /></button> : null}
         <button type="button" onClick={() => void fullscreen()} aria-label={isFullscreen ? "Exit full screen" : "Full screen"} title={isFullscreen ? "Return to inline desktop" : "Expand desktop; Escape returns here"} style={{ padding: 7, color: "inherit", background: "transparent", border: "1px solid #333" }}><Maximize2 size={14} /></button>
       </div>
+      )}
       {nativeMessage ? (
         <div role="status" style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,.12)", color: nativeState === "failed" ? "#f0b7b7" : "#bbb", fontSize: 11 }}>
           {nativeMessage}
         </div>
       ) : null}
-      {windowsPreparationMessage ? (
-        <div role="status" style={{ padding: "8px 16px", borderBottom: "1px solid rgba(255,255,255,.12)", color: windowsPreparationState === "failed" ? "#f0b7b7" : "#bbb", fontSize: 11 }}>
-          {windowsPreparationMessage}
-        </div>
-      ) : null}
-      <div ref={viewportRef} aria-label={`${name} interactive desktop`} style={{ flex: 1, minHeight: 0, overflow: "hidden", background: "#000" }}>
+      <div ref={viewportRef} aria-label={`${name} interactive desktop`} style={{ flex: 1, minHeight: 0, overflow: "hidden", background: "#000", position: "relative" }}>
         {profile === "windows" ? windowsLaunchUrl ? (
-          <iframe ref={windowsFrameRef} title={`${name} Windows desktop`} src={windowsLaunchUrl}
+          <iframe key={windowsFrameRevision} ref={windowsFrameRef} title={`${name} Windows desktop`} src={windowsLaunchUrl}
             sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads"
             allow="clipboard-read https://windows-canary.hermesos.cloud; clipboard-write https://windows-canary.hermesos.cloud"
             referrerPolicy="no-referrer"
-            onLoad={() => { setMessage("Windows desktop gateway loaded · Full screen is optional"); windowsFrameRef.current?.focus(); }}
-            onError={() => { setWindowsLaunchState("failed"); setMessage("Windows desktop could not load. Reconnect Windows to request a fresh session."); }}
+            onLoad={() => { setWindowsFrameLoading(false); setWindowsFrameLoaded(true); setMessage("Windows desktop gateway loaded · Full screen is optional"); windowsFrameRef.current?.focus(); }}
+            onErrorCapture={() => { setWindowsFrameLoading(false); setWindowsFrameLoaded(false); setWindowsLaunchState("failed"); setMessage("Windows desktop could not load. Reconnect Windows to request a fresh session."); }}
             style={{ display: "block", width: "100%", height: "100%", border: 0, background: "#000" }} />
+        ) : windowsLaunchState === "opening" ? (
+          <LoadingState dark label={windowsPreparationState === "preparing" ? "Preparing Windows…" : "Opening Windows…"} detail={name} />
         ) : (
           <div style={{ height: "100%", display: "grid", placeItems: "center", padding: 32, textAlign: "center", color: "#eee" }}>
             <div style={{ maxWidth: 520 }}>
               <MonitorUp size={34} style={{ margin: "0 auto 16px" }} />
               <h2 style={{ margin: "0 0 8px", fontSize: 22 }}>Open Windows desktop here</h2>
-              <p style={{ margin: 0, color: "#aaa", lineHeight: 1.5 }}>Use Open fast desktop to connect inline over RDP. Full screen is optional; exiting it keeps your desktop here.</p>
+              <p style={{ margin: 0, color: "#aaa", lineHeight: 1.5 }}>Select Open to connect. Full screen is optional; exiting it keeps your desktop here.</p>
             </div>
           </div>
         ) : null}
-        {profile === "omarchy" ? (
+        {profile === "windows" && windowsLaunchUrl && (windowsFrameLoading || windowsLaunchState === "opening") ? (
+          <div style={{ position: "absolute", inset: 0 }}><LoadingState dark label="Opening Windows…" detail={name} /></div>
+        ) : null}
+        {profile === "omarchy" && (nativeState === "opening" || nativeState === "switching") ? (
+          <LoadingState dark label={nativeState === "switching" ? "Switching desktop quality…" : "Opening Omarchy…"} detail={name} />
+        ) : profile === "omarchy" ? (
           <div style={{ height: "100%", display: "grid", placeItems: "center", padding: 32, textAlign: "center", color: "#eee" }}>
             <div style={{ maxWidth: 520 }}>
               <MonitorUp size={34} style={{ margin: "0 auto 16px" }} />

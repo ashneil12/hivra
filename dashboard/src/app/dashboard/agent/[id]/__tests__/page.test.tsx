@@ -291,63 +291,87 @@ describe("AgentPage", () => {
     expect(desktop).toBeVisible();
   });
 
-  it.each([
-    ["Files", "Use Windows File Explorer", "Dedicated web file browsing and upload/download"],
-    ["Terminal", "Use Windows PowerShell", "A dedicated web terminal"],
-  ])("gives running Windows %s a truthful native path while retaining its desktop", async (tab, heading, limitation) => {
+  it.each(["running", "stopped"])("hides Terminal and Files for a %s Windows computer", async status => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "linux-desktop", computer_profile: "windows",
-      name: "WINDOWS", status: "running", cpu: 2, ram: 4,
+      name: "WINDOWS", status, cpu: 2, ram: 4,
       chat_url: "https://windows-box.example.com", api_token: "must-not-be-used",
       computer_substrate: "proxmox-kvm" });
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Desktop" }));
-    const desktop = await screen.findByTestId("windows-desktop");
-    const initialRequests = (global.fetch as jest.Mock).mock.calls.length;
-    fireEvent.click(getSurfaceButton(tab === "Terminal" ? /Terminal/ : "Files"));
-    expect(await screen.findByText(heading)).toBeVisible();
-    expect(screen.getByText(new RegExp(limitation))).toHaveTextContent("not available");
-    expect(screen.getByText(/click Start inside the remote Windows desktop/)).toBeVisible();
-    expect(screen.queryByText("Not ready")).not.toBeInTheDocument();
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
+    const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
+    if (tools) fireEvent.click(tools);
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(?:Box )?Terminal$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Desktop" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage" })).toBeInTheDocument();
     expect(document.querySelector('iframe[title="Box · shell"], form[action*="windows-box"]')).toBeNull();
-    expect(desktop).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Open Desktop" }));
-    expect(screen.getByTestId("windows-desktop")).toBe(desktop);
-    expect(desktop).toBeVisible();
-    expect(pushMock).not.toHaveBeenCalled();
-    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(initialRequests);
   });
 
-  it.each(["Files", "Terminal"])("does not offer native %s guidance for a stopped Windows computer", async tab => {
-    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "linux-desktop", computer_profile: "windows",
-      name: "WINDOWS", status: "stopped", cpu: 2, ram: 4, chat_url: null, computer_substrate: "proxmox-kvm" });
-    render(<AgentPage />);
-    fireEvent.click(await findSurfaceButton(tab === "Terminal" ? /Terminal/ : "Files"));
-    expect(await screen.findByText("Not ready")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Open Desktop" })).not.toBeInTheDocument();
-    expect(screen.queryByTestId("windows-desktop")).not.toBeInTheDocument();
-  });
-
-  it.each([
-    ["Files", "Use Files inside Desktop", "dedicated web file tool"],
-    ["Terminal", "Use Terminal inside Desktop", "dedicated web terminal"],
-  ])("gives running Omarchy %s an honest Desktop path when no web tool is connected", async (tab, heading, limitation) => {
+  it("hides Terminal and Files for disconnected Omarchy", async () => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123", type: "linux-desktop", computer_profile: "omarchy",
       name: "OMARCHY", status: "running", cpu: 2, ram: 4,
       chat_url: null, api_token: null, computer_substrate: "proxmox-kvm",
     });
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Desktop" }));
-    const desktop = await screen.findByTestId("remote-desktop");
-    fireEvent.click(getSurfaceButton(tab === "Terminal" ? /Terminal/ : "Files"));
-    expect(await screen.findByText(heading)).toBeVisible();
-    expect(screen.getByText(new RegExp(limitation))).toHaveTextContent("not connected");
-    expect(screen.queryByText("Not ready")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("remote-desktop")).toBeVisible();
+    const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
+    if (tools) fireEvent.click(tools);
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
     expect(document.querySelector('iframe[title="Box · shell"], form[action*="auth/bootstrap"]')).toBeNull();
-    expect(desktop).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Open Desktop" }));
-    expect(screen.getByTestId("remote-desktop")).toBe(desktop);
+  });
+
+  it.each(["omarchy", "ubuntu-desktop"])("hides Terminal and Files for stopped %s even with a retained chat URL", async profile => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: profile,
+      name: "STOPPED_COMPUTER", status: "stopped", cpu: 2, ram: 4,
+      chat_url: "https://stale-box.example.com", api_token: "stale-token", computer_substrate: "proxmox-kvm",
+    });
+    render(<AgentPage />);
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
+    const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
+    if (tools) fireEvent.click(tools);
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
+    expect(document.querySelector('iframe[title="Box · shell"], form[action*="stale-box"]')).toBeNull();
+  });
+
+  it.each([
+    { profile: "windows", tab: "files", chatUrl: "https://windows-box.example.com" },
+    { profile: "omarchy", tab: "box", chatUrl: null },
+  ])("falls back from an unavailable $tab deep link on running $profile to Desktop", async ({ profile, tab, chatUrl }) => {
+    window.history.replaceState(null, "", `/dashboard/agent/agent_123?hivra=1&tab=${tab}&prepare=1#workspace`);
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: profile,
+      name: profile.toUpperCase(), status: "running", cpu: 2, ram: 4,
+      chat_url: chatUrl, api_token: "must-not-be-used", computer_substrate: "proxmox-kvm",
+    });
+    render(<AgentPage />);
+    const desktop = profile === "windows"
+      ? await screen.findByTestId("windows-desktop")
+      : await screen.findByTestId("remote-desktop");
     expect(desktop).toBeVisible();
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("tab")).toBe("desktop"));
+    expect(new URLSearchParams(window.location.search).get("hivra")).toBe("1");
+    expect(new URLSearchParams(window.location.search).get("prepare")).toBe("1");
+    expect(window.location.hash).toBe("#workspace");
+    expect(screen.queryByText(/Use (?:Windows|Files|Terminal)/)).not.toBeInTheDocument();
+    expect(document.querySelector('iframe[title="Box · shell"], form[action*="auth/bootstrap"]')).toBeNull();
+  });
+
+  it("keeps Terminal and Files for a connected Ubuntu computer", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      name: "UBUNTU", status: "running", cpu: 2, ram: 4,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
+    });
+    render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton("Files"));
+    expect(await screen.findByText("Files panel")).toHaveAttribute("data-workspace-root", "true");
+    fireEvent.click(getSurfaceButton(/^Terminal$/));
+    expect(await screen.findByTitle("Box · shell")).toBeVisible();
   });
 
   it("keeps the selected surface in the URL without reloading or adding history entries", async () => {
@@ -403,7 +427,7 @@ describe("AgentPage", () => {
     expect(files).toBeVisible(); expect(terminal).not.toBeVisible();
     expect(screen.queryByText("Files panel")).not.toBeInTheDocument();
     expect(document.querySelector('iframe[src*="/box-terminal"]')).toBeNull();
-    fireEvent.click(getSurfaceButton(/Box/));
+    fireEvent.click(getSurfaceButton(/^Terminal$/));
     expect(terminal).toBeVisible(); expect(files).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Files" }));
     expect(screen.getByTestId("provider-workspace-files")).toBe(files); expect(files).toBeVisible();
@@ -865,7 +889,8 @@ describe("AgentPage", () => {
       activity, provisioned_at: "2026-08-27T10:00:00Z", cpu: 2, ram: 4,
     });
     render(<AgentPage />);
-    const status = await screen.findByRole("status");
+    await screen.findByText(`${verb} EXISTING_AGENT…`);
+    const status = screen.getByRole("status");
     expect(status).toHaveTextContent(`${verb} EXISTING_AGENT…`);
     expect(status).toHaveTextContent(body);
     expect(status.querySelector("svg")).toHaveStyle({ display: "block", margin: "0 auto" });
@@ -880,7 +905,8 @@ describe("AgentPage", () => {
       activity: "cancelling", provisioned_at: null, cpu: 2, ram: 4,
     });
     render(<AgentPage />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Cancelling CANCELLED_AGENT…");
+    await screen.findByText("Cancelling CANCELLED_AGENT…");
+    expect(screen.getByRole("status")).toHaveTextContent("Cancelling CANCELLED_AGENT…");
     expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
     expect(screen.queryByText(/Once it is ready/)).not.toBeInTheDocument();
   });
@@ -892,7 +918,8 @@ describe("AgentPage", () => {
       provisioned_at: null, cpu: 2, ram: 4,
     });
     render(<AgentPage />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Updating UNKNOWN_AGENT…");
+    await screen.findByText("Updating UNKNOWN_AGENT…");
+    expect(screen.getByRole("status")).toHaveTextContent("Updating UNKNOWN_AGENT…");
     expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
   });
 
@@ -1225,7 +1252,7 @@ describe("AgentPage", () => {
     expect(screen.getByRole("button", { name: "Manage" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Box Terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(?:Box )?Terminal$/ })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/remote-desktop"))).toBe(false);
   });
 
@@ -1328,7 +1355,7 @@ describe("AgentPage", () => {
     });
     render(<AgentPage />);
     await screen.findByRole("navigation", { name: "Resource surfaces" });
-    fireEvent.click(getSurfaceButton("Box Terminal"));
+    fireEvent.click(getSurfaceButton(/^Terminal$/));
     expect(await screen.findByText(/Secure access credentials for this computer/)).toBeInTheDocument();
     expect(screen.queryByText(/connection service isn’t reachable yet/)).not.toBeInTheDocument();
     expect(document.documentElement.outerHTML).not.toContain("box-token");

@@ -38,6 +38,59 @@ OPERATION_ID="${HIVRA_OPERATION_ID:-}"
 
 [[ "$VMID" =~ ^[0-9]+$ ]] && [ "$VMID" -ge 100 ] || { echo "invalid VMID" >&2; exit 1; }
 [[ "$OCTET" =~ ^[0-9]+$ ]] && [ "$OCTET" -ge 2 ] && [ "$OCTET" -le 254 ] || { echo "invalid IP octet" >&2; exit 1; }
+
+# Agent-run reporter credential (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
+# The control plane stages it only for Claude Code / Codex computers, in a
+# root-only file bound to this VMID. Consume and delete it before any later exit
+# path and keep it in memory only (never argv, env or logs). The reporter step
+# can never fail or hold up the start: every outcome is exactly one
+# HIVRA_ACTIVITY_COLLECTOR line in the published result.
+ACTIVITY_TELEMETRY_FILE="${HIVRA_ACTIVITY_TELEMETRY_FILE:-}"
+ACTIVITY_CREDENTIAL_JSON=""
+ACTIVITY_COLLECTOR_STATUS=""
+read_activity_credential() {
+  local file="$1" size line encoded
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  [ "$(stat -c '%a:%U:%G' "$file" 2>/dev/null)" = "600:root:root" ] || return 1
+  size="$(stat -c '%s' "$file" 2>/dev/null)"
+  [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -le 16384 ] || return 1
+  line="$(grep -m1 -E '^HIVRA_ACTIVITY_TELEMETRY_B64=' "$file" 2>/dev/null)" || return 1
+  encoded="${line#*=}"
+  [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || return 1
+  printf '%s' "$encoded" | base64 -d 2>/dev/null | python3 -I -B -c '
+import json, re, sys
+raw = sys.stdin.buffer.read(8193)
+if len(raw) > 8192:
+    sys.exit(1)
+try:
+    doc = json.loads(raw.decode("utf-8"))
+except ValueError:
+    sys.exit(1)
+keys = {"endpoint", "resourceId", "token", "expiresAt"}
+if not isinstance(doc, dict) or set(doc) != keys or not all(isinstance(doc[k], str) for k in keys):
+    sys.exit(1)
+if (not re.fullmatch(r"https://[a-z0-9.-]+(:[0-9]{1,5})?/api/activity/ingest", doc["endpoint"])
+        or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", doc["resourceId"])
+        or len(doc["token"]) > 4096
+        or not re.fullmatch(r"hvra_otlp_v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", doc["token"])
+        or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z", doc["expiresAt"])):
+    sys.exit(1)
+sys.stdout.write(json.dumps(doc, separators=(",", ":")))
+' 2>/dev/null
+}
+if [ -n "$ACTIVITY_TELEMETRY_FILE" ]; then
+  ACTIVITY_COLLECTOR_STATUS="status=failed reason=invalid_input"
+  # Never follow or delete a caller-chosen path outside the exact VMID slot.
+  if [[ "$ACTIVITY_TELEMETRY_FILE" =~ ^/run/hivra-lifecycle/${VMID}\.activity\.env$ ]]; then
+    if ACTIVITY_CREDENTIAL_JSON="$(read_activity_credential "$ACTIVITY_TELEMETRY_FILE")" \
+      && [ -n "$ACTIVITY_CREDENTIAL_JSON" ]; then
+      ACTIVITY_COLLECTOR_STATUS="status=failed reason=not_attempted"
+    else
+      ACTIVITY_CREDENTIAL_JSON=""
+    fi
+    rm -f -- "$ACTIVITY_TELEMETRY_FILE" 2>/dev/null || true
+  fi
+fi
 [[ "$CHAT_PORT" =~ ^[0-9]+$ ]] && [ "$CHAT_PORT" -ge 1 ] && [ "$CHAT_PORT" -le 65535 ] || { echo "invalid chat port" >&2; exit 1; }
 case "$CLOUDFLARED_VERSION" in *[!0-9.]*|'') echo "invalid cloudflared version" >&2; exit 1 ;; esac
 [[ "$CLOUDFLARED_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid cloudflared checksum" >&2; exit 1; }
@@ -60,6 +113,9 @@ publish_result() {
   install -m 0600 /dev/null "$tmp"
   if [ -n "$OPERATION_ID" ]; then
     printf 'HIVRA_OPERATION_ID %s\n' "$OPERATION_ID" >> "$tmp"
+  fi
+  if [ -n "$ACTIVITY_COLLECTOR_STATUS" ]; then
+    printf 'HIVRA_ACTIVITY_COLLECTOR %s\n' "$ACTIVITY_COLLECTOR_STATUS" >> "$tmp"
   fi
   printf '%s\n' "$result" >> "$tmp"
   mv -f -- "$tmp" "$LOG"
@@ -130,6 +186,69 @@ if [ "$GUEST_READY" != "1" ]; then
   publish_result "$(printf '{"vmid":%s,"ip":"%s","chat_url":"","ready":false,"error":"guest health check timed out"}' "$VMID" "$IP")"
   echo "[hivra-start] guest health check timed out for VMID $VMID" >&2
   exit 1
+fi
+
+# (Re)install the agent-run reporter with the fresh credential. This also
+# backfills reporting into computers launched before it existed. Every guest
+# call is time-bounded (at most ~160 s in total: the reporter's own worst case
+# is ~92 s of bounded systemctl calls) and every failure only changes
+# ACTIVITY_COLLECTOR_STATUS; the start itself continues regardless.
+install_activity_collector() {
+  local source guest_dir rc
+  # Runs as root in the guest. The control plane stages a credential only for
+  # Claude Code / Codex Proxmox computers, so the guest reads nothing the
+  # monitored agent can write (no /home/bux selector). It unpacks the reviewed
+  # reporter into a fresh root-only directory so no guest user can swap it
+  # between staging and install.
+  local stage='set -eu
+umask 077
+dir="$(mktemp -d /run/hivra-agent-trace-install.XXXXXXXX)"
+if ! tar --no-same-owner --no-same-permissions -xf - -C "$dir" hivra-agent-trace.py hivra-agent-trace.service \
+  || [ ! -f "$dir/hivra-agent-trace.py" ] || [ -L "$dir/hivra-agent-trace.py" ] \
+  || [ ! -f "$dir/hivra-agent-trace.service" ] || [ -L "$dir/hivra-agent-trace.service" ]; then
+  rm -rf -- "$dir"
+  exit 4
+fi
+cat >/dev/null
+printf "%s\n" "$dir"'
+  for source in hivra-agent-trace.py hivra-agent-trace.service; do
+    if [ ! -f "${PROVISIONER_DIR}/${source}" ] || [ -L "${PROVISIONER_DIR}/${source}" ]; then
+      ACTIVITY_COLLECTOR_STATUS="status=failed reason=source_missing"
+      return 0
+    fi
+  done
+  guest_dir="$(tar -C "$PROVISIONER_DIR" -cf - hivra-agent-trace.py hivra-agent-trace.service \
+    | timeout -k 5 20 "${GSSH[@]}" "ubuntu@${IP}" "sudo -n /bin/sh -c '${stage}'" 2>/dev/null)"
+  rc=$?
+  case "$rc" in
+    0) ;;
+    124|137) ACTIVITY_COLLECTOR_STATUS="status=failed reason=timeout"; return 0 ;;
+    *) ACTIVITY_COLLECTOR_STATUS="status=failed reason=transfer_failed"; return 0 ;;
+  esac
+  if ! [[ "$guest_dir" =~ ^/run/hivra-agent-trace-install\.[A-Za-z0-9]{8}$ ]]; then
+    ACTIVITY_COLLECTOR_STATUS="status=failed reason=transfer_failed"
+    return 0
+  fi
+  # The credential travels only on stdin (printf is a builtin, so it never
+  # appears in any argv); the guest installer validates it strictly.
+  printf '%s' "$ACTIVITY_CREDENTIAL_JSON" | timeout -k 5 120 "${GSSH[@]}" "ubuntu@${IP}" \
+    "sudo -n /usr/bin/python3 -I -B ${guest_dir}/hivra-agent-trace.py install --source-dir ${guest_dir}; rc=\$?; sudo -n /bin/rm -rf -- ${guest_dir}; exit \$rc" \
+    >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = 0 ]; then
+    ACTIVITY_COLLECTOR_STATUS="status=installed"
+    return 0
+  fi
+  timeout -k 2 8 "${GSSH[@]}" "ubuntu@${IP}" "sudo -n /bin/rm -rf -- ${guest_dir}" </dev/null >/dev/null 2>&1 || true
+  case "$rc" in
+    124|137) ACTIVITY_COLLECTOR_STATUS="status=failed reason=timeout" ;;
+    *) ACTIVITY_COLLECTOR_STATUS="status=failed reason=install_failed" ;;
+  esac
+  return 0
+}
+if [ -n "$ACTIVITY_CREDENTIAL_JSON" ]; then
+  install_activity_collector || true
+  ACTIVITY_CREDENTIAL_JSON=""
 fi
 
 # Named-tunnel boxes keep a STABLE URL across restarts: the hivra-cf-tunnel unit

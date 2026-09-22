@@ -42,6 +42,12 @@ jobs:
       - name: Guard offline native systemd fixture boundaries
         run: python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py
 
+      # The reporter ships in the portable bundle. Run its stdlib tests in UTC
+      # and in a zone behind UTC so a local-time parsing regression cannot hide
+      # behind a UTC runner.
+      - name: Guard the guest agent-run reporter in UTC and a non-UTC zone
+        run: TZ=UTC python3 -I -B dashboard/provisioner/test_hivra_agent_trace.py && TZ=America/New_York python3 -I -B dashboard/provisioner/test_hivra_agent_trace.py
+
       - name: Preserve exact portable release bytes including bundled documentation
         run: node --test scripts/release/portable-bundle-immutability.test.mjs
 

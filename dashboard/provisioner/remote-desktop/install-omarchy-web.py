@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-SELKIES_IMAGE = "ghcr.io/selkies-project/selkies/desktop@sha256:395336daf8a8552949da12a969e0d7a0893309a01e65c81fb75bb0cbab3e3756"
+SELKIES_IMAGE = "ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b"
 NODE_IMAGE = "node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32"
 ROOT = Path("/opt/hivra/omarchy-web")
 STATE = ROOT / "state"
@@ -128,7 +128,15 @@ if __name__ == '__main__': main()
 
 LAYOUT_ADAPTER = r'''import asyncio, json, math, os, socket
 from selkies.input_handler import WebRTCInput
-from selkies.selkies import DataStreamingServer, wayland_output_id
+try:
+    # Selkies 2.0 keeps the WebSocket server and display helpers in explicit
+    # modules. Its host-Wayland callback carries cursor shapes outside video.
+    from selkies.websockets_mode import DataStreamingServer
+    from selkies.display_utils import wayland_output_id
+except ModuleNotFoundError:
+    # Compatibility for inspecting an older sealed image only. The release pin
+    # above must use the 2.0 imports in production.
+    from selkies.selkies import DataStreamingServer, wayland_output_id
 
 def apply_layout(width=None, height=None):
     with socket.socket(socket.AF_UNIX) as client:
@@ -154,11 +162,12 @@ original_sync = DataStreamingServer._sync_wayland_realized_geometry
 original_parse = DataStreamingServer._parse_settings_payload
 original_native_cursor = DataStreamingServer.set_native_cursor_rendering
 
-async def captured_cursor_only(self, enabled):
-    # External Hyprland capture lacks changing cursor sprite metadata. Capture
-    # its real cursor once; the paired broker hides both local cursor renderers.
-    # Keep this stable across client pointer/trackpad preference messages.
-    return await original_native_cursor(self, True)
+async def client_cursor_only(self, enabled):
+    # Keep the video cursor-free so pointer motion is rendered immediately by
+    # the browser. Selkies still forwards guest cursor metadata, allowing the
+    # local pointer to follow hand, text, resize and hidden cursor states.
+    # Delegate disabling upstream so an already-enabled capture is rebuilt.
+    return await original_native_cursor(self, False)
 
 def parse_settings(self, payload):
     parsed = original_parse(self, payload)
@@ -222,7 +231,7 @@ WebRTCInput._size_session_screen = size_session
 DataStreamingServer._size_wayland_screen = size_capture
 DataStreamingServer._sync_wayland_realized_geometry = sync_geometry
 DataStreamingServer._parse_settings_payload = parse_settings
-DataStreamingServer.set_native_cursor_rendering = captured_cursor_only
+DataStreamingServer.set_native_cursor_rendering = client_cursor_only
 '''
 LAYOUT_BOOT = "import sys\nif sys.argv[0].endswith('/selkies'):\n    try:\n        import hivra_layout_policy\n    except Exception:\n        raise SystemExit('omarchy_layout_policy_unavailable')\n"
 
@@ -234,13 +243,21 @@ def run(argv, *, input_data=None, timeout=180, capture=False):
 
 
 def ensure_image(image):
-    """Use a locally verified pinned image when the registry no longer serves it."""
+    """Accept an exact local config or repository digest, otherwise pull it."""
     expected = "sha256:" + image.rsplit("@sha256:", 1)[1]
-    probe = subprocess.run(["/usr/bin/docker", "image", "inspect", image, "--format", "{{.Id}}"],
+    probe = subprocess.run(["/usr/bin/docker", "image", "inspect", image, "--format",
+                            '{"id":{{json .Id}},"repoDigests":{{json .RepoDigests}}}'],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"})
     if probe.returncode == 0:
-        if probe.stdout.decode("ascii", "replace").strip() != expected:
+        try:
+            observed = json.loads(probe.stdout)
+            repository_digests = observed.get("repoDigests") or []
+        except (json.JSONDecodeError, AttributeError):
+            raise RuntimeError("image_digest_mismatch")
+        if observed.get("id") != expected and not any(
+                isinstance(value, str) and value.endswith("@" + expected)
+                for value in repository_digests):
             raise RuntimeError("image_digest_mismatch")
         return
     run(["/usr/bin/docker", "pull", image], timeout=300)
@@ -309,7 +326,8 @@ def main():
         f"SELKIES_APP_WAYLAND_DISPLAY=/tmp/runtime-ubuntu/{request['waylandDisplay']}",
         "SELKIES_AUTO_GPU=false", "SELKIES_USE_CPU=true", "SELKIES_FRAMERATE=60", "SELKIES_VIDEO_BITRATE=25000",
         "SELKIES_USE_CSS_SCALING=true|locked", "SELKIES_SCALING_DPI=96", "PYTHONPATH=/opt/hivra-python-policy",
-        # The paired broker hides the browser pointer and Selkies cursor canvas.
+        # Keep metadata enabled for local guest cursor shapes. The layout policy
+        # independently forces native video cursor capture off.
         "SELKIES_ENABLE_CURSORS=true", "SELKIES_BACKPRESSURE_QUEUE_SIZE=4",
         "SELKIES_COMMAND_ENABLED=false", "SELKIES_ENABLE_CLIPBOARD=false", "SELKIES_ENABLE_BINARY_CLIPBOARD=false",
         "SELKIES_AUDIO_ENABLED=false", "SELKIES_MICROPHONE_ENABLED=false", "SELKIES_GAMEPAD_ENABLED=false",

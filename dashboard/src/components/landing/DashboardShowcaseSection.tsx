@@ -1,13 +1,19 @@
 "use client";
 import { useState } from "react";
-import { Check, Terminal, LayoutGrid, Folder, Code2, Bot } from "lucide-react";
+import { Terminal, LayoutGrid, Folder, Code2, Bot } from "lucide-react";
 import styles from "./home.module.css";
-const CAPABILITIES = ["Launch new agents", "Monitor activity", "View logs", "Manage browser sessions", "Store API keys", "Upgrade resources", "Restart deployments"];
+const WORKSPACE_BENEFITS = [
+  { title: "Pick up where you left off", body: "Keep the files, apps and setup for a project together. Open the same workspace from your laptop or phone." },
+  { title: "Work in the interface you prefer", body: "Use an agent's interface, its terminal, or both. Open the desktop and take over whenever you want." },
+  { title: "See what happened", body: "Check the files, results and activity Hivra can observe. Work inside an external app may need checking in that app." },
+];
 const tabs = [{ name:"Agents", icon:LayoutGrid },{ name:"Files", icon:Folder },{ name:"Terminal", icon:Terminal }];
 export default function DashboardShowcaseSection() {
   const [active, setActive] = useState(0);
-  return <section className={`${styles.section} ${styles.showcase}`}>
-    <div><span className={styles.eyebrow}>03 / One dashboard</span><h2>One place to <em>manage everything.</em></h2><p>Whether you run one agent or ten, Hivra gives you a single dashboard to manage them all.</p><ul>{CAPABILITIES.map(cap => <li key={cap}><Check size={14} />{cap}</li>)}</ul></div>
+  return <section id="workspace" className={`${styles.section} ${styles.showcase}`} aria-labelledby="workspace-heading">
+    <div><span className={styles.eyebrow}>Inside your workspace</span><h2 id="workspace-heading">Your work.<br /><em>Right where you left it.</em></h2>
+      <div className={styles.workspaceBenefits}>{WORKSPACE_BENEFITS.map(item => <div key={item.title}><h3>{item.title}</h3><p>{item.body}</p></div>)}</div>
+    </div>
     <div className={styles.preview}>
       <div className={styles.previewHeader}><span>Hivra / Workspace</span><span>Illustration</span></div>
       <div className={styles.previewTabs} role="group" aria-label="Explore the workspace illustration">{tabs.map(({name,icon:Icon},i) => <button type="button" key={name} aria-pressed={active===i} onClick={()=>setActive(i)}><Icon size={13} />{name}</button>)}</div>

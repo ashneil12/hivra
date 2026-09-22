@@ -52,6 +52,25 @@ describe("redactSensitiveCommandOutput", () => {
     expect(redacted).not.toContain("tskey-auth-abcDEF123456");
   });
 
+  it("redacts agent-run reporter credentials wherever they appear", () => {
+    const token = ["hvra_otlp_v1", "eyJ2IjoxLCJ1c2VySWQiOiJ1c2VyIn0", "c2lnbmF0dXJlLWZpeHR1cmU"].join("."); // synthetic, built at runtime
+    const raw = [
+      `reporter replayed ${token} after restart`,
+      `HIVRA_ACTIVITY_TOKEN:${token}`,
+      "truncated hvra_otlp_v1.eyJ2IjoxfQ",
+    ].join("\n");
+
+    const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+    expect(redacted).toBe([
+      "reporter replayed [REDACTED] after restart",
+      "HIVRA_ACTIVITY_TOKEN:[REDACTED]",
+      "truncated [REDACTED]",
+    ].join("\n"));
+    expect(redacted).not.toContain("hvra_otlp_v1");
+    expect(redacted).not.toContain("c2lnbmF0dXJlLWZpeHR1cmU");
+  });
+
   it("redacts camelCase secret fields from JSON error bodies", () => {
     const raw = JSON.stringify({
       error: "forbidden",

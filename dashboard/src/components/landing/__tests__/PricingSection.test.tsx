@@ -1,71 +1,48 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import React from "react";
 import { render, screen, within } from "@testing-library/react";
 import PricingSection from "../PricingSection";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import { MARKETING_COPY, SUPPORTED_LOCALES } from "@/lib/i18n";
+import { SUPPORTED_LOCALES } from "@/lib/i18n";
 
-// Use real links and rendering. Animation mocks previously hid the blank-pricing regression.
-describe("PricingSection", () => {
-  it("offers the free platform on the customer's own infrastructure", () => {
-    render(<PricingSection />);
-    const own = within(screen.getByRole("article", { name: "Free platform" }));
-
-    expect(own.getByText("$0")).toBeVisible();
-    expect(own.getByText("platform fee")).toBeVisible();
-    expect(own.getByText("Your server or cloud")).toBeVisible();
-    expect(own.getByRole("link", { name: "Connect your server or cloud" })).toHaveAttribute(
-      "href", "/dashboard/infrastructure",
-    );
-    expect(screen.getByText(/infrastructure and model provider's charges are separate/)).toBeVisible();
-  });
-
-  it("shows paid hosted capacity as an optional addition to the free platform", () => {
-    render(<PricingSection />);
-    const hosted = within(screen.getByRole("article", { name: "Hivra Cloud" }));
-
-    expect(hosted.getByText("Paid")).toBeVisible();
-    expect(hosted.getByText("Billed separately")).toBeVisible();
-    expect(hosted.getByText("Free")).toBeVisible();
-    expect(hosted.getByRole("link", { name: "View hosted options" })).toHaveAttribute(
-      "href", "/dashboard/infrastructure",
-    );
-    expect(screen.getByText(/Adding Hivra Cloud capacity is optional/)).toBeVisible();
-    for (const link of screen.getAllByRole("link")) expect(link).not.toHaveAttribute("target");
-  });
-
-  it("does not market the retired starter-compute, trial or agent-subscription offer", () => {
-    render(<PricingSection />);
-    const pricing = screen.getByRole("region", { name: /The platform is free/ });
-
-    expect(pricing).not.toHaveTextContent(/trial|starter agent|starter compute|concurrent|active agent|vCPU|GB RAM|allowance/i);
-    expect(pricing).not.toHaveTextContent(/\$9\.99|\$19\.99|HermesOS|40%/);
-    expect(screen.queryByRole("article", { name: "Pro" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("article", { name: "Power" })).not.toBeInTheDocument();
-    expect(pricing.querySelector('a[href*="plan="]')).toBeNull();
-  });
-
-  it.each(SUPPORTED_LOCALES)("uses the corrected offer in %s without falling back to old localized tiers", (locale) => {
-    render(<LocaleProvider initialLocale={locale}><PricingSection /></LocaleProvider>);
-    const articles = screen.getAllByRole("article");
-
-    expect(articles).toHaveLength(2);
-    expect(within(articles[0]).getByText("$0")).toBeVisible();
-    expect(within(articles[1]).getByRole("heading", { level: 3, name: "Hivra Cloud" })).toBeVisible();
-    expect(articles[1]).not.toHaveTextContent(/\$\d/);
-    for (const article of articles) {
-      expect(article).toBeVisible();
-      const link = within(article).getByRole("link");
-      expect(link).toBeVisible();
-      expect(link).toHaveAttribute("href", "/dashboard/infrastructure");
+test("locked relaunch ladder includes all resources and computer entitlements", () => {
+  render(<PricingSection />);
+  expect(screen.getByRole("heading",{name:/Pick a size. Use it how you like./})).toBeVisible();
+  for(const [name,price,ram,cpu,storage,computers,windows,support] of [
+    ["Starter","$9.99","4 GB","2","40 GB","1","Not included","Standard"],
+    ["Pro","$19.99","8 GB","4","160 GB","3","Yes","Standard"],
+    ["Studio","$49","16 GB","8","320 GB","Unlimited","Yes","Priority"],
+    ["Max","$99","32 GB","12","640 GB","Unlimited","Yes","Priority"],
+  ]){
+    const card=screen.getByRole("article",{name});
+    expect(card).toHaveTextContent(price);
+    for(const [label,value] of [["RAM",ram],["vCPU",cpu],["Storage",storage],["Computers",computers],["Windows",windows],["Support",support]]){
+      expect(within(card).getByText(label).nextElementSibling).toHaveTextContent(value);
     }
-    for (const retiredTier of MARKETING_COPY[locale].pricing.tiers) {
-      expect(screen.queryByRole("link", { name: retiredTier.ctaLabel })).not.toBeInTheDocument();
-    }
-    if (locale !== "en") {
-      expect(screen.queryByText("The platform is free.")).not.toBeInTheDocument();
-      expect(screen.queryByText("View hosted options")).not.toBeInTheDocument();
-    }
-  });
+  }
+  expect(screen.queryByRole("heading",{name:"Fleet"})).not.toBeInTheDocument();
+  expect(screen.getByRole("link",{name:"View hosted options"})).toHaveAttribute("href","/dashboard/infrastructure");
+});
+test("self-host stays separate and no retired agent quota or trial returns",()=>{
+  const {container}=render(<PricingSection />);
+  expect(container).not.toHaveTextContent(/trial|starter agent|concurrent|Vultr|DigitalOcean|per agent/i);
+  const free = screen.getByRole("article",{name:"Free"});
+  expect(free).toBeVisible();
+  expect(free).toHaveTextContent("Bring your own infrastructure.");
+  expect(free).toHaveTextContent("Hosting and model-provider usage are paid separately.");
+  expect(container).not.toHaveTextContent(/Run one agent or twenty|charge per seat/i);
+  expect(screen.getByText(/Snapshots and clones on every hosted plan/)).toBeVisible();
+  expect(screen.getByText("Annual billing: two months free.")).toBeVisible();
+  expect(screen.getByRole("link",{name:"Explore self-hosting"})).toHaveAttribute("target","_blank");
+});
+test.each(SUPPORTED_LOCALES)("locked ladder stays visible without retired prices in %s",locale=>{
+ render(<LocaleProvider initialLocale={locale}><PricingSection /></LocaleProvider>);
+ expect(screen.getAllByRole("article")).toHaveLength(5);
+ expect(screen.getByRole("heading",{name:"Max"})).toBeVisible();
+});
+
+test("identifies hosted offers as a pricing preview", () => {
+  render(<PricingSection />);
+  expect(screen.getByText("Pricing preview")).toBeVisible();
+  expect(screen.getByText(/are proposed and are not yet available as shown/)).toBeVisible();
 });

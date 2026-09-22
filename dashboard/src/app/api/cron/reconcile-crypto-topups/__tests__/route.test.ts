@@ -4,6 +4,7 @@ import { GET } from "../route";
 import { reconcilePendingCryptoTopUps } from "@/lib/billing/crypto-reconciliation";
 import { sweepPendingCreditDepositReceipts } from "@/lib/billing/credit-deposit-sweep";
 import { sweepPendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-sweep";
+import { reportOpsEvent } from "@/lib/ops-events";
 
 jest.mock("@/lib/billing/crypto-reconciliation", () => ({
   reconcilePendingCryptoTopUps: jest.fn(),
@@ -15,6 +16,11 @@ jest.mock("@/lib/billing/credit-deposit-sweep", () => ({
 
 jest.mock("@/lib/billing/managed-venice-token-sweep", () => ({
   sweepPendingManagedVeniceTokenQuotes: jest.fn(),
+}));
+
+jest.mock("@/lib/ops-events", () => ({
+  ...jest.requireActual("@/lib/ops-events"),
+  reportOpsEvent: jest.fn(async () => null),
 }));
 
 describe("GET /api/cron/reconcile-crypto-topups", () => {
@@ -180,6 +186,49 @@ describe("GET /api/cron/reconcile-crypto-topups", () => {
     });
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("reports per-intent reconciliation failures to the ops feed instead of hiding them in a 200", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (reconcilePendingCryptoTopUps as jest.Mock).mockResolvedValueOnce({
+      ...reconciliationPayload,
+      failed: 1,
+      results: [
+        {
+          status: "failed",
+          referenceId: "bankr_crypto_topup:paid",
+          errorName: "Error",
+          errorMessage: "Base RPC eth_getLogs failed with status 413: eth_getLogs is limited to a 2,000 range",
+        },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "error",
+        title: "USDC top-up reconciliation failed",
+        metadata: expect.objectContaining({
+          failed: 1,
+          sample: [
+            expect.objectContaining({
+              referenceId: "bankr_crypto_topup:paid",
+              errorMessage: expect.stringContaining("413"),
+            }),
+          ],
+        }),
+      })
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("does not raise a reconciliation alert on a clean run", async () => {
+    await GET(makeRequest("Bearer cron-secret"));
+
+    expect(reportOpsEvent).not.toHaveBeenCalled();
   });
 
   it("does not leak backend errors", async () => {

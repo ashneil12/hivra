@@ -60,9 +60,10 @@ requirements, lifecycle commands, provider onboarding and the exact acceptance
 boundary. A live acceptance run from this source checkout created a fresh
 Hetzner computer with the operator's token, prepared it, launched Codex through
 the original agent flow, opened its native interfaces, captured installed-state
-evidence, and removed every provider resource. Repeating that run from the exact
-committed public-source candidate on a clean machine is still a gate; this
-section describes implemented behavior, not final V1 approval.
+evidence, and removed every provider resource. The initial exported-source
+control-plane installation and recovery rehearsal
+also passed. That does not establish every provider/runtime combination or
+final V1 approval; see the [verification status](docs/release/VERIFICATION-STATUS.md).
 
 ## First reference path
 
@@ -95,10 +96,10 @@ npm run dev
 
 Use the risk-based verification rules in [`AGENTS.md`](AGENTS.md) before committing changes.
 
-## Licensing and public-release warning
+## Licensing and release boundaries
 
 Hivra-owned source is available under the [Apache License 2.0](LICENSE). Forks and competing hosted services are permitted; [the trademark policy](TRADEMARKS.md) prevents confusion about who operates or endorses a distribution, not competition.
 
-Third-party dependencies, agent runtimes, images, assets, and services keep their own terms. The root license does not relicense them. Do not publish a release artifact or claim that the complete public-release gate has passed until the required notices, exact artifact inventories, credential rotation, and cleaned-history review in [the roadmap](ROADMAP.md) are complete.
+Third-party dependencies, agent runtimes, images, assets, and services keep their own terms. The root license does not relicense them. The initial reviewed source export is published. Do not publish a release artifact until its required notices, exact inventory, and applicable release checks pass. New source revisions and separately distributed runtime images or installers require their own checks; source publication does not approve those artifacts or establish full V1 acceptance. See [the release boundaries](docs/release/PUBLIC-TRANSITION.md).
 
 Never commit credentials, customer data, production host inventory, or live access details.

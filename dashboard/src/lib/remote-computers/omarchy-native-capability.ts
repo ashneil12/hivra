@@ -25,10 +25,10 @@ const SHA256 = /^[a-f0-9]{64}$/;
 export const OMARCHY_NATIVE_GUARDIAN_SHA256 = "48c453debfb0fc703e180aaddbae5e4b1ac89a1a23db1a35bb3a9b3a03f614ca";
 export const OMARCHY_NATIVE_PREVIOUS_GUARDIAN_SHA256 = "24a89a6d4368971048d9f8d180b2fdb05531f1ae5ba9b574fd8eeaea0925791f";
 export const OMARCHY_NATIVE_OWNERSHIP_SHA256 = "0f988ab03729e381531c923e835f0eaca80d23a77339cb1d13f234780b27f950";
-export const OMARCHY_WEB_INSTALLER_SHA256 = "ff899b97ad3f02b5af9cfc7f3e9429acf894a2d087738d33f5c5fe03b346c3a0";
-export const OMARCHY_WEB_BROKER_SHA256 = "7f71dbd64f725cf0fc688337f62bba919f8b8d0b83152f69d5f8b95fd478419f";
+export const OMARCHY_WEB_INSTALLER_SHA256 = "c8e8987b03be4df32a2decc1ee9344ae8f32191a683f4b2ee9c6ac1a6e0776ed";
+export const OMARCHY_WEB_BROKER_SHA256 = "3bdd0ec4626392ef977eff7cab7765c1f6e6bfe412729e75ffc3bd411f3e997d";
 export const OMARCHY_WEB_ADAPTER_SHA256 = "9272e47af4146a593120d1fea711563449843a0ed8367661b03f54f72ca8c4d1";
-export const OMARCHY_WEB_SERVER_SHA256 = "c91a4a189eaf56cf5734735b4a11f5d6563d837b1bb96c09996d6488bf4df89e";
+export const OMARCHY_WEB_SERVER_SHA256 = "4b7db0d78a176757374b8567b0680e559e93254fb1adaee9848f0f80c9dff034";
 export const OMARCHY_WEB_BROKER_ORIGIN = "https://omarchy-canary.hermesos.cloud";
 
 export const LEGACY_OMARCHY_NATIVE_INSPECTION_PROGRAM = String.raw`import datetime,hashlib,http.client,ipaddress,json,os,pathlib,pwd,re,socket,ssl,stat,subprocess,sys
@@ -388,7 +388,7 @@ for key,path in (('LAYOUT_SERVICE','/opt/hivra/omarchy-web/layout-service.py'),(
  if key not in derived or hashlib.sha256(read_regular(pathlib.Path(path),0,'web_layout_policy',1048576,False)).hexdigest()!=hashlib.sha256(derived[key].encode()).hexdigest(): fail('web_layout_policy_mismatch')
 for unit in ('hivra-omarchy-layout.service','hivra-omarchy-web.service','hivra-omarchy-web-broker.service'):
  if run(['/usr/bin/systemctl','is-active',unit],'web_service',timeout=5).strip()!=b'active': fail('web_service_inactive')
-selkies_image='ghcr.io/selkies-project/selkies/desktop@sha256:395336daf8a8552949da12a969e0d7a0893309a01e65c81fb75bb0cbab3e3756'
+selkies_image='ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b'
 node_image='node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32'
 for name,image in (('hivra-omarchy-web',selkies_image),('hivra-omarchy-web-broker',node_image)):
  raw=run(['/usr/bin/docker','inspect',name],'web_container',timeout=5)
@@ -469,7 +469,7 @@ const Descriptor = z.object({
   observedBoottimeNs: z.string().regex(/^[1-9][0-9]{0,18}$/),
   compositor: z.literal("wayland-hyprland"),
   webBrokerOrigin: z.literal(OMARCHY_WEB_BROKER_ORIGIN),
-  webSelkiesImage: z.literal("ghcr.io/selkies-project/selkies/desktop@sha256:395336daf8a8552949da12a969e0d7a0893309a01e65c81fb75bb0cbab3e3756"),
+  webSelkiesImage: z.literal("ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b"),
   webNodeImage: z.literal("node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32"),
   route: Route,
   privateNetworkReachable: z.literal(true),

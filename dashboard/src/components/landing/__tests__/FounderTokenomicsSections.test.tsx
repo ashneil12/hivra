@@ -2,29 +2,34 @@
 import "@testing-library/jest-dom";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import FounderSection, { FOUNDER_EXCERPTS } from "../FounderSection";
-import TokenomicsSection from "../TokenomicsSection";
+import TokenomicsSection from "../FullTokenomicsSection";
+import CompactTokenomicsSection from "../TokenomicsSection";
 
 const litepaper = readFileSync(path.resolve(__dirname, "../../../../../LITEPAPER.md"), "utf8");
 
-test("the founder quotation preserves the approved words and personal attribution", () => {
-  const { container } = render(<FounderSection />);
-  const quote = container.querySelector("blockquote")!;
-  for (const paragraph of FOUNDER_EXCERPTS) {
-    expect(litepaper).toContain(paragraph);
-    expect(within(quote).getByText(paragraph)).toBeVisible();
-  }
-  expect(screen.getByText("Ash's personal perspective")).toBeVisible();
-  expect(screen.getByText(/End-time prophecy\. Evangelism\./)).toBeVisible();
-  const invitation = screen.getByRole("link", { name: /Read why I'm building Hivra/ });
-  expect(invitation).toHaveAttribute("href", "/docs/litepaper/index.html#founder");
-  expect(invitation).toHaveAttribute("target", "_blank");
-  expect(invitation).toHaveAttribute("rel", "noopener noreferrer");
-  expect(container.querySelector('a[href="/WHY.md"]')).toBeNull();
-  expect(screen.queryByText(/the rest of this page stands on its own/i)).not.toBeInTheDocument();
+test("homepage founder note uses complete Litepaper excerpts and links the full piece", () => {
+ const {container}=render(<FounderSection />);
+ for (const paragraph of FOUNDER_EXCERPTS) { expect(screen.getByText(paragraph)).toBeVisible(); expect(litepaper).toContain(paragraph); }
+ expect(container.querySelectorAll("blockquote p")).toHaveLength(5);
+ expect(screen.getByRole("link",{name:/Read why I'm building Hivra/})).toHaveAttribute("href","/why-hivra");
 });
-
+test("homepage names both tokens and groups migration, uses and Litepaper reading", () => {
+ render(<CompactTokenomicsSection />);
+ expect(screen.getByRole("heading",{name:"$HIVRA"})).toBeVisible();
+ expect(screen.getByText("$HermesOS",{exact:true})).toBeVisible();
+ expect(screen.getByRole("heading",{name:"What happened to HermesOS?"})).toBeVisible();
+ expect(screen.getByText(/separate, optional choice/)).toBeVisible();
+ expect(screen.getByText(/maintain that balance/)).toBeVisible();
+ expect(screen.getByText(/Card payments remain available/)).toBeVisible();
+ expect(screen.getByText("Proposed uses")).toBeVisible();
+ for(const title of ["Computers and Nibbii","Tools and useful work","Security worth testing"]) expect(screen.getByRole("heading",{name:title})).toBeVisible();
+ expect(screen.getByRole("link",{name:"Read the tokenomics"})).toHaveAttribute("href","/tokenomics");
+ expect(screen.getByRole("link",{name:"Read the Litepaper"})).toHaveAttribute("href","/docs/litepaper/index.html#economy");
+ expect(screen.getByRole("link",{name:"Nibbii"})).toHaveAttribute("href","https://nibbii.pet/");
+ screen.getAllByRole("link").forEach(link=>expect(link).toHaveAttribute("rel","noopener noreferrer"));
+});
 test("token access is distinct from an optional claim and does not promise a conversion ratio", () => {
   render(<TokenomicsSection />);
   expect(screen.getByText(/required token quantity is fixed at deposit/)).toBeVisible();
@@ -36,13 +41,11 @@ test("token access is distinct from an optional claim and does not promise a con
   expect(screen.queryByText(/1:1|guaranteed return|buy now/i)).not.toBeInTheDocument();
 });
 
-test("the founder section uses the litepaper wording without an invented faith note", () => {
-  render(<FounderSection />);
-  expect(screen.queryByRole("complementary", { name: "Faith and the future" })).not.toBeInTheDocument();
-  expect(screen.getByText(/scripture already described/)).toBeVisible();
-  expect(screen.getByText(/Someone has to be answerable/)).toBeVisible();
+test("the full founder source retains the faith, accountability and reference paragraphs", () => {
+ const full=readFileSync(path.resolve(__dirname,"../../../../../THOUGHTS.md"),"utf8");
+ for(const text of ["I'm also a Christian", "scripture already described", "Someone has to be answerable", "https://projectzero.google/", "https://www.anthropic.com/"]) expect(full).toContain(text);
+ expect(litepaper).toContain(full.split("\n\n")[1]);
 });
-
 test("proposed uses and treasury retain their boundaries and direct reading links", () => {
   render(<TokenomicsSection />);
   expect(screen.getByText(/migration, new uses and treasury plans are proposals/)).toBeVisible();

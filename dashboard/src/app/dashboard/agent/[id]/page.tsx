@@ -9,6 +9,7 @@ import styles from "./ResourceWorkspace.module.css";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
@@ -62,7 +63,8 @@ type Tab = "chat" | "aeon" | "desktop" | "files" | "git" | "skills" | "telegram"
 // Tabs shown for dashboard-surface agents (Aeon): the embedded dashboard + the
 // box shell + files + manage. No chat/browser/skills/telegram.
 const DASHBOARD_TABS: Tab[] = ["aeon", "desktop", "files", "box", "manage"];
-const COMPUTER_TABS: Tab[] = ["desktop", "files", "box", "manage"];
+const COMPUTER_BASE_TABS: Tab[] = ["desktop", "manage"];
+const COMPUTER_WORKSPACE_TABS: Tab[] = ["files", "box"];
 
 const labelStyle: React.CSSProperties = {
   fontFamily: "var(--font-mono), monospace",
@@ -101,36 +103,22 @@ function Stub({ title, body }: { title: string; body: string }) {
   );
 }
 
-function WindowsWorkspaceGuidance({ surface, onDesktop }: { surface: "files" | "terminal"; onDesktop: () => void }) {
-  return (
-    <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
-        {surface === "files" ? "Use Windows File Explorer" : "Use Windows PowerShell"}
-      </div>
-      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>
-        {surface === "files"
-          ? "Dedicated web file browsing and upload/download are not available for this Windows computer yet. Open Desktop, then click Start inside the remote Windows desktop and search for File Explorer to manage files in Windows."
-          : "A dedicated web terminal is not available for this Windows computer yet. Open Desktop, then click Start inside the remote Windows desktop, type PowerShell, and open Windows PowerShell. Run Get-Location to check your working folder."}
-      </div>
-      <button type="button" onClick={onDesktop}>Open Desktop</button>
-    </div>
-  );
-}
-
-function DisconnectedComputerWorkspaceGuidance({ surface, onDesktop }: { surface: "files" | "terminal"; onDesktop: () => void }) {
-  return (
-    <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
-        {surface === "files" ? "Use Files inside Desktop" : "Use Terminal inside Desktop"}
-      </div>
-      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>
-        {surface === "files"
-          ? "The dedicated web file tool is not connected for this computer. Open Desktop, then use Files inside the remote computer to browse or manage files."
-          : "The dedicated web terminal is not connected for this computer. Open Desktop, then use Terminal inside the remote computer to run commands."}
-      </div>
-      <button type="button" onClick={onDesktop}>Open Desktop</button>
-    </div>
-  );
+function CanonicalizeUnavailableComputerTab({
+  unavailableTab,
+  canonicalTab,
+}: {
+  unavailableTab: Tab | null;
+  canonicalTab: Tab;
+}) {
+  useEffect(() => {
+    if (!unavailableTab) return;
+    const nextURL = new URL(window.location.href);
+    // Do not overwrite a newer selection if navigation changed after render.
+    if (nextURL.searchParams.get("tab") !== unavailableTab) return;
+    nextURL.searchParams.set("tab", canonicalTab);
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+  }, [canonicalTab, unavailableTab]);
+  return null;
 }
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
@@ -744,12 +732,7 @@ export default function AgentPage() {
   }, [agent, id]);
 
   if (flagOn === null) {
-    return (
-      <div role="status" aria-live="polite" style={{ padding: 48, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-muted)" }}>
-        <Loader2 aria-hidden="true" size={16} style={{ animation: "spin 1s linear infinite" }} />
-        <span>Checking availability…</span>
-      </div>
-    );
+    return <LoadingState label="Checking availability…" />;
   }
   if (!flagOn) {
     return <div className={styles.statusPanel}>This preview isn&apos;t enabled here.</div>;
@@ -765,7 +748,7 @@ export default function AgentPage() {
     );
   }
   if (!agent || agent.id !== id) {
-    return <div className={styles.statusPanel}><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /></div>;
+    return <LoadingState label="Opening your workspace…" />;
   }
 
   const def = catalogAgent(agent.type);
@@ -776,11 +759,23 @@ export default function AgentPage() {
   const isGvisorComputer = isComputer && agent.computer_substrate === "gvisor";
   const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
     && agent.computer_profile === "ubuntu-desktop";
+  // A running lifecycle record plus its provisioned chat_url is the durable
+  // workspace capability signal. The surfaces handle transient gateway outages
+  // themselves so navigation does not appear and disappear with live probes.
+  const hasComputerWorkspace = isComputer
+    && agent.status === "running"
+    && agent.computer_profile !== "windows"
+    && Boolean(agent.chat_url?.trim());
+  const computerTabs: Tab[] = isGvisorComputer
+    ? ["manage"]
+    : hasComputerWorkspace
+      ? [...COMPUTER_BASE_TABS, ...COMPUTER_WORKSPACE_TABS]
+      : COMPUTER_BASE_TABS;
   const termLabel = `${def?.name || "Agent"} Terminal`;
   const tabs = TABS
     .filter((t) =>
       isComputer
-        ? isGvisorComputer ? t.id === "manage" : COMPUTER_TABS.includes(t.id)
+        ? computerTabs.includes(t.id)
         : isDashboard
         // Dashboard-surface agents (Aeon, OpenClaw) get the embedded dashboard +
         // box shell + files, plus the live Browser tab for browser-capable ones
@@ -790,7 +785,9 @@ export default function AgentPage() {
         // browser-capable agents even when the runtime has it toggled off.
         : t.id !== "aeon" && (t.id !== "browser" || Boolean(def?.browser)),
     )
-    .map((t) => (t.id === "terminal" ? { ...t, label: termLabel } : t));
+    .map((t) => t.id === "terminal"
+      ? { ...t, label: termLabel }
+      : isComputer && t.id === "box" ? { ...t, label: "Terminal" } : t);
   // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
   // falls back to the dashboard surface.
   // One shared decision with the workspace: resource-landing owns "what does
@@ -810,10 +807,17 @@ export default function AgentPage() {
     // decision rather than hardcoding "desktop" a second time.
     ? isGvisorComputer
       ? "manage"
-      : (COMPUTER_TABS.includes(tab) ? tab : (landing.landing as Tab))
+      : computerTabs.includes(tab)
+        ? tab
+        : landing.landing === "desktop" ? "desktop" : "manage"
     : isDashboard
       ? ((DASHBOARD_TABS.includes(tab) || (tab === "browser" && Boolean(def?.browser))) ? tab : "aeon")
       : tab;
+  const unavailableComputerTab = isComputer
+    && COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
+    && !computerTabs.includes(requestedTab as Tab)
+      ? requestedTab as Tab
+      : null;
   const provisioning = agent.status === "provisioning";
   const activity = agentActivityPresentation(agent, def?.name || "the agent");
   // Every surface verifies the running gateway's auth capability, then POSTs
@@ -836,6 +840,10 @@ export default function AgentPage() {
   return (
     <SurfaceActionProvider store={actionStore}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
+      <CanonicalizeUnavailableComputerTab
+        unavailableTab={unavailableComputerTab}
+        canonicalTab={effectiveTab}
+      />
       {/* Keep identity, switching and work surfaces together. Native chrome owns
           identity on native clients; the existing session components stay below. */}
       <ResourceSurfaceNavigation
@@ -973,7 +981,7 @@ export default function AgentPage() {
           !agent.chat_url ? (
             <Stub title="Dashboard not reachable" body="The box is up but its dashboard endpoint isn't connected yet. Give it a moment." />
           ) : loggedIn === null && def?.connect === "github" ? (
-            <div style={{ padding: 56, textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+            <LoadingState compact label="Checking access…" />
           ) : loggedIn || def?.connect !== "github" ? (
             // No GitHub connect step (OpenClaw, Agent Zero — they run ON the box, not
             // on the user's GitHub) → go straight to the embedded dashboard; the box's
@@ -1002,7 +1010,7 @@ export default function AgentPage() {
               <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
             </div>
           ) : loggedIn === null ? (
-            <div style={{ padding: 56, textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+            <LoadingState compact label="Checking access…" />
           ) : loggedIn ? (
             <HivraChat boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
           ) : (
@@ -1013,11 +1021,7 @@ export default function AgentPage() {
         ) : effectiveTab === "git" ? (
           agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
         ) : effectiveTab === "files" ? (
-          agent.computer_profile === "windows" && agent.status === "running"
-            ? <WindowsWorkspaceGuidance surface="files" onDesktop={() => selectTab("desktop")} />
-            : isComputer && agent.status === "running" && !agent.chat_url
-              ? <DisconnectedComputerWorkspaceGuidance surface="files" onDesktop={() => selectTab("desktop")} />
-            : providerWorkspace && agent.status === "running" && agent.chat_url ? null
+          providerWorkspace && agent.status === "running" && agent.chat_url ? null
             : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
         ) : effectiveTab === "skills" ? (
           agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
@@ -1036,11 +1040,7 @@ export default function AgentPage() {
             <Stub title="Not ready" body="The box isn't running yet — scheduled tasks become available once it's online." />
           )
         ) : effectiveTab === "terminal" || effectiveTab === "box" ? (
-          agent.computer_profile === "windows" && agent.status === "running"
-            ? <WindowsWorkspaceGuidance surface="terminal" onDesktop={() => selectTab("desktop")} />
-            : isComputer && agent.status === "running" && !agent.chat_url
-              ? <DisconnectedComputerWorkspaceGuidance surface="terminal" onDesktop={() => selectTab("desktop")} />
-            : agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The box isn't reachable yet." />
         ) : effectiveTab === "browser" ? (
           browserOn === false ? (
             <BrowserDisabledView

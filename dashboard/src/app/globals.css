@@ -303,6 +303,79 @@ select,
 .animate-spin-slow { animation: spin-slow 2s linear infinite; }
 .animate-kaomoji { animation: kaomoji-wiggle 3s ease-in-out infinite; }
 
+/* Shared agent-chat activity: quiet motion keeps the eye on the current action. */
+.hivra-chat-message,
+.hivra-chat-activity-wrap,
+.hivra-chat-tool-history-list {
+  animation: hivra-chat-activity-in 160ms ease-out both;
+}
+.hivra-chat-activity-wrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.hivra-chat-activity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  margin-bottom: 8px;
+  border-left: 2px solid var(--gold-leaf);
+  padding: 2px 0 2px 9px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.035em;
+}
+.hivra-chat-activity-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--gold-leaf); }
+.hivra-chat-activity-dot.is-running { animation: hivra-chat-activity-pulse 1.4s ease-in-out infinite; }
+.hivra-chat-activity-dot.is-error { background: var(--red, #c0392b); }
+.hivra-chat-activity-dot.is-muted { background: var(--text-muted); }
+.hivra-chat-activity-dot.is-done { background: var(--gold-leaf); }
+.hivra-chat-activity-label { color: var(--ink-black); font-weight: 600; text-transform: uppercase; }
+.hivra-chat-activity-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hivra-chat-spinner { animation: spin 1s linear infinite; }
+.hivra-chat-latest {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 8px 12px;
+  border: 1px solid var(--etched-border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  box-shadow: 0 3px 14px rgb(0 0 0 / 10%);
+  font-size: 12px;
+  cursor: pointer;
+}
+.hivra-chat-latest:hover { border-color: var(--hivra-red-line); }
+.hivra-chat-latest:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 2px; }
+.hivra-chat-composer:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: -2px; }
+.hivra-chat-tool-toggle:focus-visible, .hivra-chat-tool-history > button:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 2px; }
+.hivra-chat-tool-history { margin-top: 8px; border-top: 1px solid var(--etched-border); }
+.hivra-chat-tool-history > button {
+  display: flex; align-items: center; gap: 5px; border: 0; background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: var(--font-mono), monospace;
+  font-size: 10.5px;
+  padding: 5px 0;
+  transition: color 160ms ease, transform 160ms ease;
+}
+.hivra-chat-tool-history > button:hover,
+.hivra-chat-tool-history > button:focus-visible { color: var(--ink-black); }
+.hivra-chat-tool-history-list { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.hivra-chat-turn-state { color: var(--text-muted); font-family: var(--font-mono), monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+@keyframes hivra-chat-activity-in {
+  from { opacity: 0; transform: translate3d(0, 3px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes hivra-chat-activity-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 /* Wallet compute-boost card — entrance + ambient "alive" loops. */
 @keyframes boost-card-in {
   from { opacity: 0; transform: translateY(16px) scale(0.99); }
@@ -331,10 +404,19 @@ select,
 .boost-shine { animation: boost-cta-shine 4.8s ease-in-out 1.6s infinite; }
 
 @media (prefers-reduced-motion: reduce) {
+  .hivra-chat-root *, .hivra-chat-root *::before, .hivra-chat-root *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
   .animate-fade-up { animation: none; filter: none; transform: none; opacity: 1; }
   .boost-card, .boost-glow, .boost-iconwrap, .boost-zap, .boost-shine { animation: none; }
   .boost-card { opacity: 1; transform: none; }
   .boost-shine { display: none; }
+  .hivra-chat-message, .hivra-chat-activity-wrap, .hivra-chat-tool-history-list, .hivra-chat-activity-dot.is-running { animation: none; }
+  .hivra-chat-message, .hivra-chat-activity-wrap, .hivra-chat-tool-history-list { transform: none; opacity: 1; }
+  .hivra-chat-tool-history > button { transition: none; }
+  .hivra-chat-spinner, .hivra-chat-message .animate-bounce { animation: none; }
 }
 
 /* Form-control resets are intentionally absent — see the note at the top of this

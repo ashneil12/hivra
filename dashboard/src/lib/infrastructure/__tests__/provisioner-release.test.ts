@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.09.15.2.json";
+import release from "../../../../provisioner-releases/2026.09.22.1.json";
+import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json";
+import omarchyCursorRelease from "../../../../provisioner-releases/2026.09.21.1.json";
 import providerRelease from "../../../../provisioner-releases/2026.09.08.3.json";
 import {
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION,
+  provisionerSupportsActivityTelemetry,
   provisionerSupportsWindowsInstaller,
   isCompatibleProxmoxProvisionerVersion,
   isCompatibleProviderVmProvisionerVersion,
@@ -27,7 +30,7 @@ it("binds every reviewed portable provisioner asset to the immutable current rel
   }
 });
 
-it.each(["2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2"])("retains predecessor %s across lifecycle, desktop, provider and model-settings gates", version => {
+it.each(["2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.2"])("retains predecessor %s across lifecycle, desktop, provider and model-settings gates", version => {
   expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
   expect(portableProvisionerSupportsCatalogRuntime(version, "linux-desktop")).toBe(true);
   expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
@@ -40,10 +43,27 @@ it("offers fresh provider desktop placement only for the current prepared bundle
     expect(providerProvisionerSupportsCatalogRuntime(version, "linux-desktop")).toBe(false);
 });
 
-it("advertises Windows installation only from the new signed host release", () => {
+it("advertises Windows installation only from the exact reviewed host releases that ship it", () => {
   expect(provisionerSupportsWindowsInstaller(PORTABLE_HIVRA_PROVISIONER_VERSION)).toBe(true);
-  for (const version of ["2026.09.08.2", "2026.09.08.3", "2026.09.07.1"])
+  // The current release must not silently drop the capability from hosts
+  // still on the first admitted release that shipped it.
+  expect(provisionerSupportsWindowsInstaller("2026.09.15.2")).toBe(true);
+  for (const version of ["2026.09.15.1", "2026.09.08.2", "2026.09.08.3", "2026.09.07.1", "2099.01.01.1", undefined])
     expect(provisionerSupportsWindowsInstaller(version)).toBe(false);
+});
+
+it("ships the agent-run reporter only in a new release, never its tests or into the sealed predecessor", () => {
+  const paths = release.files.map(file => file.path);
+  expect(paths).toEqual(expect.arrayContaining(["hivra-agent-trace.py", "hivra-agent-trace.service"]));
+  expect(paths.filter(file => /(^|\/)test_|\.test\./.test(file))).toEqual([]);
+  expect(capacityRelease.version).toBe("2026.09.15.2");
+  expect(capacityRelease.files.map(file => file.path)).not.toContain("hivra-agent-trace.py");
+  // Credentials are issued only to a host bundle known to carry the reporter.
+  expect(provisionerSupportsActivityTelemetry(PORTABLE_HIVRA_PROVISIONER_VERSION)).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.09.15.2")).toBe(false);
+  expect(omarchyCursorRelease.version).toBe("2026.09.21.1");
+  expect(omarchyCursorRelease.files.map(file => file.path)).not.toContain("hivra-agent-trace.py");
+  expect(provisionerSupportsActivityTelemetry("2026.09.21.1")).toBe(false);
 });
 
 it("keeps the retained provider predecessor bound to its independently sealed bundle", () => {

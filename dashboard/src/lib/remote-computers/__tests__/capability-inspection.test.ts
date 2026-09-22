@@ -94,7 +94,7 @@ function omarchyDescriptor(overrides: Record<string, unknown> = {}) {
     observedBoottimeNs: "1234567890",
     compositor: "wayland-hyprland",
     webBrokerOrigin: OMARCHY_WEB_BROKER_ORIGIN,
-    webSelkiesImage: "ghcr.io/selkies-project/selkies/desktop@sha256:395336daf8a8552949da12a969e0d7a0893309a01e65c81fb75bb0cbab3e3756",
+    webSelkiesImage: "ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b",
     webNodeImage: "node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32",
     route: {
       status: "configured-proven",
@@ -165,10 +165,13 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("remote desktop capability inspection", () => {
-  it("pairs captured guest cursors with hidden local cursors only for Omarchy", () => {
+  it("keeps Omarchy cursor pixels out of video while preserving local guest shapes", () => {
     const source = (name: string) => readFileSync(path.join(process.cwd(), "provisioner/remote-desktop", name), "utf8");
     expect(source("install-omarchy-web.py")).toContain("SELKIES_ENABLE_CURSORS=true");
-    expect(source("omarchy-web-server.cjs")).toContain("capturedCursor: true");
+    expect(source("install-omarchy-web.py")).toContain("original_native_cursor(self, False)");
+    expect(source("omarchy-web-server.cjs")).not.toContain("nativeBrowserCursor");
+    expect(source("broker.cjs")).not.toContain("NATIVE_BROWSER_CURSOR");
+    expect(source("omarchy-web-server.cjs")).not.toContain("capturedCursor");
     expect(source("server.cjs")).not.toContain("capturedCursor");
   });
   it("pins the native guardian sources used by session revision admission", () => {
@@ -469,9 +472,11 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
       "e97280bea96549d42fc4e25d8b9880d7fcad2722da950c53fd7810c0c866fb56",
       // Native cursor policy is opt-in; existing Ubuntu session behavior stays admitted.
       "9beeb61195795feb78f86196f5a9b059d1b6828adcbd81f1c00d409642b68cfe",
+      // Prior current release remains session compatible for retained guests.
       "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca",
       "f2707c137c8363f3dfcc539a1f2eade116378c032ef51779c36bc8097b697d46",
       "78be6f62955aceea5e33345e8187efcc4f16fb886c203e54f9ce3ec3b775146e",
+      "6e66475cc695c033c9b2ed568e5ce0cecd3a3b7cbcb75682eb40e59f3020e96d",
       REMOTE_DESKTOP_BUNDLE_REVISION,
       OMARCHY_DESKTOP_SESSION_REVISION,
     ]);

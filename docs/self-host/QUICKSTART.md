@@ -9,9 +9,11 @@ containers, volumes, or networks.
 A live source-checkout acceptance run also created and prepared a fresh Hetzner
 computer, launched Codex through the original agent flow, opened the native
 interfaces, captured the installed-state receipt/SBOM/notices, and removed every
-provider resource. Clean-machine repetition from the exact committed public
-source candidate, provider-agent restart and model inference remain release
-gates.
+provider resource. The initial exported-source control-plane installation and
+recovery rehearsal
+has since passed; see [verification status](../release/VERIFICATION-STATUS.md).
+This does not establish provider-agent restart, model inference, or acceptance
+of every runtime from that export.
 
 Release reviewers can now repeat the local control-plane half from the exact
 committed source archive rather than trusting a developer checkout:
@@ -126,7 +128,12 @@ installation-owned Hivra operator screen. Its session is a signed, expiring,
 HttpOnly, SameSite-strict cookie. The self-host build does not load Clerk's
 browser runtime. Self-hosted `/sign-up` redirects to this operator screen
 instead of implying that the independent installation can create a hosted
-account.
+account. Opening `/` or the commercial blog, feature, comparison, token or
+founder pages leads to `/dashboard`, with operator sign-in when needed. Local
+auth builds send `X-Robots-Tag: noindex, nofollow`, disallow all crawling in
+`robots.txt`, and expose an empty sitemap. These directives discourage search
+indexing; authentication remains the access control. Hosted builds keep the
+public website and blog.
 
 When Local Hivra is created through the macOS app, the app stores the exact
 installation-only operator sign-in in macOS Keychain. It submits those

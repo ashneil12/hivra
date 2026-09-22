@@ -36,7 +36,8 @@ describe("Footer", () => {
   it("links the product, token, status, and stats entries and credits HermesOS", () => {
     render(<Footer />);
 
-    expect(screen.getByRole("link", { name: "Tokenomics" })).toHaveAttribute("href", "/#tokenomics");
+    expect(screen.getByRole("link", { name: "Ecosystem" })).toHaveAttribute("href", "/ecosystem");
+    expect(screen.getByRole("link", { name: "Token" })).toHaveAttribute("href", "/token");
     // Operational status page lives at /status; the live deploy counter is /stats.
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Stats" })).toHaveAttribute("href", "/stats");
@@ -56,7 +57,7 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "Roadmap" })).toHaveAttribute("href", "/roadmap");
   });
 
-  it("exposes computers, hosting and a GitHub release placeholder without inventing a repository", () => {
+  it("exposes computer, hosting and download routes without a dead GitHub link", () => {
     render(<Footer />);
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
     expect(screen.getByRole("link", { name: "Hosting & self-hosting" })).toHaveAttribute("href", "/#hosting");
@@ -82,7 +83,8 @@ describe("Footer", () => {
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
     render(<Footer />);
     expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
-    expect(screen.getByRole("link", { name: "Read the litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
+    expect(screen.queryByText("A place of its own.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Read the litepaper" })).not.toBeInTheDocument();
     const nibbii = screen.getByRole("link", { name: "Nibbii" });
     expect(nibbii).toHaveAttribute("href", "https://nibbii.pet/");
     expect(nibbii).toHaveAttribute("target", "_blank");

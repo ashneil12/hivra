@@ -100,6 +100,12 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     reason: "reserved credits before deleting credit_accounts",
   },
   {
+    table: "crypto_topup_reconciliation_items",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "USDC top-up manual-review queue rows before payment transaction cleanup",
+  },
+  {
     table: "payment_transactions",
     filterColumn: "user_id",
     source: "userId",

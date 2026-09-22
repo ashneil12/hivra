@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { UserButton } from '@clerk/nextjs';
 import { AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import Link from 'next/link';
+import Link from '@/components/ui/NavigationLink';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { useLocale } from '@/components/i18n/LocaleProvider';
@@ -207,7 +207,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <span>Needs attention</span>}<span className={styles.attentionCount}>{attentionCount}</span>
       </Link>}
       <div className={styles.footer}>
-        <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{DASHBOARD_SECONDARY_NAVIGATION.map(renderNavigationItem)}</nav>
+        <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, isWorkspaceShellNavigationEnabled()).map(renderNavigationItem)}</nav>
         <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
         <div className={styles.account}>
           {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}

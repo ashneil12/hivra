@@ -290,9 +290,6 @@ test('requires canonical HTTPS origins, exact identity, admitted transport and b
   assert.throws(() => createRemoteDesktopBroker({ ...base, publicOrigin: `${PUBLIC}/` }));
   assert.throws(() => createRemoteDesktopBroker({ ...base, computerId: 'latest' }));
   assert.throws(() => createRemoteDesktopBroker({ ...base, transport: 'selkies-webrtc' }));
-  for (const nativeBrowserCursor of ['true', 1, null]) {
-    assert.throws(() => createRemoteDesktopBroker({ ...base, nativeBrowserCursor }));
-  }
   for (const controlBypassSecret of ['short', 'contains space 1234567890', 'a'.repeat(257), null]) {
     assert.throws(
       () => createRemoteDesktopBroker({ ...base, controlBypassSecret }),
@@ -647,8 +644,8 @@ test('generated handoff accepts a painted pinned Selkies canvas but rejects stat
   assert.ok(posts.some(message => message.type === 'hivra.remote-desktop.disconnected.v1'));
 });
 
-for (const nativeBrowserCursor of [false, true]) test(`generated handoff script reports trusted measurements and cursor policy native=${nativeBrowserCursor}`, async () => {
-  const html = handoffHtml(CONTROL, nativeBrowserCursor);
+test('generated handoff script reports trusted measurements and preserves guest-shaped local cursors', async () => {
+  const html = handoffHtml(CONTROL);
   const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
   const posts = [];
   const windowListeners = new Map();
@@ -753,8 +750,8 @@ for (const nativeBrowserCursor of [false, true]) test(`generated handoff script 
   });
 });
 
-for (const ending of ['pagehide', 'transport-close']) test(`Omarchy native cursor overrides reactive inline important without looping and cleans up on ${ending}`, async t => {
-  const dom = new JSDOM(handoffHtml(CONTROL, true), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
+for (const ending of ['pagehide', 'transport-close']) test(`Omarchy preserves local guest cursor shapes with one renderer on ${ending}`, async t => {
+  const dom = new JSDOM(handoffHtml(CONTROL), { url: `${PUBLIC}/desktop/handoff`, runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const window = dom.window;
   const desktop = window.document.getElementById('desktop');
@@ -769,13 +766,6 @@ for (const ending of ['pagehide', 'transport-close']) test(`Omarchy native curso
   const transportListeners = new Map();
   window.fetch = async () => ({ status: 204, redirected: false });
   window.parent.postMessage = () => {};
-  let mutations = 0;
-  let disconnects = 0;
-  const NativeObserver = window.MutationObserver;
-  window.MutationObserver = class extends NativeObserver {
-    constructor(callback) { super(records => { mutations += 1; callback(records); }); }
-    disconnect() { disconnects += 1; super.disconnect(); }
-  };
   window.eval(window.document.querySelector('script').textContent);
   window.dispatchEvent(new window.MessageEvent('message', { origin: CONTROL, source: window.parent,
     data: { type: 'hivra.remote-desktop.handoff.v2', sessionId: SESSION_ID, exchangeCode: EXCHANGE_CODE, verifier: VERIFIER, streamingMode: 'hq' } }));
@@ -793,25 +783,17 @@ for (const ending of ['pagehide', 'transport-close']) test(`Omarchy native curso
   }
   assert.equal(typeof transportListeners.get('close'), 'function');
   assert.deepEqual(messages, [{ type: 'setUseBrowserCursors', value: true }]);
-  assert.equal(overlay.style.getPropertyValue('cursor'), 'default');
+  assert.equal(overlay.style.getPropertyValue('cursor'), 'url(guest.png) 12 12,auto');
   assert.equal(overlay.style.getPropertyPriority('cursor'), 'important');
-  for (const cursor of ['url(updated.png) 12 12, auto', 'none']) {
-    const before = mutations;
+  for (const cursor of ['pointer', 'text', 'ew-resize', 'url(updated.png) 12 12, auto', 'none']) {
     overlay.style.setProperty('cursor', cursor, 'important');
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(overlay.style.getPropertyValue('cursor'), 'default');
+    assert.equal(overlay.style.getPropertyValue('cursor'), cursor);
     assert.equal(overlay.style.getPropertyPriority('cursor'), 'important');
-    assert.ok(mutations - before <= 2, 'own repair must not sustain an observer loop');
   }
   if (ending === 'pagehide') window.dispatchEvent(new window.Event('pagehide'));
   else transportListeners.get('close')();
-  assert.equal(disconnects, 1);
   assert.equal(desktop.isConnected, false);
-  const before = mutations;
-  overlay.style.setProperty('cursor', 'none', 'important');
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(mutations, before);
-  assert.equal(overlay.style.getPropertyValue('cursor'), 'none');
 });
 
 test('one-time exchange keeps the bearer guest-side and activates isolated input', async t => {

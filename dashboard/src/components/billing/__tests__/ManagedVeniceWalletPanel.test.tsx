@@ -33,8 +33,23 @@ const summary = {
 };
 
 describe("ManagedVeniceWalletPanel", () => {
+  it("keeps card payment primary and token actions behind intentional disclosure", () => {
+    render(<ManagedVeniceWalletPanel summary={summary} tokenPaymentsEnabled onDeposit={jest.fn()} />);
+    expect(screen.getByRole("button", { name: "Top up by card" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Top up with $HermesOS" })).not.toBeVisible();
+    expect(screen.getByText("1,000 Hivra")).toBeVisible();
+    expect(screen.getByText("Launch bonus cap: $187 of $250 used")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Optional token top-ups"));
+    expect(screen.getByRole("button", { name: "Top up with $HermesOS" })).toBeVisible();
+  });
+  it("keeps existing balances visible but offers no disabled token payment flow", () => {
+    render(<ManagedVeniceWalletPanel summary={summary} onDeposit={jest.fn()} />);
+    expect(screen.getByText("1,000 Hivra")).toBeVisible();
+    expect(screen.queryByText("Optional token top-ups")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Top up by card" })).toBeVisible();
+  });
   it("renders Hivra and card balances side by side", () => {
-    render(<ManagedVeniceWalletPanel summary={summary} />);
+    render(<ManagedVeniceWalletPanel summary={summary} tokenPaymentsEnabled />);
 
     expect(screen.getByText("$HermesOS wallet")).toBeInTheDocument();
     expect(screen.getByText("1,000 Hivra")).toBeInTheDocument();
@@ -44,7 +59,7 @@ describe("ManagedVeniceWalletPanel", () => {
   });
 
   it("shows launch cap usage and the 20% bonus nudge while eligible", () => {
-    render(<ManagedVeniceWalletPanel summary={summary} />);
+    render(<ManagedVeniceWalletPanel summary={summary} tokenPaymentsEnabled />);
 
     expect(screen.getByText("Launch bonus cap: $187 of $250 used")).toBeInTheDocument();
     expect(screen.getByText("Pay with $HermesOS for up to 20% more credits")).toBeInTheDocument();
@@ -53,6 +68,7 @@ describe("ManagedVeniceWalletPanel", () => {
   it("shows the 10% standard rate after cap or kill-switch step-down", () => {
     render(
       <ManagedVeniceWalletPanel
+        tokenPaymentsEnabled
         summary={{
           ...summary,
           discount: {
@@ -69,8 +85,9 @@ describe("ManagedVeniceWalletPanel", () => {
 
   it("opens managed Venice wallet-specific deposit actions", () => {
     const onDeposit = jest.fn();
-    render(<ManagedVeniceWalletPanel summary={summary} onDeposit={onDeposit} />);
+    render(<ManagedVeniceWalletPanel summary={summary} tokenPaymentsEnabled onDeposit={onDeposit} />);
 
+    fireEvent.click(screen.getByText("Optional token top-ups"));
     fireEvent.click(screen.getByRole("button", { name: /top up with \$hermesos/i }));
     fireEvent.click(screen.getByRole("button", { name: /top up by card/i }));
 

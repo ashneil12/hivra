@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { LanguageSwitcher, useLocale } from "@/components/i18n/LocaleProvider";
 import styles from "../public-site/public-site.module.css";
 import SourceLink from "../public-site/SourceLink";
+import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
 
 interface LandingHeaderProps {
   /** Auth is resolved by the route; public pages do not mount ClerkProvider. */
@@ -25,9 +26,8 @@ export default function LandingHeader({ isSignedIn = false }: LandingHeaderProps
     { label: "Agents", href: "/#agents" },
     { label: "Computers", href: "/#computers" },
     { label: copy.nav.pricing, href: "/#pricing" },
-    { label: "Open source", href: "/#open-source" },
     { label: "Blog", href: "/blog" },
-    { label: "Tokenomics", href: "/#tokenomics" },
+    { label: "Ecosystem", href: "/ecosystem" },
     { label: "Litepaper", href: "/docs/litepaper/" },
   ];
 
@@ -69,7 +69,7 @@ export default function LandingHeader({ isSignedIn = false }: LandingHeaderProps
           {links.map(({ label, href }) => <Link key={href} href={href}>{label}</Link>)}
         </nav>
         <div className={styles.headerTools}>
-          <SourceLink className={styles.headerSource} />
+          {PUBLIC_PROJECT_LINKS.repository.status === "published" && <SourceLink className={styles.headerSource} />}
           <div className={styles.themeControl}><ThemeToggle /></div>
           <div className={styles.desktopLanguage}><LanguageSwitcher presentation="modal" /></div>
           <div className={styles.mobileLanguage}><LanguageSwitcher presentation="modal" compact /></div>
@@ -108,7 +108,7 @@ export default function LandingHeader({ isSignedIn = false }: LandingHeaderProps
             </Link>
           ))}
         </nav>
-        <div className={styles.mobileExtras}><Link href="/#downloads" onClick={() => setMenuOpen(false)}>Download the app</Link><Link href="/#founder" onClick={() => setMenuOpen(false)}>Why I’m building Hivra</Link><Link href="/docs/litepaper/" onClick={() => setMenuOpen(false)}>Read the litepaper</Link><SourceLink /></div>
+        <div className={styles.mobileExtras}><Link href="/#founder" onClick={() => setMenuOpen(false)}>Why I’m building Hivra</Link><Link href="/docs/litepaper/" onClick={() => setMenuOpen(false)}>Read the litepaper</Link>{PUBLIC_PROJECT_LINKS.repository.status === "published" && <SourceLink />}</div>
         {accountLinks(true)}
       </dialog>
       <noscript>

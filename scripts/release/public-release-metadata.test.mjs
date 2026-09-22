@@ -102,7 +102,10 @@ test('release policies preserve third-party and incomplete-release boundaries', 
   assert.doesNotMatch(readme, /No root open-source license has been selected/i);
 
   const boundary = read('docs/OPEN-SOURCE-BOUNDARY.md');
-  assert.match(boundary, /does not complete Phase 0/i);
+  assert.match(boundary, /initial reviewed source export is published/i);
+  assert.match(boundary, /does not approve every runtime, image, installer, or\s+future revision/i);
+  assert.match(boundary, /do not publish history that has not passed sensitive-data review/i);
+  assert.doesNotMatch(boundary, /public release remains blocked/i);
   assert.doesNotMatch(boundary, /No root open-source license is currently committed/i);
 
   const runtime = read('docs/release/RUNTIME-DISTRIBUTION.md');

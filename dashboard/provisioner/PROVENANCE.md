@@ -499,6 +499,11 @@ not inherit this capability. Dashboard delivery does not install this release;
 the owner must explicitly prepare the host and complete a fresh preflight before
 Windows setup is selectable.
 
+Release `2026.09.21.1` updates the pinned Omarchy Selkies transport so guest
+cursor shapes are sent as metadata and rendered by the local browser pointer,
+while native cursor pixels remain excluded from the delayed video stream. It
+also preserves release `2026.09.15.2` and every earlier manifest unchanged.
+
 Release `2026.09.15.2` adds one host-capacity admission helper shared by launch,
 start, restart, and resize. It counts only active non-template guest floors,
 keeps a configurable host reserve, rejects a guest maximum larger than the
@@ -507,3 +512,27 @@ density. Observation is the legacy default. It never resizes or evicts an
 existing guest, and a reducing resize remains available on an already
 overcommitted host. Inventory and per-guest status errors fail closed, and an
 uncapped QEMU guest's CPU maximum counts every configured socket.
+
+Release `2026.09.22.1` builds on `2026.09.21.1` and adds the agent-run reporter
+for Claude Code and Codex computers on Proxmox. `hivra-agent-trace.py` and
+`hivra-agent-trace.service` read only the structure of the agent's own session
+transcripts (task start and end, tool name, duration and a structured outcome)
+and deliver bounded OTLP records to the dashboard ingest with a per-computer
+seven-day credential that the reporter renews itself; prompts, replies,
+commands, tool inputs and tool outputs are never recorded or sent. Parse cost
+is bounded per line, a line that crashes the reporter is skipped on the next
+start, and heartbeats stop while delivery is failing so a stuck reporter shows
+as a gap rather than as healthy. The host launch script stages the credential
+from the existing root-only secret handoff only when this bundle is present and
+emits launch document version 4 only for Claude Code and Codex; other runtimes
+keep the unchanged version 1-3 documents, and an older dashboard that writes no
+credential still launches. The guest installer validates the credential
+strictly and passes it to the reporter's installer on stdin only; installing
+the reporter is fail-open, so a reporter failure never fails a launch or a
+start, and both paths print one `HIVRA_ACTIVITY_COLLECTOR` status line that the
+control plane records. Start, restart and resize reinstall the reporter from a
+fresh VMID-bound credential file, which also brings computers launched before
+this release into reporting. The runtime receipt does not list the reporter,
+because it is written before the reporter is installed. This is agent-reported
+evidence, not an operating-system audit, and this source release does not
+deploy, install, or establish Canary acceptance.

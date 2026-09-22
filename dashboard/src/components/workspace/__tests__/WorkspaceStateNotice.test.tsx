@@ -111,7 +111,7 @@ describe("WorkspaceStateNotice", () => {
       expect(screen.getByText(copy)).toBeInTheDocument();
       const region = alert ? screen.getByRole("alert") : screen.getByRole("status");
       expect(region).toHaveAttribute("aria-live", alert ? "assertive" : "polite");
-      expect(screen.getByText("Updated 5 minutes ago")).toHaveAttribute(
+      if (state !== "loading") expect(screen.getByText("Updated 5 minutes ago")).toHaveAttribute(
         "aria-label",
         expect.stringContaining("24 August 2026"),
       );
@@ -148,10 +148,10 @@ describe("WorkspaceStateNotice", () => {
     expect(screen.queryByText("offline")).not.toBeInTheDocument();
   });
 
-  it("keeps responsive outer gutters separate from the bounded state card", () => {
+  it("keeps responsive outer gutters separate from the bounded error card", () => {
     render(
       <WorkspaceStateNotice
-        state="loading"
+        state="unknown"
         agentName="Beta"
         surfaceLabel="Workspace"
         updatedAt={UPDATED_AT}

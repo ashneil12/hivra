@@ -7,6 +7,7 @@
 // rooted in their shared folder; legacy token-less boxes stay read-only.
 
 import { useCallback, useEffect, useState } from "react";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { Folder, FileText, CornerLeftUp, Loader2, AlertTriangle, X, RefreshCw, Pencil, Check } from "lucide-react";
 
 import { listBoxFiles, readBoxFile, writeBoxFile, type BoxFileEntry } from "@/lib/hivra/agent-api";
@@ -92,7 +93,7 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <div style={{ width: file ? 340 : "100%", flexShrink: 0, overflowY: "auto", borderRight: file ? "1px solid var(--etched-border)" : "none" }}>
           {loading ? (
-            <div style={{ padding: 40, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>
+            <LoadingState compact label="Loading files…" />
           ) : error ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px", color: "#e06c5a", fontSize: 13 }}><AlertTriangle size={16} /> {error}</div>
           ) : entries.length === 0 ? (

@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadingState } from "@/components/ui/LoadingState";
+
 import {
   useCallback,
   useEffect,
@@ -792,10 +794,7 @@ export function UnifiedWorkspace({
                     )}
               </SurfacePanel>
             ) : workspaceAgents.loading ? (
-              <WorkspaceState
-                title="Loading your agents…"
-                body="The workspace will open after both agent sources respond."
-              />
+              <LoadingState label="Loading your agents…" />
             ) : bothFailed && empty ? (
               <WorkspaceState
                 title="We couldn't load your agents"

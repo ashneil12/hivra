@@ -22,10 +22,10 @@ function getTwitterValue(metadataValue: unknown, key: string): unknown {
 }
 
 describe('route Open Graph metadata', () => {
-  it('describes the free tier as live on the homepage metadata', () => {
-    expect(homeMetadata.description).toContain('Free tier is live');
+  it('reflects the current homepage computer choices in metadata', () => {
+    expect(homeMetadata.description).toContain('Launch Ubuntu, Windows or Omarchy');
     expect(String(homeMetadata.description)).not.toMatch(/launching now/i);
-    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Free tier is live');
+    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, Windows or Omarchy');
   });
 
   it('keeps the shared website Open Graph defaults on every static route that overrides openGraph metadata', () => {

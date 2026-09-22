@@ -16,7 +16,6 @@ const broker = createRemoteDesktopBroker({
   computerKind: required('HIVRA_REMOTE_DESKTOP_COMPUTER_KIND'),
   computerId: required('HIVRA_REMOTE_DESKTOP_COMPUTER_ID'),
   transport: required('HIVRA_REMOTE_DESKTOP_TRANSPORT'),
-  capturedCursor: true,
   upstreamPort: 8080,
   basicAuthorization: `Basic ${readFileSync(required('HIVRA_REMOTE_DESKTOP_BASIC_AUTH_FILE'), 'ascii').trim()}`,
   statePath: required('HIVRA_REMOTE_DESKTOP_STATE_FILE'),
