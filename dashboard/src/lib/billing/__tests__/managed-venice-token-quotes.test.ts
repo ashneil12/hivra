@@ -12,154 +12,16 @@ import {
 } from "@/lib/billing/managed-venice-token-quotes";
 import { MANAGED_VENICE_HIDDEN_USER_BONUS_CAP_MICRO_USD } from "@/lib/venice/managed-credit-topup";
 
-type Row = Record<string, unknown>;
+import {
+  MANAGED_VENICE_TOKEN_DEPOSIT_REASONS,
+  managedVeniceTokenTransferDedupeKey,
+} from "@/lib/billing/managed-venice-token-quotes";
+import { createManagedVeniceMemoryDb } from "@/test-utils/managed-venice-memory-db";
 
-function createQuery(rows: Row[]) {
-  const filters: Array<[string, unknown]> = [];
-  const query: {
-    eq: (column: string, value: unknown) => typeof query;
-    order: (column: string, options?: { ascending?: boolean }) => typeof query;
-    limit: (count: number) => typeof query;
-    single: () => Promise<{ data: Row | null; error: null }>;
-    maybeSingle: () => Promise<{ data: Row | null; error: null }>;
-    then: Promise<{ data: Row[]; error: null }>["then"];
-  } = {} as typeof query;
-
-  let orderedBy: { column: string; ascending: boolean } | null = null;
-  let rowLimit: number | null = null;
-
-  function filtered() {
-    let result = rows.filter((row) =>
-      filters.every(([column, value]) => row[column] === value)
-    );
-    if (orderedBy) {
-      const order = orderedBy;
-      result = [...result].sort((left, right) => {
-        const leftValue = String(left[order.column] ?? "");
-        const rightValue = String(right[order.column] ?? "");
-        const comparison = leftValue.localeCompare(rightValue);
-        return order.ascending ? comparison : -comparison;
-      });
-    }
-    return rowLimit === null ? result : result.slice(0, rowLimit);
-  }
-
-  query.eq = (column, value) => {
-    filters.push([column, value]);
-    return query;
-  };
-  query.order = (column, options) => {
-    orderedBy = { column, ascending: options?.ascending ?? true };
-    return query;
-  };
-  query.limit = (count) => {
-    rowLimit = count;
-    return query;
-  };
-  query.single = async () => ({ data: filtered()[0] ?? null, error: null });
-  query.maybeSingle = async () => ({ data: filtered()[0] ?? null, error: null });
-  query.then = (resolve, reject) =>
-    Promise.resolve({ data: filtered(), error: null }).then(resolve, reject);
-
-  return query;
-}
-
-function createUpdate(rows: Row[], patch: Row) {
-  const filters: Array<[string, unknown]> = [];
-  const query: {
-    eq: (column: string, value: unknown) => typeof query;
-    select: () => { single: () => Promise<{ data: Row | null; error: null }> };
-    then: Promise<{ error: null }>["then"];
-  } = {} as typeof query;
-
-  function applyPatch() {
-    let last: Row | null = null;
-    for (const row of rows) {
-      if (filters.every(([column, value]) => row[column] === value)) {
-        Object.assign(row, patch);
-        last = row;
-      }
-    }
-    return last;
-  }
-
-  query.eq = (column, value) => {
-    filters.push([column, value]);
-    return query;
-  };
-  query.select = () => ({
-    single: async () => ({ data: applyPatch(), error: null }),
-  });
-  query.then = (resolve, reject) =>
-    Promise.resolve(applyPatch()).then(() => ({ error: null })).then(resolve, reject);
-
-  return query;
-}
-
+// Shared memory DB: real filters, compare-and-set updates that report affected
+// rows, and the production unique indexes (23505) on the venice tables.
 function createMemoryDb() {
-  const tables: Record<string, Row[]> = {
-    managed_venice_wallet_accounts: [],
-    managed_venice_token_quotes: [],
-    managed_venice_token_lots: [],
-    managed_venice_financial_events: [],
-    managed_venice_reconciliation_items: [],
-    managed_venice_platform_state: [],
-  };
-
-  function insertRow(tableName: string, row: Row) {
-    const table = tables[tableName];
-    const stored = {
-      id: row.id ?? `${tableName}_${table.length + 1}`,
-      created_at: row.created_at ?? new Date(2026, 0, table.length + 1).toISOString(),
-      updated_at: row.updated_at ?? new Date(2026, 0, table.length + 1).toISOString(),
-      ...row,
-    };
-    table.push(stored);
-    return stored;
-  }
-
-  function table(name: string) {
-    const rows = tables[name];
-    if (!rows) throw new Error(`Unexpected table ${name}`);
-
-    return {
-      insert: (row: Row) => {
-        const stored = insertRow(name, row);
-        return {
-          select: () => ({
-            single: async () => ({ data: stored, error: null }),
-          }),
-          then: (
-            resolve: (value: { data: Row; error: null }) => unknown,
-            reject?: (reason: unknown) => unknown
-          ) => Promise.resolve({ data: stored, error: null }).then(resolve, reject),
-        };
-      },
-      upsert: (row: Row, options?: { onConflict?: string }) => {
-        const conflictColumns = (options?.onConflict || "id")
-          .split(",")
-          .map((column) => column.trim());
-        const existing = rows.find((candidate) =>
-          conflictColumns.every((column) => candidate[column] === row[column])
-        );
-        const stored = existing ? Object.assign(existing, row) : insertRow(name, row);
-
-        return {
-          select: () => ({
-            single: async () => ({ data: stored, error: null }),
-          }),
-        };
-      },
-      select: () => createQuery(rows),
-      update: (patch: Row) => createUpdate(rows, patch),
-    };
-  }
-
-  return {
-    db: { from: table },
-    tables,
-    insertRow,
-  };
+  return createManagedVeniceMemoryDb();
 }
 
 const now = new Date("2026-05-12T12:00:00.000Z");
@@ -595,12 +457,30 @@ describe("managed Venice token deposit quotes", () => {
       db
     );
 
-    // No second lot => no double credit. Quote converges to settled.
+    // No second lot => no double credit. The quote converges to settled ON
+    // THE LOT'S TX (0xfirst): the retry's different tx is never recorded as the
+    // settlement, never gets its own deposit event, and is surfaced once for
+    // review instead of being silently absorbed.
+    const settledQuote = tables.managed_venice_token_quotes.find((row) => row.id === quote.id)!;
     expect(tables.managed_venice_token_lots).toHaveLength(1);
     expect(retry.status).toBe("settled");
+    expect(settledQuote.status).toBe("settled");
+    expect(settledQuote.transaction_hash).toBe(tables.managed_venice_token_lots[0].transaction_hash);
+    expect(settledQuote.transaction_hash).toBe("0xfirst");
     expect(
-      tables.managed_venice_token_quotes.find((row) => row.id === quote.id)!.status
-    ).toBe("settled");
+      tables.managed_venice_financial_events
+        .filter((event) => event.event_type === "token_deposit")
+        .map((event) => event.idempotency_key)
+    ).toEqual([`managed_venice_token_deposit:${quote.id}:0xfirst`]);
+    expect(
+      tables.managed_venice_financial_events.filter((event) => event.event_type === "subsidy_applied")
+    ).toHaveLength(0);
+    expect(tables.managed_venice_reconciliation_items).toEqual([
+      expect.objectContaining({
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xsecond", null),
+      }),
+    ]);
   });
 
   it("settles a USD-targeted $HermesOS top-up with bonus credits and subsidy accounting", async () => {

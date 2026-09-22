@@ -1,4 +1,5 @@
-import { requireDb } from "@/lib/billing/db-utils";
+import { metadataRecord, requireDb } from "@/lib/billing/db-utils";
+import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   HERMESOS_TOKEN_DECIMALS,
@@ -41,18 +42,47 @@ export const MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS = 500;
 export const MANAGED_VENICE_MAX_OVERSEND_NUMERATOR = 2n;
 export const MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR = 1n;
 
-type ManagedVeniceTokenQuoteStatus =
+export type ManagedVeniceTokenQuoteStatus =
   | "active"
   | "settled"
   | "expired"
   | "manual_review_required"
   | "cancelled";
 
+// Statuses a quote can still be settled, reviewed, or retired from. Every
+// status transition below is a compare-and-set on this set, so a quote that is
+// already settled / in review / cancelled can never be moved again.
+const OPEN_QUOTE_STATUSES = ["active", "expired"] as const;
+
+// Reconciliation item reasons for token deposits. Every item for an on-chain
+// transfer carries one dedupe key per transfer (see
+// managedVeniceTokenTransferDedupeKey), so the same transfer is surfaced once
+// regardless of which reason or code path saw it first.
+export const MANAGED_VENICE_TOKEN_DEPOSIT_REASONS = {
+  underpaid: "managed_venice_token_deposit_underpaid",
+  amountMismatch: "managed_venice_token_deposit_amount_mismatch",
+  outsideQuoteWindow: "managed_venice_token_deposit_outside_quote_window",
+  replayedAfterSettlement: "managed_venice_token_deposit_replayed_after_settlement",
+  extraTransfer: "managed_venice_token_deposit_extra_transfer",
+  unattributedLateTransfer: "managed_venice_token_deposit_unattributed_late_transfer",
+  // A transfer delivered for a quote already in review or cancelled that would
+  // otherwise have qualified (in window, in band).
+  afterQuoteClosed: "managed_venice_token_deposit_after_quote_closed",
+  // A credited lot whose tx is already bound to a different quote (legacy
+  // cross-quote capture), so this quote can never be flipped to settled.
+  claimConflict: "managed_venice_token_deposit_claim_conflict",
+} as const;
+
+export type ManagedVeniceTokenDepositReason =
+  (typeof MANAGED_VENICE_TOKEN_DEPOSIT_REASONS)[keyof typeof MANAGED_VENICE_TOKEN_DEPOSIT_REASONS];
+
 type QueryError = { code?: string; message?: string } | null;
 
 type DbChain = {
   select: (...args: unknown[]) => DbChain;
   eq: (...args: unknown[]) => DbChain;
+  neq: (...args: unknown[]) => DbChain;
+  in: (...args: unknown[]) => DbChain;
   order: (...args: unknown[]) => DbChain;
   limit: (...args: unknown[]) => DbChain;
   single: () => Promise<{ data: unknown; error: QueryError }>;
@@ -67,11 +97,13 @@ type DbInsertChain = {
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
 
+// update(...).<filters>.select() resolves to the AFFECTED rows, which is how
+// the compare-and-set transitions below detect a lost race (0 rows).
 type DbUpdateFilter = {
   eq: (...args: unknown[]) => DbUpdateFilter;
-  select?: (...args: unknown[]) => {
-    single: () => Promise<{ data: unknown; error: QueryError }>;
-  };
+  in: (...args: unknown[]) => DbUpdateFilter;
+  is: (...args: unknown[]) => DbUpdateFilter;
+  select: (...args: unknown[]) => PromiseLike<{ data?: unknown; error: QueryError }>;
   then: Promise<{ error: QueryError }>["then"];
 };
 
@@ -131,6 +163,22 @@ export interface ManagedVeniceTokenQuote {
   bonusValueMicroUsd: number;
   launchBonusMicroUsd: number;
   standardBonusMicroUsd: number;
+  // The tx this quote durably claimed (step 1 of settlement) and the values it
+  // will be credited with. Present while a claimed quote is being completed and
+  // kept on settled quotes as the audit record of what was credited.
+  settlementClaim?: ManagedVeniceTokenSettlementClaim | null;
+}
+
+export interface ManagedVeniceTokenSettlementClaim {
+  transactionHash: string;
+  logIndex: number | null;
+  tokenAmountRaw: string;
+  observedAt: string;
+  blockTimestamp: string | null;
+  paidValueMicroUsd: number;
+  creditValueMicroUsd: number;
+  bonusValueMicroUsd: number;
+  claimedAt: string;
 }
 
 const SELECT_COLUMNS =
@@ -291,7 +339,44 @@ function asQuote(row: TokenQuoteRow): ManagedVeniceTokenQuote {
     bonusValueMicroUsd,
     launchBonusMicroUsd,
     standardBonusMicroUsd,
+    settlementClaim: readSettlementClaim(metadata.settlementClaim),
   };
+}
+
+function readSettlementClaim(value: unknown): ManagedVeniceTokenSettlementClaim | null {
+  const claim = metadataRecord(value);
+  const numberField = (field: unknown) =>
+    typeof field === "number" && Number.isFinite(field) ? field : null;
+  const paidValueMicroUsd = numberField(claim.paidValueMicroUsd);
+  const creditValueMicroUsd = numberField(claim.creditValueMicroUsd);
+  const bonusValueMicroUsd = numberField(claim.bonusValueMicroUsd);
+  if (
+    typeof claim.transactionHash !== "string" ||
+    !claim.transactionHash ||
+    typeof claim.tokenAmountRaw !== "string" ||
+    !/^\d+$/.test(claim.tokenAmountRaw) ||
+    typeof claim.observedAt !== "string" ||
+    paidValueMicroUsd === null ||
+    creditValueMicroUsd === null ||
+    bonusValueMicroUsd === null
+  ) {
+    return null;
+  }
+  return {
+    transactionHash: claim.transactionHash,
+    logIndex: normalizeLogIndex(claim.logIndex),
+    tokenAmountRaw: claim.tokenAmountRaw,
+    observedAt: claim.observedAt,
+    blockTimestamp: typeof claim.blockTimestamp === "string" ? claim.blockTimestamp : null,
+    paidValueMicroUsd,
+    creditValueMicroUsd,
+    bonusValueMicroUsd,
+    claimedAt: typeof claim.claimedAt === "string" ? claim.claimedAt : claim.observedAt,
+  };
+}
+
+function normalizeLogIndex(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 export function calculateManagedVeniceLockedValueMicroUsd(params: {
@@ -434,10 +519,17 @@ function topUpMetadata(quote: ManagedVeniceTopUpQuoteMicroUsd) {
   };
 }
 
-async function loadManagedVeniceTokenQuoteById(
+interface ManagedVeniceTokenQuoteRecord {
+  quote: ManagedVeniceTokenQuote;
+  // Raw metadata so every write can MERGE into it instead of replacing it
+  // (primaryRaw / crossCheckRaw / managedVeniceTopUp must survive).
+  metadata: Record<string, unknown>;
+}
+
+async function loadManagedVeniceTokenQuoteRecord(
   db: SupabaseLike,
   quoteId: string
-): Promise<ManagedVeniceTokenQuote | null> {
+): Promise<ManagedVeniceTokenQuoteRecord | null> {
   const { data, error } = await table(db, "managed_venice_token_quotes")
     .select(SELECT_COLUMNS)
     .eq("id", quoteId)
@@ -446,7 +538,9 @@ async function loadManagedVeniceTokenQuoteById(
   if (error) {
     throw new Error(error.message || "Failed to load managed Venice token quote");
   }
-  return data ? asQuote(data as TokenQuoteRow) : null;
+  if (!data) return null;
+  const row = data as TokenQuoteRow;
+  return { quote: asQuote(row), metadata: metadataRecord(row.metadata) };
 }
 
 export async function loadManagedVeniceTokenQuoteForUser(
@@ -470,66 +564,192 @@ export async function loadManagedVeniceTokenQuoteForUser(
   return data ? asQuote(data as TokenQuoteRow) : null;
 }
 
-async function writeManualReview(params: {
-  db: SupabaseLike;
-  quote: ManagedVeniceTokenQuote;
-  transactionHash: string;
-  tokenAmountRaw: string;
-  observedAt: string;
-  reason: string;
-}) {
-  const now = new Date().toISOString();
-  const { error: updateError } = await table(params.db, "managed_venice_token_quotes")
-    .update({
-      status: "manual_review_required" satisfies ManagedVeniceTokenQuoteStatus,
-      transaction_hash: params.transactionHash,
-      updated_at: now,
-      metadata: {
-        manualReviewReason: params.reason,
-        observedTokenAmountRaw: params.tokenAmountRaw,
-        observedAt: params.observedAt,
-      },
-    })
-    .eq("id", params.quote.id);
+// ── Deposit lots ──────────────────────────────────────────────────────────
 
-  if (updateError) {
-    throw new Error(updateError.message || "Failed to mark managed Venice token quote for review");
-  }
-
-  await writeReconciliationItem(params);
-  return { status: "manual_review_required" as const };
+interface DepositLotRow {
+  id: string;
+  transaction_hash?: string | null;
+  token_amount_raw: string | number;
+  original_value_micro_usd: number | string;
+  metadata?: unknown;
 }
 
-async function writeReconciliationItem(params: {
-  db: SupabaseLike;
-  quote: ManagedVeniceTokenQuote;
-  transactionHash: string;
+export interface ManagedVeniceTokenDepositLot {
+  id: string;
+  transactionHash: string | null;
   tokenAmountRaw: string;
+  originalValueMicroUsd: number;
+  observedAt: string | null;
+  blockTimestamp: string | null;
+  logIndex: number | null;
+  paidValueMicroUsd: number | null;
+  bonusValueMicroUsd: number | null;
+}
+
+function optionalNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asDepositLot(row: DepositLotRow): ManagedVeniceTokenDepositLot {
+  const metadata = metadataRecord(row.metadata);
+  return {
+    id: row.id,
+    transactionHash: row.transaction_hash || null,
+    tokenAmountRaw: String(row.token_amount_raw),
+    originalValueMicroUsd: Number(row.original_value_micro_usd),
+    observedAt: typeof metadata.observedAt === "string" ? metadata.observedAt : null,
+    blockTimestamp: typeof metadata.blockTimestamp === "string" ? metadata.blockTimestamp : null,
+    logIndex: normalizeLogIndex(metadata.logIndex),
+    paidValueMicroUsd: optionalNumber(metadata.paidValueMicroUsd),
+    bonusValueMicroUsd: optionalNumber(metadata.bonusValueMicroUsd),
+  };
+}
+
+async function loadDepositLot(
+  db: SupabaseLike,
+  quoteId: string
+): Promise<ManagedVeniceTokenDepositLot | null> {
+  const { data, error } = await table(db, "managed_venice_token_lots")
+    .select("id, transaction_hash, token_amount_raw::text, original_value_micro_usd, metadata")
+    .eq("quote_id", quoteId)
+    .eq("source", "hermesos_deposit")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to check existing managed Venice token lot");
+  }
+  return data ? asDepositLot(data as DepositLotRow) : null;
+}
+
+// The quote's spendable deposit lot, if settlement created one. Exposed so the
+// reconciler can recover a crashed settlement and the sweep can move the
+// RECEIVED amount instead of the quoted one.
+export async function loadManagedVeniceTokenDepositLot(
+  quoteId: string,
+  db: SupabaseLike | null | undefined = supabaseAdmin
+) {
+  return loadDepositLot(requireDb(db), quoteId);
+}
+
+// ── Transfer identity and reconciliation items ───────────────────────────
+
+function sameTransactionHash(left: string | null | undefined, right: string | null | undefined) {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function transactionHashVariants(transactionHash: string) {
+  return Array.from(new Set([transactionHash, transactionHash.toLowerCase()]));
+}
+
+// One open item per on-chain transfer, whatever the reason: the unique index on
+// managed_venice_reconciliation_items.dedupe_key turns a repeat insert (every
+// cron tick, cron racing the user's check, a bearer redelivery) into a no-op.
+export function managedVeniceTokenTransferDedupeKey(
+  transactionHash: string,
+  logIndex?: number | null
+) {
+  const index = normalizeLogIndex(logIndex);
+  return `managed_venice_token_transfer:${transactionHash.trim().toLowerCase()}:${index ?? "na"}`;
+}
+
+function affectedRowCount(data: unknown) {
+  if (Array.isArray(data)) return data.length;
+  return data ? 1 : 0;
+}
+
+// True when the tx is already the settlement tx of a quote or a lot. Such a
+// transfer is accounted for; it is never re-surfaced against another quote.
+async function isTransactionBound(
+  db: SupabaseLike,
+  transactionHash: string,
+  options: { ignoreQuoteId?: string } = {}
+) {
+  const variants = transactionHashVariants(transactionHash);
+  const [quotes, lots] = await Promise.all([
+    table(db, "managed_venice_token_quotes")
+      .select("id")
+      .in("transaction_hash", variants),
+    table(db, "managed_venice_token_lots")
+      .select("id, quote_id")
+      .in("transaction_hash", variants),
+  ]);
+  if (quotes.error) {
+    throw new Error(quotes.error.message || "Failed to check managed Venice quote transaction binding");
+  }
+  if (lots.error) {
+    throw new Error(lots.error.message || "Failed to check managed Venice lot transaction binding");
+  }
+  const boundQuotes = (Array.isArray(quotes.data) ? quotes.data : []) as Array<{ id?: unknown }>;
+  const boundLots = (Array.isArray(lots.data) ? lots.data : []) as Array<{ quote_id?: unknown }>;
+  return (
+    boundQuotes.some((row) => row.id !== options.ignoreQuoteId) ||
+    boundLots.some((row) => !options.ignoreQuoteId || row.quote_id !== options.ignoreQuoteId)
+  );
+}
+
+interface ObservedTransfer {
+  transactionHash: string;
+  logIndex: number | null;
+  tokenAmountRaw: string | null;
   observedAt: string;
-  reason: string;
-}) {
-  const { error: reconciliationError } = await table(
-    params.db,
-    "managed_venice_reconciliation_items"
-  ).insert({
-    user_id: params.quote.userId,
-    account_id: params.quote.accountId,
+}
+
+async function insertTransferItem(
+  db: SupabaseLike,
+  quote: ManagedVeniceTokenQuote,
+  transfer: ObservedTransfer,
+  reason: ManagedVeniceTokenDepositReason
+): Promise<"surfaced" | "already_surfaced"> {
+  const dedupeKey = managedVeniceTokenTransferDedupeKey(transfer.transactionHash, transfer.logIndex);
+  const { error } = await table(db, "managed_venice_reconciliation_items").insert({
+    user_id: quote.userId,
+    account_id: quote.accountId,
     status: "open",
-    reason: params.reason,
+    reason,
+    dedupe_key: dedupeKey,
     metadata: {
-      quoteId: params.quote.id,
-      transactionHash: params.transactionHash,
-      observedTokenAmountRaw: params.tokenAmountRaw,
-      expectedTokenAmountRaw: params.quote.tokenAmountRaw,
-      observedAt: params.observedAt,
+      quoteId: quote.id,
+      transactionHash: transfer.transactionHash,
+      logIndex: transfer.logIndex,
+      observedTokenAmountRaw: transfer.tokenAmountRaw,
+      expectedTokenAmountRaw: quote.tokenAmountRaw,
+      observedAt: transfer.observedAt,
     },
   });
 
-  if (reconciliationError) {
-    throw new Error(
-      reconciliationError.message || "Failed to create managed Venice reconciliation item"
-    );
+  // 23505 on the dedupe key = this transfer is already surfaced. Success.
+  if (error?.code === "23505") return "already_surfaced";
+  if (error) {
+    throw new Error(error.message || "Failed to create managed Venice reconciliation item");
   }
+  return "surfaced";
+}
+
+// Surface one on-chain transfer for operator review without touching the
+// quote (extra transfers, late out-of-band transfers). Idempotent per transfer.
+export async function surfaceManagedVeniceTokenTransfer(
+  params: {
+    quote: ManagedVeniceTokenQuote;
+    transactionHash: string;
+    logIndex?: number | null;
+    tokenAmountRaw: string | null;
+    observedAt: string;
+    reason: ManagedVeniceTokenDepositReason;
+  },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+) {
+  const status = await insertTransferItem(
+    requireDb(db),
+    params.quote,
+    {
+      transactionHash: params.transactionHash.trim().toLowerCase(),
+      logIndex: normalizeLogIndex(params.logIndex),
+      tokenAmountRaw: params.tokenAmountRaw,
+      observedAt: params.observedAt,
+    },
+    params.reason
+  );
+  return { status };
 }
 
 export async function createManagedVeniceTokenQuote(
@@ -702,6 +922,150 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
   );
 }
 
+// ── Settlement ────────────────────────────────────────────────────────────
+//
+// There is no multi-statement transaction here, so settlement is a claim-first
+// saga whose every step is idempotent and whose every quote transition is a
+// compare-and-set:
+//   1. CLAIM  — quote.transaction_hash := tx (CAS: open status, tx still null).
+//               The unique tx index makes this the single point where a
+//               transfer is bound to exactly one quote. Nothing is credited
+//               before the claim is durable.
+//   2. LOT    — one spendable lot (unique per quote), from the claim values.
+//   3. EVENTS — token_deposit + subsidy_applied, keyed by quote + claimed tx.
+//   4. FLIP   — status := settled (CAS: open status, tx = claimed tx).
+// A crash anywhere leaves either an unclaimed quote (nothing credited) or a
+// claimed/credited one that any later call converges on the SAME tx and
+// values. A different transfer seen by a retry is surfaced, never credited.
+
+export type ManagedVeniceTokenSettlementResult =
+  | { status: "settled"; quoteId: string; idempotent?: true }
+  | { status: "manual_review_required" }
+  | { status: "cancelled" }
+  | { status: "transaction_already_claimed"; quoteId: string };
+
+const RETRY_SETTLEMENT = Symbol("retry_managed_venice_settlement");
+type SettlementPass = ManagedVeniceTokenSettlementResult | typeof RETRY_SETTLEMENT;
+
+// A lost compare-and-set re-loads the quote and re-evaluates once.
+const MAX_SETTLEMENT_PASSES = 2;
+
+interface SettlementTransfer extends ObservedTransfer {
+  tokenAmountRaw: string;
+  observedAtDate: Date;
+  blockTimestamp: string | null;
+}
+
+export function managedVeniceTokenQuoteWindow(
+  quote: Pick<ManagedVeniceTokenQuote, "quotedAt" | "expiresAt">
+) {
+  const quotedAt = new Date(quote.quotedAt);
+  const storedExpiresAt = new Date(quote.expiresAt);
+  return {
+    quotedAt,
+    // Legacy quotes were stored with a shorter lifetime; every quote gets at
+    // least the current 20-minute window.
+    effectiveExpiresAt: new Date(
+      Math.max(storedExpiresAt.getTime(), quotedAt.getTime() + MANAGED_VENICE_QUOTE_LIFETIME_MS)
+    ),
+  };
+}
+
+function overSendCeiling(quotedTokenAmount: bigint) {
+  return (
+    (quotedTokenAmount * MANAGED_VENICE_MAX_OVERSEND_NUMERATOR) /
+    MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR
+  );
+}
+
+// ── Amount reconciliation (under-pay / exact / over-send) ─────────────
+// The user can send a different on-chain amount than the quote asked for.
+//   • outside [quotedAt, effectiveExpiresAt] → manual review.
+//   • observed  <  quoted              → UNDER-PAYMENT. Never auto-credit;
+//     they didn't pay for what they quoted. Route to manual review.
+//   • quoted <= observed <= quoted*N   → OVER-SEND within bounds. Real
+//     money — credit them for what they ACTUALLY sent (pro-rata against
+//     the quote's snapshot price) and settle normally.
+//   • observed  >  quoted*N            → WILDLY over (fat-finger 10x, a
+//     wrong-token transfer that happened to decode, etc). Route to manual
+//     review so an absurd auto-credit can never be minted.
+// Wrong-token transfers are already filtered upstream by the reconciler
+// (it only matches logs from the $HermesOS token contract), so this code
+// only ever sees same-token amounts. Returns null for a qualifying transfer.
+function classifyTransfer(
+  quote: ManagedVeniceTokenQuote,
+  transfer: Pick<SettlementTransfer, "tokenAmountRaw" | "observedAtDate">
+): ManagedVeniceTokenDepositReason | null {
+  const window = managedVeniceTokenQuoteWindow(quote);
+  if (transfer.observedAtDate < window.quotedAt || transfer.observedAtDate > window.effectiveExpiresAt) {
+    return MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow;
+  }
+  const observed = BigInt(transfer.tokenAmountRaw);
+  const quoted = BigInt(quote.tokenAmountRaw);
+  if (observed < quoted) return MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid;
+  if (observed > overSendCeiling(quoted)) return MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch;
+  return null;
+}
+
+function buildSettlementClaim(
+  quote: ManagedVeniceTokenQuote,
+  transfer: SettlementTransfer,
+  claimedAt: string
+): ManagedVeniceTokenSettlementClaim {
+  const observed = BigInt(transfer.tokenAmountRaw);
+  const quoted = BigInt(quote.tokenAmountRaw);
+  const isOverSend = observed > quoted;
+  // Credit the actual paid value pro-rata: the excess tokens were bought at the
+  // SAME snapshot price the quote locked, so paid value scales linearly with
+  // the observed amount. The bonus/subsidy is NOT scaled up — it was sized and
+  // cap-checked against the original quote, and over-sent excess shouldn't mint
+  // extra subsidy past the hidden per-user bonus cap. For an exact match every
+  // value is the quote's own.
+  const paidValueMicroUsd = isOverSend
+    ? Number((BigInt(quote.paidValueMicroUsd) * observed) / quoted)
+    : quote.paidValueMicroUsd;
+  const bonusValueMicroUsd = quote.bonusValueMicroUsd;
+  return {
+    transactionHash: transfer.transactionHash,
+    logIndex: transfer.logIndex,
+    tokenAmountRaw: transfer.tokenAmountRaw,
+    observedAt: transfer.observedAt,
+    blockTimestamp: transfer.blockTimestamp,
+    paidValueMicroUsd,
+    creditValueMicroUsd: isOverSend ? paidValueMicroUsd + bonusValueMicroUsd : quote.creditValueMicroUsd,
+    bonusValueMicroUsd,
+    claimedAt,
+  };
+}
+
+// The lot is the credit that already exists, so it is authoritative for the
+// tx and every amount; the recorded claim only fills gaps in legacy lots.
+function settlementClaimFromLot(
+  quote: ManagedVeniceTokenQuote,
+  lot: ManagedVeniceTokenDepositLot,
+  recordedClaim: ManagedVeniceTokenSettlementClaim | null,
+  transfer: SettlementTransfer
+): ManagedVeniceTokenSettlementClaim {
+  const transactionHash =
+    lot.transactionHash ?? recordedClaim?.transactionHash ?? quote.transactionHash ?? transfer.transactionHash;
+  const claim =
+    recordedClaim && sameTransactionHash(recordedClaim.transactionHash, transactionHash) ? recordedClaim : null;
+  const bonusValueMicroUsd = lot.bonusValueMicroUsd ?? claim?.bonusValueMicroUsd ?? quote.bonusValueMicroUsd;
+  const creditValueMicroUsd = lot.originalValueMicroUsd;
+  return {
+    transactionHash,
+    logIndex: lot.logIndex ?? claim?.logIndex ?? null,
+    tokenAmountRaw: lot.tokenAmountRaw,
+    observedAt: lot.observedAt ?? claim?.observedAt ?? transfer.observedAt,
+    blockTimestamp: lot.blockTimestamp ?? claim?.blockTimestamp ?? null,
+    paidValueMicroUsd:
+      lot.paidValueMicroUsd ?? claim?.paidValueMicroUsd ?? Math.max(0, creditValueMicroUsd - bonusValueMicroUsd),
+    creditValueMicroUsd,
+    bonusValueMicroUsd,
+    claimedAt: claim?.claimedAt ?? new Date().toISOString(),
+  };
+}
+
 export async function settleManagedVeniceTokenQuote(
   params: {
     quoteId: string;
@@ -709,9 +1073,10 @@ export async function settleManagedVeniceTokenQuote(
     tokenAmountRaw: string | bigint;
     observedAt: string;
     blockTimestamp?: string | null;
+    logIndex?: number | null;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
-) {
+): Promise<ManagedVeniceTokenSettlementResult> {
   if (!params.quoteId.trim()) {
     throw new Error("Managed Venice token quote ID is required");
   }
@@ -720,268 +1085,396 @@ export async function settleManagedVeniceTokenQuote(
   }
   const tokenAmountRaw = requireTokenAmountRaw(params.tokenAmountRaw).toString();
   const client = requireDb(db);
-  const quote = await loadManagedVeniceTokenQuoteById(client, params.quoteId);
-  if (!quote) {
-    throw new Error("Managed Venice token quote not found");
-  }
 
   const observedAt = new Date(params.blockTimestamp || params.observedAt);
   if (Number.isNaN(observedAt.getTime())) {
     throw new Error("Managed Venice token quote observedAt is invalid");
   }
-  const quotedAt = new Date(quote.quotedAt);
-  const storedExpiresAt = new Date(quote.expiresAt);
-  const effectiveExpiresAt = new Date(
-    Math.max(
-      storedExpiresAt.getTime(),
-      quotedAt.getTime() + MANAGED_VENICE_QUOTE_LIFETIME_MS
-    )
+  const transfer: SettlementTransfer = {
+    // Tx hashes are hex; normalize so the unique claim index cannot be
+    // side-stepped by a differently-cased copy of the same hash.
+    transactionHash: params.transactionHash.trim().toLowerCase(),
+    logIndex: normalizeLogIndex(params.logIndex),
+    tokenAmountRaw,
+    observedAt: observedAt.toISOString(),
+    observedAtDate: observedAt,
+    blockTimestamp: params.blockTimestamp || null,
+  };
+
+  for (let pass = 0; pass < MAX_SETTLEMENT_PASSES; pass += 1) {
+    const outcome = await settleOnce(client, params.quoteId, transfer);
+    if (outcome !== RETRY_SETTLEMENT) return outcome;
+  }
+  throw new Error(
+    "Managed Venice token quote changed concurrently during settlement; retry the settlement"
   );
-  const observedAtIso = observedAt.toISOString();
+}
+
+async function settleOnce(
+  db: SupabaseLike,
+  quoteId: string,
+  transfer: SettlementTransfer
+): Promise<SettlementPass> {
+  const record = await loadManagedVeniceTokenQuoteRecord(db, quoteId);
+  if (!record) {
+    throw new Error("Managed Venice token quote not found");
+  }
+  const { quote } = record;
 
   if (quote.status === "settled") {
-    // Idempotent redelivery of the SAME settled deposit. The amount can legally
-    // differ from the quote when the original settlement was an accepted
-    // over-send (quoted <= observed <= quoted*ceiling), so accept the same band
-    // here rather than requiring a byte-exact amount — otherwise a benign retry
-    // of an over-send would spuriously open a "replayed_after_settlement" item.
-    const settledQuotedAmount = BigInt(quote.tokenAmountRaw);
-    const settledObservedAmount = BigInt(tokenAmountRaw);
-    const settledOverSendCeiling =
-      (settledQuotedAmount * MANAGED_VENICE_MAX_OVERSEND_NUMERATOR) /
-      MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR;
-    const amountWithinSettledBand =
-      settledObservedAmount >= settledQuotedAmount &&
-      settledObservedAmount <= settledOverSendCeiling;
-    if (
-      quote.transactionHash === params.transactionHash &&
-      (tokenAmountRaw === quote.tokenAmountRaw || amountWithinSettledBand)
-    ) {
-      return { status: "settled" as const, quoteId: quote.id, idempotent: true };
-    }
-
-    await writeReconciliationItem({
-      db: client,
-      quote,
-      transactionHash: params.transactionHash,
-      tokenAmountRaw,
-      observedAt: observedAtIso,
-      reason: "managed_venice_token_deposit_replayed_after_settlement",
-    });
-    return { status: "manual_review_required" as const };
+    return handleSettledQuote(db, quote, transfer);
+  }
+  if (quote.status !== "active" && quote.status !== "expired") {
+    return handleClosedQuote(db, record, transfer);
   }
 
+  // A claim or a lot means an earlier settlement got part-way: converge on it.
+  const lot = await loadDepositLot(db, quote.id);
+  if (quote.transactionHash || lot) {
+    return convergeClaimedSettlement(db, record, lot, transfer);
+  }
+
+  const reviewReason = classifyTransfer(quote, transfer);
+  if (reviewReason) {
+    return reviewUnclaimedQuote(db, record, transfer, reviewReason);
+  }
+  return claimAndSettle(db, record, transfer);
+}
+
+async function handleSettledQuote(
+  db: SupabaseLike,
+  quote: ManagedVeniceTokenQuote,
+  transfer: SettlementTransfer
+): Promise<ManagedVeniceTokenSettlementResult> {
+  // Idempotent redelivery of the SAME settled deposit. The amount can legally
+  // differ from the quote when the original settlement was an accepted
+  // over-send (quoted <= observed <= quoted*ceiling), so accept the same band
+  // here rather than requiring a byte-exact amount — otherwise a benign retry
+  // of an over-send would spuriously open a "replayed_after_settlement" item.
+  const quoted = BigInt(quote.tokenAmountRaw);
+  const observed = BigInt(transfer.tokenAmountRaw);
+  const amountWithinSettledBand = observed >= quoted && observed <= overSendCeiling(quoted);
   if (
-    (quote.status !== "active" && quote.status !== "expired") ||
-    observedAt < quotedAt ||
-    observedAt > effectiveExpiresAt
+    sameTransactionHash(quote.transactionHash, transfer.transactionHash) &&
+    (transfer.tokenAmountRaw === quote.tokenAmountRaw || amountWithinSettledBand)
   ) {
-    return writeManualReview({
-      db: client,
-      quote,
-      transactionHash: params.transactionHash,
-      tokenAmountRaw,
-      observedAt: observedAtIso,
-      reason: "managed_venice_token_deposit_outside_quote_window",
-    });
+    return { status: "settled", quoteId: quote.id, idempotent: true };
   }
 
-  // ── Amount reconciliation (under-pay / exact / over-send) ─────────────
-  // The user can send a different on-chain amount than the quote asked for.
-  //   • observed  <  quoted              → UNDER-PAYMENT. Never auto-credit;
-  //     they didn't pay for what they quoted. Route to manual review.
-  //   • quoted <= observed <= quoted*N   → OVER-SEND within bounds. Real
-  //     money — credit them for what they ACTUALLY sent (pro-rata against
-  //     the quote's snapshot price) and settle normally.
-  //   • observed  >  quoted*N            → WILDLY over (fat-finger 10x, a
-  //     wrong-token transfer that happened to decode, etc). Route to manual
-  //     review so an absurd auto-credit can never be minted.
-  // Wrong-token transfers are already filtered upstream by the reconciler
-  // (it only matches logs from the $HermesOS token contract), so this code
-  // only ever sees same-token amounts.
-  const observedTokenAmount = BigInt(tokenAmountRaw);
-  const quotedTokenAmount = BigInt(quote.tokenAmountRaw);
-  const overSendCeiling =
-    (quotedTokenAmount * MANAGED_VENICE_MAX_OVERSEND_NUMERATOR) /
-    MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR;
-
-  if (observedTokenAmount < quotedTokenAmount) {
-    return writeManualReview({
-      db: client,
-      quote,
-      transactionHash: params.transactionHash,
-      tokenAmountRaw,
-      observedAt: observedAtIso,
-      reason: "managed_venice_token_deposit_underpaid",
-    });
+  // A different transfer after settlement: surface it once, never touch the
+  // settled quote (its credit, tx and sweep state are final).
+  if (!(await isTransactionBound(db, transfer.transactionHash, { ignoreQuoteId: quote.id }))) {
+    await insertTransferItem(db, quote, transfer, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.replayedAfterSettlement);
   }
+  return { status: "manual_review_required" };
+}
 
-  if (observedTokenAmount > overSendCeiling) {
-    return writeManualReview({
-      db: client,
+async function handleClosedQuote(
+  db: SupabaseLike,
+  record: ManagedVeniceTokenQuoteRecord,
+  transfer: SettlementTransfer
+): Promise<ManagedVeniceTokenSettlementResult> {
+  const { quote, metadata } = record;
+  const status = quote.status === "cancelled" ? "cancelled" : "manual_review_required";
+  // Review and cancelled are terminal for automation: never settle, never
+  // re-review. The transfer that caused the review already has its item.
+  const reviewTransactionHash =
+    typeof metadata.reviewTransactionHash === "string" ? metadata.reviewTransactionHash : null;
+  if (
+    !sameTransactionHash(reviewTransactionHash, transfer.transactionHash) &&
+    !(await isTransactionBound(db, transfer.transactionHash))
+  ) {
+    await insertTransferItem(
+      db,
       quote,
-      transactionHash: params.transactionHash,
-      tokenAmountRaw,
-      observedAt: observedAtIso,
-      reason: "managed_venice_token_deposit_amount_mismatch",
-    });
-  }
-
-  const now = new Date().toISOString();
-  const isOverSend = observedTokenAmount > quotedTokenAmount;
-  // The lot holds the ACTUAL received tokens so the spendable balance reflects
-  // the real on-chain funds. For an exact match this is identical to the quote.
-  const settledTokenAmountRaw = tokenAmountRaw;
-  // Credit the actual paid value pro-rata: the excess tokens were bought at the
-  // SAME snapshot price the quote locked, so paid value scales linearly with
-  // the observed amount. The bonus/subsidy is NOT scaled up — it was sized and
-  // cap-checked against the original quote, and over-sent excess shouldn't mint
-  // extra subsidy past the hidden per-user bonus cap. Net effect: the user gets
-  // full credit for every real token they sent; only the bonus stays as quoted.
-  // For an exact match (observed === quoted) every value below is byte-identical
-  // to the previous behavior.
-  const paidValueMicroUsd = isOverSend
-    ? Number(
-        (BigInt(quote.paidValueMicroUsd) * observedTokenAmount) /
-          quotedTokenAmount
-      )
-    : quote.paidValueMicroUsd;
-  const bonusValueMicroUsd = quote.bonusValueMicroUsd;
-  const creditValueMicroUsd = isOverSend
-    ? paidValueMicroUsd + bonusValueMicroUsd
-    : quote.creditValueMicroUsd;
-
-  // ── Idempotency guard against double-credit on retry ──────────────────
-  // The lot insert, financial-event inserts, and quote-status flip below
-  // are NOT one transaction, and the lot insert has no unique key. A
-  // settlement that creates the lot but dies before flipping the quote to
-  // `settled` would, on the reconciler's next pass, hit this branch again
-  // (status still `active`) and insert a SECOND spendable lot. The deposit
-  // event's idempotency_key dedupes the *audit ledger* but NOT the lot, and
-  // lots are the spendable balance — so a duplicate lot is a real double-
-  // credit. A lot already existing for this quote means the credit was
-  // granted; converge to settled instead of inserting another.
-  const existingLot = await table(client, "managed_venice_token_lots")
-    .select("id")
-    .eq("quote_id", quote.id)
-    .maybeSingle();
-  if (existingLot.error) {
-    throw new Error(
-      existingLot.error.message || "Failed to check existing managed Venice token lot"
+      transfer,
+      classifyTransfer(quote, transfer) ?? MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.afterQuoteClosed
     );
   }
-  const lotAlreadyExists = Boolean(existingLot.data);
+  return { status };
+}
 
-  if (!lotAlreadyExists) {
-    const { error: lotError } = await table(client, "managed_venice_token_lots").insert({
+async function reviewUnclaimedQuote(
+  db: SupabaseLike,
+  record: ManagedVeniceTokenQuoteRecord,
+  transfer: SettlementTransfer,
+  reason: ManagedVeniceTokenDepositReason
+): Promise<SettlementPass> {
+  const { quote } = record;
+  // Item FIRST: if the insert fails nothing changes and the next pass retries;
+  // if the status flip then fails or loses its race, the transfer is still
+  // surfaced (it was never credited through this quote either way). A review
+  // can therefore never be invisible.
+  await insertTransferItem(db, quote, transfer, reason);
+
+  const now = new Date().toISOString();
+  // The rejected tx is NOT written to transaction_hash: that column is the
+  // unique settlement claim, and a foreign transfer must never occupy it.
+  const { data, error } = await table(db, "managed_venice_token_quotes")
+    .update({
+      status: "manual_review_required" satisfies ManagedVeniceTokenQuoteStatus,
+      updated_at: now,
+      metadata: {
+        ...record.metadata,
+        manualReviewReason: reason,
+        observedTokenAmountRaw: transfer.tokenAmountRaw,
+        observedAt: transfer.observedAt,
+        reviewTransactionHash: transfer.transactionHash,
+        reviewLogIndex: transfer.logIndex,
+      },
+    })
+    .eq("id", quote.id)
+    .in("status", OPEN_QUOTE_STATUSES)
+    .is("transaction_hash", null)
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message || "Failed to mark managed Venice token quote for review");
+  }
+  if (affectedRowCount(data) === 0) return RETRY_SETTLEMENT;
+  return { status: "manual_review_required" };
+}
+
+async function claimAndSettle(
+  db: SupabaseLike,
+  record: ManagedVeniceTokenQuoteRecord,
+  transfer: SettlementTransfer
+): Promise<SettlementPass> {
+  const { quote } = record;
+  const now = new Date().toISOString();
+  const claim = buildSettlementClaim(quote, transfer, now);
+  const metadata = { ...record.metadata, settlementClaim: claim };
+  const { data, error } = await table(db, "managed_venice_token_quotes")
+    .update({ transaction_hash: claim.transactionHash, updated_at: now, metadata })
+    .eq("id", quote.id)
+    .in("status", OPEN_QUOTE_STATUSES)
+    .is("transaction_hash", null)
+    .select("id");
+
+  if (error?.code === "23505") {
+    // The unique tx index says another quote already owns this transfer. It
+    // is accounted for there; this quote stays open for its own transfer.
+    log.warn("managed Venice token transfer already claimed by another quote", {
+      source: "managed-venice-token-quotes",
+      failureType: "managed_venice_token_transaction_already_claimed",
+      quoteId: quote.id,
+      transactionHash: claim.transactionHash,
+    });
+    return { status: "transaction_already_claimed", quoteId: quote.id };
+  }
+  if (error) {
+    throw new Error(error.message || "Failed to claim managed Venice token deposit");
+  }
+  if (affectedRowCount(data) === 0) return RETRY_SETTLEMENT;
+
+  await completeClaimedSettlement(db, { ...quote, transactionHash: claim.transactionHash }, metadata, claim, null);
+  return { status: "settled", quoteId: quote.id };
+}
+
+async function convergeClaimedSettlement(
+  db: SupabaseLike,
+  record: ManagedVeniceTokenQuoteRecord,
+  lot: ManagedVeniceTokenDepositLot | null,
+  transfer: SettlementTransfer
+): Promise<SettlementPass> {
+  const { quote } = record;
+  const recordedClaim = readSettlementClaim(record.metadata.settlementClaim);
+  let claim: ManagedVeniceTokenSettlementClaim;
+  if (lot) {
+    claim = settlementClaimFromLot(quote, lot, recordedClaim, transfer);
+  } else if (recordedClaim && sameTransactionHash(recordedClaim.transactionHash, quote.transactionHash)) {
+    claim = recordedClaim;
+  } else if (
+    sameTransactionHash(quote.transactionHash, transfer.transactionHash) &&
+    classifyTransfer(quote, transfer) === null
+  ) {
+    // Claimed without recorded claim values: rebuild them from this delivery
+    // of the same (qualifying) transfer.
+    claim = buildSettlementClaim(quote, transfer, new Date().toISOString());
+  } else {
+    throw new Error(
+      "Managed Venice token quote has a claimed transaction without settlement details; it needs manual review"
+    );
+  }
+
+  let metadata = record.metadata;
+  if (!sameTransactionHash(quote.transactionHash, claim.transactionHash)) {
+    // The lot (the credit that exists) wins: bind the quote to the lot's tx.
+    metadata = { ...record.metadata, settlementClaim: claim };
+    const update = table(db, "managed_venice_token_quotes")
+      .update({ transaction_hash: claim.transactionHash, updated_at: new Date().toISOString(), metadata })
+      .eq("id", quote.id)
+      .in("status", OPEN_QUOTE_STATUSES);
+    const { data, error } = await (quote.transactionHash
+      ? update.eq("transaction_hash", quote.transactionHash)
+      : update.is("transaction_hash", null)
+    ).select("id");
+
+    if (error?.code === "23505") {
+      // Legacy cross-quote capture: this quote holds a credited lot whose tx
+      // is claimed by another quote, so it can never flip to settled. Surface
+      // it once for an operator instead of failing every tick.
+      log.warn("managed Venice token lot transaction is claimed by another quote", {
+        source: "managed-venice-token-quotes",
+        failureType: "managed_venice_token_lot_claim_conflict",
+        quoteId: quote.id,
+        transactionHash: claim.transactionHash,
+      });
+      await insertTransferItem(db, quote, claim, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimConflict);
+      return { status: "transaction_already_claimed", quoteId: quote.id };
+    }
+    if (error) {
+      throw new Error(error.message || "Failed to claim managed Venice token deposit");
+    }
+    if (affectedRowCount(data) === 0) return RETRY_SETTLEMENT;
+
+    const displacedClaim = quote.transactionHash;
+    if (displacedClaim && !(await isTransactionBound(db, displacedClaim))) {
+      await insertTransferItem(
+        db,
+        quote,
+        {
+          transactionHash: displacedClaim,
+          logIndex: recordedClaim && sameTransactionHash(recordedClaim.transactionHash, displacedClaim)
+            ? recordedClaim.logIndex
+            : null,
+          tokenAmountRaw:
+            recordedClaim && sameTransactionHash(recordedClaim.transactionHash, displacedClaim)
+              ? recordedClaim.tokenAmountRaw
+              : null,
+          observedAt: transfer.observedAt,
+        },
+        MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer
+      );
+    }
+  }
+
+  await completeClaimedSettlement(db, { ...quote, transactionHash: claim.transactionHash }, metadata, claim, lot);
+
+  // The caller saw a different transfer than the one this quote settled with:
+  // it is real money that was not credited here, so surface it once.
+  if (
+    !sameTransactionHash(transfer.transactionHash, claim.transactionHash) &&
+    !(await isTransactionBound(db, transfer.transactionHash))
+  ) {
+    await insertTransferItem(db, quote, transfer, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer);
+  }
+  return { status: "settled", quoteId: quote.id };
+}
+
+async function completeClaimedSettlement(
+  db: SupabaseLike,
+  quote: ManagedVeniceTokenQuote,
+  metadata: Record<string, unknown>,
+  claim: ManagedVeniceTokenSettlementClaim,
+  existingLot: ManagedVeniceTokenDepositLot | null
+) {
+  const now = new Date().toISOString();
+  const isOverSend = BigInt(claim.tokenAmountRaw) > BigInt(quote.tokenAmountRaw);
+  const overSendMetadata = isOverSend
+    ? {
+        overSend: true,
+        quotedTokenAmountRaw: quote.tokenAmountRaw,
+        observedTokenAmountRaw: claim.tokenAmountRaw,
+      }
+    : {};
+
+  if (!existingLot) {
+    // The lot holds the ACTUAL received tokens so the spendable balance
+    // reflects the real on-chain funds.
+    const { error: lotError } = await table(db, "managed_venice_token_lots").insert({
       account_id: quote.accountId,
       user_id: quote.userId,
       quote_id: quote.id,
       source: "hermesos_deposit",
-      token_amount_raw: settledTokenAmountRaw,
-      remaining_token_amount_raw: settledTokenAmountRaw,
+      token_amount_raw: claim.tokenAmountRaw,
+      remaining_token_amount_raw: claim.tokenAmountRaw,
       snapshot_price_usd: quote.snapshotPriceUsd,
-      original_value_micro_usd: creditValueMicroUsd,
-      remaining_value_micro_usd: creditValueMicroUsd,
+      original_value_micro_usd: claim.creditValueMicroUsd,
+      remaining_value_micro_usd: claim.creditValueMicroUsd,
       quote_source: quote.source,
       quoted_at: quote.quotedAt,
       quote_expires_at: quote.expiresAt,
-      transaction_hash: params.transactionHash,
+      transaction_hash: claim.transactionHash,
       status: "active",
       metadata: {
         quoteId: quote.id,
-        observedAt: observedAtIso,
-        blockTimestamp: params.blockTimestamp || null,
-        paidValueMicroUsd,
-        creditValueMicroUsd,
-        bonusValueMicroUsd,
-        ...(isOverSend
-          ? {
-              overSend: true,
-              quotedTokenAmountRaw: quote.tokenAmountRaw,
-              observedTokenAmountRaw: settledTokenAmountRaw,
-            }
-          : {}),
+        observedAt: claim.observedAt,
+        blockTimestamp: claim.blockTimestamp,
+        logIndex: claim.logIndex,
+        paidValueMicroUsd: claim.paidValueMicroUsd,
+        creditValueMicroUsd: claim.creditValueMicroUsd,
+        bonusValueMicroUsd: claim.bonusValueMicroUsd,
+        ...overSendMetadata,
       },
     });
-    // 23505 (unique_violation) = a concurrent settlement of the same quote
-    // won the race and already inserted the lot. Belt-and-suspenders with
-    // the existence check above; treat as already-credited, not an error.
-    if (lotError && lotError.code !== "23505") {
+    if (lotError?.code === "23505") {
+      // A concurrent completion of the same claim won the insert. It can only
+      // have used the same claimed tx; anything else must not be papered over.
+      const winner = await loadDepositLot(db, quote.id);
+      if (!winner || !sameTransactionHash(winner.transactionHash, claim.transactionHash)) {
+        throw new Error("Managed Venice token lot was created for a different transaction; retry to converge");
+      }
+    } else if (lotError) {
       throw new Error(lotError.message || "Failed to create managed Venice token lot");
     }
   }
 
-  const { error: eventError } = await table(
-    client,
-    "managed_venice_financial_events"
-  ).insert({
+  const { error: eventError } = await table(db, "managed_venice_financial_events").insert({
     user_id: quote.userId,
     account_id: quote.accountId,
     wallet_type: "hermesos",
     event_type: "token_deposit",
     reference_id: quote.id,
-    idempotency_key: `managed_venice_token_deposit:${quote.id}:${params.transactionHash}`,
-    token_amount_raw: settledTokenAmountRaw,
+    idempotency_key: `managed_venice_token_deposit:${quote.id}:${claim.transactionHash}`,
+    token_amount_raw: claim.tokenAmountRaw,
     token_price_usd: quote.snapshotPriceUsd,
-    amount_micro_usd: paidValueMicroUsd,
+    amount_micro_usd: claim.paidValueMicroUsd,
     metadata: {
       depositAddress: quote.depositAddress,
-      transactionHash: params.transactionHash,
-      observedAt: observedAtIso,
-      creditValueMicroUsd,
-      bonusValueMicroUsd,
-      ...(isOverSend
-        ? {
-            overSend: true,
-            quotedTokenAmountRaw: quote.tokenAmountRaw,
-            observedTokenAmountRaw: settledTokenAmountRaw,
-          }
-        : {}),
+      transactionHash: claim.transactionHash,
+      observedAt: claim.observedAt,
+      creditValueMicroUsd: claim.creditValueMicroUsd,
+      bonusValueMicroUsd: claim.bonusValueMicroUsd,
+      ...overSendMetadata,
     },
   });
-  // 23505 = this deposit event was already recorded (idempotent redelivery
-  // of the same quote+tx). The unique idempotency_key did its job; don't
-  // throw, so a retry can still reach the quote-status flip below.
+  // 23505 = this deposit event was already recorded for the claimed tx.
   if (eventError && eventError.code !== "23505") {
     throw new Error(
       eventError.message || "Failed to write managed Venice token deposit financial event"
     );
   }
 
-  if (bonusValueMicroUsd > 0) {
+  if (claim.bonusValueMicroUsd > 0) {
     const rate =
       quote.launchBonusMicroUsd > 0 && quote.standardBonusMicroUsd > 0
         ? "mixed_launch_standard"
         : quote.launchBonusMicroUsd > 0
           ? "launch_20"
           : "standard_10";
-    const { error: subsidyEventError } = await table(
-      client,
-      "managed_venice_financial_events"
-    ).insert({
+    const { error: subsidyEventError } = await table(db, "managed_venice_financial_events").insert({
       user_id: quote.userId,
       account_id: quote.accountId,
       wallet_type: "hermesos",
       event_type: "subsidy_applied",
       reference_id: quote.id,
-      idempotency_key: `managed_venice_token_bonus:${quote.id}:${params.transactionHash}`,
-      token_amount_raw: settledTokenAmountRaw,
+      idempotency_key: `managed_venice_token_bonus:${quote.id}:${claim.transactionHash}`,
+      token_amount_raw: claim.tokenAmountRaw,
       token_price_usd: quote.snapshotPriceUsd,
       amount_micro_usd: 0,
-      discount_micro_usd: bonusValueMicroUsd,
+      discount_micro_usd: claim.bonusValueMicroUsd,
       metadata: {
         source: "managed_venice_deposit_bonus",
         rate,
         launchSubsidyMicroUsd: quote.launchBonusMicroUsd,
         standardSubsidyMicroUsd: quote.standardBonusMicroUsd,
-        paidValueMicroUsd,
-        creditValueMicroUsd,
-        transactionHash: params.transactionHash,
+        paidValueMicroUsd: claim.paidValueMicroUsd,
+        creditValueMicroUsd: claim.creditValueMicroUsd,
+        transactionHash: claim.transactionHash,
       },
     });
-    // 23505 = idempotent redelivery (bonus event already recorded). Mirror
-    // the deposit-event handling above: don't throw on the duplicate.
+    // 23505 = bonus event already recorded for the claimed tx.
     if (subsidyEventError && subsidyEventError.code !== "23505") {
       throw new Error(
         subsidyEventError.message ||
@@ -990,31 +1483,86 @@ export async function settleManagedVeniceTokenQuote(
     }
   }
 
-  const { error: quoteError } = await table(client, "managed_venice_token_quotes")
+  const existingTopUp = metadataRecord(metadata.managedVeniceTopUp);
+  const { data, error: quoteError } = await table(db, "managed_venice_token_quotes")
     .update({
       status: "settled" satisfies ManagedVeniceTokenQuoteStatus,
-      transaction_hash: params.transactionHash,
       settled_at: now,
       updated_at: now,
       metadata: {
-        observedAt: observedAtIso,
-        blockTimestamp: params.blockTimestamp || null,
+        ...metadata,
+        observedAt: claim.observedAt,
+        blockTimestamp: claim.blockTimestamp,
         managedVeniceTopUp: {
+          ...existingTopUp,
           policy: "deposit_bonus_v1",
           walletType: "hermesos",
-          paidValueMicroUsd,
-          creditValueMicroUsd,
-          bonusValueMicroUsd,
+          paidValueMicroUsd: claim.paidValueMicroUsd,
+          creditValueMicroUsd: claim.creditValueMicroUsd,
+          bonusValueMicroUsd: claim.bonusValueMicroUsd,
           launchBonusMicroUsd: quote.launchBonusMicroUsd,
           standardBonusMicroUsd: quote.standardBonusMicroUsd,
         },
       },
     })
-    .eq("id", quote.id);
+    .eq("id", quote.id)
+    .eq("transaction_hash", claim.transactionHash)
+    .in("status", OPEN_QUOTE_STATUSES)
+    .select("id");
 
   if (quoteError) {
     throw new Error(quoteError.message || "Failed to settle managed Venice token quote");
   }
+  if (affectedRowCount(data) === 0) {
+    const current = await loadManagedVeniceTokenQuoteRecord(db, quote.id);
+    if (
+      current?.quote.status === "settled" &&
+      sameTransactionHash(current.quote.transactionHash, claim.transactionHash)
+    ) {
+      return; // A concurrent completion of the same claim flipped it first.
+    }
+    throw new Error(
+      `Managed Venice token quote could not be marked settled (status ${current?.quote.status ?? "missing"})`
+    );
+  }
+}
 
-  return { status: "settled" as const, quoteId: quote.id };
+// Retire an unpaid quote whose window + late-payment grace has been fully
+// scanned: active|expired -> cancelled, only while nothing is claimed and no
+// lot exists. Returns the quote's resulting status.
+export async function retireManagedVeniceTokenQuote(
+  params: { quoteId: string; closedAt?: Date },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ status: ManagedVeniceTokenQuoteStatus }> {
+  const client = requireDb(db);
+  const record = await loadManagedVeniceTokenQuoteRecord(client, params.quoteId);
+  if (!record) {
+    throw new Error("Managed Venice token quote not found");
+  }
+  const { quote } = record;
+  if ((quote.status !== "active" && quote.status !== "expired") || quote.transactionHash) {
+    return { status: quote.status };
+  }
+  if (await loadDepositLot(client, quote.id)) {
+    return { status: quote.status };
+  }
+
+  const closedAt = (params.closedAt ?? new Date()).toISOString();
+  const { data, error } = await table(client, "managed_venice_token_quotes")
+    .update({
+      status: "cancelled" satisfies ManagedVeniceTokenQuoteStatus,
+      updated_at: new Date().toISOString(),
+      metadata: { ...record.metadata, closedReason: "expired_unpaid", closedAt },
+    })
+    .eq("id", quote.id)
+    .in("status", OPEN_QUOTE_STATUSES)
+    .is("transaction_hash", null)
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message || "Failed to retire managed Venice token quote");
+  }
+  if (affectedRowCount(data) === 1) return { status: "cancelled" };
+  const current = await loadManagedVeniceTokenQuoteRecord(client, quote.id);
+  return { status: current?.quote.status ?? quote.status };
 }

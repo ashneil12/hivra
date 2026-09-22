@@ -389,7 +389,9 @@ async function fetchBlockTimestamp(params: {
   return new Date(timestamp * 1000).toISOString();
 }
 
-function quotePayload(quote: ManagedVeniceTokenQuote) {
+function quotePayload(
+  quote: Omit<ManagedVeniceTokenQuote, "status"> & { status: string }
+) {
   return {
     id: quote.id,
     tokenAmountRaw: quote.tokenAmountRaw,
