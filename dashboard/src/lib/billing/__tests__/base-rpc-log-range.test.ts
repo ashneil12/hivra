@@ -22,10 +22,11 @@ import {
   MAX_BASE_RPC_LOG_RANGE_BLOCKS,
 } from "@/lib/billing/base-rpc-logs";
 import {
+  createBaseChainReader,
   ERC20_TRANSFER_TOPIC,
   encodeErc20TransferToTopic,
-  reconcilePendingCryptoTopUps,
-} from "@/lib/billing/crypto-reconciliation";
+  scanErc20TransfersInWindow,
+} from "@/lib/billing/base-transfer-scan";
 import { USDC_BASE_TOKEN_ADDRESS } from "@/lib/billing/crypto-topups";
 import { reconcileManagedVeniceTokenQuote } from "@/lib/billing/managed-venice-token-reconciliation";
 import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
@@ -47,6 +48,15 @@ type FakeLog = {
   blockHash: string;
 };
 type LogRange = { fromBlock: number; toBlock: number };
+
+// Base mines a block every 2 s; LATEST_BLOCK was mined at `now`.
+function blockTimeSec(block: number) {
+  return Math.floor(now.getTime() / 1000) - 2 * (LATEST_BLOCK - block);
+}
+
+function blockTimeMs(block: number) {
+  return blockTimeSec(block) * 1000;
+}
 
 function hex(value: number | bigint) {
   return `0x${value.toString(16)}`;
@@ -109,7 +119,10 @@ function createRangeLimitedBaseRpc(params: {
       return jsonResponse(200, {
         jsonrpc: "2.0",
         id: 1,
-        result: { number: request.params[0], timestamp: hex(Math.floor(now.getTime() / 1000)) },
+        result: {
+          number: request.params[0],
+          timestamp: hex(blockTimeSec(Number.parseInt(String(request.params[0]), 16))),
+        },
       });
     }
     if (request.method === "eth_getLogs") {
@@ -174,84 +187,6 @@ function expectContiguousWithinLimit(ranges: LogRange[], fromBlock: number, toBl
     expect(ranges[index].fromBlock).toBe(ranges[index - 1].toBlock + 1);
   }
   expect(ranges[ranges.length - 1].toBlock).toBe(toBlock);
-}
-
-function pendingUsdcTopUp() {
-  return {
-    id: "payment_1",
-    user_id: "user_123",
-    provider: "bankr",
-    provider_reference_id: "bankr_crypto_topup:range-limit",
-    status: "pending",
-    asset: "usdc_base",
-    amount_minor: 50_000_000,
-    package_credits: 5000,
-    metadata: { type: "crypto_topup_intent", depositAddress: usdcDepositAddress },
-    created_at: "2026-09-22T11:55:00.000Z",
-  };
-}
-
-function createUsdcDb(payments: Row[]) {
-  const receipts: Row[] = [];
-  const selectQuery = (rows: () => Row[]) => {
-    const filters: Record<string, unknown> = {};
-    const query = {
-      select: () => query,
-      eq: (column: string, value: unknown) => {
-        filters[column] = value;
-        return query;
-      },
-      order: () => query,
-      limit: async (limit: number) => ({
-        data: rows()
-          .filter((row) => Object.entries(filters).every(([column, value]) => row[column] === value))
-          .slice(0, limit),
-        error: null,
-      }),
-    };
-    return query;
-  };
-
-  return {
-    receipts,
-    db: {
-      from: (name: string) => {
-        if (name === "payment_transactions") return selectQuery(() => payments);
-        if (name === "crypto_deposit_receipts") {
-          return {
-            select: () => selectQuery(() => receipts),
-            upsert: async (row: Row) => {
-              const existing = receipts.findIndex(
-                (receipt) => receipt.provider === row.provider && receipt.reference_id === row.reference_id
-              );
-              if (existing >= 0) receipts[existing] = { ...receipts[existing], ...row };
-              else receipts.push({ ...row });
-              return { error: null };
-            },
-            update: (patch: Row) => {
-              const filters: Record<string, unknown> = {};
-              const query = {
-                eq: (column: string, value: unknown) => {
-                  filters[column] = value;
-                  return query;
-                },
-                then: (resolve: (value: { error: null }) => unknown, reject?: (reason: unknown) => unknown) => {
-                  for (const receipt of receipts) {
-                    if (Object.entries(filters).every(([column, value]) => receipt[column] === value)) {
-                      Object.assign(receipt, patch);
-                    }
-                  }
-                  return Promise.resolve({ error: null }).then(resolve, reject);
-                },
-              };
-              return query;
-            },
-          };
-        }
-        throw new Error(`Unexpected table ${name}`);
-      },
-    },
-  };
 }
 
 const veniceQuoteRow = {
@@ -385,85 +320,98 @@ describe("getLogsInBlockChunks", () => {
   });
 });
 
-describe("USDC top-up reconciliation within Base's 2,000-block eth_getLogs limit", () => {
-  const settled = async () => ({ status: "settled" as const, inserted: true, balance: 5000 });
+describe("USDC top-up transfer scan within Base's 2,000-block eth_getLogs limit", () => {
+  // The USDC reconciler scans each intent's window (creation to session end
+  // plus late-payment grace) through scanErc20TransfersInWindow.
+  const windowStartMs = blockTimeMs(LATEST_BLOCK - 5_000);
+  const windowEndMs = blockTimeMs(LATEST_BLOCK - 800);
 
-  it("credits a payment in the oldest block of the default 5,000-block lookback", async () => {
-    const oldestScannedBlock = LATEST_BLOCK - 5_000 + 1;
+  function chainFor(fetchImpl: ReturnType<typeof createRangeLimitedBaseRpc>["fetchImpl"], sleepImpl?: () => Promise<void>) {
+    return createBaseChainReader({
+      rpcUrl: "https://base.test",
+      fetchImpl,
+      rpcOptions: sleepImpl ? { sleepImpl, random: () => 0 } : undefined,
+    });
+  }
+
+  it("finds a payment in the first block of a 4,200-block intent window", async () => {
+    const paidBlock = LATEST_BLOCK - 5_000;
     const { fetchImpl, ranges } = createRangeLimitedBaseRpc({
       logs: [
         transferLog({
           token: USDC_BASE_TOKEN_ADDRESS,
           to: usdcDepositAddress,
           amount: 50_000_000,
-          blockNumber: oldestScannedBlock,
+          blockNumber: paidBlock,
           transactionHash: "0xpaid",
         }),
       ],
     });
-    const { db, receipts } = createUsdcDb([pendingUsdcTopUp()]);
-    const settleIntent = jest.fn(settled);
 
-    const result = await reconcilePendingCryptoTopUps({ db, fetchImpl, settleIntent, now });
-
-    expect(result).toMatchObject({ checked: 1, settled: 1, failed: 0 });
-    expect(settleIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ referenceId: "bankr_crypto_topup:range-limit", transactionHash: "0xpaid" })
-    );
-    expect(receipts).toEqual([
-      expect.objectContaining({ tx_hash: "0xpaid", block_number: oldestScannedBlock, status: "settled" }),
-    ]);
-    expectContiguousWithinLimit(ranges, oldestScannedBlock, LATEST_BLOCK);
-  });
-
-  it("stays within the limit at the maximum 50,000-block lookback", async () => {
-    const { fetchImpl, ranges } = createRangeLimitedBaseRpc({ logs: [] });
-    const { db } = createUsdcDb([pendingUsdcTopUp()]);
-
-    const result = await reconcilePendingCryptoTopUps({
-      db,
-      fetchImpl,
-      settleIntent: jest.fn(),
-      now,
-      lookbackBlocks: 1_000_000,
+    const scan = await scanErc20TransfersInWindow({
+      chain: chainFor(fetchImpl),
+      tokenAddress: USDC_BASE_TOKEN_ADDRESS,
+      toAddress: usdcDepositAddress,
+      fromMs: windowStartMs,
+      toMs: windowEndMs,
+      minConfirmations: 3,
     });
 
-    expect(result).toMatchObject({ checked: 1, noMatch: 1, failed: 0 });
-    expect(ranges).toHaveLength(25);
-    expectContiguousWithinLimit(ranges, LATEST_BLOCK - 50_000 + 1, LATEST_BLOCK);
+    expect(scan.transfers).toEqual([
+      expect.objectContaining({ transactionHash: "0xpaid", blockNumber: paidBlock, amount: 50_000_000n }),
+    ]);
+    expectContiguousWithinLimit(ranges, ranges[0].fromBlock, ranges[ranges.length - 1].toBlock);
+    expect(ranges[0].fromBlock).toBeLessThanOrEqual(paidBlock);
+    expect(ranges[ranges.length - 1].toBlock).toBeGreaterThanOrEqual(LATEST_BLOCK - 800);
+    expect(ranges.length).toBeGreaterThan(1);
   });
 
-  it("retries a rate-limited (429) log chunk instead of failing the top-up", async () => {
+  it("stays within the limit across the largest window the scanner accepts", async () => {
+    const { fetchImpl, ranges } = createRangeLimitedBaseRpc({ logs: [] });
+
+    await scanErc20TransfersInWindow({
+      chain: chainFor(fetchImpl),
+      tokenAddress: USDC_BASE_TOKEN_ADDRESS,
+      toAddress: usdcDepositAddress,
+      fromMs: blockTimeMs(LATEST_BLOCK - 49_000),
+      toMs: blockTimeMs(LATEST_BLOCK),
+      minConfirmations: 3,
+    });
+
+    expect(ranges.length).toBeGreaterThanOrEqual(25);
+    expectContiguousWithinLimit(ranges, ranges[0].fromBlock, LATEST_BLOCK);
+  });
+
+  it("retries a rate-limited (429) log chunk instead of failing the scan", async () => {
+    const paidBlock = LATEST_BLOCK - 2_500;
     const { fetchImpl, ranges } = createRangeLimitedBaseRpc({
       logs: [
         transferLog({
           token: USDC_BASE_TOKEN_ADDRESS,
           to: usdcDepositAddress,
           amount: 50_000_000,
-          blockNumber: LATEST_BLOCK - 3_000,
+          blockNumber: paidBlock,
           transactionHash: "0xpaid",
         }),
       ],
       failGetLogsOnce: { request: 2, status: 429 },
     });
-    const { db } = createUsdcDb([pendingUsdcTopUp()]);
-    const rpcSleepImpl = jest.fn(async () => undefined);
+    const sleepImpl = jest.fn(async () => undefined);
 
-    const result = await reconcilePendingCryptoTopUps({
-      db,
-      fetchImpl,
-      settleIntent: jest.fn(settled),
-      now,
-      rpcSleepImpl,
-      rpcRandom: () => 0,
+    const scan = await scanErc20TransfersInWindow({
+      chain: chainFor(fetchImpl, sleepImpl),
+      tokenAddress: USDC_BASE_TOKEN_ADDRESS,
+      toAddress: usdcDepositAddress,
+      fromMs: windowStartMs,
+      toMs: windowEndMs,
+      minConfirmations: 3,
     });
 
-    expect(result).toMatchObject({ checked: 1, settled: 1, failed: 0 });
-    expect(rpcSleepImpl).toHaveBeenCalledTimes(1);
+    expect(scan.transfers.map((transfer) => transfer.transactionHash)).toEqual(["0xpaid"]);
+    expect(sleepImpl).toHaveBeenCalledTimes(1);
     // The rate-limited chunk is re-requested, so its range appears twice.
-    expect(ranges).toHaveLength(4);
     expect(ranges[2]).toEqual(ranges[1]);
-    expectContiguousWithinLimit([ranges[0], ...ranges.slice(2)], LATEST_BLOCK - 5_000 + 1, LATEST_BLOCK);
+    expectContiguousWithinLimit([ranges[0], ...ranges.slice(2)], ranges[0].fromBlock, ranges[ranges.length - 1].toBlock);
   });
 });
 
@@ -515,7 +463,8 @@ describe("eth_getLogs call sites", () => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          if (entry.name !== "__tests__" && entry.name !== "node_modules") walk(full);
+          // test-utils holds fake RPC servers that answer eth_getLogs.
+          if (!["__tests__", "test-utils", "node_modules"].includes(entry.name)) walk(full);
         } else if (/\.(ts|tsx|js|mjs|cjs)$/.test(entry.name) && !/\.test\.[tj]sx?$/.test(entry.name)) {
           if (/["'`]eth_getLogs["'`]/.test(fs.readFileSync(full, "utf8"))) {
             offenders.push(path.relative(srcRoot, full));

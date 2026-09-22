@@ -136,44 +136,22 @@ async function expireStaleQuoteSessions(params: {
   }
 }
 
-function paymentSessionExpiresAt(row: PaymentTransactionRow): Date {
+/**
+ * When a crypto top-up's payment session ends. After this the intent no longer
+ * blocks a new payment session, but it stays 'pending': only the reconciler
+ * closes it, after scanning the chain for its payment (window + grace).
+ */
+export function cryptoTopUpSessionExpiresAt(row: {
+  metadata: unknown;
+  created_at?: string | null;
+  updated_at?: string | null;
+}): Date {
   const metadata = metadataRecord(row.metadata);
   const explicitExpiry = readDate(metadata.sessionExpiresAt) || readDate(metadata.expiresAt);
   if (explicitExpiry) return explicitExpiry;
 
   const createdAt = readDate(metadata.createdAt) || readDate(row.created_at) || readDate(row.updated_at);
   return addMs(createdAt ?? new Date(0), CRYPTO_PAYMENT_SESSION_TIMEOUT_MS);
-}
-
-async function expirePendingPaymentTransaction(params: {
-  db: SupabaseLike;
-  row: PaymentTransactionRow;
-  now: Date;
-  expiresAt: Date;
-}) {
-  const metadata = {
-    ...metadataRecord(params.row.metadata),
-    creditGrantStatus: "expired",
-    failureType: "crypto_payment_session_expired",
-    expiredAt: params.now.toISOString(),
-    sessionExpiresAt: params.expiresAt.toISOString(),
-  };
-
-  const result = await table(params.db, "payment_transactions")
-    .update({
-      status: "failed",
-      metadata,
-      updated_at: params.now.toISOString(),
-    })
-    .eq("provider", "bankr")
-    .eq("provider_reference_id", params.row.provider_reference_id)
-    .eq("status", "pending");
-
-  if (result.error) {
-    throw new Error(
-      `Failed to expire stale crypto top-up session ${params.row.provider_reference_id}: ${safeDbMessage(result.error, "unknown")}`
-    );
-  }
 }
 
 function paymentSession(row: PaymentTransactionRow, expiresAt: Date): ActiveCryptoPaymentSession {
@@ -241,14 +219,14 @@ async function findPendingPaymentSession(params: {
     throw new Error(`Failed to load pending crypto payments: ${safeDbMessage(result.error, "unknown")}`);
   }
 
+  // An expired session no longer blocks a new one, but it is NOT failed here:
+  // the user may have paid it minutes ago and the reconciler (which runs every
+  // few minutes and checks the chain) owns closing it. Failing it here, with
+  // no chain check, is how a paid intent used to end up never credited.
   const rows = (result.data ?? []) as unknown as PaymentTransactionRow[];
   for (const row of rows) {
-    const expiresAt = paymentSessionExpiresAt(row);
-    if (expiresAt <= params.now) {
-      await expirePendingPaymentTransaction({ db: params.db, row, now: params.now, expiresAt });
-      continue;
-    }
-    return paymentSession(row, expiresAt);
+    const expiresAt = cryptoTopUpSessionExpiresAt(row);
+    if (expiresAt > params.now) return paymentSession(row, expiresAt);
   }
 
   return null;

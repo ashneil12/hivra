@@ -340,4 +340,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260915190100", name: "gvisor_preflight_connection_columns" },
   { version: "20260918120000", name: "hivra_activity_read_path_indexes" },
   { version: "20260922172439", name: "enable_rls_remaining_public_tables" },
+  { version: "20260922180543", name: "crypto_topup_reconciliation_items" },
 ];

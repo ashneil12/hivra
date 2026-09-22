@@ -1,128 +1,73 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { metadataRecord, requireDb } from "@/lib/billing/db-utils";
-import { BASE_CHAIN_ID, normalizeEvmAddress } from "@/lib/billing/token-holdings";
+import { normalizeEvmAddress } from "@/lib/billing/token-holdings";
 import {
   CRYPTO_TOPUP_ASSETS,
+  CRYPTO_TOPUP_REVIEW_REASONS,
+  CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE,
   USDC_BASE_TOKEN_ADDRESS,
+  cryptoTopUpIntentWindow,
+  cryptoTopUpTransferKey,
+  isOpenCryptoTopUpIntent,
+  listUnfinishedCryptoTopUpClaims,
+  loadClaimedCryptoTopUpTransferKeys,
+  loadCryptoTopUpPayment,
+  resumeClaimedCryptoTopUp,
+  retireCryptoTopUpIntent,
   settleCryptoTopUpIntent,
+  surfaceCryptoTopUpTransfer,
+  type CryptoTopUpPaymentRow,
+  type CryptoTopUpSettlementResult,
+  type CryptoTopUpTransfer,
 } from "@/lib/billing/crypto-topups";
-import { getLogsInBlockChunks, type BaseRpcCall } from "@/lib/billing/base-rpc-logs";
 import {
-  normalizeRpcRetryConfig,
-  RpcHttpError,
-  withRpcRetry,
-  type RpcCallOptions,
-  type RpcRetryConfig,
-} from "@/lib/billing/base-rpc-retry";
+  createBaseChainReader,
+  scanErc20TransfersInWindow,
+  type BaseChainReader,
+  type JsonRpcFetch,
+  type ScannedTransfer,
+} from "@/lib/billing/base-transfer-scan";
+import type { RpcCallOptions } from "@/lib/billing/base-rpc-retry";
+
+// Kept exported from here: other Base scanners import them from this module.
+export { ERC20_TRANSFER_TOPIC, encodeErc20TransferToTopic } from "@/lib/billing/base-transfer-scan";
 
 type QueryError = { code?: string; message?: string } | null;
 
-type DbSelectFilter = {
-  select: (...args: unknown[]) => DbSelectFilter;
-  eq: (...args: unknown[]) => DbSelectFilter;
-  order: (...args: unknown[]) => DbSelectFilter;
-  limit: (...args: unknown[]) => Promise<{ data: unknown; error: QueryError }>;
-};
-
-type DbUpdateFilter = {
-  eq: (...args: unknown[]) => DbUpdateFilter;
-  then: Promise<{ error: QueryError }>["then"];
-};
-
-type DbTable = {
-  select: (...args: unknown[]) => DbSelectFilter;
-  upsert: (...args: unknown[]) => Promise<{ error: QueryError }>;
-  update: (...args: unknown[]) => DbUpdateFilter;
+type DbQuery = {
+  select: (...args: unknown[]) => DbQuery;
+  eq: (...args: unknown[]) => DbQuery;
+  is: (...args: unknown[]) => DbQuery;
+  gt: (...args: unknown[]) => DbQuery;
+  order: (...args: unknown[]) => DbQuery;
+  limit: (...args: unknown[]) => DbQuery;
+  then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
 
 type SupabaseLike = {
   from: (name: string) => unknown;
 };
 
-type JsonRpcFetch = (
-  input: string,
-  init: {
-    method: "POST";
-    headers: { "Content-Type": "application/json" };
-    body: string;
-  }
-) => Promise<{
-  ok: boolean;
-  status: number;
-  json: () => Promise<unknown>;
-}>;
-
-interface JsonRpcResponse {
-  jsonrpc: "2.0";
-  id: number;
-  result?: unknown;
-  error?: {
-    code?: number;
-    message?: string;
-  };
-}
-
-interface EvmLog {
-  address?: string;
-  topics?: unknown[];
-  data?: unknown;
-  transactionHash?: unknown;
-  logIndex?: unknown;
-  blockNumber?: unknown;
-  blockHash?: unknown;
-}
-
-interface PendingCryptoTopUpRow {
-  id: string;
-  user_id: string;
-  provider: "bankr";
-  provider_reference_id: string;
-  status: "pending" | "succeeded" | "failed" | "refunded";
-  asset: string;
-  amount_minor: number;
-  package_credits: number | null;
-  metadata: unknown;
-  created_at?: string;
-}
-
-interface PendingCryptoTopUp {
-  id: string;
-  userId: string;
-  referenceId: string;
-  amountMinor: number;
-  depositAddress: string;
-}
-
 type SettleCryptoTopUp = typeof settleCryptoTopUpIntent;
 
-export const ERC20_TRANSFER_TOPIC =
-  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-
-const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
-const DEFAULT_LOOKBACK_BLOCKS = 5_000;
-const MAX_LOOKBACK_BLOCKS = 50_000;
+const DEFAULT_LIMIT = 50;
+// Batch slots always left for intents the old session helper failed without a
+// chain check, so that finite backlog drains even while many intents are open.
+const MIN_UNCHECKED_EXPIRED_SHARE = 5;
 const DEFAULT_MIN_CONFIRMATIONS = 3;
+// How many later intents to look through for the next one on the same
+// deposit address (a user's wallet is normally the same across intents).
+const NEXT_INTENT_LOOKAHEAD = 10;
+const PAYMENT_COLUMNS =
+  "id, user_id, provider, provider_reference_id, status, asset, amount_minor, package_credits, metadata, created_at, updated_at";
 
-function table(db: SupabaseLike, name: string): DbTable {
-  return db.from(name) as DbTable;
-}
-
-function getBaseRpcUrl(env: Record<string, string | undefined> = process.env) {
-  return (
-    env.HERMES_BASE_RPC_URL?.trim() ||
-    env.BASE_RPC_URL?.trim() ||
-    DEFAULT_BASE_RPC_URL
-  );
+function table(db: SupabaseLike, name: string): DbQuery {
+  return db.from(name) as DbQuery;
 }
 
 function normalizeLimit(limit: number | undefined) {
-  if (!Number.isFinite(limit)) return 50;
-  return Math.max(1, Math.min(100, Math.floor(limit ?? 50)));
-}
-
-function normalizeLookbackBlocks(lookbackBlocks: number | undefined) {
-  if (!Number.isFinite(lookbackBlocks)) return DEFAULT_LOOKBACK_BLOCKS;
-  return Math.max(1, Math.min(MAX_LOOKBACK_BLOCKS, Math.floor(lookbackBlocks ?? DEFAULT_LOOKBACK_BLOCKS)));
+  if (!Number.isFinite(limit)) return DEFAULT_LIMIT;
+  return Math.max(1, Math.min(100, Math.floor(limit ?? DEFAULT_LIMIT)));
 }
 
 function normalizeMinConfirmations(confirmations: number | undefined) {
@@ -130,492 +75,401 @@ function normalizeMinConfirmations(confirmations: number | undefined) {
   return Math.max(1, Math.min(100, Math.floor(confirmations ?? DEFAULT_MIN_CONFIRMATIONS)));
 }
 
-function parseRpcQuantity(value: unknown, label: string) {
-  if (typeof value !== "string" || !/^0x[a-fA-F0-9]+$/.test(value)) {
-    throw new Error(`Invalid ${label} RPC quantity`);
-  }
-
-  const parsed = Number.parseInt(value, 16);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`Invalid ${label} RPC quantity`);
-  }
-
-  return parsed;
-}
-
-function decodeUint256LogData(data: unknown) {
-  if (typeof data !== "string" || !/^0x[a-fA-F0-9]+$/.test(data)) {
-    throw new Error("Invalid ERC-20 transfer amount data");
-  }
-
-  return BigInt(data);
-}
-
-async function rpcCallOnce<T>(
-  rpcUrl: string,
-  method: string,
-  params: unknown[],
-  fetchImpl: JsonRpcFetch
-): Promise<T> {
-  const response = await fetchImpl(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-  });
-
-  if (!response.ok) {
-    // Typed so the shared retry layer retries 429/5xx and fails fast on the
-    // rest (e.g. the public endpoint's 413 for an over-wide log range).
-    throw new RpcHttpError(response.status);
-  }
-
-  const payload = (await response.json()) as JsonRpcResponse;
-  if (payload.error) {
-    throw new Error(payload.error.message || "Base RPC returned an error");
-  }
-
-  return payload.result as T;
-}
-
-function createRpcCall(params: {
-  rpcUrl: string;
-  fetchImpl: JsonRpcFetch;
-  rpcOptions?: RpcCallOptions;
-}): BaseRpcCall {
-  return <T>(method: string, args: unknown[]) =>
-    withRpcRetry<T>(
-      () => rpcCallOnce<T>(params.rpcUrl, method, args, params.fetchImpl),
-      params.rpcOptions
-    );
-}
-
-export function encodeErc20TransferToTopic(walletAddress: string) {
-  const normalized = normalizeEvmAddress(walletAddress);
-  return `0x${normalized.slice(2).padStart(64, "0")}`;
-}
-
-async function getLatestBaseBlockNumber(call: BaseRpcCall) {
-  const latestBlockHex = await call<string>("eth_blockNumber", []);
-  return parseRpcQuantity(latestBlockHex, "block number");
-}
-
-async function fetchUsdcTransfersToAddress(params: {
+interface ParsedIntent {
+  row: CryptoTopUpPaymentRow;
+  referenceId: string;
   depositAddress: string;
-  call: BaseRpcCall;
-  lookbackBlocks: number;
-}) {
-  const latestBlock = await getLatestBaseBlockNumber(params.call);
-  const fromBlock = Math.max(0, latestBlock - params.lookbackBlocks + 1);
-  const logs = await getLogsInBlockChunks<EvmLog>({
-    call: params.call,
-    filter: {
-      address: USDC_BASE_TOKEN_ADDRESS,
-      topics: [
-        ERC20_TRANSFER_TOPIC,
-        null,
-        encodeErc20TransferToTopic(params.depositAddress),
-      ],
-    },
-    fromBlock,
-    toBlock: latestBlock,
-  });
+  requiredAmount: bigint;
+  window: ReturnType<typeof cryptoTopUpIntentWindow>;
+}
 
+function parseIntent(row: CryptoTopUpPaymentRow): ParsedIntent | null {
+  if (row.provider !== "bankr" || row.asset !== CRYPTO_TOPUP_ASSETS.usdc_base.key) return null;
+  if (!row.id || !row.user_id?.trim() || !row.provider_reference_id?.trim()) return null;
+  if (!Number.isInteger(row.amount_minor) || row.amount_minor <= 0) return null;
+  const depositAddress = metadataRecord(row.metadata).depositAddress;
+  if (typeof depositAddress !== "string" || !depositAddress) return null;
+  try {
+    return {
+      row,
+      referenceId: row.provider_reference_id,
+      depositAddress: normalizeEvmAddress(depositAddress),
+      requiredAmount: BigInt(row.amount_minor),
+      window: cryptoTopUpIntentWindow(row),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function toTopUpTransfer(transfer: ScannedTransfer): CryptoTopUpTransfer {
   return {
-    latestBlock,
-    logs,
+    transactionHash: transfer.transactionHash,
+    logIndex: transfer.logIndex,
+    blockNumber: transfer.blockNumber,
+    blockHash: transfer.blockHash,
+    amountRaw: transfer.amount.toString(),
+    confirmations: transfer.confirmations,
+    observedAt: transfer.observedAt,
   };
 }
 
-function parsePendingPayment(row: PendingCryptoTopUpRow): PendingCryptoTopUp | null {
-  if (row.provider !== "bankr" || row.status !== "pending" || row.asset !== CRYPTO_TOPUP_ASSETS.usdc_base.key) {
-    return null;
-  }
+// ── Candidates ────────────────────────────────────────────────────────────
 
-  if (!row.id || !row.user_id?.trim() || !row.provider_reference_id?.trim()) {
-    return null;
+/**
+ * Newest first: a fresh payment is always inside the batch, however many
+ * older intents are still open. Older intents leave the set by settling or by
+ * retiring once their window + grace has been fully scanned, so abandoned
+ * intents cannot starve new ones. Intents the old session helper failed
+ * without a chain check are included until the reconciler has closed them.
+ */
+async function listOpenCryptoTopUps(db: SupabaseLike, limit: number) {
+  const base = () =>
+    table(db, "payment_transactions")
+      .select(PAYMENT_COLUMNS)
+      .eq("provider", "bankr")
+      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key);
+  const [pending, uncheckedExpired] = await Promise.all([
+    base().eq("status", "pending").order("created_at", { ascending: false }).limit(limit),
+    base()
+      .eq("status", "failed")
+      .eq("metadata->>failureType", CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE)
+      .is("metadata->>reconciliationClosedAt", null)
+      .order("created_at", { ascending: false })
+      .limit(limit),
+  ]);
+  for (const result of [pending, uncheckedExpired]) {
+    if (result.error) {
+      throw new Error(result.error.message || "Failed to load open crypto top-ups");
+    }
   }
-
-  if (!Number.isInteger(row.amount_minor) || row.amount_minor <= 0) {
-    return null;
-  }
-
-  const metadata = metadataRecord(row.metadata);
-  const depositAddress = typeof metadata.depositAddress === "string" ? metadata.depositAddress : "";
-  if (!depositAddress) {
-    return null;
-  }
-
-  return {
-    id: row.id,
-    userId: row.user_id,
-    referenceId: row.provider_reference_id,
-    amountMinor: row.amount_minor,
-    depositAddress: normalizeEvmAddress(depositAddress),
-  };
+  const pendingRows = (Array.isArray(pending.data) ? pending.data : []) as CryptoTopUpPaymentRow[];
+  const uncheckedRows = (Array.isArray(uncheckedExpired.data) ? uncheckedExpired.data : []) as CryptoTopUpPaymentRow[];
+  const uncheckedShare = Math.max(MIN_UNCHECKED_EXPIRED_SHARE, limit - pendingRows.length);
+  return [...pendingRows, ...uncheckedRows.slice(0, uncheckedShare)];
 }
 
-function findMatchingTransfer(params: {
-  logs: EvmLog[];
-  latestBlock: number;
-  amountMinor: number;
-}) {
-  const requiredAmount = BigInt(params.amountMinor);
-  // Per-log try/catch: a single malformed entry from the RPC (rare but
-  // happens with eth_getLogs via flaky proxies — null blockNumber on a
-  // reorg'd log, etc.) used to throw out of the whole map() and stall
-  // reconciliation for the entire user. Now we drop the bad log and
-  // keep evaluating the rest. If the bug persists, the user simply
-  // doesn't get auto-credited on this tick; the next tick re-fetches.
-  const matches: Array<{
-    amount: bigint;
-    blockNumber: number;
-    logIndex: number;
-    confirmations: number;
-    transactionHash: string;
-    blockHash: string | null;
-  }> = [];
-  for (const log of params.logs) {
+// ── Attribution ───────────────────────────────────────────────────────────
+// The user's deposit wallet is reused by every top-up intent they make. A
+// transfer at block time t belongs to intent I only if
+//   start(I) <= t <= end of I's session + grace, and t < start(next intent on
+//   the same address).
+// So each transfer has at most one owner, an older stranded transfer is never
+// matched to a newer intent, and a payment sent after the user opened a new
+// intent pays the new one.
+
+async function loadNextIntentStartMs(db: SupabaseLike, intent: ParsedIntent) {
+  const { data, error } = await table(db, "payment_transactions")
+    .select("id, provider_reference_id, metadata, created_at, updated_at")
+    .eq("provider", "bankr")
+    .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
+    .eq("user_id", intent.row.user_id)
+    .gt("created_at", intent.row.created_at)
+    .order("created_at", { ascending: true })
+    .limit(NEXT_INTENT_LOOKAHEAD);
+
+  if (error) {
+    throw new Error(error.message || "Failed to load the next crypto top-up intent");
+  }
+  for (const row of (Array.isArray(data) ? data : []) as CryptoTopUpPaymentRow[]) {
+    if (row.provider_reference_id === intent.referenceId) continue;
+    const address = metadataRecord(row.metadata).depositAddress;
+    if (typeof address !== "string" || normalizeEvmAddress(address) !== intent.depositAddress) continue;
     try {
-      const amount = decodeUint256LogData(log.data);
-      const blockNumber = parseRpcQuantity(log.blockNumber, "log block number");
-      const logIndex = parseRpcQuantity(log.logIndex, "log index");
-      const confirmations = Math.max(0, params.latestBlock - blockNumber + 1);
-      const transactionHash = typeof log.transactionHash === "string" ? log.transactionHash : "";
-      if (amount === requiredAmount && transactionHash) {
-        matches.push({
-          amount,
-          blockNumber,
-          logIndex,
-          confirmations,
-          transactionHash,
-          blockHash: typeof log.blockHash === "string" ? log.blockHash : null,
-        });
-      }
+      return cryptoTopUpIntentWindow(row).startMs;
     } catch {
-      // Best-effort: a malformed log doesn't block reconciliation.
-      // Intentionally not logging the bad log payload — it can carry
-      // RPC-internal data we'd rather not echo into ops_events.
       continue;
     }
   }
+  return null;
+}
 
-  return matches.sort((a, b) => {
-    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
-    return a.logIndex - b.logIndex;
+// ── Per-intent reconciliation ─────────────────────────────────────────────
+
+export type CryptoTopUpReconciliationResult =
+  | { status: "invalid_intent"; referenceId: string }
+  | { status: "no_match"; referenceId: string }
+  | { status: "underconfirmed"; referenceId: string; confirmations: number }
+  | { status: "expired"; referenceId: string }
+  | { status: "manual_review"; referenceId: string; surfaced: number }
+  | { status: "closed"; referenceId: string; paymentStatus: string }
+  | { status: "settled"; referenceId: string; transactionHash: string; inserted: boolean; balance: number | null }
+  | {
+      status: "settlement_skipped";
+      referenceId: string;
+      settlementStatus: Exclude<CryptoTopUpSettlementResult["status"], "settled">;
+    };
+
+function settlementOutcome(result: CryptoTopUpSettlementResult): CryptoTopUpReconciliationResult {
+  if (result.status === "settled") return result;
+  return { status: "settlement_skipped", referenceId: result.referenceId, settlementStatus: result.status };
+}
+
+async function reconcileOpenIntent(params: {
+  row: CryptoTopUpPaymentRow;
+  db: SupabaseLike;
+  chain: BaseChainReader;
+  minConfirmations: number;
+  settle: SettleCryptoTopUp;
+  now: Date;
+}): Promise<CryptoTopUpReconciliationResult> {
+  const { db, now } = params;
+  const intent = parseIntent(params.row);
+  if (!intent) {
+    return { status: "invalid_intent", referenceId: params.row.provider_reference_id };
+  }
+  const { window, referenceId } = intent;
+
+  const scan = await scanErc20TransfersInWindow({
+    chain: params.chain,
+    tokenAddress: USDC_BASE_TOKEN_ADDRESS,
+    toAddress: intent.depositAddress,
+    fromMs: window.startMs,
+    toMs: window.graceEndMs,
+    minConfirmations: params.minConfirmations,
   });
-}
-
-async function listPendingCryptoTopUps(params: {
-  db: SupabaseLike;
-  limit: number;
-}) {
-  const { data, error } = await table(params.db, "payment_transactions")
-    .select("id, user_id, provider, provider_reference_id, status, asset, amount_minor, package_credits, metadata, created_at")
-    .eq("provider", "bankr")
-    .eq("status", "pending")
-    .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
-    .order("created_at", { ascending: true })
-    .limit(params.limit);
-
-  if (error) {
-    throw new Error(error.message || "Failed to load pending crypto top-ups");
-  }
-
-  return Array.isArray(data) ? (data as PendingCryptoTopUpRow[]) : [];
-}
-
-async function upsertCryptoDepositReceipt(params: {
-  db: SupabaseLike;
-  payment: PendingCryptoTopUp;
-  transfer: {
-    transactionHash: string;
-    logIndex: number;
-    blockNumber: number;
-    blockHash: string | null;
-    confirmations: number;
-  };
-  status: "confirmed" | "settled";
-  now: Date;
-}) {
-  const nowIso = params.now.toISOString();
-  const result = await table(params.db, "crypto_deposit_receipts").upsert(
-    {
-      user_id: params.payment.userId,
-      payment_transaction_id: params.payment.id,
-      provider: "bankr",
-      reference_id: params.payment.referenceId,
-      chain_id: BASE_CHAIN_ID,
-      token_address: USDC_BASE_TOKEN_ADDRESS,
-      token_symbol: CRYPTO_TOPUP_ASSETS.usdc_base.symbol,
-      token_decimals: CRYPTO_TOPUP_ASSETS.usdc_base.tokenDecimals,
-      deposit_address: params.payment.depositAddress,
-      normalized_deposit_address: params.payment.depositAddress,
-      amount_minor: params.payment.amountMinor,
-      tx_hash: params.transfer.transactionHash,
-      log_index: params.transfer.logIndex,
-      block_number: params.transfer.blockNumber,
-      block_hash: params.transfer.blockHash,
-      confirmations: params.transfer.confirmations,
-      status: params.status,
-      metadata: {
-        source: "base_rpc",
-        creditGrantReference: params.payment.referenceId,
-      },
-      detected_at: nowIso,
-      confirmed_at: nowIso,
-      settled_at: params.status === "settled" ? nowIso : null,
-      updated_at: nowIso,
-    },
-    { onConflict: "provider,reference_id" }
+  const nextStartMs = await loadNextIntentStartMs(db, intent);
+  const inRange = scan.transfers.filter(
+    (transfer) =>
+      transfer.timestampMs >= window.startMs &&
+      transfer.timestampMs <= window.graceEndMs &&
+      (nextStartMs === null || transfer.timestampMs < nextStartMs)
   );
+  // A transfer another intent has claimed is accounted for there.
+  const claimedElsewhere = await loadClaimedCryptoTopUpTransferKeys(db, inRange, {
+    ignoreReferenceId: referenceId,
+  });
+  const attributable = inRange.filter(
+    (transfer) => !claimedElsewhere.has(cryptoTopUpTransferKey(transfer.transactionHash, transfer.logIndex))
+  );
+  const isConfirmed = (transfer: ScannedTransfer) => transfer.confirmations >= params.minConfirmations;
 
-  if (result.error) {
-    throw new Error(result.error.message || "Failed to store crypto deposit receipt");
+  // 1. Credit the EARLIEST exact-amount transfer in chain order. Later
+  //    arrivals never displace it; an under-confirmed one is waited for.
+  const candidate = attributable.find((transfer) => transfer.amount === intent.requiredAmount);
+  if (candidate) {
+    if (!isConfirmed(candidate)) {
+      return { status: "underconfirmed", referenceId, confirmations: candidate.confirmations };
+    }
+    const settlement = await params.settle({
+      referenceId,
+      transfer: toTopUpTransfer(candidate),
+      actor: "bankr_reconciler",
+      db,
+      now,
+    });
+    if (settlement.status === "settled") {
+      // Anything else the user sent for this intent is real money that was
+      // not credited: hand it to an operator. (Settlement itself surfaces the
+      // candidate when the intent turned out to hold an earlier claim.)
+      const claimed = await loadClaimedCryptoTopUpTransferKeys(db, attributable);
+      for (const transfer of attributable) {
+        if (transfer === candidate || !isConfirmed(transfer)) continue;
+        if (claimed.has(cryptoTopUpTransferKey(transfer.transactionHash, transfer.logIndex))) continue;
+        await surfaceCryptoTopUpTransfer(
+          { payment: intent.row, transfer: toTopUpTransfer(transfer), reason: CRYPTO_TOPUP_REVIEW_REASONS.extraTransfer },
+          db
+        );
+      }
+    }
+    return settlementOutcome(settlement);
   }
-}
 
-async function markCryptoDepositReceiptSettled(params: {
-  db: SupabaseLike;
-  referenceId: string;
-  now: Date;
-}) {
-  const nowIso = params.now.toISOString();
-  const result = await table(params.db, "crypto_deposit_receipts")
-    .update({
-      status: "settled",
-      settled_at: nowIso,
-      updated_at: nowIso,
-    })
-    .eq("provider", "bankr")
-    .eq("reference_id", params.referenceId);
-
-  if (result.error) {
-    throw new Error(result.error.message || "Failed to update crypto deposit receipt");
+  // 2. No exact payment. Keep watching until the whole window + grace is on a
+  //    confirmed chain: the user can still send the right amount until then.
+  const fullyScanned = now.getTime() >= window.graceEndMs && scan.confirmedHeadMs >= window.graceEndMs;
+  if (!fullyScanned) {
+    const waiting = attributable.filter((transfer) => !isConfirmed(transfer));
+    if (waiting.length > 0) {
+      return {
+        status: "underconfirmed",
+        referenceId,
+        confirmations: Math.max(...waiting.map((transfer) => transfer.confirmations)),
+      };
+    }
+    return { status: "no_match", referenceId };
   }
+
+  // 3. Close the intent. Non-exact transfers (under, over, split payments) are
+  //    surfaced one item each BEFORE the close, so a review is never lost.
+  const received = attributable.filter(isConfirmed);
+  for (const transfer of received) {
+    await surfaceCryptoTopUpTransfer(
+      {
+        payment: intent.row,
+        transfer: toTopUpTransfer(transfer),
+        reason:
+          transfer.amount < intent.requiredAmount
+            ? CRYPTO_TOPUP_REVIEW_REASONS.underpaid
+            : CRYPTO_TOPUP_REVIEW_REASONS.overpaid,
+      },
+      db
+    );
+  }
+  const outcome = received.length > 0 ? "manual_review" : "expired";
+  const retired = await retireCryptoTopUpIntent(
+    {
+      payment: intent.row,
+      outcome,
+      observedTotalMinor: received.length
+        ? received.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
+        : null,
+      now,
+    },
+    db
+  );
+  if (!retired.retired) {
+    // Settled or closed by someone else since the candidates were read.
+    const current = await loadCryptoTopUpPayment(db, referenceId);
+    return { status: "closed", referenceId, paymentStatus: current?.status ?? "missing" };
+  }
+  return outcome === "manual_review"
+    ? { status: "manual_review", referenceId, surfaced: received.length }
+    : { status: "expired", referenceId };
 }
 
 /**
- * The set of on-chain transfers already consumed by OTHER top-up intents on
- * this deposit address, keyed `${tx_hash}:${log_index}`. The deposit wallet is
- * reused per user, so two same-amount top-ups land at the same address with the
- * same required amount; without this, the oldest (already-credited) transfer is
- * re-matched and the receipt insert collides on the (chain_id, tx_hash,
- * log_index) unique constraint, permanently blocking the new credit. We scope
- * OUT this intent's own reference_id so re-reconciling the same intent (e.g. a
- * confirmed-but-not-settled retry) can still re-pick its own transfer.
+ * Reconcile one intent on demand (the bearer settle route). The transfer is
+ * found and verified on chain and claimed like any cron settlement; a
+ * caller-supplied hash is never trusted.
  */
-async function loadConsumedTransferKeys(params: {
-  db: SupabaseLike;
-  depositAddress: string;
-  excludeReferenceId: string;
-}): Promise<Set<string>> {
-  // DbSelectFilter has no `.neq`, so fetch this address's receipts and exclude
-  // this intent's own reference_id in JS. A deposit address only accumulates a
-  // single user's top-up receipts, so the row count is small.
-  const { data, error } = await table(params.db, "crypto_deposit_receipts")
-    .select("tx_hash, log_index, reference_id")
-    .eq("chain_id", BASE_CHAIN_ID)
-    .eq("normalized_deposit_address", params.depositAddress)
-    .limit(1000);
-
-  if (error) {
-    throw new Error(error.message || "Failed to load consumed crypto deposit receipts");
-  }
-
-  const consumed = new Set<string>();
-  for (const row of (Array.isArray(data) ? data : []) as Array<{
-    tx_hash?: string | null;
-    log_index?: number | null;
-    reference_id?: string | null;
-  }>) {
-    if (row.reference_id === params.excludeReferenceId) continue;
-    if (typeof row.tx_hash === "string" && typeof row.log_index === "number") {
-      consumed.add(`${row.tx_hash.toLowerCase()}:${row.log_index}`);
-    }
-  }
-  return consumed;
-}
-
-async function reconcileCryptoTopUpIntent(params: {
-  payment: PendingCryptoTopUpRow;
+export async function reconcileCryptoTopUpByReference(params: {
+  referenceId: string;
   db?: SupabaseLike | null;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
-  lookbackBlocks?: number;
   minConfirmations?: number;
-  settleIntent?: SettleCryptoTopUp;
   now?: Date;
   rpcOptions?: RpcCallOptions;
-}) {
-  const admin = requireDb(params.db ?? supabaseAdmin);
-  const parsedPayment = parsePendingPayment(params.payment);
-
-  if (!parsedPayment) {
-    return {
-      status: "invalid_intent" as const,
-      referenceId: params.payment.provider_reference_id,
-    };
-  }
-
-  const rpcUrl = params.rpcUrl || getBaseRpcUrl();
-  const fetchImpl = params.fetchImpl || (fetch as unknown as JsonRpcFetch);
-  const lookbackBlocks = normalizeLookbackBlocks(params.lookbackBlocks);
-  const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
+}): Promise<CryptoTopUpReconciliationResult | { status: "not_found"; referenceId: string }> {
+  const db = requireDb(params.db ?? supabaseAdmin);
+  const referenceId = params.referenceId.trim();
   const now = params.now ?? new Date();
-  const scan = await fetchUsdcTransfersToAddress({
-    depositAddress: parsedPayment.depositAddress,
-    call: createRpcCall({ rpcUrl, fetchImpl, rpcOptions: params.rpcOptions }),
-    lookbackBlocks,
-  });
-  const matches = findMatchingTransfer({
-    logs: scan.logs,
-    latestBlock: scan.latestBlock,
-    amountMinor: parsedPayment.amountMinor,
-  });
-  // Drop transfers already consumed by other intents so a repeat same-amount
-  // top-up matches its OWN (newer) transfer rather than re-picking a stale one.
-  const consumed = await loadConsumedTransferKeys({
-    db: admin,
-    depositAddress: parsedPayment.depositAddress,
-    excludeReferenceId: parsedPayment.referenceId,
-  });
-  const freshMatches = matches.filter(
-    (match) => !consumed.has(`${match.transactionHash.toLowerCase()}:${match.logIndex}`)
-  );
-  const confirmed = freshMatches.find((match) => match.confirmations >= minConfirmations);
+  const row = await loadCryptoTopUpPayment(db, referenceId);
+  if (!row) return { status: "not_found", referenceId };
 
-  if (!confirmed) {
-    if (freshMatches.length > 0) {
-      return {
-        status: "underconfirmed" as const,
-        referenceId: parsedPayment.referenceId,
-        confirmations: Math.max(...freshMatches.map((match) => match.confirmations)),
-      };
-    }
-
-    return {
-      status: "no_match" as const,
-      referenceId: parsedPayment.referenceId,
-    };
+  if (row.status === "succeeded") {
+    // Settled already: report the claimed transfer; never re-settle.
+    const settlement = metadataRecord(metadataRecord(row.metadata).settlement);
+    const claim = await loadClaimForIntent(db, referenceId);
+    const transactionHash =
+      claim?.tx_hash ?? (typeof settlement.transactionHash === "string" ? settlement.transactionHash : "");
+    return { status: "settled", referenceId, transactionHash, inserted: false, balance: null };
+  }
+  if (!isOpenCryptoTopUpIntent(row)) {
+    return { status: "closed", referenceId, paymentStatus: row.status };
   }
 
-  await upsertCryptoDepositReceipt({
-    db: admin,
-    payment: parsedPayment,
-    transfer: confirmed,
-    status: "confirmed",
+  return reconcileOpenIntent({
+    row,
+    db,
+    chain: createBaseChainReader({ rpcUrl: params.rpcUrl, fetchImpl: params.fetchImpl, rpcOptions: params.rpcOptions }),
+    minConfirmations: normalizeMinConfirmations(params.minConfirmations),
+    settle: settleCryptoTopUpIntent,
     now,
   });
-
-  const settle = params.settleIntent ?? settleCryptoTopUpIntent;
-  const settlement = await settle({
-    referenceId: parsedPayment.referenceId,
-    actor: "bankr_reconciler",
-    transactionHash: confirmed.transactionHash,
-    detectedAt: now.toISOString(),
-    db: admin,
-    now,
-  });
-
-  if (settlement.status !== "settled") {
-    return {
-      status: "settlement_skipped" as const,
-      referenceId: parsedPayment.referenceId,
-      settlementStatus: settlement.status,
-    };
-  }
-
-  await markCryptoDepositReceiptSettled({
-    db: admin,
-    referenceId: parsedPayment.referenceId,
-    now,
-  });
-
-  return {
-    status: "settled" as const,
-    referenceId: parsedPayment.referenceId,
-    transactionHash: confirmed.transactionHash,
-    inserted: settlement.inserted,
-    balance: settlement.balance,
-  };
 }
+
+async function loadClaimForIntent(db: SupabaseLike, referenceId: string) {
+  const { data, error } = await table(db, "crypto_deposit_receipts")
+    .select("tx_hash")
+    .eq("provider", "bankr")
+    .eq("reference_id", referenceId)
+    .limit(1);
+  if (error) {
+    throw new Error(error.message || "Failed to load crypto deposit receipt");
+  }
+  return (Array.isArray(data) ? (data[0] as { tx_hash?: string } | undefined) : undefined) ?? null;
+}
+
+// ── Batch ─────────────────────────────────────────────────────────────────
+
+type BatchResult =
+  | CryptoTopUpReconciliationResult
+  | { status: "recovered"; referenceId: string; settlementStatus: CryptoTopUpSettlementResult["status"] }
+  | { status: "failed"; referenceId: string; errorName: string; errorMessage: string };
 
 export async function reconcilePendingCryptoTopUps(params: {
   db?: SupabaseLike | null;
   limit?: number;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
-  lookbackBlocks?: number;
   minConfirmations?: number;
   settleIntent?: SettleCryptoTopUp;
   now?: Date;
-  // Retry knobs for 429/5xx from Base RPC (optional; exposed mainly so tests
-  // can inject a fake sleep/random and tighten the retry budget).
-  rpcRetryConfig?: Partial<RpcRetryConfig>;
-  rpcSleepImpl?: (ms: number) => Promise<void>;
-  rpcRandom?: () => number;
+  rpcOptions?: RpcCallOptions;
 } = {}) {
-  const admin = requireDb(params.db ?? supabaseAdmin);
+  const db = requireDb(params.db ?? supabaseAdmin);
   const limit = normalizeLimit(params.limit);
-  const payments = await listPendingCryptoTopUps({ db: admin, limit });
-  const rpcOptions: RpcCallOptions = {
-    retryConfig: normalizeRpcRetryConfig(params.rpcRetryConfig),
-    sleepImpl: params.rpcSleepImpl,
-    random: params.rpcRandom,
+  const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
+  const settle = params.settleIntent ?? settleCryptoTopUpIntent;
+  const now = params.now ?? new Date();
+  // One reader per batch: the head and block timestamps are fetched once.
+  const chain = createBaseChainReader({
+    rpcUrl: params.rpcUrl,
+    fetchImpl: params.fetchImpl,
+    rpcOptions: params.rpcOptions,
+  });
+
+  const results: BatchResult[] = [];
+  const counts = {
+    settled: 0,
+    noMatch: 0,
+    underconfirmed: 0,
+    invalidIntent: 0,
+    expired: 0,
+    manualReview: 0,
+    recovered: 0,
+    failed: 0,
   };
-  const results: Array<
-    | Awaited<ReturnType<typeof reconcileCryptoTopUpIntent>>
-    | { status: "failed"; referenceId: string; errorName: string }
-  > = [];
+  const fail = (referenceId: string, error: unknown) => {
+    counts.failed += 1;
+    results.push({
+      status: "failed",
+      referenceId,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  };
 
-  let settled = 0;
-  let noMatch = 0;
-  let underconfirmed = 0;
-  let invalidIntent = 0;
-  let failed = 0;
-
-  for (const payment of payments) {
+  const intents = await listOpenCryptoTopUps(db, limit);
+  for (const row of intents) {
     try {
-      const result = await reconcileCryptoTopUpIntent({
-        payment,
-        db: admin,
-        rpcUrl: params.rpcUrl,
-        fetchImpl: params.fetchImpl,
-        lookbackBlocks: params.lookbackBlocks,
-        minConfirmations: params.minConfirmations,
-        settleIntent: params.settleIntent,
-        now: params.now,
-        rpcOptions,
-      });
+      const result = await reconcileOpenIntent({ row, db, chain, minConfirmations, settle, now });
       results.push(result);
-
-      if (result.status === "settled") settled += 1;
-      if (result.status === "no_match") noMatch += 1;
-      if (result.status === "underconfirmed") underconfirmed += 1;
-      if (result.status === "invalid_intent") invalidIntent += 1;
-      if (result.status === "settlement_skipped") failed += 1;
+      if (result.status === "settled") counts.settled += 1;
+      if (result.status === "no_match") counts.noMatch += 1;
+      if (result.status === "underconfirmed") counts.underconfirmed += 1;
+      if (result.status === "invalid_intent") counts.invalidIntent += 1;
+      if (result.status === "expired") counts.expired += 1;
+      if (result.status === "manual_review") counts.manualReview += 1;
+      if (result.status === "settlement_skipped") {
+        // A closed-during-settlement intent is already surfaced for review;
+        // anything else settlement refused is unexpected here.
+        if (result.settlementStatus === "intent_closed") counts.manualReview += 1;
+        else counts.failed += 1;
+      }
     } catch (error) {
-      failed += 1;
-      results.push({
-        status: "failed",
-        referenceId: payment.provider_reference_id,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
+      fail(row.provider_reference_id, error);
+    }
+  }
+
+  // Recovery: a claim whose settlement died part-way (the intent already
+  // flipped, the credit not yet written) is finished here without a scan.
+  const claims = await listUnfinishedCryptoTopUpClaims(db, limit);
+  for (const receipt of claims) {
+    try {
+      const result = await resumeClaimedCryptoTopUp({ receipt, db, now });
+      results.push({ status: "recovered", referenceId: receipt.reference_id, settlementStatus: result.status });
+      if (result.status === "settled") counts.recovered += 1;
+    } catch (error) {
+      fail(receipt.reference_id, error);
     }
   }
 
   return {
-    checked: payments.length,
-    settled,
-    noMatch,
-    underconfirmed,
-    invalidIntent,
-    failed,
+    checked: intents.length,
+    ...counts,
     results,
   };
 }
