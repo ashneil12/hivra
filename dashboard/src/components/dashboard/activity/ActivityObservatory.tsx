@@ -15,9 +15,10 @@ import {
   presentEvent,
   sourceExplanation,
 } from "./presentation";
+import { AgentRuns } from "./AgentRuns";
 import styles from "./ActivityObservatory.module.css";
 
-type View = "timeline" | "attention" | "coverage" | "usage";
+type View = "runs" | "timeline" | "attention" | "coverage" | "usage";
 const label = (value: string) => value.replaceAll("_", " ");
 function timestamp(value?: string) {
   if (!value) return "Not recorded";
@@ -226,6 +227,9 @@ export function ActivityObservatory({
   const filtered = events.filter(
     (event) =>
       (view !== "attention" || event.needsAttention) &&
+      (view !== "runs" ||
+        event.kind === "trace_span" ||
+        event.kind === "tool_activity") &&
       (agent === "all" || event.agentId === agent) &&
       (kind === "all" || event.kind === kind) &&
       [
@@ -253,6 +257,7 @@ export function ActivityObservatory({
     data?.sources.some((source) => source.state === "degraded");
   const views: [View, string][] = [
     ["timeline", "History"],
+    ["runs", "Agent runs"],
     ["attention", "Needs attention"],
     ["coverage", "What is monitored"],
     ...(showUsage ? [["usage", "Usage"] as [View, string]] : []),
@@ -404,9 +409,11 @@ export function ActivityObservatory({
         ) : (
           <>
             <p className={styles.viewHelp}>
-              {view === "attention"
-                ? "Only records marked for review appear here. The count covers loaded records, not all activity or a guarantee that everything is fine."
-                : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems."}
+              {view === "runs"
+                ? "Follow reported agent steps in order. Select a step to inspect what was reported; a quiet run does not mean it finished."
+                : view === "attention"
+                  ? "Only records marked for review appear here. The count covers loaded records, not all activity or a guarantee that everything is fine."
+                  : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems."}
             </p>
             <div className={styles.toolbar}>
               <input
@@ -444,61 +451,78 @@ export function ActivityObservatory({
               </select>
             </div>
             <div className={styles.work}>
-              <section aria-label="Recorded events">
-                <div className={styles.listLabel}>
-                  <span>Last 30 days · loaded records</span>
-                  <span role="status">{filtered.length} events</span>
-                </div>
-                {filtered.length ? (
-                  filtered.map((event) => (
-                    <button
-                      key={event.id}
-                      className={styles.event}
-                      aria-pressed={active?.id === event.id}
-                      onClick={() => setSelected(event.id)}
-                    >
-                      {event.needsAttention ? (
-                        <AlertTriangle
-                          size={16}
-                          className={styles.warning}
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Activity size={16} aria-hidden="true" />
-                      )}
-                      <span>
-                        <strong>{presentEvent(event).title}</strong>
-                        <span className={styles.meta}>
-                          {event.agentName} ·{" "}
-                          {kindLabels[event.kind] ?? label(event.kind)}
-                        </span>
-                        <span className={styles.eventBottom}>
-                          <span
-                            className={
-                              event.needsAttention ? styles.warning : undefined
-                            }
-                          >
-                            {presentEvent(event).status}
+              {view === "runs" ? (
+                <AgentRuns
+                  events={filtered}
+                  selected={active?.id}
+                  onSelect={setSelected}
+                  limited={
+                    data.truncated ||
+                    data.degraded ||
+                    Boolean(query) ||
+                    agent !== "all" ||
+                    kind !== "all"
+                  }
+                />
+              ) : (
+                <section aria-label="Recorded events">
+                  <div className={styles.listLabel}>
+                    <span>Last 30 days · loaded records</span>
+                    <span role="status">{filtered.length} events</span>
+                  </div>
+                  {filtered.length ? (
+                    filtered.map((event) => (
+                      <button
+                        key={event.id}
+                        className={styles.event}
+                        aria-pressed={active?.id === event.id}
+                        onClick={() => setSelected(event.id)}
+                      >
+                        {event.needsAttention ? (
+                          <AlertTriangle
+                            size={16}
+                            className={styles.warning}
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Activity size={16} aria-hidden="true" />
+                        )}
+                        <span>
+                          <strong>{presentEvent(event).title}</strong>
+                          <span className={styles.meta}>
+                            {event.agentName} ·{" "}
+                            {kindLabels[event.kind] ?? label(event.kind)}
                           </span>
-                          <time dateTime={event.occurredAt}>
-                            {timestamp(event.occurredAt)}
-                          </time>
+                          <span className={styles.eventBottom}>
+                            <span
+                              className={
+                                event.needsAttention
+                                  ? styles.warning
+                                  : undefined
+                              }
+                            >
+                              {presentEvent(event).status}
+                            </span>
+                            <time dateTime={event.occurredAt}>
+                              {timestamp(event.occurredAt)}
+                            </time>
+                          </span>
                         </span>
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <p className={styles.empty}>
-                    {events.length
-                      ? "No recorded events match this view and its filters."
-                      : data.degraded
-                        ? "No activity was returned by the available history."
-                        : "No activity was recorded in the last 30 days."}{" "}
-                    See What is monitored to understand which records are
-                    available.
-                  </p>
-                )}
-              </section>
+                      </button>
+                    ))
+                  ) : (
+                    <p className={styles.empty}>
+                      {events.length
+                        ? "No recorded events match this view and its filters."
+                        : data.degraded
+                          ? "No activity was returned by the available history."
+                          : "No activity was recorded in the last 30 days."}{" "}
+                      See What is monitored to understand which records are
+                      available.
+                    </p>
+                  )}
+                </section>
+              )}
               {active && (
                 <Inspector event={active} selected={selected === active.id} />
               )}

@@ -1,0 +1,19 @@
+[Unit]
+Description=Hivra agent structural telemetry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 -I -B /opt/hivra/agent-trace/hivra-agent-trace.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/home/bux/.codex /home/bux/.claude
+ReadWritePaths=/var/lib/hivra-agent-trace
+
+[Install]
+WantedBy=multi-user.target

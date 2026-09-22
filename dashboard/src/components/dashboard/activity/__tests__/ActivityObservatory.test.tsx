@@ -2,7 +2,10 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ActivityObservatory } from "../ActivityObservatory";
-import type { ActivitySnapshot, ActivityEventKind } from "@/lib/activity-observability/types";
+import type {
+  ActivitySnapshot,
+  ActivityEventKind,
+} from "@/lib/activity-observability/types";
 
 jest.mock("@/components/dashboard/AgentActivityPanel", () => ({
   AgentActivityPanel: () => <div>Metered usage panel</div>,
@@ -48,7 +51,9 @@ const snapshot: ActivitySnapshot = {
     {
       id: "a1",
       name: "Builder",
-      capabilities: [{ key: "tool_activity", label: "Agent tools", state: "missing" }],
+      capabilities: [
+        { key: "tool_activity", label: "Agent tools", state: "missing" },
+      ],
     },
   ],
   sources: [
@@ -459,3 +464,84 @@ it.each<[ActivityEventKind, string]>([
     ).toBeVisible();
   },
 );
+
+it("shows bounded run steps and lets a step open its original evidence", async () => {
+  respond({
+    ...snapshot,
+    truncated: true,
+    events: [
+      {
+        ...snapshot.events[1],
+        id: "step-later",
+        runId: "run-123",
+        occurredAt: "2026-09-21T12:00:00Z",
+        evidence: [
+          { label: "Tool", value: "shell" },
+          { label: "Duration (ms)", value: "80" },
+        ],
+      },
+      {
+        ...snapshot.events[1],
+        id: "step-earlier",
+        runId: "run-123",
+        occurredAt: "2026-09-21T11:00:00Z",
+        outcome: "unknown",
+        severity: "info",
+        needsAttention: false,
+        evidence: [],
+      },
+      {
+        ...snapshot.events[1],
+        id: "ungrouped",
+        runId: undefined,
+        traceId: undefined,
+      },
+    ],
+  });
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: "Agent runs" });
+  await screen.findByRole("button", { name: "Monitoring limits" });
+  fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+  const runs = within(
+    screen.getByRole("region", { name: "Agent runs" }),
+  );
+  expect(runs.getByText(/not a complete account of a run/)).toBeVisible();
+  expect(
+    runs.getByText(/Some records are missing or outside this view/),
+  ).toBeVisible();
+  expect(runs.getByText("A step reported a problem")).toBeVisible();
+  expect(runs.getByText("80 ms reported")).toBeVisible();
+  expect(runs.getByText("Reports without a linked run")).toBeVisible();
+  expect(runs.getByText("run-123")).not.toBeVisible();
+  fireEvent.click(runs.getByRole("button", { name: /Tool: shell/ }));
+  const inspector = within(
+    screen.getByRole("complementary", { name: "Event inspector" }),
+  );
+  fireEvent.click(inspector.getByText("Technical details"));
+  expect(inspector.getByText("step-later")).toBeVisible();
+  expect(inspector.getByText("shell")).toBeVisible();
+});
+
+it("does not present successful or unknown steps as a completed run", async () => {
+  respond({
+    ...snapshot,
+    events: [
+      {
+        ...snapshot.events[1],
+        runId: "run",
+        outcome: "success",
+        severity: "info",
+        needsAttention: false,
+      },
+    ],
+  });
+  render(<ActivityObservatory />);
+  await screen.findByRole("button", { name: "Monitoring limits" });
+  fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+  expect(screen.getByText("Final result not confirmed")).toBeVisible();
+  expect(
+    within(
+      screen.getByRole("region", { name: "Agent runs" }),
+    ).getByText("Reported successful"),
+  ).toBeVisible();
+});

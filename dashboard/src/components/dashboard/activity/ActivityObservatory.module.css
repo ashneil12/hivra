@@ -348,3 +348,30 @@
   color: var(--text-secondary);
   font-size: 12px;
 }
+
+.runs {
+  min-width: 0;
+}
+.runGroup {
+  border-top: 1px solid var(--etched-border);
+  padding-top: 14px;
+  margin-top: 22px;
+}
+.runHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.runHeading h3 {
+  margin: 0 0 8px;
+}
+.runHeading > span {
+  font-size: 11px;
+}
+.runSteps {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+}

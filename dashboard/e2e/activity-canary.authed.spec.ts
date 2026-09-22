@@ -92,6 +92,20 @@ test.describe("Activity observatory (deployed canary)", () => {
     }
     await activity.getByLabel("Filter by agent").selectOption("all");
     await activity.getByLabel("Filter by kind").selectOption("all");
+    await activity.getByRole("button", { name: "Agent runs", exact: true }).click();
+    const runs = activity.getByRole("region", { name: "Agent runs", exact: true });
+    await expect(runs).toBeVisible();
+    await expect(runs).toContainText("not a complete account of a run");
+    const linked = data.events.filter((event) =>
+      (event.kind === "trace_span" || event.kind === "tool_activity") &&
+      (event.runId?.trim() || event.traceId?.trim()),
+    );
+    if (!linked.length) await expect(runs).toContainText("No linked agent runs");
+    const steps = runs.getByRole("button");
+    if (await steps.count()) {
+      await steps.first().click();
+      await expect(activity.getByRole("complementary", { name: "Event inspector" })).toBeVisible();
+    }
     await activity.getByRole("button", { name: /Needs attention/ }).click();
     await expect(
       activity

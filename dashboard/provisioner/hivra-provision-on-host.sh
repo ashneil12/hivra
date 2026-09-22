@@ -187,6 +187,7 @@ if [ -n "$SECRET_ENV_FILE" ]; then
   HIVRA_MODEL_KEY="$(read_secret_b64 HIVRA_MODEL_KEY_B64)"
   HIVRA_MODEL_BASE_URL="$(read_secret_b64 HIVRA_MODEL_BASE_URL_B64)"
   HIVRA_HERMES_MODEL="$(read_secret_b64 HIVRA_HERMES_MODEL_B64)"
+  HIVRA_ACTIVITY_TELEMETRY="$(read_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"
   rm -f -- "$SECRET_ENV_FILE"
   SECRET_ENV_FILE=""
 else
@@ -450,7 +451,7 @@ fi
 guest_launch_document() {
   printf '%s\0' "$AGENT_KIND" "${HIVRA_WANT_BROWSER:-}" "$HIVRA_MODEL_KEY" \
     "$HIVRA_MODEL_BASE_URL" "$HIVRA_HERMES_MODEL" "${HIVRA_TUNNEL_TOKEN:-}" "${HIVRA_TUNNEL_URL:-}" \
-    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" \
+    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" \
     | python3 -I -B -c '
 import json, sys
 try:
@@ -458,7 +459,7 @@ try:
     if len(raw) > 32768:
         raise ValueError()
     values = raw.decode("utf-8").split("\0")
-    if len(values) != 10 or values[-1] != "" or values[1] not in ("", "0", "1"):
+    if len(values) != 11 or values[-1] != "" or values[1] not in ("", "0", "1"):
         raise ValueError()
     native = values[0] == "deepseek-harness"
     desktop = values[0] == "linux-desktop"
@@ -475,6 +476,12 @@ try:
     if desktop:
         document["computerId"] = values[7]
         document["controlOrigin"] = values[8]
+    if values[9]:
+        telemetry = json.loads(values[9])
+        if values[0] not in ("claude", "codex") or not isinstance(telemetry, dict):
+            raise ValueError()
+        document["version"] = 4
+        document["activityTelemetry"] = telemetry
     print(json.dumps(document))
 except Exception:
     print("invalid guest launch input", file=sys.stderr)

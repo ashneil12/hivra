@@ -108,6 +108,7 @@ import {
   resolveHivraVmidStart,
   shellQuote,
 } from "@/lib/hivra/proxmox-target";
+import { mintActivityCollectorToken } from "@/lib/activity-observability/auth";
 
 // Process-lifetime once-guard for the hivra-lane box_created emit. Same
 // rationale as emittedBoxCreatedInstanceIds in instance-service.ts (#353):
@@ -249,6 +250,12 @@ function phase1Script(params: {
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
+  activityTelemetry?: {
+    endpoint: string;
+    resourceId: string;
+    token: string;
+    expiresAt: string;
+  } | null;
 }): string {
   const runtime = params.portableRuntime ?? null;
   const runtimePaths = runtime ?? params.managedRuntimePaths;
@@ -359,6 +366,7 @@ chmod 0700 "$QM_WRAPPER"
   export HIVRA_MODEL_KEY="$(read_secret_b64 HIVRA_MODEL_KEY_B64)"
   export HIVRA_MODEL_BASE_URL="$(read_secret_b64 HIVRA_MODEL_BASE_URL_B64)"
   export HIVRA_HERMES_MODEL="$(read_secret_b64 HIVRA_HERMES_MODEL_B64)"
+  export HIVRA_ACTIVITY_TELEMETRY="$(read_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"
   rm -f -- "$SECRET_ENV_FILE"
   exec env PATH="$WRAPPER_DIR:\${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}" HIVRA_REAL_QM="$REAL_QM" HIVRA_EXPECTED_VMID="$VMID" HIVRA_PID_FILE="$PIDFILE" HIVRA_OPERATION_ID=${shellQuote(params.operationId)} HIVRA_OPERATION_TAG=${shellQuote(operationTag)} HIVRA_BINDING_TAG=${shellQuote(params.infrastructureBindingTag)} ${hostEnvironment}HIVRA_WANT_BROWSER=${shellQuote(wantBrowserEnvValue)} HIVRA_SUBNET_PREFIX=${shellQuote(params.subnetPrefix)} HIVRA_GW=${shellQuote(params.gateway)} bash ${shellQuote(provisionerDirectory)}/hivra-provision-on-host.sh "$VMID" "$OCTET" "${params.cpu}" "${params.memMb}" "${params.agentKind}"
 ) >> "$LOG" 2>&1 < /dev/null &
@@ -516,6 +524,7 @@ write_secret_b64() { printf '%s' "$1" | base64 -w 0; printf '\n'; }
   printf 'HIVRA_MODEL_KEY_B64='; write_secret_b64 ${shellQuote(params.modelKey ?? "")}
   printf 'HIVRA_MODEL_BASE_URL_B64='; write_secret_b64 ${shellQuote(params.modelBaseUrl ?? "")}
   printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 ${shellQuote(params.model ?? "")}
+  printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; write_secret_b64 ${shellQuote(params.activityTelemetry ? JSON.stringify(params.activityTelemetry) : "")}
 } > "$SECRET_ENV_FILE"
 ${kickoff}
 ALLOCATION_RECEIPT="/run/hivra-provision/$VMID.allocated"
