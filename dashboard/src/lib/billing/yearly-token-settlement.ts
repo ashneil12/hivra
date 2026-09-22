@@ -4,24 +4,32 @@
  *
  * The quote shows the user their credit_deposit Bankr wallet, which is SHARED
  * with managed-Venice $HermesOS top-ups. So a quote is paid by a specific
- * Transfer log, never by the wallet's balance:
+ * Transfer log, never by the wallet's balance.
  *
- *   1. Scan Transfer logs into the deposit address over the quote's own time
- *      range: quotedAt .. expiresAt + LATE_PAYMENT_GRACE, cut off at the start
- *      of the user's next $HermesOS payment session on that wallet
- *      (hermesos-transfer-attribution). Transfers any flow already bound are
- *      skipped.
- *   2. The EARLIEST confirmed in-window transfer of at least the quoted amount
- *      (and at most MAX_OVERSEND x) settles the quote through
- *      settle_yearly_token_payment, which claims the tx, activates or renews
- *      the subscription and consumes the quote in one transaction.
- *   3. Nothing qualifying: under-payments (once the window has closed),
- *      over-ceiling payments and in-band payments after the window go to an
- *      operator as yearly_token_reconciliation_items (one per transfer) and
- *      the quote moves to 'manual_review'. Other late transfers are surfaced
- *      without closing the quote.
- *   4. Once the whole range is scanned at full confirmations with nothing to
- *      act on, the quote retires to 'cancelled'.
+ * Every quote owns an attribution RANGE on its deposit wallet:
+ *
+ *     quotedAt .. min(expiresAt + LATE_PAYMENT_GRACE, next $HermesOS session)
+ *
+ * (hermesos-transfer-attribution). Transfers another flow already owns are
+ * skipped. The reconciler keeps watching the range until it has been scanned
+ * at full confirmations (yearly_token_quotes.attribution_closed_at), whatever
+ * happens to the quote in between:
+ *
+ *   'active' / 'expired' quotes
+ *     1. The EARLIEST confirmed in-window transfer of 1x..2x the quote settles
+ *        it through settle_yearly_token_payment, which claims the tx,
+ *        activates or renews the subscription and consumes the quote in one
+ *        transaction.
+ *     2. Nothing qualifying: over-ceiling transfers are surfaced for review as
+ *        soon as they confirm, but the quote stays payable while its window
+ *        is open. Once the window has closed, an over-ceiling, late in-band or
+ *        under-paying transfer sends the quote to 'manual_review'. Every such
+ *        transfer is one yearly_token_reconciliation_items row (+ ops event).
+ *     3. Nothing at all once the range is fully scanned: 'cancelled'.
+ *   'consumed' / 'manual_review' quotes
+ *     Watched until the range is fully scanned: every further transfer in it
+ *     (a duplicate payment, an extra that confirmed after settlement, a top-up
+ *     after review) is surfaced once.
  *
  * Mirrors the managed-Venice reconciler on claude/venice-settlement-fixes.
  */
@@ -39,21 +47,20 @@ import {
   type ScannedTransfer,
 } from "@/lib/billing/base-token-transfers";
 import {
-  floorToSecondMs,
-  loadBoundHermesosTransactionHashes,
+  loadHermesosTransferOwnership,
   loadNextHermesosPaymentSessionMs,
 } from "@/lib/billing/hermesos-transfer-attribution";
 import { HERMESOS_TOKEN_ADDRESS, normalizeEvmAddress } from "@/lib/billing/token-holdings";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 import {
   asYearlyTokenQuote,
+  YEARLY_LATE_PAYMENT_GRACE_MS,
   YEARLY_QUOTE_SELECT_COLUMNS,
   type YearlyQuoteRow,
   type YearlyTokenQuote,
 } from "@/lib/billing/yearly-token-quotes";
 
-/** A payment mined after the quote window but within this grace is still attributed to the quote (for review). */
-export const YEARLY_LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
+export { YEARLY_LATE_PAYMENT_GRACE_MS };
 /** Payments above quoted * 2 are not auto-accepted (fat-finger over-sends go to review for a refund decision). */
 export const YEARLY_MAX_OVERSEND_NUMERATOR = 2n;
 export const YEARLY_MAX_OVERSEND_DENOMINATOR = 1n;
@@ -71,7 +78,9 @@ export type YearlyReviewReason =
   | "late_payment"
   | "unattributed_late_transfer"
   | "extra_transfer"
-  | "legacy_subscription_exists";
+  | "payment_after_review"
+  | "legacy_subscription_exists"
+  | "contested_by_managed_venice_review";
 
 export type YearlyReconcileStatus =
   | "activated"
@@ -82,6 +91,9 @@ export type YearlyReconcileStatus =
   | "manual_review"
   | "cancelled"
   | "transaction_already_claimed"
+  /** A settled / in-review quote whose range is still being watched. */
+  | "watching"
+  /** The quote's range is closed (or the quote was final already). */
   | "closed";
 
 export interface YearlyReconcileResult {
@@ -106,8 +118,11 @@ export interface YearlyReconcileBatchResult {
   noMatch: number;
   manualReview: number;
   cancelled: number;
+  watching: number;
   skipped: number;
   failed: number;
+  /** Quotes left for the next run because the batch deadline passed. */
+  deferred: number;
   results: Array<YearlyReconcileResult | (Pick<YearlyReconcileResult, "quoteId" | "userId" | "tier"> & {
     status: "failed";
     errorName: string;
@@ -237,6 +252,7 @@ async function surfaceTransfer(
     dedupe_key: yearlyTransferDedupeKey(transfer),
     metadata: {
       tier: quote.tier,
+      quoteStatus: quote.status,
       blockNumber: transfer.blockNumber,
       confirmations: transfer.confirmations,
       quoteExpiresAt: quote.expiresAt,
@@ -251,7 +267,7 @@ async function surfaceTransfer(
     severity: "warn",
     title: "Yearly $HermesOS payment needs review",
     message:
-      `A $HermesOS transfer to a yearly quote's deposit wallet could not be credited automatically ` +
+      `A $HermesOS transfer to a yearly quote's deposit wallet needs an operator ` +
       `(${reason}). It is recorded in yearly_token_reconciliation_items.`,
     userId: quote.userId,
     metadata: {
@@ -268,16 +284,42 @@ async function surfaceTransfer(
   return true;
 }
 
-/** active|expired -> status, only while no transfer is bound to the quote. */
+/**
+ * active|expired -> status, only while no transfer is bound to the quote.
+ * Retiring to 'cancelled' happens only after a full scan, so it also closes
+ * attribution; 'manual_review' leaves the range watched.
+ */
 async function closeQuote(db: YearlySettlementDb, quoteId: string, status: "manual_review" | "cancelled", now: Date) {
   const { data, error } = await table(db, "yearly_token_quotes")
-    .update({ status, updated_at: now.toISOString() })
+    .update({
+      status,
+      updated_at: now.toISOString(),
+      ...(status === "cancelled" ? { attribution_closed_at: now.toISOString() } : {}),
+    })
     .eq("id", quoteId)
     .in("status", ["active", "expired"])
     .is("consumed_tx_hash", null)
     .select("id, status");
   if (error) throw new Error(`Failed to move yearly quote to ${status}: ${error.message || "unknown error"}`);
   return Array.isArray(data) && data.length > 0;
+}
+
+async function closeAttribution(db: YearlySettlementDb, quoteId: string, now: Date) {
+  const { error } = await table(db, "yearly_token_quotes")
+    .update({ attribution_closed_at: now.toISOString(), updated_at: now.toISOString() })
+    .eq("id", quoteId)
+    .is("attribution_closed_at", null)
+    .select("id");
+  if (error) throw new Error(`Failed to close yearly quote attribution: ${error.message || "unknown error"}`);
+}
+
+async function subscriptionIdForQuote(db: YearlySettlementDb, quoteId: string) {
+  const { data, error } = await table(db, "yearly_token_subscriptions")
+    .select("id")
+    .eq("yearly_quote_id", quoteId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load the yearly subscription for quote ${quoteId}: ${error.message || "unknown"}`);
+  return (data as { id?: string } | null)?.id ?? null;
 }
 
 // Conversion stamp (write-once): a yearly token payment flips the user's
@@ -307,16 +349,20 @@ export async function reconcileYearlyTokenQuote(params: {
   const db = asSettlementDb(params.db ?? supabaseAdmin);
   const { quote } = params;
   const base = { quoteId: quote.id, userId: quote.userId, tier: quote.tier };
-  if (quote.status !== "active" && quote.status !== "expired") {
+  const now = params.now ?? new Date();
+
+  const settling = quote.status === "active" || quote.status === "expired";
+  const watching = quote.status === "consumed" || quote.status === "manual_review";
+  if (!settling && !watching) {
+    await closeAttribution(db, quote.id, now);
     return { ...base, status: "closed", quoteStatus: quote.status };
   }
 
-  const now = params.now ?? new Date();
   const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
   const chain =
     params.chain ?? createBaseChainReader({ rpcUrl: params.rpcUrl, fetchImpl: params.fetchImpl, rpcOptions: params.rpcOptions });
 
-  const quotedAtMs = floorToSecondMs(Date.parse(quote.quotedAt));
+  const quotedAtMs = Date.parse(quote.quotedAt);
   const expiresAtMs = Date.parse(quote.expiresAt);
   if (!Number.isFinite(quotedAtMs) || !Number.isFinite(expiresAtMs)) {
     throw new Error(`Yearly quote ${quote.id} has an invalid window`);
@@ -338,11 +384,11 @@ export async function reconcileYearlyTokenQuote(params: {
     toMs: rangeEndMs,
     minConfirmations,
   });
-  const bound = await loadBoundHermesosTransactionHashes(
+  const ownership = await loadHermesosTransferOwnership(
     db,
     scan.transfers.map((transfer) => transfer.transactionHash)
   );
-  const attributable = scan.transfers.filter((transfer) => !bound.has(transfer.transactionHash));
+  const attributable = scan.transfers.filter((transfer) => !ownership.bound.has(transfer.transactionHash));
 
   const required = quote.tokensRequiredRaw;
   const band = {
@@ -352,6 +398,28 @@ export async function reconcileYearlyTokenQuote(params: {
   };
   const classOf = (transfer: ScannedTransfer) => classify(transfer, band);
   const isConfirmed = (transfer: ScannedTransfer) => transfer.confirmations >= minConfirmations;
+  const confirmed = attributable.filter(isConfirmed);
+  const rangeScanned = now.getTime() > rangeEndMs && scan.confirmedHeadMs >= rangeEndMs;
+
+  // ── Settled or in-review quote: keep surfacing until the range closes ──
+  if (watching) {
+    const subscriptionId = quote.status === "consumed" ? await subscriptionIdForQuote(db, quote.id) : null;
+    for (const transfer of confirmed) {
+      const reason: YearlyReviewReason =
+        quote.status === "consumed"
+          ? "extra_transfer"
+          : classOf(transfer) === "qualifying"
+            ? "payment_after_review"
+            : CLASS_REASON[classOf(transfer)];
+      await surfaceTransfer(db, quote, transfer, reason, subscriptionId);
+    }
+    const awaiting = attributable.filter((transfer) => !isConfirmed(transfer));
+    if (rangeScanned && awaiting.length === 0) {
+      await closeAttribution(db, quote.id, now);
+      return { ...base, status: "closed", quoteStatus: quote.status };
+    }
+    return { ...base, status: "watching", quoteStatus: quote.status };
+  }
 
   // 1. The EARLIEST qualifying in-window transfer in chain order settles the
   //    quote. Later arrivals never displace it; an under-confirmed candidate is
@@ -374,11 +442,16 @@ export async function reconcileYearlyTokenQuote(params: {
       case "activated":
       case "renewed":
       case "already_settled": {
+        const subscriptionId = settlement.subscription_id ?? null;
         if (settlement.status !== "already_settled") await stampTokenConversion(db, quote.userId, now);
-        for (const extra of attributable) {
-          if (extra !== candidate && isConfirmed(extra)) {
-            await surfaceTransfer(db, quote, extra, "extra_transfer", settlement.subscription_id ?? null);
-          }
+        if (ownership.contested.has(candidate.transactionHash)) {
+          // The pre-attribution managed-Venice flow put this transfer in one of
+          // its reviews; make sure nobody credits it a second time there.
+          await surfaceTransfer(db, quote, candidate, "contested_by_managed_venice_review", subscriptionId);
+        }
+        // Extras confirmed now are surfaced here; later ones by the watch pass.
+        for (const extra of confirmed) {
+          if (extra !== candidate) await surfaceTransfer(db, quote, extra, "extra_transfer", subscriptionId);
         }
         return { ...settledResult, status: settlement.status };
       }
@@ -391,25 +464,36 @@ export async function reconcileYearlyTokenQuote(params: {
         await closeQuote(db, quote.id, "manual_review", now);
         return { ...settledResult, status: "manual_review", reason: "legacy_subscription_exists", subscriptionId: null };
       case "quote_settled_with_other_transaction":
-      case "not_settleable":
-      case "not_found":
+      case "not_settleable": {
+        // A concurrent pass settled or closed the quote after we loaded it.
+        // This transfer is still in the quote's range: never drop it.
+        const reason: YearlyReviewReason =
+          settlement.quote_status === "manual_review" ? "payment_after_review" : "extra_transfer";
+        await surfaceTransfer(db, quote, candidate, reason);
         return { ...base, status: "closed", quoteStatus: settlement.quote_status ?? settlement.status };
+      }
+      case "not_found":
+        return { ...base, status: "closed", quoteStatus: "not_found" };
       default:
         throw new Error(`settle_yearly_token_payment rejected the transfer: ${settlement.status}`);
     }
   }
 
-  // 2. No qualifying transfer. Over-ceiling and late in-band payments go to
-  //    review now; an under-payment only once the window has closed on a
-  //    confirmed chain, so the user can still send the full amount until then.
-  //    Items are written BEFORE the quote closes, so a review is never
-  //    invisible.
-  const confirmed = attributable.filter(isConfirmed);
+  // 2. No qualifying transfer. Over-ceiling payments are surfaced as soon as
+  //    they confirm, but the quote stays payable while its window is open, so
+  //    the user can still send the right amount. Once the window has closed on
+  //    a confirmed chain, any over-ceiling, late in-band or under-paying
+  //    transfer sends the quote to review. Items are written BEFORE the quote
+  //    closes, so a review is never invisible.
+  for (const transfer of confirmed) {
+    if (classOf(transfer) === "over") await surfaceTransfer(db, quote, transfer, "overpaid");
+  }
   const windowClosed = now.getTime() > expiresAtMs && scan.confirmedHeadMs >= expiresAtMs;
-  const reviewTrigger =
-    confirmed.find((transfer) => classOf(transfer) === "over") ??
-    confirmed.find((transfer) => classOf(transfer) === "late_qualifying") ??
-    (windowClosed ? confirmed.find((transfer) => classOf(transfer) === "under") : undefined);
+  const reviewTrigger = windowClosed
+    ? confirmed.find((transfer) => classOf(transfer) === "over") ??
+      confirmed.find((transfer) => classOf(transfer) === "late_qualifying") ??
+      confirmed.find((transfer) => classOf(transfer) === "under")
+    : undefined;
   if (reviewTrigger) {
     for (const transfer of confirmed) {
       await surfaceTransfer(db, quote, transfer, CLASS_REASON[classOf(transfer)]);
@@ -441,8 +525,7 @@ export async function reconcileYearlyTokenQuote(params: {
 
   // 3. Retire: the whole range is scanned at full confirmations and nothing
   //    left can settle or review this quote.
-  const fullyScanned = now.getTime() > rangeEndMs && scan.confirmedHeadMs >= rangeEndMs;
-  if (fullyScanned && confirmed.length === lateOther.length) {
+  if (rangeScanned && confirmed.length === lateOther.length) {
     await closeQuote(db, quote.id, "cancelled", now);
     return { ...base, status: "cancelled" };
   }
@@ -461,10 +544,9 @@ function normalizeBatchLimit(limit: number | undefined) {
 }
 
 /**
- * Quotes whose window or late-payment grace may still hold a payment, newest
- * first: a fresh payment is always inside the batch however many older quotes
- * are open, and older ones leave the set by settling, going to review or
- * retiring.
+ * Quotes whose attribution range is still open, newest first: a fresh
+ * payment is always inside the batch however many older ranges are open,
+ * and older ones leave the set once their range has been fully scanned.
  */
 export async function loadReconcilableYearlyTokenQuotes(params: {
   db?: unknown;
@@ -475,7 +557,7 @@ export async function loadReconcilableYearlyTokenQuotes(params: {
   const db = asSettlementDb(params.db ?? supabaseAdmin);
   let query = table(db, "yearly_token_quotes")
     .select(YEARLY_QUOTE_SELECT_COLUMNS)
-    .in("status", ["active", "expired"]);
+    .is("attribution_closed_at", null);
   if (params.userId) query = query.eq("user_id", params.userId);
   if (params.tier) query = query.eq("tier", params.tier);
   const { data, error } = await query.order("quoted_at", { ascending: false }).limit(normalizeBatchLimit(params.limit));
@@ -496,6 +578,9 @@ export async function reconcilePendingYearlyTokenQuotes(
     rpcRetryConfig?: Partial<RpcRetryConfig>;
     rpcSleepImpl?: (ms: number) => Promise<void>;
     interQuoteDelayMs?: number;
+    requestTimeoutMs?: number;
+    /** Wall-clock ms after which no further quote is started (left for the next run). */
+    deadlineMs?: number;
   } = {}
 ): Promise<YearlyReconcileBatchResult> {
   const db = asSettlementDb(params.db ?? supabaseAdmin);
@@ -510,7 +595,12 @@ export async function reconcilePendingYearlyTokenQuotes(
     sleepImpl: params.rpcSleepImpl,
   };
   // One chain view per batch: the head and block timestamps are fetched once.
-  const chain = createBaseChainReader({ rpcUrl: params.rpcUrl, fetchImpl: params.fetchImpl, rpcOptions });
+  const chain = createBaseChainReader({
+    rpcUrl: params.rpcUrl,
+    fetchImpl: params.fetchImpl,
+    rpcOptions,
+    requestTimeoutMs: params.requestTimeoutMs,
+  });
   const sleepImpl = params.rpcSleepImpl ?? sleep;
   const interQuoteDelayMs = Number.isFinite(params.interQuoteDelayMs)
     ? Math.max(0, Math.floor(params.interQuoteDelayMs as number))
@@ -524,12 +614,23 @@ export async function reconcilePendingYearlyTokenQuotes(
     noMatch: 0,
     manualReview: 0,
     cancelled: 0,
+    watching: 0,
     skipped: 0,
     failed: 0,
+    deferred: 0,
     results: [],
   };
 
   for (const [index, quote] of quotes.entries()) {
+    if (params.deadlineMs !== undefined && Date.now() >= params.deadlineMs) {
+      summary.deferred = quotes.length - index;
+      log.warn("yearly token reconciliation hit its deadline; deferring the rest", {
+        source: "yearly-token-settlement",
+        failureType: "yearly_token_reconcile_deadline",
+        deferred: summary.deferred,
+      });
+      break;
+    }
     if (index > 0 && interQuoteDelayMs > 0) await sleepImpl(interQuoteDelayMs);
     summary.checked += 1;
     try {
@@ -546,6 +647,7 @@ export async function reconcilePendingYearlyTokenQuotes(
       else if (result.status === "no_match") summary.noMatch += 1;
       else if (result.status === "manual_review") summary.manualReview += 1;
       else if (result.status === "cancelled") summary.cancelled += 1;
+      else if (result.status === "watching") summary.watching += 1;
       else summary.skipped += 1;
       summary.results.push(result);
     } catch (error) {

@@ -29,6 +29,11 @@ import { sweepYearlyTokenSubscription, type SweepResult } from "@/lib/billing/ye
 import { supabaseAdmin } from "@/lib/supabase";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 
+// User-facing: keep the button responsive. Quotes not reached in time are
+// reconciled by the cron.
+export const maxDuration = 60;
+const RECONCILE_BUDGET_MS = 25_000;
+
 function isValidTier(value: unknown): value is TierKey {
   return value === "pro" || value === "power";
 }
@@ -62,6 +67,7 @@ export async function POST(req: NextRequest) {
       userId,
       tier,
       limit: 10,
+      deadlineMs: Date.now() + RECONCILE_BUDGET_MS,
     });
 
     // Pass 2 — sweep this user's fresh activations (the cron retries failures).

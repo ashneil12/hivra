@@ -165,18 +165,22 @@ describe("YR-1: activation and sweep use the quote's credit_deposit wallet", () 
 });
 
 describe("YR-2: other flows' $HermesOS in the shared wallet never pays a yearly quote", () => {
-  it("does not activate from a managed-Venice deposit that landed before the quote", async () => {
+  it("does not activate from $HermesOS that landed in the wallet before the quote", async () => {
     const world = setup();
+    // A managed-Venice deposit whose quote has not bound it (yet): only the
+    // yearly quote's own window keeps it out.
     world.memory.insertRow(
       "managed_venice_token_quotes",
       managedVeniceQuoteRow({
         quoted_at: world.at(-70 * MINUTE_MS),
         expires_at: world.at(-50 * MINUTE_MS),
-        transaction_hash: txHash(0x77),
+        status: "expired",
+        transaction_hash: null,
         token_amount_raw: (REQUIRED * 2n).toString(),
       })
     );
     world.pay({ tx: txHash(0x77), amountRaw: REQUIRED * 2n, offsetMs: -60 * MINUTE_MS });
+    world.pay({ tx: txHash(0x76), amountRaw: REQUIRED, offsetMs: -10 * MINUTE_MS - 5_000 });
     openQuote(world);
 
     await runCron();
@@ -186,14 +190,14 @@ describe("YR-2: other flows' $HermesOS in the shared wallet never pays a yearly 
     expect(world.submitted).toHaveLength(0);
   });
 
-  it("does not count a transfer inside the quote window that a managed-Venice quote already claimed", async () => {
+  it("does not count a transfer inside the quote window that a managed-Venice quote owns", async () => {
     const world = setup();
     world.memory.insertRow(
       "managed_venice_token_quotes",
       managedVeniceQuoteRow({
         quoted_at: world.at(-40 * MINUTE_MS),
         expires_at: world.at(-20 * MINUTE_MS),
-        status: "manual_review_required",
+        status: "settled",
         transaction_hash: txHash(0x78),
         token_amount_raw: REQUIRED.toString(),
       })
@@ -205,6 +209,32 @@ describe("YR-2: other flows' $HermesOS in the shared wallet never pays a yearly 
 
     expect(world.subscriptions()).toHaveLength(0);
     expect(world.quote("yq_1")).toMatchObject({ status: "active", consumed_tx_hash: null });
+  });
+
+  it("still credits a yearly payment that canary's managed-Venice flow put in one of its reviews", async () => {
+    const world = setup();
+    // The pre-attribution Venice reconciler rescans ~11 h for any in-band
+    // transfer and writes a REJECTED one into its stale quote's
+    // transaction_hash when it sends that quote to review.
+    world.memory.insertRow(
+      "managed_venice_token_quotes",
+      managedVeniceQuoteRow({
+        quoted_at: world.at(-3 * HOUR_MS),
+        expires_at: world.at(-3 * HOUR_MS + 20 * MINUTE_MS),
+        status: "manual_review_required",
+        transaction_hash: txHash(0x79),
+        token_amount_raw: ((REQUIRED * 2n) / 3n).toString(),
+      })
+    );
+    openQuote(world);
+    world.pay({ tx: txHash(0x79), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS });
+
+    await runCron();
+
+    expect(liveSubscriptions(world)).toEqual([expect.objectContaining({ deposit_tx_hash: txHash(0x79) })]);
+    expect(world.items()).toEqual([
+      expect.objectContaining({ reason: "contested_by_managed_venice_review", transaction_hash: txHash(0x79) }),
+    ]);
   });
 });
 

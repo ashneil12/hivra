@@ -30,6 +30,13 @@ import {
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
 
 const YEARLY_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
+/**
+ * A payment mined after the quote window but within this grace is still
+ * attributed to the quote (and goes to manual review).
+ */
+export const YEARLY_LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
+// How long a quote under manual review stays visible to the user.
+const REVIEW_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000;
 export type YearlyQuoteStatus = "active" | "consumed" | "expired" | "cancelled" | "manual_review";
 
 /**
@@ -260,4 +267,35 @@ export async function getActiveYearlyTokenQuotes(
 
   if (error) throw new Error(`Failed to load yearly quotes: ${error.message}`);
   return ((data as unknown) as YearlyQuoteRow[] | null)?.map(asYearlyTokenQuote) ?? [];
+}
+
+/**
+ * The user's quotes that still matter to them although they can no longer be
+ * paid, newest first, one per tier: 'expired' quotes inside the late-payment
+ * grace (a payment on its way is still picked up) and recent quotes under
+ * manual review (a payment arrived and an operator will resolve it).
+ */
+export async function getPendingYearlyTokenQuotes(
+  userId: string,
+  now: Date = new Date()
+): Promise<YearlyTokenQuote[]> {
+  if (!supabaseAdmin) throw new Error("Database not configured");
+  const { data, error } = await supabaseAdmin
+    .from("yearly_token_quotes")
+    .select(YEARLY_QUOTE_SELECT_COLUMNS)
+    .eq("user_id", userId)
+    .in("status", ["expired", "manual_review"])
+    .gt("quoted_at", new Date(now.getTime() - REVIEW_VISIBLE_MS).toISOString())
+    .order("quoted_at", { ascending: false })
+    .limit(10);
+  if (error) throw new Error(`Failed to load pending yearly quotes: ${error.message}`);
+  const pending: YearlyTokenQuote[] = [];
+  for (const quote of ((data as unknown) as YearlyQuoteRow[] | null)?.map(asYearlyTokenQuote) ?? []) {
+    if (pending.some((existing) => existing.tier === quote.tier)) continue;
+    const stillWatched =
+      quote.status === "manual_review" ||
+      Date.parse(quote.expiresAt) + YEARLY_LATE_PAYMENT_GRACE_MS > now.getTime();
+    if (stillWatched) pending.push(quote);
+  }
+  return pending;
 }

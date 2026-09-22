@@ -27,6 +27,13 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { reconcilePendingYearlyTokenQuotes } from "@/lib/billing/yearly-token-settlement";
 import { sweepPendingYearlyTokenSubscriptions } from "@/lib/billing/yearly-sweep";
 
+// Each open quote costs a handful of Base RPC calls (block search, one
+// eth_getLogs per 2,000 blocks); each RPC call times out after 10 s and is
+// retried. Stop starting new quotes well before the platform limit so the
+// sweep pass always runs; leftovers are picked up next tick.
+export const maxDuration = 300;
+const RECONCILE_BUDGET_MS = 120_000;
+
 function parseLimit(url: URL, fallback: number, max: number): number {
   const raw = url.searchParams.get("limit");
   const n = raw ? Number(raw) : fallback;
@@ -61,6 +68,7 @@ export async function GET(req: NextRequest) {
       db: supabaseAdmin,
       limit: parseLimit(url, 25, 100),
       now,
+      deadlineMs: now.getTime() + RECONCILE_BUDGET_MS,
     });
   } catch (error) {
     log.error("yearly-token-sweep failed to load reconcilable quotes", error, {
