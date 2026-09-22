@@ -88,6 +88,8 @@ describe("managed Venice token quote reconciliation", () => {
         observedAt: "2026-05-16T10:22:00.000Z",
         blockTimestamp: "2026-05-16T10:21:58.000Z",
         logIndex: 0,
+        // The tx's first (only) log to the address: the bare item key.
+        dedupeLogIndex: null,
       },
       expect.anything()
     );
@@ -488,5 +490,82 @@ describe("Base RPC 429 resilience (issue #362)", () => {
     // Two quotes → exactly one inter-quote throttle (none before the first).
     expect(interQuoteSleeps).toContain(123);
     expect(interQuoteSleeps.filter((ms) => ms === 123)).toHaveLength(1);
+  });
+});
+
+describe("managed Venice reconciliation tick time budget", () => {
+  // Five open quotes and three settled quotes that still owe a surface-only
+  // pass, each on its own wallet. The fake clock advances 50 s per eth_getLogs
+  // (one chunk per quote here), so the open loop reaches its 150 s budget
+  // after three scans.
+  function budgetFixture() {
+    const open = Array.from({ length: 5 }, (_, index) =>
+      managedVeniceQuoteRow({
+        id: `open_${index}`,
+        user_id: `user_open_${index}`,
+        deposit_address: `0x${String(index + 1).padStart(40, "0")}`,
+        created_at: `2026-05-16T10:20:0${index}.000Z`,
+      })
+    );
+    const surfacing = Array.from({ length: 3 }, (_, index) =>
+      managedVeniceQuoteRow({
+        id: `settled_${index}`,
+        user_id: `user_settled_${index}`,
+        deposit_address: `0x${String(index + 11).padStart(40, "0")}`,
+        status: "settled",
+        transaction_hash: `0xpaid_${index}`,
+        transfer_surfacing_pending: true,
+        created_at: `2026-05-16T10:19:0${index}.000Z`,
+      })
+    );
+    const memory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: [...open, ...surfacing] });
+    const chain = makeChain([], { block: 200, time: "2026-05-16T10:25:00.000Z" });
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+    return { memory, chain, clock: () => nowMs };
+  }
+
+  it("stops starting open scans at its budget, still runs the surface-only pass, and reports what it deferred", async () => {
+    const { memory, chain, clock } = budgetFixture();
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      now: new Date("2026-05-16T10:25:00.000Z"),
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+      clock,
+    });
+
+    // Open scans start at 0 s, 50 s and 100 s; the fourth would start at 150 s.
+    expect(summary.checked).toBe(3);
+    expect(summary.results.map((result) => result.quoteId)).toEqual(["open_4", "open_3", "open_2"]);
+    // Surface-only scans start at 150 s and 200 s; the third would start at 250 s.
+    expect(summary.transferSurfacing).toEqual({ checked: 2, complete: 0, pending: 2, failed: 0 });
+    expect(summary.deferred).toEqual({ open: 2, surfacing: 1 });
+    expect(summary.failed).toBe(0);
+  });
+
+  it("defers nothing when the tick finishes inside its budget", async () => {
+    const { memory, chain } = budgetFixture();
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      now: new Date("2026-05-16T10:25:00.000Z"),
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+      clock: () => 0,
+    });
+
+    expect(summary.checked).toBe(5);
+    expect(summary.transferSurfacing.checked).toBe(3);
+    expect(summary.deferred).toEqual({ open: 0, surfacing: 0 });
   });
 });

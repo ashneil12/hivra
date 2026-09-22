@@ -82,8 +82,9 @@ function quote(memory: Memory, id = "quote_1") {
   return memory.tables.managed_venice_token_quotes.find((row) => row.id === id)!;
 }
 
-function transferKey(txHash: string) {
-  return `managed_venice_token_transfer:${txHash}`;
+// Item key of the tx's first Transfer log to quote_1's deposit address.
+function transferKey(txHash: string, depositAddress = TEST_DEPOSIT_ADDRESS, logIndex?: number) {
+  return `managed_venice_token_transfer:${txHash}:${depositAddress}${logIndex === undefined ? "" : `:${logIndex}`}`;
 }
 
 // Open items per transfer dedupe key; I6 wants exactly one per transfer.
@@ -125,7 +126,8 @@ describe("managed Venice terminal quotes: durable transfer surfacing", () => {
     await tickAt(memory, rpc, "2026-05-16T10:22:00.000Z");
     rpc.addTransfer(transfer("0xagain", QUOTED, "2026-05-16T10:24:00.000Z"));
     await tickAt(memory, rpc, "2026-05-16T10:30:00.000Z");
-    // The user's own check of the settled quote runs the same surface-only pass.
+    // The user's own check of the settled quote reads it from the DB (no
+    // scan); the cron's surface-only pass surfaces 0xagain.
     const check = await checkAt(memory, rpc, "2026-05-16T10:31:00.000Z");
     await tickAt(memory, rpc, "2026-05-16T10:35:00.000Z");
     await tickAt(memory, rpc, "2026-05-16T13:30:00.000Z");
@@ -168,7 +170,9 @@ describe("managed Venice terminal quotes: durable transfer surfacing", () => {
     const memory = seed();
     const rpc = chain([transfer("0xunder", UNDER, "2026-05-16T10:21:00.000Z")]);
 
-    await tickAt(memory, rpc, "2026-05-16T10:41:00.000Z");
+    // The under-payment reviews once the chain is confirmed 30 blocks (60 s)
+    // past the window end (10:40): confirmed head 10:41:56.
+    await tickAt(memory, rpc, "2026-05-16T10:42:00.000Z");
     expect(quote(memory).status).toBe("manual_review_required");
     rpc.addTransfer(transfer("0xtopup", QUOTED, "2026-05-16T10:50:00.000Z"));
     await tickAt(memory, rpc, "2026-05-16T11:00:00.000Z");
@@ -306,12 +310,13 @@ describe("managed Venice terminal quotes: surfacing flag lifecycle", () => {
     const rpc = chain([transfer("0xpaid", QUOTED, "2026-05-16T10:21:00.000Z")]);
 
     await tickAt(memory, rpc, "2026-05-16T10:22:00.000Z");
-    // Head just past the grace end (12:40), confirmed head 2 s short of it.
-    const almost = await tickAt(memory, rpc, "2026-05-16T12:40:02.000Z");
+    // The flag clears once the confirmed head is 30 blocks (60 s) past the
+    // grace end (12:40). Head 12:41:02: confirmed head 12:40:58, 2 s short.
+    const almost = await tickAt(memory, rpc, "2026-05-16T12:41:02.000Z");
     expect(almost.transferSurfacing).toEqual({ checked: 1, complete: 0, pending: 1, failed: 0 });
     expect(quote(memory).transfer_surfacing_pending).toBe(true);
 
-    const covered = await tickAt(memory, rpc, "2026-05-16T12:40:04.000Z");
+    const covered = await tickAt(memory, rpc, "2026-05-16T12:41:04.000Z");
     expect(covered.transferSurfacing).toEqual({ checked: 1, complete: 1, pending: 0, failed: 0 });
     expect(quote(memory).transfer_surfacing_pending).toBe(false);
 

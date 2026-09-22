@@ -478,7 +478,7 @@ describe("managed Venice token deposit quotes", () => {
     expect(tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xsecond"),
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xsecond", "0xmanagedvenice"),
       }),
     ]);
   });

@@ -98,12 +98,17 @@ async function main() {
     assert.match(indexes.ix_managed_venice_token_quotes_deposit_address_quoted_at, /\(deposit_address, quoted_at\)/);
     assert.match(indexes.ix_managed_venice_token_quotes_transfer_surfacing_pending, /\(created_at DESC\) WHERE transfer_surfacing_pending$/);
 
-    // One item per transfer (tx-hash key): a repeat key is 23505 whichever
-    // path writes it; null keys never collide.
-    const key = "managed_venice_token_transfer:0xabc";
+    // One item per transfer (tx + deposit address, plus the log index for a
+    // tx's later logs to that address): a repeat key is 23505 whichever path
+    // writes it; the same tx paying another address, or the same address
+    // twice, is a different transfer; null keys never collide.
+    const key = "managed_venice_token_transfer:0xabc:0xba5e";
     await item(key);
     await rejectsWith("23505", () => item(key));
-    await item("managed_venice_token_transfer:0xdef");
+    await item("managed_venice_token_transfer:0xabc:0xd2d2");
+    await item("managed_venice_token_transfer:0xabc:0xba5e:7");
+    await rejectsWith("23505", () => item("managed_venice_token_transfer:0xabc:0xba5e:7"));
+    await item("managed_venice_token_transfer:0xdef:0xba5e");
     await item(null);
     await item(null);
     assert.equal((await db.query(
@@ -163,7 +168,7 @@ async function main() {
     await db.exec(migration);
     assert.deepEqual(await flags(), { [legacySettled]: false, [legacyReview]: false, [qa]: false, [qb]: true });
 
-    console.log("PASS managed Venice token transfer dedupe: rerun-safe migration, per-transfer unique item key, legacy rows kept, attribution index, claim CAS + unique tx, transfer_surfacing_pending flag + index");
+    console.log("PASS managed Venice token transfer dedupe: rerun-safe migration, per-transfer (tx, address, log) unique item key, legacy rows kept, attribution index, claim CAS + unique tx, transfer_surfacing_pending flag + index");
   } finally {
     await db.close();
   }

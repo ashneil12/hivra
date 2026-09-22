@@ -29,6 +29,8 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 import { auth } from "@clerk/nextjs/server";
+import { log } from "@/lib/logger";
+import { reconcilePendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-reconciliation";
 import { POST } from "../route";
 
 const QUOTED = 1000n * 10n ** 18n;
@@ -182,6 +184,72 @@ describe("POST /api/billing/managed-venice/hermesos/check", () => {
       quote: expect.objectContaining({ id: "quote_1", status: "active", transactionHash: null }),
     });
     expect(JSON.stringify(payload.data)).not.toContain("0xtaken");
+  });
+
+  it("returns a settled quote from the DB with no RPC call, even while it still owes transfer surfacing", async () => {
+    // Settled by the cron a minute ago: transfer_surfacing_pending stays true
+    // for ~2 h 20 min, and the Base RPC is down for the whole check.
+    mockMemory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        quoteRow({ status: "settled", transaction_hash: "0xpaid", settled_at: isoAt(-60_000), transfer_surfacing_pending: true }),
+      ],
+    });
+    const failingFetch = jest.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { message: "service unavailable" } }),
+    }));
+    global.fetch = failingFetch as unknown as typeof fetch;
+
+    const response = await check();
+
+    expect(response.status).toBe(200);
+    expect((await body(response)).data).toMatchObject({
+      status: "settled",
+      quote: expect.objectContaining({ status: "settled", transactionHash: "0xpaid" }),
+    });
+    expect(failingFetch).not.toHaveBeenCalled();
+    expect(mockMemory.tables.managed_venice_token_quotes[0].transfer_surfacing_pending).toBe(true);
+  });
+
+  it("returns settled when the check settles but the extra transfer's item insert fails; the next cron tick writes it", async () => {
+    mockMemory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: [quoteRow()] });
+    rpc.addTransfer({ txHash: "0xpaid", amountRaw: QUOTED, block: blockAt(-4 * 60_000), to: TEST_DEPOSIT_ADDRESS });
+    rpc.addTransfer({ txHash: "0xextra", amountRaw: QUOTED, block: blockAt(-3 * 60_000), to: TEST_DEPOSIT_ADDRESS });
+    mockMemory.failNext({ table: "managed_venice_reconciliation_items", op: "insert" });
+
+    const response = await check();
+
+    expect(response.status).toBe(200);
+    expect((await body(response)).data).toMatchObject({ status: "settled", transactionHash: "0xpaid" });
+    expect(mockMemory.tables.managed_venice_token_quotes[0]).toMatchObject({
+      status: "settled",
+      transaction_hash: "0xpaid",
+      transfer_surfacing_pending: true,
+    });
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toEqual([]);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("surfacing its other transfers failed"),
+      expect.objectContaining({ quoteId: "quote_1", failureType: "managed_venice_token_transfer_surfacing_failed" })
+    );
+
+    const tick = await reconcilePendingManagedVeniceTokenQuotes({
+      db: mockMemory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(nowMs),
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    expect(tick).toMatchObject({ failed: 0, transferSurfacing: { checked: 1, failed: 0 } });
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toEqual([
+      expect.objectContaining({
+        dedupe_key: `managed_venice_token_transfer:0xextra:${TEST_DEPOSIT_ADDRESS}`,
+        metadata: expect.objectContaining({ quoteId: "quote_1" }),
+      }),
+    ]);
+    expect(mockMemory.tables.managed_venice_token_lots).toHaveLength(1);
   });
 
   it("fails safely when Base rejects the scan", async () => {

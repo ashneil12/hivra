@@ -114,7 +114,7 @@ describe("managed Venice reconciler: attribution and selection", () => {
     expect(items(memory)).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: "managed_venice_token_transfer:0xsecond_exact",
+        dedupe_key: `managed_venice_token_transfer:0xsecond_exact:${TEST_DEPOSIT_ADDRESS}`,
       }),
     ]);
   });
@@ -141,7 +141,7 @@ describe("managed Venice reconciler: attribution and selection", () => {
     expect(items(memory)).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
-        dedupe_key: "managed_venice_token_transfer:0xfat",
+        dedupe_key: `managed_venice_token_transfer:0xfat:${TEST_DEPOSIT_ADDRESS}`,
       }),
     ]);
   });
@@ -228,12 +228,25 @@ describe("managed Venice reconciler: cross-quote capture on the shared deposit w
     expect(quote(memory, "quote_2")).toMatchObject({ status: "settled", transaction_hash: "0xq2paid" });
   });
 
-  it("never attributes a transfer already bound to another quote or lot", async () => {
+  it("never attributes a transfer already bound to another quote or lot on the same deposit address", async () => {
     const memory = seed(
-      managedVeniceQuoteRow({ id: "quote_other", deposit_address: "0x000000000000000000000000000000000000cafe", status: "settled", transaction_hash: "0xbound" }),
+      managedVeniceQuoteRow({ id: "quote_other", status: "settled", transaction_hash: "0xbound" }),
       managedVeniceQuoteRow()
     );
-    const rpc = chain([transfer("0xbound", QUOTED, "2026-05-16T10:21:00.000Z")]);
+    memory.insertRow("managed_venice_token_lots", {
+      account_id: "account_1",
+      user_id: "user_1",
+      quote_id: "quote_legacy",
+      source: "hermesos_deposit",
+      token_amount_raw: QUOTED.toString(),
+      transaction_hash: "0xlot_bound",
+      status: "active",
+      metadata: {},
+    });
+    const rpc = chain([
+      transfer("0xbound", QUOTED, "2026-05-16T10:21:00.000Z"),
+      transfer("0xlot_bound", QUOTED, "2026-05-16T10:22:00.000Z"),
+    ]);
 
     const result = await reconcileAt(memory, rpc, "2026-05-16T10:25:00.000Z");
 
@@ -339,6 +352,80 @@ describe("managed Venice reconciler: non-qualifying transfers reach review", () 
   });
 });
 
+// eth_blockNumber answered by an up-to-date backend, eth_getLogs by one that
+// lags `lagBlocks()` blocks behind it and silently clamps toBlock to its own
+// head (a load-balanced public RPC).
+function lagGetLogs(rpc: Chain, lagBlocks: () => number) {
+  const inner = rpc.fetchImpl.getMockImplementation()!;
+  let latest = 0;
+  rpc.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+    const request = JSON.parse(init.body) as { method: string; params: Array<Record<string, string>> };
+    if (request.method === "eth_blockNumber") {
+      const response = await inner(url, init);
+      const payload = (await response.json()) as { result: string };
+      latest = Number.parseInt(payload.result, 16);
+      return { ok: true, status: 200, json: async () => payload };
+    }
+    if (request.method === "eth_getLogs" && lagBlocks() > 0) {
+      const filter = request.params[0];
+      const toBlock = Math.min(Number.parseInt(filter.toBlock, 16), latest - lagBlocks());
+      if (toBlock < Number.parseInt(filter.fromBlock, 16)) {
+        return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: [] }) };
+      }
+      const clamped = { ...request, params: [{ ...filter, toBlock: `0x${toBlock.toString(16)}` }] };
+      return inner(url, { body: JSON.stringify(clamped) });
+    }
+    return inner(url, init);
+  });
+}
+
+describe("managed Venice reconciler: finality margin for irreversible decisions", () => {
+  it("never retires a quote over a late payment that a lagging eth_getLogs backend has not returned yet", async () => {
+    const memory = seed();
+    // In band, 2 s before the grace end (10:40 expiry + 2 h = 12:40:00).
+    const rpc = chain([transfer("0xedge", QUOTED, "2026-05-16T12:39:58.000Z")]);
+    let lag = 0;
+    lagGetLogs(rpc, () => lag);
+
+    await tickAt(memory, rpc, "2026-05-16T11:00:00.000Z");
+    // Confirmed head = the grace end, but the logs backend is 4 blocks behind
+    // and has not returned the 12:39:58 block.
+    lag = 4;
+    const lagging = await tickAt(memory, rpc, "2026-05-16T12:40:04.000Z");
+    expect(lagging.cancelled).toBe(0);
+    expect(quote(memory).status).toBe("active");
+
+    lag = 0;
+    await tickAt(memory, rpc, "2026-05-16T13:30:00.000Z");
+
+    expect(quote(memory)).toMatchObject({
+      status: "manual_review_required",
+      metadata: expect.objectContaining({
+        manualReviewReason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow,
+        reviewTransactionHash: "0xedge",
+      }),
+    });
+    expect(items(memory)).toEqual([
+      expect.objectContaining({
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow,
+        dedupe_key: `managed_venice_token_transfer:0xedge:${TEST_DEPOSIT_ADDRESS}`,
+      }),
+    ]);
+  });
+
+  it("reviews an in-window under-payment only once the chain is confirmed 30 blocks past the window", async () => {
+    const memory = seed();
+    const rpc = chain([transfer("0xunder", UNDER, "2026-05-16T10:21:00.000Z")]);
+
+    // Window ends 10:40:00; confirmed head 10:40:58 is 2 s short of the margin.
+    expect((await reconcileAt(memory, rpc, "2026-05-16T10:41:02.000Z")).status).toBe("no_match");
+    expect(quote(memory).status).toBe("active");
+
+    expect((await reconcileAt(memory, rpc, "2026-05-16T10:41:04.000Z")).status).toBe("manual_review_required");
+    expect(items(memory)).toHaveLength(1);
+  });
+});
+
 describe("managed Venice reconciler: candidates, retirement and recovery", () => {
   it("bug 4: newest-first candidates reach a fresh paid quote behind 30 abandoned ones", async () => {
     const abandoned = Array.from({ length: 30 }, (_, index) =>
@@ -373,9 +460,12 @@ describe("managed Venice reconciler: candidates, retirement and recovery", () =>
     expect((await reconcileAt(memory, rpc, "2026-05-16T12:00:00.000Z")).status).toBe("no_match");
     // Head exactly at the grace end: the last blocks are not yet confirmed.
     expect((await reconcileAt(memory, rpc, graceEnd)).status).toBe("no_match");
+    // Confirmed head (12:40:58) 2 s short of the 30-block finality margin past
+    // the grace end.
+    expect((await reconcileAt(memory, rpc, "2026-05-16T12:41:02.000Z")).status).toBe("no_match");
     expect(quote(memory).status).toBe("active");
 
-    const retired = await reconcileAt(memory, rpc, "2026-05-16T12:40:04.000Z");
+    const retired = await reconcileAt(memory, rpc, "2026-05-16T12:41:04.000Z");
     expect(retired.status).toBe("cancelled");
     expect(quote(memory)).toMatchObject({
       status: "cancelled",

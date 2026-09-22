@@ -5,7 +5,8 @@
  * Unlike the generic `createSupabaseMock` stub, this fake actually filters and
  * mutates rows, so settlement/reconciliation code runs against real query
  * semantics:
- *   - eq / neq / in / lt / lte / gt / gte / is filters, multi-key order, and a
+ *   - eq / neq / in / lt / lte / gt / gte / is filters (also on a jsonb text
+ *     path, `metadata->>key`, like PostgREST), multi-key order, and a
  *     chainable + thenable limit;
  *   - update(...).<filters>.select() resolves to the AFFECTED rows, so
  *     compare-and-set code can see "0 rows = lost the race";
@@ -161,8 +162,20 @@ function valuesEqual(left: unknown, right: unknown) {
   return false;
 }
 
+// A column, or a PostgREST jsonb text path `column->>key` (->> yields text).
+function readColumn(row: MemoryRow, column: string): unknown {
+  const path = column.split("->>");
+  if (path.length === 1) return row[column];
+  const [base, key] = path.map((part) => part.trim());
+  const container = row[base];
+  if (!container || typeof container !== "object") return null;
+  const value = (container as Record<string, unknown>)[key];
+  if (value === null || value === undefined) return null;
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
 function rowMatches(row: MemoryRow, filter: Filter) {
-  const value = row[filter.column];
+  const value = readColumn(row, filter.column);
   switch (filter.op) {
     case "eq":
       return valuesEqual(value, filter.value);

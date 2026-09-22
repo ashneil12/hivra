@@ -8,6 +8,7 @@ import { log } from "@/lib/logger";
 import {
   createManagedVeniceMemoryDb,
   managedVeniceQuoteRow,
+  TEST_DEPOSIT_ADDRESS,
   type MemoryRow,
 } from "@/test-utils/managed-venice-memory-db";
 
@@ -34,6 +35,11 @@ function quoteRow(memory: ReturnType<typeof seed>, id = "quote_1") {
 
 function events(memory: ReturnType<typeof seed>, type: string) {
   return memory.tables.managed_venice_financial_events.filter((event) => event.event_type === type);
+}
+
+// Item key of the tx's first Transfer log to the quotes' deposit address.
+function transferKey(txHash: string) {
+  return managedVeniceTokenTransferDedupeKey(txHash, TEST_DEPOSIT_ADDRESS);
 }
 
 const failFlip = { table: "managed_venice_token_quotes", op: "update" as const, match: (patch: MemoryRow) => patch.status === "settled" };
@@ -82,7 +88,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xsecond"),
+        dedupe_key: transferKey("0xsecond"),
         status: "open",
         metadata: expect.objectContaining({ quoteId: "quote_1", transactionHash: "0xsecond" }),
       }),
@@ -128,7 +134,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xother"),
+        dedupe_key: transferKey("0xother"),
       }),
     ]);
   });
@@ -205,8 +211,13 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
 
-  it("keys a transfer's item by its lowercased tx hash alone (no log index)", () => {
-    expect(managedVeniceTokenTransferDedupeKey(" 0xABC ")).toBe("managed_venice_token_transfer:0xabc");
+  it("keys a transfer's item by lowercased tx and deposit address, plus the log index for a tx's later logs", () => {
+    expect(managedVeniceTokenTransferDedupeKey(" 0xABC ", " 0xDePoSiT ")).toBe(
+      "managed_venice_token_transfer:0xabc:0xdeposit"
+    );
+    expect(managedVeniceTokenTransferDedupeKey("0xabc", "0xdeposit", 7)).toBe(
+      "managed_venice_token_transfer:0xabc:0xdeposit:7"
+    );
   });
 
   it("sends a claim with no lot and no claim values to review; a different delivered tx is surfaced once", async () => {
@@ -236,8 +247,8 @@ describe("managed Venice token settlement saga", () => {
       }),
     });
     expect(memory.tables.managed_venice_reconciliation_items.map((item) => [item.dedupe_key, item.reason])).toEqual([
-      [managedVeniceTokenTransferDedupeKey("0xorphan"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable],
-      [managedVeniceTokenTransferDedupeKey("0xother"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid],
+      [transferKey("0xorphan"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimUnrecoverable],
+      [transferKey("0xother"), MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid],
     ]);
     expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
     expect(memory.tables.managed_venice_financial_events).toHaveLength(0);
@@ -310,7 +321,7 @@ describe("managed Venice token settlement saga", () => {
       expect.objectContaining({ transaction_hash: "0xclaimed", token_amount_raw: QUOTED }),
     ]);
     expect(memory.tables.managed_venice_reconciliation_items.map((item) => item.dedupe_key)).toEqual([
-      managedVeniceTokenTransferDedupeKey("0xunder"),
+      transferKey("0xunder"),
     ]);
   });
 
@@ -336,7 +347,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.underpaid,
-        dedupe_key: "managed_venice_token_transfer:0xunder",
+        dedupe_key: `managed_venice_token_transfer:0xunder:${TEST_DEPOSIT_ADDRESS}`,
       }),
     ]);
     expect(memory.tables.managed_venice_token_lots).toHaveLength(0);
@@ -374,7 +385,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.amountMismatch,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xfat"),
+        dedupe_key: transferKey("0xfat"),
       }),
     ]);
   });
@@ -469,7 +480,7 @@ describe("managed Venice token settlement saga", () => {
     expect(memory.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.outsideQuoteWindow,
-        dedupe_key: managedVeniceTokenTransferDedupeKey("0xlate"),
+        dedupe_key: transferKey("0xlate"),
       }),
     ]);
   });

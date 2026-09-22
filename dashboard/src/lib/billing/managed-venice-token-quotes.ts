@@ -60,7 +60,8 @@ const OPEN_QUOTE_STATUSES = ["active", "expired"] as const;
 export const MANAGED_VENICE_TRANSFER_SURFACING_STATUSES = ["settled", "manual_review_required"] as const;
 
 // Reconciliation item reasons for token deposits. Every item for an on-chain
-// transfer carries one dedupe key per transfer (see
+// transfer carries one dedupe key per transfer (tx, deposit address and, for a
+// tx's later logs to that address, log index; see
 // managedVeniceTokenTransferDedupeKey), so the same transfer is surfaced once
 // regardless of which reason or code path saw it first.
 export const MANAGED_VENICE_TOKEN_DEPOSIT_REASONS = {
@@ -73,8 +74,11 @@ export const MANAGED_VENICE_TOKEN_DEPOSIT_REASONS = {
   // A transfer delivered for a quote already in review or cancelled that would
   // otherwise have qualified (in window, in band).
   afterQuoteClosed: "managed_venice_token_deposit_after_quote_closed",
-  // A credited lot whose tx is already bound to a different quote (legacy
-  // cross-quote capture), so this quote can never be flipped to settled.
+  // The transfer's tx is already claimed on ANOTHER deposit address (one tx
+  // paying several wallets: an ERC-4337 bundle, a batch withdrawal), so the
+  // unique tx claim can never bind it here. Also a credited lot whose tx is
+  // already bound to a different quote (legacy cross-quote capture), so that
+  // quote can never be flipped to settled.
   claimConflict: "managed_venice_token_deposit_claim_conflict",
   // An open quote that claimed a tx but has neither a lot nor readable claim
   // values: nothing says what to credit, so it goes to review instead of
@@ -184,6 +188,9 @@ export interface ManagedVeniceTokenQuote {
   // Why and by which transfer the quote was sent to review (review metadata).
   manualReviewReason?: string | null;
   reviewTransactionHash?: string | null;
+  // The review trigger's log index; null when the delivery had none (the
+  // bearer route), meaning the tx's first Transfer log to the address.
+  reviewLogIndex?: number | null;
 }
 
 export interface ManagedVeniceTokenSettlementClaim {
@@ -361,6 +368,7 @@ function asQuote(row: TokenQuoteRow): ManagedVeniceTokenQuote {
     transferSurfacingPending: row.transfer_surfacing_pending === true,
     manualReviewReason: nonEmptyString(metadata.manualReviewReason),
     reviewTransactionHash: nonEmptyString(metadata.reviewTransactionHash),
+    reviewLogIndex: normalizeLogIndex(metadata.reviewLogIndex),
   };
 }
 
@@ -657,6 +665,11 @@ export async function loadManagedVeniceTokenDepositLot(
 }
 
 // ── Transfer identity and reconciliation items ───────────────────────────
+//
+// An incoming transfer is one ERC-20 Transfer log: (tx, deposit address, log
+// index). One tx can pay several deposit addresses (an ERC-4337 bundle, an
+// exchange or disperse batch withdrawal) and can even pay one address twice,
+// so a tx hash alone does not identify a transfer.
 
 function sameTransactionHash(left: string | null | undefined, right: string | null | undefined) {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
@@ -666,14 +679,27 @@ function transactionHashVariants(transactionHash: string) {
   return Array.from(new Set([transactionHash, transactionHash.toLowerCase()]));
 }
 
+function addressVariants(address: string) {
+  return Array.from(new Set([address, address.toLowerCase()]));
+}
+
 // One open item per on-chain transfer, whatever the reason: the unique index on
 // managed_venice_reconciliation_items.dedupe_key turns a repeat insert (every
 // cron tick, cron racing the user's check, a bearer redelivery) into a no-op.
-// Keyed by the tx hash alone: the bearer settle route has no log index, and the
-// reconciler and the bearer route must key the same transfer identically. (The
-// claim is per tx too: the unique quotes.transaction_hash index.)
-export function managedVeniceTokenTransferDedupeKey(transactionHash: string) {
-  return `managed_venice_token_transfer:${transactionHash.trim().toLowerCase()}`;
+// The key is 'managed_venice_token_transfer:<tx>:<deposit address>' for a tx's
+// first Transfer log to the address, and that plus ':<logIndex>' for any later
+// log of the same tx to the same address. The bearer settle route has no log
+// index, so it always uses the bare key; the reconciler uses the bare key for
+// the first log too, so both key the same transfer identically.
+export function managedVeniceTokenTransferDedupeKey(
+  transactionHash: string,
+  depositAddress: string,
+  logIndex: number | null = null
+) {
+  const key =
+    `managed_venice_token_transfer:${transactionHash.trim().toLowerCase()}:` +
+    depositAddress.trim().toLowerCase();
+  return logIndex === null ? key : `${key}:${logIndex}`;
 }
 
 function affectedRowCount(data: unknown) {
@@ -681,34 +707,157 @@ function affectedRowCount(data: unknown) {
   return data ? 1 : 0;
 }
 
-// True when the tx is already the settlement tx of a quote or a lot. Such a
-// transfer is accounted for; it is never re-surfaced against another quote.
+// ── Transfer bindings ─────────────────────────────────────────────────────
+// A binding is a record that already accounts for a transfer's tx on a
+// deposit address: a quote's settlement claim, a deposit lot, another quote's
+// review trigger, or a yearly $HermesOS payment. Bindings are only ever looked
+// up on the SAME deposit address (lots and yearly subscriptions by the same
+// user, who owns exactly one credit_deposit wallet): a tx claimed on another
+// address is a different transfer, which must still be credited or surfaced
+// here. Within one address the identity is per log: the binding's log index
+// (null for records without one, meaning the tx's first log to the address).
+
+export type ManagedVeniceTransferBindingKind =
+  | "quote_claim"
+  | "lot"
+  | "review_trigger"
+  | "yearly_quote"
+  | "yearly_subscription";
+
+export interface ManagedVeniceTransferBinding {
+  kind: ManagedVeniceTransferBindingKind;
+  quoteId: string | null;
+  logIndex: number | null;
+}
+
+type BindingQuote = Pick<ManagedVeniceTokenQuote, "id" | "userId" | "depositAddress">;
+
+// Every binding of the given tx hashes on the quote's deposit address, keyed
+// by lowercased tx hash.
+export async function loadManagedVeniceTransferBindings(
+  params: { quote: BindingQuote; transactionHashes: string[] },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<Map<string, ManagedVeniceTransferBinding[]>> {
+  const client = requireDb(db);
+  const bindings = new Map<string, ManagedVeniceTransferBinding[]>();
+  if (params.transactionHashes.length === 0) return bindings;
+  const variants = Array.from(new Set(params.transactionHashes.flatMap(transactionHashVariants)));
+  const addresses = addressVariants(params.quote.depositAddress);
+  const [claims, lots, reviews, yearlyQuotes, yearlySubscriptions] = await Promise.all([
+    table(client, "managed_venice_token_quotes")
+      .select("id, transaction_hash, metadata")
+      .in("deposit_address", addresses)
+      .in("transaction_hash", variants),
+    table(client, "managed_venice_token_lots")
+      .select("id, quote_id, transaction_hash, metadata")
+      .eq("user_id", params.quote.userId)
+      .in("transaction_hash", variants),
+    table(client, "managed_venice_token_quotes")
+      .select("id, metadata")
+      .in("deposit_address", addresses)
+      .eq("status", "manual_review_required")
+      .in("metadata->>reviewTransactionHash", variants),
+    // user_id keeps this on yearly_token_quotes_user_idx; the address is the
+    // user's own credit_deposit wallet.
+    table(client, "yearly_token_quotes")
+      .select("id, consumed_tx_hash")
+      .eq("user_id", params.quote.userId)
+      .in("deposit_address", addresses)
+      .in("consumed_tx_hash", variants),
+    table(client, "yearly_token_subscriptions")
+      .select("id, deposit_tx_hash")
+      .eq("user_id", params.quote.userId)
+      .in("deposit_tx_hash", variants),
+  ]);
+  const rows = (
+    result: { data?: unknown; error: QueryError },
+    label: string
+  ): Array<Record<string, unknown>> => {
+    if (result.error) {
+      throw new Error(result.error.message || `Failed to check managed Venice ${label} transaction bindings`);
+    }
+    return Array.isArray(result.data) ? (result.data as Array<Record<string, unknown>>) : [];
+  };
+  const add = (transactionHash: unknown, binding: ManagedVeniceTransferBinding) => {
+    if (typeof transactionHash !== "string" || !transactionHash) return;
+    const key = transactionHash.toLowerCase();
+    bindings.set(key, [...(bindings.get(key) ?? []), binding]);
+  };
+  const id = (value: unknown) => (typeof value === "string" ? value : null);
+
+  for (const row of rows(claims, "quote")) {
+    const claim = metadataRecord(metadataRecord(row.metadata).settlementClaim);
+    add(row.transaction_hash, {
+      kind: "quote_claim",
+      quoteId: id(row.id),
+      logIndex: sameTransactionHash(nonEmptyString(claim.transactionHash), nonEmptyString(row.transaction_hash))
+        ? normalizeLogIndex(claim.logIndex)
+        : null,
+    });
+  }
+  for (const row of rows(lots, "lot")) {
+    add(row.transaction_hash, {
+      kind: "lot",
+      quoteId: id(row.quote_id),
+      logIndex: normalizeLogIndex(metadataRecord(row.metadata).logIndex),
+    });
+  }
+  for (const row of rows(reviews, "review")) {
+    const metadata = metadataRecord(row.metadata);
+    add(metadata.reviewTransactionHash, {
+      kind: "review_trigger",
+      quoteId: id(row.id),
+      logIndex: normalizeLogIndex(metadata.reviewLogIndex),
+    });
+  }
+  for (const row of rows(yearlyQuotes, "yearly quote")) {
+    add(row.consumed_tx_hash, { kind: "yearly_quote", quoteId: null, logIndex: null });
+  }
+  for (const row of rows(yearlySubscriptions, "yearly subscription")) {
+    add(row.deposit_tx_hash, { kind: "yearly_subscription", quoteId: null, logIndex: null });
+  }
+  return bindings;
+}
+
+// Whether a binding accounts for a transfer as seen from `quote`. The quote's
+// own review trigger never does: it is the quote's own transfer to surface.
+// Its own claim and lot do (the credited transfer is never re-surfaced),
+// unless `ignoreOwnQuote` asks for bindings held by OTHER records only.
+export function isManagedVeniceTransferBindingCounted(
+  binding: ManagedVeniceTransferBinding,
+  quoteId: string,
+  options: { ignoreOwnQuote?: boolean } = {}
+) {
+  if (binding.quoteId !== quoteId) return true;
+  if (binding.kind === "review_trigger") return false;
+  return !options.ignoreOwnQuote;
+}
+
+// The first binding that accounts for `transactionHash` on the quote's deposit
+// address (see isManagedVeniceTransferBindingCounted), or null. A delivery
+// without a log index is the tx's first log to the address, which any binding
+// of the tx on the address covers.
+async function findSameAddressBinding(
+  db: SupabaseLike,
+  quote: BindingQuote,
+  transactionHash: string,
+  options: { ignoreOwnQuote?: boolean } = {}
+) {
+  const bindings = await loadManagedVeniceTransferBindings({ quote, transactionHashes: [transactionHash] }, db);
+  return (
+    (bindings.get(transactionHash.toLowerCase()) ?? []).find((binding) =>
+      isManagedVeniceTransferBindingCounted(binding, quote.id, options)
+    ) ?? null
+  );
+}
+
 async function isTransactionBound(
   db: SupabaseLike,
+  quote: BindingQuote,
   transactionHash: string,
-  options: { ignoreQuoteId?: string } = {}
+  options: { ignoreOwnQuote?: boolean } = {}
 ) {
-  const variants = transactionHashVariants(transactionHash);
-  const [quotes, lots] = await Promise.all([
-    table(db, "managed_venice_token_quotes")
-      .select("id")
-      .in("transaction_hash", variants),
-    table(db, "managed_venice_token_lots")
-      .select("id, quote_id")
-      .in("transaction_hash", variants),
-  ]);
-  if (quotes.error) {
-    throw new Error(quotes.error.message || "Failed to check managed Venice quote transaction binding");
-  }
-  if (lots.error) {
-    throw new Error(lots.error.message || "Failed to check managed Venice lot transaction binding");
-  }
-  const boundQuotes = (Array.isArray(quotes.data) ? quotes.data : []) as Array<{ id?: unknown }>;
-  const boundLots = (Array.isArray(lots.data) ? lots.data : []) as Array<{ quote_id?: unknown }>;
-  return (
-    boundQuotes.some((row) => row.id !== options.ignoreQuoteId) ||
-    boundLots.some((row) => !options.ignoreQuoteId || row.quote_id !== options.ignoreQuoteId)
-  );
+  return (await findSameAddressBinding(db, quote, transactionHash, options)) !== null;
 }
 
 interface ObservedTransfer {
@@ -716,6 +865,9 @@ interface ObservedTransfer {
   logIndex: number | null;
   tokenAmountRaw: string | null;
   observedAt: string;
+  // The log index to key the item by: null (the default) for the tx's first
+  // Transfer log to the deposit address, the log's own index for a later one.
+  dedupeLogIndex?: number | null;
 }
 
 async function insertTransferItem(
@@ -724,7 +876,11 @@ async function insertTransferItem(
   transfer: ObservedTransfer,
   reason: ManagedVeniceTokenDepositReason
 ): Promise<"surfaced" | "already_surfaced"> {
-  const dedupeKey = managedVeniceTokenTransferDedupeKey(transfer.transactionHash);
+  const dedupeKey = managedVeniceTokenTransferDedupeKey(
+    transfer.transactionHash,
+    quote.depositAddress,
+    transfer.dedupeLogIndex ?? null
+  );
   const { error } = await table(db, "managed_venice_reconciliation_items").insert({
     user_id: quote.userId,
     account_id: quote.accountId,
@@ -733,6 +889,7 @@ async function insertTransferItem(
     dedupe_key: dedupeKey,
     metadata: {
       quoteId: quote.id,
+      depositAddress: quote.depositAddress,
       transactionHash: transfer.transactionHash,
       logIndex: transfer.logIndex,
       observedTokenAmountRaw: transfer.tokenAmountRaw,
@@ -756,6 +913,8 @@ export async function surfaceManagedVeniceTokenTransfer(
     quote: ManagedVeniceTokenQuote;
     transactionHash: string;
     logIndex?: number | null;
+    // See ObservedTransfer.dedupeLogIndex.
+    dedupeLogIndex?: number | null;
     tokenAmountRaw: string | null;
     observedAt: string;
     reason: ManagedVeniceTokenDepositReason;
@@ -768,6 +927,7 @@ export async function surfaceManagedVeniceTokenTransfer(
     {
       transactionHash: params.transactionHash.trim().toLowerCase(),
       logIndex: normalizeLogIndex(params.logIndex),
+      dedupeLogIndex: normalizeLogIndex(params.dedupeLogIndex),
       tokenAmountRaw: params.tokenAmountRaw,
       observedAt: params.observedAt,
     },
@@ -951,10 +1111,16 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
 // There is no multi-statement transaction here, so settlement is a claim-first
 // saga whose every step is idempotent and whose every quote transition is a
 // compare-and-set:
+//   0. BOUND  — a fresh transfer whose tx is already bound on this quote's
+//               deposit address (another quote's claim or review trigger, a
+//               lot, a yearly payment) is refused before anything is written:
+//               it is accounted for there (transaction_already_claimed).
 //   1. CLAIM  — quote.transaction_hash := tx (CAS: open status, tx still null).
 //               The unique tx index makes this the single point where a
-//               transfer is bound to exactly one quote; a tx that is already
-//               another quote's lot (legacy) is refused before the claim.
+//               transfer is bound to exactly one quote. A tx the index (or a
+//               lot) shows is claimed on ANOTHER deposit address is a
+//               different transfer that can never be claimed here: the quote
+//               goes to review as a claim conflict, with one item.
 //               Nothing is credited before the claim is durable.
 //   2. LOT    — one spendable lot (unique per quote), from the claim values.
 //   3. EVENTS — token_deposit + subsidy_applied, keyed by quote + claimed tx.
@@ -1109,6 +1275,11 @@ export async function settleManagedVeniceTokenQuote(
     observedAt: string;
     blockTimestamp?: string | null;
     logIndex?: number | null;
+    // The log index to key this transfer's item by (see
+    // managedVeniceTokenTransferDedupeKey): omitted / null for the tx's first
+    // Transfer log to the deposit address (every bearer delivery), the log's
+    // index for a later log of the same tx.
+    dedupeLogIndex?: number | null;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ): Promise<ManagedVeniceTokenSettlementResult> {
@@ -1130,6 +1301,7 @@ export async function settleManagedVeniceTokenQuote(
     // side-stepped by a differently-cased copy of the same hash.
     transactionHash: params.transactionHash.trim().toLowerCase(),
     logIndex: normalizeLogIndex(params.logIndex),
+    dedupeLogIndex: normalizeLogIndex(params.dedupeLogIndex),
     tokenAmountRaw,
     observedAt: observedAt.toISOString(),
     observedAtDate: observedAt,
@@ -1169,6 +1341,15 @@ async function settleOnce(
     return convergeClaimedSettlement(db, record, lot, transfer);
   }
 
+  // A transfer already accounted for on this deposit address (another quote
+  // credited it or reviewed with it, a lot or a yearly payment holds it) is
+  // neither claimed nor reviewed here: writing nothing keeps it credited XOR
+  // surfaced, never both, and never on two quotes.
+  const binding = await findSameAddressBinding(db, quote, transfer.transactionHash, { ignoreOwnQuote: true });
+  if (binding) {
+    return transactionAlreadyClaimed(quote, transfer, binding.kind);
+  }
+
   const reviewReason = classifyTransfer(quote, transfer);
   if (reviewReason) {
     return reviewUnclaimedQuote(db, record, transfer, reviewReason);
@@ -1198,7 +1379,7 @@ async function handleSettledQuote(
 
   // A different transfer after settlement: surface it once, never touch the
   // settled quote (its credit, tx and sweep state are final).
-  if (!(await isTransactionBound(db, transfer.transactionHash, { ignoreQuoteId: quote.id }))) {
+  if (!(await isTransactionBound(db, quote, transfer.transactionHash, { ignoreOwnQuote: true }))) {
     await insertTransferItem(db, quote, transfer, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.replayedAfterSettlement);
   }
   return { status: "manual_review_required" };
@@ -1230,7 +1411,7 @@ async function handleClosedQuote(
     }
     return { status };
   }
-  if (!(await isTransactionBound(db, transfer.transactionHash))) {
+  if (!(await isTransactionBound(db, quote, transfer.transactionHash))) {
     await insertTransferItem(
       db,
       quote,
@@ -1285,6 +1466,24 @@ async function reviewUnclaimedQuote(
   return { status: "manual_review_required" };
 }
 
+// Another quote on this deposit address (or a lot / yearly payment of this
+// user) already accounts for the transfer: this quote stays open for its own
+// transfer and nothing is written.
+function transactionAlreadyClaimed(
+  quote: ManagedVeniceTokenQuote,
+  transfer: SettlementTransfer,
+  boundTo: ManagedVeniceTransferBindingKind
+) {
+  log.warn("managed Venice token transfer already claimed by another quote", {
+    source: "managed-venice-token-quotes",
+    failureType: "managed_venice_token_transaction_already_claimed",
+    quoteId: quote.id,
+    transactionHash: transfer.transactionHash,
+    boundTo: boundTo === "quote_claim" ? "quote" : boundTo,
+  });
+  return { status: "transaction_already_claimed" as const, quoteId: quote.id };
+}
+
 // Lots whose tx is `transactionHash` and that belong to a quote other than
 // `quoteId`. Claim-first settlement only inserts a lot after its quote claims
 // the tx, but legacy lots exist whose quote never recorded the tx, so the
@@ -1306,21 +1505,28 @@ async function claimAndSettle(
   transfer: SettlementTransfer
 ): Promise<SettlementPass> {
   const { quote } = record;
-  const alreadyClaimed = (boundTo: "quote" | "lot") => {
-    // Another quote already owns this transfer. It is accounted for there;
-    // this quote stays open for its own transfer and nothing is written.
-    log.warn("managed Venice token transfer already claimed by another quote", {
+  // The tx is claimed (or held by a lot) elsewhere. If that is on this deposit
+  // address (a binding that appeared after settleOnce's check), the transfer
+  // is accounted for there. Otherwise it is claimed on ANOTHER address: the
+  // same tx paid several wallets, and this address's transfer can never be
+  // claimed here because the claim is unique per tx. It is real money that
+  // must not vanish, so the quote goes to review (flip first, then one item).
+  const claimedElsewhere = async (boundTo: "quote" | "lot"): Promise<SettlementPass> => {
+    const binding = await findSameAddressBinding(db, quote, transfer.transactionHash, { ignoreOwnQuote: true });
+    if (binding) return transactionAlreadyClaimed(quote, transfer, binding.kind);
+    log.warn("managed Venice token transfer is claimed on another deposit address; sending the quote to review", {
       source: "managed-venice-token-quotes",
-      failureType: "managed_venice_token_transaction_already_claimed",
+      failureType: "managed_venice_token_deposit_claim_conflict",
       quoteId: quote.id,
       transactionHash: transfer.transactionHash,
+      logIndex: transfer.logIndex,
       boundTo,
     });
-    return { status: "transaction_already_claimed" as const, quoteId: quote.id };
+    return reviewUnclaimedQuote(db, record, transfer, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.claimConflict);
   };
 
   if (await findOtherQuoteLot(db, transfer.transactionHash, quote.id)) {
-    return alreadyClaimed("lot");
+    return claimedElsewhere("lot");
   }
 
   const now = new Date().toISOString();
@@ -1333,8 +1539,8 @@ async function claimAndSettle(
     .is("transaction_hash", null)
     .select("id");
 
-  // The unique tx index: another quote claimed this transfer.
-  if (error?.code === "23505") return alreadyClaimed("quote");
+  // The unique tx index: another quote claimed this tx.
+  if (error?.code === "23505") return claimedElsewhere("quote");
   if (error) {
     throw new Error(error.message || "Failed to claim managed Venice token deposit");
   }
@@ -1396,7 +1602,7 @@ async function reviewUnrecoverableClaim(
   );
   if (
     !sameTransactionHash(transfer.transactionHash, claimedTransactionHash) &&
-    !(await isTransactionBound(db, transfer.transactionHash))
+    !(await isTransactionBound(db, quote, transfer.transactionHash))
   ) {
     await insertTransferItem(
       db,
@@ -1466,7 +1672,7 @@ async function convergeClaimedSettlement(
     if (affectedRowCount(data) === 0) return RETRY_SETTLEMENT;
 
     const displacedClaim = quote.transactionHash;
-    if (displacedClaim && !(await isTransactionBound(db, displacedClaim))) {
+    if (displacedClaim && !(await isTransactionBound(db, quote, displacedClaim))) {
       await insertTransferItem(
         db,
         quote,
@@ -1492,7 +1698,7 @@ async function convergeClaimedSettlement(
   // it is real money that was not credited here, so surface it once.
   if (
     !sameTransactionHash(transfer.transactionHash, claim.transactionHash) &&
-    !(await isTransactionBound(db, transfer.transactionHash))
+    !(await isTransactionBound(db, quote, transfer.transactionHash))
   ) {
     await insertTransferItem(db, quote, transfer, MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.extraTransfer);
   }
