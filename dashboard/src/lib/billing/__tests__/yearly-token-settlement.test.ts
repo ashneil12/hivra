@@ -473,3 +473,106 @@ describe("batch time budget", () => {
     expect(summary).toMatchObject({ checked: 0, deferred: 2 });
   });
 });
+
+describe("ownership is per Transfer log and per wallet", () => {
+  const WALLET_B = "0x00000000000000000000000000000000000000b2";
+
+  it("settles both users when one multi-send pays two users' wallets", async () => {
+    const world = createYearlyTokenWorld();
+    world.memory.insertRow("bankr_deposit_wallet_credentials", {
+      ...world.memory.tables.bankr_deposit_wallet_credentials[0],
+      id: "cred_b",
+      user_id: "user_b",
+      evm_address: WALLET_B,
+      normalized_evm_address: WALLET_B,
+    });
+    openQuote(world);
+    openQuote(world, { id: "yq_b", user_id: "user_b", deposit_address: WALLET_B, quoted_at: world.at(-9 * MINUTE_MS) });
+    // One tx: log 0 pays user_1's wallet, log 1 pays user_b's wallet.
+    world.pay({ tx: txHash(7), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS, logIndex: 0 });
+    world.pay({ tx: txHash(7), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS, logIndex: 1, to: WALLET_B });
+
+    const summary = await reconcilePendingYearlyTokenQuotes({
+      db: world.memory.db,
+      fetchImpl: world.chain.fetchImpl,
+      now: new Date(world.nowMs),
+      rpcSleepImpl: noDelay,
+    });
+
+    expect(summary).toMatchObject({ activated: 2 });
+    expect(world.subscriptions().map((row) => [row.user_id, row.deposit_log_index])).toEqual(
+      expect.arrayContaining([
+        ["user_b", 1],
+        ["user_1", 0],
+      ])
+    );
+    expect(world.items()).toHaveLength(0);
+  });
+
+  it("does not let a managed-Venice binding on another wallet block this wallet's log of the tx", async () => {
+    const world = createYearlyTokenWorld();
+    world.memory.insertRow(
+      "managed_venice_token_quotes",
+      managedVeniceQuoteRow({ user_id: "user_b", deposit_address: WALLET_B, status: "settled", transaction_hash: txHash(8) })
+    );
+    openQuote(world);
+    world.pay({ tx: txHash(8), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS, logIndex: 2 });
+
+    expect(await reconcile(world)).toMatchObject({ status: "activated", transactionHash: txHash(8) });
+  });
+});
+
+describe("pre-attribution quotes", () => {
+  it("closes a quote the old balance-based flow consumed without flagging its payment", async () => {
+    const world = createYearlyTokenWorld();
+    openQuote(world, { status: "consumed", consumed_tx_hash: null, consumed_at: world.at(-4 * MINUTE_MS) });
+    world.memory.insertRow("yearly_token_subscriptions", yearlySubscriptionRow({ yearly_quote_id: "yq_1", deposit_tx_hash: null }));
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS });
+
+    expect(await reconcile(world)).toMatchObject({ status: "closed", quoteStatus: "consumed" });
+    expect(world.items()).toHaveLength(0);
+    expect(world.quote("yq_1")?.attribution_closed_at).toEqual(expect.any(String));
+  });
+});
+
+describe("a managed-Venice review of a yearly payment", () => {
+  it("is flagged even when the Venice review appears after the yearly quote settled", async () => {
+    const world = createYearlyTokenWorld();
+    openQuote(world);
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS });
+    expect(await reconcile(world)).toMatchObject({ status: "activated" });
+    expect(world.items()).toHaveLength(0);
+
+    world.memory.insertRow(
+      "managed_venice_token_quotes",
+      managedVeniceQuoteRow({ status: "manual_review_required", transaction_hash: txHash(1), quoted_at: world.at(-5 * HOUR_MS) })
+    );
+    expect(await reconcile(world)).toMatchObject({ status: "watching" });
+
+    expect(world.items()).toEqual([
+      expect.objectContaining({
+        reason: "contested_by_managed_venice_review",
+        transaction_hash: txHash(1),
+        subscription_id: world.subscriptions()[0].id,
+      }),
+    ]);
+  });
+});
+
+describe("session boundaries use raw milliseconds", () => {
+  it("gives a transfer mined in the same second as, but before, the next quote to the earlier quote", async () => {
+    const world = createYearlyTokenWorld();
+    const block = world.blockAt(-5 * MINUTE_MS);
+    const blockMs = Date.parse(world.chain.blockTimestamp(block));
+    openQuote(world, { quoted_at: world.at(-30 * MINUTE_MS), expires_at: world.at(-10 * MINUTE_MS), status: "expired" });
+    openQuote(world, {
+      id: "yq_next",
+      quoted_at: new Date(blockMs + 700).toISOString(),
+      expires_at: new Date(blockMs + 700 + 20 * MINUTE_MS).toISOString(),
+    });
+    world.chain.addTransfer({ txHash: txHash(1), amountRaw: REQUIRED, block, to: TEST_DEPOSIT_ADDRESS });
+
+    expect(await reconcile(world, "yq_next")).toMatchObject({ status: "no_match" });
+    expect(await reconcile(world, "yq_1")).toMatchObject({ status: "manual_review", reason: "late_payment" });
+  });
+});

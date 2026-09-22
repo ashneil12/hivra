@@ -40,9 +40,9 @@ export const YEARLY_TOKEN_UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
       where: (row) => row.status === "active",
     },
     {
-      name: "uq_yearly_token_quotes_consumed_tx_hash",
-      columns: ["consumed_tx_hash"],
-      where: (row) => row.consumed_tx_hash != null,
+      name: "uq_yearly_token_quotes_consumed_transfer",
+      columns: ["consumed_tx_hash", "consumed_log_index"],
+      where: (row) => row.consumed_tx_hash != null && row.consumed_log_index != null,
     },
   ],
   yearly_token_subscriptions: [
@@ -52,9 +52,9 @@ export const YEARLY_TOKEN_UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
       where: (row) => row.status === "active" || row.status === "grace",
     },
     {
-      name: "uq_yearly_token_subscriptions_deposit_tx_hash",
-      columns: ["deposit_tx_hash"],
-      where: (row) => row.deposit_tx_hash != null,
+      name: "uq_yearly_token_subscriptions_deposit_transfer",
+      columns: ["deposit_tx_hash", "deposit_log_index"],
+      where: (row) => row.deposit_tx_hash != null && row.deposit_log_index != null,
     },
     {
       name: "uq_yearly_token_subscriptions_yearly_quote_id",
@@ -104,7 +104,10 @@ export function settleYearlyTokenPaymentModel(
 ) {
   const { tables } = context;
   const tx = String(args.p_transaction_hash ?? "").trim().toLowerCase();
-  if (!/^0x[0-9a-f]{64}$/.test(tx)) return { data: { status: "invalid_transaction" }, error: null };
+  const logIndex = args.p_log_index;
+  if (!/^0x[0-9a-f]{64}$/.test(tx) || typeof logIndex !== "number" || logIndex < 0) {
+    return { data: { status: "invalid_transaction" }, error: null };
+  }
   const amount = BigInt(String(args.p_amount_raw ?? "0"));
   if (amount <= 0n) return { data: { status: "invalid_amount" }, error: null };
   const nowMs = Date.parse(String(args.p_now));
@@ -113,7 +116,7 @@ export function settleYearlyTokenPaymentModel(
   if (!quote) return { data: { status: "not_found" }, error: null };
 
   if (quote.consumed_tx_hash != null) {
-    if (lower(quote.consumed_tx_hash) === tx) {
+    if (lower(quote.consumed_tx_hash) === tx && (quote.consumed_log_index ?? null) === logIndex) {
       const sub = tables.yearly_token_subscriptions.find((row) => row.yearly_quote_id === quote.id);
       return {
         data: {
@@ -139,14 +142,31 @@ export function settleYearlyTokenPaymentModel(
     return { data: { status: "legacy_subscription_exists" }, error: null };
   }
 
+  // Ownership is per Transfer log: another log of a multi-send (another
+  // wallet) is a different transfer. Managed-Venice binds per tx, so its rows
+  // count only on this wallet (quotes) or this user (lots), and a Venice
+  // quote in review does not own the tx it recorded.
+  const wallet = lower(quote.deposit_address);
   const claimedElsewhere =
-    tables.yearly_token_quotes.some((row) => lower(row.consumed_tx_hash) === tx) ||
-    tables.yearly_token_subscriptions.some((row) => lower(row.deposit_tx_hash) === tx) ||
-    // A managed-Venice quote in review does not own the tx it recorded.
-    tables.managed_venice_token_quotes.some(
-      (row) => lower(row.transaction_hash) === tx && row.status !== "manual_review_required"
+    tables.yearly_token_quotes.some(
+      (row) =>
+        lower(row.consumed_tx_hash) === tx &&
+        (row.consumed_log_index === logIndex || (row.consumed_log_index == null && lower(row.deposit_address) === wallet))
     ) ||
-    tables.managed_venice_token_lots.some((row) => lower(row.transaction_hash) === tx);
+    tables.yearly_token_subscriptions.some(
+      (row) =>
+        lower(row.deposit_tx_hash) === tx &&
+        (row.deposit_log_index === logIndex || (row.deposit_log_index == null && lower(row.deposit_address) === wallet))
+    ) ||
+    tables.managed_venice_token_quotes.some(
+      (row) =>
+        lower(row.transaction_hash) === tx &&
+        lower(row.deposit_address) === wallet &&
+        row.status !== "manual_review_required"
+    ) ||
+    tables.managed_venice_token_lots.some(
+      (row) => lower(row.transaction_hash) === tx && row.user_id === quote.user_id
+    );
   if (claimedElsewhere) return { data: { status: "transaction_already_claimed" }, error: null };
 
   const snapshot = {
@@ -200,12 +220,17 @@ export function settleYearlyTokenPaymentModel(
     if (current) {
       current.metadata = { ...(current.metadata as MemoryRow), renewedBySubscriptionId: inserted.id };
     }
-    if (tables.yearly_token_quotes.some((row) => row !== quote && lower(row.consumed_tx_hash) === tx)) {
-      throw Object.assign(new Error("duplicate consumed_tx_hash"), { code: "23505" });
+    if (
+      tables.yearly_token_quotes.some(
+        (row) => row !== quote && lower(row.consumed_tx_hash) === tx && row.consumed_log_index === logIndex
+      )
+    ) {
+      throw Object.assign(new Error("duplicate consumed transfer"), { code: "23505" });
     }
     Object.assign(quote, {
       status: "consumed",
       consumed_tx_hash: tx,
+      consumed_log_index: logIndex,
       consumed_balance_raw: amount.toString(),
       consumed_at: nowIso,
       updated_at: nowIso,
@@ -266,6 +291,7 @@ export function yearlyQuoteRow(overrides: MemoryRow = {}): MemoryRow {
     consumed_balance_raw: null,
     consumed_at: null,
     consumed_tx_hash: null,
+    consumed_log_index: null,
     attribution_closed_at: null,
     source: "dexscreener",
     metadata: {},

@@ -144,6 +144,8 @@ async function main() {
     assert.equal(await closedAt(q1), null);
 
     // Idempotent replay; a different tx on a settled quote is a conflict.
+    // A multi-send's OTHER log in the same tx is a different transfer.
+    assert.equal((await settle(q1, tx(1), "1000", NOW, 4)).status, "quote_settled_with_other_transaction");
     const replay = await settle(q1, tx(1));
     assert.equal(replay.status, "already_settled");
     assert.equal(replay.subscription_id, activated.subscription_id);
@@ -160,7 +162,7 @@ async function main() {
       `insert into public.managed_venice_token_quotes
          (account_id, user_id, token_amount_raw, snapshot_price_usd, locked_value_micro_usd,
           deposit_address, quoted_at, expires_at, status, source, transaction_hash)
-       values ($1, 'user_1', 1000, '0.05', 50000000, '0xba5e', now() - interval '1 hour',
+       values ($1, 'user_1', 1000, '0.05', 50000000, '0x000000000000000000000000000000000000ba5e', now() - interval '1 hour',
                now() - interval '40 minutes', 'settled', 'dexscreener', $2)`,
       [account, tx(0x77)]
     );
@@ -179,7 +181,7 @@ async function main() {
       `insert into public.managed_venice_token_quotes
          (account_id, user_id, token_amount_raw, snapshot_price_usd, locked_value_micro_usd,
           deposit_address, quoted_at, expires_at, status, source, transaction_hash)
-       values ($1, 'user_1', 1000, '0.05', 50000000, '0xba5e', now() - interval '3 hours',
+       values ($1, 'user_1', 1000, '0.05', 50000000, '0x000000000000000000000000000000000000ba5e', now() - interval '3 hours',
                now() - interval '160 minutes', 'manual_review_required', 'dexscreener', $2)`,
       [account, tx(0x79)]
     );
@@ -244,6 +246,7 @@ async function main() {
 
     // Input validation.
     assert.equal((await settle(q4, "not-a-hash")).status, "invalid_transaction");
+    assert.equal((await settle(q4, tx(5), "1000", NOW, null)).status, "invalid_transaction");
     assert.equal((await settle(q4, tx(5), "0")).status, "invalid_amount");
     assert.equal(
       (await settle("00000000-0000-0000-0000-000000000000", tx(6))).status,
@@ -252,16 +255,27 @@ async function main() {
 
     // ── Unique indexes backing the claim ──────────────────────────────
     const q5 = await quote({ user_id: "user_3" });
+    // One Transfer log (tx + log index) pays at most one quote / subscription.
     await rejectsWith("23505", () =>
-      db.query("update public.yearly_token_quotes set consumed_tx_hash = $2 where id = $1", [q5, tx(1).toUpperCase()])
+      db.query(
+        "update public.yearly_token_quotes set consumed_tx_hash = $2, consumed_log_index = 3 where id = $1",
+        [q5, tx(1).toUpperCase()]
+      )
     );
     await rejectsWith("23505", () =>
       db.query(
-        `insert into public.yearly_token_subscriptions (user_id, tier, expires_at, amount_received_raw, deposit_tx_hash)
-         values ('user_3', 'power', now(), 1, $1)`,
+        `insert into public.yearly_token_subscriptions
+           (user_id, tier, expires_at, amount_received_raw, deposit_tx_hash, deposit_log_index)
+         values ('user_3', 'power', now(), 1, $1, 3)`,
         [tx(1)]
       )
     );
+    // Another log of the same tx is a different transfer.
+    await db.query("update public.yearly_token_quotes set consumed_tx_hash = $2, consumed_log_index = 9 where id = $1", [
+      q5,
+      tx(1),
+    ]);
+    await db.query("update public.yearly_token_quotes set consumed_tx_hash = null, consumed_log_index = null where id = $1", [q5]);
     await rejectsWith("23505", () =>
       db.query(
         `insert into public.yearly_token_subscriptions (user_id, tier, yearly_quote_id, expires_at, amount_received_raw)
@@ -295,6 +309,34 @@ async function main() {
       "select relrowsecurity from pg_class where oid = 'public.yearly_token_reconciliation_items'::regclass"
     );
     assert.equal(itemsRls.relrowsecurity, true);
+
+    // ── One multi-send pays two users' wallets (one log each) ─────────
+    const walletA = "0x00000000000000000000000000000000000000a1";
+    const walletB = "0x00000000000000000000000000000000000000b2";
+    const qA = await quote({ user_id: "user_bundle_a", deposit_address: walletA });
+    const qB = await quote({ user_id: "user_bundle_b", deposit_address: walletB });
+    assert.equal((await settle(qB, tx(0x500), "1000", NOW, 1)).status, "activated");
+    assert.equal((await settle(qA, tx(0x500), "1000", NOW, 0)).status, "activated");
+    // A managed-Venice quote on ANOTHER wallet binding a tx never blocks this
+    // wallet's log of it; on THIS wallet it does.
+    await db.query(
+      `insert into public.managed_venice_token_quotes
+         (account_id, user_id, token_amount_raw, snapshot_price_usd, locked_value_micro_usd,
+          deposit_address, quoted_at, expires_at, status, source, transaction_hash)
+       values ($1, 'user_1', 1000, '0.05', 50000000, $2, now() - interval '1 hour',
+               now() - interval '40 minutes', 'settled', 'dexscreener', $3)`,
+      [account, walletB, tx(0x501)]
+    );
+    const qOtherWallet = await quote({ user_id: "user_bundle_c", deposit_address: walletA });
+    assert.equal((await settle(qOtherWallet, tx(0x501), "1000", NOW, 2)).status, "activated");
+
+    // Re-applying the migration closes only quotes the OLD flow finished:
+    // a quote this function consumed keeps its range watched.
+    const oldFlowConsumed = await quote({ user_id: "user_old_flow", status: "consumed" });
+    await db.exec(migration);
+    assert.ok(await closedAt(oldFlowConsumed), "old-flow consumed quote closed on rerun");
+    assert.equal(await closedAt(q1), null);
+    assert.equal(await closedAt(qA), null);
 
     console.log("PASS yearly token payment settlement");
   } finally {

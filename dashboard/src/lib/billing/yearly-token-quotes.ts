@@ -63,6 +63,7 @@ export interface YearlyQuoteRow {
   consumed_balance_raw: string | null;
   consumed_at: string | null;
   consumed_tx_hash: string | null;
+  consumed_log_index?: number | null;
   source: string;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -86,6 +87,8 @@ export interface YearlyTokenQuote {
   consumedBalanceRaw: bigint | null;
   consumedAt: string | null;
   consumedTxHash: string | null;
+  /** Log index of the consumed Transfer (null for pre-attribution quotes). */
+  consumedLogIndex: number | null;
   source: string;
 }
 
@@ -107,6 +110,7 @@ export function asYearlyTokenQuote(row: YearlyQuoteRow): YearlyTokenQuote {
     consumedBalanceRaw: row.consumed_balance_raw ? BigInt(row.consumed_balance_raw) : null,
     consumedAt: row.consumed_at,
     consumedTxHash: row.consumed_tx_hash,
+    consumedLogIndex: typeof row.consumed_log_index === "number" ? row.consumed_log_index : null,
     source: row.source,
   };
 }
@@ -115,7 +119,7 @@ export const YEARLY_QUOTE_SELECT_COLUMNS =
   "id, user_id, tier, usd_target_cents, price_usd_at_quote, " +
   "tokens_required_raw::text, tokens_required_display, deposit_address, " +
   "quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, " +
-  "consumed_tx_hash, source, metadata, created_at, updated_at";
+  "consumed_tx_hash, consumed_log_index, source, metadata, created_at, updated_at";
 
 interface CreateYearlyQuoteParams {
   userId: string;

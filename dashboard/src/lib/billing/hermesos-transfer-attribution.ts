@@ -72,59 +72,118 @@ export async function loadNextHermesosPaymentSessionMs(
   return boundaries.length ? Math.min(...boundaries) : null;
 }
 
-export interface HermesosTransferOwnership {
-  /** Lowercased tx hashes another flow (or quote) already owns. */
-  bound: Set<string>;
-  /**
-   * Lowercased tx hashes a managed-Venice quote in 'manual_review_required'
-   * recorded. The pre-attribution Venice flow wrote transfers it REJECTED
-   * (e.g. outside its own window) there, so this is not ownership — but an
-   * operator looking at that Venice review must know the transfer paid for
-   * something else.
-   */
-  contested: Set<string>;
+export interface TransferRef {
+  transactionHash: string;
+  logIndex: number;
 }
 
-// Columns that record a transfer a flow owns: yearly quote claims and
-// subscriptions, managed-Venice lots, and managed-Venice quote claims /
-// settlements (see the review exception above).
-const OWNING_COLUMNS: Array<[string, string]> = [
-  ["managed_venice_token_lots", "transaction_hash"],
-  ["yearly_token_quotes", "consumed_tx_hash"],
-  ["yearly_token_subscriptions", "deposit_tx_hash"],
-];
+export interface HermesosTransferOwnership {
+  /** Another flow (or quote) already owns this Transfer log. */
+  isBound(transfer: TransferRef): boolean;
+  /**
+   * A managed-Venice quote in 'manual_review_required' on this wallet
+   * recorded this tx. The pre-attribution Venice flow wrote transfers it
+   * REJECTED (e.g. outside its own window) there, so this is not ownership —
+   * but an operator looking at that Venice review must know the transfer paid
+   * for something else.
+   */
+  isContested(transfer: TransferRef): boolean;
+}
 
+interface YearlyBindingRow {
+  tx: string;
+  logIndex: number | null;
+  address: string | null;
+}
+
+function lowerOrNull(value: unknown) {
+  return typeof value === "string" ? value.toLowerCase() : null;
+}
+
+/**
+ * Which of these Transfer logs into `depositAddress` does another flow own?
+ *
+ * Ownership is per Transfer LOG: one transaction (a multi-send, an exchange
+ * batch withdrawal) can pay several users' wallets, and a binding of another
+ * log of the same tx is a different transfer. Yearly rows record the log;
+ * rows without one (pre-attribution) and managed-Venice quotes, which bind per
+ * tx, only count on this same wallet; managed-Venice lots only for this user.
+ */
 export async function loadHermesosTransferOwnership(
   db: SupabaseLike,
-  transactionHashes: string[]
+  params: { transfers: TransferRef[]; depositAddress: string; userId: string }
 ): Promise<HermesosTransferOwnership> {
-  const ownership: HermesosTransferOwnership = { bound: new Set(), contested: new Set() };
-  if (transactionHashes.length === 0) return ownership;
-  const variants = Array.from(new Set(transactionHashes.flatMap((hash) => [hash, hash.toLowerCase()])));
-  const [venice, ...owning] = await Promise.all([
-    (db.from("managed_venice_token_quotes") as DbQuery).select("transaction_hash, status").in("transaction_hash", variants),
-    ...OWNING_COLUMNS.map(([tableName, column]) =>
-      (db.from(tableName) as DbQuery).select(column).in(column, variants)
-    ),
+  const wallet = normalizeEvmAddress(params.depositAddress);
+  const hashes = Array.from(new Set(params.transfers.map((transfer) => transfer.transactionHash.toLowerCase())));
+  if (hashes.length === 0) return { isBound: () => false, isContested: () => false };
+  const variants = Array.from(new Set(params.transfers.flatMap((transfer) => [transfer.transactionHash, transfer.transactionHash.toLowerCase()])));
+
+  const [yearlyQuotes, yearlySubs, veniceQuotes, veniceLots] = await Promise.all([
+    (db.from("yearly_token_quotes") as DbQuery)
+      .select("consumed_tx_hash, consumed_log_index, deposit_address")
+      .in("consumed_tx_hash", variants),
+    (db.from("yearly_token_subscriptions") as DbQuery)
+      .select("deposit_tx_hash, deposit_log_index, deposit_address")
+      .in("deposit_tx_hash", variants),
+    (db.from("managed_venice_token_quotes") as DbQuery)
+      .select("transaction_hash, status, deposit_address")
+      .in("transaction_hash", variants),
+    (db.from("managed_venice_token_lots") as DbQuery).select("transaction_hash, user_id").in("transaction_hash", variants),
   ]);
-  if (venice.error) {
-    throw new Error(venice.error.message || "Failed to check managed_venice_token_quotes transaction hashes");
+  for (const [name, result] of [
+    ["yearly_token_quotes", yearlyQuotes],
+    ["yearly_token_subscriptions", yearlySubs],
+    ["managed_venice_token_quotes", veniceQuotes],
+    ["managed_venice_token_lots", veniceLots],
+  ] as const) {
+    if (result.error) throw new Error(result.error.message || `Failed to check ${name} transaction hashes`);
   }
-  for (const row of Array.isArray(venice.data) ? (venice.data as Array<Record<string, unknown>>) : []) {
-    if (typeof row.transaction_hash !== "string") continue;
-    const hash = row.transaction_hash.toLowerCase();
-    if (row.status === "manual_review_required") ownership.contested.add(hash);
-    else ownership.bound.add(hash);
-  }
-  owning.forEach((result, index) => {
-    const [tableName, column] = OWNING_COLUMNS[index];
-    if (result.error) {
-      throw new Error(result.error.message || `Failed to check ${tableName} transaction hashes`);
-    }
-    for (const row of Array.isArray(result.data) ? (result.data as Array<Record<string, unknown>>) : []) {
-      const value = row[column];
-      if (typeof value === "string") ownership.bound.add(value.toLowerCase());
-    }
-  });
-  return ownership;
+  const rows = (result: { data?: unknown }) =>
+    Array.isArray(result.data) ? (result.data as Array<Record<string, unknown>>) : [];
+
+  const yearly: YearlyBindingRow[] = [
+    ...rows(yearlyQuotes).map((row) => ({
+      tx: lowerOrNull(row.consumed_tx_hash) ?? "",
+      logIndex: typeof row.consumed_log_index === "number" ? row.consumed_log_index : null,
+      address: lowerOrNull(row.deposit_address),
+    })),
+    ...rows(yearlySubs).map((row) => ({
+      tx: lowerOrNull(row.deposit_tx_hash) ?? "",
+      logIndex: typeof row.deposit_log_index === "number" ? row.deposit_log_index : null,
+      address: lowerOrNull(row.deposit_address),
+    })),
+  ];
+  const veniceOnWallet = rows(veniceQuotes).filter((row) => lowerOrNull(row.deposit_address) === wallet);
+  const boundByVenice = new Set(
+    veniceOnWallet
+      .filter((row) => row.status !== "manual_review_required")
+      .map((row) => lowerOrNull(row.transaction_hash))
+  );
+  const contestedByVenice = new Set(
+    veniceOnWallet
+      .filter((row) => row.status === "manual_review_required")
+      .map((row) => lowerOrNull(row.transaction_hash))
+  );
+  const boundByLot = new Set(
+    rows(veniceLots)
+      .filter((row) => row.user_id === params.userId)
+      .map((row) => lowerOrNull(row.transaction_hash))
+  );
+
+  return {
+    isBound(transfer) {
+      const tx = transfer.transactionHash.toLowerCase();
+      return (
+        boundByVenice.has(tx) ||
+        boundByLot.has(tx) ||
+        yearly.some(
+          (row) =>
+            row.tx === tx && (row.logIndex === transfer.logIndex || (row.logIndex === null && row.address === wallet))
+        )
+      );
+    },
+    isContested(transfer) {
+      return contestedByVenice.has(transfer.transactionHash.toLowerCase());
+    },
+  };
 }

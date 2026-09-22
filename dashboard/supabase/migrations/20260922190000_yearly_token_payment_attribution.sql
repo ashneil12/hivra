@@ -16,13 +16,17 @@
 --     * status 'manual_review' — a payment was seen but cannot be credited
 --       automatically (under-paid, far over-paid, or late); the transfer is in
 --       yearly_token_reconciliation_items.
---     * consumed_tx_hash is unique: one transfer pays at most one quote.
+--     * consumed_log_index, and (consumed_tx_hash, consumed_log_index) is
+--       unique: one Transfer log pays at most one quote. Keyed per log, not per
+--       tx, because one transaction (a multi-send, an exchange batch
+--       withdrawal) can pay several users' wallets.
 --     * attribution_closed_at — set once the quote's whole attribution range
 --       (quotedAt .. min(expiresAt + late grace, next session)) has been
 --       scanned at full confirmations. Until then the reconciler keeps
 --       watching the range, even after the quote settled or went to review,
---       so a duplicate payment or a late top-up is always surfaced. Existing
---       consumed/cancelled quotes are closed by this migration.
+--       so a duplicate payment or a late top-up is always surfaced. Quotes the
+--       pre-attribution flow already finished (cancelled, or consumed with no
+--       tx recorded) are closed by this migration.
 --   yearly_token_subscriptions
 --     * status 'renewed' — superseded by a renewal row that carries the
 --       extended period (one row per paid year, each with its own sweep).
@@ -32,15 +36,17 @@
 --       sweep_submitted_at marks that a treasury transfer was submitted under
 --       the current claim, so a stale claim is only retried when nothing was
 --       sent.
---     * deposit_tx_hash and yearly_quote_id are unique.
+--     * (deposit_tx_hash, deposit_log_index) and yearly_quote_id are unique.
 --   yearly_token_reconciliation_items — one row per on-chain transfer that
 --     needs an operator (dedupe_key is unique, so cron ticks racing a user's
 --     check surface each transfer once).
 --   settle_yearly_token_payment(...) — claim + activate/renew + consume in one
 --     transaction (see the function comment).
 --
--- Rerun-safe. The only data change is a backfill of deposit_address from the
--- metadata the old code already recorded.
+-- Rerun-safe. The only data changes are backfills: deposit_address from the
+-- metadata the old code already recorded, and attribution_closed_at for quotes
+-- the old flow finished (a rerun cannot close a range the new flow still
+-- watches: new-flow consumed quotes always carry consumed_tx_hash).
 
 -- ── yearly_token_quotes ─────────────────────────────────────────────────
 
@@ -50,19 +56,21 @@ alter table public.yearly_token_quotes
   add constraint yearly_token_quotes_status_check
   check (status in ('active', 'consumed', 'expired', 'cancelled', 'manual_review'));
 
-create unique index if not exists uq_yearly_token_quotes_consumed_tx_hash
-  on public.yearly_token_quotes (lower(consumed_tx_hash))
-  where consumed_tx_hash is not null;
-
 alter table public.yearly_token_quotes
+  add column if not exists consumed_log_index integer,
   add column if not exists attribution_closed_at timestamptz;
 
--- Quotes that predate transfer attribution and are already final: their
--- ranges belong to the old balance-based flow and are never rescanned.
+create unique index if not exists uq_yearly_token_quotes_consumed_transfer
+  on public.yearly_token_quotes (lower(consumed_tx_hash), consumed_log_index)
+  where consumed_tx_hash is not null and consumed_log_index is not null;
+
+-- Quotes the pre-attribution (balance-based) flow finished: their ranges are
+-- never rescanned. That flow never recorded a tx, so a consumed quote with no
+-- consumed_tx_hash is always one of its settlements.
 update public.yearly_token_quotes
    set attribution_closed_at = coalesce(consumed_at, updated_at, now())
  where attribution_closed_at is null
-   and status in ('consumed', 'cancelled');
+   and (status = 'cancelled' or (status = 'consumed' and consumed_tx_hash is null));
 
 -- Reconciler candidates (quotes whose attribution range may still hold a
 -- transfer) and the next-session attribution boundary lookup.
@@ -97,9 +105,11 @@ update public.yearly_token_subscriptions
  where deposit_address is null
    and coalesce(btrim(metadata->>'depositAddress'), '') <> '';
 
-create unique index if not exists uq_yearly_token_subscriptions_deposit_tx_hash
-  on public.yearly_token_subscriptions (lower(deposit_tx_hash))
-  where deposit_tx_hash is not null;
+-- Rows written by settle_yearly_token_payment always carry the log index;
+-- manual/legacy rows (no log index) are not constrained.
+create unique index if not exists uq_yearly_token_subscriptions_deposit_transfer
+  on public.yearly_token_subscriptions (lower(deposit_tx_hash), deposit_log_index)
+  where deposit_tx_hash is not null and deposit_log_index is not null;
 
 create unique index if not exists uq_yearly_token_subscriptions_yearly_quote_id
   on public.yearly_token_subscriptions (yearly_quote_id)
@@ -177,16 +187,19 @@ revoke all on public.yearly_token_reconciliation_items from anon, authenticated;
 
 -- ── settle_yearly_token_payment ─────────────────────────────────────────
 --
--- Binds one confirmed on-chain transfer to a yearly quote and grants the year
--- it paid for, all in one transaction:
---   1. lock the quote; a quote already bound to this tx is an idempotent
---      replay, bound to another tx is a conflict, and only 'active' /
+-- Binds one confirmed on-chain Transfer log (tx hash + log index) to a yearly
+-- quote and grants the year it paid for, all in one transaction:
+--   1. lock the quote; a quote already bound to this log is an idempotent
+--      replay, bound to another one is a conflict, and only 'active' /
 --      'expired' quotes can settle;
---   2. serialise per (user, tier) and refuse a tx any flow has already bound
---      (another yearly quote or subscription, a managed-Venice lot, or a
---      managed-Venice quote that claimed or settled it). A managed-Venice
---      quote in 'manual_review_required' does NOT own its transaction_hash:
---      the pre-attribution Venice flow wrote REJECTED transfers there;
+--   2. serialise per (user, tier) and refuse a transfer another flow already
+--      owns: the same log bound to another yearly quote or subscription, or
+--      the tx bound on THIS wallet by a managed-Venice quote (which binds per
+--      tx) or on this user by a managed-Venice lot. Bindings on other wallets
+--      are other Transfer logs of a multi-send and never block. A
+--      managed-Venice quote in 'manual_review_required' does NOT own its
+--      transaction_hash: the pre-attribution Venice flow wrote REJECTED
+--      transfers there;
 --   3. no live subscription for the tier -> a new 365-day row. A live
 --      ('active' / 'grace') one -> it becomes 'renewed' and a new row runs
 --      365 days from max(its expires_at, now);
@@ -214,7 +227,7 @@ declare
   v_sub_id uuid;
   v_expires_at timestamptz;
 begin
-  if v_tx !~ '^0x[0-9a-f]{64}$' then
+  if v_tx !~ '^0x[0-9a-f]{64}$' or p_log_index is null or p_log_index < 0 then
     return jsonb_build_object('status', 'invalid_transaction');
   end if;
   if p_amount_raw is null or p_amount_raw <= 0 then
@@ -230,7 +243,7 @@ begin
   end if;
 
   if v_quote.consumed_tx_hash is not null then
-    if lower(v_quote.consumed_tx_hash) = v_tx then
+    if lower(v_quote.consumed_tx_hash) = v_tx and v_quote.consumed_log_index is not distinct from p_log_index then
       select id, expires_at into v_sub_id, v_expires_at
         from public.yearly_token_subscriptions
        where yearly_quote_id = v_quote.id;
@@ -261,14 +274,30 @@ begin
     return jsonb_build_object('status', 'legacy_subscription_exists');
   end if;
 
-  if exists (select 1 from public.yearly_token_quotes where lower(consumed_tx_hash) = v_tx)
-     or exists (select 1 from public.yearly_token_subscriptions where lower(deposit_tx_hash) = v_tx)
-     or exists (
-       select 1 from public.managed_venice_token_quotes
-        where lower(transaction_hash) = v_tx
-          and status <> 'manual_review_required'
+  if exists (
+       select 1 from public.yearly_token_quotes q
+        where lower(q.consumed_tx_hash) = v_tx
+          and (q.consumed_log_index = p_log_index
+               or (q.consumed_log_index is null and lower(q.deposit_address) = lower(v_quote.deposit_address)))
      )
-     or exists (select 1 from public.managed_venice_token_lots where lower(transaction_hash) = v_tx) then
+     or exists (
+       select 1 from public.yearly_token_subscriptions s
+        where lower(s.deposit_tx_hash) = v_tx
+          and (s.deposit_log_index = p_log_index
+               or (s.deposit_log_index is null
+                   and lower(coalesce(s.deposit_address, '')) = lower(v_quote.deposit_address)))
+     )
+     or exists (
+       select 1 from public.managed_venice_token_quotes m
+        where lower(m.transaction_hash) = v_tx
+          and lower(m.deposit_address) = lower(v_quote.deposit_address)
+          and m.status <> 'manual_review_required'
+     )
+     or exists (
+       select 1 from public.managed_venice_token_lots l
+        where lower(l.transaction_hash) = v_tx
+          and l.user_id = v_quote.user_id
+     ) then
     return jsonb_build_object('status', 'transaction_already_claimed');
   end if;
 
@@ -323,6 +352,7 @@ begin
   update public.yearly_token_quotes
      set status = 'consumed',
          consumed_tx_hash = v_tx,
+         consumed_log_index = p_log_index,
          consumed_balance_raw = p_amount_raw,
          consumed_at = p_now,
          updated_at = p_now,

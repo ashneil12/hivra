@@ -352,7 +352,12 @@ export async function reconcileYearlyTokenQuote(params: {
   const now = params.now ?? new Date();
 
   const settling = quote.status === "active" || quote.status === "expired";
-  const watching = quote.status === "consumed" || quote.status === "manual_review";
+  // settle_yearly_token_payment always records the tx it consumes with; a
+  // consumed quote without one was settled by the pre-attribution
+  // (balance-based) flow, whose payment was never bound: rescanning its range
+  // would report that payment as an extra transfer.
+  const legacyConsumed = quote.status === "consumed" && !quote.consumedTxHash;
+  const watching = (quote.status === "consumed" && !legacyConsumed) || quote.status === "manual_review";
   if (!settling && !watching) {
     await closeAttribution(db, quote.id, now);
     return { ...base, status: "closed", quoteStatus: quote.status };
@@ -388,11 +393,12 @@ export async function reconcileYearlyTokenQuote(params: {
   const inRange = scan.transfers.filter(
     (transfer) => transfer.timestampMs >= quotedAtMs && transfer.timestampMs <= rangeEndMs
   );
-  const ownership = await loadHermesosTransferOwnership(
-    db,
-    inRange.map((transfer) => transfer.transactionHash)
-  );
-  const attributable = inRange.filter((transfer) => !ownership.bound.has(transfer.transactionHash));
+  const ownership = await loadHermesosTransferOwnership(db, {
+    transfers: inRange,
+    depositAddress: quote.depositAddress,
+    userId: quote.userId,
+  });
+  const attributable = inRange.filter((transfer) => !ownership.isBound(transfer));
 
   const required = quote.tokensRequiredRaw;
   const band = {
@@ -408,6 +414,16 @@ export async function reconcileYearlyTokenQuote(params: {
   // ── Settled or in-review quote: keep surfacing until the range closes ──
   if (watching) {
     const subscriptionId = quote.status === "consumed" ? await subscriptionIdForQuote(db, quote.id) : null;
+    // The quote's own payment can become contested after it settled (the
+    // pre-attribution Venice flow reviews it later): flag it, once.
+    const ownPayment = inRange.find(
+      (transfer) =>
+        transfer.transactionHash === quote.consumedTxHash?.toLowerCase() &&
+        (quote.consumedLogIndex === null || transfer.logIndex === quote.consumedLogIndex)
+    );
+    if (ownPayment && ownership.isContested(ownPayment)) {
+      await surfaceTransfer(db, quote, ownPayment, "contested_by_managed_venice_review", subscriptionId);
+    }
     for (const transfer of confirmed) {
       const reason: YearlyReviewReason =
         quote.status === "consumed"
@@ -448,7 +464,7 @@ export async function reconcileYearlyTokenQuote(params: {
       case "already_settled": {
         const subscriptionId = settlement.subscription_id ?? null;
         if (settlement.status !== "already_settled") await stampTokenConversion(db, quote.userId, now);
-        if (ownership.contested.has(candidate.transactionHash)) {
+        if (ownership.isContested(candidate)) {
           // The pre-attribution managed-Venice flow put this transfer in one of
           // its reviews; make sure nobody credits it a second time there.
           await surfaceTransfer(db, quote, candidate, "contested_by_managed_venice_review", subscriptionId);
