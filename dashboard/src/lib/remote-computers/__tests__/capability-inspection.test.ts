@@ -171,6 +171,8 @@ describe("remote desktop capability inspection", () => {
     expect(source("install-omarchy-web.py")).toContain("original_native_cursor(self, False)");
     expect(source("omarchy-web-server.cjs")).not.toContain("capturedCursor");
     expect(source("server.cjs")).not.toContain("capturedCursor");
+    expect(source("omarchy-web-server.cjs")).not.toContain("nativeBrowserCursor");
+    expect(source("broker.cjs")).not.toContain("NATIVE_BROWSER_CURSOR");
   });
   it("pins the native guardian sources used by session revision admission", () => {
     for (const [file, expected] of [
@@ -470,9 +472,11 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
       "e97280bea96549d42fc4e25d8b9880d7fcad2722da950c53fd7810c0c866fb56",
       // Native cursor policy is opt-in; existing Ubuntu session behavior stays admitted.
       "9beeb61195795feb78f86196f5a9b059d1b6828adcbd81f1c00d409642b68cfe",
+      // Prior sealed revisions from both source lines remain session compatible.
       "dd070b13194107a5621905e5a8e386977cd8b85a6051af4bd3bc152a948866ca",
       "f2707c137c8363f3dfcc539a1f2eade116378c032ef51779c36bc8097b697d46",
       "78be6f62955aceea5e33345e8187efcc4f16fb886c203e54f9ce3ec3b775146e",
+      "6e66475cc695c033c9b2ed568e5ce0cecd3a3b7cbcb75682eb40e59f3020e96d",
       REMOTE_DESKTOP_BUNDLE_REVISION,
       OMARCHY_DESKTOP_SESSION_REVISION,
     ]);

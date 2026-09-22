@@ -140,12 +140,11 @@ function validGrant(data, expected) {
     && expiresAt <= Date.now() + 5 * 60_000;
 }
 
-function handoffHtml(controlOrigin, nativeBrowserCursor = false) {
+function handoffHtml(controlOrigin) {
   const origin = JSON.stringify(controlOrigin);
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening desktop</title><style>html,body,#desktop{width:100%;height:100%;margin:0;border:0;background:#090909}body{overflow:hidden;color:#bbb;font:14px system-ui,sans-serif}#status{position:absolute;inset:0;display:grid;place-items:center;margin:0}#status[hidden],#desktop[hidden]{display:none}</style></head><body><p id="status">Connecting securely…</p><iframe id="desktop" title="Remote desktop stream" hidden></iframe><script>
   'use strict';
   const CONTROL_ORIGIN=${origin};
-  const NATIVE_BROWSER_CURSOR=${nativeBrowserCursor === true};
   const desktop=document.getElementById('desktop');
   const status=document.getElementById('status');
   let used=false;
@@ -162,7 +161,6 @@ function handoffHtml(controlOrigin, nativeBrowserCursor = false) {
   let resizeMonitoring=false;
   let dprQuery=null;
   let streamingMode='hq';
-  let cursorObserver=null;
   const streamProfiles={
     hq:{videoBitRate:25000,videoFramerate:60},
     qhd:{videoBitRate:40000,videoFramerate:60},
@@ -176,7 +174,6 @@ function handoffHtml(controlOrigin, nativeBrowserCursor = false) {
     if(bindingTimer!==null)clearTimeout(bindingTimer);
     bindingTimer=null;
     stopResizeMonitoring();
-    if(cursorObserver){cursorObserver.disconnect();cursorObserver=null;}
     if(transport){transport.removeEventListener('close',onTransportClose);transport.removeEventListener('error',onTransportError);}
     // Removing the browsing context stops both the native and worker reconnect
     // paths, including KILL's replacement of the native .onclose callback.
@@ -210,27 +207,6 @@ function handoffHtml(controlOrigin, nativeBrowserCursor = false) {
       if(app.videoBitRate!==profile.videoBitRate)app.videoBitRate=profile.videoBitRate;
       return true;
     }catch{return false;}
-  };
-  const applyNativeBrowserCursor=()=>{
-    if(!NATIVE_BROWSER_CURSOR||ended||cursorObserver)return;
-    try{
-      const childDocument=desktop.contentDocument;
-      const overlay=childDocument&&childDocument.querySelector('#overlayInput');
-      if(!overlay)return;
-      // The same-origin pinned Selkies input overlay otherwise uses a tiny
-      // guest-provided CSS image. Keep the local OS pointer as the main cursor.
-      // Selkies writes inline !important, so override that property directly.
-      // Observe only this node's style, and skip identical values to prevent
-      // our own mutation from producing a self-sustaining observer loop.
-      const restore=()=>{
-        if(ended)return;
-        if(overlay.style.getPropertyValue('cursor')!=='default'||overlay.style.getPropertyPriority('cursor')!=='important')
-          overlay.style.setProperty('cursor','default','important');
-      };
-      restore();
-      cursorObserver=new MutationObserver(restore);
-      cursorObserver.observe(overlay,{attributes:true,attributeFilter:['style']});
-    }catch{}
   };
   const resizeObserver=typeof ResizeObserver==='function'?new ResizeObserver(scheduleResize):null;
   const visualViewport=window.visualViewport;
@@ -319,7 +295,6 @@ function handoffHtml(controlOrigin, nativeBrowserCursor = false) {
   const bindTelemetry=()=>{
     bindingTimer=null;
     if(ended||!sessionId)return;
-    applyNativeBrowserCursor();
     let document;
     try{document=desktop.contentDocument;}catch{return;}
     if(!document||document===boundDocument)return;
@@ -360,14 +335,10 @@ function handoffHtml(controlOrigin, nativeBrowserCursor = false) {
     if(!sessionId||ended)return;
     if(loaded){endStream('document-reloaded');return;}
     loaded=true;bindingStartedAt=performance.now();boundDocument=null;
-    // Preserve the existing guest-shaped CSS pointer for normal Selkies.
-    // Omarchy opts into the native local pointer instead; its capture-side
-    // baked cursor is separately disabled by the compositor graphics policy.
-    // Keep Selkies' separate cursor bitmap/canvas disabled, including Wayland
-    // capture paths that still send cursor metadata. Omarchy only overrides
-    // the CSS image with the native pointer; false could enable cursorDiv.
+    // Render the guest cursor shape locally, including hand/text/resize and
+    // hidden cursors. Browser-cursor mode disables the separate cursor canvas;
+    // the Omarchy capture policy independently prevents a baked video cursor.
     try{desktop.contentWindow.postMessage({type:'setUseBrowserCursors',value:true},'*');}catch{}
-    applyNativeBrowserCursor();
     applyStreamingMode();
     scheduleResize();bindingTimer=setTimeout(bindTelemetry,0);
   });
@@ -427,7 +398,6 @@ function createRemoteDesktopBroker(options) {
     || !Number.isInteger(options.upstreamPort) || options.upstreamPort < 1 || options.upstreamPort > 65535
     || typeof options.basicAuthorization !== 'string' || !/^Basic [A-Za-z0-9+/=]{16,512}$/.test(options.basicAuthorization)
     || typeof controlBypassSecret !== 'string'
-    || (options.nativeBrowserCursor !== undefined && typeof options.nativeBrowserCursor !== 'boolean')
     || (controlBypassSecret !== '' && !CONTROL_BYPASS_SECRET_RE.test(controlBypassSecret))
     || typeof options.verifyInputIsolation !== 'function') {
     throw new Error('remote_desktop_broker_options_invalid');
@@ -769,7 +739,7 @@ function createRemoteDesktopBroker(options) {
       jsonResponse(res, 200, { status: 'ok', protocol: 'hivra-remote-desktop-guest-v1' }); return;
     }
     if (req.method === 'GET' && target.pathname === '/desktop/handoff' && !target.search) {
-      const body = handoffHtml(control.origin, options.nativeBrowserCursor);
+      const body = handoffHtml(control.origin);
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'content-length': Buffer.byteLength(body),

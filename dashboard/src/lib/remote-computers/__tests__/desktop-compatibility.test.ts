@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   buildRemoteDesktopCapabilityInspectionScript, inspectRemoteDesktopCapability, parseRemoteDesktopCapabilityReceipt,
   REMOTE_DESKTOP_COMPATIBILITY, REMOTE_DESKTOP_BUNDLE_REVISION,
@@ -6,6 +7,18 @@ import {
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const GENERATION = "22222222-2222-4222-8222-222222222222";
+const BOOT_ID = "33333333-3333-4333-8333-333333333333";
+// The guest derives its capability generation as UUIDv5(installed generation,
+// "hivra-remote-desktop-boot-v1:" + boot id); mirror that instead of pinning
+// a derived identifier in the public tree.
+function uuidV5(namespace: string, name: string): string {
+  const hash = createHash("sha1").update(Buffer.from(namespace.replace(/-/g, ""), "hex")).update(name, "utf8").digest();
+  hash[6] = (hash[6] & 0x0f) | 0x50;
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+const BOOT_GENERATION = uuidV5(GENERATION, `hivra-remote-desktop-boot-v1:${BOOT_ID}`);
 const ORIGIN = "https://desktop.example.test";
 const revisions = Object.keys(REMOTE_DESKTOP_COMPATIBILITY) as Array<keyof typeof REMOTE_DESKTOP_COMPATIBILITY>;
 const script = buildRemoteDesktopCapabilityInspectionScript({ vmid: 1123, guestIp: "10.241.0.23", infrastructureBindingTag: "hivra-bind-" + "a".repeat(32) });
@@ -67,6 +80,7 @@ def lstat(path):
  if path=='/opt/hivra/remote-desktop/input-isolation': return types.SimpleNamespace(st_mode=stat.S_IFREG|0o640,st_uid=0,st_gid=0)
  raise AssertionError('unexpected path')
 def read_text(path,**kwargs):
+ if str(path)=='/proc/sys/kernel/random/boot_id': return '${BOOT_ID}\\n'
  if str(path)=='/opt/hivra/remote-desktop/capability.json': return json.dumps(cap)
  if str(path)=='/opt/hivra/remote-desktop/input-isolation': return 'selkies-container-no-agent-input-v1\\n'
  raise AssertionError('unexpected read')
@@ -126,13 +140,13 @@ for variant,digests in expected.items():
     if (revision===REMOTE_DESKTOP_BUNDLE_REVISION) expect(currentOnly).toMatchObject({ observedRevision: revision });
     else expect(currentOnly).toBeNull();
     expect(parseRemoteDesktopCapabilityReceipt(observed.stdout,{ allowKnownPredecessor: true }))
-      .toMatchObject({ observedRevision: revision, capabilityGeneration: GENERATION });
+      .toMatchObject({ observedRevision: revision, capabilityGeneration: BOOT_GENERATION });
     const deps=dependencies(observed);
     const result=await inspectRemoteDesktopCapability(ID,deps as never);
     expect(result).toMatchObject({ ok: true, runtimeVersion: REMOTE_DESKTOP_COMPATIBILITY[revision].version,
       upgradeAvailable: revision!==REMOTE_DESKTOP_BUNDLE_REVISION });
     expect(deps.recordCapability).toHaveBeenCalledWith(expect.objectContaining({
-      userId: "owner", receipt: expect.objectContaining({ observedRevision: revision, capabilityGeneration: GENERATION }),
+      userId: "owner", receipt: expect.objectContaining({ observedRevision: revision, capabilityGeneration: BOOT_GENERATION }),
     }));
   });
 
