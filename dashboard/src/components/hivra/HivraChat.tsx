@@ -1001,31 +1001,37 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div className="flex-1 overflow-y-auto p-2">
  {sessions.map((s) => {
  const isActive = s.id === activeId;
+ const title = s.title || "New chat";
+ // The row is a real button (keyboard operable, named by its title); the
+ // delete control is its sibling, never nested inside it.
  return (
  <div
  key={s.id}
- onClick={() => !busy && selectSession(s)}
  className={[
- "group mb-0.5 flex items-center gap-2 px-2.5 py-2",
- busy ? "cursor-default" : "cursor-pointer",
+ "group mb-0.5 flex items-center",
  isActive
  ? "bg-[var(--hivra-red-soft)]"
  : "hover:bg-[var(--bg-elevated)]",
  ].join(" ")}
  >
- <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" />
+ <button
+ type="button"
+ onClick={() => selectSession(s)}
+ disabled={busy}
+ aria-current={isActive ? "true" : undefined}
+ className="hivra-chat-rail-item flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left cursor-pointer disabled:cursor-default"
+ >
+ <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" aria-hidden />
  <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink-black)]">
- {s.title || "New chat"}
+ {title}
  </span>
+ </button>
  {sessions.length > 1 ? (
  <button
  type="button"
- aria-label="Delete chat"
- onClick={(e) => {
- e.stopPropagation();
- deleteChat(s.id);
- }}
- className="inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+ aria-label={`Delete chat: ${title}`}
+ onClick={() => deleteChat(s.id)}
+ className="mr-1.5 inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
  >
  <Trash2 size={12} />
  </button>

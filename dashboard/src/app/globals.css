@@ -351,6 +351,7 @@ select,
 }
 .hivra-chat-latest:hover { border-color: var(--hivra-red-line); }
 .hivra-chat-latest:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 2px; }
+.hivra-chat-rail-item:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: -2px; }
 .hivra-chat-scroll:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: -2px; }
 .hivra-chat-composer:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: -2px; }
 .hivra-chat-tool-toggle:focus-visible, .hivra-chat-tool-history > button:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 2px; }

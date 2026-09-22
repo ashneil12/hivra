@@ -949,7 +949,7 @@ describe("HivraChat", () => {
     await sendMessage("continue a");
     await screen.findByText("new partial");
     fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
-    fireEvent.click(screen.getAllByRole("button", { name: /^Delete chat/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete chat: Chat A" }));
     await screen.findByText("OLD ANSWER");
     expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
     await act(async () => late.resolve(eventChunk(claudeText(" + LATE TEXT"), { type: "result", is_error: false, session_id: "sid-a-new" }, exitEvent(0))));
@@ -1111,5 +1111,78 @@ describe("HivraChat", () => {
       expect(screen.getByRole("textbox", { name: "Message Atlas" })).toHaveFocus();
       expect(view.top).toBe(view.bottom());
     });
+  });
+
+  // ── Accessibility: live regions, session rail, box-history wording ─────
+  it("keeps historical turns out of live regions and makes only the current turn live", async () => {
+    seedSessions("live-scope", [
+      { id: "a", title: "Chat A", claudeSessionId: null, createdAt: 2, messages: [
+        ...toolTurn("q1", "answer one"),
+        { role: "user", text: "q2", tools: [] },
+        { role: "assistant", text: "partial", tools: [{ id: "y", name: "Bash", detail: "make", status: "error" }], outcome: "error", failure: "Model unavailable" },
+      ] },
+    ], "a");
+    const stream = controlledStream();
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(stream.read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="live-scope" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("answer one");
+    const conversation = screen.getByRole("region", { name: "Conversation" });
+    expect(conversation.querySelectorAll("[aria-live]")).toHaveLength(0);
+    expect(within(conversation).queryAllByRole("status")).toHaveLength(0);
+    expect(within(conversation).getByRole("note", { name: "Response failed" })).toHaveTextContent("Model unavailable");
+    await sendMessage("q3");
+    await stream.push(runningToolEvent("t9", "ls"));
+    const live = conversation.querySelectorAll("[aria-live]");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toHaveTextContent("Working");
+    await stream.push(exitEvent(137));
+    await stream.end();
+    expect(conversation.querySelectorAll("[aria-live]")).toHaveLength(1);
+    // The settled current turn stays announced: its summary and its failure row.
+    const statuses = within(conversation).getAllByRole("status");
+    expect(statuses).toHaveLength(2);
+    expect(statuses[0]).toHaveTextContent("Response failed");
+    expect(statuses[1]).toHaveAccessibleName("Response failed");
+    expect(statuses[1]).toHaveTextContent("Agent process exited unexpectedly (code 137)");
+  });
+
+  it("renders session rail rows as keyboard-operable buttons with a valid, named delete control", async () => {
+    seedSessions("rail-a11y", [
+      { id: "a", title: "Chat A", claudeSessionId: null, createdAt: 2, messages: [{ role: "user", text: "qa", tools: [] }, { role: "assistant", text: "answer A", tools: [] }] },
+      { id: "b", title: "Chat B", claudeSessionId: null, createdAt: 1, messages: [{ role: "user", text: "qb", tools: [] }, { role: "assistant", text: "answer B", tools: [] }] },
+    ], "a");
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-a11y" agentName="Atlas" />);
+    await screen.findByText("answer A");
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    const rowA = screen.getByRole("button", { name: "Chat A" });
+    const rowB = screen.getByRole("button", { name: "Chat B" });
+    expect(rowA.tagName).toBe("BUTTON");
+    expect(rowA).toHaveAttribute("aria-current", "true");
+    expect(rowB).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("button", { name: "Delete chat: Chat A" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete chat: Chat B" })).toBeInTheDocument();
+    expect(document.querySelectorAll("button button")).toHaveLength(0);
+    rowB.focus();
+    expect(rowB).toHaveFocus();
+    fireEvent.click(rowB);
+    expect(await screen.findByText("answer B")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat B" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("describes resumed box-history tools honestly instead of 'Completion unconfirmed'", async () => {
+    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: "remote-1", title: "Past work", updatedAt: Date.now() }]);
+    (readBoxSession as jest.Mock).mockResolvedValue([
+      { role: "user", text: "fix the build" },
+      { role: "assistant", text: "Fixed it.", tools: ["Bash", "Edit"] },
+    ]);
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="box-history" token="t" agentName="Atlas" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show chats" }));
+    fireEvent.click(await screen.findByText("Past work"));
+    expect(await screen.findByText("Fixed it.")).toBeInTheDocument();
+    expect(screen.getByText("2 earlier actions")).toBeInTheDocument();
+    expect(screen.getByText("results not stored")).toBeInTheDocument();
+    expect(screen.queryByText("Completion unconfirmed")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "2 actions" }));
+    expect(screen.getByRole("button", { name: "Bash — Result not stored" })).toBeInTheDocument();
   });
 });
