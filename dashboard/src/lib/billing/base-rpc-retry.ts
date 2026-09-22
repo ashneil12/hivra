@@ -58,12 +58,17 @@ export function normalizeRpcRetryConfig(
 
 // Distinguishable HTTP-level RPC failure so the retry layer can tell a 429/5xx
 // (retry) apart from a JSON-RPC error body or a 4xx (don't retry). The message
-// is intentionally stable ("Base RPC request failed with status N") so existing
-// ops_events / log assertions on the text keep matching.
+// keeps its stable prefix ("Base RPC request failed with status N") so existing
+// ops_events / log assertions keep matching, and appends the provider's
+// JSON-RPC reason when the response carried one (e.g. a 413's
+// "eth_getLogs is limited to a 2,000 range"), so the cause is visible.
+const MAX_RPC_ERROR_DETAIL_LENGTH = 200;
+
 export class RpcHttpError extends Error {
   readonly status: number;
-  constructor(status: number) {
-    super(`Base RPC request failed with status ${status}`);
+  constructor(status: number, detail?: string) {
+    const reason = detail?.replace(/\s+/g, " ").trim().slice(0, MAX_RPC_ERROR_DETAIL_LENGTH);
+    super(`Base RPC request failed with status ${status}${reason ? `: ${reason}` : ""}`);
     this.name = "RpcHttpError";
     this.status = status;
   }

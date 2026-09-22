@@ -42,6 +42,17 @@ describe("base-rpc-retry: isRetryableRpcError", () => {
     expect(isRetryableRpcError(new Error("Base RPC returned an error"))).toBe(false);
     expect(isRetryableRpcError(new Error("Invalid uint256 RPC result"))).toBe(false);
   });
+
+  it("names the provider's JSON-RPC reason in the message and keeps a 413 non-retryable", () => {
+    const error = new RpcHttpError(413, "eth_getLogs is limited to a 2,000 range");
+    expect(error.message).toBe(
+      "Base RPC request failed with status 413: eth_getLogs is limited to a 2,000 range"
+    );
+    expect(error.status).toBe(413);
+    expect(isRetryableRpcError(error)).toBe(false);
+    // Without a body the message keeps its stable, status-only form.
+    expect(new RpcHttpError(429).message).toBe("Base RPC request failed with status 429");
+  });
 });
 
 describe("base-rpc-retry: computeBackoffDelayMs", () => {
