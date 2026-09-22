@@ -130,13 +130,12 @@ LAYOUT_ADAPTER = r'''import asyncio, json, math, os, socket
 from selkies.input_handler import WebRTCInput
 try:
     # Selkies 2.0 keeps the WebSocket server and display helpers in explicit
-    # modules. This release's pixelflux host-Wayland cursor callback is what
-    # carries guest shapes separately from video.
+    # modules. Its host-Wayland callback carries cursor shapes outside video.
     from selkies.websockets_mode import DataStreamingServer
     from selkies.display_utils import wayland_output_id
 except ModuleNotFoundError:
-    # Retain import compatibility only for inspecting an older sealed image;
-    # the pinned release above must take the 2.0 branch in production.
+    # Compatibility for inspecting an older sealed image only. The release pin
+    # above must use the 2.0 imports in production.
     from selkies.selkies import DataStreamingServer, wayland_output_id
 
 def apply_layout(width=None, height=None):
@@ -327,8 +326,8 @@ def main():
         f"SELKIES_APP_WAYLAND_DISPLAY=/tmp/runtime-ubuntu/{request['waylandDisplay']}",
         "SELKIES_AUTO_GPU=false", "SELKIES_USE_CPU=true", "SELKIES_FRAMERATE=60", "SELKIES_VIDEO_BITRATE=25000",
         "SELKIES_USE_CSS_SCALING=true|locked", "SELKIES_SCALING_DPI=96", "PYTHONPATH=/opt/hivra-python-policy",
-        # Keep cursor metadata enabled for local guest shapes. The layout policy
-        # above independently forces native video cursor capture off.
+        # Keep metadata enabled for local guest cursor shapes. The layout policy
+        # independently forces native video cursor capture off.
         "SELKIES_ENABLE_CURSORS=true", "SELKIES_BACKPRESSURE_QUEUE_SIZE=4",
         "SELKIES_COMMAND_ENABLED=false", "SELKIES_ENABLE_CLIPBOARD=false", "SELKIES_ENABLE_BINARY_CLIPBOARD=false",
         "SELKIES_AUDIO_ENABLED=false", "SELKIES_MICROPHONE_ENABLED=false", "SELKIES_GAMEPAD_ENABLED=false",
