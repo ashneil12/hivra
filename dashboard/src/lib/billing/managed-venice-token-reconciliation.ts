@@ -483,16 +483,17 @@ interface ScannedTransfer {
 }
 
 // getLogsInBlockChunks skips a chunk whose result is not an array, and a
-// JSON-RPC answer without an error is otherwise taken as-is. For eth_getLogs
+// JSON-RPC answer without an error is otherwise taken as-is. For a log scan
 // that would read "no transfers" into a range the provider never answered, and
 // a fully covered range with no transfers retires the quote to 'cancelled'
 // irreversibly, losing a payment in it. Fail the reconcile instead (the batch
 // counts it and a later tick rescans), like the USDC sweep's reader does.
-function callRequiringLogArrays(call: BaseChainReader["call"]): BaseChainReader["call"] {
+// Only handed to getLogsInBlockChunks, whose every call is a log request.
+function callRequiringArrayResults(call: BaseChainReader["call"]): BaseChainReader["call"] {
   return async <T>(method: string, args: unknown[]) => {
     const result = await call<T>(method, args);
-    if (method === "eth_getLogs" && !Array.isArray(result)) {
-      throw new Error("Invalid eth_getLogs result from Base RPC");
+    if (!Array.isArray(result)) {
+      throw new Error(`Invalid ${method} result from Base RPC`);
     }
     return result;
   };
@@ -532,7 +533,7 @@ async function scanQuoteTransfers(params: {
   // Chunked at the public endpoint's 2,000-block eth_getLogs limit (Base's
   // public RPC answers a wider range with HTTP 413 / JSON-RPC -32614).
   const logs = await getLogsInBlockChunks<EvmLog>({
-    call: callRequiringLogArrays(chain.call),
+    call: callRequiringArrayResults(chain.call),
     filter: { address: HERMESOS_TOKEN_ADDRESS, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
     fromBlock,
     toBlock,
