@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync as readFixtureFile, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
 import { NextRequest } from "next/server";
 
 import { GET, POST } from "../route";
@@ -11,7 +14,10 @@ import { HivraLaunchOperationRequestError } from "@/lib/hivra/launch-operation-s
 import {
   PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
+  provisionerSupportsActivityTelemetry,
 } from "@/lib/infrastructure/portable-provisioner-contract";
+import { verifyActivityCollectorToken } from "@/lib/activity-observability/auth";
+import { ACTIVITY_COLLECTOR_TTL_SECONDS } from "@/lib/activity-observability/collectors";
 
 const mockAuth = jest.fn();
 let mockLocalAuthMode = false;
@@ -95,6 +101,8 @@ const mockAgentUpdates: Array<Record<string, unknown>> = [];
 let mockSubscriptionRow: Record<string, unknown> | null;
 let mockExistingAgents: Array<Record<string, unknown>>;
 let mockVmIdentityUpdateError: unknown;
+let mockInsertedAgentId = "agent-1";
+const mockCollectorUpsert = jest.fn();
 
 function selfManagedExecutionContext(overrides: {
   totalCores?: number | null;
@@ -400,6 +408,8 @@ describe("POST /api/hivra/agents", () => {
       current_period_end: null,
     };
     mockVmIdentityUpdateError = null;
+    mockInsertedAgentId = "agent-1";
+    mockCollectorUpsert.mockReset().mockResolvedValue({ error: null });
     mockAgentInsertError = null;
     mockAgentInsertThrows = null;
     mockExistingAgents = [];
@@ -526,6 +536,10 @@ describe("POST /api/hivra/agents", () => {
         };
       }
 
+      if (table === "hivra_activity_collectors") {
+        return { upsert: (...args: unknown[]) => mockCollectorUpsert(...args) };
+      }
+
       const state: { insertPayload?: Record<string, unknown>; updatePayloads: Record<string, unknown>[] } = {
         updatePayloads: [],
       };
@@ -553,7 +567,7 @@ describe("POST /api/hivra/agents", () => {
           error: null,
         })),
         maybeSingle: jest.fn(async () => ({
-          data: state.insertPayload ? { id: "agent-1", ...state.insertPayload } : null,
+          data: state.insertPayload ? { id: mockInsertedAgentId, ...state.insertPayload } : null,
           error: null,
         })),
         insert: jest.fn((payload: Record<string, unknown>) => {
@@ -564,7 +578,7 @@ describe("POST /api/hivra/agents", () => {
             single: jest.fn(async () => {
               if (mockAgentInsertThrows) throw mockAgentInsertThrows;
               if (mockAgentInsertError) return { data: null, error: mockAgentInsertError };
-              return { data: { id: "agent-1", ...payload }, error: null };
+              return { data: { id: mockInsertedAgentId, ...payload }, error: null };
             }),
           };
         }),
@@ -578,7 +592,7 @@ describe("POST /api/hivra/agents", () => {
             eq: jest.fn(),
             select: jest.fn(),
             single: jest.fn(async () => ({
-              data: { id: "agent-1", ...(state.insertPayload ?? {}), ...payload },
+              data: { id: mockInsertedAgentId, ...(state.insertPayload ?? {}), ...payload },
               error: null,
             })),
           };
@@ -1236,7 +1250,7 @@ describe("POST /api/hivra/agents", () => {
     expect(foreignVmidCreate.stdout.trim()).toBe("create 201 --name foreign");
     expect(foreignVmidCreate.stdout).not.toContain("hivra-bind-test");
     const managedExec = kickoff.split("\n").find((line) => line.trimStart().startsWith("exec env ")) ?? "";
-    expect(managedExec).not.toMatch(/HIVRA_(?:TUNNEL_TOKEN|MODEL_KEY|MODEL_BASE_URL|HERMES_MODEL)=/);
+    expect(managedExec).not.toMatch(/HIVRA_(?:TUNNEL_TOKEN|MODEL_KEY|MODEL_BASE_URL|HERMES_MODEL|ACTIVITY_TELEMETRY)=/);
     expect(mockRunProxmoxHostScript).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("qm set 200 --cores 1 --cpulimit 0.5 --memory 1024 --balloon 1024"),
@@ -2800,6 +2814,284 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
     expect(mockLaunchProviderAgent).not.toHaveBeenCalled();
     expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+  });
+
+  describe("agent-run reporting credential", () => {
+    const AGENT_ID = "00000000-0000-4000-8000-000a00000006";
+    const originalSigningSecret = process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET;
+    let consoleSpies: jest.SpyInstance[] = [];
+
+    beforeEach(() => {
+      mockInsertedAgentId = AGENT_ID;
+      process.env.NEXT_PUBLIC_APP_URL = "https://canary.example.test";
+      process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET = "fixture-activity-signing-secret-0123456789";
+      consoleSpies = (["log", "info", "warn", "error"] as const)
+        .map(method => jest.spyOn(console, method).mockImplementation(() => undefined));
+      mockSubscriptionRow = {
+        plan: "operator", status: "active", instance_limit: 4,
+        total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+      };
+      // A current host bundle: phase 1 staged the credential it was handed.
+      mockRunProxmoxHostScript.mockReset()
+        .mockImplementationOnce(async (body: string) => ({
+          ok: true,
+          stdout: `${body.includes("HIVRA_ACTIVITY_STAGE=1") ? "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n" : ""}HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n`,
+        }))
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+    });
+    afterEach(() => {
+      consoleSpies.forEach(spy => spy.mockRestore());
+      if (originalSigningSecret === undefined) delete process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET;
+      else process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET = originalSigningSecret;
+    });
+
+    const consoleOutput = () => consoleSpies.flatMap(spy => spy.mock.calls.map(args => args.map(String).join(" "))).join("\n");
+    function kickoffScript(): string {
+      const script = mockRunProxmoxHostScript.mock.calls
+        .map(([body]) => String(body))
+        .find(body => body.includes("/hivra-provision-on-host.sh"));
+      expect(script).toBeDefined();
+      return script as string;
+    }
+    // The shellQuote'd value phase 1 may write into the root-only secret
+    // handoff file (only after its bundle probe passes).
+    function handedOffTelemetry(script: string): string {
+      const match = script.match(/printf 'HIVRA_ACTIVITY_TELEMETRY_B64='; (?:if \[ "\$HIVRA_ACTIVITY_STAGE" = 1 \]; then )?write_secret_b64 '([^'\n]*)'(?:; else printf '\\n'; fi)?\n/);
+      expect(match).not.toBeNull();
+      return match?.[1] ?? "";
+    }
+    // Run phase 1's real probe + handoff fragment against a host bundle
+    // directory, with only root-owned paths and GNU-only flags shimmed.
+    function stageOnBundle(script: string, provisionerDirectory: string, bundle: string) {
+      const start = script.indexOf("HIVRA_ACTIVITY_STAGE=0");
+      const endMarker = 'if [ "$HIVRA_ACTIVITY_STAGE" = 1 ]; then echo HIVRA_ACTIVITY_CREDENTIAL_STAGED; fi\n';
+      const end = script.indexOf(endMarker);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const fragment = script.slice(start, end + endMarker.length)
+        .split(`'${provisionerDirectory}/`).join(`'${bundle}/`);
+      expect(fragment).not.toContain(provisionerDirectory);
+      const work = mkdtempSync(nodePath.join(tmpdir(), "hivra-launch-activity-"));
+      try {
+        const secretFile = nodePath.join(work, "200.env");
+        const run = spawnSync("bash", ["-c", `set -euo pipefail
+install() { : > "\${@: -1}"; chmod 600 "\${@: -1}"; }
+base64() { [ "\${1:-}" != -w ] || shift 2; command base64 "$@" | tr -d '\\n'; }
+SECRET_ENV_FILE="$1"
+${fragment}`, "phase1", secretFile], { encoding: "utf8" });
+        const handoff = readFixtureFile(secretFile, "utf8");
+        const line = handoff.split("\n").find(entry => entry.startsWith("HIVRA_ACTIVITY_TELEMETRY_B64=")) ?? "";
+        return {
+          status: run.status,
+          stdout: run.stdout,
+          stderr: run.stderr,
+          handoffKeyPresent: handoff.split("\n").some(entry => entry.startsWith("HIVRA_ACTIVITY_TELEMETRY_B64=")),
+          credential: Buffer.from(line.slice("HIVRA_ACTIVITY_TELEMETRY_B64=".length), "base64").toString("utf8"),
+        };
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
+    function bundleFixture(files: Record<string, string>): string {
+      const bundle = mkdtempSync(nodePath.join(tmpdir(), "hivra-launch-bundle-"));
+      for (const [name, content] of Object.entries(files)) writeFileSync(nodePath.join(bundle, name), content);
+      return bundle;
+    }
+
+    it.each([["claude-code", "claude"], ["codex", "codex"]])(
+      "hands a %s launch a credential scoped to exactly its computer, only through the secret handoff",
+      async (type, kind) => {
+        const response = await POST(makeRequest({ type, name: "TRACED", cpu: 2, ram: 4 }) as never);
+
+        expect(response.status).toBe(201);
+        const script = kickoffScript();
+        expect(script).toContain(`hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "${kind}"`);
+        const credential = JSON.parse(handedOffTelemetry(script));
+        expect(Object.keys(credential)).toEqual(["endpoint", "resourceId", "token", "expiresAt"]);
+        expect(credential).toMatchObject({ endpoint: "https://canary.example.test/api/activity/ingest", resourceId: AGENT_ID });
+        const claims = verifyActivityCollectorToken(`Bearer ${credential.token}`);
+        expect(claims).toEqual({ v: 1, userId: "user-free", resourceIds: [AGENT_ID], iat: expect.any(Number), exp: expect.any(Number) });
+        expect(claims!.exp - claims!.iat).toBe(ACTIVITY_COLLECTOR_TTL_SECONDS);
+        expect(new Date(credential.expiresAt).getTime()).toBe(claims!.exp * 1000);
+
+        // Exactly once, in the 0600 handoff file: never the managed exec line
+        // (argv/env of the host provisioner), the SSH environment, another
+        // host script, the collector row, the response, or a log line.
+        const managedExec = script.split("\n").find(line => line.trimStart().startsWith("exec env ")) ?? "";
+        expect(managedExec).toContain("hivra-provision-on-host.sh");
+        expect(managedExec).not.toMatch(/HIVRA_(?:TUNNEL_TOKEN|MODEL_KEY|MODEL_BASE_URL|HERMES_MODEL|ACTIVITY_TELEMETRY)=/);
+        expect(script.split(credential.token)).toHaveLength(2);
+        expect(script).toContain('export HIVRA_ACTIVITY_TELEMETRY="$(read_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"');
+        for (const [body, env] of mockRunProxmoxHostScript.mock.calls) {
+          expect(JSON.stringify(env ?? {})).not.toContain("hvra_otlp_v1");
+          if (body !== script) expect(String(body)).not.toContain("hvra_otlp_v1");
+        }
+        expect(mockCollectorUpsert).toHaveBeenCalledTimes(1);
+        expect(mockCollectorUpsert).toHaveBeenCalledWith(expect.objectContaining({
+          agent_id: AGENT_ID, user_id: "user-free", issue_reason: "launch", credential_expires_at: credential.expiresAt,
+        }), { onConflict: "agent_id" });
+        expect(JSON.stringify(mockCollectorUpsert.mock.calls)).not.toContain("hvra_otlp_v1");
+        expect(JSON.stringify(await response.json())).not.toContain("hvra_otlp_v1");
+        expect(consoleOutput()).not.toContain("hvra_otlp_v1");
+      },
+    );
+
+    it.each(["aeon", "openclaw", "agent-zero"])("hands %s no credential and records no issuance", async type => {
+      const response = await POST(makeRequest({ type, name: "UNTRACED", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript())).toBe("");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      expect(consoleOutput()).not.toContain("hivra_activity_collector_unavailable");
+    });
+
+    it("hands no credential in local-auth mode, where guests cannot reach ingest", async () => {
+      mockLocalAuthMode = true;
+      const response = await POST(makeRequest({ type: "claude-code", name: "LOCAL", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript())).toBe("");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["no signing secret", () => { delete process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET; }],
+      ["a short signing secret", () => { process.env.ACTIVITY_COLLECTOR_SIGNING_SECRET = "too-short"; }],
+      ["no public origin", () => { process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000"; }],
+    ])("still launches with %s, without a credential and with a structured warning", async (_label, arrange) => {
+      arrange();
+      const response = await POST(makeRequest({ type: "codex", name: "UNSIGNED", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript())).toBe("");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      expect(consoleOutput()).toContain("hivra_activity_collector_unavailable");
+    });
+
+    it("launches when recording the issuance fails and logs it without the credential", async () => {
+      mockCollectorUpsert.mockResolvedValueOnce({ error: { message: "fixture outage" } });
+      const response = await POST(makeRequest({ type: "claude-code", name: "UNRECORDED", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript())).not.toBe("");
+      expect(consoleOutput()).toContain("hivra_activity_collector_record_failed");
+      expect(consoleOutput()).not.toContain("hvra_otlp_v1");
+    });
+
+    it("records no issuance when the managed default host bundle did not stage the credential", async () => {
+      // Regression: admission still accepts predecessor bundles (for example
+      // 2026.09.15.2) that silently drop the credential. Recording it anyway
+      // produced a false "credential expired, restart to fix" alert on day 7.
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const response = await POST(makeRequest({ type: "claude-code", name: "OLD_DEFAULT", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript())).not.toBe("");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      expect(consoleOutput()).toContain("hivra_activity_collector_not_staged");
+      expect(consoleOutput()).not.toContain("hvra_otlp_v1");
+    });
+
+    it("stages the credential only on a host bundle that consumes and reports it end to end", async () => {
+      const response = await POST(makeRequest({ type: "codex", name: "PROBED", cpu: 2, ram: 4 }) as never);
+      expect(response.status).toBe(201);
+      const script = kickoffScript();
+      const provisionerDirectory = script.match(/HIVRA_PROV_DIR='([^']+)'/)?.[1] ?? "";
+      expect(provisionerDirectory).not.toBe("");
+      const handed = handedOffTelemetry(script);
+
+      // The bundle this release ships satisfies the probe.
+      const current = stageOnBundle(script, provisionerDirectory, nodePath.join(process.cwd(), "provisioner"));
+      expect({ status: current.status, stdout: current.stdout, stderr: current.stderr })
+        .toEqual({ status: 0, stdout: "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n", stderr: "" });
+      expect(current.credential).toBe(handed);
+
+      const newHost = "read_optional_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64\n";
+      const newInstaller = 'line = "HIVRA_ACTIVITY_COLLECTOR status=installed"\n';
+      const cases: Array<[string, Record<string, string>]> = [
+        ["a predecessor bundle without reporting", {
+          "hivra-provision-on-host.sh": "guest_launch_document\n", "hivra-install-agent.py": "KINDS = set()\n" }],
+        ["a host script that ignores the credential", {
+          "hivra-provision-on-host.sh": "guest_launch_document\n", "hivra-install-agent.py": newInstaller,
+          "hivra-agent-trace.py": "", "hivra-agent-trace.service": "" }],
+        ["a fail-closed installer that reports no install status", {
+          "hivra-provision-on-host.sh": newHost, "hivra-install-agent.py": "install_activity_reporter(launch, source)\n",
+          "hivra-agent-trace.py": "", "hivra-agent-trace.service": "" }],
+        ["a bundle missing the reporter sources", {
+          "hivra-provision-on-host.sh": newHost, "hivra-install-agent.py": newInstaller }],
+      ];
+      for (const [label, files] of cases) {
+        const bundle = bundleFixture(files);
+        try {
+          const staged = stageOnBundle(script, provisionerDirectory, bundle);
+          expect({ label, status: staged.status, stdout: staged.stdout, key: staged.handoffKeyPresent, credential: staged.credential })
+            .toEqual({ label, status: 0, stdout: "", key: true, credential: "" });
+        } finally {
+          rmSync(bundle, { recursive: true, force: true });
+        }
+      }
+    });
+
+    it("hands no credential to a self-managed bundle that predates the reporter", async () => {
+      mockResolveSelfManagedProxmoxExecutionContext.mockResolvedValue(
+        selfManagedExecutionContext({ provisionerVersion: "2026.09.08.3" }),
+      );
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.251.20.50"}\n' })
+        .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_ALLOCATION_VERIFIED 200\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const response = await POST(makeRequest({
+        type: "codex", name: "OLD_BUNDLE", cpu: 2, ram: 4, deployment: SELF_MANAGED_DEPLOYMENT,
+      }) as never);
+
+      expect(response.status).toBe(201);
+      const script = kickoffScript();
+      expect(handedOffTelemetry(script)).toBe("");
+      // The portable host script reads the handoff file itself; the key is
+      // always present (empty here) and never on the detached command line.
+      const portableKickoff = script.split("\n").find(line => line.startsWith("nohup env ")) ?? "";
+      expect(portableKickoff).toContain('HIVRA_SECRET_ENV_FILE="$SECRET_ENV_FILE"');
+      expect(portableKickoff).not.toContain("ACTIVITY");
+      expect(mockCollectorUpsert).not.toHaveBeenCalled();
+    });
+
+    it("issues to a pinned current bundle exactly when that release ships the reporter", async () => {
+      // Self-managed evidence and the managed Canary channel both pin the
+      // current release; the managed default fleet is covered above.
+      const expected = provisionerSupportsActivityTelemetry(PORTABLE_HIVRA_PROVISIONER_VERSION);
+      // The pinned host runs the same bundle probe; it prints the staged
+      // marker only when the probe passed, and only then is issuance recorded.
+      const phase1 = (ip: string) => async (body: string) => ({
+        ok: true,
+        stdout: `${body.includes("HIVRA_ACTIVITY_STAGE=1") ? "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n" : ""}HIVRA_PROVISION_RESULT {"vmid":200,"ip":"${ip}"}\n`,
+      });
+      mockRunProxmoxHostScript.mockReset()
+        .mockImplementationOnce(phase1("10.251.20.50"))
+        .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_ALLOCATION_VERIFIED 200\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const selfManaged = await POST(makeRequest({
+        type: "codex", name: "CURRENT_BUNDLE", cpu: 2, ram: 4, deployment: SELF_MANAGED_DEPLOYMENT,
+      }) as never);
+      expect(selfManaged.status).toBe(201);
+      expect(handedOffTelemetry(kickoffScript()) !== "").toBe(expected);
+      expect(mockCollectorUpsert).toHaveBeenCalledTimes(expected ? 1 : 0);
+
+      process.env.VERCEL_TARGET_ENV = "canary";
+      mockRunProxmoxHostScript.mockReset()
+        .mockImplementationOnce(phase1("10.250.21.50"))
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const canary = await POST(makeRequest({ type: "claude-code", name: "CANARY", cpu: 2, ram: 4 }) as never);
+      expect(canary.status).toBe(201);
+      expect(kickoffScript()).toContain("/root/hivra-provisioner-canary");
+      expect(handedOffTelemetry(kickoffScript()) !== "").toBe(expected);
+      expect(mockCollectorUpsert).toHaveBeenCalledTimes(expected ? 2 : 0);
+      for (const [row] of mockCollectorUpsert.mock.calls) expect(row).toMatchObject({ agent_id: AGENT_ID, issue_reason: "launch" });
+    });
   });
 
   describe("launch request boundary", () => {

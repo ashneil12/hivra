@@ -67,8 +67,31 @@ import {
   type HivraPrivateAccessAgentRow,
 } from "@/lib/hivra/tailscale-private-access";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import {
+  recordCollectorInstallResult,
+  supportsNativeTracing,
+  type ActivityCollectorInstallStatus,
+} from "@/lib/activity-observability/collectors";
 
 type ProxmoxEnvironment = Record<string, string | undefined>;
+
+// The one agent-run reporter install line the launch installer and the start
+// helper write into the host log (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
+// Closed enum only; anything else is ignored.
+const ACTIVITY_COLLECTOR_MARKER_PATTERN = "^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$";
+
+function parseActivityCollectorMarker(
+  lines: string[],
+): { status: ActivityCollectorInstallStatus; reason?: string } | null {
+  let parsed: { status: ActivityCollectorInstallStatus; reason?: string } | null = null;
+  for (const candidate of lines) {
+    const line = candidate.trim();
+    if (line === "HIVRA_ACTIVITY_COLLECTOR status=installed") parsed = { status: "installed" };
+    const failed = line.match(/^HIVRA_ACTIVITY_COLLECTOR status=failed reason=([a-z_]{1,40})$/);
+    if (failed) parsed = { status: "failed", reason: failed[1] };
+  }
+  return parsed;
+}
 
 function verifiedDestroyHivraVmScript(input: {
   vmid: number;
@@ -514,8 +537,16 @@ if printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(context.infras
   printf 'HIVRA_PROVIDER_OWNERSHIP %s\\n' ${shellQuote(provisionOperationId)}
 fi`
           : "";
+      // Claude Code / Codex Proxmox computers: the reporter install outcome the
+      // launch installer (provision log) or start helper (start log) wrote for
+      // this operation. The log is recreated per operation, so the last line wins.
+      const activityCollectorProbe = supportsNativeTracing(current)
+        ? `COLLECTOR="$(grep -E ${shellQuote(ACTIVITY_COLLECTOR_MARKER_PATTERN)} ${shellQuote(convergenceLog)} 2>/dev/null | tail -1 || true)"
+if [ -n "$COLLECTOR" ]; then printf '%s\\n' "$COLLECTOR"; fi`
+        : "";
       const script = `MARKER="$(grep -oE '\\{"vmid":[^{}]*"ready":(true|false)[^{}]*\\}' ${shellQuote(convergenceLog)} 2>/dev/null | tail -1 || true)"
 if [ -n "$MARKER" ]; then printf '%s\\n' "$MARKER"; fi
+${activityCollectorProbe}
 ${startReceiptProbe}
 ${provisionOwnershipProbe}
 ${provisionSecret ? `if printf '%s' "$MARKER" | grep -q '"ready":true' && [ -f ${shellQuote(provisionSecret)} ]; then
@@ -743,6 +774,29 @@ fi` : ""}`;
                   vmid,
                   proxmoxHost: context.host,
                   errorMessage: cleanupResult.error ?? cleanupResult.stderr?.slice(0, 300) ?? null,
+                });
+              }
+            }
+            // Only the completion winner records the reporter install outcome,
+            // separately from issuance (recorded when the credential was
+            // staged). Best effort: it never holds up or fails convergence.
+            const collectorInstall = supportsNativeTracing(current)
+              ? parseActivityCollectorMarker(outputLines)
+              : null;
+            if (collectorInstall) {
+              const recorded = await recordCollectorInstallResult(supabaseAdmin, {
+                agentId: String(current.id),
+                userId,
+                status: collectorInstall.status,
+                ...(collectorInstall.reason ? { reason: collectorInstall.reason } : {}),
+              });
+              if (!recorded) {
+                log.warn("hivra agent-run reporter install result could not be recorded", {
+                  source: "hivra/agents/[id]",
+                  failureType: "hivra_activity_collector_install_record_failed",
+                  userId,
+                  agentId: current.id,
+                  operationKind: convergenceOperationKind,
                 });
               }
             }

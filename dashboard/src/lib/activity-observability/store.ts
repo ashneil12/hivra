@@ -37,6 +37,13 @@ export async function persistTelemetryEvents(
         runId: item.runId,
         evidence: item.evidence,
         attributes: item.safeAttributes,
+        // Native run records (contract-validated at ingest; re-validated on read).
+        role: item.role,
+        producer: item.producer,
+        toolName: item.toolName,
+        durationMs: item.durationMs,
+        conversationId: item.conversationId,
+        errorType: item.errorType,
       },
     },
   }));

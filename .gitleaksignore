@@ -10,8 +10,8 @@ dashboard/src/app/api/cron/purge-error-hivra-agents/__tests__/route.test.ts:gene
 dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generic-api-key:12
 dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generic-api-key:13
 dashboard/src/app/api/cron/refresh-token-tiers/__tests__/route.test.ts:generic-api-key:20
-dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2112
-dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2188
+dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2126
+dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2202
 dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:135
 dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:191
 dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:186

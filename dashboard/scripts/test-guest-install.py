@@ -24,6 +24,19 @@ def launch(**overrides):
             "tunnelToken": "fixture-named-tunnel-only", "accessHostname": None, **overrides}
 
 
+FIXTURE_REPORTER_TOKEN = ".".join(("hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ", "Zml4dHVyZS1zaWduYXR1cmU"))  # synthetic; built at runtime
+
+
+def telemetry(**overrides):
+    return {"endpoint": "https://canary.example.test/api/activity/ingest",
+            "resourceId": "00000000-0000-4000-8000-000a00000003",
+            "token": FIXTURE_REPORTER_TOKEN, "expiresAt": "2026-09-29T12:00:00.000Z", **overrides}
+
+
+def traced_launch(**overrides):
+    return launch(**{"version": 4, "activityTelemetry": telemetry(), **overrides})
+
+
 class LaunchContract(unittest.TestCase):
     def test_linux_desktop_requires_the_complete_v3_computer_contract(self):
         value = launch(version=3, agentKind="linux-desktop", wantBrowser=None, modelKey="", modelBaseUrl="", model="",
@@ -127,6 +140,170 @@ class LaunchContract(unittest.TestCase):
                     self.assertEqual(env["HIVRA_ACCESS_HOSTNAME"], "")
                     self.assertNotIn("BUX_REF", env)
                     self.assertEqual(command.call_args.kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_v4_carries_a_strict_reporter_credential_for_claude_and_codex_on_proxmox_only(self):
+        for kind in ("claude", "codex"):
+            with self.subTest(kind=kind):
+                value = traced_launch(agentKind=kind)
+                self.assertEqual(guest.parse_launch(json.dumps(value).encode()), value)
+        invalid = [traced_launch(agentKind=kind) for kind in ("aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop")]
+        invalid += [traced_launch(computerSubstrate="provider-vm"),
+                    launch(version=4),
+                    launch(activityTelemetry=telemetry()),
+                    traced_launch(activityTelemetry=None),
+                    traced_launch(activityTelemetry=json.dumps(telemetry())),
+                    traced_launch(activityTelemetry={key: item for key, item in telemetry().items() if key != "expiresAt"}),
+                    traced_launch(activityTelemetry={**telemetry(), "renewUrl": "https://canary.example.test/x"})]
+        for key, bad in (
+                ("endpoint", "http://canary.example.test/api/activity/ingest"),
+                ("endpoint", "https://canary.example.test/api/activity/ingest/"),
+                ("endpoint", "https://canary.example.test/api/activity/collector/renew"),
+                ("endpoint", "https://canary.example.test/api/activity/ingest?next=1"),
+                ("endpoint", "https://canary.example.test/api/activity/ingest#fragment"),
+                ("endpoint", "https://user:pass@canary.example.test/api/activity/ingest"),
+                ("endpoint", "https://Canary.example.test/api/activity/ingest"),
+                ("endpoint", "https://canary.example.test/api/activity/ingest\n"),
+                ("resourceId", "11111111-2222-4333-8444-55555555555G"),
+                ("resourceId", "00000000-0000-4000-8000-000A00000005"),
+                ("resourceId", "not-a-uuid"),
+                ("token", ".".join(("hvra_otlp_v2", "eyJmaXh0dXJlIjp0cnVlfQ", "c2ln"))),
+                ("token", ".".join(("hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ"))),
+                ("token", FIXTURE_REPORTER_TOKEN + ".extra"),
+                ("token", FIXTURE_REPORTER_TOKEN + "\n"),
+                ("token", "hvra_otlp_v1.a b.c"),
+                ("token", "hvra_otlp_v1." + "a" * 4096 + ".c"),
+                ("expiresAt", "2026-09-29T12:00:00.000"),
+                ("expiresAt", "2026-13-40T12:00:00.000Z"),
+                ("expiresAt", "tomorrow"),
+                ("expiresAt", 1790000000)):
+            invalid.append(traced_launch(activityTelemetry=telemetry(**{key: bad})))
+        for candidate in invalid:
+            with self.subTest(candidate=candidate), self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
+                guest.parse_launch(json.dumps(candidate).encode())
+        duplicate = json.dumps(traced_launch()).replace('"token": ', '"token": "hvra_otlp_v1.a.b", "token": ', 1)
+        with self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
+            guest.parse_launch(duplicate.encode())
+
+    def test_v4_installs_the_reporter_after_bootstrap_with_the_credential_on_stdin_only(self):
+        for kind in ("claude", "codex"):
+            value = traced_launch(agentKind=kind)
+            order = Mock()
+            output = io.StringIO()
+            with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
+                 patch.object(guest, "configure_named_tunnel", side_effect=lambda *args: order.access()) as tunnel, \
+                 patch.object(guest.subprocess, "run", side_effect=lambda *args, **kwargs: order.run(*args, **kwargs)), \
+                 patch.object(guest.sys, "stderr", output):
+                guest.install_agent(value, Path("/owned-bundle"))
+            with self.subTest(kind=kind):
+                self.assertIn("\nHIVRA_ACTIVITY_COLLECTOR status=installed\n", output.getvalue())
+                tunnel.assert_called_once_with(value["tunnelToken"], 0)
+                self.assertEqual([call[0] for call in order.mock_calls], ["run", "run", "access"])
+                bootstrap, reporter = order.run.call_args_list
+                self.assertEqual(bootstrap.args[0], ["/bin/bash", "/owned-bundle/provision-claude-code-box.sh"])
+                self.assertEqual(reporter.args[0], ["/usr/bin/python3", "-I", "-B", "/owned-bundle/hivra-agent-trace.py",
+                                                    "install", "--source-dir", "/owned-bundle"])
+                self.assertEqual(json.loads(reporter.kwargs["input"]), value["activityTelemetry"])
+                self.assertEqual(reporter.kwargs["timeout"], guest.ACTIVITY_REPORTER_TIMEOUT_SECONDS)
+                self.assertTrue(reporter.kwargs["check"])
+                self.assertEqual(reporter.kwargs["env"], {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"})
+                self.assertNotIn("stdin", reporter.kwargs)
+                for call in (bootstrap, reporter):
+                    self.assertNotIn(FIXTURE_REPORTER_TOKEN, json.dumps(call.args[0]))
+                    self.assertNotIn(FIXTURE_REPORTER_TOKEN, json.dumps(call.kwargs["env"]))
+                self.assertNotIn("activityTelemetry", json.dumps(bootstrap.kwargs["env"]))
+                self.assertEqual(bootstrap.kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_reporter_failure_is_fail_open_with_one_sanitized_marker_and_access_still_configured(self):
+        # Contract: reporter installation never fails a launch. The installer
+        # reports one closed-enum marker line and continues to access setup.
+        failures = ((subprocess.CalledProcessError(1, "fixture", stderr=("leaked " + FIXTURE_REPORTER_TOKEN).encode()), "install_failed"),
+                    (subprocess.TimeoutExpired(["fixture"], 120, stderr=FIXTURE_REPORTER_TOKEN.encode()), "timeout"),
+                    (FileNotFoundError(2, "fixture"), "install_failed"),
+                    # Anything else is still fail-open and never echoes its text.
+                    (RuntimeError("unexpected " + FIXTURE_REPORTER_TOKEN), "install_failed"))
+        for failure, reason in failures:
+            def run(arguments, **kwargs):
+                if arguments[0] == "/usr/bin/python3":
+                    raise failure
+                return SimpleNamespace(returncode=0)
+            output = io.StringIO()
+            with self.subTest(failure=type(failure).__name__), \
+                 patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
+                 patch.object(guest, "configure_named_tunnel") as tunnel, \
+                 patch.object(guest.subprocess, "run", side_effect=run), patch.object(guest.sys, "stderr", output):
+                guest.install_agent(traced_launch(), Path("/owned-bundle"))
+                tunnel.assert_called_once_with(traced_launch()["tunnelToken"], 0)
+                markers = [line for line in output.getvalue().splitlines() if line.startswith("HIVRA_ACTIVITY_COLLECTOR")]
+                self.assertEqual(markers, ["HIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason])
+                self.assertIn("\nHIVRA_ACTIVITY_COLLECTOR status=failed reason=" + reason + "\n", output.getvalue())
+                self.assertNotIn("hvra_otlp_v1", output.getvalue())
+
+    def test_reporter_success_emits_exactly_one_installed_marker_before_access(self):
+        order = Mock()
+        output = io.StringIO()
+
+        def run(arguments, **kwargs):
+            order.run()
+            if arguments[0] == "/usr/bin/python3":
+                return SimpleNamespace(returncode=0, stderr=b"hivra-agent-trace: installed and active\n")
+            return SimpleNamespace(returncode=0)
+        with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
+             patch.object(guest, "configure_named_tunnel", side_effect=lambda *args: order.access(output.getvalue())), \
+             patch.object(guest.subprocess, "run", side_effect=run), patch.object(guest.sys, "stderr", output):
+            guest.install_agent(traced_launch(), Path("/owned-bundle"))
+        markers = [line for line in output.getvalue().splitlines() if line.startswith("HIVRA_ACTIVITY_COLLECTOR")]
+        self.assertEqual(markers, ["HIVRA_ACTIVITY_COLLECTOR status=installed"])
+        # Emitted before access is configured, so a later access failure still leaves it in the log.
+        self.assertIn("HIVRA_ACTIVITY_COLLECTOR status=installed", order.access.call_args.args[0])
+
+    def test_collector_marker_is_one_whole_line_in_a_single_write(self):
+        # The host appends this stream and the guest's stdout to the same
+        # provisioning log. Two writes ("\n" + line, then "\n") could let
+        # other output land between them and break the anchored poll match.
+        for status, reason, line in (("installed", None, "HIVRA_ACTIVITY_COLLECTOR status=installed"),
+                                     ("failed", "timeout", "HIVRA_ACTIVITY_COLLECTOR status=failed reason=timeout")):
+            stream = Mock()
+            with self.subTest(status=status), patch.object(guest.sys, "stderr", stream):
+                guest.report_activity_collector(status, reason)
+            self.assertEqual(stream.write.call_args_list, [unittest.mock.call("\n" + line + "\n")])
+            stream.flush.assert_called_once_with()
+
+    def test_launches_without_a_credential_emit_no_collector_marker(self):
+        output = io.StringIO()
+        with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \
+             patch.object(guest, "configure_named_tunnel"), patch.object(guest.subprocess, "run"), \
+             patch.object(guest.sys, "stderr", output):
+            guest.install_agent(launch(agentKind="claude"), Path("/owned-bundle"))
+        self.assertNotIn("HIVRA_ACTIVITY_COLLECTOR", output.getvalue())
+
+    def test_collector_marker_accepts_only_the_closed_status_enum(self):
+        for status, reason in (("installed", "timeout"), ("failed", None), ("failed", "Bad Reason"), ("failed", "a" * 41),
+                               ("failed", FIXTURE_REPORTER_TOKEN), ("partial", None)):
+            output = io.StringIO()
+            with self.subTest(status=status, reason=reason), patch.object(guest.sys, "stderr", output), \
+                 self.assertRaises(guest.InstallError):
+                guest.report_activity_collector(status, reason)
+            self.assertEqual(output.getvalue(), "")
+
+    def test_reporter_status_line_is_relayed_only_when_plain_and_credential_free(self):
+        cases = ((b"hivra-agent-trace: installed; unit active\n", "Hivra agent-run reporter: hivra-agent-trace: installed; unit active\n"),
+                 (("credential " + FIXTURE_REPORTER_TOKEN).encode(), ""),
+                 (b"token hvra_otlp_v1.partial", ""),
+                 (b"\x1b[31mcolored\x1b[0m", ""),
+                 (b"x" * 201, ""),
+                 (b"", ""))
+        for stderr, expected in cases:
+            output = io.StringIO()
+            with self.subTest(stderr=stderr), patch.object(guest.sys, "stderr", output):
+                guest.relay_reporter_status(stderr, FIXTURE_REPORTER_TOKEN)
+                self.assertEqual(output.getvalue(), expected)
+
+    def test_reporter_rejects_a_credential_that_was_not_parsed(self):
+        with patch.object(guest.subprocess, "run") as command:
+            for value in (traced_launch(agentKind="aeon"), traced_launch(activityTelemetry=telemetry(endpoint="http://x.test/api/activity/ingest"))):
+                with self.subTest(value=value["agentKind"]), self.assertRaises(guest.InstallError):
+                    guest.install_activity_reporter(value, Path("/owned-bundle"))
+            command.assert_not_called()
 
     def test_failed_install_does_not_configure_access(self):
         with patch.object(guest, "check_named_tunnel"), patch.object(guest, "check_effective_tunnel"), \

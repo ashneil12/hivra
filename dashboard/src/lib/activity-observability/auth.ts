@@ -34,24 +34,43 @@ export function mintActivityCollectorToken(
   return `${PREFIX}.${encoded}.${sign(encoded, signingSecret)}`;
 }
 
+export type ActivityCollectorTokenInspection =
+  | { status: "valid"; claims: ActivityCollectorClaims }
+  | { status: "expired"; claims: ActivityCollectorClaims }
+  | { status: "invalid" };
+
+/**
+ * Classify a presented collector token. The signature is checked before any
+ * claim is parsed or trusted, so "expired" is only ever reported for a token
+ * this deployment signed; everything else (tampered, malformed, unsigned,
+ * issued in the future, or no server secret) is "invalid".
+ */
+export function inspectActivityCollectorToken(
+  authorization: string | null,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): ActivityCollectorTokenInspection {
+  const key = secret();
+  const bearer = authorization?.match(/^Bearer\s+([^\s]+)$/i)?.[1];
+  if (!key || !bearer || bearer.length > 8192) return { status: "invalid" };
+  const [prefix, encoded, receivedSignature, extra] = bearer.split(".");
+  if (prefix !== PREFIX || !encoded || !receivedSignature || extra) return { status: "invalid" };
+  const expected = Buffer.from(sign(encoded, key), "utf8");
+  const received = Buffer.from(receivedSignature, "utf8");
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) return { status: "invalid" };
+  try {
+    const parsed = ClaimsSchema.parse(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")));
+    if (parsed.iat > nowSeconds + 60 || parsed.exp <= parsed.iat) return { status: "invalid" };
+    const claims = { ...parsed, resourceIds: [...new Set(parsed.resourceIds)] };
+    return parsed.exp <= nowSeconds ? { status: "expired", claims } : { status: "valid", claims };
+  } catch {
+    return { status: "invalid" };
+  }
+}
+
 export function verifyActivityCollectorToken(
   authorization: string | null,
   nowSeconds = Math.floor(Date.now() / 1000),
 ): ActivityCollectorClaims | null {
-  const key = secret();
-  const bearer = authorization?.match(/^Bearer\s+([^\s]+)$/i)?.[1];
-  if (!key || !bearer || bearer.length > 8192) return null;
-  const [prefix, encoded, receivedSignature, extra] = bearer.split(".");
-  if (prefix !== PREFIX || !encoded || !receivedSignature || extra) return null;
-  const expected = Buffer.from(sign(encoded, key), "utf8");
-  const received = Buffer.from(receivedSignature, "utf8");
-  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) return null;
-  try {
-    const claims = ClaimsSchema.parse(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")));
-    if (claims.iat > nowSeconds + 60 || claims.exp <= nowSeconds) return null;
-    return { ...claims, resourceIds: [...new Set(claims.resourceIds)] };
-  } catch {
-    return null;
-  }
+  const inspection = inspectActivityCollectorToken(authorization, nowSeconds);
+  return inspection.status === "valid" ? inspection.claims : null;
 }
-

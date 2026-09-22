@@ -1,6 +1,14 @@
 import crypto from "node:crypto";
 
-import type { ActivityOutcome, ActivitySeverity } from "./types";
+import {
+  NATIVE_PRODUCERS,
+  NATIVE_RUN_ROLES,
+  type ActivityEvidence,
+  type ActivityOutcome,
+  type ActivitySeverity,
+  type NativeProducer,
+  type NativeRunRole,
+} from "./types";
 
 const MAX_ITEMS = 500;
 const MAX_ATTRIBUTES = 64;
@@ -11,6 +19,25 @@ const SAFE_ATTRIBUTE_KEYS = new Set([
   "rpc.system", "http.request.method", "event.id",
 ]);
 const BLOCKED_KEY = /(prompt|command|content|body|message|query|input|output|argument|response|completion|system_prompt)/i;
+
+// Native agent-run records (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
+// They are recognised only by resource/record attribute service.namespace and
+// validated field by field against the contract; the generic allowlist above
+// never applies to them.
+export const NATIVE_NAMESPACE = "hivra.native";
+export const NATIVE_HEARTBEAT_EVENT = "collector.heartbeat";
+const NATIVE_HEARTBEAT_SERVICE = "hivra-agent-trace";
+export const NATIVE_MAX_DURATION_MS = 604_800_000;
+export const NATIVE_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/;
+export const NATIVE_CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,119}$/;
+export const NATIVE_ERROR_TYPE = /^[a-z0-9_]{1,40}$/;
+const NATIVE_EVENT_ID = /^[a-f0-9]{32}$/;
+const NATIVE_SPAN_ID = /^[a-f0-9]{16}$/;
+const NATIVE_KEYS = new Set([
+  "service.namespace", "service.name", "event.name", "event.id", "conversation.id", "session.id",
+  "tool.name", "success", "duration_ms", "error.type", "parent.span.id",
+]);
+const PRODUCER_LABELS: Record<NativeProducer, string> = { codex: "Codex", "claude-code": "Claude Code" };
 
 export interface NormalizedTelemetryEvent {
   id: string;
@@ -28,14 +55,36 @@ export interface NormalizedTelemetryEvent {
   runId?: string;
   evidence: Array<{ label: string; value: string }>;
   safeAttributes: Record<string, string | number | boolean>;
+  /** Native run records only; every field is contract-validated. */
+  role?: NativeRunRole;
+  producer?: NativeProducer;
+  toolName?: string;
+  durationMs?: number;
+  conversationId?: string;
+  errorType?: string;
 }
-export interface OtlpNormalization { events: NormalizedTelemetryEvent[]; rejectedSpans: number; rejectedLogRecords: number }
+/**
+ * A reporter liveness signal. Never stored as an activity event; ingest records
+ * server receive time. `occurredAt` is the guest's own clock, kept only so a
+ * wrong guest clock can be noticed; it is never used for liveness.
+ */
+export interface NativeHeartbeat { occurredAt: string }
+export interface OtlpNormalization {
+  events: NormalizedTelemetryEvent[]; heartbeats: NativeHeartbeat[]; rejectedSpans: number; rejectedLogRecords: number;
+  /** Of rejectedLogRecords: valid native run records refused only because their timestamp is outside the accepted window (usually a wrong guest clock). */
+  clockSkewedLogRecords: number;
+}
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec | null => v && typeof v === "object" && !Array.isArray(v) ? v as Rec : null;
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
 const str = (v: unknown, max = 200): string | undefined => typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined;
 const hex = (v: unknown, len: number): string | undefined => typeof v === "string" && new RegExp(`^[a-fA-F0-9]{${len}}$`).test(v) ? v.toLowerCase() : undefined;
+
+/** Credential-shaped identifiers are dropped even when their charset is allowed. */
+export function looksSecret(candidate: string): boolean {
+  return /^(?:sk-|gh[opsu]_|github_pat_|xox[baprs]-|AKIA|ASIA|eyJ[A-Za-z0-9_-]*\.)/i.test(candidate)||/bearer/i.test(candidate);
+}
 
 function anyValue(key: string, value: unknown): string | number | boolean | undefined {
   const r = rec(value);
@@ -44,7 +93,7 @@ function anyValue(key: string, value: unknown): string | number | boolean | unde
     const candidate=r.stringValue;
     // Attribute keys are allowlisted and values are token-shaped. Free-form
     // strings (commands, prompts, headers and tool bodies) never reach storage.
-    const secretLike=/^(?:sk-|gh[opsu]_|github_pat_|xox[baprs]-|AKIA|ASIA|eyJ[A-Za-z0-9_-]*\.)/i.test(candidate)||/bearer/i.test(candidate);
+    const secretLike=looksSecret(candidate);
     return !secretLike && candidate.length <= 120 && /^[A-Za-z0-9][A-Za-z0-9_.:/@-]*$/.test(candidate) ? candidate : undefined;
   }
   if (typeof r.boolValue === "boolean") return r.boolValue;
@@ -104,12 +153,138 @@ function logSeverity(record: Rec): ActivitySeverity {
   return n >= 17 || /ERROR|FATAL/.test(text) ? "error" : n >= 13 || /WARN/.test(text) ? "warning" : "info";
 }
 
+type NativeRaw = Map<string, string | number | boolean>;
+
+/** Contract keys only, raw typed values, record attributes overriding resource attributes. */
+function nativeRaw(...lists: unknown[]): NativeRaw {
+  const out: NativeRaw = new Map();
+  for (const list of lists) {
+    for (const entry of arr(list).slice(0, MAX_ATTRIBUTES)) {
+      const item = rec(entry); const key = str(item?.key, 120); const value = rec(item?.value);
+      if (!key || !NATIVE_KEYS.has(key) || !value) continue;
+      if (typeof value.stringValue === "string" && value.stringValue.length <= 200) out.set(key, value.stringValue);
+      else if (typeof value.boolValue === "boolean") out.set(key, value.boolValue);
+      else if (typeof value.intValue === "number" || (typeof value.intValue === "string" && /^-?\d{1,16}$/.test(value.intValue))) {
+        const n = Number(value.intValue); if (Number.isSafeInteger(n)) out.set(key, n);
+      } else out.delete(key);
+    }
+  }
+  return out;
+}
+
+const matches = (value: unknown, pattern: RegExp): string | undefined =>
+  typeof value === "string" && pattern.test(value) && !looksSecret(value) ? value : undefined;
+export const isNativeRunRole = (value: unknown): value is NativeRunRole =>
+  typeof value === "string" && (NATIVE_RUN_ROLES as readonly string[]).includes(value);
+export const isNativeProducer = (value: unknown): value is NativeProducer =>
+  typeof value === "string" && (NATIVE_PRODUCERS as readonly string[]).includes(value);
+export const nativeToolName = (value: unknown): string | undefined => matches(value, NATIVE_TOOL_NAME);
+export const nativeCorrelationId = (value: unknown): string | undefined => matches(value, NATIVE_CORRELATION_ID);
+export const nativeErrorType = (value: unknown): string | undefined => matches(value, NATIVE_ERROR_TYPE);
+export const nativeSpanId = (value: unknown): string | undefined => typeof value === "string" && NATIVE_SPAN_ID.test(value) ? value : undefined;
+export const nativeDurationMs = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= NATIVE_MAX_DURATION_MS ? value : undefined;
+
+/** "850 ms", "2.0 s", "1 min 5 s", "2 h 3 min". */
+export function formatNativeDuration(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(Math.floor(ms / 100) / 10).toFixed(1)} s`;
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes} min ${Math.floor((ms % 60_000) / 1000)} s`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+export interface NativeRecordFields {
+  role: NativeRunRole;
+  producer: NativeProducer;
+  runId?: string;
+  toolName?: string;
+  durationMs?: number;
+  errorType?: string;
+  /** tool.completed only: the producer recorded a structured success. */
+  succeeded?: boolean;
+}
+
+/**
+ * Plain-English text for a native record, derived only from validated
+ * fields. The feed calls this again on read, so stored text is never trusted.
+ */
+export function describeNativeRecord(fields: NativeRecordFields): { title: string; summary: string; outcome: ActivityOutcome; severity: ActivitySeverity } {
+  const agent = PRODUCER_LABELS[fields.producer];
+  const tool = fields.toolName ? `Tool ${fields.toolName}` : "A tool";
+  const took = fields.durationMs === undefined ? "" : formatNativeDuration(fields.durationMs);
+  switch (fields.role) {
+    case "run.started":
+      return { title: `${agent} started a task`, summary: "Hivra does not record what was asked.", outcome: "unknown", severity: "info" };
+    case "run.completed":
+      return { title: took ? `${agent} finished a task in ${took}` : `${agent} finished a task`, summary: "The agent reported the task ended normally; this does not check the work.", outcome: "success", severity: "info" };
+    case "run.failed":
+      return { title: `${agent} task ended with a failure`, summary: "The agent reported the task stopped before finishing.", outcome: "failure", severity: "error" };
+    case "run.stopped":
+      return { title: `${agent} task was stopped`, summary: "The agent reported the task was interrupted or replaced before it finished, so its outcome is unknown.", outcome: "unknown", severity: "info" };
+    case "tool.started":
+      return { title: `${tool} started`, summary: "Its input is not recorded.", outcome: "unknown", severity: "info" };
+    case "tool.completed":
+      return { title: took ? `${tool} finished in ${took}` : `${tool} finished`, summary: fields.succeeded ? "The agent reported it succeeded." : "The agent did not report whether it succeeded.", outcome: fields.succeeded ? "success" : "unknown", severity: "info" };
+    case "tool.failed":
+      return { title: took ? `${tool} failed after ${took}` : `${tool} failed`, summary: "Agents often recover from tool errors.", outcome: "failure", severity: "warning" };
+  }
+}
+
+export function nativeEvidence(fields: NativeRecordFields): ActivityEvidence[] {
+  return [
+    { label: "Agent", value: PRODUCER_LABELS[fields.producer] },
+    ...(fields.toolName ? [{ label: "Tool", value: fields.toolName }] : []),
+    ...(fields.durationMs !== undefined ? [{ label: "Duration (ms)", value: String(fields.durationMs) }] : []),
+    ...(fields.errorType ? [{ label: "Error type", value: fields.errorType }] : []),
+    ...(fields.runId ? [{ label: "Run", value: fields.runId }] : []),
+  ];
+}
+
+type NativeResult = { kind: "event"; event: NormalizedTelemetryEvent } | { kind: "heartbeat" } | { kind: "rejected" };
+
+function normalizeNativeLog(raw: NativeRaw, record: Rec, resourceId: string, occurredAt: string): NativeResult {
+  const role = raw.get("event.name");
+  const service = raw.get("service.name");
+  if (role === NATIVE_HEARTBEAT_EVENT) return service === NATIVE_HEARTBEAT_SERVICE ? { kind: "heartbeat" } : { kind: "rejected" };
+  if (!isNativeRunRole(role) || !isNativeProducer(service)) return { kind: "rejected" };
+  const eventId = raw.get("event.id");
+  const runId = nativeCorrelationId(raw.get("session.id"));
+  if (typeof eventId !== "string" || !NATIVE_EVENT_ID.test(eventId) || !runId) return { kind: "rejected" };
+  const isTool = role.startsWith("tool.");
+  const fields: NativeRecordFields = {
+    role, producer: service, runId,
+    toolName: isTool ? nativeToolName(raw.get("tool.name")) : undefined,
+    durationMs: nativeDurationMs(raw.get("duration_ms")),
+    errorType: role.endsWith(".failed") ? nativeErrorType(raw.get("error.type")) : undefined,
+    succeeded: role === "tool.completed" && raw.get("success") === true,
+  };
+  const conversationId = nativeCorrelationId(raw.get("conversation.id"));
+  const text = describeNativeRecord(fields);
+  const safeAttributes: Record<string, string | number | boolean> = {
+    "service.namespace": NATIVE_NAMESPACE, "service.name": service, "event.name": role, "event.id": eventId, "session.id": runId,
+    ...(conversationId ? { "conversation.id": conversationId } : {}),
+    ...(fields.toolName ? { "tool.name": fields.toolName } : {}),
+    ...(fields.durationMs !== undefined ? { duration_ms: fields.durationMs } : {}),
+    ...(fields.errorType ? { "error.type": fields.errorType } : {}),
+    ...(role === "tool.completed" && typeof raw.get("success") === "boolean" ? { success: raw.get("success") as boolean } : {}),
+  };
+  return { kind: "event", event: {
+    // Keyed on the reporter's stable event id only, so replays after a crash or
+    // restart land on the same row whatever their timestamp or batch.
+    id: deterministicId([resourceId, "native", eventId]), resourceId, sourceKind: "otlp_log", event: "otel_log", occurredAt,
+    ...text, traceId: hex(record.traceId, 32), spanId: hex(record.spanId, 16), parentSpanId: nativeSpanId(raw.get("parent.span.id")),
+    runId, evidence: nativeEvidence(fields), safeAttributes,
+    role, producer: service, toolName: fields.toolName, durationMs: fields.durationMs, conversationId, errorType: fields.errorType,
+  } };
+}
+
 export function normalizeOtlpJson(body: unknown, resourceId: string, now = new Date()): OtlpNormalization | null {
   const root = rec(body); if (!root) return null;
   const hasSpans = Array.isArray(root.resourceSpans);
   const hasLogs = Array.isArray(root.resourceLogs);
   if (!hasSpans && !hasLogs) return null;
-  const out: NormalizedTelemetryEvent[] = []; let rejectedSpans=0; let rejectedLogRecords=0;
+  const out: NormalizedTelemetryEvent[] = []; const heartbeats: NativeHeartbeat[] = []; let rejectedSpans=0; let rejectedLogRecords=0; let clockSkewedLogRecords=0;
   const timestampAllowed=(iso:string)=>{const ms=new Date(iso).getTime(); return ms<=now.getTime()+5*60_000&&ms>=now.getTime()-90*86_400_000;};
 
   for (const resourceSpanValue of arr(root.resourceSpans)) {
@@ -133,14 +308,28 @@ export function normalizeOtlpJson(body: unknown, resourceId: string, now = new D
 
   for (const resourceLogValue of arr(root.resourceLogs)) {
     const resourceLog = rec(resourceLogValue); if (!resourceLog) continue;
-    const resourceAttrs = attributes(rec(resourceLog.resource)?.attributes);
+    const resourceAttributeList = rec(resourceLog.resource)?.attributes;
+    const resourceAttrs = attributes(resourceAttributeList);
     for (const scopeValue of arr(resourceLog.scopeLogs)) {
       const scope = rec(scopeValue); if (!scope) continue;
       for (const logValue of arr(scope.logRecords)) {
-        if (out.length >= MAX_ITEMS) throw new Error("too_many_telemetry_items");
+        if (out.length + heartbeats.length >= MAX_ITEMS) throw new Error("too_many_telemetry_items");
         const record = rec(logValue); if (!record) continue;
         const rawTime=record.timeUnixNano ?? record.observedTimeUnixNano;
-        const occurredAt = nanoToIso(rawTime); if (!occurredAt || !timestampAllowed(occurredAt)) { rejectedLogRecords++; continue; }
+        const occurredAt = nanoToIso(rawTime); if (!occurredAt) { rejectedLogRecords++; continue; }
+        const native = nativeRaw(resourceAttributeList, record.attributes);
+        if (native.get("service.namespace") === NATIVE_NAMESPACE) {
+          // Classified before the time window: liveness is the server's receive
+          // time, so a heartbeat's own timestamp only has to parse and a guest
+          // with a wrong clock still shows as reporting.
+          const result = normalizeNativeLog(native, record, resourceId, occurredAt);
+          if (result.kind === "heartbeat") heartbeats.push({ occurredAt });
+          else if (result.kind === "rejected") rejectedLogRecords++;
+          else if (!timestampAllowed(occurredAt)) { rejectedLogRecords++; clockSkewedLogRecords++; }
+          else out.push(result.event);
+          continue;
+        }
+        if (!timestampAllowed(occurredAt)) { rejectedLogRecords++; continue; }
         const a = { ...resourceAttrs, ...attributes(record.attributes) };
         const tool = str(a.tool_name ?? a["tool.name"] ?? a.tool,120);
         const success = a.success;
@@ -152,5 +341,5 @@ export function normalizeOtlpJson(body: unknown, resourceId: string, now = new D
       }
     }
   }
-  return {events:out,rejectedSpans,rejectedLogRecords};
+  return {events:out,heartbeats,rejectedSpans,rejectedLogRecords,clockSkewedLogRecords};
 }

@@ -263,6 +263,11 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
         "/opt/bux/hivra-chat/server.js",
         "/usr/local/bin/hivra-agent-shell",
         "/usr/share/doc/hivra-caddy/LICENSE",
+        # The agent-run reporter (/opt/hivra/agent-trace, hivra-agent-trace.service)
+        # is deliberately absent: this receipt is collected inside the runtime
+        # bootstrap, before the fail-open reporter install at launch and on every
+        # start, so any record of it here would describe a stale or pre-install
+        # state. Its evidence is the control plane's install marker and heartbeats.
         "/etc/hivra/deepseek-native.json",
         "/etc/hivra/deepseek-install.json",
         "/opt/hivra/deepseek-runtime/package.json",

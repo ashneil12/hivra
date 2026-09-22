@@ -51,6 +51,9 @@ export const config = {
      * - exactly /api/activity/ingest: the OTLP receiver verifies its own
      *   tenant/resource-scoped collector capability. Clerk cannot decode that
      *   capability as a session JWT. Activity reads still use Clerk.
+     * - exactly /api/activity/collector/renew: the guest reporter renews that
+     *   same collector capability with the capability itself; the route
+     *   verifies it and the computer's ownership. Clerk cannot decode it.
      *
      * An api exclusion must appear in BOTH entries below. The matcher array is
      * an OR: a path excluded from one entry but matched by another still runs
@@ -76,8 +79,8 @@ export const config = {
      * the box's own dashboard in a cross-origin iframe (WebuiIframe). No SSE
      * route needs a bypass, so there is no SSE bypass list.
      */
-    "/((?!_next|api/instances/[^/]+/aeon-gate|api/infrastructure/first-boot/enroll$|api/activity/ingest$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/api/((?!instances/[^/]+/aeon-gate|infrastructure/first-boot/enroll$|activity/ingest$).*)",
+    "/((?!_next|api/instances/[^/]+/aeon-gate|api/infrastructure/first-boot/enroll$|api/activity/ingest$|api/activity/collector/renew$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/api/((?!instances/[^/]+/aeon-gate|infrastructure/first-boot/enroll$|activity/ingest$|activity/collector/renew$).*)",
     "/trpc/(.*)",
   ],
 };

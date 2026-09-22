@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
 import type { ActivitySnapshot } from "../src/lib/activity-observability/types";
+import {
+  capabilityExplanation,
+  capabilityStateLabel,
+  reportingAlerts,
+} from "../src/components/dashboard/activity/presentation";
+import {
+  describeIncompleteRun,
+  describeRunCounts,
+  describeRunStatus,
+  groupActivityRuns,
+} from "../src/components/dashboard/activity/run-groups";
 
 // Real authenticated read-only acceptance. Missing credentials are a reported
 // prerequisite, never evidence that a deployed revision passed.
@@ -92,12 +103,70 @@ test.describe("Activity observatory (deployed canary)", () => {
     }
     await activity.getByLabel("Filter by agent").selectOption("all");
     await activity.getByLabel("Filter by kind").selectOption("all");
-    await activity.getByRole("button", { name: /Needs attention/ }).click();
+    await activity.getByRole("button", { name: "Agent runs", exact: true }).click();
+    const runs = activity.getByRole("region", { name: "Agent runs", exact: true });
+    await expect(runs).toBeVisible();
+    await expect(runs).toContainText("not a complete account of a run");
+    await expect(runs).toContainText("never records prompts");
+    // The page groups exactly these loaded records; each linked run states the
+    // status its own explicit run records support, never an inferred finish.
+    const { groups } = groupActivityRuns(data.events);
+    if (!groups.length) await expect(runs).toContainText("No linked agent runs");
+    for (const group of groups.slice(0, 10)) {
+      const run = runs.getByRole("article").filter({ hasText: group.agentName }).filter({
+        hasText: describeRunStatus(group).text,
+      });
+      await expect(run.first()).toBeVisible();
+      // "Load older events" is offered only when an older page exists.
+      if (group.incomplete)
+        await expect(runs).toContainText(describeIncompleteRun(Boolean(data.nextCursor)));
+    }
+    // Searching for one tool picks the run but never trims it: its status and
+    // counts still come from every loaded record.
+    const searched = groups.find(
+      (group) =>
+        group.native &&
+        group.steps.some((step) => step.kind === "tool" && step.event.toolName),
+    );
+    const tool = searched?.steps.find((step) => step.kind === "tool" && step.event.toolName)?.event.toolName;
+    if (searched && tool) {
+      await activity.getByRole("searchbox").fill(tool);
+      const run = runs.getByRole("article").filter({ hasText: searched.agentName }).filter({
+        hasText: describeRunStatus(searched).text,
+      }).filter({ hasText: describeRunCounts(searched).join(" · ") });
+      await expect(run.first()).toBeVisible();
+      await expect(runs).toContainText("Showing runs with a step that matches your search");
+      await activity.getByRole("searchbox").fill("");
+    }
+    const steps = runs.getByRole("button");
+    if (await steps.count()) {
+      await steps.first().click();
+      await expect(activity.getByRole("complementary", { name: "Event inspector" })).toBeVisible();
+    }
+    const flagged = data.events.filter((event) => event.needsAttention).length;
+    const alerts = reportingAlerts(data.resources);
+    const attention = activity.getByRole("button", { name: /Needs attention/ });
+    if (flagged + alerts.length)
+      await expect(attention).toContainText(String(flagged + alerts.length));
+    await attention.click();
     await expect(
       activity
         .getByRole("region", { name: "Recorded events" })
         .getByRole("button"),
-    ).toHaveCount(data.events.filter((event) => event.needsAttention).length);
+    ).toHaveCount(flagged);
+    const gaps = activity.getByRole("region", { name: "Reporting gaps" });
+    if (alerts.length) {
+      for (const { resource } of alerts) await expect(gaps).toContainText(resource.name);
+    } else await expect(gaps).toHaveCount(0);
+    // The badge counts every item; a search that hides them all says so.
+    if (flagged + alerts.length) {
+      await activity.getByRole("searchbox").fill("__no_activity_match_fixture__");
+      await expect(activity).toContainText(
+        `${flagged + alerts.length} ${flagged + alerts.length === 1 ? "item needs" : "items need"} attention but`,
+      );
+      await activity.getByRole("button", { name: "Clear search and filters" }).click();
+      await expect(activity).not.toContainText("hidden by your search or filters");
+    }
     await activity
       .getByRole("button", { name: "What is monitored", exact: true })
       .click();
@@ -114,6 +183,21 @@ test.describe("Activity observatory (deployed canary)", () => {
       await expect(coverage.getByText("Unable to load", { exact: true }).first()).toBeVisible();
     for (const resource of data.resources)
       await expect(coverage).toContainText(resource.name);
+    if (
+      data.resources.some((resource) =>
+        resource.capabilities.some((capability) => capability.key === "native_tracing"),
+      )
+    )
+      await expect(coverage).toContainText("Agent run reporting");
+    // Each computer's run reporting reads from its own recorded state and cause.
+    for (const resource of data.resources.slice(0, 20)) {
+      const native = resource.capabilities.find((capability) => capability.key === "native_tracing");
+      if (!native) continue;
+      const context = { status: resource.status, agentType: resource.agentType, now: data.generatedAt };
+      await expect(coverage).toContainText(capabilityStateLabel(native, context));
+      const explanation = capabilityExplanation(native, context);
+      if (explanation) await expect(coverage).toContainText(explanation);
+    }
     const refreshed = page.waitForResponse(
       (res) =>
         res.url().includes("/api/activity?") &&
