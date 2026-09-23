@@ -35,18 +35,33 @@ import {
   BILLING_V2_UNAVAILABLE_MESSAGE,
   isBillingV2ServerEnabled,
 } from "@/lib/billing/billing-v2-availability";
-import { withdrawAllHermesTokensForUser } from "@/lib/billing/bankr-withdraw";
-import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import {
+  getSelfCustodyPrimaryWallet,
+  waitForTransferReceipt,
+  withdrawAllHermesTokensForUser,
+} from "@/lib/billing/bankr-withdraw";
+import {
+  evaluateAndRecordTokenTierEligibility,
+  clearTierBreachHold,
+  holdTierBreachesUntil,
+} from "@/lib/billing/token-tier-eligibility";
 import {
   fetchHermesTokenBalance,
   getHermesLockWallet,
   refreshPrimaryHermesTokenHolding,
+  refreshPrimaryVerifiedTokenHoldings,
 } from "@/lib/billing/token-holdings";
 import { log } from "@/lib/logger";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 interface WithdrawRequestBody {
   expectedRecipient?: string;
+  /**
+   * "verified_wallet": move the lock wallet's tokens to the user's own
+   * signature-verified primary wallet. The tier keeps counting them there, so
+   * no breach starts. Default: the saved withdraw address (an exit).
+   */
+  destination?: "withdraw_address" | "verified_wallet";
 }
 
 // In-process per-user lock so two near-simultaneous POSTs from the same
@@ -62,6 +77,8 @@ interface WithdrawRequestBody {
 // security report. Keep this in-process guard as defense-in-depth even
 // after the DB lock lands.
 const inFlightByUser = new Map<string, Promise<unknown>>();
+// How long new tier breaches are held after a lock-wallet move is submitted.
+const LOCK_MOVE_BREACH_HOLD_MS = 30 * 60 * 1000;
 const LOG_CONTEXT = {
   source: "billing/withdraw",
   route: "/api/billing/bankr/wallet/withdraw",
@@ -112,6 +129,9 @@ export async function POST(req: NextRequest) {
     inFlightByUser.set(userId, lockHolder);
 
     let result;
+    let destination: "withdraw_address" | "verified_wallet" = "withdraw_address";
+    // The breach hold this attempt wrote (keyed by its withdrawal claim), if any.
+    let holdId: string | null = null;
     try {
       let body: WithdrawRequestBody = {};
       try {
@@ -120,10 +140,47 @@ export async function POST(req: NextRequest) {
         // Empty body is fine.
       }
 
+      if (body.destination !== undefined && body.destination !== "withdraw_address" && body.destination !== "verified_wallet") {
+        return apiError("Invalid destination — must be 'withdraw_address' or 'verified_wallet'.", 400, {
+          failureType: "withdraw_bad_destination",
+        });
+      }
+      destination = body.destination ?? "withdraw_address";
       result = await withdrawAllHermesTokensForUser({
         userId,
         expectedRecipient: body.expectedRecipient,
+        destination,
+        // A move, not an exit: before anything is sent, hold off new breaches
+        // for exactly the amount in flight. Whatever reads balances in the next
+        // minutes (a cron tick, a slow RPC node) may see the tokens in neither
+        // wallet. If the hold cannot be written, nothing is sent.
+        beforeTransfer:
+          destination === "verified_wallet"
+            ? async (amountRaw, claimId) => {
+                // Set first: a hold that fails half-way still gets cleared.
+                holdId = claimId;
+                await holdTierBreachesUntil({
+                  userId,
+                  holdId: claimId,
+                  until: new Date(Date.now() + LOCK_MOVE_BREACH_HOLD_MS),
+                  movingRaw: amountRaw,
+                  reason: "lock_wallet_move_to_verified_wallet",
+                });
+              }
+            : undefined,
       });
+      if (holdId && result.status !== "submitted" && !result.transferMayHaveBeenSent) {
+        // This attempt wrote a hold and then sent nothing: drop it. Holds
+        // written by other, in-flight attempts are left alone. A failed
+        // submit may still have been broadcast: that hold lapses instead.
+        await clearTierBreachHold({ userId, holdId }).catch((clearErr) =>
+          log.warn("failed to clear the breach hold after an unsent move", {
+            ...LOG_CONTEXT,
+            userId,
+            failureType: "withdraw_move_hold_clear_failed",
+          }, clearErr)
+        );
+      }
     } finally {
       inFlightByUser.delete(userId);
       releaseLock();
@@ -139,6 +196,13 @@ export async function POST(req: NextRequest) {
           "A withdraw is already in progress. Wait for it to settle before retrying.",
         409,
         { failureType: "withdraw_already_in_flight" }
+      );
+    }
+    if (result.status === "no_verified_wallet") {
+      return apiError(
+        result.errorMessage ?? "Verify your own wallet first. It becomes the wallet your tier reads.",
+        422,
+        { failureType: "withdraw_no_verified_wallet" }
       );
     }
     if (result.status === "no_wallet") {
@@ -205,7 +269,71 @@ export async function POST(req: NextRequest) {
     // submitted successfully.
     let postWithdrawEligibility:
       | { evaluated: boolean; balanceRaw: string }
+      | { evaluated: boolean; reason: string }
       | null = null;
+    if (destination === "verified_wallet") {
+      // A move, not an exit: once the transfer is mined, record the lock
+      // wallet's real (empty) balance and the verified wallet's new one, then
+      // evaluate on the verified wallet, so the tier never sees a dip. If it
+      // is not mined yet, evaluate nothing now: the next holdings refresh
+      // reads it (and a breach, if any, has the normal grace).
+      try {
+        const receipt = result.txHash ? await waitForTransferReceipt({ txHash: result.txHash }) : "pending";
+        if (receipt === "mined") {
+          const [lockWallet, verifiedWallet] = await Promise.all([
+            getHermesLockWallet(userId),
+            getSelfCustodyPrimaryWallet(userId),
+          ]);
+          if (lockWallet) await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: lockWallet });
+          if (verifiedWallet) {
+            // A load-balanced RPC node can lag the receipt: only evaluate once
+            // the moved amount is visible in the verified wallet.
+            const moved = BigInt(result.amountRaw ?? "0");
+            let refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
+            for (let attempt = 0; attempt < 3 && refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) < moved; attempt++) {
+              await new Promise((resolve) => setTimeout(resolve, 2_000));
+              refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
+            }
+            if (refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) >= moved) {
+              await evaluateAndRecordTokenTierEligibility({ userId, balances: refreshed.balances });
+              // The hold is left to lapse: another reader (a cron tick on a
+              // lagging RPC node) may still see the tokens in neither wallet.
+              postWithdrawEligibility = { evaluated: true, balanceRaw: refreshed.snapshot?.balanceRaw ?? "0" };
+            } else {
+              postWithdrawEligibility = { evaluated: false, reason: "move_balance_not_visible_yet" };
+            }
+          }
+        } else {
+          if (receipt === "failed" && holdId) {
+            // Reverted: the tokens never left the lock wallet, so holding
+            // would only count them twice.
+            await clearTierBreachHold({ userId, holdId }).catch((clearErr) =>
+              log.warn("failed to clear the breach hold after a reverted move", {
+                ...LOG_CONTEXT,
+                userId,
+                failureType: "withdraw_move_hold_clear_failed",
+              }, clearErr)
+            );
+          }
+          postWithdrawEligibility = { evaluated: false, reason: `move_${receipt}` };
+        }
+      } catch (moveErr) {
+        log.warn("post-move eligibility re-check failed", {
+          ...LOG_CONTEXT,
+          userId,
+          failureType: "withdraw_post_move_eligibility_failed",
+        }, moveErr);
+      }
+      return apiSuccess({
+        status: result.status,
+        destination,
+        txHash: result.txHash ?? null,
+        amountRaw: result.amountRaw,
+        amountDisplay: result.amountDisplay,
+        recipientAddress: result.recipientAddress,
+        postWithdrawEligibility,
+      });
+    }
     try {
       // refreshPrimaryHermesTokenHolding does both: reads live on-chain
       // balance AND inserts a fresh row into token_holding_snapshots.
