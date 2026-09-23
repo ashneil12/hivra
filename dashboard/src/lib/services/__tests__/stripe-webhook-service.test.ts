@@ -69,6 +69,12 @@ jest.mock("@/lib/billing/dunning", () => ({
     .mockResolvedValue({ sent: false, reason: "disabled" }),
 }));
 
+// The Stripe lapse paths ask whether another lane (Apple IAP, yearly
+// $HermesOS, token holdings) still entitles the user. Default: none.
+jest.mock("@/lib/billing/instance-entitlement", () => ({
+  resolveEffectiveSubscription: jest.fn().mockResolvedValue(null),
+}));
+
 interface MockBuilder {
   select: jest.Mock;
   update: jest.Mock;
@@ -130,6 +136,10 @@ import {
 } from "@/lib/billing/credits";
 import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-wallets";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
+import {
+  resolveEffectiveSubscription,
+  type EffectiveSubscription,
+} from "@/lib/billing/instance-entitlement";
 
 function createDeferredPromise<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -1741,6 +1751,194 @@ describe("StripeWebhookService", () => {
       const pastDueWrite = subUpdates.find((p) => p.status === "past_due");
       expect(pastDueWrite).toBeTruthy();
       expect(pastDueWrite!.grace_period_ends_at).toBe(EXISTING_ANCHOR);
+    });
+  });
+
+  describe("Stripe lapse while another lane still pays", () => {
+    const YEARLY_POWER: EffectiveSubscription = {
+      plan: "fleet",
+      status: "active",
+      instance_limit: PLANS.fleet.maxAgents,
+      total_cpu_budget: PLANS.fleet.totalCpu,
+      total_ram_budget: PLANS.fleet.totalRam,
+      source: "token_yearly",
+      tokenTier: "power",
+      currentPeriodEnd: "2027-03-07T00:00:00.000Z",
+      canChangePlanInPlace: false,
+    };
+    const APPLE_PRO: EffectiveSubscription = {
+      plan: "operator",
+      status: "active",
+      instance_limit: PLANS.operator.maxAgents,
+      total_cpu_budget: PLANS.operator.totalCpu,
+      total_ram_budget: PLANS.operator.totalRam,
+      source: "apple_iap",
+      currentPeriodEnd: "2026-10-23T00:00:00.000Z",
+      canChangePlanInPlace: false,
+    };
+
+    // The service loads tier-change-service lazily. doMock + import returns
+    // the same mocked module the service will get, even if an earlier test
+    // already registered a mock for it.
+    async function mockApplyTierChange(): Promise<jest.Mock> {
+      jest.doMock("@/lib/services/tier-change-service", () => ({
+        applyTierChange: jest.fn(),
+      }));
+      const mod = await import("@/lib/services/tier-change-service");
+      const applyTierChange = mod.applyTierChange as unknown as jest.Mock;
+      applyTierChange.mockReset();
+      applyTierChange.mockResolvedValue({
+        userId: "user_1",
+        newTier: "fleet",
+        instancesUpdated: 1,
+        resizesAttempted: 0,
+        resizesSucceeded: 0,
+        resizesFailed: [],
+      });
+      return applyTierChange;
+    }
+
+    afterEach(() => {
+      jest.dontMock("@/lib/services/tier-change-service");
+    });
+
+    it("subscription.deleted keeps a yearly subscriber running on their yearly tier", async () => {
+      const applyTierChange = await mockApplyTierChange();
+      (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce(YEARLY_POWER);
+      const payloads = mockInstanceUpdateCapture();
+
+      await StripeWebhookService.handleSubscriptionDeleted({
+        id: "sub_1",
+        metadata: { user_id: "user_1" },
+      } as unknown as Stripe.Subscription);
+
+      expect(resolveEffectiveSubscription).toHaveBeenCalledWith("user_1", {
+        excludeStripe: true,
+      });
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toBeUndefined();
+      expect(payloads.find((p) => p.status === "scheduled_for_deletion")).toBeUndefined();
+      expect(applyTierChange).toHaveBeenCalledTimes(1);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_1", newTier: "fleet", source: "stripe" })
+      );
+    });
+
+    it("subscription.deleted arms no deletion fuse under the legacy hard-delete flag", async () => {
+      process.env.HERMES_BILLING_LEGACY_HARD_DELETE = "true";
+      const scheduleSpy = jest
+        .spyOn(StripeWebhookService, "scheduleInstancesForDeletion")
+        .mockResolvedValue(undefined);
+      try {
+        await mockApplyTierChange();
+        (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce(YEARLY_POWER);
+        mockInstanceUpdateCapture();
+
+        await StripeWebhookService.handleSubscriptionDeleted({
+          id: "sub_1",
+          metadata: { user_id: "user_1" },
+        } as unknown as Stripe.Subscription);
+
+        expect(scheduleSpy).not.toHaveBeenCalled();
+      } finally {
+        scheduleSpy.mockRestore();
+        delete process.env.HERMES_BILLING_LEGACY_HARD_DELETE;
+      }
+    });
+
+    it("subscription.deleted downgrades and suspends when no other lane pays", async () => {
+      const applyTierChange = await mockApplyTierChange();
+      const payloads = mockInstanceUpdateCapture();
+
+      await StripeWebhookService.handleSubscriptionDeleted({
+        id: "sub_1",
+        metadata: { user_id: "user_1" },
+      } as unknown as Stripe.Subscription);
+
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_1", newTier: "credit_base" })
+      );
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toMatchObject({
+        entitlement_reason: "subscription_canceled",
+      });
+    });
+
+    it("invoice.payment_failed does not suspend an Apple subscriber", async () => {
+      const stripe = getStripe();
+      (stripe.subscriptions.retrieve as jest.Mock).mockResolvedValue({
+        id: "sub_pf_apple",
+        status: "past_due",
+        metadata: { user_id: "user_pf_apple" },
+      });
+      (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce(APPLE_PRO);
+      const payloads = mockInstanceUpdateCapture();
+
+      await StripeWebhookService.handlePaymentFailed({
+        subscription: "sub_pf_apple",
+      } as unknown as Stripe.Invoice);
+
+      expect(resolveEffectiveSubscription).toHaveBeenCalledWith("user_pf_apple", {
+        excludeStripe: true,
+      });
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toBeUndefined();
+      // The card still failed, so the dunning nudge still goes out.
+      expect(maybeSendPaymentFailedRecoveryEmail).toHaveBeenCalled();
+    });
+
+    it.each(["past_due", "canceled", "unpaid"] as const)(
+      "subscription.updated → %s does not suspend a yearly subscriber",
+      async (status) => {
+        (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce(YEARLY_POWER);
+        const payloads = mockInstanceUpdateCapture();
+
+        await StripeWebhookService.handleSubscriptionChange({
+          id: "sub_lapse",
+          customer: "cus_1",
+          status,
+          start_date: 1000,
+          metadata: { user_id: "user_1", plan: "operator" },
+          items: { data: [{ current_period_start: 1000, current_period_end: 2000 }] },
+        } as unknown as Stripe.Subscription);
+
+        expect(resolveEffectiveSubscription).toHaveBeenCalledWith("user_1", {
+          excludeStripe: true,
+        });
+        expect(payloads.find((p) => p.entitlement_state === "suspended")).toBeUndefined();
+      }
+    );
+
+    it("subscription.updated → past_due still suspends a Stripe-only user", async () => {
+      const payloads = mockInstanceUpdateCapture();
+
+      await StripeWebhookService.handleSubscriptionChange({
+        id: "sub_lapse",
+        customer: "cus_1",
+        status: "past_due",
+        start_date: 1000,
+        metadata: { user_id: "user_1", plan: "operator" },
+        items: { data: [{ current_period_start: 1000, current_period_end: 2000 }] },
+      } as unknown as Stripe.Subscription);
+
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toMatchObject({
+        entitlement_reason: "subscription_past_due",
+      });
+    });
+
+    it("throws for redelivery, suspending nothing, when the cross-check itself fails", async () => {
+      const applyTierChange = await mockApplyTierChange();
+      (resolveEffectiveSubscription as jest.Mock).mockRejectedValueOnce(
+        new Error("connection reset")
+      );
+      const payloads = mockInstanceUpdateCapture();
+
+      await expect(
+        StripeWebhookService.handleSubscriptionDeleted({
+          id: "sub_1",
+          metadata: { user_id: "user_1" },
+        } as unknown as Stripe.Subscription)
+      ).rejects.toThrow("connection reset");
+
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toBeUndefined();
+      expect(applyTierChange).not.toHaveBeenCalled();
     });
   });
 
