@@ -20,6 +20,7 @@ import {
   isCompatibleProviderVmProvisionerVersion,
   supportsModelSettingsProvisionerVersion,
   isCompatibleProxmoxProvisionerVersion,
+  provisionerSupportsWindowsInstaller,
   providerProvisionerSupportsCatalogRuntime,
 } from "../portable-provisioner-contract";
 
@@ -99,6 +100,19 @@ describe("portable provisioner source contract", () => {
     expect(providerProvisionerSupportsCatalogRuntime(prior, "linux-desktop")).toBe(false);
     expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: prior })?.provisionerVersion).toBe(prior);
+  });
+  it("keeps the immediately prior releases compatible after a version bump", () => {
+    // Regression: the lists end with the current-version constant, so bumping it
+    // to 2026.09.21.1 silently dropped installed 2026.09.15.2 computers.
+    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"]) {
+      expect(isCompatibleProviderVmProvisionerVersion(prior)).toBe(true);
+      expect(supportsModelSettingsProvisionerVersion(prior)).toBe(true);
+    }
+    // 2026.09.22.2 changes only the provider-VM desktop planner, so hosts on
+    // 2026.09.22.1 keep the identical Proxmox lifecycle ABI and capabilities.
+    expect(isCompatibleProxmoxProvisionerVersion("2026.09.22.1")).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.09.22.1", "linux-desktop")).toBe(true);
+    expect(provisionerSupportsWindowsInstaller("2026.09.22.1")).toBe(true);
   });
   it("does not confuse native launch compatibility with model-settings delivery", () => {
     expect(supportsModelSettingsProvisionerVersion("2026.08.28.2")).toBe(true);
@@ -551,10 +565,19 @@ describe("portable provisioner source contract", () => {
     expect(start).toContain("/run/lock/hivra-allocation.lock");
     expect(start).toContain("HIVRA_BINDING_TAG_ENFORCED");
     expect(start).toContain("refusing to start VMID $VMID without its exact Hivra binding tag");
-    expect(start).toContain("insufficient live host memory to start VMID $VMID");
+    // Live memory/CPU admission is delegated to the shared host-capacity helper
+    // (behaviourally covered in host-capacity-admission.test.ts) and must run
+    // under the lifecycle lock before the VM is started.
+    const admission = start.indexOf('bash "${PROVISIONER_DIR}/hivra-host-capacity-admission" "$VMID"');
+    expect(admission).toBeGreaterThan(start.indexOf("flock -w 60 8"));
+    expect(admission).toBeLessThan(start.indexOf('qm start "$VMID"'));
     expect(start.indexOf("release_lifecycle_lock")).toBeLessThan(start.indexOf("# wait for the box to boot"));
     expect(action).toContain("lifecycleMutationPrelude");
-    expect(action).toContain("liveMemoryAdmissionBody");
+    expect(action).toContain("const serializedAdmission = buildHostCapacityAdmissionCommand(");
+    // Resize admission runs under the lifecycle prelude, before the VM is stopped and resized.
+    const resizeAdmission = action.indexOf("${serializedAdmission}");
+    expect(resizeAdmission).toBeGreaterThan(action.indexOf("${lifecyclePrelude}"));
+    expect(resizeAdmission).toBeLessThan(action.indexOf("${verifiedStopVmBody(vmid, 40)}", resizeAdmission));
     expect(action).toContain("restore_previous_size");
     expect(action).toContain("new size failed to start and prior config could not be restored");
     expect(action).toContain("HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced");

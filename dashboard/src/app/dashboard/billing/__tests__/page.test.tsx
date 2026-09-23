@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import BillingPage from "../page";
@@ -14,10 +14,15 @@ const mockRouter = {
 const mockSearchParams = {
   get: mockGet,
 };
+// Next's router hands out a NEW searchParams object whenever the URL changes
+// (including window.history.replaceState); tests can swap it here.
+const mockSearchParamsHolder: { current: { get: (key: string) => string | null } } = {
+  current: mockSearchParams,
+};
 
 jest.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
-  useSearchParams: () => mockSearchParams,
+  useSearchParams: () => mockSearchParamsHolder.current,
 }));
 
 jest.mock("framer-motion", () => {
@@ -134,6 +139,7 @@ describe("BillingPage", () => {
     jest.clearAllMocks();
     mockGet.mockReset();
     mockGet.mockReturnValue(null);
+    mockSearchParamsHolder.current = mockSearchParams;
     process.env.NEXT_PUBLIC_BILLING_V2_ENABLED = "true";
     process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = "true";
     process.env.NEXT_PUBLIC_CREDIT_TOPUPS_ENABLED = "true";
@@ -490,6 +496,159 @@ describe("BillingPage", () => {
     } else {
       process.env.NEXT_PUBLIC_CREDIT_TOPUPS_ENABLED = originalCreditTopUpsFlag;
     }
+  });
+
+  describe("yearly $HermesOS payment banner", () => {
+    const yearlyQuote = (overrides: Record<string, unknown> = {}) => ({
+      id: "yq_renewal",
+      tier: "pro",
+      usdTargetCents: 4900,
+      priceUsdAtQuote: "0.0000025",
+      tokensRequiredDisplay: "19600000",
+      tokenSymbol: "Hivra",
+      depositAddress: "0x000000000000000000000000000000000000ba5e",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      status: "active",
+      ...overrides,
+    });
+    const currentYear = {
+      id: "ys_1",
+      tier: "pro",
+      yearlyQuoteId: "yq_first_year",
+      paidAt: "2025-10-01T00:00:00.000Z",
+      expiresAt: "2026-10-01T00:00:00.000Z",
+      status: "active",
+      sweepStatus: "swept",
+      sweepTxHash: null,
+      amountReceivedRaw: "1",
+    };
+
+    function withYearlyResponse(data: Record<string, unknown>) {
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(input);
+        if (url.includes("/api/billing/yearly-token-quote") && requestMethod(input, init) === "GET") {
+          return Promise.resolve(apiResponse({ success: true, data }));
+        }
+        return base(input, init);
+      });
+    }
+
+    it("shows a subscriber the progress of a renewal they are paying", async () => {
+      withYearlyResponse({ pro: yearlyQuote(), power: null, proSubscription: currentYear, powerSubscription: null });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText(/Yearly \$HermesOS · Pro/)).toBeInTheDocument();
+      expect(screen.getByText("Waiting…")).toBeInTheDocument();
+    });
+
+    it("shows a payable quote of one tier ahead of another tier's quote under review", async () => {
+      withYearlyResponse({
+        pro: null,
+        power: yearlyQuote({ id: "yq_power", tier: "power" }),
+        proPending: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        powerPending: null,
+        proSubscription: null,
+        powerSubscription: null,
+      });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText(/Yearly \$HermesOS · Power/)).toBeInTheDocument();
+      expect(screen.queryByText("Payment under review")).not.toBeInTheDocument();
+    });
+
+    it("opens the payment from the renewal email link even though stripping the link re-renders the page", async () => {
+      mockGet.mockImplementation((key: string) => (key === "plan" ? "pro" : key === "yearly_token" ? "1" : null));
+      withYearlyResponse({ quote: null, pendingQuote: null, subscription: currentYear, tier: "pro" });
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/yearly-token-quote") && requestMethod(input, init) === "POST") {
+          return Promise.resolve(apiResponse({ success: true, data: yearlyQuote() }));
+        }
+        return base(input, init);
+      });
+
+      const { rerender } = render(<BillingPage />);
+      // What Next does after the page strips the params with replaceState:
+      // a new, empty searchParams and a re-render, before the modal opens.
+      mockSearchParamsHolder.current = { get: () => null };
+      rerender(<BillingPage />);
+
+      expect(await screen.findByText(/Step 1 · Send exactly/)).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledWith("/api/billing/yearly-token-quote?tier=pro", { method: "GET" });
+    });
+
+    it("shows the banner for a quote minted from the email link once the payment modal is closed", async () => {
+      mockGet.mockImplementation((key: string) => (key === "plan" ? "pro" : key === "yearly_token" ? "1" : null));
+      let minted = false;
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(input);
+        if (url.includes("/api/billing/yearly-token-quote")) {
+          if (requestMethod(input, init) === "POST") {
+            minted = true;
+            return Promise.resolve(apiResponse({ success: true, data: yearlyQuote() }));
+          }
+          const data = url.includes("?tier=")
+            ? { quote: null, pendingQuote: null, subscription: currentYear, tier: "pro" }
+            : { pro: minted ? yearlyQuote() : null, power: null, proSubscription: currentYear, powerSubscription: null };
+          return Promise.resolve(apiResponse({ success: true, data }));
+        }
+        return base(input, init);
+      });
+
+      render(<BillingPage />);
+      const dialog = await screen.findByRole("dialog", { name: /Pay Pro yearly with \$HermesOS/ });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+      expect(await screen.findByText(/Yearly \$HermesOS · Pro/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Check now/ })).toBeInTheDocument();
+    });
+
+    it("does not mint a new quote from the email link while a payment for that tier is under review", async () => {
+      mockGet.mockImplementation((key: string) => (key === "plan" ? "pro" : key === "yearly_token" ? "1" : null));
+      withYearlyResponse({
+        quote: null,
+        pendingQuote: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        pro: null,
+        power: null,
+        proPending: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        powerPending: null,
+        proSubscription: null,
+        powerSubscription: null,
+      });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText("Payment under review")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith("/api/billing/yearly-token-quote?tier=pro", { method: "GET" })
+      );
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestUrl(input as RequestInfo).includes("/api/billing/yearly-token-quote") &&
+            requestMethod(input as RequestInfo, init as RequestInit) === "POST"
+        )
+      ).toBe(false);
+    });
+
+    it("tells the user a payment is under review instead of hiding the quote", async () => {
+      withYearlyResponse({
+        pro: null,
+        power: null,
+        proPending: yearlyQuote({ status: "manual_review", expiresAt: "2026-01-01T00:00:00.000Z" }),
+        powerPending: null,
+        proSubscription: null,
+        powerSubscription: null,
+      });
+
+      render(<BillingPage />);
+
+      expect(await screen.findByText("Payment under review")).toBeInTheDocument();
+    });
   });
 
   it("shows credits, plan grant, and top-up packages for subscribed users", async () => {

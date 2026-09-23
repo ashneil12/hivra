@@ -3,8 +3,9 @@
  *
  * Settlement credits the user's managed Venice wallet immediately after a
  * quote-matched token deposit. This module performs the custody follow-up:
- * move the same $HERMESOS amount from the user's Bankr deposit wallet into
- * the managed Venice treasury wallet.
+ * move the $HERMESOS amount the quote's deposit lot actually RECEIVED (an
+ * accepted over-send credits, and so sweeps, more than the quote asked for)
+ * from the user's Bankr deposit wallet into the managed Venice treasury.
  *
  * The sweep is deliberately separate from quote settlement. A stuck sweep
  * must not take away user credit, but it must be visible, retryable, and
@@ -27,6 +28,7 @@ import {
   getBankrDepositWalletCredentialForUser,
 } from "./bankr-deposit-wallets";
 import { mintScopedTransferApiKey, submitBankrTransfer } from "./bankr-withdraw";
+import { loadManagedVeniceTokenDepositLot } from "./managed-venice-token-quotes";
 import {
   ensureWalletHasGas,
   type EnsureWalletGasResult,
@@ -159,6 +161,24 @@ function readLockedValueMicroUsd(value: unknown): number {
   return 0;
 }
 
+// The quote's locked value is for the QUOTED tokens; the swept (received)
+// amount is valued at the same snapshot price.
+function sweptValueMicroUsd(quote: ManagedVeniceSweepQuoteRow, amountRaw: bigint): number {
+  const locked = readLockedValueMicroUsd(quote.locked_value_micro_usd);
+  const quotedRaw = BigInt(normalizeNumericToBigIntString(quote.token_amount_raw));
+  if (quotedRaw <= 0n || amountRaw === quotedRaw) return locked;
+  return Number((BigInt(locked) * amountRaw) / quotedRaw);
+}
+
+// Sweep what the deposit actually delivered: the quote's deposit lot holds the
+// received token amount (an accepted over-send is larger than the quote), so
+// the excess never stays stranded in the shared credit_deposit wallet. Legacy
+// settled quotes without a lot row fall back to the quoted amount.
+async function resolveSweepAmountRaw(quote: ManagedVeniceSweepQuoteRow, db: SupabaseLike) {
+  const lot = await loadManagedVeniceTokenDepositLot(quote.id, db);
+  return BigInt(normalizeNumericToBigIntString(lot ? lot.tokenAmountRaw : quote.token_amount_raw));
+}
+
 async function markSweepFailed(params: {
   db: SupabaseLike;
   quoteId: string;
@@ -207,6 +227,7 @@ async function markSweepSucceeded(params: {
   db: SupabaseLike;
   quote: ManagedVeniceSweepQuoteRow;
   txHash: string | null;
+  amountRaw: bigint;
   amountDisplay: string;
   destinationAddress: string;
   now: Date;
@@ -236,8 +257,8 @@ async function markSweepSucceeded(params: {
     event_type: "treasury_sweep",
     reference_id: params.quote.id,
     idempotency_key: `managed_venice_treasury_sweep:${params.quote.id}:${params.txHash || "no_tx_hash"}`,
-    token_amount_raw: normalizeNumericToBigIntString(params.quote.token_amount_raw),
-    amount_micro_usd: readLockedValueMicroUsd(params.quote.locked_value_micro_usd),
+    token_amount_raw: params.amountRaw.toString(),
+    amount_micro_usd: sweptValueMicroUsd(params.quote, params.amountRaw),
     metadata: {
       tokenAddress: HERMESOS_TOKEN_ADDRESS,
       tokenDecimals: HERMESOS_TOKEN_DECIMALS,
@@ -350,7 +371,20 @@ export async function sweepManagedVeniceTokenQuote(
   }
 
   const walletAddress = credential.evmAddress;
-  const expectedRaw = BigInt(normalizeNumericToBigIntString(quote.token_amount_raw));
+  let expectedRaw: bigint;
+  try {
+    expectedRaw = await resolveSweepAmountRaw(quote, db);
+  } catch (error) {
+    const message = `deposit lot read failed: ${safeErrorMessage(error)}`;
+    await markSweepFailed({ db, quoteId, error: message, now, destinationAddress: treasury });
+    return {
+      quoteId,
+      userId,
+      outcome: "transfer_failed",
+      destinationAddress: treasury,
+      error: message,
+    };
+  }
   const readBalance = options.readHermesBalance ?? fetchHermesTokenBalance;
 
   let liveBalanceRaw: bigint;
@@ -479,6 +513,7 @@ export async function sweepManagedVeniceTokenQuote(
     db,
     quote,
     txHash,
+    amountRaw: expectedRaw,
     amountDisplay,
     destinationAddress: treasury,
     now,

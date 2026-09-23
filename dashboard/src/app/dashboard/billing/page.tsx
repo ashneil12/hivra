@@ -179,6 +179,8 @@ function BillingPageContent() {
   // paywall_viewed fires once per mount when the plan grid first renders
   // (post-load). The ref guards against re-fires on data refreshes.
   const paywallViewedRef = useRef(false);
+  // The ?plan=&yearly_token=1 deep link is handled once per page load.
+  const yearlyDeepLinkHandledRef = useRef(false);
   const [activityLoading, setActivityLoading] = useState(billingV2Enabled);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [tokenLoading, setTokenLoading] = useState(cryptoBillingEnabled);
@@ -232,11 +234,21 @@ function BillingPageContent() {
   const [yearlyTokenQuote, setYearlyTokenQuote] = useState<YearlyTokenQuotePayload | null>(null);
   const [yearlyTokenLoading, setYearlyTokenLoading] = useState(false);
   const [yearlyTokenError, setYearlyTokenError] = useState<string | null>(null);
+  // Captured when the modal opens: minting a new quote supersedes the pending
+  // review in the reloaded state, but the user should still see the warning.
+  const [yearlyTokenReviewPending, setYearlyTokenReviewPending] = useState(false);
   // Durable active-quotes state. Quotes survive a 20-min server lifetime
   // in `yearly_token_quotes`; we GET them on page mount so a refresh /
   // back-nav surfaces the same locked amount + countdown via the banner
   // instead of pretending nothing's in flight.
   const [activeYearlyQuotes, setActiveYearlyQuotes] = useState<{
+    pro: YearlyTokenQuotePayload | null;
+    power: YearlyTokenQuotePayload | null;
+  }>({ pro: null, power: null });
+  // Quotes that can no longer be paid but still matter, per tier: expired
+  // inside the late-payment grace (a payment on its way is still picked up)
+  // or a payment under manual review. Shown so nobody pays twice.
+  const [pendingYearlyQuotes, setPendingYearlyQuotes] = useState<{
     pro: YearlyTokenQuotePayload | null;
     power: YearlyTokenQuotePayload | null;
   }>({ pro: null, power: null });
@@ -367,6 +379,7 @@ function BillingPageContent() {
       const res = await fetch("/api/billing/yearly-token-quote", { method: "GET" });
       if (!res.ok) {
         setActiveYearlyQuotes({ pro: null, power: null });
+        setPendingYearlyQuotes({ pro: null, power: null });
         setRecentYearlySubs({ pro: null, power: null });
         return;
       }
@@ -375,6 +388,10 @@ function BillingPageContent() {
         setActiveYearlyQuotes({
           pro: (body.data?.pro as YearlyTokenQuotePayload | null) ?? null,
           power: (body.data?.power as YearlyTokenQuotePayload | null) ?? null,
+        });
+        setPendingYearlyQuotes({
+          pro: (body.data?.proPending as YearlyTokenQuotePayload | null) ?? null,
+          power: (body.data?.powerPending as YearlyTokenQuotePayload | null) ?? null,
         });
         setRecentYearlySubs({
           pro: (body.data?.proSubscription as YearlyTokenSubscriptionPayload | null) ?? null,
@@ -496,7 +513,13 @@ function BillingPageContent() {
     } else if (linkYearlyToken) {
       setCadence("yearly");
     }
-    if (cryptoBillingEnabled && linkYearlyToken && (linkPlan === "operator" || linkPlan === "fleet" || linkPlan === "pro" || linkPlan === "power")) {
+    if (
+      cryptoBillingEnabled &&
+      linkYearlyToken &&
+      !yearlyDeepLinkHandledRef.current &&
+      (linkPlan === "operator" || linkPlan === "fleet" || linkPlan === "pro" || linkPlan === "power")
+    ) {
+      yearlyDeepLinkHandledRef.current = true;
       const tier: "pro" | "power" =
         linkPlan === "operator" || linkPlan === "pro" ? "pro" : "power";
       // Strip the deep-link params from the URL FIRST so a refresh /
@@ -511,8 +534,12 @@ function BillingPageContent() {
         url.searchParams.delete("from");
         window.history.replaceState(null, "", url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : ""));
       }
-      // Defer to next tick so state updates from above settle first.
-      const timer = window.setTimeout(() => {
+      // Defer to next tick so state updates from above settle first. The
+      // timer is deliberately NOT cleared when this effect re-runs: stripping
+      // the params above makes Next's router hand out a new searchParams,
+      // which re-runs the effect before the timer fires (and the ref above
+      // keeps it from firing twice).
+      window.setTimeout(() => {
         setYearlyTokenTier(tier);
         setYearlyTokenLoading(true);
         void (async () => {
@@ -530,6 +557,13 @@ function BillingPageContent() {
               setYearlyTokenQuote(getBody.data.quote);
               return;
             }
+            // A payment for this tier is under review: don't mint a new quote
+            // (that invites paying twice); the banner explains the review.
+            if (getRes.ok && getBody?.success && getBody.data?.pendingQuote?.status === "manual_review") {
+              setYearlyTokenTier(null);
+              void loadYearlyQuotes();
+              return;
+            }
             const res = await fetch("/api/billing/yearly-token-quote", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -538,6 +572,8 @@ function BillingPageContent() {
             const body = await res.json().catch(() => ({}));
             if (res.ok && body?.success) {
               setYearlyTokenQuote(body.data);
+              // The banner (Check now, polling) is driven by the loaded state.
+              void loadYearlyQuotes();
             } else {
               setYearlyTokenError(body?.error || `Failed to get quote (${res.status}).`);
             }
@@ -546,7 +582,6 @@ function BillingPageContent() {
           }
         })();
       }, 50);
-      return () => window.clearTimeout(timer);
     }
   }, [billingV2Enabled, cryptoBillingEnabled, fetchBillingActivity, fetchManagedVeniceSummary, fetchUsage, fetchTokenHolding, loadYearlyQuotes, openManagedVeniceDeposit, searchParams, router]);
 
@@ -640,17 +675,20 @@ function BillingPageContent() {
     setYearlyTokenLoading(false);
   };
 
-  // While a yearly $HermesOS quote is active OR an activated sub still
-  // has sweep_status='pending', poll every 15 s so the dashboard banner
-  // animates through stages (waiting → activated → swept) without the
-  // user refreshing. The interval auto-stops when nothing's in flight.
+  // While a yearly $HermesOS quote is active, an expired quote may still
+  // receive a late payment, OR an activated sub still has
+  // sweep_status='pending', poll every 15 s so the dashboard banner animates
+  // through stages (waiting → activated → swept) without the user
+  // refreshing. The interval auto-stops when nothing's in flight.
   useEffect(() => {
     const hasActiveQuote =
       activeYearlyQuotes.pro !== null || activeYearlyQuotes.power !== null;
+    const hasLatePaymentWatch =
+      pendingYearlyQuotes.pro?.status === "expired" || pendingYearlyQuotes.power?.status === "expired";
     const hasPendingSweep =
       (recentYearlySubs.pro !== null && recentYearlySubs.pro.sweepStatus === "pending") ||
       (recentYearlySubs.power !== null && recentYearlySubs.power.sweepStatus === "pending");
-    if (!hasActiveQuote && !hasPendingSweep) return;
+    if (!hasActiveQuote && !hasLatePaymentWatch && !hasPendingSweep) return;
     const handle = window.setInterval(() => {
       void loadYearlyQuotes();
     }, 15_000);
@@ -658,10 +696,55 @@ function BillingPageContent() {
   }, [
     activeYearlyQuotes.pro,
     activeYearlyQuotes.power,
+    pendingYearlyQuotes.pro,
+    pendingYearlyQuotes.power,
     recentYearlySubs.pro,
     recentYearlySubs.power,
     loadYearlyQuotes,
   ]);
+
+  // The payment-progress banner, shown to subscribed users too (a renewal is
+  // paid while the current year is still live). Active quote first, then a
+  // quote that is under review or watching for a late payment, then a
+  // subscription that just activated or is still sweeping.
+  const renderYearlyPaymentBanner = () => {
+    const candidates = [
+      {
+        quote: activeYearlyQuotes.pro ?? pendingYearlyQuotes.pro,
+        sub: recentYearlySubs.pro,
+        tier: "pro" as const,
+      },
+      {
+        quote: activeYearlyQuotes.power ?? pendingYearlyQuotes.power,
+        sub: recentYearlySubs.power,
+        tier: "power" as const,
+      },
+    ];
+    // Across tiers: a quote that can still be paid wins over one under review
+    // or watching for a late payment, which wins over a subscription.
+    const payable = (tier: "pro" | "power") => (tier === "pro" ? activeYearlyQuotes.pro : activeYearlyQuotes.power);
+    let chosen = candidates.find((c) => payable(c.tier)) ?? candidates.find((c) => c.quote);
+    if (!chosen) {
+      const fiveMinAgo = Date.now() - 5 * 60_000;
+      chosen = candidates.find(
+        (c) => c.sub && (c.sub.sweepStatus === "pending" || Date.parse(c.sub.paidAt) > fiveMinAgo),
+      );
+    }
+    if (!chosen || (!chosen.quote && !chosen.sub)) return null;
+    const chosenTier = chosen.tier;
+    return (
+      <motion.div variants={sectionVariants} style={{ marginBottom: "1.5rem" }}>
+        <YearlyPaymentProgress
+          tier={chosenTier}
+          quote={chosen.quote ?? null}
+          subscription={chosen.sub ?? null}
+          onResume={() => handleResumeYearlyQuote(chosenTier)}
+          onCheckNow={() => void handleCheckNow()}
+          checkingNow={yearlyCheckingNow}
+        />
+      </motion.div>
+    );
+  };
 
   /**
    * Open the "Pay yearly with $HermesOS" modal. POST mints a fresh
@@ -671,6 +754,9 @@ function BillingPageContent() {
    * state after success so the durable banner shows up.
    */
   const handleYearlyTokenPay = async (tier: "pro" | "power") => {
+    setYearlyTokenReviewPending(
+      (tier === "pro" ? pendingYearlyQuotes.pro : pendingYearlyQuotes.power)?.status === "manual_review"
+    );
     setYearlyTokenTier(tier);
     setYearlyTokenLoading(true);
     setYearlyTokenError(null);
@@ -697,9 +783,12 @@ function BillingPageContent() {
   };
 
   const handleYearlyTokenClose = () => {
+    setYearlyTokenReviewPending(false);
     setYearlyTokenTier(null);
     setYearlyTokenQuote(null);
     setYearlyTokenError(null);
+    // Show server truth in the banner once the modal is gone.
+    void loadYearlyQuotes();
   };
 
   const handleChangePlan = async (newPlan: PlanKey) => {
@@ -1180,6 +1269,9 @@ function BillingPageContent() {
 
       {data?.subscribed && data.plan && data.usage ? (
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants}>
+          {/* ── Yearly $HermesOS payment in flight (e.g. a renewal) ───── */}
+          {renderYearlyPaymentBanner()}
+
           {/* ── Active Plan Panel ─────────────────────────────────────────── */}
           <motion.div variants={sectionVariants} style={{
             border: "1px solid var(--ink-black)", background: "var(--bg-surface)",
@@ -1630,44 +1722,7 @@ function BillingPageContent() {
       ) : (
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants}>
           {/* ── Active yearly $HermesOS quote (durable across reload) ─── */}
-          {(() => {
-            // Resolve the most-relevant tier to surface in the banner.
-            // Active quote wins over a recent sub; if both quotes
-            // exist, surface whichever has the soonest expiry. If no
-            // quote but a recent sub exists with sweep_status pending,
-            // surface that so the user sees activation-in-progress.
-            const candidates = [
-              { quote: activeYearlyQuotes.pro, sub: recentYearlySubs.pro, tier: "pro" as const },
-              { quote: activeYearlyQuotes.power, sub: recentYearlySubs.power, tier: "power" as const },
-            ];
-            // Prefer the one with an active quote.
-            let chosen = candidates.find((c) => c.quote);
-            // Otherwise, surface a sub whose sweep is still pending OR
-            // a sub that just activated (paid_at within 5 minutes) so
-            // the user sees the celebration.
-            if (!chosen) {
-              const fiveMinAgo = Date.now() - 5 * 60_000;
-              chosen = candidates.find(
-                (c) =>
-                  c.sub &&
-                  (c.sub.sweepStatus === "pending" ||
-                    Date.parse(c.sub.paidAt) > fiveMinAgo),
-              );
-            }
-            if (!chosen || (!chosen.quote && !chosen.sub)) return null;
-            return (
-              <motion.div variants={sectionVariants} style={{ marginBottom: "1.5rem" }}>
-                <YearlyPaymentProgress
-                  tier={chosen.tier}
-                  quote={chosen.quote ?? null}
-                  subscription={chosen.sub ?? null}
-                  onResume={() => handleResumeYearlyQuote(chosen!.tier)}
-                  onCheckNow={() => void handleCheckNow()}
-                  checkingNow={yearlyCheckingNow}
-                />
-              </motion.div>
-            );
-          })()}
+          {renderYearlyPaymentBanner()}
 
           {/* ── No Subscription — Plan Selection ────────────────────────── */}
           <motion.div variants={sectionVariants} style={{ textAlign: "center", marginBottom: "3rem" }}>
@@ -2103,6 +2158,7 @@ function BillingPageContent() {
         error={yearlyTokenError}
         quote={yearlyTokenQuote}
         onClose={handleYearlyTokenClose}
+        reviewPending={yearlyTokenReviewPending}
       />
     </motion.div>
   );

@@ -6,9 +6,10 @@
  * Yearly token-payment flow: user clicks "Pay yearly with $HermesOS" on
  * /dashboard/billing, this endpoint mints a 20-min lock at live USD ÷
  * live $HERMESOS price ($49 Pro, $99 Power), and the deposit address
- * (the user's credit_deposit Bankr wallet) is shown. The cron sees
- * matching tokens land, activates a 365-day yearly subscription, and
- * sweeps the tokens to HERMES_TREASURY_ADDRESS.
+ * (the user's credit_deposit Bankr wallet) is shown. The cron binds the
+ * on-chain transfer that paid the quote, activates a 365-day yearly
+ * subscription (or extends a live one by a year), and sweeps that
+ * transfer's tokens to HERMES_TREASURY_ADDRESS.
  */
 
 import { NextRequest } from "next/server";
@@ -23,6 +24,7 @@ import {
   createYearlyTokenQuote,
   getActiveYearlyTokenQuote,
   getActiveYearlyTokenQuotes,
+  getPendingYearlyTokenQuotes,
   type YearlyTokenQuote,
 } from "@/lib/billing/yearly-token-quotes";
 import {
@@ -62,10 +64,11 @@ function serializeQuote(quote: YearlyTokenQuote) {
 interface RecentSubRow {
   id: string;
   tier: TierKey;
+  yearly_quote_id: string | null;
   paid_at: string;
   expires_at: string;
-  status: "active" | "grace" | "expired" | "cancelled";
-  sweep_status: "pending" | "swept" | "failed" | "skipped";
+  status: "active" | "grace" | "expired" | "cancelled" | "renewed";
+  sweep_status: "pending" | "sweeping" | "swept" | "failed" | "skipped" | "needs_operator";
   sweep_tx_hash: string | null;
   amount_received_raw: string;
 }
@@ -83,7 +86,7 @@ async function loadRecentSubscriptions(
   const { data, error } = await supabaseAdmin
     .from("yearly_token_subscriptions")
     .select(
-      "id, tier, paid_at, expires_at, status, sweep_status, sweep_tx_hash, amount_received_raw::text",
+      "id, tier, yearly_quote_id, paid_at, expires_at, status, sweep_status, sweep_tx_hash, amount_received_raw::text",
     )
     .eq("user_id", userId)
     .order("paid_at", { ascending: false })
@@ -101,6 +104,7 @@ function serializeSub(row: RecentSubRow | null) {
   return {
     id: row.id,
     tier: row.tier,
+    yearlyQuoteId: row.yearly_quote_id ?? null,
     paidAt: row.paid_at,
     expiresAt: row.expires_at,
     status: row.status,
@@ -124,25 +128,38 @@ export async function GET(req: NextRequest) {
     const tierParam = url.searchParams.get("tier");
     const tier = tierParam && isValidTier(tierParam) ? tierParam : null;
 
+    // Quotes that can no longer be paid but still matter: expired inside the
+    // late-payment grace, or a payment under manual review. The banner shows
+    // them so the user is not prompted to pay a second time.
+    const pendingFor = (pending: YearlyTokenQuote[], forTier: TierKey) => {
+      const quote = pending.find((q) => q.tier === forTier);
+      return quote ? serializeQuote(quote) : null;
+    };
+
     if (tier) {
-      const [quote, subs] = await Promise.all([
+      const [quote, subs, pending] = await Promise.all([
         getActiveYearlyTokenQuote({ userId, tier }),
         loadRecentSubscriptions(userId),
+        getPendingYearlyTokenQuotes(userId),
       ]);
       return apiSuccess({
         quote: quote ? serializeQuote(quote) : null,
+        pendingQuote: pendingFor(pending, tier),
         subscription: serializeSub(tier === "pro" ? subs.pro : subs.power),
         tier,
       });
     }
 
-    const [quotes, subs] = await Promise.all([
+    const [quotes, subs, pending] = await Promise.all([
       getActiveYearlyTokenQuotes(userId),
       loadRecentSubscriptions(userId),
+      getPendingYearlyTokenQuotes(userId),
     ]);
     const proQuote = quotes.find((q) => q.tier === "pro") ?? null;
     const powerQuote = quotes.find((q) => q.tier === "power") ?? null;
     return apiSuccess({
+      proPending: pendingFor(pending, "pro"),
+      powerPending: pendingFor(pending, "power"),
       quotes: quotes.map(serializeQuote),
       pro: proQuote ? serializeQuote(proQuote) : null,
       power: powerQuote ? serializeQuote(powerQuote) : null,

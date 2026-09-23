@@ -1,5 +1,6 @@
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PLANS } from "@/lib/subscription/plans";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
@@ -23,6 +24,7 @@ interface MockYearlyRow {
   tier: "pro" | "power";
   status: string;
   expires_at: string;
+  paid_at?: string;
 }
 
 interface MockAppleRow {
@@ -34,7 +36,7 @@ interface MockAppleRow {
 function mockTables(opts: {
   sub?: MockSubData | null;
   quals?: MockQualRow[];
-  yearly?: MockYearlyRow | null;
+  yearly?: MockYearlyRow | MockYearlyRow[] | null;
   apple?: MockAppleRow | null;
 }) {
   const subQuery = {
@@ -58,15 +60,46 @@ function mockTables(opts: {
     return qualQuery;
   });
 
-  // yearly_token_subscriptions: chain is .eq("user_id", ...).in("status",
-  // [...]).order(...).limit(1).maybeSingle()
-  const yearlyQuery = {
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    in: jest.fn().mockReturnThis(),
-    order: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    maybeSingle: jest.fn().mockResolvedValue({ data: opts.yearly ?? null, error: null }),
+  // yearly_token_subscriptions: emulates the database for whichever chain the
+  // resolver builds — .in() filters, .order() sorts, .limit() truncates,
+  // .maybeSingle() takes the first row, and awaiting the chain yields every
+  // row that survived — so fixtures describe table contents, not query shape.
+  const yearlyTable = opts.yearly == null ? [] : Array.isArray(opts.yearly) ? opts.yearly : [opts.yearly];
+  let yearlyResult = yearlyTable.map((row) => ({ paid_at: "2026-05-01T12:35:18.000Z", ...row }));
+  const yearlyQuery: {
+    select: jest.Mock;
+    eq: jest.Mock;
+    in: jest.Mock;
+    order: jest.Mock;
+    limit: jest.Mock;
+    maybeSingle: jest.Mock;
+    then: (
+      resolve: (value: { data: MockYearlyRow[]; error: null }) => unknown,
+      reject: (reason: unknown) => unknown
+    ) => Promise<unknown>;
+  } = {
+    select: jest.fn(() => yearlyQuery),
+    eq: jest.fn(() => yearlyQuery),
+    in: jest.fn((column: keyof MockYearlyRow, values: string[]) => {
+      yearlyResult = yearlyResult.filter((row) => values.includes(String(row[column])));
+      return yearlyQuery;
+    }),
+    order: jest.fn((column: keyof MockYearlyRow, { ascending }: { ascending: boolean }) => {
+      yearlyResult = [...yearlyResult].sort((a, b) => {
+        const cmp = String(a[column]).localeCompare(String(b[column]));
+        return ascending ? cmp : -cmp;
+      });
+      return yearlyQuery;
+    }),
+    limit: jest.fn((count: number) => {
+      yearlyResult = yearlyResult.slice(0, count);
+      return yearlyQuery;
+    }),
+    maybeSingle: jest.fn(() => Promise.resolve({ data: yearlyResult[0] ?? null, error: null })),
+    then: (
+      resolve: (value: { data: MockYearlyRow[]; error: null }) => unknown,
+      reject: (reason: unknown) => unknown
+    ) => Promise.resolve({ data: yearlyResult, error: null }).then(resolve, reject),
   };
 
   // apple_iap_subscriptions: chain is .eq("user_id", ...).in("status",
@@ -339,6 +372,83 @@ describe("resolveEffectiveSubscription", () => {
     expect(result?.source).toBe("token_yearly");
     expect(result?.plan).toBe("fleet");
     expect(result?.tokenTier).toBe("power");
+  });
+
+  describe("more than one live yearly-token subscription (one Pro, one Power)", () => {
+    const POWER_LIVE: MockYearlyRow = {
+      tier: "power",
+      status: "active",
+      paid_at: "2026-06-01T00:00:00.000Z",
+      expires_at: "2027-06-01T00:00:00.000Z",
+    };
+    // settle_yearly_token_payment marks the live same-tier row 'renewed' and
+    // inserts a NEW active row with paid_at = the renewal payment.
+    const PRO_RENEWED_OLD: MockYearlyRow = {
+      tier: "pro",
+      status: "renewed",
+      paid_at: "2025-10-10T00:00:00.000Z",
+      expires_at: "2026-10-10T00:00:00.000Z",
+    };
+    const PRO_RENEWAL: MockYearlyRow = {
+      tier: "pro",
+      status: "active",
+      paid_at: "2026-09-22T12:00:00.000Z",
+      expires_at: "2027-10-10T00:00:00.000Z",
+    };
+
+    it("keeps the paid Power tier when a Pro renewal is newer", async () => {
+      mockTables({ sub: null, yearly: [POWER_LIVE, PRO_RENEWED_OLD, PRO_RENEWAL] });
+
+      const result = await resolveEffectiveSubscription("user_power_and_pro");
+      expect(result).toMatchObject({
+        source: "token_yearly",
+        plan: "fleet",
+        tokenTier: "power",
+        instance_limit: PLANS.fleet.maxAgents,
+        total_cpu_budget: PLANS.fleet.totalCpu,
+        total_ram_budget: PLANS.fleet.totalRam,
+        currentPeriodEnd: POWER_LIVE.expires_at,
+      });
+    });
+
+    it("keeps Power while it is in grace, even with a newer active Pro row", async () => {
+      mockTables({
+        sub: null,
+        yearly: [
+          { ...POWER_LIVE, status: "grace", expires_at: "2026-09-20T00:00:00.000Z" },
+          PRO_RENEWAL,
+        ],
+      });
+
+      const result = await resolveEffectiveSubscription("user_power_grace");
+      expect(result).toMatchObject({ plan: "fleet", tokenTier: "power" });
+    });
+
+    it("falls back to the live Pro row once Power is no longer live", async () => {
+      mockTables({ sub: null, yearly: [{ ...POWER_LIVE, status: "expired" }, PRO_RENEWAL] });
+
+      const result = await resolveEffectiveSubscription("user_power_expired");
+      expect(result).toMatchObject({
+        plan: "operator",
+        tokenTier: "pro",
+        currentPeriodEnd: PRO_RENEWAL.expires_at,
+      });
+    });
+
+    it("breaks a same-tier tie by the later expiry", async () => {
+      // The partial unique index allows one live row per tier, so this only
+      // pins the tiebreak should that invariant ever be relaxed.
+      mockTables({
+        sub: null,
+        yearly: [
+          { ...POWER_LIVE, paid_at: "2026-08-01T00:00:00.000Z", expires_at: "2027-06-01T00:00:00.000Z" },
+          { ...POWER_LIVE, paid_at: "2026-07-01T00:00:00.000Z", expires_at: "2028-06-01T00:00:00.000Z" },
+        ],
+      });
+
+      const result = await resolveEffectiveSubscription("user_power_twice");
+      expect(result?.currentPeriodEnd).toBe("2028-06-01T00:00:00.000Z");
+    });
   });
 
   it("Stripe outranks yearly-token when both are present", async () => {

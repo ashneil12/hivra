@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { GET } from "../route";
+import { GET, maxDuration } from "../route";
 import { reconcilePendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-reconciliation";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -39,8 +39,10 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
       underconfirmed: 0,
       noMatch: 1,
       manualReview: 0,
+      cancelled: 0,
       skipped: 0,
       failed: 0,
+      transferSurfacing: { checked: 1, complete: 1, pending: 0, failed: 0 },
       results: [],
     });
   });
@@ -124,6 +126,53 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
         }),
       })
     );
+  });
+
+  it("allows the same 300 s as the sibling Base-scanning billing cron", () => {
+    expect(maxDuration).toBe(300);
+  });
+
+  it("logs quotes deferred by the tick's time budget with the cancelled and surfacing counts, without an ops event", async () => {
+    (reconcilePendingManagedVeniceTokenQuotes as jest.Mock).mockResolvedValueOnce({
+      checked: 30,
+      settled: 0,
+      underconfirmed: 0,
+      noMatch: 28,
+      manualReview: 0,
+      cancelled: 2,
+      skipped: 0,
+      failed: 0,
+      transferSurfacing: { checked: 10, complete: 4, pending: 6, failed: 0 },
+      deferred: { open: 20, surfacing: 15 },
+      results: [],
+    });
+
+    const response = await GET(req("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(log.warn).toHaveBeenCalledWith(
+      "managed Venice token reconciliation completed with quote failures",
+      expect.objectContaining({
+        cancelled: 2,
+        transferSurfacing: { checked: 10, complete: 4, pending: 6, failed: 0 },
+        deferred: { open: 20, surfacing: 15 },
+      })
+    );
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("reconciles 50 open quotes per scheduled tick when no limit is given", async () => {
+    // vercel.json schedules this route without ?limit.
+    const scheduled = await GET(req("Bearer cron-secret"));
+    const malformed = await GET(req(
+      "Bearer cron-secret",
+      "https://example/api/cron/managed-venice-token-reconciliation?limit=abc"
+    ));
+
+    expect(scheduled.status).toBe(200);
+    expect(malformed.status).toBe(200);
+    expect(reconcilePendingManagedVeniceTokenQuotes).toHaveBeenNthCalledWith(1, { limit: 50 });
+    expect(reconcilePendingManagedVeniceTokenQuotes).toHaveBeenNthCalledWith(2, { limit: 50 });
   });
 
   it("clamps an oversized limit to the bounded maximum", async () => {
