@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { TokenNotAllowedError } from "@/lib/billing/token-access";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import {
@@ -35,10 +36,14 @@ const HERMES_PRICE_UNAVAILABLE_MESSAGE =
 const HERMES_WALLET_PENDING_MESSAGE =
   "$HermesOS top-ups are still being connected. Card credits are available now.";
 
+// Optional platform token; the account's payment token when absent.
+const TokenSchema = z.enum(["hermesos", "hivra"]).optional();
+
 const QuoteRequestSchema = z.union([
   z.object({
     tokenAmountRaw: z.string().regex(/^[1-9]\d*$/),
     targetPaidMicroUsd: z.never().optional(),
+    token: TokenSchema,
   }),
   z.object({
     targetPaidMicroUsd: z
@@ -47,6 +52,7 @@ const QuoteRequestSchema = z.union([
       .positive()
       .max(MAX_MANAGED_VENICE_TARGET_PAID_MICRO_USD),
     tokenAmountRaw: z.never().optional(),
+    token: TokenSchema,
   }),
 ]);
 
@@ -56,6 +62,8 @@ function serializeQuote(quote: ManagedVeniceTokenQuote) {
     accountId: quote.accountId,
     userId: quote.userId,
     tokenAmountRaw: quote.tokenAmountRaw,
+    tokenKey: quote.tokenKey,
+    tokenAddress: quote.tokenAddress,
     tokenSymbol: quote.tokenSymbol,
     tokenDecimals: quote.tokenDecimals,
     snapshotPriceUsd: quote.snapshotPriceUsd,
@@ -225,13 +233,22 @@ export async function POST(req: NextRequest) {
               userId,
               targetMicroUsd: parsed.data.targetPaidMicroUsd,
               depositAddress,
+              ...(parsed.data.token ? { token: parsed.data.token } : {}),
             })
           : await createManagedVeniceTokenQuote({
               userId,
               tokenAmountRaw: parsed.data.tokenAmountRaw,
               depositAddress,
+              ...(parsed.data.token ? { token: parsed.data.token } : {}),
             });
     } catch (error) {
+      if (error instanceof TokenNotAllowedError) {
+        return apiError(error.message, 403, {
+          failureType: "token_not_allowed",
+          token: error.tokenKey,
+          allowedTokens: error.allowedTokens,
+        });
+      }
       if (error instanceof ManagedVeniceTokenQuotePriceError) {
         return apiError(
           HERMES_PRICE_UNAVAILABLE_MESSAGE,
