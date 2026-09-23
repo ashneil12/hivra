@@ -2,17 +2,29 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { resolveConversionState } from "@/lib/claim/conversion-state";
+import { validateHivraLaunchConfig } from "@/lib/billing/token-registry";
+import { resolveConversionState, type ConversionInputs } from "@/lib/claim/conversion-state";
 
-import { ANNOUNCED_MESSAGE, ConvertPanel, DORMANT_MESSAGE, PROPOSED_LABEL } from "../ConvertPanel";
+import { ANNOUNCED_MESSAGE, ConvertPanel, DORMANT_MESSAGE, LIVE_LABEL, PROPOSED_LABEL } from "../ConvertPanel";
+
+jest.mock("next/navigation", () => ({ useRouter: () => ({ refresh: jest.fn() }) }));
 
 const TEST_HIVRA = "0x1111111111111111111111111111111111111111";
 const TERMS = "https://hivra.cloud/token/conversion-terms";
 const CONVERT = "https://bankr.bot/convert/hivra";
 
-function renderState(overrides: Record<string, string | null> = {}) {
-  const state = resolveConversionState({ hivraTokenAddress: null, termsUrl: null, conversionUrl: null, ...overrides });
-  return render(<ConvertPanel state={state} />);
+const validation = validateHivraLaunchConfig({
+  contractAddress: TEST_HIVRA,
+  decimals: 18,
+  poolId: `0x${"ab".repeat(32)}`,
+  activatesAt: "2026-10-01T16:00:00Z",
+});
+const testHivra = validation.status === "configured" ? validation.token : null;
+
+const DORMANT: ConversionInputs = { hivra: null, phase: "dormant", links: { termsUrl: null, conversionUrl: null }, access: null };
+
+function renderState(overrides: Partial<ConversionInputs> = {}) {
+  return render(<ConvertPanel state={resolveConversionState({ ...DORMANT, ...overrides })} />);
 }
 
 describe("ConvertPanel", () => {
@@ -43,8 +55,8 @@ describe("ConvertPanel", () => {
     expect(screen.getByRole("link", { name: "Open Wallet" })).toHaveAttribute("href", "/dashboard/wallet");
   });
 
-  it("shows the announced contract but still no conversion link before terms are published", () => {
-    renderState({ hivraTokenAddress: TEST_HIVRA, conversionUrl: CONVERT });
+  it("shows the registry contract but no conversion link while the user's access can't be read", () => {
+    renderState({ hivra: testHivra, phase: "active", links: { termsUrl: TERMS, conversionUrl: CONVERT }, access: null });
 
     expect(screen.getByTestId("convert-closed")).toHaveTextContent(ANNOUNCED_MESSAGE);
     expect(screen.queryByText(DORMANT_MESSAGE)).not.toBeInTheDocument();
@@ -52,12 +64,59 @@ describe("ConvertPanel", () => {
     expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
   });
 
-  it("links to terms and conversion only when both are configured", () => {
-    renderState({ hivraTokenAddress: TEST_HIVRA, termsUrl: TERMS, conversionUrl: CONVERT });
+  it("links to terms and conversion once everything is in place", () => {
+    renderState({ hivra: testHivra, phase: "active", links: { termsUrl: TERMS, conversionUrl: CONVERT }, access: { grandfathered: false, convertedAt: null, conversionGraceEndsAt: null } });
 
     expect(screen.queryByTestId("convert-closed")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Read the conversion terms" })).toHaveAttribute("href", TERMS);
     expect(screen.getByRole("link", { name: "Go to conversion" })).toHaveAttribute("href", CONVERT);
+  });
+
+  it("shows step 1 and no swap link to a grandfathered holder who hasn't switched", () => {
+    renderState({
+      hivra: testHivra,
+      phase: "active",
+      links: { termsUrl: TERMS, conversionUrl: CONVERT },
+      access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null },
+    });
+
+    expect(screen.getByTestId("convert-switch-access")).toHaveTextContent("Step 1 of 2: switch your access to $HIVRA.");
+    expect(screen.getByRole("link", { name: "Read the conversion terms" })).toHaveAttribute("href", TERMS);
+    expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link").some((link) => link.getAttribute("href") === CONVERT)).toBe(false);
+  });
+
+  it("drops pre-launch promises once conversion is live, and states the tier condition", () => {
+    renderState({
+      hivra: testHivra,
+      phase: "active",
+      links: { termsUrl: TERMS, conversionUrl: CONVERT },
+      access: { grandfathered: false, convertedAt: null, conversionGraceEndsAt: null },
+    });
+
+    expect(screen.getByTestId("convert-proposed-label")).toHaveTextContent(LIVE_LABEL);
+    expect(screen.queryByText(/no deadline/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/The proposal is that existing holders keep their access/)).not.toBeInTheDocument();
+    expect(screen.getByText(/The \$HIVRA you receive has to meet your tier's amount/)).toBeInTheDocument();
+    expect(screen.queryByText(/You switched your access/)).not.toBeInTheDocument();
+  });
+
+  it("tells a holder who switched when their grace ends", () => {
+    renderState({
+      hivra: testHivra,
+      phase: "active",
+      links: { termsUrl: TERMS, conversionUrl: CONVERT },
+      access: { grandfathered: true, convertedAt: "2026-10-02T00:00:00.000Z", conversionGraceEndsAt: "2026-10-05T00:00:00.000Z" },
+    });
+
+    expect(screen.getByText(/Until 5 October 2026 at 00:00 UTC, holding either token keeps your tier\. After that, only \$HIVRA counts\./)).toBeInTheDocument();
+  });
+
+  it("uses neutral access copy when $HIVRA is announced but conversion is closed", () => {
+    renderState({ hivra: testHivra, phase: "active", links: { termsUrl: TERMS, conversionUrl: CONVERT }, access: null });
+
+    expect(screen.getByText(/Billing shows which token your tier counts/)).toBeInTheDocument();
+    expect(screen.queryByText(/Today, platform access counts the \$HermesOS/)).not.toBeInTheDocument();
   });
 
   it("checks a pasted address against the official contracts only", () => {
