@@ -1,29 +1,49 @@
+import { HERMESOS_TOKEN, validateHivraLaunchConfig, type PlatformToken } from "@/lib/billing/token-registry";
+
 import {
-  HERMESOS_CONTRACT_ADDRESS,
   checkTokenAddress,
   readAllowedUrl,
+  readConversionInputs,
   resolveConversionState,
+  type ConversionInputs,
 } from "../conversion-state";
 import {
+  CONVERSION_LINKS,
   CONVERSION_URL_ALLOWED_HOSTS,
-  HIVRA_LAUNCH_CONFIG,
   TERMS_URL_ALLOWED_HOSTS,
-  type HivraLaunchConfig,
-} from "../hivra-launch-config";
+} from "../conversion-links-config";
 
 // Stand-in address for tests only. It is not, and must never be treated as, $HIVRA.
 const TEST_HIVRA = "0x1111111111111111111111111111111111111111";
 const TERMS = "https://hivra.cloud/token/conversion-terms";
 const CONVERT = "https://bankr.bot/convert/hivra";
 
-function config(overrides: Partial<HivraLaunchConfig>): HivraLaunchConfig {
-  return { hivraTokenAddress: null, termsUrl: null, conversionUrl: null, ...overrides };
+function testHivraToken(): PlatformToken {
+  const validation = validateHivraLaunchConfig({
+    contractAddress: TEST_HIVRA,
+    decimals: 18,
+    poolId: `0x${"ab".repeat(32)}`,
+    activatesAt: "2026-10-01T16:00:00Z",
+  });
+  if (validation.status !== "configured") throw new Error("test launch block should validate");
+  return validation.token;
 }
 
-describe("committed launch config", () => {
-  it("ships dormant: no $HIVRA address, terms or conversion link is set", () => {
-    expect(HIVRA_LAUNCH_CONFIG).toEqual({ hivraTokenAddress: null, termsUrl: null, conversionUrl: null });
-    expect(resolveConversionState()).toEqual({ status: "dormant", problems: [] });
+function inputs(overrides: Partial<ConversionInputs> = {}): ConversionInputs {
+  return {
+    hivra: testHivraToken(),
+    phase: "active",
+    links: { termsUrl: TERMS, conversionUrl: CONVERT },
+    access: { grandfathered: false, convertedAt: null, conversionGraceEndsAt: null },
+    ...overrides,
+  };
+}
+
+describe("committed configuration", () => {
+  it("ships with no conversion link, so the committed state can never be open", () => {
+    expect(CONVERSION_LINKS).toEqual({ termsUrl: null, conversionUrl: null });
+    // Holds before and after the registry's $HIVRA launch block is filled in.
+    expect(resolveConversionState(readConversionInputs({ grandfathered: false, convertedAt: null, conversionGraceEndsAt: null })).status).not.toBe("open");
   });
 
   it("pins the exact hosts conversion and terms links may use", () => {
@@ -33,64 +53,71 @@ describe("committed launch config", () => {
 });
 
 describe("resolveConversionState", () => {
-  it("stays dormant when only the links are set", () => {
-    expect(resolveConversionState(config({ termsUrl: TERMS, conversionUrl: CONVERT })).status).toBe("dormant");
+  it("is dormant while the registry has no $HIVRA, even with links and access", () => {
+    expect(resolveConversionState(inputs({ hivra: null, phase: "dormant" })).status).toBe("dormant");
   });
 
-  it.each([
-    ["not an address", "hivra"],
-    ["too short", "0x1234"],
-    ["zero address", "0x0000000000000000000000000000000000000000"],
-  ])("rejects an invalid $HIVRA address (%s) and stays dormant", (_label, address) => {
-    const state = resolveConversionState(config({ hivraTokenAddress: address, termsUrl: TERMS, conversionUrl: CONVERT }));
-    expect(state.status).toBe("dormant");
-    expect(state.status === "dormant" && state.problems).toEqual([
-      "hivraTokenAddress is not a valid Base contract address",
-    ]);
-  });
-
-  it("refuses the $HermesOS contract as $HIVRA", () => {
-    const state = resolveConversionState(
-      config({ hivraTokenAddress: HERMESOS_CONTRACT_ADDRESS.toUpperCase().replace("0X", "0x"), termsUrl: TERMS, conversionUrl: CONVERT }),
-    );
-    expect(state).toEqual({ status: "dormant", problems: ["hivraTokenAddress is the $HermesOS contract"] });
-  });
-
-  it("announces the contract but keeps conversion closed until terms are published", () => {
-    expect(resolveConversionState(config({ hivraTokenAddress: TEST_HIVRA, conversionUrl: CONVERT }))).toEqual({
-      status: "announced",
-      hivraTokenAddress: TEST_HIVRA,
-      problems: [],
+  it("opens when $HIVRA is live, both links are valid and the user's tier counts $HIVRA", () => {
+    expect(resolveConversionState(inputs())).toEqual({
+      status: "open",
+      hivraAddress: TEST_HIVRA,
+      hivraPublishedAddress: TEST_HIVRA,
+      termsUrl: TERMS,
+      conversionUrl: CONVERT,
+      graceEndsAt: null,
     });
   });
 
-  it("keeps conversion closed without a conversion link", () => {
-    expect(resolveConversionState(config({ hivraTokenAddress: TEST_HIVRA, termsUrl: TERMS })).status).toBe("announced");
+  it.each<[string, Partial<ConversionInputs>]>([
+    ["$HIVRA is scheduled but not live", { phase: "scheduled" }],
+    ["the terms are not published", { links: { termsUrl: null, conversionUrl: CONVERT } }],
+    ["there is no conversion link", { links: { termsUrl: TERMS, conversionUrl: null } }],
+    ["the user's access can't be read", { access: null }],
+  ])("stays closed (announced) when %s", (_label, overrides) => {
+    const state = resolveConversionState(inputs(overrides));
+    expect(state.status).toBe("announced");
+    expect(state.status === "announced" && state.hivraPublishedAddress).toBe(TEST_HIVRA);
   });
 
-  it("opens only when address, terms and conversion link are all valid", () => {
+  it("asks a grandfathered holder who hasn't switched to switch their access first, with no swap link", () => {
+    expect(resolveConversionState(inputs({ access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } }))).toEqual({
+      status: "switch-access",
+      hivraAddress: TEST_HIVRA,
+      hivraPublishedAddress: TEST_HIVRA,
+      termsUrl: TERMS,
+    });
+  });
+
+  it("opens for a grandfathered holder who has switched their access, carrying their grace end", () => {
     expect(
-      resolveConversionState(config({ hivraTokenAddress: TEST_HIVRA.toUpperCase().replace("0X", "0x"), termsUrl: TERMS, conversionUrl: CONVERT })),
-    ).toEqual({ status: "open", hivraTokenAddress: TEST_HIVRA, termsUrl: TERMS, conversionUrl: CONVERT });
+      resolveConversionState(
+        inputs({
+          access: {
+            grandfathered: true,
+            convertedAt: "2026-10-02T00:00:00.000Z",
+            conversionGraceEndsAt: "2026-10-05T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "open", graceEndsAt: "2026-10-05T00:00:00.000Z" });
+  });
+
+  it("never asks for the switch while links are missing", () => {
+    expect(
+      resolveConversionState(
+        inputs({ links: { termsUrl: TERMS, conversionUrl: null }, access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } }),
+      ).status,
+    ).toBe("announced");
   });
 
   it("keeps conversion closed and reports a conversion link on an unapproved host", () => {
-    const state = resolveConversionState(
-      config({ hivraTokenAddress: TEST_HIVRA, termsUrl: TERMS, conversionUrl: "https://bankr-bot.xyz/convert" }),
-    );
-    expect(state).toEqual({
-      status: "announced",
-      hivraTokenAddress: TEST_HIVRA,
-      problems: ["conversionUrl must be https on an allowed host"],
-    });
+    const state = resolveConversionState(inputs({ links: { termsUrl: TERMS, conversionUrl: "https://bankr-bot.xyz/convert" } }));
+    expect(state).toMatchObject({ status: "announced", problems: ["conversionUrl must be https on an allowed host"] });
   });
 
   it("keeps conversion closed and reports terms on an unapproved host", () => {
-    const state = resolveConversionState(
-      config({ hivraTokenAddress: TEST_HIVRA, termsUrl: "https://hivra-cloud.io/terms", conversionUrl: CONVERT }),
-    );
-    expect(state.status).toBe("announced");
-    expect(state.status === "announced" && state.problems).toEqual(["termsUrl must be https on an allowed Hivra host"]);
+    const state = resolveConversionState(inputs({ links: { termsUrl: "https://hivra-cloud.io/terms", conversionUrl: CONVERT } }));
+    expect(state).toMatchObject({ status: "announced", problems: ["termsUrl must be https on an allowed Hivra host"] });
   });
 });
 
@@ -123,18 +150,20 @@ describe("readAllowedUrl", () => {
 });
 
 describe("checkTokenAddress", () => {
-  const dormant = resolveConversionState(config({}));
-  const announced = resolveConversionState(config({ hivraTokenAddress: TEST_HIVRA }));
+  const dormant = resolveConversionState(inputs({ hivra: null, phase: "dormant" }));
+  const announced = resolveConversionState(inputs({ phase: "scheduled" }));
 
   it("recognises the $HermesOS contract in any case", () => {
-    expect(checkTokenAddress(` ${HERMESOS_CONTRACT_ADDRESS.toLowerCase()} `, dormant)).toEqual({ kind: "hermesos" });
+    expect(checkTokenAddress(` ${HERMESOS_TOKEN.publishedAddress.toUpperCase().replace("0X", "0x")} `, dormant)).toEqual({
+      kind: "hermesos",
+    });
   });
 
   it("says any other token is not Hivra's while $HIVRA has not launched", () => {
     expect(checkTokenAddress(TEST_HIVRA, dormant)).toEqual({ kind: "hivra-not-launched" });
   });
 
-  it("recognises the configured $HIVRA contract once announced", () => {
+  it("recognises the registry $HIVRA contract once announced", () => {
     expect(checkTokenAddress(TEST_HIVRA, announced)).toEqual({ kind: "hivra" });
   });
 

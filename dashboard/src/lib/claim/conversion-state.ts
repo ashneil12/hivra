@@ -1,31 +1,72 @@
-import { tokenVerificationContent } from "@/lib/token-verification-content";
+import {
+  HERMESOS_TOKEN,
+  getConfiguredHivraToken,
+  getHivraTokenPhase,
+  type HivraTokenPhase,
+  type PlatformToken,
+} from "@/lib/billing/token-registry";
 
 import {
+  CONVERSION_LINKS,
   CONVERSION_URL_ALLOWED_HOSTS,
-  HIVRA_LAUNCH_CONFIG,
   TERMS_URL_ALLOWED_HOSTS,
-  type HivraLaunchConfig,
-} from "./hivra-launch-config";
+  type ConversionLinksConfig,
+} from "./conversion-links-config";
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-export const HERMESOS_CONTRACT_ADDRESS = tokenVerificationContent.tokenDetails.contractAddress;
+/** $HermesOS exactly as published, for display. */
+export const HERMESOS_CONTRACT_ADDRESS = HERMESOS_TOKEN.publishedAddress;
 
 /**
- * - dormant: $HIVRA has not launched. No contract is shown and no conversion is offered.
- * - announced: the official $HIVRA contract is published, but the terms or the
- *   conversion link are not, so nothing can be converted yet.
- * - open: contract, published terms and conversion link are all set.
+ * This user's platform-token access (lib/billing/token-access.ts), reduced to
+ * what decides whether swapping $HermesOS is safe for their tier:
+ * - grandfathered and not yet switched: their tier still counts $HermesOS, so a
+ *   swap would drop them below it. They must switch their access first.
+ * - switched, or not grandfathered: their tier counts $HIVRA, so a swap is safe.
+ * Null means the access engine can't say (surface off, or it failed), and
+ * conversion stays closed.
+ */
+export type ConversionAccessGate = {
+  grandfathered: boolean;
+  convertedAt: string | null;
+  /** End of the post-switch window in which either token keeps the tier. */
+  conversionGraceEndsAt: string | null;
+} | null;
+
+export type ConversionInputs = {
+  hivra: PlatformToken | null;
+  phase: HivraTokenPhase;
+  links: ConversionLinksConfig;
+  access: ConversionAccessGate;
+};
+
+/**
+ * - dormant: $HIVRA is not in the token registry. No contract is shown and no conversion is offered.
+ * - announced: the registry names $HIVRA, but it is not live yet, the terms or
+ *   conversion link are not published, or this user's access can't be read, so
+ *   nothing can be converted.
+ * - switch-access: everything is in place, but this user's tier still counts
+ *   $HermesOS. They must switch their access to $HIVRA before swapping.
+ * - open: all of the above are in place and this user's tier counts $HIVRA.
  */
 export type ConversionState =
   | { status: "dormant"; problems: string[] }
-  | { status: "announced"; hivraTokenAddress: string; problems: string[] }
+  | { status: "announced"; hivraAddress: string; hivraPublishedAddress: string; problems: string[] }
+  | {
+      status: "switch-access";
+      hivraAddress: string;
+      hivraPublishedAddress: string;
+      termsUrl: string;
+    }
   | {
       status: "open";
-      hivraTokenAddress: string;
+      hivraAddress: string;
+      hivraPublishedAddress: string;
       termsUrl: string;
       conversionUrl: string;
+      /** Set for a holder who switched: either token keeps their tier until then. */
+      graceEndsAt: string | null;
     };
 
 export function normalizeAddress(value: string): string | null {
@@ -48,45 +89,56 @@ export function readAllowedUrl(value: string | null, allowed: readonly string[])
   return url.toString();
 }
 
+/** Reads the registry and link config at `now`. The access gate is per user, so the caller supplies it. */
+export function readConversionInputs(access: ConversionAccessGate, now: Date = new Date()): ConversionInputs {
+  return {
+    hivra: getConfiguredHivraToken(),
+    phase: getHivraTokenPhase(now),
+    links: CONVERSION_LINKS,
+    access,
+  };
+}
+
 /**
- * Decides what the convert page may show. Any value that is missing or fails
- * validation keeps the page at the most restrictive state it supports, and the
- * reason goes in `problems` so a bad launch config is visible in review and logs.
+ * Decides what the convert page may show. Anything missing or invalid keeps the
+ * page at the most restrictive state it supports; a set but rejected link goes
+ * in `problems` so a bad launch value is visible in review and logs.
  */
-export function resolveConversionState(
-  config: HivraLaunchConfig = HIVRA_LAUNCH_CONFIG,
-): ConversionState {
+export function resolveConversionState({ hivra, phase, links, access }: ConversionInputs): ConversionState {
   const problems: string[] = [];
+  if (!hivra || phase === "dormant") return { status: "dormant", problems };
 
-  if (!config.hivraTokenAddress) {
-    return { status: "dormant", problems };
-  }
+  const termsUrl = readAllowedUrl(links.termsUrl, TERMS_URL_ALLOWED_HOSTS);
+  if (links.termsUrl && !termsUrl) problems.push("termsUrl must be https on an allowed Hivra host");
+  const conversionUrl = readAllowedUrl(links.conversionUrl, CONVERSION_URL_ALLOWED_HOSTS);
+  if (links.conversionUrl && !conversionUrl) problems.push("conversionUrl must be https on an allowed host");
 
-  const hivra = normalizeAddress(config.hivraTokenAddress);
-  if (!hivra || hivra === ZERO_ADDRESS) {
-    problems.push("hivraTokenAddress is not a valid Base contract address");
-    return { status: "dormant", problems };
-  }
-  if (hivra === normalizeAddress(HERMESOS_CONTRACT_ADDRESS)) {
-    problems.push("hivraTokenAddress is the $HermesOS contract");
-    return { status: "dormant", problems };
-  }
-
-  const termsUrl = readAllowedUrl(config.termsUrl, TERMS_URL_ALLOWED_HOSTS);
-  if (config.termsUrl && !termsUrl) {
-    problems.push("termsUrl must be https on an allowed Hivra host");
-  }
-  const conversionUrl = readAllowedUrl(config.conversionUrl, CONVERSION_URL_ALLOWED_HOSTS);
-  if (config.conversionUrl && !conversionUrl) {
-    problems.push("conversionUrl must be https on an allowed host");
-  }
-
-  // Terms are published first: a conversion link without terms stays closed.
-  if (!termsUrl || !conversionUrl) {
-    return { status: "announced", hivraTokenAddress: hivra, problems };
+  const announced = {
+    status: "announced" as const,
+    hivraAddress: hivra.address,
+    hivraPublishedAddress: hivra.publishedAddress,
+    problems,
+  };
+  // Terms are published first, $HIVRA must be live, and the user's access must
+  // be readable, or converting could cost them their tier.
+  if (phase !== "active" || !termsUrl || !conversionUrl || !access) return announced;
+  if (access.grandfathered && !access.convertedAt) {
+    return {
+      status: "switch-access",
+      hivraAddress: hivra.address,
+      hivraPublishedAddress: hivra.publishedAddress,
+      termsUrl,
+    };
   }
 
-  return { status: "open", hivraTokenAddress: hivra, termsUrl, conversionUrl };
+  return {
+    status: "open",
+    hivraAddress: hivra.address,
+    hivraPublishedAddress: hivra.publishedAddress,
+    termsUrl,
+    conversionUrl,
+    graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null,
+  };
 }
 
 export type TokenAddressCheck =
@@ -98,17 +150,14 @@ export type TokenAddressCheck =
 
 /**
  * Tells a holder whether a pasted address is one of Hivra's tokens. The pasted
- * value is only ever compared against the configured addresses; it is never
- * used as a token, a link target or a swap input.
+ * value is only ever compared against the registry addresses; it is never used
+ * as a token, a link target or a swap input.
  */
-export function checkTokenAddress(
-  input: string,
-  state: ConversionState = resolveConversionState(),
-): TokenAddressCheck {
+export function checkTokenAddress(input: string, state: ConversionState): TokenAddressCheck {
   const address = normalizeAddress(input);
   if (!address) return { kind: "invalid" };
-  if (address === normalizeAddress(HERMESOS_CONTRACT_ADDRESS)) return { kind: "hermesos" };
+  if (address === HERMESOS_TOKEN.address) return { kind: "hermesos" };
   if (state.status === "dormant") return { kind: "hivra-not-launched" };
-  if (address === state.hivraTokenAddress) return { kind: "hivra" };
+  if (address === state.hivraAddress) return { kind: "hivra" };
   return { kind: "not-official" };
 }
