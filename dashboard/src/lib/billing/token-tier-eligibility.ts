@@ -607,7 +607,9 @@ async function evaluateFirstQualification(
  *
  * Compare-and-set on token_key: if a concurrent evaluation (the cron racing
  * an unlock) already moved the row, this returns that row untouched rather
- * than overwriting whatever that evaluation recorded since.
+ * than overwriting whatever that evaluation recorded since. Its metadata comes
+ * from this evaluation's read, so a breach hold written meanwhile can be
+ * dropped: harmless, since holds only apply to $HermesOS rows.
  */
 async function moveRowToHivra(
   ctx: EvaluateTierContext,

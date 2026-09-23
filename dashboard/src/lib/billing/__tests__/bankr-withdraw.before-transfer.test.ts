@@ -84,6 +84,21 @@ it("runs the hook with the live amount before the transfer is submitted", async 
   expect(order).toEqual(["mint", "hold:5000000000000000000000000:claim_1", "transfer"]);
 });
 
+it("flags a failed submit as possibly sent", async () => {
+  const fetchImpl = jest.fn(async (url: string) =>
+    url.includes("/api-keys")
+      ? { ok: true, status: 200, json: async () => ({ apiKey: "k" }) }
+      : { ok: false, status: 502, json: async () => ({}), text: async () => "bad gateway" }
+  );
+  const result = await withdrawAllHermesTokensForUser({
+    userId: "user_1",
+    destination: "verified_wallet",
+    fetchImpl: fetchImpl as never,
+    beforeTransfer: async () => undefined,
+  });
+  expect(result).toMatchObject({ status: "transfer_failed", transferMayHaveBeenSent: true });
+});
+
 it("sends nothing and cancels the claim when the hook throws", async () => {
   const fetchImpl = bankrFetch();
   const result = await withdrawAllHermesTokensForUser({
@@ -95,6 +110,7 @@ it("sends nothing and cancels the claim when the hook throws", async () => {
     },
   });
   expect(result).toMatchObject({ status: "transfer_failed", errorMessage: "hold not written" });
+  expect(result.transferMayHaveBeenSent).toBeUndefined();
   expect(fetchImpl.mock.calls.map(([url]) => url).filter((url) => !url.includes("/api-keys"))).toEqual([]);
   expect(mockClaimUpdates).toEqual([expect.objectContaining({ status: "cancelled", error_message: "hold not written" })]);
 });

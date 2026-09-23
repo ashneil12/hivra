@@ -71,6 +71,12 @@ export interface WithdrawResult {
    * transfer. Server telemetry only; never user-visible.
    */
   gasTopup?: EnsureWalletGasResult;
+  /**
+   * True when the transfer submit itself failed: Bankr may still have
+   * broadcast it (a timeout or 5xx after the broadcast), so the tokens may
+   * be moving. False or absent: nothing was sent.
+   */
+  transferMayHaveBeenSent?: boolean;
 }
 
 type JsonRpcFetch = typeof fetch;
@@ -522,6 +528,7 @@ export async function withdrawAllHermesTokensForUser(
       amountRaw: balance.balanceRaw,
       amountDisplay: balance.balanceDisplay,
       gasTopup,
+      transferMayHaveBeenSent: true,
     };
   }
 

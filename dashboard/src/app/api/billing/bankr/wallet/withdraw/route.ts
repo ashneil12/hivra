@@ -169,9 +169,10 @@ export async function POST(req: NextRequest) {
               }
             : undefined,
       });
-      if (holdId && result.status !== "submitted") {
+      if (holdId && result.status !== "submitted" && !result.transferMayHaveBeenSent) {
         // This attempt wrote a hold and then sent nothing: drop it. Holds
-        // written by other, in-flight attempts are left alone.
+        // written by other, in-flight attempts are left alone. A failed
+        // submit may still have been broadcast: that hold lapses instead.
         await clearTierBreachHold({ userId, holdId }).catch((clearErr) =>
           log.warn("failed to clear the breach hold after an unsent move", {
             ...LOG_CONTEXT,
@@ -306,7 +307,13 @@ export async function POST(req: NextRequest) {
           if (receipt === "failed" && holdId) {
             // Reverted: the tokens never left the lock wallet, so holding
             // would only count them twice.
-            await clearTierBreachHold({ userId, holdId });
+            await clearTierBreachHold({ userId, holdId }).catch((clearErr) =>
+              log.warn("failed to clear the breach hold after a reverted move", {
+                ...LOG_CONTEXT,
+                userId,
+                failureType: "withdraw_move_hold_clear_failed",
+              }, clearErr)
+            );
           }
           postWithdrawEligibility = { evaluated: false, reason: `move_${receipt}` };
         }

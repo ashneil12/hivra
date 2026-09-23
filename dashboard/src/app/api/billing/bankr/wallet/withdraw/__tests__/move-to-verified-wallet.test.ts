@@ -142,6 +142,15 @@ it("drops the hold when the move is not sent", async () => {
   expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
 });
 
+it("keeps the hold when the submit failed but may have been broadcast", async () => {
+  (withdrawAllHermesTokensForUser as jest.Mock).mockImplementation(async (params) => {
+    await params.beforeTransfer?.(HELD, "claim_1");
+    return { status: "transfer_failed", errorMessage: "bankr 502", transferMayHaveBeenSent: true };
+  });
+  expect((await POST(post({ destination: "verified_wallet" }))).status).toBe(502);
+  expect(clearTierBreachHold).not.toHaveBeenCalled();
+});
+
 it("drops its own hold when the move reverts", async () => {
   (waitForTransferReceipt as jest.Mock).mockResolvedValue("failed");
   const body = await (await POST(post({ destination: "verified_wallet" }))).json();
