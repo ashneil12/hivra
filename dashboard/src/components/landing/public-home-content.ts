@@ -5,8 +5,8 @@ export const COMPUTER_LAUNCH_HREF = "/dashboard/launch?kind=computer&start=1";
 
 export const HOMEPAGE_FAQ = [
   { q: "What is Hivra?", a: "Hivra gives you a separate computer for your work. Start with an agent, or choose an operating system and use the computer yourself. Keep your files, apps and sessions in that workspace, with the access you choose." },
-  { q: "Do I have to use an agent?", a: "No. Launch Ubuntu, Windows or Omarchy, install your apps, browse, write code or run services. You can use it as your own computer without attaching an agent." },
-  { q: "Which agents can I use?", a: "The lineup includes Claude Code, Codex, Hermes, Agent Zero and DeepSeek, alongside OpenClaw and Aeon. Open the agent catalog to choose a runtime and see its setup options." },
+  { q: "Do I have to use an agent?", a: "No. Launch Ubuntu, install your apps, browse, write code or run services. Windows and Omarchy are in private preview. You can use it as your own computer without attaching an agent." },
+  { q: "Which agents can I use?", a: "Claude Code, Codex, Hermes, Agent Zero, OpenClaw and Aeon are available now. DeepSeek is in preview. Open the agent catalog to choose a runtime and see its setup options." },
   { q: "Do I have to work in a terminal?", a: "It's up to you. Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it." },
   { q: "Can I bring my own model key or account?", a: "Yes. Connect the API key or supported account your agent uses. Your model connection is separate from where the computer runs, so choosing Hivra Cloud doesn't take that choice away." },
   { q: "Where can my computer run?", a: "Choose Hivra Cloud if you want us handling the machines, updates, monitoring and recovery. Connect your own cloud account or server to use capacity you already have. The launch flow shows the options for the computer you've chosen." },
@@ -14,7 +14,7 @@ export const HOMEPAGE_FAQ = [
   { q: "What happens when I close my browser?", a: "Closing the browser disconnects your view. It doesn't throw the workspace away. Reconnect from another device and return to your files, tools and settings. Your server keeps its own files and settings until you choose to remove them." },
   { q: "Can I see everything an agent does?", a: "Hivra collects the activity it can observe, including commands and actions running through its own tools. Work done entirely inside an external app may not appear there. You can also open the computer and terminal to inspect the work yourself." },
   { q: "Do I need the token?", a: "No. Self-hosting needs neither a token nor a Hivra account. Available payment methods are shown in the managed checkout." },
-  { q: "How many agents can I run?", a: "As many as fit. We sell you a computer, not a headcount." },
+  { q: "How many agents can I run?", a: "It depends on your plan. Managed plans run up to 1, 3 or 5 agents today. The billing page shows your plan's limit." },
   { q: "Why not just rent a server?", a: "You could. It'd be cheaper and you'd spend a weekend setting it up, then an hour a month keeping it alive. Some people enjoy that. If you're one of them, go and enjoy it." },
   { q: "What happens if my agent crashes?", a: "Recovery and backup coverage depend on the runtime, provider and configured services. Verify your backup schedule and restore process; nightly backups and a one-day recovery limit are not guaranteed." },
   { q: "Can I move between plans?", a: "Available changes depend on your current plan and capacity. Check the managed billing page before changing your plan." },
@@ -31,7 +31,7 @@ export const HOMEPAGE_FEATURES = [
 ] as const;
 
 export const HOMEPAGE_STEPS = [
-  { step: "1", headline: "Pick an agent or an operating system", body: "Choose the agent you want to work with, or start with Ubuntu, Windows or Omarchy. A computer doesn't need an agent." },
+  { step: "1", headline: "Pick an agent or an operating system", body: "Choose the agent you want to work with, or start with Ubuntu. Windows and Omarchy are in private preview. A computer doesn't need an agent." },
   { step: "2", headline: "Pick where it runs", body: "Use Hivra Cloud, connect your own cloud account or server, or run the platform yourself." },
   { step: "3", headline: "See the price, the resources and the access", body: "Review the compute, what it costs, where it runs and what it can reach before you launch." },
   { step: "4", headline: "Open it and start working", body: "Connect the account or key your agent uses, open your interface and get to work. Or use the computer yourself." },
@@ -39,7 +39,7 @@ export const HOMEPAGE_STEPS = [
 
 export const HOMEPAGE_USE_CASES = [
   { headline: "Give a project its own workspace", body: "Keep its code, dependencies, tools and browser sessions together. Come back to the same environment when the next job arrives." },
-  { headline: "Use the app you need", body: "Need Windows for one application? Want development tools off your everyday desktop? Open another computer and make it yours." },
+  { headline: "Use the app you need", body: "Want development tools off your everyday desktop? Open another computer and make it yours. Windows, for the apps that need it, is in private preview." },
   { headline: "Let an agent work beside you", body: "Have it build a feature, investigate a bug or work through research. Check the results and take over in the same workspace." },
   { headline: "Pick it up from your phone", body: "Open the computer from another device to check the work, find a file or make a quick change. Your workspace stays where it is." },
 ] as const;

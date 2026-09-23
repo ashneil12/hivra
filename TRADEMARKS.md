@@ -25,4 +25,4 @@ provided the distributor and support owner are clearly identified.
 
 This policy controls branding only. It must not be used to restrict the code
 rights granted by Apache-2.0. Questions about permitted brand use can be sent to
-info@hermesos.cloud.
+info@hivra.cloud.
