@@ -6,9 +6,12 @@ import { DASHBOARD_SECONDARY_NAVIGATION, isDashboardNavigationItemActive } from 
 
 import ConvertPage from "../page";
 
+jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn(async () => ({ userId: "user_1" })) }));
+jest.mock("@/lib/claim/conversion-access.server", () => ({ readConversionAccessGate: jest.fn(async () => null) }));
+
 describe("/dashboard/convert", () => {
-  it("renders the dormant state from the committed launch config", () => {
-    render(<ConvertPage />);
+  it("renders the dormant state from the committed registry and links", async () => {
+    render(await ConvertPage());
 
     expect(screen.getByTestId("convert-closed")).toHaveTextContent(
       "Conversion opens after $HIVRA launches; terms are published first.",
