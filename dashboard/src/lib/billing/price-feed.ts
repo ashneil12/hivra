@@ -25,10 +25,12 @@
  *      token's minPriceLiquidityUsd. A thin pool is what makes
  *      pump-quote-dump profitable.
  *   2. Median cross-check: the spot price must sit within
- *      PLATFORM_PRICE_MAX_DEVIATION_BPS of the MEDIAN close of the pool's
- *      recent 5-minute candles from GeckoTerminal (an independent indexer).
- *      A price pumped just before a quote is far from that median and is
- *      refused until the move has persisted across several candles.
+ *      PLATFORM_PRICE_MAX_DEVIATION_BPS of the median price over the last
+ *      PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES of wall-clock time, from the
+ *      pool's 5-minute candles on GeckoTerminal (an independent indexer).
+ *      Each 5-minute bucket carries the last traded close forward, so a quiet
+ *      pool still has a reference (its last price), and a price pumped just
+ *      before a quote is refused until it has held for half the window.
  */
 
 import { VVV_TOKEN_ADDRESS } from "./token-holdings";
@@ -87,17 +89,21 @@ const GECKOTERMINAL_BASE_URL = "https://api.geckoterminal.com/api/v2";
 
 /** Spot may differ from the recent median close by at most this much. */
 export const PLATFORM_PRICE_MAX_DEVIATION_BPS = 1_000;
-/** How many of the pool's most recent 5-minute candles the median uses. */
-export const PLATFORM_PRICE_MEDIAN_CANDLES = 12;
-/** Fewer candles than this in the last day = not enough history to trust. */
-export const PLATFORM_PRICE_MIN_CANDLES = 3;
-const CANDLE_LOOKBACK_SEC = 24 * 60 * 60;
+/** The wall-clock window the reference median covers, in 5-minute buckets. */
+export const PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES = 4 * 60;
+const BUCKET_SEC = 5 * 60;
+/**
+ * Candles fetched per reference read. Candles exist only for 5-minute periods
+ * with trades, so this reaches back past the window to find the last close
+ * before it (the price a quiet pool opened the window at).
+ */
+const CANDLES_FETCHED = 1_000;
 const REFERENCE_CACHE_MS = 60_000;
 
 /** A platform-token price failed a safety gate; quotes must not be issued. */
 export class PlatformTokenPriceGateError extends Error {
   constructor(
-    readonly gate: "liquidity" | "reference_unavailable" | "deviation" | "pool_missing",
+    readonly gate: "liquidity" | "spot_unavailable" | "reference_unavailable" | "deviation" | "pool_missing",
     message: string
   ) {
     super(message);
@@ -204,7 +210,14 @@ interface GeckoOhlcvResponse {
   data?: { attributes?: { ohlcv_list?: unknown } };
 }
 
-const referenceCache = new Map<string, { priceUsd: number; candles: number; fetchedAtMs: number }>();
+interface PoolReference {
+  priceUsd: number;
+  /** Candles with trades inside the window (the rest carry a close forward). */
+  candles: number;
+  fetchedAtMs: number;
+}
+
+const referenceCache = new Map<string, PoolReference>();
 
 /** Test seam. */
 export function _resetPlatformPriceReferenceCacheForTests() {
@@ -218,15 +231,18 @@ function median(values: number[]) {
 }
 
 /**
- * Median close of the pool's most recent 5-minute candles (GeckoTerminal,
- * priced in USD for the token side). Candles exist only when the pool trades,
- * so this is a median over recent trading, not over wall-clock time.
+ * Median price of the pool over the last PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES
+ * of wall-clock time, from GeckoTerminal 5-minute candles priced in USD for
+ * the token side. Each 5-minute bucket holds the close of the latest candle at
+ * or before it, so buckets with no trades carry the last price forward: a
+ * quiet pool keeps a reference, and a burst of trades cannot outvote hours of
+ * earlier price. Throws only when the pool has no candle at all.
  */
 async function fetchPoolMedianCloseUsd(
   poolId: string,
   tokenAddress: string,
   options: FetchTokenPriceOptions = {}
-): Promise<{ priceUsd: number; candles: number }> {
+): Promise<PoolReference> {
   const cacheKey = `${poolId}:${tokenAddress}`;
   const nowMs = Date.now();
   const cached = referenceCache.get(cacheKey);
@@ -237,7 +253,7 @@ async function fetchPoolMedianCloseUsd(
   const baseUrl = env.GECKOTERMINAL_BASE_URL || GECKOTERMINAL_BASE_URL;
   const url =
     `${baseUrl}/networks/base/pools/${poolId}/ohlcv/minute` +
-    `?aggregate=5&limit=${PLATFORM_PRICE_MEDIAN_CANDLES}&currency=usd&token=${tokenAddress}`;
+    `?aggregate=5&limit=${CANDLES_FETCHED}&currency=usd&token=${tokenAddress}`;
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), options.timeoutMs ?? 8000);
   let response: Response;
@@ -253,16 +269,31 @@ async function fetchPoolMedianCloseUsd(
   if (!response.ok) throw new Error(`GeckoTerminal OHLCV fetch failed status=${response.status}`);
   const payload = (await response.json()) as GeckoOhlcvResponse;
   const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
-  const cutoffSec = Math.floor(nowMs / 1000) - CANDLE_LOOKBACK_SEC;
-  const closes = list
+  const nowSec = Math.floor(nowMs / 1000);
+  const candles = list
     .filter((c): c is number[] => Array.isArray(c) && c.length >= 5)
-    .filter((c) => Number(c[0]) >= cutoffSec)
-    .map((c) => Number(c[4]))
-    .filter((close) => Number.isFinite(close) && close > 0);
-  if (closes.length < PLATFORM_PRICE_MIN_CANDLES) {
-    throw new Error(`GeckoTerminal has ${closes.length} recent candles for pool ${poolId}; need ${PLATFORM_PRICE_MIN_CANDLES}`);
+    .map((c) => ({ at: Number(c[0]), close: Number(c[4]) }))
+    .filter((c) => Number.isFinite(c.at) && c.at <= nowSec && Number.isFinite(c.close) && c.close > 0)
+    .sort((a, b) => a.at - b.at);
+  if (candles.length === 0) throw new Error(`GeckoTerminal has no candles for pool ${poolId}`);
+
+  const lastBucket = nowSec - (nowSec % BUCKET_SEC);
+  const buckets = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES / 5;
+  const firstBucket = lastBucket - (buckets - 1) * BUCKET_SEC;
+  const closes: number[] = [];
+  let next = 0;
+  let carried: number | null = null;
+  for (let bucket = firstBucket; bucket <= lastBucket; bucket += BUCKET_SEC) {
+    while (next < candles.length && candles[next].at <= bucket) carried = candles[next++].close;
+    // Before the pool's first candle there is no price to carry: skip.
+    if (carried !== null) closes.push(carried);
   }
-  const reference = { priceUsd: median(closes), candles: closes.length, fetchedAtMs: nowMs };
+  if (closes.length === 0) throw new Error(`GeckoTerminal has no candles for pool ${poolId} before now`);
+  const reference = {
+    priceUsd: median(closes),
+    candles: candles.filter((c) => c.at >= firstBucket).length,
+    fetchedAtMs: nowMs,
+  };
   referenceCache.set(cacheKey, reference);
   return reference;
 }
@@ -289,7 +320,17 @@ export async function fetchPlatformTokenPriceUsd(
   token: PlatformToken,
   options: FetchTokenPriceOptions = {}
 ): Promise<HermesPriceQuote> {
-  const { pair, ...quote } = await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId });
+  let spot: Awaited<ReturnType<typeof fetchTokenPriceUsd>>;
+  try {
+    spot = await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId });
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw error;
+    throw new PlatformTokenPriceGateError(
+      "spot_unavailable",
+      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  const { pair, ...quote } = spot;
   const liquidityUsd = pair.liquidity?.usd ?? 0;
   if (!(liquidityUsd >= token.minPriceLiquidityUsd)) {
     throw new PlatformTokenPriceGateError(
@@ -299,7 +340,7 @@ export async function fetchPlatformTokenPriceUsd(
   }
   const poolId = token.poolId ?? pair.pairAddress;
   if (!poolId) throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`);
-  let reference: { priceUsd: number; candles: number };
+  let reference: PoolReference;
   try {
     reference = await fetchPoolMedianCloseUsd(poolId, token.address, options);
   } catch (error) {
@@ -323,6 +364,7 @@ export async function fetchPlatformTokenPriceUsd(
         liquidityUsd,
         minLiquidityUsd: token.minPriceLiquidityUsd,
         medianCloseUsd: reference.priceUsd,
+        medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
         medianCandles: reference.candles,
         deviationBps: deviation,
       },
@@ -338,15 +380,25 @@ export async function fetchPlatformTokenPriceCrossCheck(
   token: PlatformToken,
   options: FetchTokenPriceOptions = {}
 ): Promise<HermesPriceCrossCheck> {
-  let poolId = token.poolId;
-  if (!poolId) poolId = (await fetchTokenPriceUsd(token.address, options)).pair.pairAddress ?? null;
-  if (!poolId) throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`);
-  const reference = await fetchPoolMedianCloseUsd(poolId, token.address, options);
+  let reference: PoolReference;
+  try {
+    let poolId = token.poolId;
+    if (!poolId) poolId = (await fetchTokenPriceUsd(token.address, options)).pair.pairAddress ?? null;
+    if (!poolId) throw new Error("pool has no address");
+    reference = await fetchPoolMedianCloseUsd(poolId, token.address, options);
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw error;
+    throw new PlatformTokenPriceGateError(
+      "reference_unavailable",
+      `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   return {
     source: "geckoterminal_ohlcv_median",
     priceUsd: toDecimalString(reference.priceUsd),
-    lastUpdatedAt: Math.floor(Date.now() / 1000),
-    raw: { medianCandles: reference.candles },
+    // When the reference was read (it is cached briefly), not when it was asked for.
+    lastUpdatedAt: Math.floor(reference.fetchedAtMs / 1000),
+    raw: { medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES, medianCandles: reference.candles },
   };
 }
 

@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import {
   PLATFORM_PRICE_MAX_DEVIATION_BPS,
-  PlatformTokenPriceGateError,
+  PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
   _resetPlatformPriceReferenceCacheForTests,
   fetchPlatformTokenPriceCrossCheck,
   fetchPlatformTokenPriceUsd,
@@ -17,7 +17,11 @@ function pair(pairAddress: string, priceUsd: string, liquidityUsd: number) {
   return { chainId: "base", pairAddress, baseToken: { address: TOKEN }, quoteToken: { address: "0xweth" }, priceUsd, liquidity: { usd: liquidityUsd } };
 }
 
-function fakeFetch(opts: { pairs: unknown[]; closes?: number[] | null; geckoStatus?: number }) {
+/**
+ * `closes` are one per 5-minute candle, newest first; `candles` are explicit
+ * [ageMinutes, close] pairs for pools that do not trade every 5 minutes.
+ */
+function fakeFetch(opts: { pairs: unknown[]; closes?: number[]; candles?: [number, number][]; geckoStatus?: number }) {
   return jest.fn(async (url: string) => {
     if (url.includes("dexscreener")) {
       return { ok: true, status: 200, json: async () => ({ pairs: opts.pairs }) } as unknown as Response;
@@ -25,7 +29,8 @@ function fakeFetch(opts: { pairs: unknown[]; closes?: number[] | null; geckoStat
     if (opts.geckoStatus && opts.geckoStatus !== 200) {
       return { ok: false, status: opts.geckoStatus, json: async () => ({}) } as unknown as Response;
     }
-    const list = (opts.closes ?? []).map((close, i) => [nowSec() - i * 300, close, close, close, close, 1]);
+    const candles = opts.candles ?? (opts.closes ?? []).map((close, i): [number, number] => [i * 5, close]);
+    const list = candles.map(([ageMinutes, close]) => [nowSec() - ageMinutes * 60, close, close, close, close, 1]);
     return { ok: true, status: 200, json: async () => ({ data: { attributes: { ohlcv_list: list } } }) } as unknown as Response;
   });
 }
@@ -67,16 +72,54 @@ describe("platform token price gates", () => {
     expect(PLATFORM_PRICE_MAX_DEVIATION_BPS).toBe(1_000);
   });
 
-  it("fails closed without a usable median (source down, or too little recent trading)", async () => {
+  it("fails closed when the median source is down or the pool has never traded", async () => {
     const down = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 503 });
     await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: down as never, env: env() })).rejects.toMatchObject({
       gate: "reference_unavailable",
     });
     _resetPlatformPriceReferenceCacheForTests();
-    const quiet = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], closes: [0.0000011, 0.0000011] });
-    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: quiet as never, env: env() })).rejects.toBeInstanceOf(
-      PlatformTokenPriceGateError
-    );
+    const never = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], candles: [] });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: never as never, env: env() })).rejects.toMatchObject({
+      gate: "reference_unavailable",
+    });
+  });
+
+  it("maps a spot-source outage to a gate error (503), not a 500", async () => {
+    const fetchImpl = jest.fn(async () => ({ ok: false, status: 502, json: async () => ({}) }) as unknown as Response);
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      name: "PlatformTokenPriceGateError",
+      gate: "spot_unavailable",
+    });
+  });
+
+  it("keeps a quiet pool quotable: its last trade, hours ago, is still the reference", async () => {
+    const fetchImpl = fakeFetch({
+      pairs: [pair(HERMESOS_POOL_ID, "0.00000105", 80_000)],
+      candles: [[30 * 60, 0.000001]], // one trade, 30 hours ago
+    });
+    const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    expect(quote.raw).toMatchObject({ gates: { medianCloseUsd: 0.000001, medianCandles: 0 } });
+  });
+
+  it("weighs wall-clock time, not trade count: a burst of pumped trades cannot move the median", async () => {
+    const burst = Array.from({ length: 40 }, (_, i): [number, number] => [i * 0.1, 0.0000013]); // 40 trades in 4 minutes
+    const fetchImpl = fakeFetch({
+      pairs: [pair(HERMESOS_POOL_ID, "0.0000013", 80_000)],
+      candles: [...burst, [3 * 60, 0.000001]],
+    });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "deviation",
+    });
+  });
+
+  it("accepts a move once it has held for over half the window", async () => {
+    const half = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES / 2;
+    const fetchImpl = fakeFetch({
+      pairs: [pair(HERMESOS_POOL_ID, "0.0000013", 80_000)],
+      candles: [[half + 10, 0.0000013], [PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES + 60, 0.000001]],
+    });
+    const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    expect(quote.priceUsd).toBe("0.0000013");
   });
 
   it("fails closed when the canonical pool is missing from the price source", async () => {
@@ -87,7 +130,7 @@ describe("platform token price gates", () => {
   });
 
   it("offers the median as a cross-check quote in plain decimal form", async () => {
-    const fetchImpl = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], closes: [1e-9, 2e-9, 3e-9] });
+    const fetchImpl = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], candles: [[PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES + 30, 2e-9]] });
     const cross = await fetchPlatformTokenPriceCrossCheck(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
     expect(cross).toMatchObject({ source: "geckoterminal_ohlcv_median", priceUsd: "0.000000002" });
     expect(toDecimalString(1.09036588922258e-6)).toBe("0.00000109036588922");
