@@ -52,6 +52,7 @@ import {
 } from "@/lib/billing/hermesos-transfer-attribution";
 import { HERMESOS_TOKEN_ADDRESS, normalizeEvmAddress } from "@/lib/billing/token-holdings";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
+import { applyYearlyPaymentToInstances, type YearlyPaymentTrigger } from "@/lib/billing/yearly-activation";
 import {
   asYearlyTokenQuote,
   YEARLY_LATE_PAYMENT_GRACE_MS,
@@ -455,6 +456,8 @@ export async function reconcileYearlyTokenQuote(params: {
   rpcOptions?: RpcCallOptions;
   minConfirmations?: number;
   now?: Date;
+  /** Runs after a payment settles; moves the payer's instances onto the paid tier. */
+  applyYearlyPayment?: (userId: string, trigger: YearlyPaymentTrigger) => Promise<void>;
 }): Promise<YearlyReconcileResult> {
   const db = asSettlementDb(params.db ?? supabaseAdmin);
   const { quote } = params;
@@ -596,6 +599,9 @@ export async function reconcileYearlyTokenQuote(params: {
       case "already_settled": {
         const subscriptionId = settlement.subscription_id ?? null;
         if (settlement.status !== "already_settled") await stampTokenConversion(db, quote.userId, now);
+        // Idempotent, so an already_settled pass also finishes the work a pass
+        // that died between the settlement and this call left undone.
+        await (params.applyYearlyPayment ?? applyYearlyPaymentToInstances)(quote.userId, settlement.status);
         if (ownership.isContested(candidate)) {
           // The pre-attribution managed-Venice flow put this transfer in one of
           // its reviews; make sure nobody credits it a second time there.
@@ -733,6 +739,7 @@ export async function reconcilePendingYearlyTokenQuotes(
     requestTimeoutMs?: number;
     /** Wall-clock ms after which no further quote is started (left for the next run). */
     deadlineMs?: number;
+    applyYearlyPayment?: (userId: string, trigger: YearlyPaymentTrigger) => Promise<void>;
   } = {}
 ): Promise<YearlyReconcileBatchResult> {
   const db = asSettlementDb(params.db ?? supabaseAdmin);
@@ -792,6 +799,7 @@ export async function reconcilePendingYearlyTokenQuotes(
         chain,
         minConfirmations: params.minConfirmations,
         now: params.now,
+        applyYearlyPayment: params.applyYearlyPayment,
       });
       if (result.status === "activated") summary.activated += 1;
       else if (result.status === "renewed") summary.renewed += 1;

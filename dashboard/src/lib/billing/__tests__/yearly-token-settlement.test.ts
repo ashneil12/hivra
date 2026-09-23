@@ -42,7 +42,13 @@ function openQuote(world: YearlyTokenWorld, overrides: Record<string, unknown> =
   );
 }
 
-function reconcile(world: YearlyTokenWorld, quoteId = "yq_1", options: { minConfirmations?: number } = {}) {
+type ApplyYearlyPayment = (userId: string, trigger: "activated" | "renewed" | "already_settled") => Promise<void>;
+
+function reconcile(
+  world: YearlyTokenWorld,
+  quoteId = "yq_1",
+  options: { minConfirmations?: number; applyYearlyPayment?: ApplyYearlyPayment } = {}
+) {
   const row = world.quote(quoteId) as unknown as YearlyQuoteRow;
   return reconcileYearlyTokenQuote({
     quote: asYearlyTokenQuote(row),
@@ -167,6 +173,53 @@ describe("settlement", () => {
     expect(await reconcile(world)).toMatchObject({ status: "activated" });
     // 2h20m of 2 s blocks = 4,200 blocks => at least three eth_getLogs chunks.
     expect(world.chain.methodCount("eth_getLogs")).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("instances follow a settled payment", () => {
+  it("hands the payer to the instance hook once the payment settles, not while it is unconfirmed", async () => {
+    const world = createYearlyTokenWorld();
+    const applyYearlyPayment = jest.fn<Promise<void>, Parameters<ApplyYearlyPayment>>().mockResolvedValue(undefined);
+    openQuote(world);
+    world.chain.addTransfer({ txHash: txHash(1), amountRaw: REQUIRED, block: world.chain.latestBlock() - 1, to: TEST_DEPOSIT_ADDRESS });
+
+    expect(await reconcile(world, "yq_1", { applyYearlyPayment })).toMatchObject({ status: "underconfirmed" });
+    expect(applyYearlyPayment).not.toHaveBeenCalled();
+
+    world.chain.setLatestBlock(world.chain.latestBlock() + 1);
+    expect(await reconcile(world, "yq_1", { applyYearlyPayment })).toMatchObject({ status: "activated" });
+    expect(applyYearlyPayment).toHaveBeenCalledTimes(1);
+    expect(applyYearlyPayment).toHaveBeenCalledWith("user_1", "activated");
+  });
+
+  it("does not call the hook for an under-payment that stays open", async () => {
+    const world = createYearlyTokenWorld();
+    const applyYearlyPayment = jest.fn<Promise<void>, Parameters<ApplyYearlyPayment>>().mockResolvedValue(undefined);
+    openQuote(world);
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED / 2n, offsetMs: -5 * MINUTE_MS });
+
+    await reconcile(world, "yq_1", { applyYearlyPayment });
+
+    expect(world.subscriptions()).toHaveLength(0);
+    expect(applyYearlyPayment).not.toHaveBeenCalled();
+  });
+
+  it("passes the hook through the batch sweep", async () => {
+    const world = createYearlyTokenWorld();
+    const applyYearlyPayment = jest.fn<Promise<void>, Parameters<ApplyYearlyPayment>>().mockResolvedValue(undefined);
+    openQuote(world);
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -5 * MINUTE_MS });
+
+    const summary = await reconcilePendingYearlyTokenQuotes({
+      db: world.memory.db,
+      fetchImpl: world.chain.fetchImpl,
+      now: new Date(world.nowMs),
+      rpcSleepImpl: noDelay,
+      applyYearlyPayment,
+    });
+
+    expect(summary).toMatchObject({ activated: 1 });
+    expect(applyYearlyPayment).toHaveBeenCalledWith("user_1", "activated");
   });
 });
 
