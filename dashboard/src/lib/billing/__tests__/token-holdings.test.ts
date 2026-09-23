@@ -445,7 +445,7 @@ describe("Hivra token holdings", () => {
     expect(insertSnapshots.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         token_address: HERMESOS_TOKEN_ADDRESS,
-        token_symbol: "Hivra",
+        token_symbol: "HermesOS",
       })
     );
     expect(insertSnapshots.insert).toHaveBeenCalledWith(
