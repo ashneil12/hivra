@@ -129,6 +129,7 @@
 .runtimeBar > div { display: flex; gap: 6px; }
 .runtimeBar button { min-height: 32px; padding: 7px 10px; border: 1px solid var(--buzz-line); border-radius: 0; background: transparent; color: var(--ink-black); cursor: pointer; font: 750 9px/1.2 var(--font-mono), monospace; letter-spacing: .06em; text-transform: uppercase; }
 .runtimeBar button:disabled { cursor: not-allowed; opacity: .5; }
+.runtimeBar .dangerButton { border-color: color-mix(in srgb, var(--hivra-red) 55%, var(--buzz-line)); color: var(--hivra-red); }
 .revoked { opacity: .48; }
 .emptyBindings { padding: 20px clamp(20px, 3vw, 30px); border-bottom: 1px solid var(--buzz-line); }
 .emptyState { min-height: 420px; display: grid; place-items: center; align-content: center; padding: 40px; text-align: center; }
@@ -164,6 +165,17 @@
   .runtimeForm .ownerField { grid-column: auto; }
   .runtimeBar { align-items: flex-start; flex-direction: column; }
   .connectionHeader { align-items: flex-start; }
+  /* Touch targets and legible text on phones. */
+  .breadcrumb { min-height: 44px; }
+  .bindingActions button, .runtimeBar button { min-height: 44px; }
+  .runtimeBar > div { width: 100%; }
+  .runtimeBar > div > button { flex: 1 1 auto; }
+  .breadcrumb, .eyebrow, .headerState > span, .railHeading > span, .sectionHeading > div > span,
+  .form label > span, .bindForm label > span, .runtimeForm label > span, .form small,
+  .guide a, .protocolFacts dt, .protocolFacts dd, .relayIdentity p, .openLink, .relayMeta span, .relayMeta strong,
+  .bindCopy p, .bindingMain small, .bindingState small, .bindingState span, .bindingActions button,
+  .runtimeCopy span, .runtimeCopy p, .vaultCredential > span, .vaultCredential a, .secretNote,
+  .runtimeBar, .runtimeBar button { font-size: 11px; }
 }
 
 @media (max-width: 460px) {
