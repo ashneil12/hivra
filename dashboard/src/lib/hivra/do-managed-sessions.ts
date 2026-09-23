@@ -37,6 +37,7 @@ import {
   loadDigitalOceanConnectionSecret,
   loadDigitalOceanTarget,
   refreshDigitalOceanTargetRecord,
+  replaceDigitalOceanConnectionToken,
   type DigitalOceanTargetEvidence,
 } from "@/lib/infrastructure/digitalocean-store";
 import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
@@ -169,7 +170,7 @@ function providerError(error: unknown, action: string, agentId?: string): Manage
   if (error instanceof DigitalOceanApiError) {
     switch (error.code) {
       case "unauthorized":
-        return new ManagedSessionError("invalid_credentials", "DigitalOcean rejected the saved token. Reconnect DigitalOcean with a new token.", agentId);
+        return new ManagedSessionError("invalid_credentials", "DigitalOcean rejected the saved token. Replace the token on this connection's Infrastructure card.", agentId);
       case "forbidden":
         return new ManagedSessionError("provider_forbidden", "This DigitalOcean token cannot manage Managed Agents. Use a token with write access to a team enrolled in the Managed Agents preview.", agentId);
       case "payment_required":
@@ -268,6 +269,66 @@ export async function refreshDigitalOceanConnection(userId: string, connectionId
   } catch (error) {
     throw providerError(error, "refresh");
   }
+}
+
+/**
+ * Replace an expired or revoked token without disturbing the connection's
+ * sessions. The new token must reach every session Hivra still holds on this
+ * connection, which proves it belongs to the same DigitalOcean team; a token
+ * from another team is refused rather than orphaning those sessions.
+ */
+export async function replaceDigitalOceanToken(userId: string, connectionId: string, apiToken: string) {
+  const loaded = await loadDigitalOceanConnectionSecret(userId, connectionId).catch((error) => {
+    // An unreadable old token is exactly the case this repairs; only a missing
+    // or foreign connection stops here.
+    if (error instanceof InfrastructureConnectionStoreError && error.code === "credential_error") return null;
+    throw providerError(error, "token replacement");
+  });
+  const revision = loaded?.revision ?? await connectionRevision(userId, connectionId);
+  const client = deps.client(apiToken);
+  try {
+    await client.listSandboxSizes();
+  } catch (error) {
+    const code = connectionErrorFor(error);
+    throw new ManagedSessionError(
+      code === "invalid_credentials" ? "invalid_credentials" : code === "managed_agents_forbidden" ? "provider_forbidden" : "provider_unavailable",
+      code === "invalid_credentials" ? "DigitalOcean rejected this token."
+        : code === "managed_agents_forbidden" ? "This token cannot use DigitalOcean Managed Agents."
+          : "DigitalOcean could not be reached to check this token. Try again shortly.",
+    );
+  }
+  const { data: bound, error: boundError } = await db().from("hivra_agents").select(AGENT_SELECT)
+    .eq("user_id", userId).eq("infrastructure_connection_id", connectionId)
+    .eq("computer_substrate", SUBSTRATE).neq("status", "deleted");
+  if (boundError) throw new ManagedSessionError("database_failed", "This connection's agents could not be read.");
+  for (const row of (bound ?? []) as unknown as AgentRow[]) {
+    if (!row.do_session_id) continue; // never observed; nothing to prove against
+    try {
+      await client.getSession(row.do_session_id);
+    } catch (error) {
+      if (error instanceof DigitalOceanApiError && (error.code === "not_found" || error.code === "forbidden")) {
+        throw new ManagedSessionError("provider_rejected",
+          `This token cannot see ${row.name}. Use a token from the same DigitalOcean team as this connection's agents.`);
+      }
+      throw providerError(error, "token check");
+    }
+  }
+  try {
+    await replaceDigitalOceanConnectionToken({ userId, connectionId, expectedRevision: revision, apiToken });
+  } catch (error) {
+    throw providerError(error, "token replacement");
+  }
+  return refreshDigitalOceanConnection(userId, connectionId);
+}
+
+async function connectionRevision(userId: string, connectionId: string): Promise<number> {
+  const { data, error } = await db().from("infrastructure_connections").select("revision,provider")
+    .eq("id", connectionId).eq("user_id", userId).maybeSingle();
+  if (error) throw new ManagedSessionError("database_failed", "The connection could not be read.");
+  if (!data || (data as { provider?: unknown }).provider !== "digitalocean") {
+    throw new ManagedSessionError("not_found", "That DigitalOcean connection was not found.");
+  }
+  return Number((data as { revision: unknown }).revision);
 }
 
 function manifestFor(agent: { sessionName: string; name: string; harness: DigitalOceanHarness; size: DigitalOceanSizeSlug }, model: ManagedSessionLaunchInput["model"]) {
