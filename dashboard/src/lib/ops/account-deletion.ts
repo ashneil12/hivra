@@ -63,6 +63,21 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     source: "instanceIds",
     reason: "handled separately from the user's instance ids",
   },
+  // Hivra agent activity (content-free lifecycle events and run/tool records)
+  // and per-computer reporter state. Neither has an FK to the account, so they
+  // would otherwise survive deletion. See src/lib/ops/activity-retention.ts.
+  {
+    table: "hivra_agent_events",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "Hivra agent activity: lifecycle events and run/tool trace records",
+  },
+  {
+    table: "hivra_activity_collectors",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "Hivra activity reporter state per computer",
+  },
   {
     table: "hermes_conversations",
     filterColumn: "user_id",
@@ -328,6 +343,20 @@ export function assertConfirmedAccountDeletion(input: AccountDeletionConfirmatio
   if (input.confirmationUserId !== input.userId) {
     throw new Error("Account deletion confirmation does not match the target user id.");
   }
+}
+
+/**
+ * This script tears down Hermes instances but not Hivra computers, whose
+ * teardown runs through the product delete flow (verified VM destroy, tunnel,
+ * DNS and key revocation). Deleting the login while a Hivra computer still
+ * runs would strand it, so an apply refuses until every computer is deleted.
+ */
+export function assertNoLiveHivraComputers(input: { apply: boolean; liveComputerIds: string[] }): void {
+  if (!input.apply || input.liveComputerIds.length === 0) return;
+  throw new Error(
+    `User still has ${input.liveComputerIds.length} Hivra computer(s) that are not deleted ` +
+    `(${input.liveComputerIds.join(", ")}). Delete them through the Hivra delete flow first, then re-run.`
+  );
 }
 
 export interface ClerkDeletionPolicyInput {
