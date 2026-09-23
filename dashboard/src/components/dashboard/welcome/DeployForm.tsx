@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle, ChevronDown, Rocket, Key, Zap, ArrowRight, Loader2, CreditCard, Settings2, Wallet, Cpu, MemoryStick } from "lucide-react";
 import {
   getFeaturedProvider,
@@ -40,6 +40,46 @@ export interface DashboardVaultKey {
   key_preview: string | null;
   name: string;
 }
+
+/**
+ * Stable ref callback that focuses a field on mount only for a fine pointer.
+ * autoFocus opened the phone keyboard over the destination, size and launch
+ * controls the user still had to review. Module scope keeps the identity
+ * stable so React calls it once per mount, not on every render.
+ */
+export function focusOnFinePointer(element: HTMLElement | null) {
+  if (!element || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+  if (window.matchMedia("(pointer: fine)").matches) element.focus();
+}
+
+// Inline text actions ("Use different key", "add credit now", ...) keep their
+// look but get a 44px tall hit area.
+const TEXT_ACTION_TARGET: CSSProperties = {
+  minHeight: 44,
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "0 4px",
+};
+
+// Bordered mono back control shared by "Back to agent choices" and the
+// funding step's "Back to setup".
+const BACK_BUTTON_STYLE: CSSProperties = {
+  border: "1px solid var(--etched-border)",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  cursor: "pointer",
+  fontSize: 10,
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  fontWeight: 800,
+  minHeight: 44,
+  padding: "8px 11px",
+  marginBottom: 18,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  alignSelf: "flex-start",
+};
 
 export interface DeploySpecializationCard {
   name: string;
@@ -99,6 +139,7 @@ export function DeployForm({
   onManagedVeniceDeposit,
   agentSpecialization,
   onChangeAgentType,
+  deployAlert = null,
 }: {
   agentName: string;
   setAgentName: (v: string) => void;
@@ -150,6 +191,9 @@ export function DeployForm({
   onManagedVeniceDeposit: (params: { walletType: ManagedVeniceWalletType; amountUsd: number }) => void;
   agentSpecialization?: DeploySpecializationCard | null;
   onChangeAgentType?: () => void;
+  /** Deploy validation/failure notice, rendered directly above the primary
+   *  action so a blocked tap never looks dead. */
+  deployAlert?: ReactNode;
 }) {
   const supportsLiveModels = supportsLiveModelDiscovery(selectedProvider.id);
   const supportsPublicModels = supportsPublicLiveModelDiscovery(selectedProvider.id);
@@ -185,7 +229,7 @@ export function DeployForm({
     background: active ? "var(--ink-black)" : "transparent",
     color: active ? "var(--bg-surface)" : "var(--text-secondary)",
     fontSize: 12,
-    padding: "6px 11px",
+    minHeight: 44,
     cursor: "pointer",
     fontFamily: "var(--font-mono), monospace",
   });
@@ -345,21 +389,10 @@ export function DeployForm({
           <button
             type="button"
             onClick={() => setShowManagedVeniceFundingStep(false)}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              fontFamily: "var(--font-mono), monospace",
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.12em",
-              fontWeight: 700,
-              opacity: 0.55,
-              padding: 0,
-              marginBottom: 18,
-            }}
+            className="mono"
+            style={BACK_BUTTON_STYLE}
           >
-            ← Back to setup
+            <ArrowLeft size={13} /> Back to setup
           </button>
 
           <div style={STYLES.fieldGroup}>
@@ -499,6 +532,8 @@ export function DeployForm({
             )}
           </div>
 
+          {deployAlert}
+
           {quoteActive ? (
             <span
               className="mono"
@@ -560,22 +595,7 @@ export function DeployForm({
             type="button"
             onClick={onChangeAgentType}
             className="mono"
-            style={{
-              border: "1px solid var(--etched-border)",
-              background: "transparent",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.12em",
-              fontWeight: 800,
-              padding: "8px 11px",
-              marginBottom: 18,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              alignSelf: "flex-start",
-            }}
+            style={BACK_BUTTON_STYLE}
           >
             <ArrowLeft size={13} /> Back to agent choices
           </button>
@@ -596,14 +616,17 @@ export function DeployForm({
 
         {/* Agent Name */}
         <div style={STYLES.fieldGroup}>
-          <label className="mono" style={STYLES.fieldLabel}>
+          <label htmlFor="welcome-deploy-agent-name" className="mono" style={STYLES.fieldLabel}>
             {selectedAgentLabel} Name
           </label>
           <input
-            autoFocus
+            id="welcome-deploy-agent-name"
+            ref={focusOnFinePointer}
             value={agentName}
             onChange={(e) => setAgentName(e.target.value)}
             placeholder="MY_FIRST_AGENT"
+            autoComplete="off"
+            enterKeyHint="done"
             style={STYLES.textInput}
             onFocus={(e) => (e.target.style.borderColor = "var(--ink-black)")}
             onBlur={(e) => (e.target.style.borderColor = "var(--etched-border)")}
@@ -737,9 +760,10 @@ export function DeployForm({
                     type="button"
                     onClick={() => setShowManagedVeniceFundingStep(true)}
                     style={{
+                      ...TEXT_ACTION_TARGET,
+                      verticalAlign: "middle",
                       background: "none",
                       border: "none",
-                      padding: 0,
                       cursor: "pointer",
                       color: "var(--ink-black)",
                       fontWeight: 700,
@@ -804,14 +828,15 @@ export function DeployForm({
             Computer size
           </label>
           <div style={{ display: "grid", gap: 9 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.62, width: 54, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <div className="welcome-size-row">
+              <span className="mono welcome-size-label" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.62 }}>
                 <Cpu size={12} /> CPU
               </span>
               {cpuOptions.map((option) => (
                 <button
                   key={`deploy-cpu-${option}`}
                   type="button"
+                  className="welcome-size-option"
                   aria-pressed={cpu === option}
                   onClick={() => setCpu(option)}
                   style={sizeButtonStyle(cpu === option)}
@@ -820,19 +845,20 @@ export function DeployForm({
                 </button>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.62, width: 54, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <div className="welcome-size-row">
+              <span className="mono welcome-size-label" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.62 }}>
                 <MemoryStick size={12} /> RAM
               </span>
               {ramOptions.map((option) => (
                 <button
                   key={`deploy-ram-${option}`}
                   type="button"
+                  className="welcome-size-option"
                   aria-pressed={ramGb === option}
                   onClick={() => setRamGb(option)}
                   style={sizeButtonStyle(ramGb === option)}
                 >
-                  {option}<span style={{ fontSize: 9, opacity: 0.6 }}>G</span>
+                  {option}<span style={{ fontSize: 11, opacity: 0.6 }}>G</span>
                 </button>
               ))}
             </div>
@@ -953,7 +979,7 @@ export function DeployForm({
                 <span
                   className="mono"
                   style={{
-                    fontSize: 9,
+                    fontSize: 11,
                     fontWeight: 700,
                     color: "var(--gold-leaf)",
                     textTransform: "uppercase",
@@ -987,7 +1013,11 @@ export function DeployForm({
               Custom Base URL
             </label>
             <input
-              type="text"
+              type="url"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               placeholder="e.g. http://localhost:11434/v1 or https://openrouter.ai/api/v1"
               value={customBaseUrl}
               onChange={(e) => setCustomBaseUrl(e.target.value)}
@@ -1007,6 +1037,9 @@ export function DeployForm({
           {selectedProvider.id === "custom_llm" ? (
             <input
               type="text"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               placeholder="e.g. llama3.2"
               value={model}
               onChange={(e) => setModel(e.target.value)}
@@ -1033,6 +1066,9 @@ export function DeployForm({
           {selectedProvider.id === 'openrouter' && (
             <input
               type="text"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               placeholder="Or enter custom model ID (e.g. qwen/qwen-max)"
               value={
                 modelOptions.some(m => String(m.value) === String(model)) ? '' : model
@@ -1083,6 +1119,7 @@ export function DeployForm({
                   type="button"
                   onClick={() => setUseVaultKey(false)}
                   style={{
+                    ...TEXT_ACTION_TARGET,
                     background: "none",
                     border: "none",
                     cursor: "pointer",
@@ -1105,6 +1142,9 @@ export function DeployForm({
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="sk-..."
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   aria-invalid={Boolean(combinedApiKeyError)}
                   style={{
                     ...STYLES.textInput,
@@ -1135,7 +1175,8 @@ export function DeployForm({
                     type="button"
                     onClick={() => { setUseVaultKey(true); setApiKey(""); }}
                     style={{
-                      marginTop: 6,
+                      ...TEXT_ACTION_TARGET,
+                      marginTop: 2,
                       background: "none",
                       border: "none",
                       cursor: "pointer",
@@ -1145,7 +1186,6 @@ export function DeployForm({
                       letterSpacing: "0.1em",
                       fontWeight: 700,
                       opacity: 0.45,
-                      padding: 0,
                     }}
                   >
                     ← Use saved vault key instead
@@ -1212,6 +1252,7 @@ export function DeployForm({
                   type="button"
                   onClick={() => setUseVaultKey(false)}
                   style={{
+                    ...TEXT_ACTION_TARGET,
                     background: "none",
                     border: "none",
                     cursor: "pointer",
@@ -1249,7 +1290,7 @@ export function DeployForm({
         <div style={STYLES.fieldGroup}>
           <label className="mono" style={STYLES.fieldLabel}>
             Honcho API Key
-            <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, color: "var(--gold-leaf)", textTransform: "uppercase", letterSpacing: "0.1em", background: "rgba(255, 44, 45,0.1)", padding: "2px 6px", border: "1px solid rgba(255, 44, 45,0.3)" }}>
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "var(--gold-leaf)", textTransform: "uppercase", letterSpacing: "0.1em", background: "rgba(255, 44, 45,0.1)", padding: "2px 6px", border: "1px solid rgba(255, 44, 45,0.3)" }}>
               Recommended
             </span>
           </label>
@@ -1277,6 +1318,7 @@ export function DeployForm({
                 type="button"
                 onClick={() => setUseHonchoVaultKey(false)}
                 style={{
+                  ...TEXT_ACTION_TARGET,
                   background: "none",
                   border: "none",
                   cursor: "pointer",
@@ -1299,6 +1341,9 @@ export function DeployForm({
                 value={honchoApiKey}
                 onChange={(e) => setHonchoApiKey(e.target.value)}
                 placeholder="honcho_..."
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 style={STYLES.textInput}
                 onFocus={(e) => (e.target.style.borderColor = "var(--ink-black)")}
                 onBlur={(e) => (e.target.style.borderColor = "var(--etched-border)")}
@@ -1308,7 +1353,8 @@ export function DeployForm({
                   type="button"
                   onClick={() => { setUseHonchoVaultKey(true); setHonchoApiKey(""); }}
                   style={{
-                    marginTop: 6,
+                    ...TEXT_ACTION_TARGET,
+                    marginTop: 2,
                     background: "none",
                     border: "none",
                     cursor: "pointer",
@@ -1318,7 +1364,6 @@ export function DeployForm({
                     letterSpacing: "0.1em",
                     fontWeight: 700,
                     opacity: 0.45,
-                    padding: 0,
                   }}
                 >
                   ← Use saved vault key instead
@@ -1351,6 +1396,8 @@ export function DeployForm({
             still go through (a flag-gated starter credit may cover it, and the
             instance page has its own boot/funding UI). Funding is offered as a
             SECONDARY link below for users who want to top up first. */}
+        {deployAlert}
+
         <button
           type="button"
           data-testid="deploy-primary-cta"
@@ -1399,9 +1446,7 @@ export function DeployForm({
               color: "var(--text-secondary)",
               textDecoration: "underline",
               textUnderlineOffset: 3,
-              padding: 0,
-              display: "inline-flex",
-              alignItems: "center",
+              ...TEXT_ACTION_TARGET,
               gap: 6,
             }}
           >
@@ -1450,7 +1495,7 @@ function SpecializedDeployCard({
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
         <div>
-          <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800, opacity: 0.5 }}>
+          <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800, opacity: 0.5 }}>
             {card.eyebrow}
           </span>
           <h3 className="serif" style={{ margin: "6px 0 6px", fontSize: 24, lineHeight: 1.1, fontWeight: 650 }}>
@@ -1483,7 +1528,7 @@ function SpecializedDeployList({
   const color = tone === "gold" ? "var(--gold-leaf)" : tone === "green" ? "#16a34a" : "var(--ink-black)";
   return (
     <div style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", padding: "12px 13px" }}>
-      <span className="mono" style={{ display: "block", marginBottom: 8, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800, color }}>
+      <span className="mono" style={{ display: "block", marginBottom: 8, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800, color }}>
         {title}
       </span>
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 7 }}>

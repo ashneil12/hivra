@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { InfrastructureConnectionCard } from "../InfrastructureConnectionCard";
 import { providerVmTarget } from "@/lib/infrastructure/__tests__/provider-vm-target.fixtures";
 import type { InfrastructureConnectionDto, ProxmoxDeploymentTargetDto } from "@/lib/infrastructure/contracts";
@@ -61,4 +61,15 @@ it.each([true, false])("renders Proxmox readiness only for the same connection: 
     expect(screen.queryByText("Latest readiness")).not.toBeInTheDocument();
     expect(screen.queryByText("Ready for agents")).not.toBeInTheDocument();
   }
+});
+
+it("labels the host disconnect for narrow cards while keeping the icon control", () => {
+  const onDelete = jest.fn();
+  render(<InfrastructureConnectionCard connection={connection}
+    onCheck={jest.fn()} onPrepare={jest.fn()} onEdit={jest.fn()} onDelete={onDelete} />);
+  const labelled = screen.getByRole("button", { name: "Disconnect host My Linux host" });
+  expect(labelled).toHaveTextContent("Disconnect host");
+  fireEvent.click(labelled);
+  fireEvent.click(screen.getByRole("button", { name: "Delete My Linux host" }));
+  expect(onDelete).toHaveBeenCalledTimes(2);
 });

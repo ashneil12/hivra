@@ -8,6 +8,7 @@ import { ArrowRight, CreditCard, Loader2 } from "lucide-react";
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import InteractiveBackground from "@/components/InteractiveBackground";
+import funnelStyles from "@/components/public-site/public-site.module.css";
 import { ACTIVE_PLAN_KEYS, PLANS, formatPrice, type PlanKey } from "@/lib/subscription";
 
 const PLAN_GUIDE: Record<PlanKey, string> = {
@@ -19,7 +20,7 @@ const PLAN_GUIDE: Record<PlanKey, string> = {
 
 function CheckoutCanceledFallback() {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+    <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
       <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
     </div>
   );
@@ -75,7 +76,7 @@ function CheckoutCanceledContent() {
 
   if (!isSignedIn) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: 420 }}>
           <p style={{ fontSize: 14, marginBottom: "1rem" }}>Please sign in to restart checkout.</p>
           <a
@@ -106,8 +107,9 @@ function CheckoutCanceledContent() {
     <>
       <InteractiveBackground />
       <div
+        className={funnelStyles.funnelPage}
         style={{
-          minHeight: "100vh",
+          minHeight: "100dvh",
           display: "grid",
           placeItems: "center",
           padding: "2rem",
@@ -116,6 +118,7 @@ function CheckoutCanceledContent() {
         }}
       >
         <div
+          className={funnelStyles.funnelCard}
           style={{
             border: "1px solid var(--etched-border)",
             background: "var(--bg-surface)",
@@ -236,7 +239,7 @@ function CheckoutCanceledContent() {
             </div>
             <a
               href={`/dashboard/welcome?plan=${planKey}`}
-              style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
             >
               Choose a different plan →
             </a>

@@ -298,6 +298,7 @@ export function InfrastructureConnectionWizard({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const stateHeadingRef = useRef<HTMLHeadingElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
   const editing = Boolean(connection);
   const legacyProxmox = connection?.provider === "proxmox";
   const busy = phase === "discovering" || phase === "preflighting";
@@ -311,6 +312,18 @@ export function InfrastructureConnectionWizard({
   useEffect(() => {
     closeButtonRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    // Phones scroll this dialog with the dashboard page, so a phase that
+    // replaces the body in place starts at its top. A failed save returns to
+    // the form with its error beside the actions, so that error is shown
+    // instead. Runs before the invalid-field focus below.
+    if (!dialog || window.getComputedStyle(dialog).overflowY !== "visible") return;
+    const formError = phase === "form" ? formErrorRef.current : null;
+    if (formError) formError.scrollIntoView?.({ block: "center" });
+    else dialog.scrollIntoView?.({ block: "start" });
+  }, [phase, dialogRef]);
 
   useEffect(() => {
     if (phase === "discovering" || phase === "preflighting") {
@@ -735,7 +748,7 @@ export function InfrastructureConnectionWizard({
               {editing ? <CapacityPolicyFields form={form} setField={setField} errors={errors} /> : null}
 
               {operationError || errors.form ? (
-                <div className={styles.formError} role="alert">
+                <div ref={formErrorRef} className={styles.formError} role="alert">
                   <AlertTriangle size={16} aria-hidden="true" />
                   <span>{operationError ?? errors.form}</span>
                 </div>
@@ -870,25 +883,25 @@ function AdvancedFields({
       </div>
       <div className={styles.formGrid}>
         <Field label="Node" hint="Must be the SSH-local Proxmox node" error={errors["configuration.node"]}>
-          <input value={form.node} onChange={(event) => setField("node", event.target.value)} placeholder="fixturenode1" />
+          <input value={form.node} onChange={(event) => setField("node", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="fixturenode1" />
         </Field>
         <Field label="Network bridge" error={errors["configuration.bridge"]}>
-          <input value={form.bridge} onChange={(event) => setField("bridge", event.target.value)} placeholder="vmbr0" />
+          <input value={form.bridge} onChange={(event) => setField("bridge", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="vmbr0" />
         </Field>
         <Field label="VM storage" error={errors["configuration.storage"]}>
-          <input value={form.storage} onChange={(event) => setField("storage", event.target.value)} placeholder="local-lvm" />
+          <input value={form.storage} onChange={(event) => setField("storage", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="local-lvm" />
         </Field>
         <Field label="Template VMID" error={errors["configuration.template.vmid"]}>
           <input type="number" inputMode="numeric" value={form.templateVmid} onChange={(event) => setField("templateVmid", event.target.value)} placeholder="9000" />
         </Field>
         <Field label="Expected template name" error={errors["configuration.template.expectedName"]}>
-          <input value={form.templateExpectedName} onChange={(event) => setField("templateExpectedName", event.target.value)} placeholder="hivra-template" />
+          <input value={form.templateExpectedName} onChange={(event) => setField("templateExpectedName", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="hivra-template" />
         </Field>
         <Field label="Provisioner directory" error={errors["configuration.provisioner.directory"]}>
-          <input value={form.provisionerDirectory} onChange={(event) => setField("provisionerDirectory", event.target.value)} placeholder="/root/hivra-provisioner" />
+          <input value={form.provisionerDirectory} onChange={(event) => setField("provisionerDirectory", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="/root/hivra-provisioner" />
         </Field>
         <Field label="Provisioner version" error={errors["configuration.provisioner.expectedVersion"]}>
-          <input value={form.provisionerExpectedVersion} onChange={(event) => setField("provisionerExpectedVersion", event.target.value)} placeholder="1.0.0" />
+          <input value={form.provisionerExpectedVersion} onChange={(event) => setField("provisionerExpectedVersion", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="1.0.0" />
         </Field>
         <Field label="VMID range start" error={errors["configuration.vmidRange.start"]}>
           <input type="number" inputMode="numeric" value={form.vmidStart} onChange={(event) => setField("vmidStart", event.target.value)} />

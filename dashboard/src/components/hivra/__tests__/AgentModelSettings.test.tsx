@@ -53,6 +53,11 @@ it("reads saved metadata without claiming guest confirmation, with labeled optio
   expect(screen.getByLabelText(/Model/)).toBeInTheDocument();
   expect(screen.getByLabelText("Venice API key")).toHaveAttribute("type", "password");
   expect(screen.getByLabelText("Venice API key")).toHaveAttribute("autocomplete", "off");
+  expect(screen.getByLabelText("Venice API key")).toHaveAttribute("autocapitalize", "none");
+  // iOS would otherwise save "Deepseek-v4-pro", an invalid model id.
+  expect(screen.getByLabelText(/Model/)).toHaveAttribute("autocapitalize", "none");
+  expect(screen.getByLabelText(/Model/)).toHaveAttribute("autocorrect", "off");
+  expect(screen.getByLabelText(/Model/)).toHaveAttribute("enterkeyhint", "done");
 });
 
 it("sends a single server request, wipes the submitted key, and refreshes confirmed metadata", async () => {
