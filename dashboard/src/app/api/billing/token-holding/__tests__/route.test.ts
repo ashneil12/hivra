@@ -26,7 +26,30 @@ jest.mock("@/lib/billing/token-holdings", () => ({
   getLatestHermesTokenHoldingSnapshot: jest.fn(),
   getTokenVerificationWallet: jest.fn(),
   refreshPrimaryHermesTokenHolding: jest.fn(),
+  platformTokenBalanceConfig: (token: { chainId: number; address: string; symbol: string; decimals: number }) => ({
+    chainId: token.chainId,
+    tokenAddress: token.address,
+    tokenSymbol: token.symbol,
+    tokenDecimals: token.decimals,
+    baseTierMinimumRaw: (10n ** BigInt(token.decimals)).toString(),
+  }),
 }));
+
+// $HIVRA is dormant in these tests: the access-aware snapshot reader is the
+// $HermesOS one, as in production before activation.
+jest.mock("@/lib/billing/token-access", () => {
+  const actual = jest.requireActual("@/lib/billing/token-access");
+  const holdings = jest.requireMock("@/lib/billing/token-holdings");
+  return {
+    ...actual,
+    resolveUserTokenAccess: jest.fn(async () =>
+      actual.computeUserTokenAccess({ phase: "dormant", cohort: null, now: new Date() })
+    ),
+    getLatestAccessTokenHoldingSnapshot: jest.fn((userId: string) =>
+      holdings.getLatestHermesTokenHoldingSnapshot(userId)
+    ),
+  };
+});
 
 describe("/api/billing/token-holding", () => {
   const userId = "user_123";
@@ -94,7 +117,7 @@ describe("/api/billing/token-holding", () => {
     expect(body.data).toMatchObject({
       token: {
         chainId: 8453,
-        tokenSymbol: "Hivra",
+        tokenSymbol: "HermesOS",
         minimumBalanceDisplay: "1",
       },
       wallet: {
