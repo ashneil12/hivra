@@ -43,6 +43,9 @@ describe("tier eligibility emails", () => {
     expect(hivra.subject).toBe("Your $HIVRA balance dropped below your qualifying quantity");
     expect(hivra.text).toContain("5 $HIVRA");
     expect(hivra.text).not.toMatch(/HermesOS|\bHivra\b/);
+    // A breach opens the grace; it does not end the tier.
+    expect(hivra.text).toContain("24-hour grace period");
+    expect(hivra.text).not.toContain("has ended");
 
     const hermesos = buildEmailContent({
       userId: "u",

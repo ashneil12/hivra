@@ -36,8 +36,14 @@ import {
 
 import { primaryPlatformToken } from "@/lib/billing/token-registry";
 
-/** The token new payments are made in: $HermesOS until $HIVRA is live, then $HIVRA. */
-const PAYMENT_TOKEN_UNIT = primaryPlatformToken().displayUnit;
+/**
+ * The token new payments are made in: $HermesOS until $HIVRA is live, then
+ * $HIVRA. Read at each render, never at module load, so a long-lived page or
+ * server process does not keep the unit it started with.
+ */
+function paymentTokenUnit() {
+  return primaryPlatformToken().displayUnit;
+}
 
 export interface DashboardVaultKey {
   id: string;
@@ -367,7 +373,7 @@ export function DeployForm({
         if (!result.ok) {
           if (result.reason === "bankr_wallet_provisioning_pending") {
             setManagedVeniceTopUpNotice(
-              `Token top-ups are waiting on Bankr wallet provisioning. Once Bankr is connected, this button will show the exact ${PAYMENT_TOKEN_UNIT} amount, QR code, and deposit address here. Card credit top-ups are available now.`
+              `Token top-ups are waiting on Bankr wallet provisioning. Once Bankr is connected, this button will show the exact ${paymentTokenUnit()} amount, QR code, and deposit address here. Card credit top-ups are available now.`
             );
             return;
           }
@@ -376,7 +382,7 @@ export function DeployForm({
         }
         setManagedVeniceTokenQuote(result.quote);
       } catch (quoteError) {
-        setManagedVeniceTopUpError(`Failed to create ${PAYMENT_TOKEN_UNIT} quote. Please try again.`);
+        setManagedVeniceTopUpError(`Failed to create ${paymentTokenUnit()} quote. Please try again.`);
         clientLog.error("Welcome managed Venice Hivra quote failed", quoteError, {
           source: "welcome-deploy-form",
           route: "/api/billing/managed-venice/hermesos/quote",
@@ -452,7 +458,7 @@ export function DeployForm({
               >
                 <Wallet size={15} style={{ marginBottom: 8 }} />
                 <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 800, marginBottom: 5 }}>
-                  Pay with {PAYMENT_TOKEN_UNIT}
+                  Pay with {paymentTokenUnit()}
                 </div>
                 <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
                   Up to 20% more managed Venice credits during the launch wave, then a 10% standard bonus.
@@ -479,7 +485,7 @@ export function DeployForm({
               {managedVeniceWalletType === "hermesos" ? (
                 <>
                   <strong style={{ color: "var(--ink-black)" }}>$250 lifetime launch bonus cap.</strong>{" "}
-                  {PAYMENT_TOKEN_UNIT} top-ups can earn up to 20% more managed Venice credits; that is about $1,250 in {PAYMENT_TOKEN_UNIT} top-ups at the full launch rate. After the cap is used, {PAYMENT_TOKEN_UNIT} top-ups receive the 10% standard bonus.
+                  {paymentTokenUnit()} top-ups can earn up to 20% more managed Venice credits; that is about $1,250 in {paymentTokenUnit()} top-ups at the full launch rate. After the cap is used, {paymentTokenUnit()} top-ups receive the 10% standard bonus.
                 </>
               ) : (
                 <>
@@ -580,7 +586,7 @@ export function DeployForm({
                   : quoteSettled
                     ? deployCtaLabel
                     : managedVeniceWalletType === "hermesos"
-                      ? `Start ${PAYMENT_TOKEN_UNIT} top-up`
+                      ? `Start ${paymentTokenUnit()} top-up`
                       : "Start card credit top-up"}
               {!deploying && <ArrowRight size={14} />}
             </button>
@@ -905,7 +911,7 @@ export function DeployForm({
                 Managed Venice
               </div>
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
-                No keys to manage. Pay Venice provider rates with card credits, or use {PAYMENT_TOKEN_UNIT} for bonus credits.
+                No keys to manage. Pay Venice provider rates with card credits, or use {paymentTokenUnit()} for bonus credits.
               </p>
             </button>
             <button

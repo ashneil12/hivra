@@ -100,7 +100,7 @@ export function buildEmailContent(params: SendParams): EmailContent | null {
       text: [
         `Your wallet now holds ${balanceStr} ${sym}. Your qualifying quantity for the ${tierName} tier was ${qualifyingStr} ${sym}.`,
         ``,
-        `Your ${tierName} tier eligibility has ended. To regain ${tierName}, deposit back to at least the current threshold of ${thresholdStr} ${sym}. (Note: re-qualifying uses the current threshold, not your original qualifying quantity.)`,
+        `You keep ${tierName} for a ${REQUALIFICATION_GRACE_HOURS}-hour grace period. Bring your balance back to ${qualifyingStr} ${sym} within it and nothing changes. After it, ${tierName} is suspended, and re-qualifying uses the threshold at that time (currently ${thresholdStr} ${sym}), not your original qualifying quantity.`,
         ``,
         `View your wallet: https://hermesos.cloud/dashboard/wallet`,
       ].join("\n"),

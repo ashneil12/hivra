@@ -34,8 +34,9 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    - DEXScreener lists the canonical pool with at least
      `HIVRA_MIN_PRICE_LIQUIDITY_USD` of liquidity (default $25,000; see
      `dashboard/src/lib/billing/token-registry.ts`).
-   - GeckoTerminal has at least 3 five-minute candles for the pool in the
-     last 24 hours.
+   - GeckoTerminal has indexed the pool (it has at least one five-minute
+     candle), and the price has held within 10% for the last two hours. Until
+     then the median check refuses quotes (section 5).
 4. **Token surfaces are switched on.** The wallet, token-holding, token-access
    and token quote routes answer 404 unless crypto billing is enabled on the
    target (`CRYPTO_BILLING_ENABLED=true` or
@@ -43,7 +44,17 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    it was off on Canary. Turning it on is an environment change for Ash, not
    part of the activation PR. Tier crons, settlement and sweeps run either way.
 5. **Decision:** agree the activation instant. Every account with $HermesOS
-   history before that instant is grandfathered (section 4).
+   history before that instant is grandfathered (section 4). It must be in
+   the future when the PR merges, and later than the moment the code is
+   live on each target (the Canary build; for production, the Promote).
+   Otherwise a user who arrives between the instant and the deploy sees a
+   $HermesOS-only site but is not grandfathered.
+6. **Conversion links** (only if the convert page ships, PR #68): set
+   `termsUrl` (on hivra.cloud) and `conversionUrl` (exact host `bankr.bot`,
+   or widen its allowlist in a reviewed change) in
+   `dashboard/src/lib/claim/conversion-links-config.ts`. The convert page
+   stays closed until both are set. That page also needs the legal review
+   named on PR #68 before any Promote.
 
 ## 2. The one file to edit
 
@@ -70,7 +81,7 @@ How to get each value:
 | `contractAddress` | the Bankr launch | Open `https://basescan.org/token/<address>`: name, symbol and total supply match the launch. Paste the checksummed form. |
 | `decimals` | on-chain `decimals()` | `curl -s https://mainnet.base.org -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"<address>","data":"0x313ce567"},"latest"]}'`. `0x…12` = 18. |
 | `poolId` | DEXScreener `https://api.dexscreener.com/latest/dex/tokens/<address>` | Use the `pairAddress` of the $HIVRA/WETH Uniswap v4 pool with the most liquidity. The price feed accepts only this pool. |
-| `activatesAt` | Ash's decision | A future instant schedules activation ("launching soon" on /token). A past instant activates at deploy. |
+| `activatesAt` | Ash's decision | A future instant, later than the deploy on every target (precondition 5). Until then /token shows $HIVRA as "launching soon". Never paste a past instant. |
 
 The build fails on a bad paste: `token-registry.test.ts` rejects a partial or
 malformed block (bad address, the $HermesOS address, bad pool id, impossible
@@ -182,9 +193,12 @@ by hand, and then resolves the item.
   the breach clock.
 - Or they can move to their own verified wallet (`POST
   /api/billing/bankr/wallet/withdraw {"destination":"verified_wallet"}`).
-  That holds new breaches for 30 minutes while the move lands, and evaluates
-  the tier on the verified wallet once the moved tokens are visible. It does
-  not start a breach.
+  Before anything is sent it writes a breach hold for exactly the amount
+  moving, for 30 minutes. While it lasts, a breach is not recorded as long as
+  the balance read plus the amount in flight still qualifies; the tier is
+  then evaluated on the verified wallet once the moved tokens are visible.
+  It does not start a breach, and moving dust cannot shield an emptied
+  wallet.
 
 ## 5. Price gates (both tokens, all the time)
 
@@ -194,9 +208,17 @@ quote fails closed with a 503 "try again later":
 1. **Liquidity floor:** the canonical pool holds at least the token's
    `minPriceLiquidityUsd` ($HermesOS $10,000, $HIVRA $25,000).
 2. **Median cross-check:** the DEXScreener spot is within
-   `PLATFORM_PRICE_MAX_DEVIATION_BPS` (10%) of the median close of the pool's
-   last 12 five-minute candles on GeckoTerminal. At least 3 candles are
-   needed in the last 24 hours. Managed-Venice deposits apply the stricter 5%.
+   `PLATFORM_PRICE_MAX_DEVIATION_BPS` (10%) of the median price over the last
+   `PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES` (4 hours) of five-minute buckets
+   from GeckoTerminal. A bucket with no trades carries the last close
+   forward, so a quiet pool is still quotable at its last price, and a pumped
+   price is refused until it has held for about two hours. The check fails
+   closed only when the pool has no candle at all or a source is down.
+   Managed-Venice deposits apply the stricter 5%.
+
+A real move of more than 10% also pauses quotes, for up to about two hours
+until the median catches up. For a young, volatile $HIVRA pool that may be
+frequent; the band is one constant in `price-feed.ts` if Ash wants it wider.
 
 Breach, grace, recovery and suspension never need a live price. They compare
 balances with each row's fixed qualifying quantity.
@@ -233,16 +255,20 @@ Then on the served site:
 
 ## 7. Rolling back
 
-Before any $HIVRA payment or tier row exists, emptying the block (a revert PR)
-returns everything to dormant.
+**Before `activatesAt`:** nothing has been recorded yet. A revert PR that
+empties the block returns everything to dormant. Merge it on every target
+before the instant passes.
 
-After $HIVRA rows exist, **do not** empty the block. Rows in a token the
-registry no longer knows cannot be read, and money paths stop on them.
-Instead, stop new $HIVRA quotes with the price gates (for example by raising
-`HIVRA_MIN_PRICE_LIQUIDITY_USD`) and plan a proper follow-up.
-
-The activation record and the cohort are durable and are never removed by a
-rollback.
+**After `activatesAt`:** do **not** empty the block. The activation record,
+the cohort and the $HIVRA `token_base` row already exist, and $HIVRA quotes,
+tier rows or payments may too. Rows in a token the registry no longer knows
+cannot be read, and money paths stop on them. To pause $HIVRA, stop new
+quotes through the price gates (for example by raising
+`HIVRA_MIN_PRICE_LIQUIDITY_USD` in a reviewed PR). A full rollback needs its
+own reviewed plan: settle or refund open $HIVRA quotes and payments, then an
+operator deletes the `platform_token_activations` row and deactivates the
+$HIVRA `token_base` config. Those are production database writes and need
+Ash's explicit approval.
 
 ## 8. Existing users at activation
 

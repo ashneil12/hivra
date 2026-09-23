@@ -177,8 +177,14 @@ import {
 } from '@/lib/billing/managed-venice-client';
 import { primaryPlatformToken } from '@/lib/billing/token-registry';
 
-/** The token new payments are made in: $HermesOS until $HIVRA is live, then $HIVRA. */
-const PAYMENT_TOKEN_UNIT = primaryPlatformToken().displayUnit;
+/**
+ * The token new payments are made in: $HermesOS until $HIVRA is live, then
+ * $HIVRA. Read at each render, never at module load, so a long-lived page or
+ * server process does not keep the unit it started with.
+ */
+function paymentTokenUnit() {
+  return primaryPlatformToken().displayUnit;
+}
 
 const WELCOME_ROUTE = '/dashboard/welcome';
 const WELCOME_PERSONALIZATION_BEST_EFFORT_MS = 750;
@@ -1774,7 +1780,7 @@ export function WelcomeFlow() {
     async ({ walletType, amountUsd }: { walletType: ManagedVeniceWalletType; amountUsd: number }) => {
       setError(null);
       if (walletType === 'hermesos') {
-        setError(`Create the ${PAYMENT_TOKEN_UNIT} quote from the managed Venice credit step.`);
+        setError(`Create the ${paymentTokenUnit()} quote from the managed Venice credit step.`);
         return;
       }
 
@@ -2714,7 +2720,7 @@ export function WelcomeFlow() {
               {flowState === 'agent-type'
                 ? 'Pick the agent software to run — Claude Code, Codex, OpenClaw, Agent Zero or a plain Hermes agent — or a specialist that starts pre-shaped and can still be renamed and retuned.'
                 : flowState === 'plan'
-                  ? `Choose Card or ${PAYMENT_TOKEN_UNIT}, then finish the deploy.`
+                  ? `Choose Card or ${paymentTokenUnit()}, then finish the deploy.`
                   : `${selectedAgentType?.tagline ?? "Name your agent, connect your AI provider, and you're live."}`}
             </p>
           </header>
@@ -5099,7 +5105,7 @@ function PaymentMethodIntro({
           />
           <PaymentMethodOptionCard
             icon={<Coins size={20} />}
-            label={PAYMENT_TOKEN_UNIT}
+            label={paymentTokenUnit()}
             tagline="Pay with the token · save up to ~59%"
             description="Pay one year up front, or hold tokens to keep your tier as long as you hold."
             onClick={onPickCrypto}
@@ -5331,7 +5337,7 @@ function PlanGrid({
             }}
           >
             {paidPathChoice === 'card' ? <CreditCard size={11} /> : <Coins size={11} style={{ color: 'var(--gold-leaf)' }} />}
-            Paying with {paidPathChoice === 'card' ? 'Card' : PAYMENT_TOKEN_UNIT}
+            Paying with {paidPathChoice === 'card' ? 'Card' : paymentTokenUnit()}
           </span>
         </div>
       </AnimateIn>
@@ -5504,7 +5510,7 @@ function CryptoHoldingExplainer({ mode }: { mode: 'yearly' | 'permanent' }) {
               color: 'var(--gold-leaf)',
             }}
           >
-            How paying in {PAYMENT_TOKEN_UNIT} works
+            How paying in {paymentTokenUnit()} works
           </span>
         </div>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>

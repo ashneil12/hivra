@@ -6,7 +6,7 @@ import { Check, Copy } from "lucide-react";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
-import { getTokenPageEntries, type TokenPageEntryStatus } from "@/lib/token-verification-content";
+import type { TokenPageEntry, TokenPageEntryStatus } from "@/lib/token-verification-content";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
@@ -49,8 +49,8 @@ function CopyAddressButton({ value }: { value: string }) {
   </>;
 }
 
-export default function TokenPageClient() {
-  const entries = getTokenPageEntries();
+/** `entries` are computed on the server at render, so the markup never depends on the viewer's clock. */
+export default function TokenPageClient({ entries }: { entries: TokenPageEntry[] }) {
   return <PublicSite>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
