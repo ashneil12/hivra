@@ -193,110 +193,6 @@ describe("WalletPage custody migration", () => {
     jest.useRealTimers();
   });
 
-  it("offers wallet-app deep links when a touch browser has no injected wallet", async () => {
-    const originalMatchMedia = window.matchMedia;
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: jest.fn().mockImplementation((media: string) => ({ matches: media === "(pointer: coarse)", media })),
-    });
-    try {
-      render(<WalletPage />);
-
-      expect(await screen.findByText(/this browser has no crypto wallet/i)).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /open in metamask/i })).toHaveAttribute(
-        "href",
-        `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`,
-      );
-      expect(screen.getByRole("link", { name: /open in coinbase wallet/i })).toHaveAttribute(
-        "href",
-        `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(window.location.href)}`,
-      );
-      expect(screen.getByRole("button", { name: /copy dashboard link/i })).toBeInTheDocument();
-    } finally {
-      Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
-    }
-  });
-
-  function renderLegacyCustodyOnTouch(snapshotWalletAddress: string | null) {
-    const originalMatchMedia = window.matchMedia;
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: jest.fn().mockImplementation((media: string) => ({ matches: media === "(pointer: coarse)", media })),
-    });
-    const defaultFetch = fetchMock.getMockImplementation();
-    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(input);
-      const method = requestMethod(input, init);
-      if (url === "/api/billing/bankr/wallet" && method === "GET") {
-        return json({
-          success: true,
-          data: {
-            ...selfCustodyWallet.data,
-            status: "ready",
-            custodyMode: "legacy_custody",
-            tokenLockWallet: {
-              address: "0x000000000000000000000000000000000000beef",
-              normalizedAddress: "0x000000000000000000000000000000000000beef",
-            },
-          },
-        });
-      }
-      if (url === "/api/billing/wallet/eligibility" && method === "GET" && snapshotWalletAddress) {
-        return json({
-          ...eligibility,
-          data: {
-            ...eligibility.data,
-            balance: {
-              balanceRaw: "0",
-              balanceDisplay: "0",
-              capturedAt: "2026-05-12T12:00:00.000Z",
-              walletAddress: snapshotWalletAddress,
-              normalizedWalletAddress: snapshotWalletAddress,
-            },
-          },
-        });
-      }
-      return defaultFetch!(input, init);
-    });
-    render(<WalletPage />);
-    return () => Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
-  }
-
-  it("offers wallet-app deep links to legacy custody on touch browsers while Unlock now still needs a wallet", async () => {
-    const restore = renderLegacyCustodyOnTouch(null);
-    try {
-      expect(await screen.findByText(/you don.t need to connect an external wallet/i)).toBeInTheDocument();
-      expect(await screen.findByRole("button", { name: /re-check holdings and unlock compute now/i })).toBeInTheDocument();
-      expect(screen.getByText(/unlock now can.t verify your holdings here/i)).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /open in metamask/i })).toHaveAttribute(
-        "href",
-        `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`,
-      );
-      expect(screen.getByRole("link", { name: /open in coinbase wallet/i })).toBeInTheDocument();
-    } finally {
-      restore();
-    }
-  });
-
-  it("keeps the no-wallet banner off touch browsers for legacy custody once a wallet is verified", async () => {
-    const restore = renderLegacyCustodyOnTouch("0x000000000000000000000000000000000000abcd");
-    try {
-      expect(await screen.findByRole("button", { name: /re-check holdings and unlock compute now/i })).toBeInTheDocument();
-      expect(screen.queryByText(/this browser has no crypto wallet/i)).not.toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: /open in metamask/i })).not.toBeInTheDocument();
-    } finally {
-      restore();
-    }
-  });
-
-  it("keeps the no-wallet banner off desktop browsers that are not in-app", async () => {
-    render(<WalletPage />);
-
-    expect(await screen.findByRole("button", { name: /connect wallet/i })).toBeInTheDocument();
-    expect(screen.queryByText(/this browser has no crypto wallet/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /open in metamask/i })).not.toBeInTheDocument();
-  });
-
   it("shows sign-to-verify for self-custody users without deposit or withdraw UI", async () => {
     render(<WalletPage />);
 
@@ -768,5 +664,109 @@ describe("WalletPage custody migration", () => {
         })
       );
     });
+  });
+
+  it("offers wallet-app deep links when a touch browser has no injected wallet", async () => {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockImplementation((media: string) => ({ matches: media === "(pointer: coarse)", media })),
+    });
+    try {
+      render(<WalletPage />);
+
+      expect(await screen.findByText(/this browser has no crypto wallet/i)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /open in metamask/i })).toHaveAttribute(
+        "href",
+        `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`,
+      );
+      expect(screen.getByRole("link", { name: /open in coinbase wallet/i })).toHaveAttribute(
+        "href",
+        `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(window.location.href)}`,
+      );
+      expect(screen.getByRole("button", { name: /copy dashboard link/i })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+    }
+  });
+
+  function renderLegacyCustodyOnTouch(snapshotWalletAddress: string | null) {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockImplementation((media: string) => ({ matches: media === "(pointer: coarse)", media })),
+    });
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(input, init);
+      if (url === "/api/billing/bankr/wallet" && method === "GET") {
+        return json({
+          success: true,
+          data: {
+            ...selfCustodyWallet.data,
+            status: "ready",
+            custodyMode: "legacy_custody",
+            tokenLockWallet: {
+              address: "0x000000000000000000000000000000000000beef",
+              normalizedAddress: "0x000000000000000000000000000000000000beef",
+            },
+          },
+        });
+      }
+      if (url === "/api/billing/wallet/eligibility" && method === "GET" && snapshotWalletAddress) {
+        return json({
+          ...eligibility,
+          data: {
+            ...eligibility.data,
+            balance: {
+              balanceRaw: "0",
+              balanceDisplay: "0",
+              capturedAt: "2026-05-12T12:00:00.000Z",
+              walletAddress: snapshotWalletAddress,
+              normalizedWalletAddress: snapshotWalletAddress,
+            },
+          },
+        });
+      }
+      return defaultFetch!(input, init);
+    });
+    render(<WalletPage />);
+    return () => Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+  }
+
+  it("offers wallet-app deep links to legacy custody on touch browsers while Unlock now still needs a wallet", async () => {
+    const restore = renderLegacyCustodyOnTouch(null);
+    try {
+      expect(await screen.findByText(/you don.t need to connect an external wallet/i)).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /re-check holdings and unlock compute now/i })).toBeInTheDocument();
+      expect(screen.getByText(/unlock now can.t verify your holdings here/i)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /open in metamask/i })).toHaveAttribute(
+        "href",
+        `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`,
+      );
+      expect(screen.getByRole("link", { name: /open in coinbase wallet/i })).toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the no-wallet banner off touch browsers for legacy custody once a wallet is verified", async () => {
+    const restore = renderLegacyCustodyOnTouch("0x000000000000000000000000000000000000abcd");
+    try {
+      expect(await screen.findByRole("button", { name: /re-check holdings and unlock compute now/i })).toBeInTheDocument();
+      expect(screen.queryByText(/this browser has no crypto wallet/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /open in metamask/i })).not.toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the no-wallet banner off desktop browsers that are not in-app", async () => {
+    render(<WalletPage />);
+
+    expect(await screen.findByRole("button", { name: /connect wallet/i })).toBeInTheDocument();
+    expect(screen.queryByText(/this browser has no crypto wallet/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /open in metamask/i })).not.toBeInTheDocument();
   });
 });
