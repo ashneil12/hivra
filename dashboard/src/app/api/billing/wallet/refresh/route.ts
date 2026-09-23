@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     try {
       await evaluateAndRecordTokenTierEligibility({
         userId,
-        currentBalance: BigInt(result.snapshot.balanceRaw),
+        balances: result.balances,
       });
     } catch (eligErr) {
       log.warn("wallet refresh eligibility re-evaluation failed", {

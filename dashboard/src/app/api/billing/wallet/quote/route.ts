@@ -27,6 +27,8 @@ import {
   activeCryptoPaymentSessionResponse,
 } from "@/lib/billing/crypto-payment-sessions";
 import { getTokenVerificationWallet } from "@/lib/billing/token-holdings";
+import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 
 function isValidTier(value: unknown): value is TierKey {
@@ -43,6 +45,8 @@ function serializeQuote(quote: DepositQuote) {
     priceUsdAtQuote: quote.priceUsdAtQuote,
     tokensRequiredRaw: quote.tokensRequiredRaw.toString(),
     tokensRequiredDisplay: quote.tokensRequiredDisplay,
+    tokenKey: quote.tokenKey,
+    tokenAddress: quote.tokenAddress,
     tokenSymbol: quote.tokenSymbol,
     tokenDecimals: quote.tokenDecimals,
     quotedAt: quote.quotedAt,
@@ -106,6 +110,8 @@ export async function GET(req: NextRequest) {
 
 interface PostBody {
   tier?: unknown;
+  /** Optional platform token ("hermesos" | "hivra"); defaults per account. */
+  token?: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -131,14 +137,31 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (body.token !== undefined && !isPlatformTokenKey(body.token)) {
+      return apiError("Invalid token — must be 'hermesos' or 'hivra'.", 400, {
+        failureType: "deposit_quote_bad_token",
+      });
+    }
+
     if (!(await hasVerifiedTokenWallet(userId))) {
       return verifiedTokenWalletRequiredError();
     }
 
-    const quote = await createDepositQuote({ userId, tier: body.tier });
+    const quote = await createDepositQuote({
+      userId,
+      tier: body.tier,
+      ...(body.token !== undefined ? { token: body.token } : {}),
+    });
 
     return apiSuccess(serializeQuote(quote));
   } catch (error) {
+    if (error instanceof TokenNotAllowedError) {
+      return apiError(error.message, 403, {
+        failureType: "token_not_allowed",
+        token: error.tokenKey,
+        allowedTokens: error.allowedTokens,
+      });
+    }
     if (error instanceof ActiveCryptoPaymentSessionError) {
       return apiError(
         "Another crypto payment is already active. Finish it or wait for it to expire before starting a new one.",

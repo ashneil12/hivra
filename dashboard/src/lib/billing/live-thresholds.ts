@@ -25,12 +25,12 @@
  */
 
 import {
-  fetchHermesPriceUsd,
+  fetchPlatformTokenPriceUsd,
   computeTokensRequiredForUsdTarget,
   type HermesPriceQuote,
 } from "./price-feed";
+import { HERMESOS_TOKEN, type PlatformToken } from "./token-registry";
 import {
-  HERMESOS_TOKEN_DECIMALS,
   LAUNCH_PROMO_END_DATE,
   USD_TARGET_CENTS,
   type ResolvedThreshold,
@@ -63,18 +63,23 @@ interface CacheEntry {
   fetchedAt: Date;
 }
 
-let cached: CacheEntry | null = null;
-let inFlight: Promise<HermesPriceQuote> | null = null;
+// One cache and one in-flight fetch per platform token, keyed by contract.
+const cachedByToken = new Map<string, CacheEntry>();
+const inFlightByToken = new Map<string, Promise<HermesPriceQuote>>();
 
 /** Test seam — clears the in-process cache and any in-flight fetch. */
 export function _resetLivePriceCacheForTests(): void {
-  cached = null;
-  inFlight = null;
+  cachedByToken.clear();
+  inFlightByToken.clear();
 }
+
+type PriceFetch = (options: { timeoutMs?: number }) => Promise<HermesPriceQuote>;
 
 interface GetLivePriceOptions {
   now?: Date;
-  fetchImpl?: typeof fetchHermesPriceUsd;
+  fetchImpl?: PriceFetch;
+  /** Token to price. Defaults to $HermesOS. USD targets are the same for every token. */
+  token?: PlatformToken;
   /**
    * Force the launch epoch regardless of the date — used to grant the
    * founders rate to allowlisted users past the global promo window.
@@ -87,8 +92,12 @@ async function getCachedOrFreshPrice(
   options: GetLivePriceOptions
 ): Promise<{ price: HermesPriceQuote; fetchedAt: Date }> {
   const now = options.now ?? new Date();
-  const fetchImpl = options.fetchImpl ?? fetchHermesPriceUsd;
+  const token = options.token ?? HERMESOS_TOKEN;
+  const fetchImpl: PriceFetch =
+    options.fetchImpl ?? ((fetchOptions) => fetchPlatformTokenPriceUsd(token, fetchOptions));
+  const cacheKey = token.address;
 
+  const cached = cachedByToken.get(cacheKey);
   if (cached) {
     const age = now.getTime() - cached.fetchedAt.getTime();
     if (age >= 0 && age < LIVE_TTL_MS) {
@@ -100,39 +109,42 @@ async function getCachedOrFreshPrice(
   // `fetchedAt` records the caller-supplied `now` (or wall-clock if the
   // caller didn't pass one) so cache age math stays consistent under
   // synthetic time in tests and across staggered request times in prod.
+  let inFlight = inFlightByToken.get(cacheKey);
   if (!inFlight) {
     inFlight = fetchImpl({ timeoutMs: PRICE_FETCH_TIMEOUT_MS })
       .then((price) => {
-        cached = { price, fetchedAt: now };
+        cachedByToken.set(cacheKey, { price, fetchedAt: now });
         return price;
       })
       .finally(() => {
-        inFlight = null;
+        inFlightByToken.delete(cacheKey);
       });
+    inFlightByToken.set(cacheKey, inFlight);
   }
 
   try {
     const price = await inFlight;
-    return { price, fetchedAt: cached?.fetchedAt ?? now };
+    return { price, fetchedAt: cachedByToken.get(cacheKey)?.fetchedAt ?? now };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    if (cached) {
-      const age = now.getTime() - cached.fetchedAt.getTime();
+    const stale = cachedByToken.get(cacheKey);
+    if (stale) {
+      const age = now.getTime() - stale.fetchedAt.getTime();
       if (age >= 0 && age < STALE_TTL_MS) {
         // Visible only in server logs — caller doesn't differentiate.
         // eslint-disable-next-line no-console
         console.warn(
-          `[live-thresholds] live fetch failed (${reason}); serving cached price aged ${Math.round(age / 1000)}s`
+          `[live-thresholds] live ${token.displayUnit} fetch failed (${reason}); serving cached price aged ${Math.round(age / 1000)}s`
         );
-        return { price: cached.price, fetchedAt: cached.fetchedAt };
+        return { price: stale.price, fetchedAt: stale.fetchedAt };
       }
     }
     // eslint-disable-next-line no-console
     console.error(
-      `[live-thresholds] live fetch failed (${reason}) and cache exhausted; threshold unavailable`
+      `[live-thresholds] live ${token.displayUnit} fetch failed (${reason}) and cache exhausted; threshold unavailable`
     );
     throw new LivePriceUnavailableError(
-      `Live $HERMESOS price unavailable: ${reason}`,
+      `Live ${token.displayUnit} price unavailable: ${reason}`,
       error
     );
   }
@@ -149,18 +161,21 @@ function buildResolved(
 
 function tokensFromUsd(
   code: ThresholdTierCode,
-  priceUsd: string
+  priceUsd: string,
+  tokenDecimals: number
 ): bigint {
   return computeTokensRequiredForUsdTarget({
     usdTargetCents: USD_TARGET_CENTS[code],
     priceUsdPerToken: priceUsd,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenDecimals,
     rounding: "up",
   }).raw;
 }
 
 /**
- * Resolve the active tier thresholds using the live $HERMESOS/USD price.
+ * Resolve the active tier thresholds in `options.token` (default $HermesOS)
+ * using its live USD price. The USD targets, and so the launch/founders
+ * discounts, are the same for every platform token.
  * Throws {@link LivePriceUnavailableError} when neither live nor cached
  * price is available — callers must decide whether to skip the work
  * (cron writer) or surface a 503 to the user (HTTP route).
@@ -175,16 +190,18 @@ export async function getLiveActiveThresholds(
   const proCode: ThresholdTierCode = inLaunchWindow ? "PRO_LAUNCH" : "PRO_STANDARD";
   const powerCode: ThresholdTierCode = inLaunchWindow ? "POWER_LAUNCH" : "POWER_STANDARD";
 
+  const token = options.token ?? HERMESOS_TOKEN;
   const { price, fetchedAt } = await getCachedOrFreshPrice({
     now,
     fetchImpl: options.fetchImpl,
+    token,
   });
 
   return {
     epoch,
     promoEndsAt: LAUNCH_PROMO_END_DATE,
-    pro: buildResolved("pro", epoch, tokensFromUsd(proCode, price.priceUsd)),
-    power: buildResolved("power", epoch, tokensFromUsd(powerCode, price.priceUsd)),
+    pro: buildResolved("pro", epoch, tokensFromUsd(proCode, price.priceUsd, token.decimals)),
+    power: buildResolved("power", epoch, tokensFromUsd(powerCode, price.priceUsd, token.decimals)),
     priceUsd: price.priceUsd,
     priceFetchedAt: fetchedAt,
   };

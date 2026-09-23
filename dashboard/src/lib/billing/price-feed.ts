@@ -23,7 +23,8 @@
  * Out of scope for V1 — flagged in the BACKLOG.
  */
 
-import { HERMESOS_TOKEN_ADDRESS, VVV_TOKEN_ADDRESS } from "./token-holdings";
+import { VVV_TOKEN_ADDRESS } from "./token-holdings";
+import { HERMESOS_TOKEN, type PlatformToken } from "./token-registry";
 
 export interface HermesPriceQuote {
   /**
@@ -157,10 +158,18 @@ async function fetchTokenPriceUsd(
   };
 }
 
+/** Live USD price of a platform token ($HermesOS or $HIVRA). */
+export async function fetchPlatformTokenPriceUsd(
+  token: PlatformToken,
+  options: FetchTokenPriceOptions = {}
+): Promise<HermesPriceQuote> {
+  return fetchTokenPriceUsd(token.address, options);
+}
+
 export async function fetchHermesPriceUsd(
   options: FetchTokenPriceOptions = {}
 ): Promise<HermesPriceQuote> {
-  return fetchTokenPriceUsd(HERMESOS_TOKEN_ADDRESS, options);
+  return fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, options);
 }
 
 /**

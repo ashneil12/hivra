@@ -20,7 +20,6 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import {
-  normalizeNumericToBigIntString,
   refreshPrimaryHermesTokenHolding,
 } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
@@ -105,9 +104,7 @@ export async function GET(req: NextRequest) {
           try {
             await evaluateAndRecordTokenTierEligibility({
               userId,
-              currentBalance: BigInt(
-                normalizeNumericToBigIntString(result.snapshot.balanceRaw)
-              ),
+              balances: result.balances,
             });
             return { userId, kind: "ok" as const };
           } catch (eligErr) {
