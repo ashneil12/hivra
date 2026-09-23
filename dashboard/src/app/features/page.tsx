@@ -9,14 +9,14 @@ import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 
 export const metadata: Metadata = {
-  title: "Hivra Features — Persistent AI Agent Hosting",
+  title: "Hivra Features: Persistent AI Agent Hosting",
   description:
     "Explore every capability of Hivra: persistent memory, browser automation, multi-agent coordination, scheduled tasks, and zero-markup AI key hosting. All pre-configured. No Docker.",
   ...buildWebsiteMetadata({
     path: "/features",
-    title: "Hivra Features — Persistent AI Agent Hosting",
+    title: "Hivra Features: Persistent AI Agent Hosting",
     description:
-      "Every capability of Hivra — explore persistent memory, browser automation, multi-agent support, and more.",
+      "Every capability of Hivra: persistent memory, browser automation, multi-agent support, and more.",
   }),
 };
 
