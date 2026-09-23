@@ -1106,6 +1106,8 @@ async function listProvisionedWalletHoldings(params: {
 
   const balances = payload.balances;
   if (!balances || typeof balances !== "object" || Array.isArray(balances)) throw unavailable();
+  // Base is where Hivra wallets live; a response without it proves nothing.
+  if (!("base" in balances)) throw unavailable();
 
   // Bankr documents amounts as decimal strings; anything else is unreadable.
   const amountOf = (value: unknown): number => {

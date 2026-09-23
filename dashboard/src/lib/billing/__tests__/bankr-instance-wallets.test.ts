@@ -983,6 +983,8 @@ describe("user-connected Bankr accounts", () => {
 
     const unreadable = [
       { success: true },
+      // An empty balance map is not proof of an empty wallet on Base.
+      { success: true, balances: {}, nfts: [] },
       // Fields missing or renamed must not read as zero.
       { success: true, balances: { base: { tokenBalances: [] } }, nfts: [] },
       { success: true, balances: { base: { nativeBalance: "0", tokens: [] } }, nfts: [] },
