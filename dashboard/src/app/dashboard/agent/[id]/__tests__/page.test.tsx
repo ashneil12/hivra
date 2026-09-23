@@ -59,6 +59,10 @@ jest.mock("@/components/hivra/HivraChat", () => ({
   },
 }));
 
+jest.mock("@/components/hivra/DigitalOceanAgentWorkspace", () => ({
+  DigitalOceanAgentWorkspace: ({ agentId }: { agentId: string }) => <div>DigitalOcean session {agentId}</div>,
+}));
+
 jest.mock("@/components/hivra/HivraLogin", () => ({
   HivraLogin: () => <div>Login panel</div>,
 }));
@@ -223,6 +227,16 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: button }));
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+  });
+
+  it("opens a DigitalOcean agent in its session workspace, never the box chat or login", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "claude-code", name: "DO_AGENT", cpu: 2, ram: 4,
+      status: "running", computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null });
+    render(<AgentPage />);
+    expect(await screen.findByText("DigitalOcean session agent_123")).toBeInTheDocument();
+    expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+    expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
+    expect(mockBrowserStatus).not.toHaveBeenCalled();
   });
 
   it("opens Chat for a guest-confirmed provider without demanding native sign-in", async () => {

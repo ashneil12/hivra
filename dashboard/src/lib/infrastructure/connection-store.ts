@@ -10,16 +10,21 @@ import {
   DeploymentTargetDtoSchema,
   GvisorDeploymentTargetDtoSchema,
   ProviderVmDeploymentTargetDtoSchema,
+  DIGITALOCEAN_CONNECTION_CAPABILITIES,
   HETZNER_CLOUD_CONNECTION_CAPABILITIES,
   InfrastructureConnectionDtoSchema,
+  isProviderApiConnection,
   PortableHivraRuntimeCompatibilitySchema,
   ProxmoxConnectionCredentialsSchema,
   type DeploymentTargetDto,
+  type DigitalOceanConnectionErrorCode,
   type HetznerCloudConnectionErrorCode,
   type InfrastructurePreflightTargetEvidence as ValidatedInfrastructurePreflightTargetEvidence,
   type InfrastructureConnectionDto,
   type InfrastructureConnectionCreate,
   type ProxmoxConnectionUpdate,
+  type SshInfrastructureConnectionCreate,
+  type SshInfrastructureConnectionDto,
   type ProxmoxPreflightErrorCode,
 } from "./contracts";
 import { isCompatibleProxmoxProvisionerVersion } from "./portable-provisioner-contract";
@@ -93,7 +98,7 @@ type InfrastructureConnectionRow = {
   preflight_lease_expires_at: string | null;
   pending_binding_rebind_from_revision: number | null;
   last_checked_at: string | null;
-  last_error_code: ProxmoxPreflightErrorCode | HetznerCloudConnectionErrorCode | null;
+  last_error_code: ProxmoxPreflightErrorCode | HetznerCloudConnectionErrorCode | DigitalOceanConnectionErrorCode | null;
   created_at: string;
   updated_at: string;
 };
@@ -121,11 +126,6 @@ type DeploymentTargetRow = {
   updated_at: string;
 };
 
-type SshInfrastructureConnectionDto = Exclude<
-  InfrastructureConnectionDto,
-  { provider: "hetzner-cloud" }
->;
-
 export type LoadedInfrastructureConnection = Omit<
   SshInfrastructureConnectionDto,
   "credentialsConfigured"
@@ -149,7 +149,8 @@ export type InfrastructureConnectionStoreErrorCode =
   | "quote_limit"
   | "capacity_busy"
   | "capacity_force_forget_required"
-  | "force_forget_not_available";
+  | "force_forget_not_available"
+  | "agents_bound";
 
 /**
  * Stable, secret-free store error. Database and crypto error messages are not
@@ -241,6 +242,24 @@ function dtoFromRow(
   row: InfrastructureConnectionRow,
   credentialsConfigured: boolean,
 ): InfrastructureConnectionDto {
+  if (row.provider === "digitalocean") {
+    return InfrastructureConnectionDtoSchema.parse({
+      id: row.id,
+      name: row.name,
+      provider: row.provider,
+      operatingMode: row.operating_mode,
+      setupMode: "simple",
+      status: row.status,
+      endpoint: null,
+      configuration: null,
+      capabilities: DIGITALOCEAN_CONNECTION_CAPABILITIES,
+      credentialsConfigured,
+      lastCheckedAt: row.last_checked_at,
+      lastErrorCode: row.last_error_code,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
   if (row.provider === "hetzner-cloud") {
     return InfrastructureConnectionDtoSchema.parse({
       id: row.id,
@@ -289,7 +308,17 @@ function dtoFromRow(
   });
 }
 
+function isDigitalOceanTargetRow(row: DeploymentTargetRow): boolean {
+  const capabilities = row.capabilities;
+  return Boolean(capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)
+    && (capabilities as Record<string, unknown>).kind === "digitalocean-managed-agents");
+}
+
 function deploymentTargetDtoFromRow(row: DeploymentTargetRow): DeploymentTargetDto {
+  if (isDigitalOceanTargetRow(row)) {
+    // Never admit a DigitalOcean target through host/VM target contracts.
+    throw new InfrastructureConnectionStoreError("invalid_request");
+  }
   const rawCapabilities = row.capabilities;
   const capabilities = rawCapabilities &&
     typeof rawCapabilities === "object" &&
@@ -388,7 +417,7 @@ function deploymentTargetDtoFromRow(row: DeploymentTargetRow): DeploymentTargetD
 
 function metadataForCreate(
   userId: string,
-  input: Exclude<InfrastructureConnectionCreate, { provider: "hetzner-cloud" }>,
+  input: SshInfrastructureConnectionCreate,
 ) {
   return {
     user_id: userId,
@@ -491,9 +520,10 @@ export async function listInfrastructureDeploymentTargets(
 
   const { data, error } = await targetQuery.order("created_at", { ascending: false });
   if (error) throw databaseError(error);
-  return (data ?? []).map((row) =>
-    deploymentTargetDtoFromRow(row as unknown as DeploymentTargetRow),
-  );
+  return (data ?? [])
+    // DigitalOcean's serverless target has its own read model and launch path.
+    .filter((row) => !isDigitalOceanTargetRow(row as unknown as DeploymentTargetRow))
+    .map((row) => deploymentTargetDtoFromRow(row as unknown as DeploymentTargetRow));
 }
 
 export async function getInfrastructureDeploymentTarget(
@@ -516,10 +546,10 @@ export async function createInfrastructureConnection(
   userId: string,
   input: InfrastructureConnectionCreate,
 ): Promise<InfrastructureConnectionDto> {
-  if (input.provider === "hetzner-cloud") {
-    // Provider-token validation and first inventory persistence use the
-    // dedicated Hetzner service. This SSH-only path must never reinterpret a
-    // provider credential as a private key.
+  if (input.provider === "hetzner-cloud" || input.provider === "digitalocean") {
+    // Provider-token validation and first persistence use the dedicated
+    // provider services. This SSH-only path must never reinterpret a provider
+    // credential as a private key.
     throw new InfrastructureConnectionStoreError("invalid_request");
   }
   // Resolve encryption configuration before the transaction starts. The RPC
@@ -567,7 +597,7 @@ export async function updateInfrastructureConnection(
   input: ProxmoxConnectionUpdate,
 ): Promise<InfrastructureConnectionDto> {
   const current = await ownerConnectionRow(userId, connectionId);
-  if (current.provider === "hetzner-cloud") {
+  if (isProviderApiConnection(current)) {
     throw new InfrastructureConnectionStoreError("invalid_request");
   }
   if (
@@ -738,6 +768,18 @@ export async function deleteInfrastructureConnection(
   ) {
     throw new InfrastructureConnectionStoreError("conflict");
   }
+  if (current.provider === "digitalocean") {
+    // The target foreign key already refuses this delete; say why up front so
+    // the owner deletes the sessions (and stops their billing) first.
+    const { count, error: boundError } = await database()
+      .from("hivra_agents")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("infrastructure_connection_id", connectionId)
+      .neq("status", "deleted");
+    if (boundError) throw databaseError(boundError);
+    if ((count ?? 0) > 0) throw new InfrastructureConnectionStoreError("agents_bound");
+  }
   const { data: disposition, error: deleteError } = await database().rpc(
     "delete_infrastructure_connection",
     {
@@ -800,7 +842,7 @@ export async function loadInfrastructureConnectionSecret(
   connectionId: string,
 ): Promise<LoadedInfrastructureConnection> {
   const row = await ownerConnectionRow(userId, connectionId);
-  if (row.provider === "hetzner-cloud") {
+  if (isProviderApiConnection(row)) {
     throw new InfrastructureConnectionStoreError("invalid_request", row.revision);
   }
   const { data, error } = await database()
@@ -828,7 +870,7 @@ export async function loadInfrastructureConnectionSecret(
 
   const { credentialsConfigured, ...rawConnection } = dtoFromRow(row, true);
   void credentialsConfigured;
-  if (rawConnection.provider === "hetzner-cloud") {
+  if (rawConnection.provider !== "proxmox" && rawConnection.provider !== "host") {
     throw new InfrastructureConnectionStoreError("invalid_request", row.revision);
   }
   const connection: Omit<SshInfrastructureConnectionDto, "credentialsConfigured"> =
