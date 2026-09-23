@@ -20,11 +20,16 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
-import { HERMESOS_TOKEN_DECIMALS, HERMESOS_TOKEN_SYMBOL } from "./token-holdings";
+import {
+  platformTokenForRow,
+  requirePlatformToken,
+  type PlatformTokenKey,
+} from "./token-registry";
+import { TokenNotAllowedError, resolveUserTokenAccess, type UserTokenAccess } from "./token-access";
 import type { TierKey } from "./tier-thresholds";
 import {
   computeTokensRequiredForUsdTarget,
-  fetchHermesPriceUsd,
+  fetchPlatformTokenPriceUsd,
   type HermesPriceQuote,
 } from "./price-feed";
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
@@ -56,6 +61,8 @@ export interface YearlyQuoteRow {
   id: string;
   user_id: string;
   tier: TierKey;
+  token_key?: PlatformTokenKey | null;
+  token_address?: string | null;
   usd_target_cents: number;
   price_usd_at_quote: string;
   tokens_required_raw: string;
@@ -82,6 +89,9 @@ export interface YearlyTokenQuote {
   priceUsdAtQuote: string;
   tokensRequiredRaw: bigint;
   tokensRequiredDisplay: string;
+  /** The platform token this quote must be paid in. Settlement credits only this token. */
+  tokenKey: PlatformTokenKey;
+  tokenAddress: string;
   tokenSymbol: string;
   tokenDecimals: number;
   depositAddress: string;
@@ -97,6 +107,7 @@ export interface YearlyTokenQuote {
 }
 
 export function asYearlyTokenQuote(row: YearlyQuoteRow): YearlyTokenQuote {
+  const token = platformTokenForRow(row);
   return {
     id: row.id,
     userId: row.user_id,
@@ -105,8 +116,10 @@ export function asYearlyTokenQuote(row: YearlyQuoteRow): YearlyTokenQuote {
     priceUsdAtQuote: row.price_usd_at_quote,
     tokensRequiredRaw: BigInt(row.tokens_required_raw),
     tokensRequiredDisplay: row.tokens_required_display,
-    tokenSymbol: HERMESOS_TOKEN_SYMBOL,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenKey: token.key,
+    tokenAddress: token.address,
+    tokenSymbol: token.symbol,
+    tokenDecimals: token.decimals,
     depositAddress: row.deposit_address,
     quotedAt: row.quoted_at,
     expiresAt: row.expires_at,
@@ -120,16 +133,33 @@ export function asYearlyTokenQuote(row: YearlyQuoteRow): YearlyTokenQuote {
 }
 
 export const YEARLY_QUOTE_SELECT_COLUMNS =
-  "id, user_id, tier, usd_target_cents, price_usd_at_quote, " +
+  "id, user_id, tier, token_key, token_address, usd_target_cents, price_usd_at_quote, " +
   "tokens_required_raw::text, tokens_required_display, deposit_address, " +
   "quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, " +
   "consumed_tx_hash, consumed_log_index, source, metadata, created_at, updated_at";
+
+/** An active quote for this tier is locked in a different token. */
+export class ActiveYearlyQuoteTokenMismatchError extends Error {
+  constructor(readonly quote: YearlyTokenQuote) {
+    super(
+      `Your open ${quote.tier} quote is in ${quote.tokenSymbol}. Pay it or wait for it to expire before paying in another token.`
+    );
+    this.name = "ActiveYearlyQuoteTokenMismatchError";
+  }
+}
 
 interface CreateYearlyQuoteParams {
   userId: string;
   tier: TierKey;
   /** Snapshot of the user's credit_deposit wallet address at quote time. */
   depositAddress: string;
+  /**
+   * Token to pay in. Defaults to the user's payment token ($HermesOS before
+   * $HIVRA is active and for the grandfather cohort, else $HIVRA). A token
+   * the user may not pay in is refused.
+   */
+  token?: PlatformTokenKey;
+  access?: UserTokenAccess;
   now?: Date;
   /** Test seam — bypass the network call. */
   priceQuote?: HermesPriceQuote;
@@ -147,6 +177,14 @@ export async function createYearlyTokenQuote(
 ): Promise<YearlyTokenQuote> {
   if (!supabaseAdmin) throw new Error("Database not configured");
   const now = params.now ?? new Date();
+
+  // Server-side token rule: new users pay in $HIVRA once it is active.
+  const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now }));
+  const tokenKey = params.token ?? access.paymentToken;
+  if (!access.allowedTokens.includes(tokenKey)) {
+    throw new TokenNotAllowedError(tokenKey, access.allowedTokens);
+  }
+  const token = requirePlatformToken(tokenKey);
 
   // Opportunistic auto-expire of stale rows so the unique partial
   // index doesn't conflict with a never-consumed past quote.
@@ -166,7 +204,15 @@ export async function createYearlyTokenQuote(
     tier: params.tier,
     now,
   });
-  if (existingActive) return existingActive;
+  if (existingActive) {
+    // A locked quote in another token must not be handed back as if it were
+    // the one asked for: paying it in the requested token would be a
+    // wrong-token transfer that is never credited.
+    if (params.token && existingActive.tokenKey !== params.token) {
+      throw new ActiveYearlyQuoteTokenMismatchError(existingActive);
+    }
+    return existingActive;
+  }
 
   await assertNoActiveCryptoPaymentSession({
     userId: params.userId,
@@ -174,12 +220,13 @@ export async function createYearlyTokenQuote(
   });
 
   const usdTargetCents = YEARLY_USD_TARGET_CENTS[params.tier];
-  const priceQuote = params.priceQuote ?? (await fetchHermesPriceUsd());
+  // The same USD target in either token: the yearly token discount carries over.
+  const priceQuote = params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
 
   const tokensRequired = computeTokensRequiredForUsdTarget({
     usdTargetCents,
     priceUsdPerToken: priceQuote.priceUsd,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenDecimals: token.decimals,
     rounding: "up",
   });
 
@@ -190,6 +237,8 @@ export async function createYearlyTokenQuote(
     .insert({
       user_id: params.userId,
       tier: params.tier,
+      token_key: token.key,
+      token_address: token.address,
       usd_target_cents: usdTargetCents,
       price_usd_at_quote: priceQuote.priceUsd,
       tokens_required_raw: tokensRequired.raw.toString(),
@@ -212,7 +261,10 @@ export async function createYearlyTokenQuote(
       tier: params.tier,
       now,
     });
-    if (winner) return winner;
+    if (winner) {
+      if (params.token && winner.tokenKey !== params.token) throw new ActiveYearlyQuoteTokenMismatchError(winner);
+      return winner;
+    }
   }
   if (error || !data) {
     throw new Error(`Failed to create yearly token quote: ${error?.message ?? "unknown"}`);

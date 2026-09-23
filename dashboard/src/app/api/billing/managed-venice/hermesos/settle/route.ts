@@ -123,6 +123,7 @@ export async function POST(req: NextRequest) {
         transactionHash: parsed.data.transactionHash,
         depositAddress: quote.depositAddress,
         tokenAmountRaw: parsed.data.tokenAmountRaw,
+        tokenAddress: quote.tokenAddress,
       });
     } catch (error) {
       return retryLater("rpc_unavailable", delivery, { cause: error, logLevel: "error" });

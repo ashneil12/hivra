@@ -26,6 +26,8 @@ const PREREQUISITES = [
 const MIGRATION = "20260923150000_dual_platform_token_foundation.sql";
 // Follow-up: the stale-state reset's base tier counts every allowed token.
 const FOLLOW_UP = "20260923203000_reconcile_token_base_any_allowed_token.sql";
+// One deposit lot per quote in either token.
+const LOT_INDEX = "20260923204000_managed_venice_token_lots_unique_quote_any_token.sql";
 const HERMESOS = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
 const HIVRA = "0x1111111111111111111111111111111111111111";
 const ACTIVATED_AT = "2026-10-01T00:00:00.000Z";
@@ -94,6 +96,8 @@ async function main() {
     await db.exec(read(MIGRATION)); // rerun-safe
     await db.exec(read(FOLLOW_UP));
     await db.exec(read(FOLLOW_UP)); // rerun-safe
+    await db.exec(read(LOT_INDEX));
+    await db.exec(read(LOT_INDEX)); // rerun-safe
 
     // ── backfills and shapes ───────────────────────────────────────────
     assert.equal((await one(`select token_key from token_tier_qualifications where user_id = 'user_qual'`)).token_key, "hermesos");
@@ -290,6 +294,18 @@ async function main() {
       `insert into managed_venice_financial_events (user_id, wallet_type, event_type, reference_id, idempotency_key)
        values ('user_wallet', 'hivra', 'token_deposit', 'y', 'y')`
     );
+
+    // A second $HIVRA deposit lot for the same quote is refused (no double credit).
+    const hivraLot = () =>
+      db.query(
+        `insert into managed_venice_token_lots (account_id, user_id, quote_id, token_amount_raw, remaining_token_amount_raw,
+           snapshot_price_usd, original_value_micro_usd, remaining_value_micro_usd, quote_source, quoted_at, source, token_key, token_address)
+         values ($1, 'user_wallet', '00000000-0000-0000-0000-00000000abcd', 10, 10, '1', 1000, 1000, 'dexscreener', $2,
+                 'hivra_deposit', 'hivra', $3)`,
+        [guardAccount, AFTER, HIVRA]
+      );
+    await hivraLot();
+    await assert.rejects(hivraLot(), (error) => error.code === "23505");
 
     // ── stale-state reset counts only allowed tokens ───────────────────
     const reset = async (user, now) => {
