@@ -19,7 +19,7 @@ import {
   LAUNCH_PROMO_END_DATE,
   HERMESOS_TOKEN_DECIMALS,
 } from "../tier-thresholds";
-import type { HermesPriceQuote } from "../price-feed";
+import { PlatformTokenPriceGateError, type HermesPriceQuote } from "../price-feed";
 
 const NOW_DURING_LAUNCH = new Date("2026-04-29T12:00:00.000Z");
 
@@ -106,6 +106,34 @@ describe("getLiveActiveThresholds", () => {
 
     expect(stale.priceUsd).toBe("0.00002609");
     expect(stale.pro.amount).toBeGreaterThan(0n);
+  });
+
+  it.each(["liquidity", "deviation", "pool_missing"] as const)(
+    "fails closed on a tripped %s gate instead of serving the cached price",
+    async (gate) => {
+      let calls = 0;
+      const fetchImpl = async () => {
+        calls += 1;
+        if (calls === 1) return priceQuote("0.00002609");
+        throw new PlatformTokenPriceGateError(gate, `${gate} tripped`);
+      };
+      await getLiveActiveThresholds({ now: NOW_DURING_LAUNCH, fetchImpl });
+      await expect(
+        getLiveActiveThresholds({ now: new Date(NOW_DURING_LAUNCH.getTime() + LIVE_TTL_MS + 60_000), fetchImpl })
+      ).rejects.toBeInstanceOf(LivePriceUnavailableError);
+    }
+  );
+
+  it("serves the cached price through a price-source outage", async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) return priceQuote("0.00002609");
+      throw new PlatformTokenPriceGateError("reference_unavailable", "GeckoTerminal down");
+    };
+    await getLiveActiveThresholds({ now: NOW_DURING_LAUNCH, fetchImpl });
+    const stale = await getLiveActiveThresholds({ now: new Date(NOW_DURING_LAUNCH.getTime() + LIVE_TTL_MS + 60_000), fetchImpl });
+    expect(stale.priceUsd).toBe("0.00002609");
   });
 
   it("throws LivePriceUnavailableError when no cache is available and fetch fails", async () => {

@@ -51,9 +51,9 @@ REQUIRED_SUBSECTIONS = {
     },
 }
 UTILITY_NAMES = (
-    "Access to compute", "Access to Nibbii", "Metered spending", "Packs", "Reserved capacity",
+    "Access to compute", "Metered spending", "Packs", "Reserved capacity",
     "Containment bounties", "Certification bonds", "Threat report payouts",
-    "Publisher payouts", "Certification fees", "Commissioned pets", "Experience packages",
+    "Publisher payouts", "Certification fees", "Experience packages",
     "Mission funding", "Agent budgets",
 )
 AUTHOR_NOTE = re.compile(
@@ -79,7 +79,7 @@ def inline(value):
     value = escape(value, quote=False)
 
     def link(match):
-        target = {"WHITEPAPER.md": "../../WHITEPAPER.md", "LITEPAPER.md": "../../LITEPAPER.md", "TOKENOMICS.md": "../../TOKENOMICS.md?v=" + hashlib.sha256((REPO / "LITEPAPER.md").read_bytes()).hexdigest()[:12], "THOUGHTS.md": "../../THOUGHTS.md", "WHY.md": "../../WHY.md", "#the-problem": "#opportunity", "#the-problem-is-where-it-lives": "#opportunity", "#hivra": "#top"}.get(match[2], match[2])
+        target = {"WHITEPAPER.md": "../../WHITEPAPER.md", "LITEPAPER.md": "../../LITEPAPER.md", "TOKENOMICS.md": "../../TOKENOMICS.md?v=" + hashlib.sha256((REPO / "LITEPAPER.md").read_bytes()).hexdigest()[:12], "THOUGHTS.md": "../../THOUGHTS.md", "#the-problem": "#opportunity", "#the-problem-is-where-it-lives": "#opportunity", "#hivra": "#top"}.get(match[2], match[2])
         return '<a href="{}">{}</a>'.format(escape(target, quote=True), match[1])
 
     value = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", link, value)
@@ -276,7 +276,7 @@ def build_page():
 <div id="top" aria-hidden="true"></div>
 <a class="skip-link" href="#main">Skip to the litepaper</a>
 <header class="site-header"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><nav aria-label="Primary navigation"><a href="#opportunity">Why Hivra</a><a href="#experience">How it works</a><a href="#observability">Activity</a><a href="#future">What's next</a></nav><div class="reader-tools"><button class="chapter-index-toggle" aria-controls="chapter-index" aria-expanded="false">Index<span aria-hidden="true" class="index-icon"></span></button><button class="reading-toggle" aria-pressed="false">Read</button><button class="motion-toggle" aria-pressed="false" aria-label="Pause animation">Motion on</button><button class="theme-toggle" aria-label="Switch to light theme">Light</button></div></header>
-<dialog class="chapter-index-panel" id="chapter-index" aria-labelledby="index-title"><div class="index-top"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><button class="chapter-index-close" aria-label="Close chapter index">Close <span aria-hidden="true">×</span></button></div><div class="index-layout"><div class="index-intro"><p class="mini-label">The Hivra litepaper</p><h2 id="index-title">Find your<br>place.</h2><p>Give it room to work.<br>Decide what it can reach.</p></div><nav class="index-links" aria-label="Chapter index">{index_links}</nav></div><div class="index-bottom"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../LITEPAPER.md">Save the litepaper {explore_arrow}</a><a href="https://nibbii.pet/">Nibbii {explore_arrow}</a></div></dialog>
+<dialog class="chapter-index-panel" id="chapter-index" aria-labelledby="index-title"><div class="index-top"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><button class="chapter-index-close" aria-label="Close chapter index">Close <span aria-hidden="true">×</span></button></div><div class="index-layout"><div class="index-intro"><p class="mini-label">The Hivra litepaper</p><h2 id="index-title">Find your<br>place.</h2><p>Give it room to work.<br>Decide what it can reach.</p></div><nav class="index-links" aria-label="Chapter index">{index_links}</nav></div><div class="index-bottom"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../LITEPAPER.md">Save the litepaper {explore_arrow}</a></div></dialog>
 <main id="main">
 <section class="hero" id="beginning" data-chapter="The beginning">
 <div class="hero-art" aria-hidden="true"><div class="hero-object-stage"><div class="hero-object"><img src="assets/boundary-monolith-v5.png" alt="" width="1672" height="940" fetchpriority="high"><div class="hero-object-edge"></div></div><div class="hero-coordinate coordinate-top">HIVRA / AGENT COMPUTERS</div><div class="hero-coordinate coordinate-bottom">A place of its own.</div></div><div class="hero-shade"></div><canvas id="field-canvas"></canvas></div><div class="hero-watermark" aria-hidden="true">HIVRA</div>
@@ -299,7 +299,7 @@ def build_page():
 <section class="reading-room chapter shell" id="reading-room" data-chapter="Read further"><h2>Read further</h2><div class="prose">{blocks(reading_copy)}</div><div class="reading-actions"><p class="source-links">{source_reading_links}</p><button class="text-link reading-toggle" aria-pressed="false">Continuous reading <span aria-hidden="true">↗</span></button></div></section>
 <section class="finale chapter" id="somewhere-better" data-chapter="Somewhere better"><div class="finale-art" aria-hidden="true"><img src="assets/boundary-monolith-v5.png" alt="" width="1672" height="940" loading="lazy"></div><div class="shell"><h2>Somewhere<br><span>better to work</span></h2><div class="prose finale-copy">{blocks(finale_copy)}</div><div class="finale-links source-links">{source_finale_links}</div></div></section>
 </main>
-<footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="https://nibbii.pet/">Nibbii {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper draft {explore_arrow}</a></div></footer>
+<footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper {explore_arrow}</a></div></footer>
 <nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The constitution">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><div class="reading-progress" aria-hidden="true"></div></nav>
 </body></html>'''
     # Chapter markers are navigational metadata; the approved narrative stays intact.
