@@ -138,6 +138,9 @@ export interface DepositQuotePayload {
   tokensRequiredDisplay: string;
   tokenSymbol: string;
   tokenDecimals: number;
+  /** Contract of the token to hold for this quote. */
+  tokenAddress?: string;
+  tokenKey?: string;
   quotedAt: string;
   expiresAt: string;
   status: 'active' | 'consumed' | 'expired' | 'cancelled';

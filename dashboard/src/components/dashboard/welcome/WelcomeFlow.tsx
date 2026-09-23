@@ -85,6 +85,7 @@ import {
 } from '@/lib/welcome-persona-catalog';
 import { GOALS as IDENTITY_GOALS } from '@/lib/hivra/agent-identity';
 
+
 const DEFAULT_PROVIDER: Provider = getFeaturedProvider(PROVIDERS) ?? PROVIDERS[0];
 import { clientLog } from '@/lib/client/logger';
 import { usePreferredProviderModels } from '@/lib/hooks/usePreferredProviderModels';
@@ -174,6 +175,10 @@ import {
   requestManagedVeniceSummary,
   type ManagedVeniceWalletSummaryPayload,
 } from '@/lib/billing/managed-venice-client';
+import { primaryPlatformToken } from '@/lib/billing/token-registry';
+
+/** The token new payments are made in: $HermesOS until $HIVRA is live, then $HIVRA. */
+const PAYMENT_TOKEN_UNIT = primaryPlatformToken().displayUnit;
 
 const WELCOME_ROUTE = '/dashboard/welcome';
 const WELCOME_PERSONALIZATION_BEST_EFFORT_MS = 750;
@@ -1769,7 +1774,7 @@ export function WelcomeFlow() {
     async ({ walletType, amountUsd }: { walletType: ManagedVeniceWalletType; amountUsd: number }) => {
       setError(null);
       if (walletType === 'hermesos') {
-        setError('Create the $HermesOS quote from the managed Venice credit step.');
+        setError(`Create the ${PAYMENT_TOKEN_UNIT} quote from the managed Venice credit step.`);
         return;
       }
 
@@ -2709,7 +2714,7 @@ export function WelcomeFlow() {
               {flowState === 'agent-type'
                 ? 'Pick the agent software to run — Claude Code, Codex, OpenClaw, Agent Zero or a plain Hermes agent — or a specialist that starts pre-shaped and can still be renamed and retuned.'
                 : flowState === 'plan'
-                  ? 'Choose Card or $HermesOS, then finish the deploy.'
+                  ? `Choose Card or ${PAYMENT_TOKEN_UNIT}, then finish the deploy.`
                   : `${selectedAgentType?.tagline ?? "Name your agent, connect your AI provider, and you're live."}`}
             </p>
           </header>
@@ -5094,7 +5099,7 @@ function PaymentMethodIntro({
           />
           <PaymentMethodOptionCard
             icon={<Coins size={20} />}
-            label="$HermesOS"
+            label={PAYMENT_TOKEN_UNIT}
             tagline="Pay with the token · save up to ~59%"
             description="Pay one year up front, or hold tokens to keep your tier as long as you hold."
             onClick={onPickCrypto}
@@ -5326,7 +5331,7 @@ function PlanGrid({
             }}
           >
             {paidPathChoice === 'card' ? <CreditCard size={11} /> : <Coins size={11} style={{ color: 'var(--gold-leaf)' }} />}
-            Paying with {paidPathChoice === 'card' ? 'Card' : '$HermesOS'}
+            Paying with {paidPathChoice === 'card' ? 'Card' : PAYMENT_TOKEN_UNIT}
           </span>
         </div>
       </AnimateIn>
@@ -5383,7 +5388,7 @@ function PlanGrid({
           <span className="mono" style={STYLES.guaranteeText}>
             {paidPathChoice === 'card'
               ? '48-hour refund on card payments · cancel any time'
-              : 'Withdraw anytime · your tokens, your custody · launch rate locked for life'}
+              : 'Holding: tokens stay in your own wallet · Paying: tokens go to a Hivra deposit address and are swept to Hivra’s treasury'}
           </span>
         </div>
       </AnimateIn>
@@ -5499,7 +5504,7 @@ function CryptoHoldingExplainer({ mode }: { mode: 'yearly' | 'permanent' }) {
               color: 'var(--gold-leaf)',
             }}
           >
-            How paying in $HermesOS works
+            How paying in {PAYMENT_TOKEN_UNIT} works
           </span>
         </div>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>

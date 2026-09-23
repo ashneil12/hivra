@@ -9,12 +9,13 @@ import {
   OpenInWalletLink,
   touchStyles,
   wholeTokenQuoteRawAmount,
+  TokenContractLine,
 } from '@/components/billing/TransferDetails';
 import { useLocale } from '@/components/i18n/LocaleProvider';
 import { BankrTrustFooter } from '@/components/wallet/AgentWalletCards';
 import { hermesosTransferUri } from '@/lib/billing/eip681';
 import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
-import { HERMESOS_TOKEN } from '@/lib/billing/token-registry';
+import { HERMESOS_TOKEN, primaryPlatformToken } from '@/lib/billing/token-registry';
 import {
   LAUNCH_PROMO_END,
   STANDARD_USD_CENTS,
@@ -79,7 +80,8 @@ export function InlineCopyAddress({ label, address }: { label: string; address: 
 export function BuyTokenCard() {
   const { copy } = useLocale();
   const buyCopy = copy.dashboard.wallet.buyToken;
-  const contract = HERMESOS_TOKEN_ADDRESS;
+  // $HermesOS until $HIVRA is live; then new buyers are pointed at $HIVRA.
+  const contract = primaryPlatformToken().publishedAddress;
   const uniswapUrl = `https://app.uniswap.org/swap?chain=base&outputCurrency=${contract}`;
 
   return (
@@ -464,6 +466,7 @@ export function QuoteCard({
       ? hermesosTransferUri({
           tokenSymbol: quote.tokenSymbol,
           tokenDecimals: quote.tokenDecimals,
+          tokenAddress: quote.tokenAddress,
           depositAddress,
           amountRaw: wholeTokenQuoteRawAmount(quote),
         })
@@ -598,6 +601,8 @@ export function QuoteCard({
               full amount in a single transfer.
             </span>
           </div>
+
+          <TokenContractLine tokenAddress={quote.tokenAddress} tokenSymbol={quote.tokenSymbol} />
 
           <InlineCopyAddress
             label="Step 2 · To this address (Base network)"
