@@ -17,7 +17,7 @@ export default function HelpPage() {
           <h2 id="support-heading">Get in touch</h2>
           <p>For help with your account or a resource, email support. Include what you were trying to do and any error message; leave out passwords and API keys.</p>
           <div className={styles.contentActions}>
-            <a href="mailto:info@hermesos.cloud" className={styles.primaryLink}><Mail size={15} aria-hidden="true" />Email support</a>
+            <a href="mailto:info@hivra.cloud" className={styles.primaryLink}><Mail size={15} aria-hidden="true" />Email support</a>
             <a href="https://discord.gg/tDQZq8479F" target="_blank" rel="noopener noreferrer" className={styles.secondaryLink}><MessageCircle size={15} aria-hidden="true" />Discord<span className="sr-only"> (opens in a new tab)</span><ArrowUpRight size={14} aria-hidden="true" /></a>
           </div>
         </section>

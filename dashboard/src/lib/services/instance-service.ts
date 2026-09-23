@@ -2594,7 +2594,7 @@ export class InstanceService {
         return {
           success: false,
           status: 400,
-          message: `Host "${resolvedHost.name}" exists in the database but has no linked Hetzner server ID. The underlying VM may still be provisioning or may have been orphaned. Please wait a few minutes and retry — if it keeps failing, tell us on Discord (discord.gg/tDQZq8479F) or email info@hermesos.cloud and we'll fix the host.`,
+          message: `Host "${resolvedHost.name}" exists in the database but has no linked Hetzner server ID. The underlying VM may still be provisioning or may have been orphaned. Please wait a few minutes and retry — if it keeps failing, tell us on Discord (discord.gg/tDQZq8479F) or email info@hivra.cloud and we'll fix the host.`,
         };
       }
     }

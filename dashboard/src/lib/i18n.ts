@@ -290,7 +290,7 @@ const BASE_MARKETING_COPY = {
       accessPrefix: "Three ways to access",
       footnote:
         "Save up to 40% paying with $HermesOS. Launch pricing for the first wave — rates may adjust as the platform matures.",
-      guarantee: "Free tier — try before you upgrade · 48-hr refund on card payments",
+      guarantee: "Free tier — try before you upgrade · 7-day money-back guarantee on card payments",
       tiers: [
         {
           name: "Free",
@@ -827,7 +827,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "Unlimited",
           agents: "agents",
           active: "Active",
-          guarantee: "48-hour refund policy · Upgrade-only plans",
+          guarantee: "7-day money-back guarantee · Upgrade-only plans",
         },
         noSubscription: {
           title: "No plan yet",
@@ -1164,7 +1164,7 @@ const BASE_MARKETING_COPY = {
       accessPrefix: "访问方式：",
       footnote:
         "使用 $HermesOS 支付最高可省 40%。首批用户享启动价格，平台成熟后价格可能调整。",
-      guarantee: "免费层级 — 先试用再升级 · 刷卡付款 48 小时退款",
+      guarantee: "免费层级 — 先试用再升级 · 刷卡付款 7 天退款保证",
       tiers: [
         {
           name: "Free",
@@ -1678,7 +1678,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "无限",
           agents: "个 Agent",
           active: "已启用",
-          guarantee: "48 小时退款政策 · 仅支持升级",
+          guarantee: "7 天退款政策 · 仅支持升级",
         },
         noSubscription: {
           title: "没有有效订阅",
@@ -2038,7 +2038,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Recomendado",
       "accessPrefix": "Tres formas de acceder",
       "footnote": "Ahorra hasta un 40% pagando con $HermesOS. Precios de lanzamiento para la primera ola — las tarifas pueden ajustarse conforme la plataforma madure.",
-      "guarantee": "Tier gratuito — prueba antes de actualizar · Reembolso de 48 h en pagos con tarjeta",
+      "guarantee": "Tier gratuito — prueba antes de actualizar · Reembolso en 7 días en pagos con tarjeta",
       "tiers": [
         {
           "name": "Free",
@@ -2577,7 +2577,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Activo",
-          "guarantee": "Política de reembolso de 48 horas · Solo actualizaciones"
+          "guarantee": "Política de reembolso de 7 días · Solo actualizaciones"
         },
         "noSubscription": {
           "title": "Sin suscripción activa"
@@ -2890,7 +2890,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Recomendado",
       "accessPrefix": "Três formas de acessar",
       "footnote": "Economize até 40% pagando com $HermesOS. Preços de lançamento para a primeira onda — valores podem ser ajustados conforme a plataforma amadurece.",
-      "guarantee": "Plano gratuito — experimente antes de fazer upgrade · Reembolso em 48h para pagamentos com cartão",
+      "guarantee": "Plano gratuito — experimente antes de fazer upgrade · Reembolso em 7 dias para pagamentos com cartão",
       "tiers": [
         {
           "name": "Free",
@@ -3429,7 +3429,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Ativo",
-          "guarantee": "Política de reembolso em 48h · Planos somente com upgrade"
+          "guarantee": "Política de reembolso em 7 dias · Planos somente com upgrade"
         },
         "noSubscription": {
           "title": "Sem assinatura ativa"
@@ -3742,7 +3742,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Recommandé",
       "accessPrefix": "Trois façons d'accéder",
       "footnote": "Économisez jusqu'à 40 % en payant avec $HermesOS. Tarifs de lancement pour la première vague — susceptibles d'évoluer à mesure que la plateforme mûrit.",
-      "guarantee": "Tier gratuit — essayez avant de monter en gamme · Remboursement sous 48h sur paiement par carte",
+      "guarantee": "Tier gratuit — essayez avant de monter en gamme · Remboursement sous 7 jours sur paiement par carte",
       "tiers": [
         {
           "name": "Free",
@@ -4281,7 +4281,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Illimité",
           "agents": "agents",
           "active": "Actif",
-          "guarantee": "Politique de remboursement 48h · Plans avec upgrade uniquement"
+          "guarantee": "Politique de remboursement sous 7 jours · Plans avec upgrade uniquement"
         },
         "noSubscription": {
           "title": "Aucun abonnement actif"
@@ -4594,7 +4594,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Empfohlen",
       "accessPrefix": "Drei Zugangswege",
       "footnote": "Bis zu 40 % sparen bei Zahlung mit $HermesOS. Launch-Preise für die erste Welle — können sich mit Reife der Plattform ändern.",
-      "guarantee": "Free-Tier — erst testen, dann upgraden · 48-Std.-Rückerstattung bei Kartenzahlung",
+      "guarantee": "Free-Tier — erst testen, dann upgraden · 7-Tage-Rückerstattung bei Kartenzahlung",
       "tiers": [
         {
           "name": "Free",
@@ -5133,7 +5133,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Unbegrenzt",
           "agents": "Agenten",
           "active": "Aktiv",
-          "guarantee": "48-Stunden-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
+          "guarantee": "7-Tage-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
         },
         "noSubscription": {
           "title": "Kein aktives Abo"
@@ -5446,7 +5446,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "おすすめ",
       "accessPrefix": "3 つのアクセス方法",
       "footnote": "$HermesOS での支払いで最大 40% 割引。ローンチ価格は初回ウェーブ限定 —— プラットフォームの成熟に伴い料金が変更になる場合があります。",
-      "guarantee": "Free プランで試してからアップグレード · カード決済は 48 時間返金保証",
+      "guarantee": "Free プランで試してからアップグレード · カード決済は 7 日間返金保証",
       "tiers": [
         {
           "name": "Free",
@@ -5985,7 +5985,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "無制限",
           "agents": "エージェント",
           "active": "有効",
-          "guarantee": "48 時間返金ポリシー · アップグレード専用プラン"
+          "guarantee": "7 日間返金ポリシー · アップグレード専用プラン"
         },
         "noSubscription": {
           "title": "有効なサブスクリプションなし"
@@ -6298,7 +6298,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "추천",
       "accessPrefix": "이용 방법 세 가지",
       "footnote": "$HermesOS 결제 시 최대 40% 절약. 첫 번째 웨이브를 위한 런칭 요금 — 플랫폼 성숙에 따라 조정될 수 있습니다.",
-      "guarantee": "Free 티어 — 업그레이드 전 체험 · 카드 결제 48시간 환불",
+      "guarantee": "Free 티어 — 업그레이드 전 체험 · 카드 결제 7일 환불",
       "tiers": [
         {
           "name": "Free",
@@ -6837,7 +6837,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "무제한",
           "agents": "에이전트",
           "active": "활성",
-          "guarantee": "48시간 환불 정책 · 업그레이드 전용 플랜"
+          "guarantee": "7일 환불 정책 · 업그레이드 전용 플랜"
         },
         "noSubscription": {
           "title": "활성 구독 없음"
