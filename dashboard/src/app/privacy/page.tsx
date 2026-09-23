@@ -2,7 +2,7 @@ import PublicSite from "@/components/public-site/PublicSite";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import { CookiePreferencesButton } from "@/components/consent/CookiePreferencesButton";
 
-const LAST_UPDATED = "June 15, 2026";
+const LAST_UPDATED = "September 23, 2026";
 
 export default function PrivacyPage() {
   return (<PublicSite className={styles.page} data-page="privacy">
@@ -60,6 +60,7 @@ export default function PrivacyPage() {
             <li><strong>Third-party API keys:</strong> deleted immediately when you remove them or tear down the instance.</li>
             <li><strong>Usage and compute metrics:</strong> retained in aggregated form for up to 24 months, then deleted or kept only in further-aggregated form.</li>
             <li><strong>Diagnostic logs and error telemetry:</strong> up to 90 days.</li>
+            <li><strong>Agent activity and trace records:</strong> the activity history of your Hivra computers, meaning lifecycle events (such as launch, restart, resize, and deletion) and run and tool records (which tools ran, when, for how long, and whether they succeeded). These records never contain your prompts, commands, or file contents. We keep them for up to 90 days. When you delete a computer, its records are deleted with it; a record that the deletion happened may be kept for up to 90 days. When you close your account, all of them are deleted.</li>
             <li><strong>Session replays:</strong> up to 30 days. Product-analytics events: up to 12 months.</li>
             <li><strong>Fraud and abuse signals:</strong> up to 24 months.</li>
             <li><strong>Billing and payment records:</strong> retained as required by financial and tax law, typically up to 7 years.</li>
@@ -78,7 +79,7 @@ export default function PrivacyPage() {
           <p>We may update this policy as the product and our providers evolve. Material changes will be reflected by the &apos;Last Updated&apos; date above, and where required we will provide additional notice.</p>
 
           <h2 className="serif">12. Contact Us</h2>
-          <p>If you have questions about this policy or wish to exercise your privacy rights, contact us at info@hermesos.cloud or through our Discord community. For formal data-protection requests, please include enough detail for us to verify your identity and locate your records.</p>
+          <p>If you have questions about this policy or wish to exercise your privacy rights, contact us at info@hivra.cloud or through our Discord community. For formal data-protection requests, please include enough detail for us to verify your identity and locate your records.</p>
         </div>
       </main>
   </PublicSite>);
