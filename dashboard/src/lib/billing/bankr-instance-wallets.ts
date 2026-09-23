@@ -11,6 +11,7 @@ import {
   type BankrPartnerFetch,
   type BankrWalletApiKeyRequest,
 } from "@/lib/billing/bankr-wallets";
+import { HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 import {
   decodeUint256RpcResult,
   encodeErc20BalanceOfCallData,
@@ -218,8 +219,8 @@ const BASE_TRACKED_ERC20_TOKENS = [
   },
   {
     symbol: "HERMESOS",
-    address: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
-    decimals: 18,
+    address: HERMESOS_TOKEN.address,
+    decimals: HERMESOS_TOKEN.decimals,
   },
   {
     symbol: "BNKR",
