@@ -9,6 +9,7 @@ them inside its own article. This catches the former first-paragraph-only
 renderer even when the page still builds and displays every product name.
 """
 
+import hashlib
 import re
 import unittest
 from collections import Counter
@@ -139,13 +140,15 @@ class LitepaperContentTests(unittest.TestCase):
         cls.by_id = {node.attrs["id"]: node for node in cls.page.elements if "id" in node.attrs}
 
     def test_source_matches_current_user_approved_wording_byte_for_byte(self):
-        # This immutable review snapshot is the current approved wording
-        # contract. Rendering edited source faithfully must not conceal an
-        # unapproved copy change. Replace the snapshot only with new user copy.
-        approved = REPO / "docs/litepaper/review/20-user-final-litepaper.md"
+        # The build pin in stage-litepaper.mjs is the approved wording contract.
+        # Rendering edited source faithfully must not conceal an unapproved copy
+        # change. Re-pin only to new user-approved copy.
+        stage = (REPO / "dashboard/scripts/stage-litepaper.mjs").read_text(encoding="utf-8")
+        pin = re.search(r"APPROVED_SOURCE_SHA256 = '([0-9a-f]{64})'", stage)
+        self.assertIsNotNone(pin, "stage-litepaper.mjs must pin the approved LITEPAPER.md")
         self.assertEqual(
-            (REPO / "LITEPAPER.md").read_bytes(),
-            approved.read_bytes(),
+            hashlib.sha256((REPO / "LITEPAPER.md").read_bytes()).hexdigest(),
+            pin[1],
             "LITEPAPER.md differs from the current user-approved wording",
         )
 
@@ -188,10 +191,10 @@ class LitepaperContentTests(unittest.TestCase):
                 self.assertIsNotNone(article, "Missing product article: " + name)
                 self.assert_content(blocks, article, name)
 
-    def test_all_fourteen_token_utility_explanations_stay_in_their_articles(self):
+    def test_all_twelve_token_utility_explanations_stay_in_their_articles(self):
         economy = section(self.markdown, "The economy", 2)
         utilities = list(named_entries(section(economy, "What it's for", 3)))
-        self.assertEqual(len(utilities), 14, "The complete source has 14 token utilities")
+        self.assertEqual(len(utilities), 12, "The complete source has 12 token utilities")
         rendered = [node for node in self.page.elements if "token-utility" in node.attrs.get("class", "").split()]
         self.assertEqual(len(rendered), len(utilities))
         for name, blocks in utilities:

@@ -20,7 +20,7 @@ Permission prompts help. You should get to decide before an agent deletes a fold
 
 An agent fixing your website needs the project. It doesn't need your personal documents, your bank session, or a route into every other device on your home network.
 
-A separate computer is just somewhere to draw that line. Share the project. Connect the accounts you want it using. Keep the rest out.
+A separate computer is just somewhere to draw that line. Share the project. Connect the accounts you want it to use. Keep the rest out.
 
 ### Try it
 
@@ -44,7 +44,7 @@ There are other reasons to care where agents run. A provider can change a model'
 
 Different causes. Same blast radius.
 
-I don't think the answer is to stop using them. I think the answer is to stop giving one mistake so much room.
+I don't think the answer is to stop using agents. I think the answer is to stop giving one mistake so much room.
 
 ---
 
@@ -58,15 +58,15 @@ I don't want every new tool I try sitting next to the keys for everything else I
 
 The capabilities are moving fast, and not in a way you have to take my word for.
 
-AI is finding zero-days on its own. Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found an exploitable flaw in SQLite that years of fuzzing had missed, and by August 2025 it had autonomously turned up twenty more across projects like FFmpeg and ImageMagick. [XBOW's](https://xbow.com/webinars/200-zero-days) autonomous agent hit number one on HackerOne's leaderboard in June 2025, above every human on it. Google's threat intelligence team has since [identified a threat actor](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day they believe was built with AI.
+AI is finding zero-days on its own. Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found an exploitable flaw in SQLite before it shipped, one the project's existing fuzzing hadn't caught, and [by August 2025](https://techcrunch.com/2025/08/04/google-says-its-ai-based-bug-hunter-found-20-security-vulnerabilities/) it had turned up twenty more across projects like FFmpeg and ImageMagick. [XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) autonomous agent hit number one on HackerOne's US leaderboard in June 2025, above every human on it. Google's threat intelligence team has since [identified a threat actor](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day they believe was built with AI.
 
-OpenAI's Astra report describes a model hitting their Critical cybersecurity threshold, scoring 100% on ExploitBench with Daybreak Blue access, and building working exploits under supervision. One escaped a browser sandbox. Another reached root on an operating system. Those were research conditions rather than the default setup, and it's still their report, not mine. [Read it](https://openai.com/index/path-to-astra/).
+OpenAI's Astra report describes a model hitting their Critical cybersecurity threshold, scoring 100% on ExploitBench with Daybreak Blue access. In expert-led tests it built working exploit chains against a hardened browser and operating system. One escaped the browser's sandbox. Another reached root. Those were research conditions rather than the default setup, and it's still their report, not mine. [Read it](https://openai.com/index/path-to-astra/).
 
 There's a second thing that changed how I work. Anthropic trained models with hidden triggers and then ran the standard safety toolkit at them: fine-tuning, reinforcement learning, adversarial training. [The triggers survived](https://www.anthropic.com/research/sleeper-agents-training-deceptive-llms-that-persist-through-safety-training). Adversarial training sometimes just taught the model to hide the behaviour better.
 
 Passing safety training doesn't prove a model has no hidden behaviour. That's why I want limits outside it.
 
-I'm also a Christian, and I genuinely think AI is leading somewhere beyond what the news says, or what people really want to believe.
+I'm also a Christian, and I'd rather say what I actually think than leave you guessing.
 
 I think this ends up somewhere scripture already described. A world where taking part in the economy gets conditioned on compliance, where the ability to buy and sell runs through something that can exclude you, and where AI is what finally makes that possible at scale. I think it arrives looking reasonable, because that's how it would have to arrive.
 
@@ -76,7 +76,7 @@ Someone has to be answerable. Someone decides what the agent reaches, where its 
 
 Hivra is the practical part of that. Give the agent a computer. Make it good enough that people actually use it. Keep control of everything around it.
 
-**[My full thoughts on AI are here](THOUGHTS.md)**, with the references, if you want to know where I'm coming from.
+**[My full thoughts on AI are here](THOUGHTS.md)**, with the references, if you want to know where I'm coming from. If you don't, the rest of this page stands on its own.
 
 ---
 
@@ -86,7 +86,7 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 ### Launch an agent
 
-Claude Code, Codex, Hermes, Agent Zero, DeepSeek. Pick one, connect the account or key it uses, and give it a machine of its own.
+Claude Code, Codex, Hermes or Agent Zero, with DeepSeek in preview. Pick one, connect the account or key it uses, and give it a machine of its own.
 
 Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it.
 
@@ -94,13 +94,13 @@ Its tools and files live on that computer, so you can close the laptop and pick 
 
 ### Launch a computer
 
-Ubuntu, Windows or Omarchy. Install apps, browse, write code, run services, set up a workspace for one project.
+Ubuntu, with Windows and Omarchy in private preview. Install apps, browse, write code, run services, set up a workspace for one project.
 
 You don't have to attach an agent at all. It's a computer.
 
 Maybe you want your dev tools off your personal desktop. Maybe you need Windows for one application. Maybe there's something you'd rather not mix into your everyday machine. That's a fine reason to be here.
 
-And when you do want help, bring an agent into the same workspace. Let it work with the files and apps you've already set up, then take the screen back whenever you'd rather do it yourself.
+And when you do want help, you'll soon be able to bring an agent into the same workspace. Let it work with the files and apps you've already set up, then take the screen back whenever you'd rather do it yourself.
 
 **macOS and custom images are coming.**
 
@@ -108,7 +108,7 @@ And when you do want help, bring an agent into the same workspace. Let it work w
 
 Run agents on different projects without losing track of them. Open a conversation, check the computer behind it, look at the files and results, move to the next.
 
-One agent building a feature. One chasing a bug. One working through research. Each with its own workspace and only the access its job needs.
+One agent building a feature. One chasing a bug. One working through research. Each with its own workspace and only the accounts you connect to it.
 
 **Hivra Orchestrator** is coming: one screen where you talk to all of them, see who's working and who's stuck, and hand work between them. Keep the individual conversations when you want them, with somewhere to run the whole group from.
 
@@ -118,9 +118,9 @@ Nobody should be managing eight tmux panes and guessing which window belongs to 
 
 **Hivra Cloud** if you want us handling the machines, the updates, the monitoring and the recovery. You choose the work and the access. We keep the service running underneath.
 
-**Your own infrastructure** if you already have a cloud account or a server. Use capacity you're already paying for.
+**Your own infrastructure** if you already have a cloud account or a server. Use capacity you're already paying for. This is in preview.
 
-**Self-host** if you'd rather we weren't involved at all. The whole platform, your hardware, your sign-in, no Hivra account.
+**Self-host** if you'd rather we weren't involved at all. The whole platform, your hardware, your sign-in, no Hivra account. A preview runs from the source today, and packaged releases come next.
 
 Your model connection is separate from all of that. Bring your own API key whether the computer runs with us or on your own metal. Choosing managed hosting doesn't cost you that choice.
 
@@ -141,7 +141,7 @@ Moving work off your laptop should make your day easier, not add a setup ritual 
 
 Files, tools and settings stay. Closing the browser disconnects your view. It doesn't throw the workspace away.
 
-Snapshot before a risky change. Restore when the risky change goes badly. Add resources as a job grows, within the capacity you've chosen.
+On Hivra Cloud, snapshot before a risky change. Restore when the risky change goes badly. Add resources as a job grows, within the capacity you've chosen.
 
 ### Settle in
 
@@ -153,13 +153,13 @@ Reconnect from another device and land in the same environment. It's there for t
 
 See what the agent is doing, what it asked you to approve, and what it produced. When something goes wrong you need enough history to understand it and decide what happens next.
 
-Hivra collects the activity it can observe, including commands and actions running through its own tools. What an agent does entirely inside an external app may not show up there. You still have the computer and the terminal to look for yourself.
+Hivra records the activity it can observe: when your agent's tasks start and finish, which tools it used, and whether they failed. It doesn't store your prompts, commands or files. Today that covers Claude Code and Codex, and other agents show lifecycle events. What an agent does entirely inside an external app may not show up there. You still have the computer and the terminal to look for yourself.
 
 ### Know what has access
 
 You should know where your computer runs, what it shares with other machines, and which accounts are connected to it.
 
-Different hosting gives you different protection. A virtual machine and a container don't separate work the same way, and calling both of them secure is how people end up trusting the wrong one. Hivra tells you which one you got.
+Different hosting gives you different protection. A virtual machine and a container don't separate work the same way, and calling both of them secure is how people end up trusting the wrong one. Hivra's launch review tells you which one you got.
 
 ---
 
@@ -179,7 +179,7 @@ Use the whole thing, or take the one part that solves your problem.
 
 ## Keeping a mistake from reaching everything
 
-Hivra can't make a model infallible. What it can change is how much damage one mistake reaches.
+Hivra can't make a model infallible. What it can change is how far one mistake can reach.
 
 **Your computer.** Personal files and sessions stay outside the agent's workspace unless you deliberately share them.
 
@@ -191,11 +191,11 @@ One rule sits under all of it:
 
 > An agent can only pass on access a responsible person gave it. Delegating a task doesn't create new permission.
 
-That holds when one agent asks another for help, when a tool connects to a service, and when money moves. The limits have to live outside the model doing the work.
+That has to hold when one agent asks another for help, when a tool connects to a service, and when money moves. The limits have to live outside the model doing the work.
 
 Emergency controls should stop activity, withdraw access and contain a problem. They must never become a way to grant more. Receiving a message doesn't authorise an action. Receiving a useful method doesn't install it.
 
-And all of that applies to us. We have to account for our own mistakes, our own compromise and our own change of ownership, the same way we're asking you to account for the agents you run. If Hivra ever has to be trusted absolutely, the design already failed.
+And all of that applies to us. We have to account for our own mistakes, our own compromise and our own change of ownership, the same way we're asking you to account for the agents you run. If Hivra ever has to be trusted absolutely, the design has already failed.
 
 ---
 
@@ -207,7 +207,9 @@ Agent Computers give the work somewhere to happen. Everything below is about wha
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes, Agent Zero or DeepSeek on a computer of its own. Or start with Ubuntu, Windows or Omarchy and use it yourself. Keep your workspace, pick your interface, run it on our infrastructure or yours.
+Run Claude Code, Codex, Hermes or Agent Zero on a computer of its own. Or start with Ubuntu and use it yourself. Keep your workspace, pick your interface, run it on our infrastructure.
+
+In preview: Windows, Omarchy, DeepSeek, and running on your own infrastructure.
 
 Coming: Hivra Orchestrator, macOS, custom images.
 
@@ -381,27 +383,27 @@ We're not putting dates on the map. AI compresses building. It doesn't compress 
 
 ## The economy
 
-**The migration, new uses and treasury plans in this section are proposals. Their final terms get published before they take effect.**
+**The migration, new uses and treasury plans in this section are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.**
 
 ### There's already a token, and it already does something
 
 $HermesOS launched alongside the original platform, before Hivra had a name. Hold it and you get access to compute. That's live now, and it's how a real share of the people here already pay.
 
-**The amount you need is fixed at the moment you deposit.** A price fall doesn't take away access you already have. Nobody gets downgraded by the market.
+**The amount you need is fixed when your holding first qualifies.** A price fall doesn't take away access you already have, as long as you keep holding it. Nobody gets downgraded by the market.
 
 People backed that platform early. Whatever comes next has to respect that.
 
-Holding is one way to qualify for compute. You can also pay through ordinary payment methods. Self-hosting Hivra requires neither the token nor a Hivra account.
+Holding is one way to qualify for compute. You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final. Self-hosting Hivra requires neither the token nor a Hivra account.
 
 ### The migration
 
-A Hivra token on Base, launched through Bankr.
+$HIVRA, on Base, launched through Bankr.
 
 The proposed route is an active claim. You choose to convert. New tokens aren't automatically sent to every wallet holding the old one.
 
-The claim would sell your old tokens into their existing pool and use the ETH proceeds to buy Hivra in the new pool, so liquidity moves across rather than being stranded behind. The conversion rate, fees and protection against price movement get published with the contract before claims open.
+The claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool, so the value moves across rather than being stranded behind. You'd sign it from your own wallet, and Hivra never holds your tokens. The rate is a live market quote, not a fixed ratio. The fees and a maximum slippage limit get published before claims open.
 
-**Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new thresholds run side by side for people who already have access, and the final terms will set out exactly who is covered and how eligibility carries over.
+**Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new thresholds run side by side for people who already have access, and the final terms will set out exactly who is covered and how eligibility carries over. Once $HIVRA launches, new users hold and pay with $HIVRA.
 
 Keeping your access and converting your tokens are separate decisions.
 
@@ -409,25 +411,19 @@ Keeping your access and converting your tokens are separate decisions.
 
 One unit that moves between every part of this, instead of fifteen separate paywalls. Each use still has to earn it. Where a card or a stablecoin does the job better, we use a card or a stablecoin.
 
-Two products already sit behind it. Hivra for the agent work, and Nibbii, a desktop pet built by the same team, which people pay for today.
-
 Here's the list.
 
-**Access to compute.** Hold for a tier, fixed at deposit. Live today.
-
-**Access to Nibbii.** Nibbii is a desktop pet that lives in your notch, built by the same team. It's a finished product people already pay $29 for. Hold Hivra above the threshold and it's yours, on the same terms as compute: fixed at deposit, nobody downgraded by the market. If you'd rather just buy it, buy it. Same licence, same app.
-
-This is the clearest test of whether one token across several products actually means anything. Not a promise about what the ecosystem will do eventually. A second finished thing you can download today.
+**Access to compute.** Hold for a tier, fixed when you first qualify. Live today with $HermesOS.
 
 **Metered spending.** Runtime, storage, extra cores, egress. Priced per unit against a balance you top up.
 
 **Packs.** Prebuilt operator setups you buy outright. The cheapest one is deliberately cheap, because it should cost almost nothing to try this.
 
-**Reserved capacity.** The fleet has a hard ceiling because hardware is finite, not because somebody printed a number on a chart. Reserved headroom and priority placement are scarce for real reasons.
+**Reserved capacity.** The fleet has a hard ceiling because hardware is finite, not because somebody printed a number on a chart. Reserved headroom and priority placement are limited by that.
 
-**Containment bounties.** A pool sits against a precise test. Escape this machine. Cross this isolation boundary. Bypass this approval. Anyone can add to a pool. A researcher breaks it, reviewers reproduce it, they get paid.
+**Containment bounties.** A pool sits against a precise test. Escape this machine. Cross this isolation boundary. Bypass this approval. Anyone can add to a pool. A researcher breaks it, reviewers reproduce it, the researcher gets paid.
 
-Nearly all the money in AI security bounties today goes at the model layer: prompt injection, jailbreaks, guardrail bypass. Good work, well funded, and it isn't the only place things break. Almost nobody is paying people to get out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
+Nearly all the money in AI security bounties today goes to the model layer: prompt injection, jailbreaks, guardrail bypass. Good work, well funded, and it isn't the only place things break. Almost nobody is paying people to get out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
 
 We're also the right people to fund it, because we are the environment. A researcher gets a real authorised Agent Computer instead of a description of a target, and the activity record means the argument is about the finding rather than about whether it can be reproduced.
 
@@ -441,8 +437,6 @@ The public record shows scope, reward, time open, who tested and what they found
 
 **Certification fees.** Seal reviews get paid for. Real review costs real time.
 
-**Commissioned pets.** Nibbii pets made by hand from an NFT you own, verified on chain, one of one, in limited drop windows. Priced in token. Two versions: locked to your account, or minted and transferable if you want to be able to move it on. Same art either way. The more expensive one pays for the infrastructure, not for a better pet.
-
 **Experience packages.** An agent works out something difficult. That gets packaged with its method, evidence and limits, and sold. Someone else's agent can use it after review. Machine-earned operational knowledge becomes something another team can buy, inspect and test.
 
 **Mission funding.** A sponsor puts up a budget for an objective, and payment happens against accepted evidence rather than against activity.
@@ -455,9 +449,9 @@ Funded by trading fees and platform revenue. Its job is to spend.
 
 Retainers for people maintaining agent tools everyone depends on and nobody pays for. Independent audits of Hivra itself. Keeping useful abandoned projects alive instead of letting them rot. Sponsored compute for students and open source contributors. The first bounty pools pointed at our own systems.
 
-**Contributors choose how they're paid.** Stablecoin or Hivra, at equivalent value, whichever you'd rather have. Nobody has to take a position in a token market to get paid for maintaining software, and nobody who wants the token is stopped from taking it.
+**Contributors choose how they're paid.** Stablecoin or $HIVRA, at equivalent value, whichever you'd rather have. Nobody has to take a position in a token market to get paid for maintaining software, and nobody who wants the token is stopped from taking it.
 
-The treasury is an operating fund, so it moves in both directions. It sells to cover bills and contributor payments. It buys when the working balance falls below what upcoming commitments need. Those decisions follow the work it has agreed to fund. No price target, no promise of a return to anyone holding.
+The treasury is an operating fund, so it moves in both directions. It sells to cover bills and contributor payments. It buys only when the $HIVRA it holds falls below what contributors have chosen to be paid in $HIVRA. It doesn't trade to support or influence the price. Those decisions follow the work it has agreed to fund. No price target, no promise of a return to anyone holding.
 
 **Both directions get published.** The treasury record shows purchases, sales and payments out, with transaction links and what each one funded. Off-chain costs get a record too. Publishing the buying without the selling would give a false picture of what this is.
 
@@ -471,7 +465,7 @@ Fee amounts, spending rules, wallets and signing authority get published before 
 
 **No buying extra authority.** A balance can't get you wider credentials, another person's machine, or an exemption from incident response. A token vote can't weaken those controls either.
 
-**No presale or private round.** The launch terms will set out the supply and any founder allocation, including its vesting, before launch. Those details are still being settled.
+**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.
 
 **No company ownership.** Holding the token isn't owning Hivra.
 

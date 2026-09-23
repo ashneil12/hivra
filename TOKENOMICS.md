@@ -1,26 +1,26 @@
 # Hivra tokenomics
 
-**The migration, new uses and treasury plans in this section are proposals. Their final terms get published before they take effect.**
+**The migration, new uses and treasury plans in this section are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.**
 
 ## There's already a token, and it already does something
 
 $HermesOS launched alongside the original platform, before Hivra had a name. Hold it and you get access to compute. That's live now, and it's how a real share of the people here already pay.
 
-**The amount you need is fixed at the moment you deposit.** A price fall doesn't take away access you already have. Nobody gets downgraded by the market.
+**The amount you need is fixed when your holding first qualifies.** A price fall doesn't take away access you already have, as long as you keep holding it. Nobody gets downgraded by the market.
 
 People backed that platform early. Whatever comes next has to respect that.
 
-Holding is one way to qualify for compute. You can also pay through ordinary payment methods. Self-hosting Hivra requires neither the token nor a Hivra account.
+Holding is one way to qualify for compute. You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final. Self-hosting Hivra requires neither the token nor a Hivra account.
 
 ## The migration
 
-A Hivra token on Base, launched through Bankr.
+$HIVRA, on Base, launched through Bankr.
 
 The proposed route is an active claim. You choose to convert. New tokens aren't automatically sent to every wallet holding the old one.
 
-The claim would sell your old tokens into their existing pool and use the ETH proceeds to buy Hivra in the new pool, so liquidity moves across rather than being stranded behind. The conversion rate, fees and protection against price movement get published with the contract before claims open.
+The claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool, so the value moves across rather than being stranded behind. You'd sign it from your own wallet, and Hivra never holds your tokens. The rate is a live market quote, not a fixed ratio. The fees and a maximum slippage limit get published before claims open.
 
-**Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new thresholds run side by side for people who already have access, and the final terms will set out exactly who is covered and how eligibility carries over.
+**Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new thresholds run side by side for people who already have access, and the final terms will set out exactly who is covered and how eligibility carries over. Once $HIVRA launches, new users hold and pay with $HIVRA.
 
 Keeping your access and converting your tokens are separate decisions.
 
@@ -28,25 +28,19 @@ Keeping your access and converting your tokens are separate decisions.
 
 One unit that moves between every part of this, instead of fifteen separate paywalls. Each use still has to earn it. Where a card or a stablecoin does the job better, we use a card or a stablecoin.
 
-Two products already sit behind it. Hivra for the agent work, and Nibbii, a desktop pet built by the same team, which people pay for today.
-
 Here's the list.
 
-**Access to compute.** Hold for a tier, fixed at deposit. Live today.
-
-**Access to Nibbii.** Nibbii is a desktop pet that lives in your notch, built by the same team. It's a finished product people already pay $29 for. Hold Hivra above the threshold and it's yours, on the same terms as compute: fixed at deposit, nobody downgraded by the market. If you'd rather just buy it, buy it. Same licence, same app.
-
-This is the clearest test of whether one token across several products actually means anything. Not a promise about what the ecosystem will do eventually. A second finished thing you can download today.
+**Access to compute.** Hold for a tier, fixed when you first qualify. Live today with $HermesOS.
 
 **Metered spending.** Runtime, storage, extra cores, egress. Priced per unit against a balance you top up.
 
 **Packs.** Prebuilt operator setups you buy outright. The cheapest one is deliberately cheap, because it should cost almost nothing to try this.
 
-**Reserved capacity.** The fleet has a hard ceiling because hardware is finite, not because somebody printed a number on a chart. Reserved headroom and priority placement are scarce for real reasons.
+**Reserved capacity.** The fleet has a hard ceiling because hardware is finite, not because somebody printed a number on a chart. Reserved headroom and priority placement are limited by that.
 
-**Containment bounties.** A pool sits against a precise test. Escape this machine. Cross this isolation boundary. Bypass this approval. Anyone can add to a pool. A researcher breaks it, reviewers reproduce it, they get paid.
+**Containment bounties.** A pool sits against a precise test. Escape this machine. Cross this isolation boundary. Bypass this approval. Anyone can add to a pool. A researcher breaks it, reviewers reproduce it, the researcher gets paid.
 
-Nearly all the money in AI security bounties today goes at the model layer: prompt injection, jailbreaks, guardrail bypass. Good work, well funded, and it isn't the only place things break. Almost nobody is paying people to get out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
+Nearly all the money in AI security bounties today goes to the model layer: prompt injection, jailbreaks, guardrail bypass. Good work, well funded, and it isn't the only place things break. Almost nobody is paying people to get out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
 
 We're also the right people to fund it, because we are the environment. A researcher gets a real authorised Agent Computer instead of a description of a target, and the activity record means the argument is about the finding rather than about whether it can be reproduced.
 
@@ -60,8 +54,6 @@ The public record shows scope, reward, time open, who tested and what they found
 
 **Certification fees.** Seal reviews get paid for. Real review costs real time.
 
-**Commissioned pets.** Nibbii pets made by hand from an NFT you own, verified on chain, one of one, in limited drop windows. Priced in token. Two versions: locked to your account, or minted and transferable if you want to be able to move it on. Same art either way. The more expensive one pays for the infrastructure, not for a better pet.
-
 **Experience packages.** An agent works out something difficult. That gets packaged with its method, evidence and limits, and sold. Someone else's agent can use it after review. Machine-earned operational knowledge becomes something another team can buy, inspect and test.
 
 **Mission funding.** A sponsor puts up a budget for an objective, and payment happens against accepted evidence rather than against activity.
@@ -74,9 +66,9 @@ Funded by trading fees and platform revenue. Its job is to spend.
 
 Retainers for people maintaining agent tools everyone depends on and nobody pays for. Independent audits of Hivra itself. Keeping useful abandoned projects alive instead of letting them rot. Sponsored compute for students and open source contributors. The first bounty pools pointed at our own systems.
 
-**Contributors choose how they're paid.** Stablecoin or Hivra, at equivalent value, whichever you'd rather have. Nobody has to take a position in a token market to get paid for maintaining software, and nobody who wants the token is stopped from taking it.
+**Contributors choose how they're paid.** Stablecoin or $HIVRA, at equivalent value, whichever you'd rather have. Nobody has to take a position in a token market to get paid for maintaining software, and nobody who wants the token is stopped from taking it.
 
-The treasury is an operating fund, so it moves in both directions. It sells to cover bills and contributor payments. It buys when the working balance falls below what upcoming commitments need. Those decisions follow the work it has agreed to fund. No price target, no promise of a return to anyone holding.
+The treasury is an operating fund, so it moves in both directions. It sells to cover bills and contributor payments. It buys only when the $HIVRA it holds falls below what contributors have chosen to be paid in $HIVRA. It doesn't trade to support or influence the price. Those decisions follow the work it has agreed to fund. No price target, no promise of a return to anyone holding.
 
 **Both directions get published.** The treasury record shows purchases, sales and payments out, with transaction links and what each one funded. Off-chain costs get a record too. Publishing the buying without the selling would give a false picture of what this is.
 
@@ -90,7 +82,7 @@ Fee amounts, spending rules, wallets and signing authority get published before 
 
 **No buying extra authority.** A balance can't get you wider credentials, another person's machine, or an exemption from incident response. A token vote can't weaken those controls either.
 
-**No presale or private round.** The launch terms will set out the supply and any founder allocation, including its vesting, before launch. Those details are still being settled.
+**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.
 
 **No company ownership.** Holding the token isn't owning Hivra.
 
