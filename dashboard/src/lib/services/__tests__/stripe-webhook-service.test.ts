@@ -1906,6 +1906,23 @@ describe("StripeWebhookService", () => {
       }
     );
 
+    it("subscription.updated → past_due still suspends a Stripe-only user", async () => {
+      const payloads = mockInstanceUpdateCapture();
+
+      await StripeWebhookService.handleSubscriptionChange({
+        id: "sub_lapse",
+        customer: "cus_1",
+        status: "past_due",
+        start_date: 1000,
+        metadata: { user_id: "user_1", plan: "operator" },
+        items: { data: [{ current_period_start: 1000, current_period_end: 2000 }] },
+      } as unknown as Stripe.Subscription);
+
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toMatchObject({
+        entitlement_reason: "subscription_past_due",
+      });
+    });
+
     it("throws for redelivery, suspending nothing, when the cross-check itself fails", async () => {
       const applyTierChange = await mockApplyTierChange();
       (resolveEffectiveSubscription as jest.Mock).mockRejectedValueOnce(
