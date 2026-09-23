@@ -55,9 +55,9 @@ const homepageSchema = {
       url: SITE_URL,
       logo: {
         "@type": "ImageObject",
-        url: `${SITE_URL}/icon.svg`,
-        width: 128,
-        height: 128,
+        url: `${SITE_URL}/brand/hivra-token-512.png`,
+        width: 512,
+        height: 512,
       },
       sameAs: [],
     },
