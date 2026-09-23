@@ -233,6 +233,46 @@ function meetsRequiredBalance(balance: bigint, required: bigint): boolean {
   return balance >= required || required - balance <= tolerance;
 }
 
+const BREACH_HOLD_KEY = "breach_hold_until";
+
+function breachHoldUntilOf(row: TierQualificationRow): Date | null {
+  const raw = row.metadata?.[BREACH_HOLD_KEY];
+  if (typeof raw !== "string") return null;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? new Date(at) : null;
+}
+
+/**
+ * Hold off new breaches on every tier row of a user until `until`: used while
+ * a legacy lock-wallet balance moves to the user's own verified wallet, so the
+ * moment the tokens are between wallets never starts a breach.
+ */
+export async function holdTierBreachesUntil(params: {
+  userId: string;
+  until: Date;
+  reason: string;
+  db?: SupabaseLike | null;
+}) {
+  const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
+  if (!db) throw new Error("Database not configured");
+  for (const tier of ["pro", "power"] as const) {
+    const row = await loadRow(db, params.userId, tier);
+    if (!row) continue;
+    await updateRow(
+      db,
+      row,
+      {
+        metadata: {
+          ...(row.metadata ?? {}),
+          [BREACH_HOLD_KEY]: params.until.toISOString(),
+          breach_hold_reason: params.reason,
+        },
+      },
+      "Failed to hold tier breaches"
+    );
+  }
+}
+
 function rowTokenKey(row: TierQualificationRow): PlatformTokenKey {
   return row.token_key === "hivra" ? "hivra" : "hermesos";
 }
@@ -794,6 +834,19 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   // ──────────────────────────────────────────────────────────────────
   // Case (b) — fresh breach: was strictly eligible, now below qualifying.
   // ──────────────────────────────────────────────────────────────────
+  const breachHoldUntil = breachHoldUntilOf(row);
+  if (wasStrictlyEligible && !meetsWithEither(qualifyingQuantity) && breachHoldUntil && now < breachHoldUntil) {
+    // A lock-wallet move to the user's own wallet is in flight: the tokens are
+    // between wallets, not gone. Hold off recording a breach until it lands.
+    warnings.push(`User ${userId} (${tier}) breach held until ${breachHoldUntil.toISOString()}: lock-wallet move in flight.`);
+    await updateRow(
+      db,
+      row,
+      { last_balance_seen: rowBalance.toString(), last_evaluated_at: nowStamp },
+      "Failed to update held row"
+    );
+    return { ...heldResult, currentlyEligible: true, inGrace: false, cooldownEndsAt: null, transition: "unchanged" };
+  }
   if (wasStrictlyEligible && !meetsWithEither(qualifyingQuantity)) {
     await updateRow(
       db,

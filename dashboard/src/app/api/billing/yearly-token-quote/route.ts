@@ -21,6 +21,7 @@ import {
   isBillingV2ServerEnabled,
 } from "@/lib/billing/billing-v2-availability";
 import {
+  ActiveYearlyQuoteTokenMismatchError,
   createYearlyTokenQuote,
   getActiveYearlyTokenQuote,
   getActiveYearlyTokenQuotes,
@@ -294,6 +295,13 @@ export async function POST(req: NextRequest) {
         ...(body.token !== undefined ? { token: body.token } : {}),
       });
     } catch (error) {
+      if (error instanceof ActiveYearlyQuoteTokenMismatchError) {
+        return apiError(error.message, 409, {
+          failureType: "yearly_token_quote_token_mismatch",
+          activeQuoteId: error.quote.id,
+          activeQuoteToken: error.quote.tokenKey,
+        });
+      }
       if (error instanceof TokenNotAllowedError) {
         return apiError(error.message, 403, {
           failureType: "token_not_allowed",

@@ -21,6 +21,7 @@ jest.mock("@/lib/billing/bankr-withdraw", () => ({
 }));
 jest.mock("@/lib/billing/token-tier-eligibility", () => ({
   evaluateAndRecordTokenTierEligibility: jest.fn(async () => ({ configured: true, warnings: [], pro: null, power: null })),
+  holdTierBreachesUntil: jest.fn(async () => undefined),
 }));
 jest.mock("@/lib/billing/token-holdings", () => ({
   fetchHermesTokenBalance: jest.fn(),
@@ -35,7 +36,7 @@ import {
   waitForTransferReceipt,
   withdrawAllHermesTokensForUser,
 } from "@/lib/billing/bankr-withdraw";
-import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { evaluateAndRecordTokenTierEligibility, holdTierBreachesUntil } from "@/lib/billing/token-tier-eligibility";
 import {
   getHermesLockWallet,
   refreshPrimaryHermesTokenHolding,
@@ -89,12 +90,34 @@ it("moves to the verified wallet and evaluates only its balance once mined", asy
   expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
 });
 
-it("evaluates nothing while the move is not mined yet", async () => {
+it("holds new breaches while the move is in flight, and evaluates nothing until it is mined", async () => {
   (waitForTransferReceipt as jest.Mock).mockResolvedValue("pending");
   const body = await (await POST(post({ destination: "verified_wallet" }))).json();
+  expect(holdTierBreachesUntil).toHaveBeenCalledWith(
+    expect.objectContaining({ userId: "user_1", reason: "lock_wallet_move_to_verified_wallet" })
+  );
+  const until = (holdTierBreachesUntil as jest.Mock).mock.calls[0][0].until as Date;
+  expect(until.getTime() - Date.now()).toBeGreaterThan(25 * 60 * 1000);
   expect(body.data.postWithdrawEligibility).toEqual({ evaluated: false, reason: "move_pending" });
   expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
   expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
+});
+
+it("does not evaluate on a lagging RPC read that does not show the moved tokens yet", async () => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+  (waitForTransferReceipt as jest.Mock).mockResolvedValue("mined");
+  (refreshPrimaryVerifiedTokenHoldings as jest.Mock).mockImplementation(async () => ({
+    status: "refreshed",
+    snapshot: { balanceRaw: "0" },
+    snapshots: [],
+    balances: { hermesos: 0n },
+  }));
+  const pending = POST(post({ destination: "verified_wallet" }));
+  await jest.runAllTimersAsync();
+  const body = await (await pending).json();
+  jest.useRealTimers();
+  expect(body.data.postWithdrawEligibility).toEqual({ evaluated: false, reason: "move_balance_not_visible_yet" });
+  expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
 });
 
 it("asks for a verified wallet when there is none", async () => {

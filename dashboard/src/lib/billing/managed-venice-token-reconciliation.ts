@@ -885,6 +885,7 @@ async function scanAttributableTransfers(params: {
   chain: BaseChainReader;
   quote: ManagedVeniceTokenQuote;
   minConfirmations: number;
+  now?: Date;
 }) {
   const { db, quote } = params;
   const window = managedVeniceTokenQuoteWindow(quote);
@@ -915,7 +916,7 @@ async function scanAttributableTransfers(params: {
     transfer.timestampMs >= quotedAtMs &&
     transfer.timestampMs <= graceEndMs &&
     (boundaryMs === null || transfer.timestampMs < boundaryMs);
-  for (const other of livePlatformTokens().filter((token) => token.address !== quote.tokenAddress)) {
+  for (const other of livePlatformTokens(params.now ?? new Date()).filter((token) => token.address !== quote.tokenAddress)) {
     const otherScan = await scanQuoteTransfers({
       chain: params.chain,
       quote,
@@ -1324,7 +1325,7 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     return finishSettlement({ db, quote, settlement, transfer: recovery, failOnSurfacingError });
   }
 
-  const scan = await scanAttributableTransfers({ db, chain, quote, minConfirmations });
+  const scan = await scanAttributableTransfers({ db, chain, quote, minConfirmations, now });
   const { attributable, extraLogs, classOf, isConfirmed, expiresAtMs, graceEndMs } = scan;
   const confirmed = attributable.filter(isConfirmed);
   const confirmedExtraLogs = extraLogs.filter(isConfirmed);

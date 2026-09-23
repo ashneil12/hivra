@@ -29,7 +29,12 @@ jest.mock("@/lib/supabase", () => ({
 }));
 
 import { reconcileYearlyTokenQuote } from "@/lib/billing/yearly-token-settlement";
-import { asYearlyTokenQuote, createYearlyTokenQuote, type YearlyQuoteRow } from "@/lib/billing/yearly-token-quotes";
+import {
+  ActiveYearlyQuoteTokenMismatchError,
+  asYearlyTokenQuote,
+  createYearlyTokenQuote,
+  type YearlyQuoteRow,
+} from "@/lib/billing/yearly-token-quotes";
 import { computeUserTokenAccess, TokenNotAllowedError } from "@/lib/billing/token-access";
 import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
 import { TEST_DEPOSIT_ADDRESS, txHash, yearlyQuoteRow } from "@/test-utils/yearly-token-memory-db";
@@ -123,6 +128,21 @@ describe("yearly quotes after $HIVRA activation", () => {
       priceQuote: PRICE,
     });
     expect(quote).toMatchObject({ tokenKey: "hermesos", tokenAddress: HERMESOS_TOKEN_ADDRESS, usdTargetCents: 9900 });
+  });
+});
+
+describe("an open yearly quote in another token", () => {
+  it("is not handed back when the user asks to pay in a different token", async () => {
+    const world = createYearlyTokenWorld();
+    mockSupabaseAdmin = world.memory.db;
+    const common = { userId: "user_1", tier: "pro" as const, depositAddress: TEST_DEPOSIT_ADDRESS, access: grandfathered, priceQuote: PRICE };
+    const first = await createYearlyTokenQuote(common);
+    expect(first.tokenKey).toBe("hermesos");
+    await expect(createYearlyTokenQuote({ ...common, token: "hivra" })).rejects.toBeInstanceOf(
+      ActiveYearlyQuoteTokenMismatchError
+    );
+    // Asking again without a token returns the open quote, as before.
+    expect((await createYearlyTokenQuote(common)).id).toBe(first.id);
   });
 });
 

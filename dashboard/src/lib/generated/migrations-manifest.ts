@@ -351,4 +351,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260923120000", name: "digitalocean_managed_agent_sessions" },
   { version: "20260923150000", name: "dual_platform_token_foundation" },
   { version: "20260923203000", name: "reconcile_token_base_any_allowed_token" },
+  { version: "20260923204000", name: "managed_venice_token_lots_unique_quote_any_token" },
 ];

@@ -445,3 +445,30 @@ describe("a grandfathered user who converts", () => {
     expect(result.warnings.join("\n")).toMatch(/due to move to \$HIVRA/);
   });
 });
+
+describe("a lock-wallet move in flight", () => {
+  it("holds a new breach until the hold ends, then breaches normally", async () => {
+    const db = new FakeDb();
+    const holdUntil = new Date(NOW.getTime() + 30 * 60 * 1000);
+    db.rows.push(hermesosProRow({ metadata: { breach_hold_until: holdUntil.toISOString() } }));
+    const during = await evaluateAndRecordTokenTierEligibility({
+      userId: "old",
+      balances: { hermesos: 0n, hivra: 0n },
+      access: grandfathered,
+      db: db as unknown as DbCast,
+      now: NOW,
+    });
+    expect(during.pro).toMatchObject({ transition: "unchanged", currentlyEligible: true });
+    expect(db.rows[0]).toMatchObject({ currently_eligible: true, last_breach_at: null });
+
+    const after = new Date(holdUntil.getTime() + 1);
+    const breached = await evaluateAndRecordTokenTierEligibility({
+      userId: "old",
+      balances: { hermesos: 0n, hivra: 0n },
+      access: grandfathered,
+      db: db as unknown as DbCast,
+      now: after,
+    });
+    expect(breached.pro?.transition).toBe("breached");
+  });
+});

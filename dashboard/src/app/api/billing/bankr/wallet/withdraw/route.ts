@@ -40,7 +40,10 @@ import {
   waitForTransferReceipt,
   withdrawAllHermesTokensForUser,
 } from "@/lib/billing/bankr-withdraw";
-import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import {
+  evaluateAndRecordTokenTierEligibility,
+  holdTierBreachesUntil,
+} from "@/lib/billing/token-tier-eligibility";
 import {
   fetchHermesTokenBalance,
   getHermesLockWallet,
@@ -73,6 +76,8 @@ interface WithdrawRequestBody {
 // security report. Keep this in-process guard as defense-in-depth even
 // after the DB lock lands.
 const inFlightByUser = new Map<string, Promise<unknown>>();
+// How long new tier breaches are held after a lock-wallet move is submitted.
+const LOCK_MOVE_BREACH_HOLD_MS = 30 * 60 * 1000;
 const LOG_CONTEXT = {
   source: "billing/withdraw",
   route: "/api/billing/bankr/wallet/withdraw",
@@ -240,6 +245,14 @@ export async function POST(req: NextRequest) {
       // is not mined yet, evaluate nothing now: the next holdings refresh
       // reads it (and a breach, if any, has the normal grace).
       try {
+        // Whatever reads balances in the next minutes (a cron tick, a slow
+        // RPC node) may see the tokens in neither wallet: no breach until the
+        // move has had time to land and be read.
+        await holdTierBreachesUntil({
+          userId,
+          until: new Date(Date.now() + LOCK_MOVE_BREACH_HOLD_MS),
+          reason: "lock_wallet_move_to_verified_wallet",
+        });
         const receipt = result.txHash ? await waitForTransferReceipt({ txHash: result.txHash }) : "pending";
         if (receipt === "mined") {
           const [lockWallet, verifiedWallet] = await Promise.all([
@@ -248,10 +261,19 @@ export async function POST(req: NextRequest) {
           ]);
           if (lockWallet) await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: lockWallet });
           if (verifiedWallet) {
-            const refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
-            if (refreshed.status === "refreshed") {
+            // A load-balanced RPC node can lag the receipt: only evaluate once
+            // the moved amount is visible in the verified wallet.
+            const moved = BigInt(result.amountRaw ?? "0");
+            let refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
+            for (let attempt = 0; attempt < 3 && refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) < moved; attempt++) {
+              await new Promise((resolve) => setTimeout(resolve, 2_000));
+              refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
+            }
+            if (refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) >= moved) {
               await evaluateAndRecordTokenTierEligibility({ userId, balances: refreshed.balances });
               postWithdrawEligibility = { evaluated: true, balanceRaw: refreshed.snapshot?.balanceRaw ?? "0" };
+            } else {
+              postWithdrawEligibility = { evaluated: false, reason: "move_balance_not_visible_yet" };
             }
           }
         } else {

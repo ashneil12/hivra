@@ -138,6 +138,16 @@ export const YEARLY_QUOTE_SELECT_COLUMNS =
   "quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, " +
   "consumed_tx_hash, consumed_log_index, source, metadata, created_at, updated_at";
 
+/** An active quote for this tier is locked in a different token. */
+export class ActiveYearlyQuoteTokenMismatchError extends Error {
+  constructor(readonly quote: YearlyTokenQuote) {
+    super(
+      `Your open ${quote.tier} quote is in ${quote.tokenSymbol}. Pay it or wait for it to expire before paying in another token.`
+    );
+    this.name = "ActiveYearlyQuoteTokenMismatchError";
+  }
+}
+
 interface CreateYearlyQuoteParams {
   userId: string;
   tier: TierKey;
@@ -194,7 +204,15 @@ export async function createYearlyTokenQuote(
     tier: params.tier,
     now,
   });
-  if (existingActive) return existingActive;
+  if (existingActive) {
+    // A locked quote in another token must not be handed back as if it were
+    // the one asked for: paying it in the requested token would be a
+    // wrong-token transfer that is never credited.
+    if (params.token && existingActive.tokenKey !== params.token) {
+      throw new ActiveYearlyQuoteTokenMismatchError(existingActive);
+    }
+    return existingActive;
+  }
 
   await assertNoActiveCryptoPaymentSession({
     userId: params.userId,
@@ -243,7 +261,10 @@ export async function createYearlyTokenQuote(
       tier: params.tier,
       now,
     });
-    if (winner) return winner;
+    if (winner) {
+      if (params.token && winner.tokenKey !== params.token) throw new ActiveYearlyQuoteTokenMismatchError(winner);
+      return winner;
+    }
   }
   if (error || !data) {
     throw new Error(`Failed to create yearly token quote: ${error?.message ?? "unknown"}`);

@@ -36,7 +36,8 @@ import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   HERMESOS_TOKEN_ADDRESS,
-  fetchHermesTokenBalance,
+  fetchTokenBalance,
+  platformTokenBalanceConfig,
   formatRawTokenBalance,
   normalizeNumericToBigIntString,
 } from "./token-holdings";
@@ -110,6 +111,7 @@ export interface YearlySweepOptions {
     walletAddress: string;
     rpcUrl?: string;
     env?: Record<string, string | undefined>;
+    fetchImpl?: JsonFetch;
   }) => Promise<{ balanceRaw: unknown }>;
   ensureGas?: (params: {
     walletAddress: string;
@@ -315,10 +317,23 @@ export async function sweepYearlyTokenSubscription(
   }
   const walletAddress = credential.evmAddress;
 
-  const readBalance = options.readHermesBalance ?? fetchHermesTokenBalance;
+  // Check the balance of the token being swept, never another one.
+  const readBalance: NonNullable<YearlySweepOptions["readHermesBalance"]> =
+    options.readHermesBalance ??
+    ((balanceParams) =>
+      fetchTokenBalance({
+        ...balanceParams,
+        fetchImpl: balanceParams.fetchImpl as Parameters<typeof fetchTokenBalance>[0]["fetchImpl"],
+        token: platformTokenBalanceConfig(token),
+      }));
   let liveBalanceRaw: bigint;
   try {
-    const liveBalance = await readBalance({ walletAddress, rpcUrl: options.rpcUrl, env });
+    const liveBalance = await readBalance({
+      walletAddress,
+      rpcUrl: options.rpcUrl,
+      env,
+      fetchImpl: options.fetchImpl,
+    });
     liveBalanceRaw = BigInt(normalizeNumericToBigIntString(String(liveBalance.balanceRaw)));
   } catch (error) {
     const message = `balance read failed: ${safeErrorMessage(error)}`;
