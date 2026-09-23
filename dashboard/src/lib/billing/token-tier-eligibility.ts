@@ -250,12 +250,33 @@ function hasBreachHold(row: TierQualificationRow): boolean {
   return BREACH_HOLD_KEYS.some((key) => row.metadata?.[key] !== undefined);
 }
 
-/** A row patch that drops a spent or expired hold, or nothing when there is none. */
-function clearBreachHoldPatch(row: TierQualificationRow): { metadata?: Record<string, unknown> } {
-  if (!hasBreachHold(row)) return {};
-  const metadata = { ...(row.metadata ?? {}) };
-  for (const key of BREACH_HOLD_KEYS) delete metadata[key];
-  return { metadata };
+/**
+ * Rewrite a user's tier-row metadata, compare-and-set on updated_at so a
+ * concurrent write (an evaluation, a $HIVRA move, another hold) is never
+ * overwritten from a stale read: on a lost race the row is re-read and the
+ * change re-applied. Only the hold writers use this; the evaluator never
+ * rewrites metadata except when moving a row to $HIVRA.
+ */
+async function patchTierMetadata(
+  db: SupabaseLike,
+  userId: string,
+  change: (row: TierQualificationRow) => Record<string, unknown> | null,
+  failure: string
+) {
+  for (const tier of ["pro", "power"] as const) {
+    for (let attempt = 0; ; attempt++) {
+      const row = await loadRow(db, userId, tier);
+      if (!row) break;
+      const metadata = change(row);
+      if (!metadata) break;
+      const filtered = db.from("token_tier_qualifications").update({ metadata }).eq("id", row.id);
+      if (!filtered.eq) throw new Error(`${failure}: database client cannot compare-and-set`);
+      const { data, error } = await filtered.eq("updated_at", row.updated_at).select("id");
+      if (error) throw new Error(`${failure} for ${userId}/${tier}`);
+      if (Array.isArray(data) && data.length > 0) break;
+      if (attempt >= 4) throw new Error(`${failure} for ${userId}/${tier}: the row kept changing`);
+    }
+  }
 }
 
 /**
@@ -264,8 +285,7 @@ function clearBreachHoldPatch(row: TierQualificationRow): { metadata?: Record<st
  * moment the tokens are between wallets never starts a breach. The hold only
  * covers `movingRaw`: a breach still starts when the balance read plus the
  * tokens in flight is below the qualifying quantity, so moving dust never
- * shields an emptied wallet. The evaluator drops the hold once it has judged
- * the row without it.
+ * shields an emptied wallet, and the hold lapses at `until`.
  */
 export async function holdTierBreachesUntil(params: {
   userId: string;
@@ -276,37 +296,34 @@ export async function holdTierBreachesUntil(params: {
 }) {
   const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
   if (!db) throw new Error("Database not configured");
-  for (const tier of ["pro", "power"] as const) {
-    const row = await loadRow(db, params.userId, tier);
-    if (!row) continue;
-    await updateRow(
-      db,
-      row,
-      {
-        metadata: {
-          ...(row.metadata ?? {}),
-          [BREACH_HOLD_KEY]: params.until.toISOString(),
-          [BREACH_HOLD_MOVING_KEY]: params.movingRaw.toString(),
-          breach_hold_reason: params.reason,
-        },
-      },
-      "Failed to hold tier breaches"
-    );
-  }
+  await patchTierMetadata(
+    db,
+    params.userId,
+    (row) => ({
+      ...(row.metadata ?? {}),
+      [BREACH_HOLD_KEY]: params.until.toISOString(),
+      [BREACH_HOLD_MOVING_KEY]: params.movingRaw.toString(),
+      breach_hold_reason: params.reason,
+    }),
+    "Failed to hold tier breaches"
+  );
 }
 
-/**
- * Drop a user's breach hold: the move it covered failed, or has landed and
- * been evaluated on the wallet it reached.
- */
+/** Drop a user's breach hold: the move it was written for was not sent. */
 export async function clearTierBreachHold(params: { userId: string; db?: SupabaseLike | null }) {
   const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
   if (!db) throw new Error("Database not configured");
-  for (const tier of ["pro", "power"] as const) {
-    const row = await loadRow(db, params.userId, tier);
-    if (!row || !hasBreachHold(row)) continue;
-    await updateRow(db, row, clearBreachHoldPatch(row), "Failed to clear the tier breach hold");
-  }
+  await patchTierMetadata(
+    db,
+    params.userId,
+    (row) => {
+      if (!hasBreachHold(row)) return null;
+      const metadata = { ...(row.metadata ?? {}) };
+      for (const key of BREACH_HOLD_KEYS) delete metadata[key];
+      return metadata;
+    },
+    "Failed to clear the tier breach hold"
+  );
 }
 
 function rowTokenKey(row: TierQualificationRow): PlatformTokenKey {
@@ -881,6 +898,10 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   ) {
     // A lock-wallet move to the user's own wallet is in flight: the tokens are
     // between wallets, not gone. Hold off recording a breach until it lands.
+    // Once they have landed the read already includes them, so the sum
+    // double-counts: selling from the verified wallet right after a move is
+    // shielded until the hold lapses (at most LOCK_MOVE_BREACH_HOLD_MS), and
+    // re-arming it needs a real lock-wallet balance.
     warnings.push(`User ${userId} (${tier}) breach held until ${breachHold.until.toISOString()}: lock-wallet move in flight.`);
     await updateRow(
       db,
@@ -899,7 +920,6 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
         last_balance_seen: rowBalance.toString(),
         last_evaluated_at: nowStamp,
         last_breach_at: nowStamp,
-        ...clearBreachHoldPatch(row),
       },
       "Failed to mark breach"
     );
@@ -938,13 +958,7 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   await updateRow(
     db,
     row,
-    {
-      last_balance_seen: rowBalance.toString(),
-      last_evaluated_at: nowStamp,
-      // An expired hold is dropped here; a live one stays until the move's own
-      // post-transfer evaluation clears it (clearTierBreachHold).
-      ...(breachHold && now < breachHold.until ? {} : clearBreachHoldPatch(row)),
-    },
+    { last_balance_seen: rowBalance.toString(), last_evaluated_at: nowStamp },
     "Failed to update last_balance"
   );
   return {

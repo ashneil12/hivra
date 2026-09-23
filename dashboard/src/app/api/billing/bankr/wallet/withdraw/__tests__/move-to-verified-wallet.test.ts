@@ -96,8 +96,8 @@ it("moves to the verified wallet and evaluates only its balance once mined", asy
   expect(evaluateAndRecordTokenTierEligibility).toHaveBeenCalledWith({ userId: "user_1", balances: { hermesos: HELD } });
   // The exit path's lock-wallet re-evaluation never runs.
   expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
-  // Evaluated where the tokens landed: the hold is spent.
-  expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1" });
+  // The hold lapses on its own: a lagging reader may still see neither wallet.
+  expect(clearTierBreachHold).not.toHaveBeenCalled();
 });
 
 it("holds new breaches for the moved amount while the move is in flight, and evaluates nothing until it is mined", async () => {
@@ -140,6 +140,12 @@ it("drops the hold when the move is not sent", async () => {
   expect(holdTierBreachesUntil).toHaveBeenCalledTimes(1);
   expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1" });
   expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
+});
+
+it("leaves another attempt's hold alone when this one never wrote one", async () => {
+  (withdrawAllHermesTokensForUser as jest.Mock).mockResolvedValue({ status: "already_in_flight" });
+  expect((await POST(post({ destination: "verified_wallet" }))).status).toBe(409);
+  expect(clearTierBreachHold).not.toHaveBeenCalled();
 });
 
 it("writes no hold for a withdraw (an exit)", async () => {

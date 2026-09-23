@@ -144,6 +144,7 @@ export async function POST(req: NextRequest) {
         });
       }
       destination = body.destination ?? "withdraw_address";
+      let holdWritten = false;
       result = await withdrawAllHermesTokensForUser({
         userId,
         expectedRecipient: body.expectedRecipient,
@@ -154,17 +155,21 @@ export async function POST(req: NextRequest) {
         // wallet. If the hold cannot be written, nothing is sent.
         beforeTransfer:
           destination === "verified_wallet"
-            ? (amountRaw) =>
-                holdTierBreachesUntil({
+            ? async (amountRaw) => {
+                // Set first: a hold that fails half-way still gets cleared.
+                holdWritten = true;
+                await holdTierBreachesUntil({
                   userId,
                   until: new Date(Date.now() + LOCK_MOVE_BREACH_HOLD_MS),
                   movingRaw: amountRaw,
                   reason: "lock_wallet_move_to_verified_wallet",
-                })
+                });
+              }
             : undefined,
       });
-      if (destination === "verified_wallet" && result.status !== "submitted") {
-        // Nothing left the lock wallet: drop any hold the attempt wrote.
+      if (holdWritten && result.status !== "submitted") {
+        // This attempt wrote a hold and then sent nothing: drop it. (A hold
+        // written by another, in-flight attempt is left alone.)
         await clearTierBreachHold({ userId }).catch((clearErr) =>
           log.warn("failed to clear the breach hold after an unsent move", {
             ...LOG_CONTEXT,
@@ -288,8 +293,8 @@ export async function POST(req: NextRequest) {
             }
             if (refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) >= moved) {
               await evaluateAndRecordTokenTierEligibility({ userId, balances: refreshed.balances });
-              // The tokens are read where they landed: the hold has done its job.
-              await clearTierBreachHold({ userId });
+              // The hold is left to lapse: another reader (a cron tick on a
+              // lagging RPC node) may still see the tokens in neither wallet.
               postWithdrawEligibility = { evaluated: true, balanceRaw: refreshed.snapshot?.balanceRaw ?? "0" };
             } else {
               postWithdrawEligibility = { evaluated: false, reason: "move_balance_not_visible_yet" };

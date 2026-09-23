@@ -37,7 +37,7 @@ jest.mock("@/lib/billing/deposit-quotes", () => ({
 }));
 
 import { computeUserTokenAccess, TokenNotAllowedError } from "@/lib/billing/token-access";
-import { clearTierBreachHold, evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { clearTierBreachHold, evaluateAndRecordTokenTierEligibility, holdTierBreachesUntil } from "@/lib/billing/token-tier-eligibility";
 
 type Row = Record<string, unknown> & { id: string; user_id: string; tier: string };
 
@@ -465,7 +465,7 @@ describe("a lock-wallet move in flight", () => {
       now,
     });
 
-  it("holds a new breach until the hold ends, then breaches normally and drops the hold", async () => {
+  it("holds a new breach until the hold ends, then breaches normally", async () => {
     const db = new FakeDb();
     const holdUntil = new Date(NOW.getTime() + 30 * 60 * 1000);
     db.rows.push(held(holdUntil, PRO_QTY()));
@@ -475,7 +475,6 @@ describe("a lock-wallet move in flight", () => {
 
     const breached = await evaluate(db, 0n, new Date(holdUntil.getTime() + 1));
     expect(breached.pro?.transition).toBe("breached");
-    expect(db.rows[0].metadata).not.toHaveProperty("breach_hold_until");
   });
 
   it("does not shield an emptied wallet behind a dust move", async () => {
@@ -498,14 +497,27 @@ describe("a lock-wallet move in flight", () => {
     expect((await evaluate(db, 0n, NOW)).pro?.transition).toBe("breached");
   });
 
-  it("keeps a live hold on a qualifying read, and drops an expired one", async () => {
+  it("never rewrites metadata from an evaluation, so a hold written meanwhile survives", async () => {
     const db = new FakeDb();
-    const holdUntil = new Date(NOW.getTime() + 30 * 60 * 1000);
-    db.rows.push(held(holdUntil, PRO_QTY()));
+    db.rows.push(hermesosProRow({ updated_at: "t0" }));
+    // The route writes a hold while this evaluation holds a stale copy of the row.
+    db.afterLoad = (row) => {
+      row.metadata = { breach_hold_until: new Date(NOW.getTime() + 60_000).toISOString(), breach_hold_moving_raw: "1" };
+      row.updated_at = "t1";
+    };
     await evaluate(db, PRO_QTY(), NOW);
-    expect(db.rows[0].metadata).toHaveProperty("breach_hold_moving_raw");
-    await evaluate(db, PRO_QTY(), new Date(holdUntil.getTime() + 1));
-    expect(db.rows[0].metadata).not.toHaveProperty("breach_hold_moving_raw");
+    expect(db.rows[0].metadata).toHaveProperty("breach_hold_moving_raw", "1");
+  });
+
+  it("writes a hold compare-and-set, keeping what a concurrent write added", async () => {
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow({ updated_at: "t0", metadata: {} }));
+    db.afterLoad = (row) => {
+      row.metadata = { moved_from_hermesos: { at: "now" } };
+      row.updated_at = "t1";
+    };
+    await holdTierBreachesUntil({ userId: "old", until: new Date(NOW.getTime() + 60_000), movingRaw: 5n, reason: "test", db: db as unknown as DbCast });
+    expect(db.rows[0].metadata).toMatchObject({ moved_from_hermesos: { at: "now" }, breach_hold_moving_raw: "5" });
   });
 
   it("clearTierBreachHold drops the hold and keeps other metadata", async () => {
