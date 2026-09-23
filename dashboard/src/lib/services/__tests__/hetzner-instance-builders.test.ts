@@ -1,3 +1,7 @@
+import { execFileSync } from "child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { gunzipSync } from "zlib";
 import {
   agentPortsForBackend,
@@ -12,9 +16,43 @@ import {
   resolveGatewayConfiguration,
   WEBUI_AGENT_PORTS,
 } from "@/lib/services/hetzner-instance-builders";
+import { HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE } from "@/lib/services/sidecar-script";
+
+const HEREDOC_DELIMITER = "HIVRA_EMBEDDED_FILE_EOF";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// The exact shell command the script uses to write `path` in heredoc form.
+function findHeredocWrite(script: string, path: string): string | null {
+  const escapedPath = escapeRegExp(path);
+  const withNewline = new RegExp(
+    `cat > ${escapedPath} <<'${HEREDOC_DELIMITER}'\\n[\\s\\S]*?\\n${HEREDOC_DELIMITER}\\n`
+  );
+  const withoutNewline = new RegExp(
+    `printf '%s' "\\$\\(cat <<'${HEREDOC_DELIMITER}'\\n[\\s\\S]*?\\n${HEREDOC_DELIMITER}\\n\\)" > ${escapedPath}\\n`
+  );
+  return script.match(withNewline)?.[0] ?? script.match(withoutNewline)?.[0] ?? null;
+}
+
+// Runs the script's own write command for `path` in bash, so the assertion
+// covers shell quoting and newline handling rather than a regex decode.
+function writeEmbeddedFileWithBash(script: string, path: string): string {
+  const command = findHeredocWrite(script, path);
+  if (!command) throw new Error(`No heredoc write for ${path}`);
+  const dir = mkdtempSync(join(tmpdir(), "hivra-embedded-"));
+  try {
+    writeFileSync(join(dir, "write.sh"), command);
+    execFileSync("bash", ["write.sh"], { cwd: dir });
+    return readFileSync(join(dir, path), "utf8");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 function extractEmbeddedFile(script: string, path: string): string {
-  const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedPath = escapeRegExp(path);
   const compressedPattern = new RegExp(
     `printf '%s' '([^']+)' \\| base64 -d \\| gunzip > ${escapedPath}`
   );
@@ -32,52 +70,62 @@ function extractEmbeddedFile(script: string, path: string): string {
   throw new Error(`Unable to extract embedded file for ${path}`);
 }
 
+function realisticGatewayDeployParams(systemPrompt?: string): Parameters<typeof buildAgentDeployScript>[0] {
+  const { fqdn } = resolveGatewayConfiguration({
+    subdomain: "7c80cbe05e19d9bf24c5",
+    ipv4: "203.0.113.4",
+  });
+
+  return {
+    instanceId: "inst_test_123",
+    containerName: "agent-inst_test_123",
+    apiServerKey: "x".repeat(64),
+    provider: "openrouter",
+    apiKey: `sk-${"a".repeat(96)}`,
+    model: "anthropic/claude-opus-4.1",
+    fqdn,
+    cpuLimit: 2,
+    ramLimit: 4096,
+    honchoSettings: {
+      enabled: true,
+      apiKey: `honcho_${"b".repeat(96)}`,
+    },
+    agentSettings: {
+      maxIterations: 60,
+      toolProgressMode: "all",
+      compressionThreshold: 0.85,
+      sessionResetMode: "both",
+      browserProvider: "local",
+      webUseGateway: true,
+      imageGenUseGateway: true,
+      ttsUseGateway: true,
+      browserUseGateway: true,
+      enableRootAccess: true,
+      ...(systemPrompt === undefined ? {} : { systemPrompt }),
+      fallbackModels: JSON.stringify([
+        {
+          provider: "openrouter",
+          model: "anthropic/claude-opus-4.1",
+          apiKey: "",
+        },
+      ]),
+    },
+    globalSettings: {
+      memoryContextLimit: 2200,
+      userContextLimit: 1375,
+      sessionExpiryHours: 24,
+    },
+    includeHostTimeSyncRepair: false,
+  };
+}
+
 describe("hetzner-instance-builders", () => {
   it("keeps a realistic gateway-enabled bootstrap under Hetzner's user_data limit", () => {
-    const { fqdn } = resolveGatewayConfiguration({
-      subdomain: "7c80cbe05e19d9bf24c5",
-      ipv4: "203.0.113.4",
-    });
-
+    // Fresh servers get the script inside renderCompressedProvisioningUserData,
+    // so hetzner-instance-service renders embedded files as heredocs.
     const agentScript = buildAgentDeployScript({
-      instanceId: "inst_test_123",
-      containerName: "agent-inst_test_123",
-      apiServerKey: "x".repeat(64),
-      provider: "openrouter",
-      apiKey: `sk-${"a".repeat(96)}`,
-      model: "anthropic/claude-opus-4.1",
-      fqdn,
-      cpuLimit: 2,
-      ramLimit: 4096,
-      honchoSettings: {
-        enabled: true,
-        apiKey: `honcho_${"b".repeat(96)}`,
-      },
-      agentSettings: {
-        maxIterations: 60,
-        toolProgressMode: "all",
-        compressionThreshold: 0.85,
-        sessionResetMode: "both",
-        browserProvider: "local",
-        webUseGateway: true,
-        imageGenUseGateway: true,
-        ttsUseGateway: true,
-        browserUseGateway: true,
-        enableRootAccess: true,
-        fallbackModels: JSON.stringify([
-          {
-            provider: "openrouter",
-            model: "anthropic/claude-opus-4.1",
-            apiKey: "",
-          },
-        ]),
-      },
-      globalSettings: {
-        memoryContextLimit: 2200,
-        userContextLimit: 1375,
-        sessionExpiryHours: 24,
-      },
-      includeHostTimeSyncRepair: false,
+      ...realisticGatewayDeployParams(),
+      embeddedFileEncoding: "heredoc",
     });
 
     const totalUserDataLength = Buffer.byteLength(
@@ -85,9 +133,48 @@ describe("hetzner-instance-builders", () => {
       "utf8"
     );
 
+    expect(agentScript).not.toContain("| base64 -d | gunzip > sidecar_server.js");
+    expect(writeEmbeddedFileWithBash(agentScript, "sidecar_server.js")).toBe(
+      HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE
+    );
+    expect(writeEmbeddedFileWithBash(agentScript, "docker-compose.yml")).toBe(
+      extractEmbeddedFile(buildAgentDeployScript(realisticGatewayDeployParams()), "docker-compose.yml")
+    );
+    // Hetzner rejects user_data above 32 KiB. Keep real headroom: gzip output
+    // differs by a few bytes between zlib builds (macOS arm64 vs Linux x64).
+    expect(totalUserDataLength).toBeLessThanOrEqual(32768 - 1024);
+  });
+
+  it.each([
+    ["without a trailing newline", "Be terse.\n\n\n\nKeep $HOME, `ticks`, \\n, 'single' and \"double\" quotes."],
+    ["with a trailing newline", "Line one\n\n\n\nLine two\n\n"],
+    ["with a delimiter-like line", `${HEREDOC_DELIMITER}x\n ${HEREDOC_DELIMITER}\nend`],
+  ])("writes heredoc-embedded files byte-exact %s", (_label, systemPrompt) => {
+    const agentScript = buildAgentDeployScript({
+      ...realisticGatewayDeployParams(systemPrompt),
+      embeddedFileEncoding: "heredoc",
+    });
+
+    expect(writeEmbeddedFileWithBash(agentScript, "SOUL.md")).toBe(systemPrompt);
+  });
+
+  it("keeps the blob form for a file containing the heredoc delimiter line", () => {
+    const systemPrompt = `before\n${HEREDOC_DELIMITER}\nafter`;
+    const agentScript = buildAgentDeployScript({
+      ...realisticGatewayDeployParams(systemPrompt),
+      embeddedFileEncoding: "heredoc",
+    });
+
+    expect(findHeredocWrite(agentScript, "SOUL.md")).toBeNull();
+    expect(extractEmbeddedFile(agentScript, "SOUL.md")).toBe(systemPrompt);
+  });
+
+  it("keeps gzip+base64 embedding by default for uncompressed delivery", () => {
+    const agentScript = buildAgentDeployScript(realisticGatewayDeployParams());
+
     expect(agentScript).toContain("| base64 -d | gunzip > sidecar_server.js");
     expect(agentScript).toContain("| base64 -d | gunzip > docker-compose.yml");
-    expect(totalUserDataLength).toBeLessThanOrEqual(32768);
+    expect(agentScript).not.toContain(HEREDOC_DELIMITER);
   });
 
   it("does not embed env-var-derived strings in the agent script (would break the user_data size budget non-deterministically)", () => {
