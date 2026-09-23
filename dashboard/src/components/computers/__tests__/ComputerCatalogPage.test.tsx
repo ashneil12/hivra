@@ -1,7 +1,13 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import { ComputerCatalogPage } from "../ComputerCatalogPage";
 
@@ -51,6 +57,61 @@ describe("ComputerCatalogPage", () => {
     );
   });
 
+  it("brings an opened OS catalog below the fold to the top under its heading", async () => {
+    const scroll = jest.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      render(<ComputerCatalogPage />);
+      await screen.findByText("No computers yet");
+      const details = screen
+        .getByText("Browse operating systems")
+        .closest("details") as HTMLDetailsElement;
+      const grid = details.querySelector("article")?.parentElement as HTMLElement;
+      const top = jest.spyOn(grid, "getBoundingClientRect");
+
+      // Opened with its first card already on screen: the page stays put.
+      top.mockReturnValue({ top: 200 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).not.toHaveBeenCalled();
+
+      // Opened at the bottom edge: the heading goes to the top, not the grid,
+      // so the tapped summary and its collapse control stay visible.
+      details.open = false;
+      fireEvent(details, new Event("toggle"));
+      top.mockReturnValue({ top: window.innerHeight - 40 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll).toHaveBeenCalledWith({ block: "start" });
+      expect(scroll.mock.instances[0]).toBe(details);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("brings a linked profile card into view when the catalog opens", async () => {
+    const scroll = jest.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    window.history.replaceState(null, "", "#omarchy");
+    try {
+      render(<ComputerCatalogPage />);
+      await screen.findByText("No computers yet");
+      const details = screen
+        .getByText("Browse operating systems")
+        .closest("details") as HTMLDetailsElement;
+      expect(details.open).toBe(true);
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).toHaveBeenLastCalledWith({ block: "nearest" });
+      expect(scroll.mock.instances.at(-1)).toBe(details.querySelector("#omarchy"));
+    } finally {
+      window.history.replaceState(null, "", window.location.pathname);
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
   it("keeps Omarchy's prepared path while presenting Windows as customer capacity", async () => {
     render(<ComputerCatalogPage />);
 
@@ -62,10 +123,19 @@ describe("ComputerCatalogPage", () => {
     expect(
       screen.getByRole("heading", { name: "Omarchy" }),
     ).toBeInTheDocument();
+    const omarchyCard = screen
+      .getByRole("heading", { name: "Omarchy" })
+      .closest("article") as HTMLElement;
+    expect(within(omarchyCard).getByText("Preview")).toBeInTheDocument();
     expect(
-      screen.getByText("Canary ready · operating system"),
+      within(omarchyCard).getByText("Full Linux desktop in your browser"),
     ).toBeInTheDocument();
+    // Substrate details stay available, but behind a collapsed disclosure.
     expect(screen.getAllByText(/prepared Canary computer/i)).toHaveLength(1);
+    expect(screen.getByText(/prepared Canary computer/i)).not.toBeVisible();
+    fireEvent.click(within(omarchyCard).getByText("Technical details"));
+    expect(screen.getByText(/prepared Canary computer/i)).toBeVisible();
+    expect(omarchyCard).not.toHaveTextContent(/Canary ready/);
     expect(
       screen.getByRole("link", { name: /Launch Omarchy/i }),
     ).toHaveAttribute(
@@ -275,6 +345,61 @@ describe("ComputerCatalogPage", () => {
     expect(
       screen.getByRole("link", { name: /Launch Windows/i }),
     ).toBeInTheDocument();
+  });
+
+  it("labels rows with the shared status words and filters starting computers", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: {
+          agents: [
+            {
+              id: "new",
+              type: "linux-desktop",
+              computer_profile: "ubuntu-desktop",
+              name: "Fresh desktop",
+              status: "provisioning",
+              cpu: 2,
+              ram: 4,
+            },
+            {
+              id: "broken",
+              type: "linux-desktop",
+              computer_profile: "ubuntu-desktop",
+              name: "Needs repair",
+              status: "error",
+              cpu: 2,
+              ram: 4,
+            },
+            {
+              id: "on",
+              type: "linux-desktop",
+              computer_profile: "ubuntu-desktop",
+              name: "Daily driver",
+              status: "running",
+              cpu: 2,
+              ram: 4,
+            },
+          ],
+        },
+      }),
+    });
+    render(<ComputerCatalogPage />);
+    const fresh = await screen.findByRole("link", { name: /Fresh desktop/ });
+    expect(fresh).toHaveTextContent("Starting");
+    expect(fresh).not.toHaveTextContent(/provisioning/i);
+    expect(
+      screen.getByRole("link", { name: /Needs repair/ }),
+    ).toHaveTextContent("Needs attention");
+    expect(
+      screen.getByRole("link", { name: /Daily driver/ }),
+    ).toHaveTextContent("Running");
+    fireEvent.click(screen.getByRole("button", { name: "Starting" }));
+    expect(screen.getByText("Fresh desktop")).toBeInTheDocument();
+    expect(screen.queryByText("Daily driver")).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs repair")).not.toBeInTheDocument();
   });
 
   it("shows a recoverable inventory error without claiming there are no computers", async () => {

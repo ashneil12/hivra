@@ -33,7 +33,9 @@ jest.mock("@/components/InteractiveBackground", () => {
 jest.mock("@/components/layout/LandingHeader", () => {
   const Mock = () => <header data-testid="landing-header" />;
   Mock.displayName = "LandingHeader";
-  return { __esModule: true, default: Mock };
+  // The CTA is the real signed-in-aware link; only the header is stubbed.
+  const { HomeOrDashboardLink } = jest.requireActual("@/components/layout/LandingHeader");
+  return { __esModule: true, default: Mock, HomeOrDashboardLink };
 });
 jest.mock("@/components/landing/Footer", () => {
   const Mock = () => <footer data-testid="footer" />;
@@ -46,6 +48,10 @@ jest.mock("@/components/i18n/LocaleProvider", () => ({
 }));
 
 describe("app/not-found", () => {
+  afterEach(() => {
+    document.cookie = "__client_uat=; Max-Age=0; path=/";
+  });
+
   it("renders a branded 404 inside the Hivra shell with a working back-home link", () => {
     render(<NotFound />);
 
@@ -60,5 +66,13 @@ describe("app/not-found", () => {
 
     const home = screen.getByRole("link", { name: /back to hivra/i });
     expect(home).toHaveAttribute("href", "/");
+  });
+
+  it("offers signed-in visitors the dashboard instead of the homepage", () => {
+    document.cookie = "__client_uat=1758000000; path=/";
+    render(<NotFound />);
+
+    expect(screen.getByRole("link", { name: /open dashboard/i })).toHaveAttribute("href", "/dashboard");
+    expect(screen.queryByRole("link", { name: /back to hivra/i })).not.toBeInTheDocument();
   });
 });

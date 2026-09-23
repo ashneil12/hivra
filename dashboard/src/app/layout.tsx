@@ -97,7 +97,9 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     title: "Hivra",
-    statusBarStyle: "black-translucent",
+    // Opaque bar with theme-appropriate glyphs. black-translucent drew white
+    // glyphs over the light header, unreadable in the installed app.
+    statusBarStyle: "default",
   },
   openGraph: {
     type: "website",

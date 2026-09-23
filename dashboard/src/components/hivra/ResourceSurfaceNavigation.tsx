@@ -85,8 +85,17 @@ export function ResourceSurfaceNavigation<T extends string>({
     function dismiss(event: PointerEvent) {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     }
+    // A tap inside a Terminal, Desktop or Browser iframe never reaches this
+    // document; the window losing focus to that frame is the only signal.
+    function blurred() {
+      setOpen(false);
+    }
     document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
+    window.addEventListener("blur", blurred);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("blur", blurred);
+    };
   }, [open]);
 
   function select(id: T) {
@@ -131,6 +140,12 @@ export function ResourceSurfaceNavigation<T extends string>({
         onClick={() => setOpen(value => !value)}>
         <MoreHorizontal className={styles.toolsIcon} size={18} aria-hidden="true" /><span className={styles.toolsLabel}>{selectedTool?.label ?? "Tools"}</span><ChevronDown className={styles.toolsChevron} size={13} aria-hidden="true" />
       </button>
+      {/* Narrow panes: a transparent layer over the surface so the first tap
+          outside the menu closes it instead of landing in an iframe. It closes
+          on click, not pointerdown, so the whole tap lands here and no click
+          falls through to the pill or frame underneath. */}
+      {open && <div className={styles.catcher} aria-hidden="true" data-testid="surface-tools-catcher"
+        onClick={() => setOpen(false)} />}
       {open && <div id={toolsId} ref={popover} className={styles.popover}>
         <span className={styles.label}>Tools & connections</span>
         {tools.map(surface => <button key={surface.id} type="button"

@@ -32,7 +32,12 @@ export interface AgentSwitcherMenuProps {
   hivraError: string | null;
   anchorRef: RefObject<HTMLButtonElement | null>;
   onSelect: (agent: UnifiedAgent, keyboardOrigin: boolean) => void;
-  onClose: () => void;
+  /**
+   * `restoreFocus: false` means focus already went somewhere the person chose
+   * (a Terminal, Desktop or Browser frame), so the host must not pull it back
+   * to the trigger.
+   */
+  onClose: (options?: { restoreFocus?: boolean }) => void;
   onRetryHermes: () => void;
   onRetryHivra: () => void;
   onOpenTestGuide?: () => void;
@@ -44,6 +49,15 @@ function agentMeta(agent: UnifiedAgent): string {
 
 function optionId(uid: string): string {
   return `agent-switcher-option-${uid}`;
+}
+
+/** On touch, focusing the search raises a keyboard that hides the list. */
+function coarsePointer(): boolean {
+  try {
+    return typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -103,21 +117,29 @@ function AgentSwitcherPanel({
     const anchor = anchorRef.current;
     if (!menu || !anchor || typeof window === "undefined") return;
     const rect = anchor.getBoundingClientRect();
+    // A hidden anchor measures 0x0; keep the last good position instead of
+    // jumping to the viewport corner.
+    if (rect.width === 0 && rect.height === 0) return;
     const available = window.innerWidth - MENU_VIEWPORT_MARGIN * 2;
     const width = Math.max(MENU_MIN_WIDTH, Math.min(rect.width, available));
     const left = Math.max(
       MENU_VIEWPORT_MARGIN,
       Math.min(rect.left, window.innerWidth - width - MENU_VIEWPORT_MARGIN),
     );
+    // The visual viewport excludes an open on-screen keyboard; innerHeight
+    // does not, which put the lower rows and footer under the iOS keyboard.
+    const viewport = window.visualViewport;
+    const visibleTop = viewport?.offsetTop ?? 0;
+    const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
     const spaceBelow =
-      window.innerHeight - rect.bottom - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
-    const spaceAbove = rect.top - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
+      visibleBottom - rect.bottom - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - visibleTop - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
     const placeAbove = spaceBelow < MENU_MIN_HEIGHT && spaceAbove > spaceBelow;
     const room = Math.max(placeAbove ? spaceAbove : spaceBelow, MENU_MIN_HEIGHT);
     const maxHeight = Math.min(MENU_MAX_HEIGHT, room);
     menu.style.top = `${
       placeAbove
-        ? Math.max(MENU_VIEWPORT_MARGIN, rect.top - MENU_OFFSET - maxHeight)
+        ? Math.max(visibleTop + MENU_VIEWPORT_MARGIN, rect.top - MENU_OFFSET - maxHeight)
         : rect.bottom + MENU_OFFSET
     }px`;
     menu.style.left = `${left}px`;
@@ -138,17 +160,28 @@ function AgentSwitcherPanel({
       menuRef.current = node;
       if (!node) return;
       place();
-      searchRef.current?.focus();
+      if (!coarsePointer()) {
+        searchRef.current?.focus();
+        return;
+      }
+      // Touch: keep the keyboard down and land on the current runtime.
+      const selected = optionRefs.current.find((option) => option?.getAttribute("aria-selected") === "true");
+      (selected ?? node).focus({ preventScroll: true });
     },
     [place],
   );
 
   useLayoutEffect(() => {
+    const viewport = window.visualViewport;
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
     return () => {
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
     };
   }, [place]);
 
@@ -167,13 +200,18 @@ function AgentSwitcherPanel({
         close();
       }
     };
+    // Fires when an iframe (terminal, desktop, browser) takes focus, where a
+    // tap never reaches this document's pointer listener. Focus stays there.
+    const handleBlur = () => onClose({ restoreFocus: false });
     document.addEventListener("pointerdown", handlePointerDown, true);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("blur", handleBlur);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("blur", handleBlur);
     };
-  }, [anchorRef, close]);
+  }, [anchorRef, close, onClose]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const sections = useMemo(() => {
@@ -228,29 +266,30 @@ function AgentSwitcherPanel({
     }
   }, [clampedIndex]);
 
+  // On the dialog, not just the search field: on touch, focus starts on the
+  // current option, and a hardware keyboard must still walk the list.
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    const fromSearch = target === searchRef.current;
+    const fromOption = target.getAttribute("role") === "option";
+    if (!fromSearch && !fromOption && target !== menuRef.current) return;
     if (flat.length === 0) return;
-    if (event.key === "ArrowDown") {
+    const next =
+      event.key === "ArrowDown" ? (clampedIndex + 1) % flat.length
+        : event.key === "ArrowUp" ? (clampedIndex - 1 + flat.length) % flat.length
+          : event.key === "Home" ? 0
+            : event.key === "End" ? flat.length - 1
+              : null;
+    if (next !== null) {
       event.preventDefault();
-      setActiveIndex((index) => (index + 1) % flat.length);
+      setActiveIndex(next);
+      // The combobox tracks the highlight with aria-activedescendant; off the
+      // search field, DOM focus follows it instead.
+      if (!fromSearch) optionRefs.current[next]?.focus();
       return;
     }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((index) => (index - 1 + flat.length) % flat.length);
-      return;
-    }
-    if (event.key === "Home") {
-      event.preventDefault();
-      setActiveIndex(0);
-      return;
-    }
-    if (event.key === "End") {
-      event.preventDefault();
-      setActiveIndex(flat.length - 1);
-      return;
-    }
-    if (event.key === "Enter") {
+    // A focused option activates itself as a button.
+    if (event.key === "Enter" && !fromOption) {
       const active = flat[clampedIndex];
       if (!active) return;
       event.preventDefault();
@@ -267,10 +306,13 @@ function AgentSwitcherPanel({
         ref={attachMenu}
         role="dialog"
         aria-label="Switch runtime"
-        style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)" }}
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+        style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)", outline: "none" }}
         className="flex max-w-[calc(100vw-16px)] flex-col overflow-hidden border border-[var(--etched-border)] bg-[var(--bg-surface)] shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--etched-border)] px-2.5 py-2">
+        {/* A label, so a tap anywhere on the row focuses the field. */}
+        <label className="flex shrink-0 cursor-text items-center gap-2 border-b border-[var(--etched-border)] px-2.5 py-2 pointer-coarse:py-0">
           <Search
             aria-hidden="true"
             size={14}
@@ -286,11 +328,15 @@ function AgentSwitcherPanel({
             aria-label="Search your runtimes"
             placeholder="Search runtimes"
             value={query}
-            onKeyDown={handleKeyDown}
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            enterKeyHint="search"
             onChange={(event) => setQuery(event.target.value)}
-            className="mono min-w-0 flex-1 bg-transparent text-[13px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
+            className="mono min-w-0 flex-1 bg-transparent text-[13px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)] pointer-coarse:min-h-[44px] max-md:text-[16px]"
           />
-        </div>
+        </label>
 
         {hermesError ? (
           <SourceFailure source="Hermes" onRetry={onRetryHermes} />
@@ -318,7 +364,7 @@ function AgentSwitcherPanel({
           ) : (
             sections.map((section) => (
               <div key={section.key} role="group" aria-label={section.label}>
-                <p className="mono px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                <p className="mono px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] max-md:text-[11px] pointer-coarse:text-[11px]">
                   {section.label}
                 </p>
                 {section.items.map((agent) => {
@@ -338,6 +384,7 @@ function AgentSwitcherPanel({
                       aria-selected={selected}
                       title={`${agent.name} — ${agentMeta(agent)}`}
                       onMouseEnter={() => setActiveIndex(index)}
+                      onFocus={() => setActiveIndex(index)}
                       onClick={(event) => onSelect(agent, event.detail === 0)}
                       className={[
                         "flex min-h-[44px] w-full min-w-0 items-center gap-2 border-l-2 px-2.5 py-2 text-left outline-none",

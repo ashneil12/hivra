@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, CalendarClock, ExternalLink, Loader2, PanelRightOpen, Radio, RotateCcw, Send, Sparkles, Terminal as TerminalIcon, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, ExternalLink, Loader2, PanelRightOpen, Radio, RotateCcw, Send, ServerCog, Sparkles, Terminal as TerminalIcon, X } from "lucide-react";
 import posthog from "posthog-js";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -208,6 +209,175 @@ function persistCommandPanelOpen(open: boolean): void {
   }
 }
 
+// At or below this width the docked panel would squeeze the chat, so the panel
+// becomes a bottom sheet opened from the narrow toolbar instead.
+const COMMAND_PANEL_SHEET_QUERY = "(max-width: 1100px)";
+
+function subscribeCommandPanelSheet(notify: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(COMMAND_PANEL_SHEET_QUERY);
+  query.addEventListener?.("change", notify);
+  return () => query.removeEventListener?.("change", notify);
+}
+
+function readCommandPanelSheet(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia(COMMAND_PANEL_SHEET_QUERY).matches;
+}
+
+function useCommandPanelSheet(): boolean {
+  return useSyncExternalStore(subscribeCommandPanelSheet, readCommandPanelSheet, () => false);
+}
+
+const SHEET_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** True while another modal dialog is open over `dialog`. Checked against the
+ *  DOM rather than focus: a dialog that never takes focus still owns the keys. */
+function isCoveredByAnotherModal(dialog: HTMLElement): boolean {
+  return Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).some((other) => other !== dialog);
+}
+
+/** Bottom sheet for the command panel on narrow viewports. Escape, the backdrop
+ *  and the panel's own close button dismiss it; Tab stays inside. Both yield to
+ *  a dialog opened from the sheet (channels, app picker) while it is open. */
+function CommandPanelSheet({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const sheet = sheetRef.current;
+      if (!sheet || isCoveredByAnotherModal(sheet)) return;
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(sheet.querySelectorAll<HTMLElement>(SHEET_FOCUSABLE));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!document.activeElement || !sheet.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <SafePortal>
+      <div
+        aria-hidden="true"
+        data-testid="instance-command-panel-sheet-backdrop"
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1000,
+          background: "color-mix(in srgb, var(--overlay-bg) 70%, rgba(0,0,0,0.3))",
+        }}
+      />
+      <div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command panel"
+        data-testid="instance-command-panel-sheet"
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 1001,
+          height: "min(85dvh, calc(var(--workspace-viewport-height, 100dvh) - 24px))",
+          display: "flex",
+          flexDirection: "column",
+          boxSizing: "border-box",
+          background: "var(--bg-surface)",
+          borderTop: "1px solid var(--etched-border)",
+          boxShadow: "0 -18px 50px rgba(0,0,0,0.22)",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          paddingLeft: "env(safe-area-inset-left, 0px)",
+          paddingRight: "env(safe-area-inset-right, 0px)",
+        }}
+      >
+        {children}
+      </div>
+    </SafePortal>
+  );
+}
+
+// Shared chrome for the Telegram and Channels connect modals. The panel caps
+// to the visible viewport (keyboard included) and keeps its close button in a
+// pinned header; under 640px the <style> in the page turns it into a sheet.
+const CONNECT_MODAL_OVERLAY_STYLE: React.CSSProperties = {
+  position: 'fixed',
+  top: 0,
+  left: 0,
+  right: 0,
+  height: 'var(--workspace-viewport-height, 100dvh)',
+  background: 'color-mix(in srgb, var(--overlay-bg) 78%, rgba(0,0,0,0.22))',
+  backdropFilter: 'blur(10px)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 9999,
+  boxSizing: 'border-box',
+  paddingTop: 'max(clamp(16px, 2.4vw, 30px), env(safe-area-inset-top, 0px))',
+  paddingRight: 'max(clamp(16px, 2.4vw, 30px), env(safe-area-inset-right, 0px))',
+  paddingBottom: 'max(clamp(16px, 2.4vw, 30px), env(safe-area-inset-bottom, 0px))',
+  paddingLeft: 'max(clamp(16px, 2.4vw, 30px), env(safe-area-inset-left, 0px))',
+};
+
+const CONNECT_MODAL_PANEL_STYLE: React.CSSProperties = {
+  position: 'relative',
+  display: 'flex',
+  flexDirection: 'column',
+  maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+  overflow: 'hidden',
+  boxSizing: 'border-box',
+  background: 'color-mix(in srgb, var(--bg-surface) 96%, transparent)',
+  border: '1px solid var(--etched-border)',
+  boxShadow: '0 24px 80px rgba(0, 0, 0, 0.22)',
+};
+
+function ConnectModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexShrink: 0,
+        padding: '0 0 0 16px',
+        background: 'var(--bg-surface)',
+        borderBottom: '1px solid var(--etched-border)',
+      }}
+    >
+      <span className="mono" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--text-muted)' }}>
+        {title}
+      </span>
+      <button
+        type="button"
+        autoFocus
+        onClick={onClose}
+        aria-label="Close"
+        style={{ width: 44, height: 44, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderLeft: '1px solid var(--etched-border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}
+      >
+        <X size={16} />
+      </button>
+    </div>
+  );
+}
+
 export default function InstanceDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
@@ -256,6 +426,23 @@ export default function InstanceDetailPage() {
       return next;
     });
   }, []);
+  // Narrow viewports get the panel as a bottom sheet. Its open state is separate
+  // from the persisted desktop toggle and always starts closed.
+  const commandPanelSheet = useCommandPanelSheet();
+  const [switcherHandleHost, setSwitcherHandleHost] = useState<HTMLDivElement | null>(null);
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  const mobilePanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const openMobilePanel = useCallback(() => {
+    setMobilePanelOpen(true);
+    captureClient("command_panel_toggled", { surface: "instance_overview_sheet", open: true });
+  }, []);
+  const closeMobilePanel = useCallback(() => {
+    setMobilePanelOpen(false);
+    mobilePanelTriggerRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    setMobilePanelOpen(false);
+  }, [id]);
   // Standing-tasks nudge: the "works while you're away" loop was invisible on
   // this lane, so it never converted. Dismissible; routes to the console Tasks
   // tab where a Free user can set up their one standing task. The dismissal is
@@ -760,10 +947,33 @@ export default function InstanceDetailPage() {
   );
 
   if (error || !instance) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, height: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #fca5a5", background: "#fef2f2", padding: 20 }}>
-        <AlertTriangle size={16} style={{ color: "#ef4444" }} />
-        <span style={{ fontSize: 13, color: "#dc2626", fontWeight: 500 }}>{error || "Instance not found"}</span>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, height: "100%", padding: 16, boxSizing: "border-box" }}>
+      <div data-testid="instance-load-error" style={{ display: "grid", gap: 14, border: "1px solid #fca5a5", background: "#fef2f2", padding: 20, width: "min(480px, 100%)", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <AlertTriangle size={16} style={{ color: "#ef4444", flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: "#dc2626", fontWeight: 500, overflowWrap: "anywhere" }}>{error || "Instance not found"}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              void fetchInstance(false);
+            }}
+            className="mono"
+            style={{ minHeight: 44, padding: "0 16px", border: "1px solid var(--hivra-red)", background: "var(--hivra-red)", color: "#fff", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "pointer" }}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard/agents")}
+            className="mono"
+            style={{ minHeight: 44, padding: "0 16px", border: "1px solid var(--hivra-red)", background: "transparent", color: "#dc2626", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "pointer" }}
+          >
+            Back to agents
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -801,6 +1011,104 @@ export default function InstanceDetailPage() {
       {/* Seamless Chat — takes full space */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
+        {/* Narrow toolbar (≤1100px, where the dock is unavailable): Console,
+            the agent switcher and the command-panel sheet live in their own
+            band so nothing covers the embedded chat's corner controls. */}
+        {commandPanelSheet ? (
+          <div
+            data-testid="instance-chat-toolbar"
+            className="instance-chat-toolbar"
+            style={{
+              position: "relative",
+              zIndex: 60,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              minHeight: 52,
+              boxSizing: "border-box",
+              paddingTop: "calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + 4px)",
+              paddingBottom: 4,
+              paddingLeft: "max(4px, env(safe-area-inset-left, 0px))",
+              paddingRight: "max(4px, env(safe-area-inset-right, 0px))",
+              borderBottom: "1px solid var(--etched-border)",
+              background: "var(--bg-surface)",
+            }}
+          >
+            <Link
+              href={`/dashboard/instances/${instance.id}/console`}
+              aria-label="Open console"
+              className="mono"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 7,
+                minWidth: 44,
+                minHeight: 44,
+                padding: "0 10px",
+                boxSizing: "border-box",
+                border: "1px solid var(--etched-border)",
+                background: "var(--bg-surface)",
+                color: "var(--ink-black)",
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                textDecoration: "none",
+              }}
+            >
+              <ServerCog size={16} aria-hidden="true" />
+              Console
+            </Link>
+            {/* The switcher's collapsed handle is portaled here; it expands in
+                the chat column below, so it never covers the banners. */}
+            <div
+              ref={setSwitcherHandleHost}
+              data-testid="instance-chat-toolbar-switcher"
+              style={{ flex: "1 1 auto", minWidth: 0, display: "flex", justifyContent: "center" }}
+            />
+            <button
+              ref={mobilePanelTriggerRef}
+              type="button"
+              onClick={openMobilePanel}
+              aria-haspopup="dialog"
+              aria-expanded={mobilePanelOpen}
+              aria-label="Open command panel"
+              data-testid="command-panel-sheet-open"
+              className="mono"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 7,
+                minWidth: 44,
+                minHeight: 44,
+                padding: "0 10px",
+                boxSizing: "border-box",
+                border: "1px solid var(--etched-border)",
+                borderRadius: 0,
+                background: "var(--bg-surface)",
+                color: "var(--ink-black)",
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                cursor: "pointer",
+              }}
+            >
+              <PanelRightOpen size={16} aria-hidden="true" />
+              Panel
+            </button>
+          </div>
+        ) : null}
+
+        {/* System banners. Under 640px the stack is capped (see the <style>
+            below) so it can never push the chat off a short phone screen, and
+            the activation nudge moves below any system alert. */}
+        <div className="instance-chat-banner-stack" style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
+
         {/* STORAGE USAGE BANNER — read-only disk warning (>=80% amber, >=95% red).
             Keyed on the real hermes_instances id, which IS sampled into
             instance_metering_events by the metering cron. Best-effort + dismissible;
@@ -810,24 +1118,26 @@ export default function InstanceDetailPage() {
         {/* RESTART BANNER */}
         {restartRequired && (
            <div className="instance-chat-banner" style={{ background: 'var(--amber)', color: '#000', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 50 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
                  <AlertTriangle size={18} strokeWidth={2.5} />
                  <span style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>RESTART REQUIRED</span>
                  <span style={{ fontSize: 13 }}>Pending setting changes require a container restart to take effect.</span>
               </div>
-              <button
-                 onClick={() => powerAction('restart')}
-                 disabled={actionLoading}
-                 style={{
-                    background: '#000', color: 'var(--amber)', border: 'none',
-                    padding: '8px 16px', fontSize: 12, fontWeight: 700,
-                    cursor: actionLoading ? 'not-allowed' : 'pointer',
-                    fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-                    opacity: actionLoading ? 0.7 : 1
-                 }}
-              >
-                 {actionLoading ? 'Restarting...' : 'Restart Now'}
-              </button>
+              <div className="instance-chat-banner-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                   onClick={() => powerAction('restart')}
+                   disabled={actionLoading}
+                   style={{
+                      background: '#000', color: 'var(--amber)', border: 'none',
+                      padding: '8px 16px', fontSize: 12, fontWeight: 700,
+                      cursor: actionLoading ? 'not-allowed' : 'pointer',
+                      fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+                      opacity: actionLoading ? 0.7 : 1
+                   }}
+                >
+                   {actionLoading ? 'Restarting...' : 'Restart Now'}
+                </button>
+              </div>
            </div>
         )}
         {/* STARTER-PROMPT STRIP — the first-action nudge on a fresh post-deploy
@@ -838,7 +1148,7 @@ export default function InstanceDetailPage() {
         {activeActivationBanner === "starter" ? (
           <div
             data-testid="instance-starter-prompts"
-            className="instance-chat-banner"
+            className="instance-chat-banner instance-chat-banner-nudge"
             style={{
               background: 'rgba(212, 175, 55, 0.12)',
               borderBottom: '1px solid var(--gold-leaf)',
@@ -862,7 +1172,7 @@ export default function InstanceDetailPage() {
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <div className="instance-chat-banner-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
               {[
                 { label: 'What can you do?', prompt: 'What can you help me with? Give me 3 concrete ideas based on what you can do right now.' },
                 { label: 'Draft an email', prompt: 'Help me draft a professional email.' },
@@ -882,7 +1192,7 @@ export default function InstanceDetailPage() {
                 type="button"
                 onClick={() => setStarterStripDismissed(true)}
                 aria-label="Dismiss"
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex' }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 40, minHeight: 40 }}
               >
                 <X size={15} />
               </button>
@@ -895,7 +1205,7 @@ export default function InstanceDetailPage() {
         {activeActivationBanner === "telegram" ? (
           <div
             data-testid="instance-telegram-banner"
-            className="instance-chat-banner"
+            className="instance-chat-banner instance-chat-banner-nudge"
             style={{
               background: 'rgba(212, 175, 55, 0.12)',
               borderBottom: '1px solid var(--gold-leaf)',
@@ -919,7 +1229,7 @@ export default function InstanceDetailPage() {
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+            <div className="instance-chat-banner-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
               <button
                 type="button"
                 onClick={() => setTelegramOpen(true)}
@@ -940,7 +1250,7 @@ export default function InstanceDetailPage() {
                 type="button"
                 onClick={() => setTelegramBannerDismissed(true)}
                 aria-label="Dismiss"
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex' }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 40, minHeight: 40 }}
               >
                 <X size={15} />
               </button>
@@ -954,7 +1264,7 @@ export default function InstanceDetailPage() {
         {activeActivationBanner === "tasks" ? (
           <div
             data-testid="instance-standing-tasks-banner"
-            className="instance-chat-banner"
+            className="instance-chat-banner instance-chat-banner-nudge"
             style={{
               background: 'rgba(212, 175, 55, 0.08)',
               borderBottom: '1px solid var(--etched-border)',
@@ -978,7 +1288,7 @@ export default function InstanceDetailPage() {
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+            <div className="instance-chat-banner-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
               <button
                 type="button"
                 onClick={() => router.push(`/dashboard/instances/${instance.id}/console?tab=tasks`)}
@@ -994,7 +1304,7 @@ export default function InstanceDetailPage() {
                   setTasksBannerDismissed(true);
                 }}
                 aria-label="Dismiss"
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex' }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 40, minHeight: 40 }}
               >
                 <X size={15} />
               </button>
@@ -1009,7 +1319,7 @@ export default function InstanceDetailPage() {
         {activeActivationBanner === "channels" ? (
           <div
             data-testid="instance-channels-banner"
-            className="instance-chat-banner"
+            className="instance-chat-banner instance-chat-banner-nudge"
             style={{
               background: 'rgba(212, 175, 55, 0.08)',
               borderBottom: '1px solid var(--etched-border)',
@@ -1033,7 +1343,7 @@ export default function InstanceDetailPage() {
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+            <div className="instance-chat-banner-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
               <button
                 type="button"
                 onClick={() => setChannelsOpen(true)}
@@ -1046,7 +1356,7 @@ export default function InstanceDetailPage() {
                 type="button"
                 onClick={() => setChannelsBannerDismissed(true)}
                 aria-label="Dismiss"
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex' }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 40, minHeight: 40 }}
               >
                 <X size={15} />
               </button>
@@ -1203,6 +1513,7 @@ export default function InstanceDetailPage() {
               </div>
             </div>
             {isColdStorageRestorableInstance(instance) ? (
+              <div className="instance-chat-banner-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
               <button
                 type="button"
                 onClick={() => {
@@ -1234,6 +1545,7 @@ export default function InstanceDetailPage() {
                 {actionLoading ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
                 {actionLoading ? 'Starting restore' : 'Start restore'}
               </button>
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -1312,6 +1624,8 @@ export default function InstanceDetailPage() {
                 style={{
                   width: 28,
                   height: 28,
+                  minWidth: 40,
+                  minHeight: 40,
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -1358,7 +1672,7 @@ export default function InstanceDetailPage() {
                 </span>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="instance-chat-banner-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button
                 type="button"
                 disabled={actionLoading}
@@ -1400,12 +1714,20 @@ export default function InstanceDetailPage() {
             </div>
           </div>
         ) : null}
+        </div>
         {/* Agent switcher floats over the top-center as a small collapsible
             handle that expands on click (see AgentSwitcher). At rest it's a
             tiny overlay tab, so it reserves no band and doesn't cover the
-            embedded chat's own corner controls. */}
-        <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <AgentSwitcher activeKind="hermes" activeId={instance.id} />
+            embedded chat's own corner controls. On narrow viewports the
+            handle sits in the toolbar band above and the console link is the
+            toolbar's own; the expanded switcher still opens here. */}
+        <div data-testid="instance-chat-column" style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <AgentSwitcher
+            activeKind="hermes"
+            activeId={instance.id}
+            showConsole={!commandPanelSheet}
+            handleHost={commandPanelSheet ? switcherHandleHost : undefined}
+          />
           {/* Workflows now live solely in the command panel's managed Workflows
               list — no over-the-chat banner. The panel owns runWorkflowPrompt. */}
           <WebuiIframe
@@ -1422,9 +1744,29 @@ export default function InstanceDetailPage() {
           claims a fixed ~360px lane and the chat flexes to fill the rest; when
           collapsed it renders nothing and the chat takes the full width. The
           iframe itself is untouched either way. On narrow viewports (≤1100px)
-          the dock is hidden via a scoped CSS breakpoint (see the <style> below)
+          the dock is replaced by a bottom sheet opened from the toolbar band,
           so the chat is never squeezed below a usable width. */}
-      {commandPanelOpen ? (
+      {commandPanelSheet ? (
+        mobilePanelOpen ? (
+          <CommandPanelSheet onClose={closeMobilePanel}>
+            <CommandPanel
+              variant="sheet"
+              instanceId={instance.id}
+              instanceName={instance.name}
+              instanceStatus={instance.status}
+              consoleHref={`/dashboard/instances/${instance.id}/console`}
+              onRunWorkflow={instance.status === "running" && starterSenderReady ? (prompt) => {
+                // The sheet covers the chat, so close it once a workflow lands there.
+                const sent = runWorkflowPrompt(prompt);
+                if (sent) closeMobilePanel();
+                return sent;
+              } : undefined}
+              onOpenChannels={(channel) => setChannelsOpen(channel ?? true)}
+              onCollapse={closeMobilePanel}
+            />
+          </CommandPanelSheet>
+        ) : null
+      ) : commandPanelOpen ? (
         <aside
           className="instance-command-panel-dock"
           data-testid="instance-command-panel-dock"
@@ -1486,12 +1828,40 @@ export default function InstanceDetailPage() {
       )}
 
       {/* Narrow-viewport guard: below 1100px the docked panel would squeeze the
-          chat, so we hide the dock entirely — AND the reopen tab, which would
-          otherwise open an invisible (display:none) dock. Scoped to this surface. */}
+          chat, so the dock and its reopen tab never show there (the sheet takes
+          over). Under 640px the banner stack is capped and the connect modals
+          anchor to the bottom as sheets. Scoped to this surface. */}
       <style>{`
         @media (max-width: 1100px) {
           .instance-command-panel-dock { display: none !important; }
           .command-panel-reopen { display: none !important; }
+        }
+        /* The collapsed sidebar's toggle hangs 16px past the rail; keep the
+           toolbar's Console link clear of it. */
+        @media (min-width: 768px) and (max-width: 1100px) {
+          .instance-chat-toolbar { padding-left: 24px !important; }
+        }
+        @media (max-width: 640px) {
+          .instance-chat-banner-stack {
+            max-height: 40%;
+            overflow-y: auto;
+            border-bottom: 1px solid var(--etched-border);
+          }
+          /* Inside the capped stack, system alerts and their recovery actions
+             come before the activation nudge. */
+          .instance-chat-banner-nudge { order: 1; }
+          .instance-connect-modal-overlay {
+            align-items: flex-end !important;
+            padding: 0 !important;
+          }
+          .instance-connect-modal {
+            width: 100% !important;
+            max-height: calc(var(--workspace-viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 16px) !important;
+            border-left: none !important;
+            border-right: none !important;
+            border-bottom: none !important;
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+          }
         }
       `}</style>
 
@@ -1785,44 +2155,22 @@ export default function InstanceDetailPage() {
             aria-modal="true"
             aria-label="Connect Telegram"
             onClick={() => setTelegramOpen(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'color-mix(in srgb, var(--overlay-bg) 78%, rgba(0,0,0,0.22))',
-              backdropFilter: 'blur(10px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 9999,
-              padding: 'clamp(16px, 2.4vw, 30px)',
-            }}
+            className="instance-connect-modal-overlay"
+            style={CONNECT_MODAL_OVERLAY_STYLE}
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'relative',
-                width: 'min(600px, calc(100vw - 32px))',
-                maxHeight: 'calc(100vh - 64px)',
-                overflow: 'auto',
-                background: 'color-mix(in srgb, var(--bg-surface) 96%, transparent)',
-                border: '1px solid var(--etched-border)',
-                boxShadow: '0 24px 80px rgba(0, 0, 0, 0.22)',
-              }}
+              className="instance-connect-modal"
+              style={{ ...CONNECT_MODAL_PANEL_STYLE, width: 'min(600px, calc(100vw - 32px))' }}
             >
-              <button
-                type="button"
-                autoFocus
-                onClick={() => setTelegramOpen(false)}
-                aria-label="Close"
-                style={{ position: 'absolute', top: 12, right: 12, zIndex: 1, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 6, display: 'inline-flex' }}
-              >
-                <X size={16} />
-              </button>
-              <InstanceTelegramConnect
-                instanceId={instance.id}
-                agentName={instance.name}
-                onStatusChange={(s) => setTelegramConnected(s.connected)}
-              />
+              <ConnectModalHeader title="Connect Telegram" onClose={() => setTelegramOpen(false)} />
+              <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                <InstanceTelegramConnect
+                  instanceId={instance.id}
+                  agentName={instance.name}
+                  onStatusChange={(s) => setTelegramConnected(s.connected)}
+                />
+              </div>
             </div>
           </div>
         </SafePortal>
@@ -1836,52 +2184,29 @@ export default function InstanceDetailPage() {
             aria-modal="true"
             aria-label="Connect channels"
             onClick={() => setChannelsOpen(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'color-mix(in srgb, var(--overlay-bg) 78%, rgba(0,0,0,0.22))',
-              backdropFilter: 'blur(10px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 9998,
-              padding: 'clamp(16px, 2.4vw, 30px)',
-            }}
+            className="instance-connect-modal-overlay"
+            style={{ ...CONNECT_MODAL_OVERLAY_STYLE, zIndex: 9998 }}
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'relative',
-                width: 'min(820px, calc(100vw - 32px))',
-                maxHeight: 'calc(100vh - 64px)',
-                overflow: 'auto',
-                background: 'color-mix(in srgb, var(--bg-surface) 96%, transparent)',
-                border: '1px solid var(--etched-border)',
-                boxShadow: '0 24px 80px rgba(0, 0, 0, 0.22)',
-                padding: '28px 24px',
-              }}
+              className="instance-connect-modal"
+              style={{ ...CONNECT_MODAL_PANEL_STYLE, width: 'min(820px, calc(100vw - 32px))' }}
             >
-              <button
-                type="button"
-                autoFocus
-                onClick={() => setChannelsOpen(false)}
-                aria-label="Close"
-                style={{ position: 'absolute', top: 12, right: 12, zIndex: 1, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 6, display: 'inline-flex' }}
-              >
-                <X size={16} />
-              </button>
-              <h2 className="serif" style={{ fontSize: '1.6rem', fontWeight: 400, color: 'var(--ink-black)', margin: '0 0 6px' }}>
-                Channels
-              </h2>
-              <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 22px', maxWidth: 560 }}>
-                Connect {instance.name} to the messaging channels and tools you already use. Each connection runs in your
-                isolated agent — credentials never leave the box.
-              </p>
-              <InstanceChannelsPanel
-                instanceId={instance.id}
-                agentName={instance.name}
-                initialChannel={typeof channelsOpen === 'string' ? channelsOpen : null}
-              />
+              <ConnectModalHeader title="Channels" onClose={() => setChannelsOpen(false)} />
+              <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', '--channels-scroll-pad-top': '20px', padding: 'var(--channels-scroll-pad-top) clamp(16px, 4vw, 24px) 28px' } as React.CSSProperties}>
+                <h2 className="serif" style={{ fontSize: '1.6rem', fontWeight: 400, color: 'var(--ink-black)', margin: '0 0 6px' }}>
+                  Channels
+                </h2>
+                <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 22px', maxWidth: 560 }}>
+                  Connect {instance.name} to the messaging channels and tools you already use. Each connection runs in your
+                  isolated agent — credentials never leave the box.
+                </p>
+                <InstanceChannelsPanel
+                  instanceId={instance.id}
+                  agentName={instance.name}
+                  initialChannel={typeof channelsOpen === 'string' ? channelsOpen : null}
+                />
+              </div>
             </div>
           </div>
         </SafePortal>

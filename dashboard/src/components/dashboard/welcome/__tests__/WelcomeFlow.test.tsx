@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import { WelcomeFlow, TierPickerCards } from "../WelcomeFlow";
@@ -179,6 +179,7 @@ describe("WelcomeFlow", () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/dashboard/welcome");
     Object.defineProperty(crypto, "randomUUID", { configurable: true, value: jest.fn(() => "11111111-1111-4111-8111-111111111111") });
     mockUserId = "user_model_launch";
     mockGet.mockImplementation((key: string) => {
@@ -1178,6 +1179,259 @@ describe("WelcomeFlow", () => {
     });
     expect(posthog.capture).not.toHaveBeenCalledWith("activation_instance_ready", expect.anything());
     expect(posthog.capture).not.toHaveBeenCalledWith("welcome_box_launch_succeeded", expect.anything());
+  });
+
+  describe("phone launch journey", () => {
+    const TOUCH_QUERY = "(max-width: 767px), (max-width: 1023px) and (pointer: coarse)";
+    const TEMPLATE_ID = "33333333-3333-4333-8333-333333333333";
+    let scrollIntoViewMock: jest.Mock;
+
+    function mockMatchMedia(matchingQuery: string) {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        writable: true,
+        value: jest.fn((query: string) => ({
+          matches: query === matchingQuery,
+          media: query,
+          addEventListener: jest.fn(),
+          removeEventListener: jest.fn(),
+        })),
+      });
+    }
+
+    beforeEach(() => {
+      scrollIntoViewMock = jest.fn();
+      Element.prototype.scrollIntoView = scrollIntoViewMock;
+    });
+
+    afterEach(() => {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      delete (window as { matchMedia?: unknown }).matchMedia;
+      mockPush.mockImplementation(() => undefined);
+      mockReplace.mockImplementation(() => undefined);
+    });
+
+    it("keeps a way back to the Launch journey when the catalog was opened from it", async () => {
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : key === "from" ? "launch" : null));
+      render(<WelcomeFlow />);
+
+      expect(await screen.findByRole("link", { name: "Launch" })).toHaveAttribute("href", "/dashboard/launch");
+    });
+
+    it("has no Launch back link on a direct visit", async () => {
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : null));
+      render(<WelcomeFlow />);
+
+      await screen.findByRole("tab", { name: /^agents$/i });
+      expect(screen.queryByRole("link", { name: "Launch" })).not.toBeInTheDocument();
+    });
+
+    it("carries a saved template into the launch it forks", async () => {
+      const baseFetch = fetchMock.getMockImplementation();
+      let launchBody: Record<string, unknown> | null = null;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/hivra/templates") {
+          return Promise.resolve(jsonResponse({
+            success: true,
+            data: { templates: [{ id: TEMPLATE_ID, name: "Research Bot", type: "claude-code", emoji: null }] },
+          }));
+        }
+        if (url === "/api/hivra/agents" && init?.method === "POST") launchBody = JSON.parse(String(init.body));
+        return baseFetch!(input, init);
+      });
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : key === "templateId" ? TEMPLATE_ID : null));
+      render(<WelcomeFlow />);
+
+      const banner = await screen.findByTestId("welcome-launch-template");
+      expect(banner).toHaveTextContent("Research Bot · Claude Code");
+      expect(banner).not.toHaveTextContent("Launching from template:");
+      fireEvent.click(screen.getByRole("button", { name: "Use this template" }));
+      expect(await screen.findByLabelText("Claude Code Name")).toHaveValue("Research Bot");
+
+      const launchButton = await screen.findByRole("button", { name: /launch · 2 CPU \/ 4 GB/i });
+      await waitFor(() => expect(launchButton).toBeEnabled());
+      fireEvent.click(launchButton);
+
+      await waitFor(() => expect(launchBody).toEqual(expect.objectContaining({
+        type: "claude-code",
+        name: "Research Bot",
+        templateId: TEMPLATE_ID,
+      })));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/dashboard/agent/agent-claude?welcome=1&tab=terminal"));
+      // The fork already carries the template's identity; the onboarding save
+      // must not overwrite it with the welcome draft.
+      expect(fetchMock).not.toHaveBeenCalledWith("/api/hivra/agents/agent-claude/action", expect.anything());
+    });
+
+    it("shows a Hermes deploy validation error directly above the Deploy button", async () => {
+      render(<WelcomeFlow />);
+      await chooseHermesAgent();
+
+      const cta = await screen.findByTestId("deploy-primary-cta");
+      fireEvent.change(screen.getByPlaceholderText("MY_FIRST_AGENT"), { target: { value: "" } });
+      fireEvent.click(cta);
+
+      const notice = (await screen.findByText("Name your agent, then try again.")).closest('[role="alert"]') as HTMLElement;
+      expect(cta.closest(".heavy-glass-card")).toContainElement(notice);
+      expect(notice.compareDocumentPosition(cta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scrollIntoViewMock.mock.contexts).toContain(notice);
+    });
+
+    it("brings the personalization panel into view on a touch tap and offers a sticky Continue", async () => {
+      mockMatchMedia(TOUCH_QUERY);
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : null));
+      render(<WelcomeFlow />);
+
+      fireEvent.click(await screen.findByRole("tab", { name: /^specialists$/i }));
+      // Opening Specialists preselects a default; that is not a tap and must not scroll.
+      await screen.findByRole("heading", { name: /a little about you/i });
+      expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+      const card = screen.getAllByTestId("welcome-persona-card")[1];
+      const personaName = card.getAttribute("aria-label")!.split(" — ")[0];
+      fireEvent.click(card);
+
+      await waitFor(() => expect(scrollIntoViewMock).toHaveBeenCalled());
+      const panel = screen.getByRole("heading", { name: new RegExp(`tell ${personaName} a little about you`, "i") })
+        .closest(".sub-glass-card");
+      expect(scrollIntoViewMock.mock.contexts).toContain(panel);
+
+      // jsdom does not evaluate the stylesheet media query that reveals it.
+      const sticky = screen.getByTestId("welcome-persona-sticky-continue");
+      const stickyContinue = within(sticky).getByRole("button", { hidden: true });
+      expect(stickyContinue).toHaveTextContent(`Continue with ${personaName}`);
+      fireEvent.click(stickyContinue);
+      expect(await screen.findByTestId("deploy-primary-cta")).toBeInTheDocument();
+    });
+
+    it("does not scroll on a persona tap with a desktop pointer", async () => {
+      mockMatchMedia("(pointer: fine)");
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : null));
+      render(<WelcomeFlow />);
+
+      fireEvent.click(await screen.findByRole("tab", { name: /^specialists$/i }));
+      fireEvent.click(screen.getAllByTestId("welcome-persona-card")[1]);
+
+      await screen.findByRole("heading", { name: /a little about you/i });
+      expect(scrollIntoViewMock).not.toHaveBeenCalled();
+    });
+
+    function urlStep() {
+      return new URLSearchParams(window.location.search).get("step");
+    }
+
+    it("pushes a history entry per step and follows browser back to the previous step", async () => {
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : null));
+      const pushState = jest.spyOn(window.history, "pushState");
+      render(<WelcomeFlow />);
+
+      await chooseClaudeCodeAgent();
+      await screen.findByLabelText("Claude Code Name");
+      expect(urlStep()).toBe("deploy");
+      expect(window.history.state).toEqual(expect.objectContaining({ hivraWelcomeStep: "deploy", hivraWelcomeFrom: "agent-type" }));
+      expect(pushState).toHaveBeenCalledTimes(1);
+      // No server round trip per step.
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        window.history.back();
+      });
+
+      expect(await screen.findByRole("tab", { name: /^agents$/i })).toBeInTheDocument();
+      expect(screen.queryByLabelText("Claude Code Name")).not.toBeInTheDocument();
+      expect(urlStep()).toBe("agent-type");
+      expect(pushState).toHaveBeenCalledTimes(1);
+      pushState.mockRestore();
+    });
+
+    it("pops the step's own entry when Back to agent choices is used, so system back keeps going back", async () => {
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : null));
+      render(<WelcomeFlow />);
+
+      await chooseClaudeCodeAgent();
+      await screen.findByLabelText("Claude Code Name");
+      const lengthAfterPush = window.history.length;
+      const back = jest.spyOn(window.history, "back");
+      const pushState = jest.spyOn(window.history, "pushState");
+
+      fireEvent.click(screen.getByRole("button", { name: /back to agent choices/i }));
+
+      expect(await screen.findByRole("tab", { name: /^agents$/i })).toBeInTheDocument();
+      expect(back).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(urlStep()).toBe("agent-type"));
+      expect(pushState).not.toHaveBeenCalled();
+      expect(window.history.length).toBe(lengthAfterPush);
+      back.mockRestore();
+      pushState.mockRestore();
+    });
+
+    it("keeps the URL on the step the user ends on when they move again before a back lands", async () => {
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : null));
+      render(<WelcomeFlow />);
+
+      await chooseClaudeCodeAgent();
+      await screen.findByLabelText("Claude Code Name");
+
+      // Back pops asynchronously; pick again before its popstate arrives.
+      const pushState = jest.spyOn(window.history, "pushState");
+      const popped = new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+      fireEvent.click(screen.getByRole("button", { name: /back to agent choices/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^claude code — coding agent/i }));
+      expect(urlStep()).toBe("deploy");
+      await act(async () => {
+        await popped;
+      });
+
+      // The landed pop is re-synced to the step the user is actually on.
+      expect(pushState).toHaveBeenCalledTimes(1);
+      pushState.mockRestore();
+      expect(urlStep()).toBe("deploy");
+      expect(screen.getByLabelText("Claude Code Name")).toBeInTheDocument();
+      expect(window.history.state).toEqual(expect.objectContaining({ hivraWelcomeStep: "deploy", hivraWelcomeFrom: "agent-type" }));
+
+      // A later browser back still reaches the catalog.
+      await act(async () => {
+        window.history.back();
+      });
+      expect(await screen.findByRole("tab", { name: /^agents$/i })).toBeInTheDocument();
+      expect(urlStep()).toBe("agent-type");
+    });
+
+    it("keeps the user's own agent choice when a template finishes loading late", async () => {
+      const baseFetch = fetchMock.getMockImplementation();
+      let resolveTemplates: (response: Response) => void = () => undefined;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/hivra/templates") {
+          return new Promise<Response>((resolve) => { resolveTemplates = resolve; });
+        }
+        return baseFetch!(input, init);
+      });
+      mockGet.mockImplementation((key: string) => (key === "step" ? "agent-type" : key === "templateId" ? TEMPLATE_ID : null));
+      render(<WelcomeFlow />);
+
+      await chooseAdvancedAgent(/^codex — coding agent/i);
+      const nameField = await screen.findByLabelText("Codex Name");
+      fireEvent.change(nameField, { target: { value: "My Codex" } });
+
+      await act(async () => {
+        resolveTemplates(jsonResponse({
+          success: true,
+          data: { templates: [{ id: TEMPLATE_ID, name: "Research Bot", type: "claude-code", emoji: null }] },
+        }));
+      });
+
+      expect(screen.getByLabelText("Codex Name")).toHaveValue("My Codex");
+      expect(screen.queryByLabelText("Claude Code Name")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("welcome-launch-template")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("hermes:welcome_agent_type")).toBe("codex");
+
+      // Back on the catalog the template is still offered explicitly.
+      fireEvent.click(screen.getByRole("button", { name: /back to agent choices/i }));
+      fireEvent.click(await screen.findByRole("button", { name: "Use this template" }));
+      expect(await screen.findByLabelText("Claude Code Name")).toHaveValue("Research Bot");
+    });
   });
 
   it("routes an accepted launch even when optional personalization never resolves", async () => {
