@@ -15,7 +15,7 @@ jest.mock("@/components/billing/LocalAddressQr", () => ({
   LocalAddressQr: () => <div data-testid="address-qr" />,
 }));
 
-const HERMESOS_TOKEN = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
+const HERMESOS_CONTRACT = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 
 function mockViewport(compact: boolean) {
   Object.defineProperty(window, "matchMedia", {
@@ -134,7 +134,7 @@ describe("ManagedVeniceTokenQuotePanel", () => {
     const link = screen.getByRole("link", { name: /open in wallet/i });
     expect(link).toHaveAttribute(
       "href",
-      `ethereum:${HERMESOS_TOKEN}@8453/transfer?address=0x000000000000000000000000000000000000feed&uint256=1000000000000000000000`
+      `ethereum:${HERMESOS_CONTRACT}@8453/transfer?address=0x000000000000000000000000000000000000feed&uint256=1000000000000000000000`
     );
     expect(screen.getByRole("button", { name: /copy amount/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /copy address/i })).toBeInTheDocument();

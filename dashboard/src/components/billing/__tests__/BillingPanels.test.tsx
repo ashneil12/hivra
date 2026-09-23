@@ -6,6 +6,8 @@ import { CryptoTopUpPanel, TokenHoldingPanel } from "../BillingPanels";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { TokenHoldingData } from "@/lib/billing/format";
 
+const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
+
 jest.mock("@/lib/client/clipboard", () => ({
   copyTextToClipboard: jest.fn(),
 }));
@@ -83,7 +85,7 @@ describe("TokenHoldingPanel", () => {
   const holding: TokenHoldingData = {
     token: {
       chainId: 8453,
-      tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+      tokenAddress: HERMESOS_CONTRACT,
       tokenSymbol: "Hivra",
       minimumBalanceDisplay: "1",
     },

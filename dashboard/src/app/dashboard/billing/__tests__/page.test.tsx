@@ -7,6 +7,9 @@ import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import { MARKETING_COPY } from "@/lib/i18n";
 import BillingPage from "../page";
 
+const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+
 const EN_BILLING = MARKETING_COPY.en.dashboard.billing;
 
 const mockGet = jest.fn();
@@ -329,7 +332,7 @@ describe("BillingPage", () => {
     tokenHoldingData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },
@@ -355,7 +358,7 @@ describe("BillingPage", () => {
     tokenRefreshData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },
@@ -421,7 +424,7 @@ describe("BillingPage", () => {
               symbol: "USDC",
               chainId: 8453,
               network: "Base",
-              tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+              tokenAddress: USDC_CONTRACT,
               tokenDecimals: 6,
               topUpEnabled: true,
               pricingMode: "usd_pegged",
@@ -1417,7 +1420,7 @@ describe("BillingPage", () => {
     tokenHoldingData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },
@@ -1431,7 +1434,7 @@ describe("BillingPage", () => {
     tokenRefreshData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },
@@ -1499,7 +1502,7 @@ describe("BillingPage", () => {
     tokenHoldingData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },
@@ -1513,7 +1516,7 @@ describe("BillingPage", () => {
     tokenRefreshData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },
@@ -2037,7 +2040,7 @@ describe("BillingPage", () => {
     tokenHoldingData = {
       token: {
         chainId: 8453,
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenSymbol: "Hivra",
         minimumBalanceDisplay: "1",
       },

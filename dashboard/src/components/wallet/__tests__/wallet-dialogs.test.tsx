@@ -32,7 +32,7 @@ jest.mock("@/lib/client/logger", () => ({
 
 const WALLET = "0x000000000000000000000000000000000000ba5e";
 const RECIPIENT = "0x1111111111111111111111111111111111111111";
-const HERMESOS_TOKEN = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
+const HERMESOS_CONTRACT = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 
 function card(overrides: Partial<AgentWalletCardData> = {}): AgentWalletCardData {
   return {
@@ -174,8 +174,8 @@ describe("AgentWalletCard", () => {
       <AgentWalletCard
         card={card({
           balances: [
-            { tokenSymbol: "HERMESOS", balanceDisplay: exactRaw, chain: "Base", tokenAddress: HERMESOS_TOKEN, tokenDecimals: 18 },
-            { tokenSymbol: "BNKR", balanceDisplay: "52718.293847561029384756", chain: "Base", tokenAddress: HERMESOS_TOKEN, tokenDecimals: 18 },
+            { tokenSymbol: "HERMESOS", balanceDisplay: exactRaw, chain: "Base", tokenAddress: HERMESOS_CONTRACT, tokenDecimals: 18 },
+            { tokenSymbol: "BNKR", balanceDisplay: "52718.293847561029384756", chain: "Base", tokenAddress: HERMESOS_CONTRACT, tokenDecimals: 18 },
           ],
         })}
         {...cardProps()}
@@ -296,7 +296,7 @@ describe("QuoteCard wallet link", () => {
     renderQuote(depositQuote());
     expect(screen.getByRole("link", { name: /open in wallet/i })).toHaveAttribute(
       "href",
-      `ethereum:${HERMESOS_TOKEN}@8453/transfer?address=${WALLET}&uint256=59600000000000000000000000`
+      `ethereum:${HERMESOS_CONTRACT}@8453/transfer?address=${WALLET}&uint256=59600000000000000000000000`
     );
   });
 

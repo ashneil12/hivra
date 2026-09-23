@@ -16,14 +16,6 @@ dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generi
 dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:191
 dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:186
 dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:209
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:1059
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:1073
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:1141
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:1155
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:1443
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:316
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:342
-dashboard/src/app/dashboard/billing/__tests__/page.test.tsx:generic-api-key:408
 dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:294
 dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:345
 dashboard/src/components/infrastructure/__tests__/InfrastructureConnectionsPage.test.tsx:generic-api-key:351

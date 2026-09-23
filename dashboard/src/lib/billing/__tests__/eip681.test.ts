@@ -12,12 +12,12 @@ import {
   HERMESOS_TOKEN_SYMBOL,
 } from "@/lib/billing/token-holdings";
 
-const TOKEN = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
+const HERMESOS_CONTRACT = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 const DEPOSIT = "0x000000000000000000000000000000000000fEeD";
 
 function request(overrides: Partial<Parameters<typeof buildBaseErc20TransferUri>[0]> = {}) {
   return {
-    tokenAddress: TOKEN,
+    tokenAddress: HERMESOS_CONTRACT,
     chainId: BASE_CHAIN_ID,
     recipient: DEPOSIT,
     amountRaw: "19600000000000000000000000",
@@ -28,7 +28,7 @@ function request(overrides: Partial<Parameters<typeof buildBaseErc20TransferUri>
 describe("buildBaseErc20TransferUri", () => {
   it("builds the EIP-681 transfer link with the exact raw amount", () => {
     expect(buildBaseErc20TransferUri(request())).toBe(
-      `ethereum:${TOKEN}@8453/transfer?address=${DEPOSIT}&uint256=19600000000000000000000000`
+      `ethereum:${HERMESOS_CONTRACT}@8453/transfer?address=${DEPOSIT}&uint256=19600000000000000000000000`
     );
   });
 
@@ -51,12 +51,12 @@ describe("buildBaseErc20TransferUri", () => {
   });
 
   it("accepts checksummed and lowercase addresses and keeps them as given", () => {
-    expect(buildBaseErc20TransferUri(request())).toContain(`ethereum:${TOKEN}@`);
+    expect(buildBaseErc20TransferUri(request())).toContain(`ethereum:${HERMESOS_CONTRACT}@`);
     const lower = buildBaseErc20TransferUri(
-      request({ tokenAddress: TOKEN.toLowerCase(), recipient: DEPOSIT.toLowerCase() })
+      request({ tokenAddress: HERMESOS_CONTRACT.toLowerCase(), recipient: DEPOSIT.toLowerCase() })
     );
     expect(lower).toBe(
-      `ethereum:${TOKEN.toLowerCase()}@8453/transfer?address=${DEPOSIT.toLowerCase()}&uint256=19600000000000000000000000`
+      `ethereum:${HERMESOS_CONTRACT.toLowerCase()}@8453/transfer?address=${DEPOSIT.toLowerCase()}&uint256=19600000000000000000000000`
     );
   });
 
@@ -81,7 +81,7 @@ describe("buildBaseErc20TransferUri", () => {
     ["too short", "0x1234"],
     ["no 0x prefix", "95ccfD2B81A9667b0Cc979992632F98fc853EBa3"],
     ["non-hex", "0x95ccfD2B81A9667b0Cc979992632F98fc853EBaZ"],
-    ["padded with spaces", ` ${TOKEN} `],
+    ["padded with spaces", ` ${HERMESOS_CONTRACT} `],
     ["the zero address", "0x0000000000000000000000000000000000000000"],
   ])("rejects a token address that is %s", (_label, tokenAddress) => {
     expect(buildBaseErc20TransferUri(request({ tokenAddress }))).toBeNull();

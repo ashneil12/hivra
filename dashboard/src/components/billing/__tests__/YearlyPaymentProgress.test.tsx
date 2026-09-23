@@ -170,7 +170,7 @@ it("says in the payment modal that a $HermesOS payment is final", () => {
 });
 
 describe("YearlyTokenPaymentModal", () => {
-  const TOKEN = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
+  const HERMESOS_CONTRACT = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
   const liveQuote = () => ({
     ...quote(),
     tokensRequiredRaw: "19600000000000000000000000",
@@ -207,7 +207,7 @@ describe("YearlyTokenPaymentModal", () => {
     renderModal();
     expect(screen.getByRole("link", { name: /open in wallet/i })).toHaveAttribute(
       "href",
-      `ethereum:${TOKEN}@8453/transfer?address=0x000000000000000000000000000000000000ba5e&uint256=19600000000000000000000000`
+      `ethereum:${HERMESOS_CONTRACT}@8453/transfer?address=0x000000000000000000000000000000000000ba5e&uint256=19600000000000000000000000`
     );
   });
 

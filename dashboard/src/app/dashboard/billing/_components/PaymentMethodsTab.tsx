@@ -90,7 +90,7 @@ export function PaymentMethodsTab({
   // Model-credit top-ups with $HermesOS are part of billing v2 and live in
   // Credits whatever the crypto flag says, so don't call crypto unavailable
   // while that button is there.
-  const tokenModelCreditsOffered = c.flags.billingV2Enabled && Boolean(c.managedVeniceSummary);
+  const hermesCreditTopUpsOffered = c.flags.billingV2Enabled && Boolean(c.managedVeniceSummary);
 
   return (
     <div className={styles.stack}>
@@ -140,7 +140,7 @@ export function PaymentMethodsTab({
             <h2 className={styles.panelTitle} id="billing-method-crypto">$HermesOS and USDC on Base</h2>
             {!c.flags.cryptoBillingEnabled ? (
               <p className={styles.panelText}>
-                {tokenModelCreditsOffered
+                {hermesCreditTopUpsOffered
                   ? "Paying for your plan with $HermesOS or USDC isn't available right now. You can still top up model credits with $HermesOS in Credits."
                   : "Crypto payments aren't available right now. Card payments work as usual."}
               </p>
@@ -154,7 +154,7 @@ export function PaymentMethodsTab({
 
         {!c.flags.cryptoBillingEnabled ? (
           <p className={styles.quietLine}>
-            {tokenModelCreditsOffered && (
+            {hermesCreditTopUpsOffered && (
               <button
                 type="button"
                 className={`${styles.button} ${styles.secondary}`}
