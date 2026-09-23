@@ -2,7 +2,8 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { resolveConversionState } from "@/lib/claim/conversion-state";
+import { validateHivraLaunchConfig } from "@/lib/billing/token-registry";
+import { resolveConversionState, type ConversionInputs } from "@/lib/claim/conversion-state";
 
 import { ANNOUNCED_MESSAGE, ConvertPanel, DORMANT_MESSAGE, PROPOSED_LABEL } from "../ConvertPanel";
 
@@ -10,9 +11,18 @@ const TEST_HIVRA = "0x1111111111111111111111111111111111111111";
 const TERMS = "https://hivra.cloud/token/conversion-terms";
 const CONVERT = "https://bankr.bot/convert/hivra";
 
-function renderState(overrides: Record<string, string | null> = {}) {
-  const state = resolveConversionState({ hivraTokenAddress: null, termsUrl: null, conversionUrl: null, ...overrides });
-  return render(<ConvertPanel state={state} />);
+const validation = validateHivraLaunchConfig({
+  contractAddress: TEST_HIVRA,
+  decimals: 18,
+  poolId: `0x${"ab".repeat(32)}`,
+  activatesAt: "2026-10-01T16:00:00Z",
+});
+const testHivra = validation.status === "configured" ? validation.token : null;
+
+const DORMANT: ConversionInputs = { hivra: null, phase: "dormant", links: { termsUrl: null, conversionUrl: null }, access: null };
+
+function renderState(overrides: Partial<ConversionInputs> = {}) {
+  return render(<ConvertPanel state={resolveConversionState({ ...DORMANT, ...overrides })} />);
 }
 
 describe("ConvertPanel", () => {
@@ -43,8 +53,8 @@ describe("ConvertPanel", () => {
     expect(screen.getByRole("link", { name: "Open Wallet" })).toHaveAttribute("href", "/dashboard/wallet");
   });
 
-  it("shows the announced contract but still no conversion link before terms are published", () => {
-    renderState({ hivraTokenAddress: TEST_HIVRA, conversionUrl: CONVERT });
+  it("shows the registry contract but no conversion link until the user's access counts $HIVRA", () => {
+    renderState({ hivra: testHivra, phase: "active", links: { termsUrl: TERMS, conversionUrl: CONVERT }, access: null });
 
     expect(screen.getByTestId("convert-closed")).toHaveTextContent(ANNOUNCED_MESSAGE);
     expect(screen.queryByText(DORMANT_MESSAGE)).not.toBeInTheDocument();
@@ -52,8 +62,8 @@ describe("ConvertPanel", () => {
     expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
   });
 
-  it("links to terms and conversion only when both are configured", () => {
-    renderState({ hivraTokenAddress: TEST_HIVRA, termsUrl: TERMS, conversionUrl: CONVERT });
+  it("links to terms and conversion once everything is in place", () => {
+    renderState({ hivra: testHivra, phase: "active", links: { termsUrl: TERMS, conversionUrl: CONVERT }, access: { canConvert: true } });
 
     expect(screen.queryByTestId("convert-closed")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Read the conversion terms" })).toHaveAttribute("href", TERMS);

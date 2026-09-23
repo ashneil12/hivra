@@ -6,7 +6,7 @@ import { HERMESOS_CONTRACT_ADDRESS, type ConversionState } from "@/lib/claim/con
 import { TokenAddressChecker } from "./TokenAddressChecker";
 
 export const DORMANT_MESSAGE = "Conversion opens after $HIVRA launches; terms are published first.";
-export const ANNOUNCED_MESSAGE = "Conversion is not open yet. It opens after the conversion terms are published.";
+export const ANNOUNCED_MESSAGE = "Conversion is not open yet. Terms are published before it opens.";
 export const PROPOSED_LABEL = "Proposed. Terms are published before conversion opens.";
 
 const section: CSSProperties = {
@@ -54,7 +54,7 @@ function ContractAddress({ label, address }: { label: string; address: string })
 /**
  * The optional $HermesOS → $HIVRA conversion page. It never builds or sends a
  * transaction: when conversion is open it links out to the conversion service
- * named in the launch config.
+ * in lib/claim/conversion-links-config.ts. $HIVRA comes from the token registry.
  */
 export function ConvertPanel({ state }: { state: ConversionState }) {
   return (
@@ -122,7 +122,7 @@ export function ConvertPanel({ state }: { state: ConversionState }) {
         {state.status === "dormant" ? (
           <p style={body}>$HIVRA has not launched. There is no official $HIVRA contract yet.</p>
         ) : (
-          <ContractAddress label="$HIVRA on Base" address={state.hivraTokenAddress} />
+          <ContractAddress label="$HIVRA on Base" address={state.hivraPublishedAddress} />
         )}
         <p style={muted}>
           Several tokens using the Hivra name already exist on Base. None of them is from Hivra. Hivra never sends
