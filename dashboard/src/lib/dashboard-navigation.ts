@@ -125,7 +125,8 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     icon: CreditCard,
     // The wallet is where $HermesOS access is paid for and agent wallets are
     // funded, so it belongs with Billing, not Settings.
-    routePrefixes: ["/dashboard/billing", WALLET_ROUTE],
+    // The optional $HermesOS → $HIVRA conversion page sits with the wallet.
+    routePrefixes: ["/dashboard/billing", WALLET_ROUTE, "/dashboard/convert"],
   },
 ];
 

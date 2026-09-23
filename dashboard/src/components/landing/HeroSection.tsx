@@ -26,8 +26,8 @@ export default function HeroSection({ agentsCounter, liveStat }: HeroSectionProp
             <a href="#computers" className={`${styles.secondary} ${styles.phoneOnly}`}>Start with a computer<ArrowRight size={18} aria-hidden="true" /></a>
           </> : <a id="hero-secondary-cta" href="#launch" className={styles.secondary}>{hero.secondaryCta}<ChevronDown size={16} aria-hidden="true" /></a>}
         </div>
-        {english && downloadsPending && <p id="desktop-availability" className={styles.downloadAvailability}>Mac and Windows apps are coming soon. Browser access is available now.</p>}
-        <p className={styles.heroNote}>{english ? "Ubuntu, Windows or Omarchy. Hivra Cloud or your own infrastructure. Your model key stays your choice." : hero.secondary}</p>
+        {english && downloadsPending && <p id="desktop-availability" className={styles.downloadAvailability}>The Mac app is coming soon. Browser access is available now.</p>}
+        <p className={styles.heroNote}>{english ? "Ubuntu now, with Windows and Omarchy in private preview. Hivra Cloud or your own infrastructure. Your model key stays your choice." : hero.secondary}</p>
       </div>
       {agentsCounter}
     </div>

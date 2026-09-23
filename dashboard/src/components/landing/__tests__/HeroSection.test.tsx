@@ -60,11 +60,13 @@ describe("HeroSection", () => {
       })
     ).toHaveAttribute("href", "#founder");
     expect(screen.getByRole("link", { name: /Download the app/i })).toHaveAttribute("href", "/download");
-    expect(screen.getByText(/Mac and Windows apps are coming soon/)).toBeVisible();
+    expect(screen.getByText(/The Mac app is coming soon/)).toBeVisible();
+    // No Windows desktop app exists, so the hero must not promise one.
+    expect(screen.queryByText(/Windows apps? (is|are) coming soon/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Explore the ecosystem/i })).toHaveAttribute("href", "/ecosystem");
 
     expect(screen.queryByRole("link", { name: /launch a computer/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/Ubuntu, Windows or Omarchy/)).toBeInTheDocument();
+    expect(screen.getByText(/Ubuntu now, with Windows and Omarchy in private preview/)).toBeInTheDocument();
     expect(screen.queryByText(/no terminals/i)).not.toBeInTheDocument();
   });
 

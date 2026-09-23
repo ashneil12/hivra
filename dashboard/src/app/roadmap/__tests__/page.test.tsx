@@ -209,4 +209,11 @@ describe("/roadmap page", () => {
     expect(bankrLink).toHaveAttribute("target", "_blank");
     expect(bankrLink).toHaveAttribute("rel", "noopener noreferrer");
   });
+
+  it("does not promise token holders a governance vote while governance is undecided", () => {
+    const { container } = render(<RoadmapPage />);
+    expect(container).not.toHaveTextContent(/holders vote/i);
+    expect(container).not.toHaveTextContent(/Token holders participate in decisions/i);
+    expect(screen.getByText(/No governance model has been chosen/)).toBeInTheDocument();
+  });
 });

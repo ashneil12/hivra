@@ -61,11 +61,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   applicationName: "Hivra",
   title: {
-    default: "Hivra (formerly HermesOS) — Deploy Any AI Agent in One Click",
+    default: "Hivra | A computer for you and your agents",
     template: "%s | Hivra",
   },
   description:
-    "Hivra (formerly HermesOS) — one-click managed cloud hosting for Hermes Agent, Claude Code, and more. No VPS, no Docker, no config. Bring your own AI key. Zero markup on API calls. Persistent memory, 24/7 uptime.",
+    "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own model key.",
   keywords: [
     "hivra",
     "hermesos",
@@ -106,15 +106,15 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: SITE_URL,
     siteName: "Hivra",
-    title: "Hivra (formerly HermesOS) — Deploy Any AI Agent in One Click",
+    title: "Hivra | A computer for you and your agents",
     description:
-      "Hivra (formerly HermesOS) — one-click managed cloud hosting for Hermes Agent, Claude Code, and more. No VPS, no Docker, no config. BYO AI key, zero markup. Persistent memory, 24/7 uptime.",
+      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own model key.",
     images: [
       {
         url: `${SITE_URL}${OG_IMAGE.home.url}`,
         width: 1200,
         height: 630,
-        alt: "Hivra — Deploy any AI agent in one click.",
+        alt: "Hivra: a computer for you and your agents.",
         type: "image/png",
       },
     ],
@@ -123,9 +123,9 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     site: "@HivraOS",
     creator: "@HivraOS",
-    title: "Hivra (formerly HermesOS) — Deploy Any AI Agent in One Click",
+    title: "Hivra | A computer for you and your agents",
     description:
-      "Deploy any AI agent in one click. Formerly HermesOS. BYO key, zero markup. Persistent memory, 24/7 uptime.",
+      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own model key.",
     images: [`${SITE_URL}${OG_IMAGE.home.url}`],
   },
   robots: {

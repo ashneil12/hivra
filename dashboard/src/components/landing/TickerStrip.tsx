@@ -8,7 +8,7 @@ import styles from "./home.module.css";
 export default function TickerStrip() {
   const { copy, locale } = useLocale();
   const proofPoints = locale.toLowerCase().startsWith("en")
-    ? ["Ubuntu · Windows · Omarchy", "Bring your own model key", "Choose who runs it"]
+    ? ["Ubuntu now · Windows and Omarchy in private preview", "Bring your own model key", "Choose who runs it"]
     : copy.ticker.proofPoints;
 
   return (
