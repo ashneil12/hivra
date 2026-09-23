@@ -981,12 +981,59 @@ describe("user-connected Bankr accounts", () => {
     const { db, rows } = createMemoryDb();
     seedActiveHivraWallet(rows);
 
-    for (const fetchImpl of [bankrFetch({ portfolioStatus: 502 }), bankrFetch({ portfolio: { success: true } })]) {
+    const unreadable = [
+      { success: true },
+      // Fields missing or renamed must not read as zero.
+      { success: true, balances: { base: { tokenBalances: [] } }, nfts: [] },
+      { success: true, balances: { base: { nativeBalance: "0", tokens: [] } }, nfts: [] },
+      { success: true, balances: { base: { nativeBalance: "0", tokenBalances: [{ token: { amount: "5" } }] } }, nfts: [] },
+      { success: true, balances: { base: { nativeBalance: "0", tokenBalances: [] } } },
+      { success: true, balances: { base: { nativeBalance: 0.5, tokenBalances: [] } }, nfts: [] },
+    ];
+    for (const fetchImpl of [bankrFetch({ portfolioStatus: 502 }), ...unreadable.map((portfolio) => bankrFetch({ portfolio }))]) {
       await expect(
         connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, replaceProvisionedWallet: true, db, env, fetchImpl })
       ).rejects.toMatchObject({ code: "balance_unavailable", httpStatus: 503 });
     }
     expect(rows[0].bankr_wallet_id).toBe("wlt_instance_123");
+  });
+
+  it("updates the row a concurrent connect inserted instead of failing", async () => {
+    const memory = createMemoryDb();
+    const racingDb = {
+      from: (tableName: string) => {
+        const real = memory.db.from(tableName) as Record<string, unknown>;
+        if (tableName !== "instance_bankr_wallets") return real;
+        return {
+          ...real,
+          // The other request's row lands first; this insert then hits the unique index.
+          insert: jest.fn(() => {
+            memory.rows.push({
+              id: "wallet_row_racer",
+              instance_id: instanceId,
+              user_id: userId,
+              bankr_wallet_id: `user:${normalizedUserWallet}`,
+              evm_address: normalizedUserWallet,
+              normalized_evm_address: normalizedUserWallet,
+              status: "active",
+              api_key_status: "active",
+              metadata: { custodyModel: "user_owned_bankr_account" },
+            });
+            return {
+              select: () => ({
+                single: async () => ({ data: null, error: { code: "23505", message: "duplicate key value violates unique constraint" } }),
+              }),
+            };
+          }),
+        };
+      },
+    };
+
+    const { record } = await connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, db: racingDb, env, fetchImpl: bankrFetch(), now });
+
+    expect(memory.rows).toHaveLength(1);
+    expect(record.id).toBe("wallet_row_racer");
+    expect(decryptApiKey(String(memory.rows[0].api_key_encrypted))).toBe(userKey);
   });
 
   it("returns a failed revocation to the caller instead of hiding it", async () => {

@@ -1063,8 +1063,9 @@ async function isHivraProvisionedBankrAddress(db: SupabaseLike, normalizedAddres
  * Everything the old Hivra-created wallet still holds, across every chain
  * Bankr supports, including tokens under $1 and NFTs (GET /wallet/portfolio,
  * read with that wallet's own key). Up to 0.0001 ETH on Base is left over
- * from Hivra's gas top-up and doesn't count. Fails closed: anything
- * unreadable blocks the switch.
+ * from Hivra's gas top-up and doesn't count. Fails closed: a field that is
+ * missing, renamed or not a number blocks the switch rather than reading as
+ * zero.
  */
 async function listProvisionedWalletHoldings(params: {
   record: InstanceBankrWalletRecord;
@@ -1078,7 +1079,13 @@ async function listProvisionedWalletHoldings(params: {
       503
     );
   const apiKey = await decryptInstanceBankrRuntimeApiKey(params.record);
-  if (!apiKey) throw unavailable();
+  if (!apiKey) {
+    throw new AgentWalletConnectError(
+      "balance_unavailable",
+      "Hivra can't read this wallet's balances because its key isn't active. Contact support to switch.",
+      409
+    );
+  }
 
   const { apiBaseUrl } = getBankrPartnerConfig(params.env);
   let payload: Record<string, unknown>;
@@ -1100,26 +1107,30 @@ async function listProvisionedWalletHoldings(params: {
   const balances = payload.balances;
   if (!balances || typeof balances !== "object" || Array.isArray(balances)) throw unavailable();
 
+  // Bankr documents amounts as decimal strings; anything else is unreadable.
+  const amountOf = (value: unknown): number => {
+    const amount = typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
+    if (!Number.isFinite(amount) || amount < 0) throw unavailable();
+    return amount;
+  };
+
   const holdings: string[] = [];
   for (const [chain, entryValue] of Object.entries(balances as Record<string, unknown>)) {
     const entry = asRecord(entryValue);
-    const native = Number(entry.nativeBalance ?? 0);
-    if (!Number.isFinite(native)) throw unavailable();
-    if (native > (chain === "base" ? HIVRA_GAS_TOPUP_ETH : 0)) {
+    if (amountOf(entry.nativeBalance) > (chain === "base" ? HIVRA_GAS_TOPUP_ETH : 0)) {
       holdings.push(`${entry.nativeBalance} native on ${chain}`);
     }
-    const tokens = Array.isArray(entry.tokenBalances) ? entry.tokenBalances : [];
-    for (const tokenValue of tokens) {
+    if (!Array.isArray(entry.tokenBalances)) throw unavailable();
+    for (const tokenValue of entry.tokenBalances) {
       const token = asRecord(asRecord(tokenValue).token);
-      const amount = Number(token.balance ?? 0);
-      if (!Number.isFinite(amount)) throw unavailable();
-      if (amount > 0) {
+      if (amountOf(token.balance) > 0) {
         holdings.push(`${token.balance} ${readString(asRecord(token.baseToken).symbol) ?? "tokens"} on ${chain}`);
       }
     }
   }
-  const nfts = Array.isArray(payload.nfts) ? payload.nfts.length : 0;
-  if (nfts > 0) holdings.push(`${nfts} NFT${nfts === 1 ? "" : "s"}`);
+  // Requested with include=nfts, so a missing list means the response isn't the documented one.
+  if (!Array.isArray(payload.nfts)) throw unavailable();
+  if (payload.nfts.length > 0) holdings.push(`${payload.nfts.length} NFT${payload.nfts.length === 1 ? "" : "s"}`);
   return holdings;
 }
 
@@ -1159,7 +1170,8 @@ async function writeWalletRow(params: {
       : table(params.db, "instance_bankr_wallets").insert(params.payload).select("*")
     ).single();
   let { data, error } = await write(params.existing);
-  if (error && !params.existing && /duplicate key|unique/i.test(error.message ?? "")) {
+  const duplicate = (error as { code?: string } | null)?.code === "23505" || /duplicate key/i.test(error?.message ?? "");
+  if (error && !params.existing && duplicate) {
     // A concurrent connect for the same agent inserted first: update that row.
     const winner = await getBankrWalletForOwner({ owner: params.owner, db: params.db });
     if (winner) ({ data, error } = await write(winner));
@@ -1244,7 +1256,7 @@ export async function connectUserBankrWalletForOwner(params: {
         "balance_not_empty",
         `Withdraw everything from the current wallet first (${holdings.slice(0, 5).join(", ")}${
           holdings.length > 5 ? ", …" : ""
-        }).`,
+        }). Contact support for anything you can't withdraw here, such as funds on another chain.`,
         409
       );
     }
