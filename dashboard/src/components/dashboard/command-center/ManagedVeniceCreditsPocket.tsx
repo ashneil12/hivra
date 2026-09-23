@@ -1,4 +1,4 @@
-import { CreditCard, Sparkles, WalletCards } from "lucide-react";
+import { CreditCard, Sparkles, WalletCards, X } from "lucide-react";
 
 import { formatMicroUsd } from "@/components/billing/ManagedVeniceSubsidyBanner";
 import type { ManagedVeniceWalletSummaryPayload } from "@/lib/billing/managed-venice-client";
@@ -19,12 +19,15 @@ export function ManagedVeniceCreditsPocket({
   error = null,
   onTopUp,
   onManage,
+  onHide,
 }: {
   summary: ManagedVeniceWalletSummaryPayload | null;
   loading?: boolean;
   error?: string | null;
   onTopUp?: () => void;
   onManage?: () => void;
+  /** When set, the header carries a "Hide credits" control. */
+  onHide?: () => void;
 }) {
   const hermesAvailable = balanceOrZero(summary?.wallets.hermesos.availableMicroUsd);
   const cardAvailable = balanceOrZero(summary?.wallets.card.availableMicroUsd);
@@ -59,7 +62,32 @@ export function ManagedVeniceCreditsPocket({
             {formatMicroUsd(totalAvailable, 4)} available
           </strong>
         </div>
-        <WalletCards size={22} style={{ color: "var(--gold-leaf)" }} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+          <WalletCards size={22} style={{ color: "var(--gold-leaf)" }} />
+          {onHide ? (
+            <button
+              type="button"
+              onClick={onHide}
+              aria-label="Hide credits"
+              title="Hide credits"
+              style={{
+                width: 44,
+                height: 44,
+                margin: "-10px -10px 0 0",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+              }}
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </span>
       </div>
 
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "var(--text-secondary)" }}>
@@ -139,7 +167,9 @@ export function ManagedVeniceCreditsPocket({
           type="button"
           onClick={onTopUp}
           disabled={!onTopUp}
+          className="max-md:flex-auto pointer-coarse:min-h-[44px]"
           style={{
+            justifyContent: "center",
             border: "1px solid var(--ink-black)",
             background: "var(--ink-black)",
             color: "var(--bg-surface)",
@@ -161,7 +191,11 @@ export function ManagedVeniceCreditsPocket({
           type="button"
           onClick={onManage}
           disabled={!onManage}
+          className="pointer-coarse:min-h-[44px]"
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
             border: "1px solid var(--etched-border)",
             background: "transparent",
             color: "var(--ink-black)",

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import posthog from "posthog-js";
 
 import { OnboardingChecklist } from "../OnboardingChecklist";
@@ -220,6 +220,77 @@ describe("OnboardingChecklist", () => {
     render(<OnboardingChecklist instances={[freshInstance()]} />);
     await waitFor(() => expect(listAgentsResult).toHaveBeenCalledTimes(2));
     expect(screen.queryByTestId("onboarding-checklist")).not.toBeInTheDocument();
+  });
+
+  it("offers a brief Undo after dismissing that restores the checklist", async () => {
+    render(<OnboardingChecklist instances={[freshInstance()]} />);
+
+    // Keyboard activation (Enter/Space) reports detail 0.
+    fireEvent.click(await screen.findByRole("button", { name: /dismiss checklist/i }), { detail: 0 });
+    expect(screen.getByTestId("onboarding-checklist-undo")).toHaveTextContent("Checklist hidden");
+    // The dismiss button is gone, so keyboard focus moves to Undo, whose name
+    // says what was hidden.
+    const undo = screen.getByRole("button", { name: "Undo hiding the checklist" });
+    expect(undo).toHaveTextContent("Undo");
+    expect(undo).toHaveFocus();
+
+    fireEvent.click(undo, { detail: 0 });
+
+    expect(screen.getByTestId("onboarding-checklist")).toBeInTheDocument();
+    // Focus returns to the restored checklist instead of dropping to <body>.
+    expect(screen.getByRole("button", { name: /dismiss checklist/i })).toHaveFocus();
+    expect(screen.queryByTestId("onboarding-checklist-undo")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("hermes:onboarding_checklist_dismissed")).toBeNull();
+    expect(posthog.capture).toHaveBeenCalledWith(
+      "onboarding_checklist_dismiss_undone",
+      expect.any(Object),
+    );
+  });
+
+  it("drops the Undo row after a few seconds and keeps the checklist dismissed", async () => {
+    render(<OnboardingChecklist instances={[freshInstance()]} />);
+    const dismissButton = await screen.findByRole("button", { name: /dismiss checklist/i });
+
+    jest.useFakeTimers();
+    try {
+      // A pointer click: Undo is offered but not focused, so the row is purely timed.
+      fireEvent.click(dismissButton, { detail: 1 });
+      expect(screen.getByTestId("onboarding-checklist-undo")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /undo/i })).not.toHaveFocus();
+      act(() => {
+        jest.advanceTimersByTime(8000);
+      });
+      expect(screen.queryByTestId("onboarding-checklist-undo")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("onboarding-checklist")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("hermes:onboarding_checklist_dismissed")).toBe("1");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps a focused Undo until focus moves on, so keyboard users keep their place", async () => {
+    render(<OnboardingChecklist instances={[freshInstance()]} />);
+    const dismissButton = await screen.findByRole("button", { name: /dismiss checklist/i });
+
+    jest.useFakeTimers();
+    try {
+      fireEvent.click(dismissButton, { detail: 0 });
+      const undo = screen.getByRole("button", { name: /undo/i });
+      expect(undo).toHaveFocus();
+      act(() => {
+        jest.advanceTimersByTime(8000);
+      });
+      expect(screen.getByTestId("onboarding-checklist-undo")).toBeInTheDocument();
+      expect(undo).toHaveFocus();
+
+      act(() => {
+        undo.blur();
+      });
+      expect(screen.queryByTestId("onboarding-checklist-undo")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("hermes:onboarding_checklist_dismissed")).toBe("1");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("stays hidden when the first deployment is older than 14 days", async () => {

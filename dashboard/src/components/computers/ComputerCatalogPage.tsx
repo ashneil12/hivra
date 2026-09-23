@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
   Bot,
+  ChevronDown,
   Cloud,
   Loader2,
   Monitor,
@@ -18,6 +19,11 @@ import {
   SquareTerminal,
 } from "lucide-react";
 
+import {
+  INVENTORY_FILTERS,
+  matchesInventoryFilter,
+  type InventoryFilter,
+} from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import {
@@ -26,14 +32,29 @@ import {
   WINDOWS_TEMPLATE,
   getComputerTemplate,
 } from "@/lib/hivra/computer-catalog";
+import {
+  unifiedStateLabel,
+  unifyAll,
+  type UnifiedAgent,
+} from "@/lib/hivra/unified-agent";
 
 import styles from "./ComputerCatalogPage.module.css";
 
-function statusTone(status: string): string {
-  if (status === "running") return styles.running;
-  if (status === "error" || status === "failed") return styles.error;
-  if (status === "provisioning" || status === "redeploying")
-    return styles.working;
+const PROFILE_ANCHORS = ["#omarchy", "#windows"];
+// Height of the opened catalog that must already show before it is scrolled to.
+const CATALOG_PEEK = 120;
+
+type ComputerState = UnifiedAgent["state"];
+
+/** Computers read the same status words as agents (Running, Starting, …). */
+function computerState(computer: HivraAgent): ComputerState {
+  return unifyAll([], [computer])[0].state;
+}
+
+function statusTone(state: ComputerState): string {
+  if (state === "running") return styles.running;
+  if (state === "error") return styles.error;
+  if (state === "provisioning" || state === "updating") return styles.working;
   return styles.stopped;
 }
 
@@ -53,10 +74,11 @@ function ComputerRow({ computer }: { computer: HivraAgent }) {
     ? "?tab=desktop&open=fast"
     : "?tab=desktop";
   const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${isDesktop ? desktopQuery : ""}`;
+  const state = computerState(computer);
   return (
     <Link className={styles.computerRow} href={href}>
       <span
-        className={`${styles.statusDot} ${statusTone(computer.status)}`}
+        className={`${styles.statusDot} ${statusTone(state)}`}
         aria-hidden="true"
       />
       <span className={styles.computerIdentity}>
@@ -66,7 +88,7 @@ function ComputerRow({ computer }: { computer: HivraAgent }) {
       <span className={styles.computerMeta}>
         {computer.cpu} vCPU · {computer.ram} GB
       </span>
-      <span className={styles.computerStatus}>{computer.status}</span>
+      <span className={styles.computerStatus}>{unifiedStateLabel(state)}</span>
       <ArrowRight size={15} aria-hidden="true" />
     </Link>
   );
@@ -90,8 +112,9 @@ export function ComputerCatalogPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<InventoryFilter>("all");
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const osGridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (searchParams?.get("launch") === "1") router.replace(launchHref);
@@ -126,7 +149,7 @@ export function ComputerCatalogPage() {
     () =>
       hivraComputers.filter(
         (computer) =>
-          (filter === "all" || computer.status === filter) &&
+          matchesInventoryFilter(computerState(computer), filter) &&
           `${computer.name} ${computerTypeLabel(computer)}`
             .toLowerCase()
             .includes(query.trim().toLowerCase()),
@@ -136,7 +159,7 @@ export function ComputerCatalogPage() {
 
   useEffect(() => {
     const revealProfile = () => {
-      if (["#omarchy", "#windows"].includes(window.location.hash))
+      if (PROFILE_ANCHORS.includes(window.location.hash))
         setCatalogOpen(true);
     };
     revealProfile();
@@ -189,17 +212,16 @@ export function ComputerCatalogPage() {
               type="search"
               aria-label="Search computers"
               placeholder="Find a computer…"
+              enterKeyHint="search"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
           <div className={styles.filters} aria-label="Filter computers">
-            {[
-              ["all", "All"],
-              ["running", "Running"],
-              ["error", "Needs attention"],
-              ["stopped", "Stopped"],
-            ].map(([value, label]) => (
+            {INVENTORY_FILTERS.map(([value, label]) => (
               <button
                 type="button"
                 key={value}
@@ -264,7 +286,31 @@ export function ComputerCatalogPage() {
       <details
         className={styles.osSection}
         open={catalogOpen}
-        onToggle={(event) => setCatalogOpen(event.currentTarget.open)}
+        onToggle={(event) => {
+          const details = event.currentTarget;
+          setCatalogOpen(details.open);
+          const grid = osGridRef.current;
+          if (!details.open || !grid) return;
+          // A linked profile (#omarchy, #windows) is brought into view.
+          const hash = window.location.hash;
+          const card =
+            PROFILE_ANCHORS.includes(hash) &&
+            grid.querySelector<HTMLElement>(hash);
+          if (card) {
+            card.scrollIntoView?.({ block: "nearest" });
+            return;
+          }
+          // On phones the grid can open below the fold (or behind the bottom
+          // navigation, its scroll margin). Bring the section heading to the
+          // top so the tap visibly did something and collapse stays in reach.
+          const reserved =
+            Number.parseFloat(getComputedStyle(grid).scrollMarginBlockEnd) || 0;
+          if (
+            grid.getBoundingClientRect().top + CATALOG_PEEK >
+            window.innerHeight - reserved
+          )
+            details.scrollIntoView?.({ block: "start" });
+        }}
       >
         <summary className={styles.catalogSummary}>
           <span>
@@ -273,21 +319,28 @@ export function ComputerCatalogPage() {
               Compare computer profiles when you’re ready to launch.
             </small>
           </span>
-          <ArrowRight size={15} aria-hidden />
+          <ChevronDown size={15} className={styles.disclosureIcon} aria-hidden />
         </summary>
-        <div className={styles.osGrid}>
+        <div ref={osGridRef} className={styles.osGrid}>
           <article className={styles.osCard}>
             <div className={styles.osIcon}>
               <Cloud size={21} />
             </div>
-            <span className={styles.availableBadge}>Available alpha</span>
+            <span className={styles.availableBadge}>Available</span>
             <h3>Ubuntu Desktop</h3>
             <p>{UBUNTU_DESKTOP_TEMPLATE.summary}</p>
             <div className={styles.osFacts}>
               <span>{UBUNTU_DESKTOP_TEMPLATE.requirements.cpu} CPU</span>
               <span>{UBUNTU_DESKTOP_TEMPLATE.requirements.ramGb} GB RAM</span>
-              <span>Browser desktop</span>
+              <span>Linux desktop in your browser</span>
             </div>
+            <details className={styles.technical}>
+              <summary>Technical details</summary>
+              <p>
+                Alpha. Ubuntu {UBUNTU_DESKTOP_TEMPLATE.upstream.release} virtual
+                machine on Proxmox KVM, streamed to your browser.
+              </p>
+            </details>
             <Link
               className={styles.primaryButton}
               href={profileLaunchHref("ubuntu-desktop")}
@@ -301,24 +354,25 @@ export function ComputerCatalogPage() {
             className={`${styles.osCard} ${styles.previewCard}`}
           >
             <div className={styles.osIcon}>O.</div>
-            <span className={styles.availableBadge}>
-              Canary ready · operating system
-            </span>
+            <span className={styles.previewBadge}>Preview</span>
             <h3>Omarchy</h3>
             <p>{OMARCHY_TEMPLATE.summary}</p>
             <div className={styles.osFacts}>
               <span>{OMARCHY_TEMPLATE.requirements.cpu} CPU</span>
               <span>{OMARCHY_TEMPLATE.requirements.ramGb} GB RAM</span>
-              <span>Proxmox KVM</span>
+              <span>Full Linux desktop in your browser</span>
             </div>
-            <div className={styles.omarchyTruth}>
-              <ShieldCheck size={15} />
-              <span>
-                <strong>Prepared Canary computer.</strong> Opens the pinned{" "}
-                {OMARCHY_TEMPLATE.upstream.release} desktop through an
-                interactive browser setup console.
-              </span>
-            </div>
+            <details className={styles.technical}>
+              <summary>Technical details</summary>
+              <div className={styles.omarchyTruth}>
+                <ShieldCheck size={15} aria-hidden />
+                <span>
+                  <strong>Prepared Canary computer.</strong> Opens the pinned{" "}
+                  {OMARCHY_TEMPLATE.upstream.release} desktop through an
+                  interactive browser setup console. Runs on Proxmox KVM.
+                </span>
+              </div>
+            </details>
             <Link
               className={styles.primaryButton}
               href={profileLaunchHref("omarchy")}
@@ -339,9 +393,13 @@ export function ComputerCatalogPage() {
             <div className={styles.osFacts}>
               <span>{WINDOWS_TEMPLATE.requirements.cpu} CPU</span>
               <span>{WINDOWS_TEMPLATE.requirements.ramGb} GB RAM</span>
-              <span>RDP / Guacamole</span>
+              <span>Remote Windows desktop</span>
             </div>
             <p>Connect compatible customer-owned or self-hosted capacity to continue.</p>
+            <details className={styles.technical}>
+              <summary>Technical details</summary>
+              <p>Browser access uses RDP through Guacamole.</p>
+            </details>
             <Link
               className={styles.primaryButton}
               href={profileLaunchHref("windows")}

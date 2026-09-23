@@ -59,6 +59,7 @@ export function LaunchModelControl({ draft, onChange, launch, disabled, supporte
       </label>}
       <label className={styles.field}>Venice model ID
         <input value={selection?.model ?? draft.model} disabled={locked} maxLength={64} autoComplete="off" spellCheck={false}
+          autoCapitalize="none" autoCorrect="off" enterKeyHint="done"
           onChange={event => onChange({ ...draft, model: event.target.value })} placeholder="deepseek-v4-pro" />
       </label>
       {mode === "managed" && <label className={styles.field}>Model usage wallet

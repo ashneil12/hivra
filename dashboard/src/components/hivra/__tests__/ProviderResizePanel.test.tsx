@@ -178,6 +178,8 @@ describe("ProviderResizePanel", () => {
     mockReview.mockResolvedValue({ ...quote(), target: padded });
     render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
     expect(await screen.findByRole("option")).toHaveTextContent("USD 27.588/month server plan");
+    // The long option label must not widen the select past its card on a phone.
+    expect(screen.getByRole("combobox", { name: "Server type" })).toHaveStyle({ width: "100%", maxWidth: "100%", minWidth: "0" });
     fireEvent.click(screen.getByRole("button", { name: "Review price & downtime" }));
     expect(await screen.findByText(/New server-plan price/)).toHaveTextContent("USD 27.588/month · USD 0.04416/hour");
     expect(screen.getByRole("button", { name: "Resize on Hetzner" })).toBeDisabled();

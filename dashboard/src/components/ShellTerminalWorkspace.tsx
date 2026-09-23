@@ -57,6 +57,16 @@ function mergeRenderedTabIds(
   return nextIds;
 }
 
+// Touch sizing: tabs grow to 44px and only the active tab shows its close
+// button (closing stops that shell), with a 44px hit area.
+const SHELL_TABS_TOUCH_CSS = `
+@media (pointer: coarse) {
+  .shell-terminal-tab-button { min-height: 44px !important; padding: 0 12px !important; }
+  .shell-terminal-tab-close { width: 44px !important; height: 44px !important; margin-right: 0 !important; }
+  .shell-terminal-tab[data-active="false"] .shell-terminal-tab-close { display: none !important; }
+  .shell-terminal-new-tab { width: 44px !important; height: 44px !important; }
+}`;
+
 function loadInitialWorkspace(instanceId: string): TerminalWorkspaceState {
   return syncWorkspaceStatuses(
     typeof window === "undefined"
@@ -118,6 +128,7 @@ export function ShellTerminalWorkspace({
         color: "#e5e7eb",
       }}
     >
+      <style>{SHELL_TABS_TOUCH_CSS}</style>
       <div
         style={{
           display: "flex",
@@ -147,6 +158,8 @@ export function ShellTerminalWorkspace({
               <div
                 key={tab.id}
                 data-testid={`shell-terminal-tab-${tab.id}`}
+                data-active={isTabActive ? "true" : "false"}
+                className="shell-terminal-tab"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -164,6 +177,7 @@ export function ShellTerminalWorkspace({
                   type="button"
                   onClick={() => handleActivateTab(tab.id)}
                   aria-pressed={isTabActive}
+                  className="shell-terminal-tab-button"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -195,6 +209,7 @@ export function ShellTerminalWorkspace({
                 <button
                   type="button"
                   aria-label={`Close ${tab.title}`}
+                  className="shell-terminal-tab-close"
                   onClick={(event) => {
                     event.stopPropagation();
                     handleCloseTab(tab.id);
@@ -226,6 +241,7 @@ export function ShellTerminalWorkspace({
           onClick={handleOpenTab}
           aria-label="Open another terminal tab"
           title="New tab"
+          className="shell-terminal-new-tab"
           style={{
             display: "inline-flex",
             alignItems: "center",

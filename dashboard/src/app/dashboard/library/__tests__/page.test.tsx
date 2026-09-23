@@ -75,6 +75,64 @@ describe("LibraryPage", () => {
     expect(screen.queryByRole("button", { name: /copied!/i })).not.toBeInTheDocument();
   });
 
+  it("opens the preview as a modal dialog that locks page scroll and closes on Escape", async () => {
+    render(
+      <main>
+        <LibraryPage />
+      </main>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /view prompt/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Closer" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    const close = screen.getByRole("button", { name: /close prompt preview/i });
+    expect(close).toHaveFocus();
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.querySelector("main")?.style.overflow).toBe("hidden");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe("");
+    expect(document.querySelector("main")?.style.overflow).toBe("");
+  });
+
+  it("keeps Tab inside the preview and returns focus to the eye button on close", async () => {
+    render(
+      <main>
+        <LibraryPage />
+      </main>
+    );
+
+    const viewButton = await screen.findByRole("button", { name: /view prompt/i });
+    viewButton.focus();
+    fireEvent.click(viewButton);
+
+    const close = await screen.findByRole("button", { name: /close prompt preview/i });
+    const deploy = screen.getByRole("button", { name: /deploy this template/i });
+    expect(close).toHaveFocus();
+
+    deploy.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(deploy).toHaveFocus();
+
+    fireEvent.click(close);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(viewButton).toHaveFocus();
+  });
+
+  it("gives the template search a search keyboard", async () => {
+    render(<LibraryPage />);
+    await screen.findByRole("button", { name: /view prompt/i });
+
+    const search = screen.getByRole("searchbox");
+    expect(search).toHaveAttribute("enterkeyhint", "search");
+    expect(search).toHaveAttribute("autocapitalize", "none");
+  });
+
   it("renders the prompt library interface in Chinese when the locale is Chinese", async () => {
     render(
       <LocaleProvider initialLocale="zh-CN">
