@@ -7,7 +7,7 @@ import { render, screen, within } from "@testing-library/react";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 
 import WhyHivraEvolutionPage from "../evolution/page";
-import WhyHivraPage from "../page";
+import WhyHivraPage, { metadata as whyHivraMetadata } from "../page";
 
 jest.mock("node:fs", () => ({
   readFileSync: jest.fn(() => [
@@ -61,6 +61,11 @@ jest.mock("@/components/landing/Footer", () => function MockFooter() {
 });
 
 describe("/why-hivra page", () => {
+  it("sets its own title and description instead of falling back to the site defaults", () => {
+    expect(whyHivraMetadata.title).toBe("Why I'm building Hivra");
+    expect(whyHivraMetadata.description).toMatch(/^Ash on AI, accountability/);
+  });
+
   it("publishes the founder note with the platform access clarification", () => {
     render(<WhyHivraPage />);
 
