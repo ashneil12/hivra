@@ -124,7 +124,6 @@ export function InfrastructureConnectionsPage() {
   // DigitalOcean sessions are Hivra agents; offer them only where those are on.
   const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the hostname flag after hydration, as the agent page does.
     setHivraAgentsEnabled(isHivraEnabled());
   }, []);
   const searchParams = useSearchParams();
@@ -145,6 +144,7 @@ export function InfrastructureConnectionsPage() {
   const [hivraCloudDialogOpen, setHivraCloudDialogOpen] = useState(false);
   const [hetznerDialogOpen, setHetznerDialogOpen] = useState(false);
   const [digitalOceanDialogOpen, setDigitalOceanDialogOpen] = useState(false);
+  const [replacingDigitalOcean, setReplacingDigitalOcean] = useState<DigitalOceanConnectionDto | null>(null);
   const [digitalOceanLaunch, setDigitalOceanLaunch] = useState<{ connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto } | null>(null);
   const [digitalOceanTargets, setDigitalOceanTargets] = useState<DigitalOceanDeploymentTargetDto[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSessionDto[]>([]);
@@ -752,6 +752,7 @@ export function InfrastructureConnectionsPage() {
                         error={digitalOceanErrors[connection.id] ?? null}
                         onLaunch={() => { if (target) setDigitalOceanLaunch({ connection, target }); }}
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
+                        onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
                       />
                     );
@@ -806,6 +807,24 @@ export function InfrastructureConnectionsPage() {
                 setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
                 setDigitalOceanDialogOpen(false);
                 setDigitalOceanLaunch({ connection, target });
+              }}
+            />
+          ) : null}
+
+          {replacingDigitalOcean ? (
+            <DigitalOceanConnectionDialog
+              replacing={replacingDigitalOcean}
+              onClose={() => setReplacingDigitalOcean(null)}
+              returnFocusRef={addCapacityButtonRef}
+              onConnected={(connection, target) => {
+                upsertConnection(connection);
+                setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
+                setDigitalOceanErrors((current) => {
+                  const next = { ...current };
+                  delete next[connection.id];
+                  return next;
+                });
+                setReplacingDigitalOcean(null);
               }}
             />
           ) : null}
