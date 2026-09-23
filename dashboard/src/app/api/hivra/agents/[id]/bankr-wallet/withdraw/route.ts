@@ -14,6 +14,7 @@
 // concurrent Hermes withdraw for the same user surfaces as a 409.
 
 import { apiError } from "@/lib/api-response";
+import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { withdrawForOwner } from "@/lib/billing/bankr-instance-withdraw";
 import { createBankrWithdrawHandler } from "@/lib/billing/bankr-withdraw-route";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
@@ -58,6 +59,16 @@ async function loadOwnedAgent(id: string, userId: string) {
   }
   if (!bankrSkillsDirForType(agent.type)) {
     return { ok: false as const, status: 400, message: "Wallet not supported for this agent type", failureTypeSuffix: "unsupported_type" };
+  }
+  // Hivra never initiates transfers from a user's own Bankr account: the user
+  // moves those funds at bankr.bot. Only Hivra-provisioned wallets withdraw here.
+  if (await isUserConnectedBankrWallet({ owner: { hivraAgentId: id } })) {
+    return {
+      ok: false as const,
+      status: 409,
+      message: "This agent uses your own Bankr account. Move its funds at bankr.bot.",
+      failureTypeSuffix: "user_connected_wallet",
+    };
   }
   return { ok: true as const, owner: { hivraAgentId: id } };
 }

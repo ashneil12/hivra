@@ -3,6 +3,7 @@ import {
   withdrawBaseTokenForInstance,
   withdrawHermesTokensForInstance,
 } from "@/lib/billing/bankr-instance-withdraw";
+import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { createBankrWithdrawHandler } from "@/lib/billing/bankr-withdraw-route";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -16,6 +17,9 @@ const LOG_CONTEXT = {
 };
 
 const inFlightByInstance = new Map<string, Promise<unknown>>();
+
+const USER_CONNECTED_WITHDRAW_MESSAGE =
+  "This agent uses your own Bankr account. Move its funds at bankr.bot.";
 
 async function verifyInstanceOwner(instanceId: string, userId: string) {
   if (!supabaseAdmin) return { ok: false as const, status: 404, message: "Instance not found", failureTypeSuffix: "instance_not_found" };
@@ -33,6 +37,17 @@ async function verifyInstanceOwner(instanceId: string, userId: string) {
 
   if (!Boolean(data)) {
     return { ok: false as const, status: 404, message: "Instance not found", failureTypeSuffix: "instance_not_found" };
+  }
+
+  // Hivra never initiates transfers from a user's own Bankr account: the user
+  // moves those funds at bankr.bot. Only Hivra-provisioned wallets withdraw here.
+  if (await isUserConnectedBankrWallet({ owner: { instanceId } })) {
+    return {
+      ok: false as const,
+      status: 409,
+      message: USER_CONNECTED_WITHDRAW_MESSAGE,
+      failureTypeSuffix: "user_connected_wallet",
+    };
   }
 
   return { ok: true as const, owner: { instanceId } };

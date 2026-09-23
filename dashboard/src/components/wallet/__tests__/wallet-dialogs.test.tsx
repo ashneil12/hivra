@@ -61,8 +61,8 @@ function cardProps() {
     onManage: jest.fn(),
     onSetDestination: jest.fn(),
     onWithdraw: jest.fn(),
-    onCreateWallet: jest.fn(),
-    creatingWallet: false,
+    onConnect: jest.fn(),
+    onDisconnect: jest.fn(),
     onRefresh: jest.fn(),
   };
 }

@@ -210,17 +210,28 @@ describe("WalletPage custody migration", () => {
     expect(bankrPosts).toHaveLength(0);
   });
 
-  it("creates an agent wallet only after the explicit create-wallet click", async () => {
-    (loadAgentWalletsFromApi as jest.Mock).mockResolvedValueOnce({
-      totalAgents: 1,
-      cards: [{
-        instance: { id: "inst_lazy", name: "Lazy Agent", status: "running", provider: "openai" },
-        wallet: null,
-        balance: null,
-        balances: [],
-        balanceFailed: false,
-      }],
-    });
+  it("connects the user's own Bankr account only after an explicit connect with consent", async () => {
+    const lazyInstance = { id: "inst_lazy", name: "Lazy Agent", status: "running", provider: "openai" };
+    const connectedWallet = {
+      evmAddress: "0x000000000000000000000000000000000000ba5e",
+      bankrWalletId: "user:0x000000000000000000000000000000000000ba5e",
+      status: "active",
+      withdrawalDestinationEvm: null,
+      apiKeyStatus: "active",
+      custody: "user_connected",
+      apiKeyPreview: "bk_usr_ab...wxyz",
+      connectedAt: "2026-09-23T12:00:00.000Z",
+    };
+    (loadAgentWalletsFromApi as jest.Mock)
+      .mockResolvedValueOnce({
+        totalAgents: 1,
+        cards: [{ instance: lazyInstance, wallet: null, balance: null, balances: [], balanceFailed: false }],
+      })
+      // The refresh after connecting reads the connected wallet back.
+      .mockResolvedValue({
+        totalAgents: 1,
+        cards: [{ instance: lazyInstance, wallet: connectedWallet, balance: null, balances: [], balanceFailed: false }],
+      });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);
       const method = requestMethod(input, init);
@@ -229,43 +240,38 @@ describe("WalletPage custody migration", () => {
       if (url === "/api/billing/wallet/quote" && method === "GET") {
         return json({ success: true, data: { pro: null, power: null } });
       }
-      if (url === "/api/instances/inst_lazy/bankr-wallet" && method === "POST") {
-        return json({
-          success: true,
-          data: {
-            wallet: {
-              evmAddress: "0x000000000000000000000000000000000000ba5e",
-              bankrWalletId: "wlt_instance",
-              status: "active",
-              withdrawalDestinationEvm: null,
-              apiKeyStatus: "active",
-            },
-          },
-        });
+      if (url === "/api/instances/inst_lazy/bankr-wallet/connect" && method === "POST") {
+        return json({ success: true, data: { wallet: connectedWallet } });
       }
       return json({ success: true, data: {} });
     });
 
     const { container } = render(<WalletPage />);
 
-    const createButton = await screen.findByRole("button", { name: /create wallet/i });
-    expect(fetchMock.mock.calls.some(([input, init]) => (
-      requestUrl(input as RequestInfo | URL) === "/api/instances/inst_lazy/bankr-wallet" &&
-      requestMethod(input as RequestInfo | URL, init as RequestInit | undefined) === "POST"
-    ))).toBe(false);
+    const connectButton = await screen.findByRole("button", { name: /connect bankr account/i });
+    expect(screen.queryByRole("button", { name: /create wallet/i })).not.toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(createButton);
+      fireEvent.click(connectButton);
+    });
+    const dialog = await screen.findByRole("dialog", { name: /connect your bankr account to lazy agent/i });
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra to store this key/i }));
+    expect(fetchMock.mock.calls.some(([input]) => requestUrl(input as RequestInfo | URL).endsWith("/bankr-wallet"))).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
       await Promise.resolve();
     });
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/instances/inst_lazy/bankr-wallet",
+        "/api/instances/inst_lazy/bankr-wallet/connect",
         expect.objectContaining({ method: "POST" })
       );
     });
     expect(await screen.findByText("0x000000000000000000000000000000000000ba5e")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-wallet-custody")).toHaveTextContent("Your Bankr account");
     const shortAddress = screen.getByText("0x0000…ba5e");
     expect(shortAddress).toHaveClass("agent-wallet-address-short");
     expect(shortAddress).not.toHaveStyle({ display: "none" });

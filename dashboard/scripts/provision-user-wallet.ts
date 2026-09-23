@@ -1,16 +1,10 @@
 /**
- * provision-user-wallet — single-user Bankr deposit wallet repair.
+ * provision-user-wallet — single-user Bankr payment-address repair.
  *
  * Sister script to `backfill-bankr-wallets.ts` but scoped to ONE user. Use
- * when a user reports "deposit wallet doesn't exist" / "Lock button never
- * shows up on /dashboard/wallet" — typical cause is that the dashboard's
- * BankrWalletProvisioner ran in a prior session, set its
- * sessionStorage dedupe flag, but the server returned 200 without
- * actually persisting the `hermesos_lock` credential. The user is then
- * stuck because the client never retries.
- *
- * The in-app self-heal (PR #83) covers this on next page load, but this
- * script unsticks users immediately without waiting for them to refresh.
+ * when a user's credit_deposit payment address is missing or has no sweep
+ * credential. It no longer creates `hermesos_lock` wallets: those held
+ * users' tokens for a tier, and holding now happens in the user's own wallet.
  *
  * Usage:
  *   npm run provision:user-wallet -- --user-id user_2abc123
@@ -98,8 +92,9 @@ function printUsage(): void {
     [
       "Usage: provision:user-wallet -- (--user-id <id> | --email <addr>) [--dry-run]",
       "",
-      "Provisions credit_deposit + hermesos_lock Bankr deposit wallets for a",
-      "single user. Idempotent — re-runs no-op on already-provisioned rows.",
+      "Provisions the credit_deposit Bankr payment address (Hivra's own receipt",
+      "address) for a single user. It never creates hermesos_lock wallets.",
+      "Idempotent — re-runs no-op on already-provisioned rows.",
       "",
       "Options:",
       "  --user-id <id>    Clerk user id (e.g. user_2abc123)",
@@ -168,37 +163,22 @@ async function main(): Promise<void> {
     return;
   }
 
-  const [credit, lock] = await Promise.all([
-    ensureBankrDepositWalletForUser({
-      userId,
-      purpose: "credit_deposit",
-      makePrimary: true,
-    }),
-    ensureBankrDepositWalletForUser({
-      userId,
-      purpose: "hermesos_lock",
-      makePrimary: false,
-    }),
-  ]);
+  // Only Hivra's own payment-receipt address. hermesos_lock wallets are no
+  // longer created (holders move to their own wallet).
+  const credit = await ensureBankrDepositWalletForUser({
+    userId,
+    purpose: "credit_deposit",
+    makePrimary: true,
+  });
 
   process.stdout.write(`[provision-user-wallet] credit_deposit status=${credit.status}\n`);
-  if (credit.status !== "not_configured") {
-    process.stdout.write(`  ${summarise("credit_deposit", credit.credential)}\n`);
-  }
-  process.stdout.write(`[provision-user-wallet] hermesos_lock  status=${lock.status}\n`);
-  if (lock.status !== "not_configured") {
-    process.stdout.write(`  ${summarise("hermesos_lock", lock.credential)}\n`);
-  }
-
-  if (credit.status === "not_configured" || lock.status === "not_configured") {
-    process.stdout.write(
-      "[provision-user-wallet] one or more purposes returned not_configured — check BANKR_PARTNER_KEY.\n"
-    );
+  if (credit.status === "not_configured") {
+    process.stdout.write("[provision-user-wallet] credit_deposit returned not_configured — check BANKR_PARTNER_KEY.\n");
     process.exit(2);
   }
+  process.stdout.write(`  ${summarise("credit_deposit", credit.credential)}\n`);
 
-  const isNew = (s: string) => s === "provisioned" || s === "credential_created";
-  const created = isNew(credit.status) || isNew(lock.status);
+  const created = credit.status === "provisioned" || credit.status === "credential_created";
   process.stdout.write(
     `[provision-user-wallet] done — ${created ? "NEW credential(s) created" : "all credentials already existed"}.\n`
   );
