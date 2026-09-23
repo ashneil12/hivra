@@ -28,7 +28,7 @@ export function basescanTokenUrl(address: string): string {
   return `https://basescan.org/token/${address}`;
 }
 
-/** The two platform token entries in display order: $HIVRA first once it is configured. */
+/** The two platform token entries in display order: $HIVRA first once it is live. */
 export function getTokenPageEntries(now: Date = new Date()): TokenPageEntry[] {
   const hivra = getConfiguredHivraToken();
   const phase = getHivraTokenPhase(now);

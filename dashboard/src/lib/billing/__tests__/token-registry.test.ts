@@ -75,6 +75,8 @@ describe("platform token registry", () => {
     ["the $HermesOS address", { ...TEST_HIVRA, contractAddress: HERMESOS_TOKEN.publishedAddress }],
     ["bad pool id", { ...TEST_HIVRA, poolId: "0xdead" }],
     ["timestamp without zone", { ...TEST_HIVRA, activatesAt: "2026-10-01T16:00:00" }],
+    ["impossible date", { ...TEST_HIVRA, activatesAt: "2026-02-30T00:00:00Z" }],
+    ["non-UTC offset", { ...TEST_HIVRA, activatesAt: "2026-10-01T16:00:00+01:00" }],
     ["bad decimals", { ...TEST_HIVRA, decimals: 18.5 }],
   ])("keeps $HIVRA dormant on a malformed launch block: %s", (_label, config) => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);

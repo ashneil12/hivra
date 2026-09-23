@@ -35,10 +35,11 @@ const read = (name) => fs.readFileSync(path.join(MIGRATIONS, name), "utf8");
 const FUNCTION_MIGRATIONS = fs
   .readdirSync(MIGRATIONS)
   .filter((name) => name.endsWith(".sql"))
-  // From the dual platform token foundation on, these definitions depend on
-  // the token tables this script stubs out; that migration's own test
-  // (test-dual-platform-token-foundation.cjs) covers them and their grants.
-  .filter((name) => name < "20260923150000")
+  // The dual platform token foundation needs the real token tables this
+  // script stubs out; its own test (test-dual-platform-token-foundation.cjs)
+  // applies it on top of them and checks these functions and their grants.
+  // Later migrations stay covered here.
+  .filter((name) => name !== "20260923150000_dual_platform_token_foundation.sql")
   .sort()
   .filter((name) => FUNCTION_NAMES.some((fn) => new RegExp(`public\\.${fn}\\s*\\(`, "i").test(read(name))));
 

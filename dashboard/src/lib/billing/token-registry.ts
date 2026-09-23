@@ -83,7 +83,12 @@ export const HIVRA_DISPLAY_UNIT = "$HIVRA";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/i;
 const POOL_ID = /^0x(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+// UTC only, to the second: "2026-10-01T16:00:00Z".
+const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+// The EIP-55 checksum of a pasted mixed-case address is checked by
+// hivra-token-launch.checksum.test.ts (it needs keccak, which this
+// client-safe module does not load).
 
 export type HivraLaunchValidation =
   | { status: "dormant" }
@@ -114,9 +119,10 @@ export function validateHivraLaunchConfig(
   if (!POOL_ID.test(poolId)) {
     errors.push("poolId must be a 0x pool id (64 hex) or pair address (40 hex)");
   }
-  const activatesAtMs = ISO_INSTANT.test(activatesAt) ? Date.parse(activatesAt) : Number.NaN;
-  if (!Number.isFinite(activatesAtMs)) {
-    errors.push("activatesAt must be an ISO-8601 instant with a timezone, e.g. 2026-10-01T16:00:00Z");
+  const activatesAtMs = UTC_INSTANT.test(activatesAt) ? Date.parse(activatesAt) : Number.NaN;
+  // Date.parse rolls impossible dates over (2026-02-30 → 2026-03-02); refuse them.
+  if (!Number.isFinite(activatesAtMs) || new Date(activatesAtMs).toISOString().slice(0, 19) !== activatesAt.slice(0, 19)) {
+    errors.push("activatesAt must be a real UTC instant to the second, e.g. 2026-10-01T16:00:00Z");
   }
   if (errors.length > 0) return { status: "invalid", errors };
 

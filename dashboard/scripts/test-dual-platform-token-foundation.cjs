@@ -63,6 +63,11 @@ async function main() {
         updated_at timestamptz not null default now());
     `);
     for (const name of PREREQUISITES) await db.exec(read(name));
+    // What 20260923001301 does to the reservation guard (the rest of that file
+    // needs unrelated credit tables): this migration replaces the function
+    // and must keep it closed to the API roles.
+    await db.exec(`revoke all on function public.enforce_managed_venice_reservation_balance()
+      from public, anon, authenticated;`);
 
     const one = async (sql, params) => (await db.query(sql, params)).rows[0];
     const all = async (sql, params) => (await db.query(sql, params)).rows;
@@ -159,6 +164,15 @@ async function main() {
 
     assert.equal((await record(HIVRA, ACTIVATED_AT, BEFORE)).status, "not_yet_active");
     assert.equal((await record(HERMESOS)).status, "invalid_address");
+    assert.equal(
+      (await one(`select public.record_platform_token_activation('hivra', 1, $1, 'HIVRA', 18, $2, $3) r`, [HIVRA, ACTIVATED_AT, AFTER])).r.status,
+      "unsupported_chain"
+    );
+    // Superset CHECK constraints are added NOT VALID: no scan under lock.
+    assert.equal(
+      (await one(`select convalidated from pg_constraint where conname = 'managed_venice_usage_events_wallet_type_check'`)).convalidated,
+      false
+    );
     const first = await record();
     assert.equal(first.status, "activated");
     assert.equal(first.cohort_size, 4);
@@ -295,6 +309,9 @@ async function main() {
     assert.equal(await reset("user_post", AFTER), "credit_base");
     // user_late_seen is a cohort member with an eligible $HermesOS Pro row.
     assert.equal(await reset("user_late_seen", AFTER), "operator");
+    // user_qual converted and its grace is over, but its $HermesOS row has not
+    // been moved to $HIVRA yet: the row still counts (no access gap).
+    assert.equal(await reset("user_qual", at(AFTER, 100 * HOUR_MS)), "operator");
     // Base tier: a cohort member's $HermesOS snapshot counts, a non-member's
     // does not, and a $HIVRA snapshot counts for anyone.
     assert.equal(await reset("user_base", AFTER), "token_base");
@@ -306,6 +323,8 @@ async function main() {
     // ── grants ─────────────────────────────────────────────────────────
     for (const signature of [
       "public.token_key_allowed_for_user(text, text, timestamptz)",
+      "public.token_tier_row_counts_for_user(text, text, timestamptz)",
+      "public.enforce_managed_venice_reservation_balance()",
       "public.hermesos_grandfather_evidence(text, timestamptz)",
       "public.ensure_token_grandfather_membership(text, timestamptz)",
       "public.record_platform_token_activation(text, integer, text, text, integer, timestamptz, timestamptz)",

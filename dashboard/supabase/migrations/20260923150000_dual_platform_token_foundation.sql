@@ -8,11 +8,12 @@
 --
 --   * token_key ('hermesos' | 'hivra') on every table that holds a token
 --     position or payment: token_tier_qualifications, token_entitlement_configs
---     (primary key becomes (tier_key, token_key)), token_holding_snapshots
---     (nullable: VVV snapshots have none), deposit_quotes, yearly_token_quotes,
+--     (primary key becomes (tier_key, token_key)), deposit_quotes, yearly_token_quotes,
 --     yearly_token_subscriptions, managed_venice_token_quotes and
---     managed_venice_token_lots. Existing rows are backfilled as $HermesOS by
---     the column default. The quote, subscription and lot tables also record
+--     managed_venice_token_lots. Existing rows are $HermesOS through the column
+--     default (a metadata-only change, no table rewrite).
+--     token_holding_snapshots already carries token_address, its token
+--     dimension; readers filter by it. The quote, subscription and lot tables also record
 --     the token_address a payment must arrive in.
 --   * token_tier_qualifications stays unique on (user_id, tier): a user holds a
 --     tier in exactly ONE token at a time, and the row's token_key says which.
@@ -38,9 +39,11 @@
 --     converted_at / conversion_grace_ends_at record a member's choice to move
 --     to $HIVRA.
 --   * token_key_allowed_for_user(user, token_key, now): the one rule both SQL
---     and application readers follow. Before activation only 'hermesos'.
---     After: 'hivra' always; 'hermesos' only for cohort members who have not
---     converted, or whose conversion grace is still running.
+--     and application readers follow for payments and new holdings. Before
+--     activation only 'hermesos'. After: 'hivra' always; 'hermesos' only for
+--     cohort members who have not converted, or whose conversion grace is
+--     still running. token_tier_row_counts_for_user adds that a member's
+--     existing $HermesOS tier row counts until it is moved to $HIVRA.
 --   * settle_yearly_platform_token_payment: settle_yearly_token_payment plus
 --     the transfer's token address; a transfer in any token other than the
 --     quote's is refused ('wrong_token'). settle_yearly_token_payment stays
@@ -48,7 +51,12 @@
 --   * reconcile_stale_subscription_state_to_free only counts qualifications
 --     and base-tier snapshots in tokens the user is allowed.
 --
--- Rerun-safe. The only data writes are the column defaults on existing rows.
+-- Locking: every CHECK constraint this migration replaces is a superset of the
+-- old one and is added NOT VALID, so no table is scanned while it is locked;
+-- new and updated rows are still checked. Adding a column with a constant
+-- default does not rewrite the table.
+--
+-- Rerun-safe. No existing row is rewritten.
 
 -- ── platform_token_activations ──────────────────────────────────────────
 
@@ -117,14 +125,14 @@ alter table public.token_tier_qualifications
 alter table public.token_tier_qualifications
   drop constraint if exists token_tier_qualifications_token_key_check;
 alter table public.token_tier_qualifications
-  add constraint token_tier_qualifications_token_key_check check (token_key in ('hermesos', 'hivra'));
+  add constraint token_tier_qualifications_token_key_check check (token_key in ('hermesos', 'hivra')) not valid;
 
 alter table public.token_entitlement_configs
   add column if not exists token_key text not null default 'hermesos';
 alter table public.token_entitlement_configs
   drop constraint if exists token_entitlement_configs_token_key_check;
 alter table public.token_entitlement_configs
-  add constraint token_entitlement_configs_token_key_check check (token_key in ('hermesos', 'hivra'));
+  add constraint token_entitlement_configs_token_key_check check (token_key in ('hermesos', 'hivra')) not valid;
 do $$
 begin
   if exists (
@@ -138,18 +146,6 @@ begin
       add constraint token_entitlement_configs_pkey primary key (tier_key, token_key);
   end if;
 end $$;
-
-alter table public.token_holding_snapshots
-  add column if not exists token_key text;
-alter table public.token_holding_snapshots
-  drop constraint if exists token_holding_snapshots_token_key_check;
-alter table public.token_holding_snapshots
-  add constraint token_holding_snapshots_token_key_check
-  check (token_key is null or token_key in ('hermesos', 'hivra'));
-update public.token_holding_snapshots
-   set token_key = 'hermesos'
- where token_key is null
-   and lower(token_address) = '0x95ccfd2b81a9667b0cc979992632f98fc853eba3';
 
 do $$
 declare
@@ -169,12 +165,12 @@ begin
     );
     execute format('alter table public.%I drop constraint if exists %I', v_table, v_table || '_token_key_check');
     execute format(
-      'alter table public.%I add constraint %I check (token_key in (%L, %L))',
+      'alter table public.%I add constraint %I check (token_key in (%L, %L)) not valid',
       v_table, v_table || '_token_key_check', 'hermesos', 'hivra'
     );
     execute format('alter table public.%I drop constraint if exists %I', v_table, v_table || '_token_address_check');
     execute format(
-      'alter table public.%I add constraint %I check (token_address ~ %L)',
+      'alter table public.%I add constraint %I check (token_address ~ %L) not valid',
       v_table, v_table || '_token_address_check', '^0x[0-9a-f]{40}$'
     );
   end loop;
@@ -191,31 +187,31 @@ alter table public.managed_venice_wallet_accounts
   drop constraint if exists managed_venice_wallet_accounts_default_payment_wallet_check;
 alter table public.managed_venice_wallet_accounts
   add constraint managed_venice_wallet_accounts_default_payment_wallet_check
-  check (default_payment_wallet in ('hermesos', 'hivra', 'card'));
+  check (default_payment_wallet in ('hermesos', 'hivra', 'card')) not valid;
 
 alter table public.managed_venice_reservations
   drop constraint if exists managed_venice_reservations_wallet_type_check;
 alter table public.managed_venice_reservations
   add constraint managed_venice_reservations_wallet_type_check
-  check (wallet_type in ('hermesos', 'hivra', 'card'));
+  check (wallet_type in ('hermesos', 'hivra', 'card')) not valid;
 
 alter table public.managed_venice_usage_events
   drop constraint if exists managed_venice_usage_events_wallet_type_check;
 alter table public.managed_venice_usage_events
   add constraint managed_venice_usage_events_wallet_type_check
-  check (wallet_type in ('hermesos', 'hivra', 'card'));
+  check (wallet_type in ('hermesos', 'hivra', 'card')) not valid;
 
 alter table public.managed_venice_financial_events
   drop constraint if exists managed_venice_financial_events_wallet_type_check;
 alter table public.managed_venice_financial_events
   add constraint managed_venice_financial_events_wallet_type_check
-  check (wallet_type in ('hermesos', 'hivra', 'card'));
+  check (wallet_type in ('hermesos', 'hivra', 'card')) not valid;
 
 alter table public.managed_venice_token_lots
   drop constraint if exists managed_venice_token_lots_source_check;
 alter table public.managed_venice_token_lots
   add constraint managed_venice_token_lots_source_check
-  check (source in ('hermesos_deposit', 'hivra_deposit', 'launch_promo', 'refund', 'admin'));
+  check (source in ('hermesos_deposit', 'hivra_deposit', 'launch_promo', 'refund', 'admin')) not valid;
 
 -- Same guard as 20260606140100, with both token wallet types drawing on the
 -- one pool of token lots.
@@ -297,6 +293,30 @@ revoke all on function public.token_key_allowed_for_user(text, text, timestamptz
   from public, anon, authenticated;
 grant execute on function public.token_key_allowed_for_user(text, text, timestamptz) to service_role;
 
+-- Whether an EXISTING tier row in p_token_key still counts for p_user_id:
+-- the allowed rule, plus a member's $HermesOS rows until the application moves
+-- them to $HIVRA after conversion (that move needs a live price and can lag).
+-- Mirrors tierRowTokenCounts in dashboard/src/lib/billing/token-access.ts.
+create or replace function public.token_tier_row_counts_for_user(
+  p_user_id text,
+  p_token_key text,
+  p_now timestamptz default now()
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.token_key_allowed_for_user(p_user_id, p_token_key, p_now)
+      or (p_token_key = 'hermesos'
+          and exists (select 1 from public.token_grandfather_cohort c where c.user_id = p_user_id));
+$$;
+
+revoke all on function public.token_tier_row_counts_for_user(text, text, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.token_tier_row_counts_for_user(text, text, timestamptz) to service_role;
+
 -- Evidence that p_user_id used $HermesOS before p_activated_at, or null.
 create or replace function public.hermesos_grandfather_evidence(
   p_user_id text,
@@ -340,7 +360,9 @@ revoke all on function public.hermesos_grandfather_evidence(text, timestamptz)
 grant execute on function public.hermesos_grandfather_evidence(text, timestamptz) to service_role;
 
 -- Record p_user_id in the cohort if it has pre-activation evidence. Returns
--- whether the user is a member. Idempotent; never removes a member.
+-- whether the user is a member, converted or not: membership alone does NOT
+-- mean $HermesOS is still allowed (see token_key_allowed_for_user).
+-- Idempotent; never removes a member.
 create or replace function public.ensure_token_grandfather_membership(
   p_user_id text,
   p_now timestamptz default now()
@@ -415,6 +437,12 @@ begin
   if p_token_decimals is null or p_token_decimals < 0 or p_token_decimals > 36 then
     return jsonb_build_object('status', 'invalid_decimals');
   end if;
+  if p_chain_id is distinct from 8453 then
+    return jsonb_build_object('status', 'unsupported_chain');
+  end if;
+  if coalesce(btrim(p_token_symbol), '') = '' then
+    return jsonb_build_object('status', 'invalid_symbol');
+  end if;
 
   perform pg_advisory_xact_lock(hashtextextended('platform_token_activation:' || p_token_key, 0));
 
@@ -464,10 +492,12 @@ begin
     min_balance_raw, max_instances, cpu_limit, ram_limit, active, metadata
   )
   select 'token_base', 'hivra', p_chain_id, v_address, p_token_symbol, p_token_decimals,
-         power(10::numeric, p_token_decimals), c.max_instances, c.cpu_limit, c.ram_limit, true,
+         power(10::numeric, p_token_decimals),
+         coalesce(c.max_instances, 1), coalesce(c.cpu_limit, 1), coalesce(c.ram_limit, 2048), true,
          jsonb_build_object('description', 'Hold at least 1 $HIVRA token on Base to unlock the base compute tier.')
-    from public.token_entitlement_configs c
-   where c.tier_key = 'token_base' and c.token_key = 'hermesos'
+    from (select 1) one
+    left join public.token_entitlement_configs c
+      on c.tier_key = 'token_base' and c.token_key = 'hermesos'
   on conflict (tier_key, token_key) do update
      set token_address = excluded.token_address,
          token_symbol = excluded.token_symbol,
@@ -718,7 +748,7 @@ grant execute on function public.settle_yearly_token_payment(uuid, text, integer
 -- ── reconcile_stale_subscription_state_to_free (token-aware) ────────────
 --
 -- Body of 20260922234806 with one change: Pro/Power qualifications and the
--- base-tier snapshot count only in tokens the user is allowed.
+-- base-tier snapshot count only in tokens that still count for the user.
 
 create or replace function public.reconcile_stale_subscription_state_to_free(
   p_user_id text,
@@ -830,7 +860,7 @@ begin
         where user_id = p_user_id
           and tier = 'power'
           and currently_eligible = true
-          and public.token_key_allowed_for_user(p_user_id, token_key, p_now)
+          and public.token_tier_row_counts_for_user(p_user_id, token_key, p_now)
       ) then 'power'
       when exists (
         select 1
@@ -838,7 +868,7 @@ begin
         where user_id = p_user_id
           and tier = 'pro'
           and currently_eligible = true
-          and public.token_key_allowed_for_user(p_user_id, token_key, p_now)
+          and public.token_tier_row_counts_for_user(p_user_id, token_key, p_now)
       ) then 'pro'
       else null
     end
@@ -866,7 +896,6 @@ begin
          and config.chain_id = snapshot.chain_id
          and lower(config.token_address) = lower(snapshot.token_address)
         where snapshot.user_id = p_user_id
-          and config.active
           and public.token_key_allowed_for_user(p_user_id, config.token_key, p_now)
         order by snapshot.checked_at desc
         limit 1
