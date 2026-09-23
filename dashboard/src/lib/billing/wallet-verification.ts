@@ -2,11 +2,9 @@ import { requireDb } from "@/lib/billing/db-utils";
 import { randomBytes } from "crypto";
 import { verifyMessage, type Address, type Hex } from "viem";
 import { supabaseAdmin } from "@/lib/supabase";
+import { livePlatformTokens } from "@/lib/billing/token-registry";
 import {
   BASE_CHAIN_ID,
-  HERMESOS_TOKEN_ADDRESS,
-  HERMESOS_TOKEN_DECIMALS,
-  HERMESOS_TOKEN_SYMBOL,
   getTokenVerificationWallet,
   normalizeEvmAddress,
 } from "@/lib/billing/token-holdings";
@@ -234,30 +232,32 @@ export const revokeDisplacedTokenEntitlements: RevokeDisplacedTokenEntitlements 
   const remainingWallet = await getTokenVerificationWallet(params.userId, params.db);
   if (remainingWallet) return;
 
-  // Zero-balance snapshot so the tier cron stops honouring the taken-over
-  // wallet's old balance. The normal 48h downgrade grace applies from this
-  // snapshot's checked_at.
-  const snapshot = await table(params.db, "token_holding_snapshots")
-    .insert({
-      user_id: params.userId,
-      wallet_id: null,
-      wallet_address: params.normalizedAddress,
-      normalized_wallet_address: params.normalizedAddress,
-      chain_id: BASE_CHAIN_ID,
-      token_address: HERMESOS_TOKEN_ADDRESS,
-      token_symbol: HERMESOS_TOKEN_SYMBOL,
-      token_decimals: HERMESOS_TOKEN_DECIMALS,
-      balance_raw: "0",
-      balance_display: "0",
-      qualifies_base_tier: false,
-      source: "admin",
-      metadata: { reason: "wallet_takeover", challenge_id: params.challengeId },
-      checked_at: params.now.toISOString(),
-    })
-    .select("id")
-    .single();
-  if (snapshot.error) {
-    throw new Error("Failed to record zero-balance snapshot for displaced account");
+  // Zero-balance snapshots (one per live platform token) so the tier cron
+  // stops honouring the taken-over wallet's old balances. The normal 48h
+  // downgrade grace applies from each snapshot's checked_at.
+  for (const token of livePlatformTokens(params.now)) {
+    const snapshot = await table(params.db, "token_holding_snapshots")
+      .insert({
+        user_id: params.userId,
+        wallet_id: null,
+        wallet_address: params.normalizedAddress,
+        normalized_wallet_address: params.normalizedAddress,
+        chain_id: BASE_CHAIN_ID,
+        token_address: token.address,
+        token_symbol: token.symbol,
+        token_decimals: token.decimals,
+        balance_raw: "0",
+        balance_display: "0",
+        qualifies_base_tier: false,
+        source: "admin",
+        metadata: { reason: "wallet_takeover", challenge_id: params.challengeId },
+        checked_at: params.now.toISOString(),
+      })
+      .select("id")
+      .single();
+    if (snapshot.error) {
+      throw new Error("Failed to record zero-balance snapshot for displaced account");
+    }
   }
 
   // Breach (not delete) the Pro/Power qualifications: instance-entitlement

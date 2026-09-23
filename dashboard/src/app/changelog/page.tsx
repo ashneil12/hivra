@@ -16,7 +16,7 @@ import { CHANGELOG_FEED_TITLE } from "@/lib/changelog-rss";
 
 const CHANGELOG_URL = `${SITE_URL}/changelog`;
 const CHANGELOG_FEED_URL = `${CHANGELOG_URL}/rss.xml`;
-const TITLE = "Changelog — what shipped on Hivra";
+const TITLE = "Changelog: what shipped on Hivra";
 const DESCRIPTION =
   "Dated entries for every notable change to Hivra: bug fixes, feature ships, upstream syncs, and infrastructure work.";
 
