@@ -59,7 +59,8 @@ export interface WithdrawResult {
     | "no_withdraw_address"
     | "not_configured"
     | "transfer_failed"
-    | "already_in_flight";
+    | "already_in_flight"
+    | "no_verified_wallet";
   txHash?: string | null;
   amountRaw?: string;
   amountDisplay?: string;
@@ -232,11 +233,42 @@ interface WithdrawParams {
    * wrong destination cached.
    */
   expectedRecipient?: string;
+  /**
+   * Where the full balance goes:
+   *   - "withdraw_address" (default): the user's saved withdraw address. An
+   *     exit: eligibility is re-evaluated at once and the breach clock starts.
+   *   - "verified_wallet": the user's signature-verified primary wallet, which
+   *     is the wallet tier eligibility reads once the lock wallet is empty. A
+   *     move, not an exit: the tier keeps counting the same tokens.
+   */
+  destination?: "withdraw_address" | "verified_wallet";
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   env?: Record<string, string | undefined>;
   /** Test-injection seam for treasury-gas. Production code never sets this. */
   treasuryGasClients?: TreasuryGasClients;
+}
+
+/**
+ * The user's self-custody wallet for a lock-wallet move: the PRIMARY wallet,
+ * verified by signature (or by an admin). Tier eligibility reads the primary
+ * wallet once the lock wallet is empty, so a move here keeps the tier.
+ */
+export async function getSelfCustodyPrimaryWallet(userId: string) {
+  if (!supabaseAdmin) throw new Error("Database not configured");
+  const { data, error } = await supabaseAdmin
+    .from("user_wallets")
+    .select("id, address, normalized_address, verification_method, verified_at")
+    .eq("user_id", userId)
+    .eq("chain_type", "evm")
+    .eq("is_primary", true)
+    .in("verification_method", ["signature", "admin"])
+    .not("verified_at", "is", null)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load the verified wallet: ${error.message}`);
+  const row = data as { id: string; address: string; normalized_address: string } | null;
+  return row ? { id: row.id, address: row.address, normalizedAddress: row.normalized_address } : null;
 }
 
 export async function withdrawAllHermesTokensForUser(
@@ -263,23 +295,36 @@ export async function withdrawAllHermesTokensForUser(
     return { status: "no_wallet" };
   }
 
-  // The user must have explicitly set a withdraw destination. We do
-  // NOT auto-detect from chain history — bundlers, exchanges, MEV
-  // relays show as the on-chain sender on inbound transfers but the
-  // user does not control those addresses, so withdrawing back there
-  // can lose funds. This is a hard refusal until the user sets one.
-  const stored = await getUserWithdrawAddress(params.userId);
-  if (!stored) {
-    return { status: "no_withdraw_address" };
+  let recipient: string;
+  if (params.destination === "verified_wallet") {
+    // A move to the wallet the user proved they control by signature.
+    const verified = await getSelfCustodyPrimaryWallet(params.userId);
+    if (!verified || verified.normalizedAddress === normalizeEvmAddress(wallet.address)) {
+      return {
+        status: "no_verified_wallet",
+        errorMessage: "Verify your own wallet first. It becomes the wallet your tier reads.",
+      };
+    }
+    recipient = verified.normalizedAddress;
+  } else {
+    // The user must have explicitly set a withdraw destination. We do
+    // NOT auto-detect from chain history — bundlers, exchanges, MEV
+    // relays show as the on-chain sender on inbound transfers but the
+    // user does not control those addresses, so withdrawing back there
+    // can lose funds. This is a hard refusal until the user sets one.
+    const stored = await getUserWithdrawAddress(params.userId);
+    if (!stored) {
+      return { status: "no_withdraw_address" };
+    }
+    recipient = stored.normalizedAddress;
   }
-  const recipient = stored.normalizedAddress;
 
   if (
     params.expectedRecipient &&
     normalizeEvmAddress(params.expectedRecipient) !== recipient
   ) {
     return {
-      status: "no_withdraw_address",
+      status: params.destination === "verified_wallet" ? "no_verified_wallet" : "no_withdraw_address",
       errorMessage:
         "Confirmation address does not match your saved withdraw address. Refresh the page and try again.",
     };
@@ -475,3 +520,38 @@ export {
   HERMESOS_TOKEN_SYMBOL,
   formatRawTokenBalance,
 };
+
+/**
+ * Wait (bounded) for a submitted transfer to be mined successfully. Returns
+ * "mined", "failed" (reverted) or "pending" (not mined within the budget).
+ */
+export async function waitForTransferReceipt(params: {
+  txHash: string;
+  rpcUrl?: string;
+  fetchImpl?: JsonRpcFetch;
+  sleepImpl?: (ms: number) => Promise<void>;
+  attempts?: number;
+  intervalMs?: number;
+}): Promise<"mined" | "failed" | "pending"> {
+  const fetchImpl = params.fetchImpl ?? (fetch as unknown as JsonRpcFetch);
+  const rpcUrl = params.rpcUrl || process.env.HERMES_BASE_RPC_URL?.trim() || process.env.BASE_RPC_URL?.trim() || "https://mainnet.base.org";
+  const sleepImpl = params.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const attempts = params.attempts ?? 10;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await sleepImpl(params.intervalMs ?? 2_000);
+    try {
+      const response = await fetchImpl(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [params.txHash] }),
+      });
+      if (!response.ok) continue;
+      const payload = (await response.json()) as { result?: { status?: string } | null };
+      const status = payload.result?.status;
+      if (typeof status === "string") return /^0x0*1$/i.test(status) ? "mined" : "failed";
+    } catch {
+      // Transient RPC failure: try again within the budget.
+    }
+  }
+  return "pending";
+}

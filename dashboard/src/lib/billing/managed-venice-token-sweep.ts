@@ -12,14 +12,14 @@
  * recorded with enough detail for treasury reconciliation.
  */
 
+import { platformTokenForRow, type PlatformToken } from "./token-registry";
 import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  HERMESOS_TOKEN_ADDRESS,
-  HERMESOS_TOKEN_DECIMALS,
-  fetchHermesTokenBalance,
+  fetchTokenBalance,
   formatRawTokenBalance,
+  platformTokenBalanceConfig,
   normalizeEvmAddress,
   normalizeNumericToBigIntString,
 } from "./token-holdings";
@@ -70,6 +70,8 @@ interface ManagedVeniceSweepQuoteRow {
   token_amount_raw: string | number | bigint;
   locked_value_micro_usd?: number | string | null;
   deposit_address?: string | null;
+  /** Token the quote was paid in (legacy rows: $HermesOS). */
+  token_address?: string | null;
 }
 
 type BalanceReader = (params: {
@@ -226,6 +228,7 @@ async function markSweepSkipped(params: {
 async function markSweepSucceeded(params: {
   db: SupabaseLike;
   quote: ManagedVeniceSweepQuoteRow;
+  token: PlatformToken;
   txHash: string | null;
   amountRaw: bigint;
   amountDisplay: string;
@@ -253,15 +256,15 @@ async function markSweepSucceeded(params: {
   ).insert({
     user_id: params.quote.user_id,
     account_id: params.quote.account_id ?? null,
-    wallet_type: "hermesos",
+    wallet_type: params.token.key,
     event_type: "treasury_sweep",
     reference_id: params.quote.id,
     idempotency_key: `managed_venice_treasury_sweep:${params.quote.id}:${params.txHash || "no_tx_hash"}`,
     token_amount_raw: params.amountRaw.toString(),
     amount_micro_usd: sweptValueMicroUsd(params.quote, params.amountRaw),
     metadata: {
-      tokenAddress: HERMESOS_TOKEN_ADDRESS,
-      tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+      tokenAddress: params.token.address,
+      tokenDecimals: params.token.decimals,
       amountDisplay: params.amountDisplay,
       destinationAddress: params.destinationAddress,
       txHash: params.txHash,
@@ -298,6 +301,7 @@ export async function sweepManagedVeniceTokenQuote(
   const env = options.env ?? process.env;
   const quoteId = quote.id;
   const userId = quote.user_id;
+  const token = platformTokenForRow(quote);
   let treasury: string | null;
   try {
     treasury = getManagedVeniceTreasuryAddress(env);
@@ -385,7 +389,10 @@ export async function sweepManagedVeniceTokenQuote(
       error: message,
     };
   }
-  const readBalance = options.readHermesBalance ?? fetchHermesTokenBalance;
+  // Sweep only the token the quote was paid in.
+  const readBalance: BalanceReader =
+    options.readHermesBalance ??
+    ((balanceParams) => fetchTokenBalance({ ...balanceParams, token: platformTokenBalanceConfig(token) }));
 
   let liveBalanceRaw: bigint;
   try {
@@ -484,14 +491,14 @@ export async function sweepManagedVeniceTokenQuote(
     };
   }
 
-  const amountDisplay = formatRawTokenBalance(expectedRaw, HERMESOS_TOKEN_DECIMALS);
+  const amountDisplay = formatRawTokenBalance(expectedRaw, token.decimals);
   const submitTransferForWallet = options.submitTransfer ?? submitBankrTransfer;
   let txHash: string | null = null;
 
   try {
     txHash = await submitTransferForWallet({
       apiKey,
-      tokenAddress: HERMESOS_TOKEN_ADDRESS,
+      tokenAddress: token.address,
       recipientAddress: treasury,
       amountDisplay,
       env,
@@ -512,6 +519,7 @@ export async function sweepManagedVeniceTokenQuote(
   await markSweepSucceeded({
     db,
     quote,
+    token,
     txHash,
     amountRaw: expectedRaw,
     amountDisplay,
@@ -552,7 +560,7 @@ export async function sweepPendingManagedVeniceTokenQuotes(options: {
   const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
   const { data, error } = await table(db, "managed_venice_token_quotes")
     .select(
-      "id, account_id, user_id, token_amount_raw::text, locked_value_micro_usd, deposit_address, settled_at, sweep_status"
+      "id, account_id, user_id, token_address, token_amount_raw::text, locked_value_micro_usd, deposit_address, settled_at, sweep_status"
     )
     .eq("status", "settled")
     .in("sweep_status", ["pending", "failed"])

@@ -29,13 +29,13 @@
  * leaked key cannot redirect funds.
  */
 
+import { platformTokenByAddress } from "./token-registry";
 import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   HERMESOS_TOKEN_ADDRESS,
-  HERMESOS_TOKEN_DECIMALS,
   fetchHermesTokenBalance,
   formatRawTokenBalance,
   normalizeNumericToBigIntString,
@@ -127,11 +127,13 @@ interface ClaimedRow {
   deposit_address: string | null;
   deposit_tx_hash: string | null;
   deposit_log_index: number | null;
+  /** Token the subscription was paid in (legacy rows: $HermesOS). */
+  token_address?: string | null;
   metadata: Record<string, unknown> | null;
 }
 
 const SWEEP_ROW_COLUMNS =
-  "id, user_id, amount_received_raw::text, deposit_address, deposit_tx_hash, deposit_log_index, metadata, " +
+  "id, user_id, amount_received_raw::text, deposit_address, deposit_tx_hash, deposit_log_index, token_address, metadata, " +
   "sweep_status, sweep_attempted_at, sweep_submitted_at, paid_at";
 
 function table(db: SupabaseLike, name: string) {
@@ -285,7 +287,15 @@ export async function sweepYearlyTokenSubscription(
   // (e.g. a USDC payment): sweeping their amount could take another flow's
   // tokens from the shared wallet.
   if (!row.deposit_tx_hash || row.deposit_log_index == null || !depositAddress || amountRaw <= 0n) {
-    const reason = "no attributed $HermesOS deposit transfer recorded for this subscription";
+    const reason = "no attributed token deposit transfer recorded for this subscription";
+    await parkForOperator(db, row, reason, now, claim);
+    return { ...base, outcome: "needs_operator", error: reason };
+  }
+
+  // Sweep the token the subscription was paid in, never another one.
+  const token = platformTokenByAddress(row.token_address ?? HERMESOS_TOKEN_ADDRESS);
+  if (!token) {
+    const reason = `unknown payment token ${row.token_address} on this subscription`;
     await parkForOperator(db, row, reason, now, claim);
     return { ...base, outcome: "needs_operator", error: reason };
   }
@@ -360,13 +370,13 @@ export async function sweepYearlyTokenSubscription(
   const stillClaimed = await transition(db, row.id, claim, { sweep_submitted_at: now.toISOString() });
   if (!stillClaimed) return { ...base, outcome: "claimed_elsewhere" };
 
-  const amountDisplay = formatRawTokenBalance(amountRaw, HERMESOS_TOKEN_DECIMALS);
+  const amountDisplay = formatRawTokenBalance(amountRaw, token.decimals);
   const submitTransfer = options.submitTransfer ?? submitBankrTransfer;
   let txHash: string | null;
   try {
     txHash = await submitTransfer({
       apiKey,
-      tokenAddress: HERMESOS_TOKEN_ADDRESS,
+      tokenAddress: token.address,
       recipientAddress: treasury,
       amountDisplay,
       env,
