@@ -42,6 +42,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
 import { PLANS, getWorkspaceCloudPlan } from "@/lib/subscription/plans";
 import { APPLE_ACCESS_STATUSES } from "@/lib/billing/apple-products";
+import {
+  YEARLY_LIVE_STATUSES,
+  pickEntitledYearlySubscription,
+  yearlyTierPlanKey,
+  type YearlyEntitlementRow,
+} from "@/lib/billing/yearly-entitlement";
 import { log } from "@/lib/logger";
 
 export interface EffectiveSubscription {
@@ -88,37 +94,6 @@ interface SubscriptionRow {
 interface QualificationRow {
   tier: "pro" | "power";
   currently_eligible: boolean;
-}
-
-interface YearlySubscriptionRow {
-  tier: "pro" | "power";
-  status: string;
-  expires_at: string;
-  paid_at: string;
-}
-
-const YEARLY_TIER_RANK: Record<YearlySubscriptionRow["tier"], number> = { pro: 1, power: 2 };
-
-/**
- * The live yearly row that entitles the user: highest tier first (Power >
- * Pro), then the later expiry, then the later payment. Keep in step with the
- * ORDER BY in public.reconcile_stale_subscription_state_to_free.
- */
-function compareYearlyEntitlement(a: YearlySubscriptionRow, b: YearlySubscriptionRow): number {
-  return (
-    YEARLY_TIER_RANK[a.tier] - YEARLY_TIER_RANK[b.tier] ||
-    Date.parse(a.expires_at) - Date.parse(b.expires_at) ||
-    Date.parse(a.paid_at) - Date.parse(b.paid_at)
-  );
-}
-
-function pickEntitledYearlySubscription(rows: YearlySubscriptionRow[]): YearlySubscriptionRow | null {
-  return rows
-    .filter((row) => row.tier in YEARLY_TIER_RANK)
-    .reduce<YearlySubscriptionRow | null>(
-      (best, row) => (!best || compareYearlyEntitlement(row, best) > 0 ? row : best),
-      null
-    );
 }
 
 // Includes 'trialing' to preserve the abuse-gate bypass behavior the
@@ -259,18 +234,20 @@ export async function resolveEffectiveSubscription(
   // is currently entitled to the tier. A user can hold one live row per
   // tier, so the highest-ranked tier wins — never the newest payment: a Pro
   // renewal inserts a fresh row while a paid Power year is still running.
+  // The ranking lives in lib/billing/yearly-entitlement, shared with the
+  // refresh-token-tiers cron so the two can never disagree.
   const { data: yearlyRows } = await supabaseAdmin
     .from("yearly_token_subscriptions")
     .select("tier, status, expires_at, paid_at")
     .eq("user_id", userId)
-    .in("status", ["active", "grace"]);
+    .in("status", [...YEARLY_LIVE_STATUSES]);
 
   const yearly = pickEntitledYearlySubscription(
-    Array.isArray(yearlyRows) ? (yearlyRows as YearlySubscriptionRow[]) : []
+    Array.isArray(yearlyRows) ? (yearlyRows as YearlyEntitlementRow[]) : []
   );
   if (yearly) {
-    const planKey = yearly.tier === "power" ? "fleet" : "operator";
-    const plan = PLANS[planKey as keyof typeof PLANS];
+    const planKey = yearlyTierPlanKey(yearly.tier);
+    const plan = PLANS[planKey];
     return {
       plan: planKey,
       status: "active",
