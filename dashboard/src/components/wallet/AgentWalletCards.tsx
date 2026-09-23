@@ -825,7 +825,9 @@ export function ConnectBankrModal({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const keyFieldId = useId();
-  const replacing = mode === 'replace';
+  // The server can still ask for the switch confirmation (an agent whose
+  // Hivra wallet the card didn't show), so the mode can change here.
+  const [replacing, setReplacing] = useState(mode === 'replace');
   const ready = apiKey.trim().length > 0 && consent && (!replacing || replaceConfirmed);
 
   const handleConnect = useCallback(async () => {
@@ -845,16 +847,30 @@ export function ConnectBankrModal({
       const body = await response.json().catch(() => ({}));
       const wallet = body?.data?.wallet as InstanceBankrWalletPublicSummary | undefined;
       if (!response.ok || !body?.success || !wallet) {
+        if (body?.code === 'replace_not_confirmed') setReplacing(true);
         setError(body?.error || `Connect failed (${response.status})`);
         return;
       }
       setApiKey('');
       onConnected(wallet);
       const runtime = runtimeSyncStatus(body?.data);
+      const notices: string[] = [];
+      if (body?.data?.oldKeysRevoked === false) {
+        notices.push(
+          'Switched, but Hivra couldn\'t confirm the old wallet\'s keys were revoked at Bankr. Contact support so this can be finished.'
+        );
+      }
       if (runtime === 'failed') {
-        setNotice('Connected, but Hivra couldn\'t reach the agent to give it the key. Connect again to retry.');
+        notices.push('Connected, but Hivra couldn\'t reach the agent to give it the key. Connect again to retry.');
       } else if (runtime === 'skipped') {
-        setNotice('Connected. The agent gets the key at its next update.');
+        notices.push(
+          card.instance.lane === 'hivra'
+            ? 'Connected, but the agent isn\'t running, so it doesn\'t have the key yet. Connect again once it\'s running.'
+            : 'Connected. The agent gets the key at its next update.'
+        );
+      }
+      if (notices.length > 0) {
+        setNotice(notices.join(' '));
       } else {
         onClose();
       }
@@ -931,8 +947,9 @@ export function ConnectBankrModal({
       {replacing && (
         <NoticeBox warn>
           <span style={modalNote}>
-            Withdraw everything from the wallet Hivra created first; Hivra checks it is empty (up to 0.0001 ETH of gas
-            dust can stay). After the switch, Hivra stops using that wallet and revokes its API keys at Bankr.
+            Withdraw everything from the wallet Hivra created first. Hivra asks Bankr whether it is empty on every chain
+            (up to 0.0001 ETH of gas on Base can stay). After the switch, Hivra stops using that wallet and revokes its
+            API keys at Bankr. Anything sent to the old address later stays there and needs support to recover.
           </span>
           <label style={{ ...modalNote, display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
             <input

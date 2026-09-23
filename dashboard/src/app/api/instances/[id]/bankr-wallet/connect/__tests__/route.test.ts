@@ -91,7 +91,7 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
     mockedAuth.mockResolvedValue({ userId: "user_123" } as Awaited<ReturnType<typeof auth>>);
     mockedLoad.mockResolvedValue({ id: "inst_123", status: "running" } as unknown as Awaited<ReturnType<typeof loadOwnedHermesInstance>>);
     mockedSync.mockResolvedValue("synced");
-    mockedConnect.mockResolvedValue({ record: connectedRecord(), replacedProvisionedWallet: false });
+    mockedConnect.mockResolvedValue({ record: connectedRecord(), replacedProvisionedWallet: false, oldKeysRevoked: null });
     mockedDisconnect.mockResolvedValue(
       connectedRecord({ status: "revoked", apiKeyStatus: "revoked", apiKeyPreview: null })
     );
@@ -158,6 +158,23 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
     expect(response.status).toBe(409);
     expect(body).toMatchObject({ success: false, code: "balance_not_empty" });
     expect(mockedSync).not.toHaveBeenCalled();
+  });
+
+  it("reports and logs a switch whose old Hivra keys weren't revoked at Bankr", async () => {
+    mockedConnect.mockResolvedValueOnce({ record: connectedRecord(), replacedProvisionedWallet: true, oldKeysRevoked: false });
+    const response = await POST(
+      request("POST", { apiKey: USER_KEY, consent: true, replaceProvisionedWallet: true }),
+      params
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ replacedProvisionedWallet: true, oldKeysRevoked: false });
+    expect(log.error).toHaveBeenCalledWith(
+      "replaced agent wallet keys were not revoked at Bankr",
+      expect.any(Error),
+      expect.objectContaining({ instanceId: "inst_123", failureType: "agent_wallet_connect_old_keys_not_revoked" })
+    );
   });
 
   it("disconnects and rewrites the agent config without the key", async () => {

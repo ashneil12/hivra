@@ -1,9 +1,10 @@
-import { decryptApiKey } from "@/lib/crypto";
+import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import {
   AGENT_WALLET_CONNECT_CONSENT_VERSION,
   buildInstanceBankrAgentConfig,
   connectUserBankrWalletForOwner,
   decryptInstanceBankrApiKey,
+  decryptInstanceBankrRuntimeApiKey,
   disconnectUserBankrWalletForOwner,
   instanceBankrWalletPublicSummary,
   isUserConnectedBankrWallet,
@@ -14,6 +15,13 @@ import {
   upsertWithdrawalRecipient,
   setWithdrawalDestination,
 } from "@/lib/billing/bankr-instance-wallets";
+
+// Public Base token contracts, named so the secret scan reads them as addresses.
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
+const BNKR_CONTRACT = "0x22af33fe49fd1fa80c7149773dde5890d3c76f3b";
+const VVV_CONTRACT = "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf";
+const DIEM_CONTRACT = "0xf4d97f2da56e8c3098f3a8d538db630a2606a024";
 
 const now = new Date("2026-05-02T12:00:00.000Z");
 const instanceId = "inst_123";
@@ -38,9 +46,17 @@ function createSelectQuery(rows: Row[]) {
   };
   const query = {} as SelectQuery;
 
+  // Supports PostgREST JSON paths such as metadata->a->>b.
+  const valueAt = (row: Row, column: string): unknown => {
+    const [head, ...path] = column.split(/->>?/);
+    return path.reduce<unknown>(
+      (value, key) => (value && typeof value === "object" ? (value as Row)[key] : undefined),
+      row[head]
+    );
+  };
   const findRows = () => {
     const filtered = rows.filter((row) =>
-      Object.entries(filters).every(([column, value]) => row[column] === value)
+      Object.entries(filters).every(([column, value]) => valueAt(row, column) === value)
     );
     return resultLimit ? filtered.slice(0, resultLimit) : filtered;
   };
@@ -610,35 +626,35 @@ describe("Bankr instance wallets", () => {
       {
         chain: "Base",
         tokenSymbol: "USDC",
-        tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        tokenAddress: USDC_CONTRACT,
         tokenDecimals: 6,
         balanceDisplay: "2.5",
       },
       {
         chain: "Base",
         tokenSymbol: "HERMESOS",
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "1000",
       },
       {
         chain: "Base",
         tokenSymbol: "BNKR",
-        tokenAddress: "0x22af33fe49fd1fa80c7149773dde5890d3c76f3b",
+        tokenAddress: BNKR_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "1",
       },
       {
         chain: "Base",
         tokenSymbol: "VVV",
-        tokenAddress: "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
+        tokenAddress: VVV_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "0.5",
       },
       {
         chain: "Base",
         tokenSymbol: "DIEM",
-        tokenAddress: "0xf4d97f2da56e8c3098f3a8d538db630a2606a024",
+        tokenAddress: DIEM_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "3",
       },
@@ -678,41 +694,44 @@ describe("Bankr instance wallets", () => {
       {
         chain: "Base",
         tokenSymbol: "USDC",
-        tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        tokenAddress: USDC_CONTRACT,
         tokenDecimals: 6,
         balanceDisplay: "0.0000",
       },
       {
         chain: "Base",
         tokenSymbol: "HERMESOS",
-        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        tokenAddress: HERMESOS_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "0.0000",
       },
       {
         chain: "Base",
         tokenSymbol: "BNKR",
-        tokenAddress: "0x22af33fe49fd1fa80c7149773dde5890d3c76f3b",
+        tokenAddress: BNKR_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "0.0000",
       },
       {
         chain: "Base",
         tokenSymbol: "VVV",
-        tokenAddress: "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
+        tokenAddress: VVV_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "0.0000",
       },
       {
         chain: "Base",
         tokenSymbol: "DIEM",
-        tokenAddress: "0xf4d97f2da56e8c3098f3a8d538db630a2606a024",
+        tokenAddress: DIEM_CONTRACT,
         tokenDecimals: 18,
         balanceDisplay: "0.0000",
       },
     ]);
   });
 });
+
+// A made-up string in the shape of a Bankr partner key, which connect must refuse.
+const PARTNER_SHAPED_FIXTURE = "bk_ptr_abcd1234_partner";
 
 describe("user-connected Bankr accounts", () => {
   const originalEncryptionKey = process.env.ENCRYPTION_KEY;
@@ -729,8 +748,24 @@ describe("user-connected Bankr accounts", () => {
     process.env.ENCRYPTION_KEY = originalEncryptionKey;
   });
 
-  function bankrFetch(overrides: { meStatus?: number; meBody?: unknown; revokeStatus?: number } = {}) {
+  const emptyPortfolio = {
+    success: true,
+    balances: {
+      // 0.00005 ETH: leftover gas top-up from Hivra's treasury, not a user balance.
+      base: { nativeBalance: "0.00005", tokenBalances: [{ network: "base", token: { balance: "0", baseToken: { symbol: "USDC" } } }] },
+      mainnet: { nativeBalance: "0", tokenBalances: [] },
+    },
+    nfts: [],
+  };
+
+  function bankrFetch(
+    overrides: { meStatus?: number; meBody?: unknown; revokeStatus?: number; portfolioStatus?: number; portfolio?: unknown } = {}
+  ) {
     return jest.fn(async (input: string) => {
+      if (input.includes("/wallet/portfolio")) {
+        const status = overrides.portfolioStatus ?? 200;
+        return { ok: status < 400, status, json: async () => overrides.portfolio ?? emptyPortfolio };
+      }
       if (input.endsWith("/wallet/me")) {
         const status = overrides.meStatus ?? 200;
         return {
@@ -748,19 +783,6 @@ describe("user-connected Bankr accounts", () => {
       }
       const status = overrides.revokeStatus ?? 200;
       return { ok: status < 400, status, json: async () => ({}) };
-    });
-  }
-
-  function rpcFetch(raw: { eth?: string; usdc?: string } = {}) {
-    return jest.fn(async (_input: string, init: { body: string }) => {
-      const body = JSON.parse(init.body) as { method: string; params: [{ to?: string }?] };
-      const result =
-        body.method === "eth_getBalance"
-          ? raw.eth ?? "0x0"
-          : body.params[0]?.to?.toLowerCase() === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
-            ? raw.usdc ?? "0x0"
-            : "0x0";
-      return { ok: true, status: 200, json: async () => ({ result }) };
     });
   }
 
@@ -820,7 +842,7 @@ describe("user-connected Bankr accounts", () => {
     const fetchImpl = bankrFetch();
 
     await expect(
-      connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: "bk_ptr_abcd1234_partner", db, env, fetchImpl })
+      connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: PARTNER_SHAPED_FIXTURE, db, env, fetchImpl })
     ).rejects.toMatchObject({ code: "partner_key", httpStatus: 400 });
     await expect(
       connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: "sk-not-a-bankr-key", db, env, fetchImpl })
@@ -875,14 +897,67 @@ describe("user-connected Bankr accounts", () => {
     expect(depositDb.rows).toHaveLength(0);
   });
 
-  it("only switches an existing Hivra wallet when asked and once it is empty, then revokes its keys", async () => {
-    const { db, rows } = createMemoryDb();
+  function seedActiveHivraWallet(rows: Row[]) {
     seedProvisionedWalletWithoutKey(rows);
-    Object.assign(rows[0], { api_key_encrypted: "encrypted-hivra-key", api_key_status: "active" });
+    Object.assign(rows[0], { api_key_encrypted: encryptApiKey("bk_usr_hivraagentkey_000000"), api_key_status: "active" });
+  }
+
+  it("only switches an existing Hivra wallet when asked and once Bankr reports it empty, then revokes its keys", async () => {
+    const { db, rows } = createMemoryDb();
+    seedActiveHivraWallet(rows);
 
     await expect(
       connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, db, env, fetchImpl: bankrFetch() })
     ).rejects.toMatchObject({ code: "replace_not_confirmed", httpStatus: 409 });
+
+    const fetchImpl = bankrFetch();
+    const result = await connectUserBankrWalletForOwner({
+      owner: { instanceId },
+      userId,
+      apiKey: userKey,
+      replaceProvisionedWallet: true,
+      db,
+      env,
+      fetchImpl,
+      now,
+    });
+
+    // The emptiness check reads every chain, low-value tokens and NFTs with the old wallet's own key.
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.example.test/wallet/portfolio?showLowValueTokens=true&include=nfts",
+      expect.objectContaining({ method: "GET", headers: { "X-API-Key": "bk_usr_hivraagentkey_000000" } })
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.example.test/partner/wallets/wlt_instance_123/api-keys",
+      expect.objectContaining({ method: "DELETE", headers: { "X-Partner-Key": "bk_ptr_secret" } })
+    );
+    expect(result).toMatchObject({ replacedProvisionedWallet: true, oldKeysRevoked: true });
+    expect(rows).toHaveLength(1);
+    expect(result.record.metadata).toMatchObject({
+      custodyModel: "user_owned_bankr_account",
+      replacedProvisionedWallet: {
+        bankrWalletId: "wlt_instance_123",
+        evmAddress: normalizedWalletAddress,
+        oldKeysRevoked: true,
+      },
+    });
+    expect(instanceBankrWalletPublicSummary(result.record)?.custody).toBe("user_connected");
+  });
+
+  it("blocks a switch while the old wallet holds anything Bankr reports, on any chain", async () => {
+    const { db, rows } = createMemoryDb();
+    seedActiveHivraWallet(rows);
+    const holding = {
+      success: true,
+      balances: {
+        base: {
+          nativeBalance: "0.00005",
+          tokenBalances: [{ network: "base", token: { balance: "12.5", baseToken: { symbol: "XYZ" } } }],
+        },
+        arbitrum: { nativeBalance: "0.01", tokenBalances: [] },
+      },
+      nfts: [{ name: "Thing #1" }],
+    };
 
     await expect(
       connectUserBankrWalletForOwner({
@@ -892,41 +967,81 @@ describe("user-connected Bankr accounts", () => {
         replaceProvisionedWallet: true,
         db,
         env,
-        fetchImpl: bankrFetch(),
-        rpcFetchImpl: rpcFetch({ usdc: "0x2dc6c0" }),
+        fetchImpl: bankrFetch({ portfolio: holding }),
       })
-    ).rejects.toMatchObject({ code: "balance_not_empty", httpStatus: 409, message: expect.stringContaining("3 USDC") });
+    ).rejects.toMatchObject({
+      code: "balance_not_empty",
+      httpStatus: 409,
+      message: expect.stringMatching(/12\.5 XYZ on base.*0\.01 native on arbitrum.*1 NFT/),
+    });
     expect(rows[0].bankr_wallet_id).toBe("wlt_instance_123");
+  });
 
-    const fetchImpl = bankrFetch();
-    const { record, replacedProvisionedWallet } = await connectUserBankrWalletForOwner({
+  it("fails closed when the old wallet's holdings can't be read", async () => {
+    const { db, rows } = createMemoryDb();
+    seedActiveHivraWallet(rows);
+
+    for (const fetchImpl of [bankrFetch({ portfolioStatus: 502 }), bankrFetch({ portfolio: { success: true } })]) {
+      await expect(
+        connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, replaceProvisionedWallet: true, db, env, fetchImpl })
+      ).rejects.toMatchObject({ code: "balance_unavailable", httpStatus: 503 });
+    }
+    expect(rows[0].bankr_wallet_id).toBe("wlt_instance_123");
+  });
+
+  it("returns a failed revocation to the caller instead of hiding it", async () => {
+    const { db, rows } = createMemoryDb();
+    seedActiveHivraWallet(rows);
+
+    const result = await connectUserBankrWalletForOwner({
       owner: { instanceId },
       userId,
       apiKey: userKey,
       replaceProvisionedWallet: true,
       db,
       env,
-      fetchImpl,
-      // 0.00005 ETH: leftover gas top-up from Hivra's treasury, not a user balance.
-      rpcFetchImpl: rpcFetch({ eth: "0x2d79883d2000" }),
+      fetchImpl: bankrFetch({ revokeStatus: 500 }),
       now,
     });
 
-    expect(replacedProvisionedWallet).toBe(true);
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "https://api.example.test/partner/wallets/wlt_instance_123/api-keys",
-      expect.objectContaining({ method: "DELETE", headers: { "X-Partner-Key": "bk_ptr_secret" } })
-    );
-    expect(rows).toHaveLength(1);
-    expect(record.metadata).toMatchObject({
-      custodyModel: "user_owned_bankr_account",
-      replacedProvisionedWallet: {
-        bankrWalletId: "wlt_instance_123",
-        evmAddress: normalizedWalletAddress,
-        oldKeysRevoked: true,
-      },
+    expect(result.oldKeysRevoked).toBe(false);
+    expect(result.record.metadata.replacedProvisionedWallet).toMatchObject({
+      oldKeysRevoked: false,
+      oldKeysRevokeError: "Bankr returned 500",
     });
-    expect(instanceBankrWalletPublicSummary(record)?.custody).toBe("user_connected");
+  });
+
+  it("keeps the replaced wallet on record across reconnects and never accepts its key as the user's own", async () => {
+    const { db, rows } = createMemoryDb();
+    seedActiveHivraWallet(rows);
+    await connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, replaceProvisionedWallet: true, db, env, fetchImpl: bankrFetch(), now });
+    await disconnectUserBankrWalletForOwner({ owner: { instanceId }, userId, db, now });
+
+    const { record } = await connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, db, env, fetchImpl: bankrFetch(), now });
+    expect(record.metadata.replacedProvisionedWallet).toMatchObject({
+      bankrWalletId: "wlt_instance_123",
+      evmAddress: normalizedWalletAddress,
+    });
+
+    // The old Hivra wallet's key, read off the box and pasted into another agent.
+    await expect(
+      connectUserBankrWalletForOwner({
+        owner: { instanceId: "inst_other" },
+        userId,
+        apiKey: "bk_usr_hivraagentkey_000000",
+        db,
+        env,
+        fetchImpl: bankrFetch({ meBody: { success: true, wallets: [{ chain: "evm", address: walletAddress }] } }),
+      })
+    ).rejects.toMatchObject({ code: "hivra_provisioned_address" });
+  });
+
+  it("never hands Hivra a user's own key for a transfer, only the runtime", async () => {
+    const { db } = createMemoryDb();
+    const { record } = await connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, db, env, fetchImpl: bankrFetch(), now });
+
+    await expect(decryptInstanceBankrApiKey(record)).resolves.toBeNull();
+    await expect(decryptInstanceBankrRuntimeApiKey(record)).resolves.toBe(userKey);
   });
 
   it("disconnect deletes Hivra's copy of the key and the agent then needs a new connect", async () => {

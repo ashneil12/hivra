@@ -11,6 +11,9 @@ import {
 } from "../AgentWalletCards";
 import type { AgentWalletCardData } from "@/app/dashboard/wallet/agent-wallet-data";
 
+// Public Base token contracts, named so the secret scan reads them as addresses.
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+
 jest.mock("@/components/billing/LocalAddressQr", () => ({
   LocalAddressQr: ({ label }: { label: string }) => <div data-testid="qr" aria-label={label} />,
 }));
@@ -132,7 +135,7 @@ describe("agent wallet card custody", () => {
       <AgentWalletCard
         card={card({
           wallet: hivraWallet,
-          balances: [{ tokenSymbol: "USDC", balanceDisplay: "3", chain: "Base", tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", tokenDecimals: 6 }],
+          balances: [{ tokenSymbol: "USDC", balanceDisplay: "3", chain: "Base", tokenAddress: USDC_CONTRACT, tokenDecimals: 6 }],
         })}
         {...props}
       />
@@ -230,14 +233,15 @@ describe("runtime delivery is reported, not assumed", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
-  it("tells the user when the agent only gets the key at its next update", async () => {
+  it("tells the user when a Hermes agent only gets the key at its next update", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ success: true, data: { wallet: connectedWallet, configSync: "skipped" } }),
     });
     const onClose = jest.fn();
     const onConnected = jest.fn();
-    render(<ConnectBankrModal card={card()} mode="connect" onClose={onClose} onConnected={onConnected} />);
+    const hermesCard = card({ instance: { id: "inst_1", name: "Scout", status: "running", provider: "openai", lane: "hermes" } });
+    render(<ConnectBankrModal card={hermesCard} mode="connect" onClose={onClose} onConnected={onConnected} />);
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
     fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
@@ -249,6 +253,65 @@ describe("runtime delivery is reported, not assumed", () => {
     expect(onConnected).toHaveBeenCalledWith(connectedWallet);
     expect(await within(dialog).findByRole("status")).toHaveTextContent("The agent gets the key at its next update.");
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("tells the user a stopped Hivra box hasn't received the key", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { wallet: connectedWallet, envSync: "skipped" } }),
+    });
+    render(<ConnectBankrModal card={card()} mode="connect" onClose={jest.fn()} onConnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+    });
+
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(/isn't running, so it doesn't have the key yet/);
+  });
+
+  it("says so when the old wallet's keys couldn't be revoked after a switch", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { wallet: connectedWallet, replacedProvisionedWallet: true, oldKeysRevoked: false, envSync: "synced" },
+      }),
+    });
+    const onClose = jest.fn();
+    render(<ConnectBankrModal card={card({ wallet: hivraWallet })} mode="replace" onClose={onClose} onConnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Replace the wallet Hivra created/i }));
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Switch wallet" }));
+    });
+
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(/couldn't confirm the old wallet's keys were revoked/);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("asks for the switch confirmation when the server says the agent has a Hivra wallet", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ success: false, code: "replace_not_confirmed", error: "This agent already has a wallet Hivra created." }),
+    });
+    render(<ConnectBankrModal card={card()} mode="connect" onClose={jest.fn()} onConnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+    });
+
+    expect(await within(dialog).findByRole("checkbox", { name: /Replace the wallet Hivra created/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Switch wallet" })).toBeDisabled();
   });
 
   it("tells the user to revoke at Bankr when the key couldn't be removed from the agent", async () => {

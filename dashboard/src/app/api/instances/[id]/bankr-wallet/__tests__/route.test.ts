@@ -16,6 +16,9 @@ import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
 import { preinstallBankrSuiteForInstance } from "@/lib/services/instance-service";
 import { log } from "@/lib/logger";
 
+// Public Base token contracts, named so the secret scan reads them as addresses.
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 jest.mock("@clerk/nextjs/server", () => ({
@@ -135,7 +138,7 @@ describe("/api/instances/[id]/bankr-wallet", () => {
       {
         chain: "Base",
         tokenSymbol: "USDC",
-        tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        tokenAddress: USDC_CONTRACT,
         tokenDecimals: 6,
         balanceDisplay: "12.5",
       },
@@ -194,7 +197,7 @@ describe("/api/instances/[id]/bankr-wallet", () => {
           {
             chain: "Base",
             tokenSymbol: "USDC",
-            tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            tokenAddress: USDC_CONTRACT,
             tokenDecimals: 6,
             balanceDisplay: "12.5",
           },

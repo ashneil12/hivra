@@ -101,7 +101,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const parsed = await parseConnectBody(req);
     if (!parsed.ok) return parsed.response;
 
-    const { record, replacedProvisionedWallet } = await connectUserBankrWalletForOwner({
+    const { record, replacedProvisionedWallet, oldKeysRevoked } = await connectUserBankrWalletForOwner({
       owner: { hivraAgentId: id },
       userId,
       apiKey: parsed.body.apiKey,
@@ -114,11 +114,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       userId,
       replacedProvisionedWallet,
     });
+    if (oldKeysRevoked === false) {
+      // The user's funds are safe (the old wallet was empty), but the old
+      // Hivra key may still work at Bankr until someone revokes it there.
+      log.error("replaced agent wallet keys were not revoked at Bankr", new Error("bankr key revocation failed"), {
+        source: LOG_SOURCE,
+        agentId: id,
+        userId,
+        failureType: `${FAILURE_PREFIX}_old_keys_not_revoked`,
+      });
+    }
     const envSync = await syncEnv(gate, record);
 
     return apiSuccess({
       wallet: instanceBankrWalletPublicSummary(record),
       replacedProvisionedWallet,
+      oldKeysRevoked,
       envSync,
     });
   } catch (err) {

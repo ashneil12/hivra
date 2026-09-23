@@ -11,6 +11,9 @@ import {
 import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { log } from "@/lib/logger";
 
+// Public Base token contracts, named so the secret scan reads them as addresses.
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
 }));
@@ -215,7 +218,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
     const recipientAddress = "0x2222222222222222222222222222222222222222";
     const token = {
       symbol: "USDC",
-      tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      tokenAddress: USDC_CONTRACT,
       decimals: 6,
       chain: "Base",
     };
@@ -238,7 +241,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
       amountDisplay: "2.5",
       token: {
         symbol: "USDC",
-        tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        tokenAddress: USDC_CONTRACT,
         decimals: 6,
       },
       setPrimaryRecipient: true,

@@ -4,13 +4,13 @@ import {
   putHermesConfigWithBindMountFallback,
 } from "@/lib/hermes-config-write";
 import {
-  decryptInstanceBankrApiKey,
+  decryptInstanceBankrRuntimeApiKey,
   getBankrWalletForInstance,
 } from "@/lib/billing/bankr-instance-wallets";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@/lib/billing/bankr-instance-wallets", () => ({
-  decryptInstanceBankrApiKey: jest.fn(),
+  decryptInstanceBankrRuntimeApiKey: jest.fn(),
   getBankrWalletForInstance: jest.fn(),
 }));
 
@@ -100,7 +100,7 @@ describe("Hermes config Composio MCP reconciliation", () => {
 
 describe("Hermes config Bankr wallet injection", () => {
   const mockedGetWallet = getBankrWalletForInstance as jest.MockedFunction<typeof getBankrWalletForInstance>;
-  const mockedDecrypt = decryptInstanceBankrApiKey as jest.MockedFunction<typeof decryptInstanceBankrApiKey>;
+  const mockedDecrypt = decryptInstanceBankrRuntimeApiKey as jest.MockedFunction<typeof decryptInstanceBankrRuntimeApiKey>;
   const mockedFrom = supabaseAdmin!.from as jest.Mock;
 
   const wallet = {

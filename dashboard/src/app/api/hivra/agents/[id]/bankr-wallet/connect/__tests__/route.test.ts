@@ -105,7 +105,7 @@ describe("/api/hivra/agents/[id]/bankr-wallet/connect", () => {
     mockedLoad.mockResolvedValue(agent);
     mockedContext.mockResolvedValue(executionContext);
     mockedSync.mockResolvedValue({ status: "synced" });
-    mockedConnect.mockResolvedValue({ record: record(), replacedProvisionedWallet: false });
+    mockedConnect.mockResolvedValue({ record: record(), replacedProvisionedWallet: false, oldKeysRevoked: null });
     mockedDisconnect.mockResolvedValue(record({ status: "revoked", apiKeyStatus: "revoked", apiKeyPreview: null }));
   });
 

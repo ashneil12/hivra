@@ -224,10 +224,17 @@ conclusions. Custody and regulatory treatment are under legal review.
   (placeholder id `pending:…`, zero address, no Bankr wallet). Canary: none.
 - **Revocation:** no revoke control in the product. Deleting an agent is a soft
   delete; the row and encrypted key remain and nothing is revoked at Bankr.
-  Account deletion deletes the rows only. Since this change, a user can switch
-  the agent to their own Bankr account (row 10); Hivra then revokes every API
-  key on the old wallet through the partner key (the wallet itself remains
-  reachable by the partner key).
+  Account deletion deletes the rows only.
+- **Switching to the user's own account (since this change):** optional, and
+  only after the user confirms it. Hivra reads the old wallet's holdings with
+  its own key (`GET /wallet/portfolio`, all chains, tokens under $1 and NFTs)
+  and refuses the switch unless everything is zero, apart from up to
+  0.0001 ETH of gas on Base that came from Hivra's treasury. If the holdings
+  can't be read, the switch is refused. After the switch the old wallet's id
+  and address stay on the row permanently, Hivra revokes every API key on
+  the old wallet through the partner key, and a failed revocation is logged
+  and shown to the user. The old wallet itself stays reachable by the partner
+  key, and anything sent to its address later stays there.
 - **Since this change:** no new wallets of this kind are created. Existing
   ones keep their key, balance display, runtime delivery and withdrawals.
 
@@ -253,21 +260,25 @@ conclusions. Custody and regulatory treatment are under legal review.
   wallet-level daily and per-transaction limits the user set at Bankr. Hivra
   cannot read or change those settings.
 - **Who can move:** the user at bankr.bot; the agent within the key's limits.
-  Hivra's withdraw routes refuse these wallets, and Hivra's partner key has no
-  access.
+  Hivra's partner key has no access. Hivra's withdraw routes refuse these
+  wallets, and the accessor the withdraw code uses to decrypt a wallet key
+  (`decryptInstanceBankrApiKey`) returns nothing for them; only the runtime
+  delivery accessor returns the key.
 - **How long:** the user's funds stay in the user's own Bankr account.
 - **Revocation:** the user revokes the key at bankr.bot/api-keys (immediate at
   Bankr), or presses Disconnect in Hivra, which deletes Hivra's stored copy and
-  stops delivering the key. Removal from the running agent depends on the
-  runtime: on Hivra boxes the env file is deleted and the next agent turn runs
-  without it; on Hermes agents with a config API the config is rewritten
-  without it; on Hermes "webfree" boxes (backend `gateway` or `webui`) the key
+  stops delivering the key. Removal from the agent depends on the runtime:
+  on a running Hivra box the env file is deleted and the next agent turn runs
+  without it (a stopped box keeps the file, because nothing re-syncs it at
+  start); on Hermes agents with a config API the config is rewritten without
+  it; on Hermes "webfree" boxes (backend `gateway` or `webui`) the key
   stays in the box's persisted environment, because runtime updates never
   clear `BANKR_*` values (`webui-runtime-env.ts`). The dashboard reports which
   of these happened and, when removal isn't confirmed, tells the user to
   revoke the key at Bankr. Disconnect never revokes the key at Bankr.
 - **Delivery timing:** on Hermes "webfree" boxes a newly connected key reaches
   the agent at its next runtime update, as Hivra-provisioned keys always have.
+  A Hivra box that isn't running doesn't receive it; the dashboard says so.
 
 ### 11. User-supplied Bankr keys in the vault or as a model provider — class C
 
@@ -331,7 +342,12 @@ conclusions. Custody and regulatory treatment are under legal review.
    Bankr (rows 2–4, 8, 9). Deleting an agent also leaves its encrypted wallet
    key row in place (rows 9 and 10), because agent deletion is a soft delete.
 6. On Hermes "webfree" boxes, `BANKR_*` values in the persisted box
-   environment are never cleared by Hivra (rows 9 and 10).
+   environment are never cleared by Hivra (rows 9 and 10). A stopped Hivra box
+   keeps its `bankr.env` after a disconnect.
+7. Bankr's `GET /wallet/me` and `GET /wallet/portfolio` response shapes and the
+   bulk key revocation endpoint (`DELETE /partner/wallets/{id}/api-keys`) are
+   implemented from Bankr's published documentation. They have not been
+   exercised against a real user-owned Bankr account or a real switch.
 
 ## Engineering recommendation for class B lock wallets
 

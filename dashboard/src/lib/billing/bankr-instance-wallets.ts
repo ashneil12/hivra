@@ -1034,28 +1034,93 @@ export async function lookupBankrApiKeyWallet(params: {
  * A wallet Hivra created through its Bankr partner account must never be
  * relabelled as the user's own. On Hivra boxes the agent's key sits in a file
  * the user can read, so this check is what stops that key being pasted back
- * in as "your Bankr account".
+ * in as "your Bankr account". It covers every agent wallet Hivra created,
+ * including ones an agent has since switched away from, and every Bankr
+ * payment or lock address.
  */
 async function isHivraProvisionedBankrAddress(db: SupabaseLike, normalizedAddress: string): Promise<boolean> {
-  const { data: agentRows, error: agentError } = await (table(db, "instance_bankr_wallets")
-    .select("id, metadata")
-    .eq("normalized_evm_address", normalizedAddress) as unknown as Promise<{ data: unknown; error: QueryError }>);
-  if (agentError) {
-    throw new Error(agentError.message || "Failed to check agent wallet ownership");
-  }
-  const provisionedAgentWallet = (Array.isArray(agentRows) ? agentRows : []).some(
-    (row) => asRecord(asRecord(row).metadata).custodyModel !== USER_CONNECTED_CUSTODY_MODEL
-  );
-  if (provisionedAgentWallet) return true;
+  const rows = async (tableName: string, column: string, extra?: [string, string]) => {
+    let query = table(db, tableName).select("id, metadata").eq(column, normalizedAddress);
+    if (extra) query = query.eq(extra[0], extra[1]);
+    const { data, error } = await (query as unknown as Promise<{ data: unknown; error: QueryError }>);
+    if (error) {
+      throw new Error(error.message || `Failed to check ${tableName} ownership`);
+    }
+    return Array.isArray(data) ? data : [];
+  };
 
-  const { data: userWalletRows, error: userWalletError } = await (table(db, "user_wallets")
-    .select("id")
-    .eq("normalized_address", normalizedAddress)
-    .eq("verification_method", "bankr") as unknown as Promise<{ data: unknown; error: QueryError }>);
-  if (userWalletError) {
-    throw new Error(userWalletError.message || "Failed to check Bankr deposit wallet ownership");
+  const agentRows = await rows("instance_bankr_wallets", "normalized_evm_address");
+  if (agentRows.some((row) => asRecord(asRecord(row).metadata).custodyModel !== USER_CONNECTED_CUSTODY_MODEL)) {
+    return true;
   }
-  return Array.isArray(userWalletRows) && userWalletRows.length > 0;
+  if ((await rows("instance_bankr_wallets", "metadata->replacedProvisionedWallet->>evmAddress")).length > 0) {
+    return true;
+  }
+  return (await rows("user_wallets", "normalized_address", ["verification_method", "bankr"])).length > 0;
+}
+
+/**
+ * Everything the old Hivra-created wallet still holds, across every chain
+ * Bankr supports, including tokens under $1 and NFTs (GET /wallet/portfolio,
+ * read with that wallet's own key). Up to 0.0001 ETH on Base is left over
+ * from Hivra's gas top-up and doesn't count. Fails closed: anything
+ * unreadable blocks the switch.
+ */
+async function listProvisionedWalletHoldings(params: {
+  record: InstanceBankrWalletRecord;
+  env?: Record<string, string | undefined>;
+  fetchImpl?: BankrUserFetch;
+}): Promise<string[]> {
+  const unavailable = () =>
+    new AgentWalletConnectError(
+      "balance_unavailable",
+      "Couldn't confirm the current wallet is empty. Try again in a minute.",
+      503
+    );
+  const apiKey = await decryptInstanceBankrRuntimeApiKey(params.record);
+  if (!apiKey) throw unavailable();
+
+  const { apiBaseUrl } = getBankrPartnerConfig(params.env);
+  let payload: Record<string, unknown>;
+  try {
+    const response = await bankrUserFetchImpl(params.fetchImpl)(
+      `${apiBaseUrl}/wallet/portfolio?showLowValueTokens=true&include=nfts`,
+      {
+        method: "GET",
+        headers: { "X-API-Key": apiKey },
+        signal: AbortSignal.timeout(BANKR_KEY_CHECK_TIMEOUT_MS),
+      }
+    );
+    if (!response.ok) throw unavailable();
+    payload = asRecord(await response.json());
+  } catch {
+    throw unavailable();
+  }
+
+  const balances = payload.balances;
+  if (!balances || typeof balances !== "object" || Array.isArray(balances)) throw unavailable();
+
+  const holdings: string[] = [];
+  for (const [chain, entryValue] of Object.entries(balances as Record<string, unknown>)) {
+    const entry = asRecord(entryValue);
+    const native = Number(entry.nativeBalance ?? 0);
+    if (!Number.isFinite(native)) throw unavailable();
+    if (native > (chain === "base" ? HIVRA_GAS_TOPUP_ETH : 0)) {
+      holdings.push(`${entry.nativeBalance} native on ${chain}`);
+    }
+    const tokens = Array.isArray(entry.tokenBalances) ? entry.tokenBalances : [];
+    for (const tokenValue of tokens) {
+      const token = asRecord(asRecord(tokenValue).token);
+      const amount = Number(token.balance ?? 0);
+      if (!Number.isFinite(amount)) throw unavailable();
+      if (amount > 0) {
+        holdings.push(`${token.balance} ${readString(asRecord(token.baseToken).symbol) ?? "tokens"} on ${chain}`);
+      }
+    }
+  }
+  const nfts = Array.isArray(payload.nfts) ? payload.nfts.length : 0;
+  if (nfts > 0) holdings.push(`${nfts} NFT${nfts === 1 ? "" : "s"}`);
+  return holdings;
 }
 
 async function revokeAllPartnerWalletApiKeys(params: {
@@ -1082,19 +1147,34 @@ async function revokeAllPartnerWalletApiKeys(params: {
 
 async function writeWalletRow(params: {
   db: SupabaseLike;
+  owner: BankrWalletOwner;
   existing: InstanceBankrWalletRecord | null;
   payload: Record<string, unknown>;
 }): Promise<InstanceBankrWalletRecord> {
   // Select-then-write by id rather than upsert: the owner columns carry
   // partial unique indexes, which ON CONFLICT cannot target by column alone.
-  const query = params.existing
-    ? table(params.db, "instance_bankr_wallets").update(params.payload).eq("id", params.existing.id).select("*")
-    : table(params.db, "instance_bankr_wallets").insert(params.payload).select("*");
-  const { data, error } = await query.single();
+  const write = (existing: InstanceBankrWalletRecord | null) =>
+    (existing
+      ? table(params.db, "instance_bankr_wallets").update(params.payload).eq("id", existing.id).select("*")
+      : table(params.db, "instance_bankr_wallets").insert(params.payload).select("*")
+    ).single();
+  let { data, error } = await write(params.existing);
+  if (error && !params.existing && /duplicate key|unique/i.test(error.message ?? "")) {
+    // A concurrent connect for the same agent inserted first: update that row.
+    const winner = await getBankrWalletForOwner({ owner: params.owner, db: params.db });
+    if (winner) ({ data, error } = await write(winner));
+  }
   if (error || !data) {
     throw new Error(error?.message || "Failed to store agent wallet");
   }
   return asInstanceBankrWalletRecord(data as InstanceBankrWalletRow);
+}
+
+export interface ConnectUserBankrWalletResult {
+  record: InstanceBankrWalletRecord;
+  replacedProvisionedWallet: boolean;
+  /** Set only when this call switched off a Hivra-created wallet. */
+  oldKeysRevoked: boolean | null;
 }
 
 /**
@@ -1107,9 +1187,9 @@ async function writeWalletRow(params: {
  * limits (which an API key cannot change), and revocation.
  *
  * Replacing an existing Hivra-provisioned wallet needs `replaceProvisionedWallet`
- * and an empty wallet (every tracked Base balance zero), so no funds are left
- * behind unreferenced. After the switch, every API key on the old wallet is
- * revoked at Bankr (best effort, recorded in metadata).
+ * and a wallet Bankr reports as empty on every chain, so no funds are left
+ * behind. The old wallet stays recorded on the row for good, and every API key
+ * on it is then revoked at Bankr; the caller reports a failed revocation.
  */
 export async function connectUserBankrWalletForOwner(params: {
   owner: BankrWalletOwner;
@@ -1119,9 +1199,8 @@ export async function connectUserBankrWalletForOwner(params: {
   db?: SupabaseLike | null;
   env?: Record<string, string | undefined>;
   fetchImpl?: BankrUserFetch;
-  rpcFetchImpl?: JsonRpcFetch;
   now?: Date;
-}): Promise<{ record: InstanceBankrWalletRecord; replacedProvisionedWallet: boolean }> {
+}): Promise<ConnectUserBankrWalletResult> {
   const admin = requireDb(params.db ?? supabaseAdmin);
   const now = params.now ?? new Date();
   const apiKey = params.apiKey.trim();
@@ -1140,9 +1219,14 @@ export async function connectUserBankrWalletForOwner(params: {
     throw new Error("Agent wallet belongs to a different user");
   }
 
-  const replacing = existing ? hasHivraProvisionedWallet(existing) : false;
-  let replacedProvisionedWallet: Record<string, unknown> | null = null;
-  if (existing && replacing) {
+  // Only one Hivra-created wallet can ever sit behind an agent, so a single
+  // record, carried across every later reconnect, is the full history.
+  let replacedProvisionedWallet: Record<string, unknown> | null =
+    existing && Object.keys(asRecord(existing.metadata.replacedProvisionedWallet)).length > 0
+      ? asRecord(existing.metadata.replacedProvisionedWallet)
+      : null;
+  const replacingNow = existing ? hasHivraProvisionedWallet(existing) : false;
+  if (existing && replacingNow) {
     if (!params.replaceProvisionedWallet) {
       throw new AgentWalletConnectError(
         "replace_not_confirmed",
@@ -1150,44 +1234,30 @@ export async function connectUserBankrWalletForOwner(params: {
         409
       );
     }
-    let balances: InstanceBankrWalletTokenBalance[];
-    try {
-      tokenBalanceCache.delete(existing.normalizedEvmAddress);
-      balances = await readInstanceBankrWalletBalances({
-        walletAddress: existing.evmAddress,
-        env: params.env,
-        fetchImpl: params.rpcFetchImpl,
-      });
-    } catch {
-      throw new AgentWalletConnectError(
-        "balance_unavailable",
-        "Couldn't confirm the current wallet is empty. Try again in a minute.",
-        503
-      );
-    }
-    const funded = balances.filter((balance) =>
-      balance.tokenSymbol === "ETH"
-        ? Number(balance.balanceDisplay) > HIVRA_GAS_TOPUP_ETH
-        : isNonZeroDisplay(balance.balanceDisplay)
-    );
-    if (funded.length > 0) {
+    const holdings = await listProvisionedWalletHoldings({
+      record: existing,
+      env: params.env,
+      fetchImpl: params.fetchImpl,
+    });
+    if (holdings.length > 0) {
       throw new AgentWalletConnectError(
         "balance_not_empty",
-        `Withdraw everything from the current wallet first (${funded
-          .map((balance) => `${balance.balanceDisplay} ${balance.tokenSymbol}`)
-          .join(", ")}).`,
+        `Withdraw everything from the current wallet first (${holdings.slice(0, 5).join(", ")}${
+          holdings.length > 5 ? ", …" : ""
+        }).`,
         409
       );
     }
     replacedProvisionedWallet = {
       bankrWalletId: existing.bankrWalletId,
-      evmAddress: existing.evmAddress,
+      evmAddress: existing.normalizedEvmAddress,
       replacedAt: now.toISOString(),
     };
   }
 
   const record = await writeWalletRow({
     db: admin,
+    owner: params.owner,
     existing,
     payload: {
       [ownerColumn(params.owner)]: ownerId(params.owner),
@@ -1213,8 +1283,8 @@ export async function connectUserBankrWalletForOwner(params: {
     },
   });
 
-  if (!replacedProvisionedWallet) {
-    return { record, replacedProvisionedWallet: false };
+  if (!replacingNow || !replacedProvisionedWallet) {
+    return { record, replacedProvisionedWallet: false, oldKeysRevoked: null };
   }
 
   const revocation = await revokeAllPartnerWalletApiKeys({
@@ -1224,6 +1294,7 @@ export async function connectUserBankrWalletForOwner(params: {
   });
   const withRevocation = await writeWalletRow({
     db: admin,
+    owner: params.owner,
     existing: record,
     payload: {
       metadata: {
@@ -1237,7 +1308,7 @@ export async function connectUserBankrWalletForOwner(params: {
       updated_at: now.toISOString(),
     },
   });
-  return { record: withRevocation, replacedProvisionedWallet: true };
+  return { record: withRevocation, replacedProvisionedWallet: true, oldKeysRevoked: revocation.revoked };
 }
 
 /**
@@ -1265,6 +1336,7 @@ export async function disconnectUserBankrWalletForOwner(params: {
 
   return writeWalletRow({
     db: admin,
+    owner: params.owner,
     existing,
     payload: {
       api_key_encrypted: null,
@@ -1286,7 +1358,21 @@ export async function isUserConnectedBankrWallet(params: {
   return Boolean(record && agentWalletCustody(record) === "user_connected");
 }
 
+/**
+ * The key Hivra itself may use to move funds (withdrawals). Always null for a
+ * user's own Bankr account: Hivra never initiates transfers from one, and
+ * refusing here also covers a withdrawal that loaded the wallet just after
+ * the user switched it to their own account.
+ */
 export async function decryptInstanceBankrApiKey(
+  record: InstanceBankrWalletRecord
+): Promise<string | null> {
+  if (agentWalletCustody(record) === "user_connected") return null;
+  return decryptInstanceBankrRuntimeApiKey(record);
+}
+
+/** The key delivered to the agent runtime, for either kind of wallet. */
+export async function decryptInstanceBankrRuntimeApiKey(
   record: InstanceBankrWalletRecord
 ): Promise<string | null> {
   if (record.status !== "active" || record.apiKeyStatus !== "active") {
@@ -1333,7 +1419,7 @@ export async function buildInstanceBankrAgentConfig(
     return null;
   }
 
-  const apiKey = await decryptInstanceBankrApiKey(record);
+  const apiKey = await decryptInstanceBankrRuntimeApiKey(record);
   if (!apiKey) return null;
 
   return {
