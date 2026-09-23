@@ -22,6 +22,7 @@ jest.mock("@/lib/billing/bankr-withdraw", () => ({
 jest.mock("@/lib/billing/token-tier-eligibility", () => ({
   evaluateAndRecordTokenTierEligibility: jest.fn(async () => ({ configured: true, warnings: [], pro: null, power: null })),
   holdTierBreachesUntil: jest.fn(async () => undefined),
+  clearTierBreachHold: jest.fn(async () => undefined),
 }));
 jest.mock("@/lib/billing/token-holdings", () => ({
   fetchHermesTokenBalance: jest.fn(),
@@ -36,7 +37,11 @@ import {
   waitForTransferReceipt,
   withdrawAllHermesTokensForUser,
 } from "@/lib/billing/bankr-withdraw";
-import { evaluateAndRecordTokenTierEligibility, holdTierBreachesUntil } from "@/lib/billing/token-tier-eligibility";
+import {
+  clearTierBreachHold,
+  evaluateAndRecordTokenTierEligibility,
+  holdTierBreachesUntil,
+} from "@/lib/billing/token-tier-eligibility";
 import {
   getHermesLockWallet,
   refreshPrimaryHermesTokenHolding,
@@ -57,12 +62,15 @@ function post(body: unknown) {
 beforeEach(() => {
   jest.clearAllMocks();
   (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_1" });
-  (withdrawAllHermesTokensForUser as jest.Mock).mockResolvedValue({
+  (withdrawAllHermesTokensForUser as jest.Mock).mockImplementation(async (params) => {
+    await params.beforeTransfer?.(HELD);
+    return {
     status: "submitted",
     txHash: "0xmove",
     amountRaw: HELD.toString(),
     amountDisplay: "5000000",
     recipientAddress: OWN.normalizedAddress,
+    };
   });
   (getHermesLockWallet as jest.Mock).mockResolvedValue(LOCK);
   (getSelfCustodyPrimaryWallet as jest.Mock).mockResolvedValue(OWN);
@@ -88,14 +96,17 @@ it("moves to the verified wallet and evaluates only its balance once mined", asy
   expect(evaluateAndRecordTokenTierEligibility).toHaveBeenCalledWith({ userId: "user_1", balances: { hermesos: HELD } });
   // The exit path's lock-wallet re-evaluation never runs.
   expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
+  // Evaluated where the tokens landed: the hold is spent.
+  expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1" });
 });
 
-it("holds new breaches while the move is in flight, and evaluates nothing until it is mined", async () => {
+it("holds new breaches for the moved amount while the move is in flight, and evaluates nothing until it is mined", async () => {
   (waitForTransferReceipt as jest.Mock).mockResolvedValue("pending");
   const body = await (await POST(post({ destination: "verified_wallet" }))).json();
   expect(holdTierBreachesUntil).toHaveBeenCalledWith(
-    expect.objectContaining({ userId: "user_1", reason: "lock_wallet_move_to_verified_wallet" })
+    expect.objectContaining({ userId: "user_1", movingRaw: HELD, reason: "lock_wallet_move_to_verified_wallet" })
   );
+  expect(clearTierBreachHold).not.toHaveBeenCalled();
   const until = (holdTierBreachesUntil as jest.Mock).mock.calls[0][0].until as Date;
   expect(until.getTime() - Date.now()).toBeGreaterThan(25 * 60 * 1000);
   expect(body.data.postWithdrawEligibility).toEqual({ evaluated: false, reason: "move_pending" });
@@ -118,6 +129,23 @@ it("does not evaluate on a lagging RPC read that does not show the moved tokens 
   jest.useRealTimers();
   expect(body.data.postWithdrawEligibility).toEqual({ evaluated: false, reason: "move_balance_not_visible_yet" });
   expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
+});
+
+it("drops the hold when the move is not sent", async () => {
+  (withdrawAllHermesTokensForUser as jest.Mock).mockImplementation(async (params) => {
+    await params.beforeTransfer?.(HELD);
+    return { status: "transfer_failed", errorMessage: "bankr down" };
+  });
+  expect((await POST(post({ destination: "verified_wallet" }))).status).toBe(502);
+  expect(holdTierBreachesUntil).toHaveBeenCalledTimes(1);
+  expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1" });
+  expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
+});
+
+it("writes no hold for a withdraw (an exit)", async () => {
+  (refreshPrimaryHermesTokenHolding as jest.Mock).mockResolvedValue({ status: "refreshed", snapshot: { balanceRaw: "0" } });
+  await POST(post({}));
+  expect(holdTierBreachesUntil).not.toHaveBeenCalled();
 });
 
 it("asks for a verified wallet when there is none", async () => {

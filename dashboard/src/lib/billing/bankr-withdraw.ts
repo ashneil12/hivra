@@ -242,6 +242,11 @@ interface WithdrawParams {
    *     move, not an exit: the tier keeps counting the same tokens.
    */
   destination?: "withdraw_address" | "verified_wallet";
+  /**
+   * Runs once the amount is known and the claim row is held, just before the
+   * transfer is submitted. A throw cancels the withdraw: nothing is sent.
+   */
+  beforeTransfer?: (amountRaw: bigint) => Promise<void>;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   env?: Record<string, string | undefined>;
@@ -474,6 +479,24 @@ export async function withdrawAllHermesTokensForUser(
       amountRaw: balance.balanceRaw,
       amountDisplay: balance.balanceDisplay,
     };
+  }
+
+  if (params.beforeTransfer) {
+    try {
+      await params.beforeTransfer(BigInt(balance.balanceRaw));
+    } catch (prepareErr) {
+      const prepareErrorMessage =
+        prepareErr instanceof Error ? prepareErr.message : String(prepareErr);
+      await finalizeClaim("cancelled", { error_message: prepareErrorMessage });
+      return {
+        status: "transfer_failed",
+        errorMessage: prepareErrorMessage,
+        recipientAddress: recipient,
+        amountRaw: balance.balanceRaw,
+        amountDisplay: balance.balanceDisplay,
+        gasTopup,
+      };
+    }
   }
 
   let txHash: string | null;

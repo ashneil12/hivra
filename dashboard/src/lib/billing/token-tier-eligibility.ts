@@ -234,22 +234,43 @@ function meetsRequiredBalance(balance: bigint, required: bigint): boolean {
 }
 
 const BREACH_HOLD_KEY = "breach_hold_until";
+const BREACH_HOLD_MOVING_KEY = "breach_hold_moving_raw";
+const BREACH_HOLD_KEYS = [BREACH_HOLD_KEY, BREACH_HOLD_MOVING_KEY, "breach_hold_reason"];
 
-function breachHoldUntilOf(row: TierQualificationRow): Date | null {
-  const raw = row.metadata?.[BREACH_HOLD_KEY];
-  if (typeof raw !== "string") return null;
-  const at = Date.parse(raw);
-  return Number.isFinite(at) ? new Date(at) : null;
+/** An in-flight lock-wallet move: until when, and how many $HermesOS are between wallets. */
+function breachHoldOf(row: TierQualificationRow): { until: Date; movingRaw: bigint } | null {
+  const until = row.metadata?.[BREACH_HOLD_KEY];
+  const moving = row.metadata?.[BREACH_HOLD_MOVING_KEY];
+  if (typeof until !== "string" || typeof moving !== "string" || !/^\d+$/.test(moving)) return null;
+  const at = Date.parse(until);
+  return Number.isFinite(at) ? { until: new Date(at), movingRaw: BigInt(moving) } : null;
+}
+
+function hasBreachHold(row: TierQualificationRow): boolean {
+  return BREACH_HOLD_KEYS.some((key) => row.metadata?.[key] !== undefined);
+}
+
+/** A row patch that drops a spent or expired hold, or nothing when there is none. */
+function clearBreachHoldPatch(row: TierQualificationRow): { metadata?: Record<string, unknown> } {
+  if (!hasBreachHold(row)) return {};
+  const metadata = { ...(row.metadata ?? {}) };
+  for (const key of BREACH_HOLD_KEYS) delete metadata[key];
+  return { metadata };
 }
 
 /**
- * Hold off new breaches on every tier row of a user until `until`: used while
- * a legacy lock-wallet balance moves to the user's own verified wallet, so the
- * moment the tokens are between wallets never starts a breach.
+ * Hold off new breaches on every tier row of a user until `until`, while a
+ * legacy lock-wallet balance moves to the user's own verified wallet: the
+ * moment the tokens are between wallets never starts a breach. The hold only
+ * covers `movingRaw`: a breach still starts when the balance read plus the
+ * tokens in flight is below the qualifying quantity, so moving dust never
+ * shields an emptied wallet. The evaluator drops the hold once it has judged
+ * the row without it.
  */
 export async function holdTierBreachesUntil(params: {
   userId: string;
   until: Date;
+  movingRaw: bigint;
   reason: string;
   db?: SupabaseLike | null;
 }) {
@@ -265,11 +286,26 @@ export async function holdTierBreachesUntil(params: {
         metadata: {
           ...(row.metadata ?? {}),
           [BREACH_HOLD_KEY]: params.until.toISOString(),
+          [BREACH_HOLD_MOVING_KEY]: params.movingRaw.toString(),
           breach_hold_reason: params.reason,
         },
       },
       "Failed to hold tier breaches"
     );
+  }
+}
+
+/**
+ * Drop a user's breach hold: the move it covered failed, or has landed and
+ * been evaluated on the wallet it reached.
+ */
+export async function clearTierBreachHold(params: { userId: string; db?: SupabaseLike | null }) {
+  const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
+  if (!db) throw new Error("Database not configured");
+  for (const tier of ["pro", "power"] as const) {
+    const row = await loadRow(db, params.userId, tier);
+    if (!row || !hasBreachHold(row)) continue;
+    await updateRow(db, row, clearBreachHoldPatch(row), "Failed to clear the tier breach hold");
   }
 }
 
@@ -834,11 +870,18 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   // ──────────────────────────────────────────────────────────────────
   // Case (b) — fresh breach: was strictly eligible, now below qualifying.
   // ──────────────────────────────────────────────────────────────────
-  const breachHoldUntil = breachHoldUntilOf(row);
-  if (wasStrictlyEligible && !meetsWithEither(qualifyingQuantity) && breachHoldUntil && now < breachHoldUntil) {
+  const breachHold = breachHoldOf(row);
+  if (
+    wasStrictlyEligible &&
+    !meetsWithEither(qualifyingQuantity) &&
+    breachHold &&
+    now < breachHold.until &&
+    tokenKey === "hermesos" &&
+    meetsRequiredBalance(rowBalance + breachHold.movingRaw, qualifyingQuantity)
+  ) {
     // A lock-wallet move to the user's own wallet is in flight: the tokens are
     // between wallets, not gone. Hold off recording a breach until it lands.
-    warnings.push(`User ${userId} (${tier}) breach held until ${breachHoldUntil.toISOString()}: lock-wallet move in flight.`);
+    warnings.push(`User ${userId} (${tier}) breach held until ${breachHold.until.toISOString()}: lock-wallet move in flight.`);
     await updateRow(
       db,
       row,
@@ -856,6 +899,7 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
         last_balance_seen: rowBalance.toString(),
         last_evaluated_at: nowStamp,
         last_breach_at: nowStamp,
+        ...clearBreachHoldPatch(row),
       },
       "Failed to mark breach"
     );
@@ -894,7 +938,13 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   await updateRow(
     db,
     row,
-    { last_balance_seen: rowBalance.toString(), last_evaluated_at: nowStamp },
+    {
+      last_balance_seen: rowBalance.toString(),
+      last_evaluated_at: nowStamp,
+      // An expired hold is dropped here; a live one stays until the move's own
+      // post-transfer evaluation clears it (clearTierBreachHold).
+      ...(breachHold && now < breachHold.until ? {} : clearBreachHoldPatch(row)),
+    },
     "Failed to update last_balance"
   );
   return {

@@ -42,6 +42,7 @@ import {
 } from "@/lib/billing/bankr-withdraw";
 import {
   evaluateAndRecordTokenTierEligibility,
+  clearTierBreachHold,
   holdTierBreachesUntil,
 } from "@/lib/billing/token-tier-eligibility";
 import {
@@ -147,7 +148,31 @@ export async function POST(req: NextRequest) {
         userId,
         expectedRecipient: body.expectedRecipient,
         destination,
+        // A move, not an exit: before anything is sent, hold off new breaches
+        // for exactly the amount in flight. Whatever reads balances in the next
+        // minutes (a cron tick, a slow RPC node) may see the tokens in neither
+        // wallet. If the hold cannot be written, nothing is sent.
+        beforeTransfer:
+          destination === "verified_wallet"
+            ? (amountRaw) =>
+                holdTierBreachesUntil({
+                  userId,
+                  until: new Date(Date.now() + LOCK_MOVE_BREACH_HOLD_MS),
+                  movingRaw: amountRaw,
+                  reason: "lock_wallet_move_to_verified_wallet",
+                })
+            : undefined,
       });
+      if (destination === "verified_wallet" && result.status !== "submitted") {
+        // Nothing left the lock wallet: drop any hold the attempt wrote.
+        await clearTierBreachHold({ userId }).catch((clearErr) =>
+          log.warn("failed to clear the breach hold after an unsent move", {
+            ...LOG_CONTEXT,
+            userId,
+            failureType: "withdraw_move_hold_clear_failed",
+          }, clearErr)
+        );
+      }
     } finally {
       inFlightByUser.delete(userId);
       releaseLock();
@@ -245,14 +270,6 @@ export async function POST(req: NextRequest) {
       // is not mined yet, evaluate nothing now: the next holdings refresh
       // reads it (and a breach, if any, has the normal grace).
       try {
-        // Whatever reads balances in the next minutes (a cron tick, a slow
-        // RPC node) may see the tokens in neither wallet: no breach until the
-        // move has had time to land and be read.
-        await holdTierBreachesUntil({
-          userId,
-          until: new Date(Date.now() + LOCK_MOVE_BREACH_HOLD_MS),
-          reason: "lock_wallet_move_to_verified_wallet",
-        });
         const receipt = result.txHash ? await waitForTransferReceipt({ txHash: result.txHash }) : "pending";
         if (receipt === "mined") {
           const [lockWallet, verifiedWallet] = await Promise.all([
@@ -271,6 +288,8 @@ export async function POST(req: NextRequest) {
             }
             if (refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) >= moved) {
               await evaluateAndRecordTokenTierEligibility({ userId, balances: refreshed.balances });
+              // The tokens are read where they landed: the hold has done its job.
+              await clearTierBreachHold({ userId });
               postWithdrawEligibility = { evaluated: true, balanceRaw: refreshed.snapshot?.balanceRaw ?? "0" };
             } else {
               postWithdrawEligibility = { evaluated: false, reason: "move_balance_not_visible_yet" };

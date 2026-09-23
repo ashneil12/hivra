@@ -37,7 +37,7 @@ jest.mock("@/lib/billing/deposit-quotes", () => ({
 }));
 
 import { computeUserTokenAccess, TokenNotAllowedError } from "@/lib/billing/token-access";
-import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { clearTierBreachHold, evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
 
 type Row = Record<string, unknown> & { id: string; user_id: string; tier: string };
 
@@ -447,28 +447,73 @@ describe("a grandfathered user who converts", () => {
 });
 
 describe("a lock-wallet move in flight", () => {
-  it("holds a new breach until the hold ends, then breaches normally", async () => {
-    const db = new FakeDb();
-    const holdUntil = new Date(NOW.getTime() + 30 * 60 * 1000);
-    db.rows.push(hermesosProRow({ metadata: { breach_hold_until: holdUntil.toISOString() } }));
-    const during = await evaluateAndRecordTokenTierEligibility({
+  const PRO_QTY = () => BigInt(hermesosProRow().qualifying_quantity as string);
+  const held = (until: Date, movingRaw: bigint) =>
+    hermesosProRow({
+      metadata: {
+        breach_hold_until: until.toISOString(),
+        breach_hold_moving_raw: movingRaw.toString(),
+        breach_hold_reason: "lock_wallet_move_to_verified_wallet",
+      },
+    });
+  const evaluate = (db: FakeDb, hermesos: bigint, now: Date) =>
+    evaluateAndRecordTokenTierEligibility({
       userId: "old",
-      balances: { hermesos: 0n, hivra: 0n },
+      balances: { hermesos, hivra: 0n },
       access: grandfathered,
       db: db as unknown as DbCast,
-      now: NOW,
+      now,
     });
+
+  it("holds a new breach until the hold ends, then breaches normally and drops the hold", async () => {
+    const db = new FakeDb();
+    const holdUntil = new Date(NOW.getTime() + 30 * 60 * 1000);
+    db.rows.push(held(holdUntil, PRO_QTY()));
+    const during = await evaluate(db, 0n, NOW);
     expect(during.pro).toMatchObject({ transition: "unchanged", currentlyEligible: true });
     expect(db.rows[0]).toMatchObject({ currently_eligible: true, last_breach_at: null });
 
-    const after = new Date(holdUntil.getTime() + 1);
-    const breached = await evaluateAndRecordTokenTierEligibility({
-      userId: "old",
-      balances: { hermesos: 0n, hivra: 0n },
-      access: grandfathered,
-      db: db as unknown as DbCast,
-      now: after,
-    });
+    const breached = await evaluate(db, 0n, new Date(holdUntil.getTime() + 1));
     expect(breached.pro?.transition).toBe("breached");
+    expect(db.rows[0].metadata).not.toHaveProperty("breach_hold_until");
+  });
+
+  it("does not shield an emptied wallet behind a dust move", async () => {
+    const db = new FakeDb();
+    db.rows.push(held(new Date(NOW.getTime() + 30 * 60 * 1000), 10n ** 18n));
+    const result = await evaluate(db, 0n, NOW);
+    expect(result.pro?.transition).toBe("breached");
+  });
+
+  it("holds when the balance read plus the tokens in flight still qualifies", async () => {
+    const db = new FakeDb();
+    const half = PRO_QTY() / 2n;
+    db.rows.push(held(new Date(NOW.getTime() + 30 * 60 * 1000), PRO_QTY() - half));
+    expect((await evaluate(db, half, NOW)).pro).toMatchObject({ transition: "unchanged", currentlyEligible: true });
+  });
+
+  it("ignores a hold without a moved amount", async () => {
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow({ metadata: { breach_hold_until: new Date(NOW.getTime() + 60_000).toISOString() } }));
+    expect((await evaluate(db, 0n, NOW)).pro?.transition).toBe("breached");
+  });
+
+  it("keeps a live hold on a qualifying read, and drops an expired one", async () => {
+    const db = new FakeDb();
+    const holdUntil = new Date(NOW.getTime() + 30 * 60 * 1000);
+    db.rows.push(held(holdUntil, PRO_QTY()));
+    await evaluate(db, PRO_QTY(), NOW);
+    expect(db.rows[0].metadata).toHaveProperty("breach_hold_moving_raw");
+    await evaluate(db, PRO_QTY(), new Date(holdUntil.getTime() + 1));
+    expect(db.rows[0].metadata).not.toHaveProperty("breach_hold_moving_raw");
+  });
+
+  it("clearTierBreachHold drops the hold and keeps other metadata", async () => {
+    const db = new FakeDb();
+    const row = held(new Date(NOW.getTime() + 60_000), PRO_QTY());
+    row.metadata = { ...(row.metadata as object), note: "kept" };
+    db.rows.push(row);
+    await clearTierBreachHold({ userId: "old", db: db as unknown as DbCast });
+    expect(db.rows[0].metadata).toEqual({ note: "kept" });
   });
 });
