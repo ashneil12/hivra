@@ -6,7 +6,7 @@ import {
   evaluateComputeEntitlement,
   normalizeEntitlementInstance,
 } from "@/lib/billing/entitlements";
-import { getLatestHermesTokenHoldingSnapshot } from "@/lib/billing/token-holdings";
+import { getLatestAccessTokenHoldingSnapshot } from "@/lib/billing/token-access";
 import type { TierKey } from "@/lib/services/tier-specs";
 
 // Single source of truth for "is this user entitled to a Pro+ feature?".
@@ -56,7 +56,7 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
           .not("status", "in", '("deleted")'),
         getCreditSummary(userId, null),
         deriveReservedCreditBalance(userId),
-        getLatestHermesTokenHoldingSnapshot(userId),
+        getLatestAccessTokenHoldingSnapshot(userId),
       ]);
 
     const decision = evaluateComputeEntitlement({

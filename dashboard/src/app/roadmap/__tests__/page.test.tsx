@@ -5,6 +5,7 @@ import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
 import RoadmapPage from "../page";
+import { roadmapContent } from "@/lib/roadmap-content";
 
 jest.mock("next/link", () => {
   const MockLink = ({
@@ -109,7 +110,7 @@ describe("/roadmap page", () => {
       })
     ).toBeInTheDocument();
 
-    expect(screen.getByText("APRIL 2026 · HERMESOS.CLOUD")).toBeInTheDocument();
+    expect(screen.getByText("APRIL 2026 · HIVRA.CLOUD")).toBeInTheDocument();
     expect(screen.getByText("The operating system for autonomous agents.")).toBeInTheDocument();
 
     expect(screen.queryByRole("link", { name: /download roadmap/i })).not.toBeInTheDocument();
@@ -122,17 +123,11 @@ describe("/roadmap page", () => {
     expect(within(roadmapNav).queryByRole("link", { name: /compare/i })).not.toBeInTheDocument();
     expect(within(roadmapNav).queryByRole("link", { name: /blog/i })).not.toBeInTheDocument();
 
+    expect(screen.getByText("Both paths give access to the same platform.")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Both paths give access to the same platform and the same features. Whichever way you choose to enter, $HermesOS powers the underlying infrastructure either way."
-      )
+      screen.getByText("Card users never need a wallet or a token. Self-hosting needs neither a token nor a Hivra account.")
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "For users paying by card, the platform operates on two layers. The first layer is the one users interact with: a simple credits system. Top up, spend credits, run agents. No wallets, no tokens, no complexity. The second layer is the underlying infrastructure: the platform uses a shared pool to settle platform operations on-chain using $HermesOS. Card users are funding the infrastructure that runs their agents. They are not buying tokens, and the tokens are not theirs. They are simply using a platform whose backend runs on-chain settlement, the same way most apps run on infrastructure their users never see."
-      )
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/Free plan access \(0\.5 vCPU, 1GB RAM\)/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/qualify for a compute tier/i).length).toBeGreaterThanOrEqual(2);
 
     expect(
       screen.getByRole("heading", {
@@ -185,12 +180,7 @@ describe("/roadmap page", () => {
     expect(screen.getByText("TOKEN UTILITY")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "$HermesOS is the utility token of the Hivra platform. The token is not a financial instrument. It is functional infrastructure for access, payments, and platform participation. Token utility is being introduced in phases as the platform matures."
-      )
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Hold even a single \$HermesOS token and get Free plan access: 0\.5 vCPU, 1GB RAM\./i
+        "Compute access (01) is live today. The other uses below were proposals in April 2026. Some have changed since, and none is a commitment. The current proposal is in the tokenomics."
       )
     ).toBeInTheDocument();
     expect(
@@ -215,5 +205,40 @@ describe("/roadmap page", () => {
     expect(container).not.toHaveTextContent(/holders vote/i);
     expect(container).not.toHaveTextContent(/Token holders participate in decisions/i);
     expect(screen.getByText(/No governance model has been chosen/)).toBeInTheDocument();
+  });
+
+  it("presents the April 2026 plan as history and keeps present-tense claims true", () => {
+    const { container } = render(<RoadmapPage />);
+    expect(screen.getByText(/This is Hivra's April 2026 roadmap, kept for the record\./)).toBeInTheDocument();
+    for (const stale of [
+      /hermesos\.cloud/i,
+      /launched into production two weeks ago/i,
+      /Never more than 24 hours from a clean restore/i,
+      /guaranteed early access/i,
+      /moving from a subscription-based model to a token-based access system/i,
+      /Hold even a single \$HermesOS token/i,
+      /Phase 1 ships in six weeks/i,
+      /[\u2013\u2014]/,
+    ]) {
+      expect(container).not.toHaveTextContent(stale);
+    }
+    expect(screen.getAllByText(/hivra\.cloud\/token/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Agents on their own computers")).toBeInTheDocument();
+  });
+
+  it("labels every token use that is not live as proposed", () => {
+    const [live, ...rest] = roadmapContent.token.utilities;
+    expect(live.description).toMatch(/^Live today\./);
+    for (const utility of rest) {
+      if (utility.icon === "governance") continue;
+      expect(utility.description).toMatch(/^Proposed: /);
+    }
+    const phaseBullets = roadmapContent.roadmap.phases.flatMap((phase) =>
+      phase.sections.flatMap((section): readonly string[] => ("bullets" in section && section.bullets ? section.bullets : [])),
+    );
+    for (const bullet of phaseBullets.filter((text) => /\$HermesOS|in the token|token balance|token-based|token spendable/i.test(text))) {
+      if (/^Token path: /.test(bullet)) continue;
+      expect(bullet).toMatch(/^Proposed: /);
+    }
   });
 });

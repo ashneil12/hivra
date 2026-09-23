@@ -12,7 +12,7 @@
  *        - live yearly $HermesOS Power / Pro subscription → "fleet" / "operator"
  *        - currently_eligible token Power qualification → "fleet"
  *        - currently_eligible token Pro qualification   → "operator"
- *        - balance >= 1 Hivra token                  → "token_base"
+ *        - balance >= 1 token of a platform token the user may hold → "token_base"
  *        - balance < 1 token                            → "credit_base" (after grace)
  *   3. Calls applyTierChange() to push the new tier through the same path
  *      Stripe webhooks use (DB write + live Proxmox resize).
@@ -36,11 +36,13 @@ import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
+import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings";
 import {
-  HERMESOS_TOKEN_ADDRESS,
-  refreshVerifiedHermesTokenHoldings,
-  qualifiesForHermesBaseTier,
-} from "@/lib/billing/token-holdings";
+  qualifiesForTokenBaseTier,
+  resolveTokenAccessForUsers,
+  tierRowTokenCounts,
+} from "@/lib/billing/token-access";
+import { livePlatformTokens, platformTokenByAddress, type PlatformTokenKey } from "@/lib/billing/token-registry";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import {
   resolveTierSpec,
@@ -151,9 +153,18 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   //     accumulating. 30 days is comfortably wider than the
   //     TOKEN_DOWNGRADE_GRACE_HOURS window so we never exclude a snapshot
   //     that the grace logic would still consider valid.
+  // Token access per user: before $HIVRA is active everyone is $HermesOS-only
+  // and this reads nothing. After, it decides which tokens' holdings count.
+  const accessByUser = await resolveTokenAccessForUsers(userIds, { db });
+  const liveTokenAddresses = livePlatformTokens().map((token) => token.address);
+
   const snapshotsByUser = new Map<
     string,
-    { balance_raw: string; qualifies_base_tier: boolean; checked_at: string }
+    {
+      balances: Partial<Record<PlatformTokenKey, bigint>>;
+      display: Partial<Record<PlatformTokenKey, string>>;
+      checked_at: string;
+    }
   >();
   if (userIds.length > 0) {
     const recencyCutoff = new Date(
@@ -161,26 +172,28 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     ).toISOString();
     const { data: snapRows, error: snapErr } = await db
       .from("token_holding_snapshots")
-      .select("user_id, balance_raw, qualifies_base_tier, checked_at")
+      .select("user_id, token_address, balance_raw::text, qualifies_base_tier, checked_at")
       .in("user_id", userIds)
-      .eq("token_address", HERMESOS_TOKEN_ADDRESS)
+      .in("token_address", liveTokenAddresses)
       .gte("checked_at", recencyCutoff)
       .order("checked_at", { ascending: false });
     if (snapErr) return apiError(`Snapshot scan failed: ${snapErr.message}`, 500);
     for (const s of (snapRows ?? []) as Array<{
       user_id: string;
+      token_address: string;
       balance_raw: string;
       qualifies_base_tier: boolean;
       checked_at: string;
     }>) {
-      // First write wins because we ordered DESC by checked_at.
-      if (!snapshotsByUser.has(s.user_id)) {
-        snapshotsByUser.set(s.user_id, {
-          balance_raw: s.balance_raw,
-          qualifies_base_tier: s.qualifies_base_tier,
-          checked_at: s.checked_at,
-        });
+      const token = platformTokenByAddress(s.token_address);
+      if (!token) continue;
+      const entry = snapshotsByUser.get(s.user_id) ?? { balances: {}, display: {}, checked_at: s.checked_at };
+      // First write per token wins because we ordered DESC by checked_at.
+      if (entry.balances[token.key] === undefined) {
+        entry.balances[token.key] = BigInt(s.balance_raw);
+        entry.display[token.key] = s.balance_raw;
       }
+      snapshotsByUser.set(s.user_id, entry);
     }
   }
 
@@ -207,11 +220,19 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   if (userIds.length > 0) {
     const { data: qualRows, error: qualErr } = await db
       .from("token_tier_qualifications")
-      .select("user_id, tier, currently_eligible")
+      .select("user_id, tier, token_key, currently_eligible")
       .in("user_id", userIds)
       .eq("currently_eligible", true);
     if (qualErr) return apiError(`Qualification scan failed: ${qualErr.message}`, 500);
-    for (const q of (qualRows ?? []) as Array<{ user_id: string; tier: "pro" | "power"; currently_eligible: boolean }>) {
+    for (const q of (qualRows ?? []) as Array<{
+      user_id: string;
+      tier: "pro" | "power";
+      token_key: PlatformTokenKey | null;
+      currently_eligible: boolean;
+    }>) {
+      // A tier row counts only in a token that still counts for the user.
+      const access = accessByUser.get(q.user_id);
+      if (access && !tierRowTokenCounts(access, q.token_key ?? "hermesos")) continue;
       const mapped: "operator" | "fleet" = q.tier === "power" ? "fleet" : "operator";
       const existing = qualByUser.get(q.user_id);
       // Power outranks Pro when both are present.
@@ -330,9 +351,12 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     } else if (qual) {
       desiredTier = qual;
       reason = `cron: token-tier qualification ${qual === "fleet" ? "power" : "pro"}`;
-    } else if (snapshot && qualifiesForHermesBaseTier(snapshot.balance_raw)) {
+    } else if (
+      snapshot &&
+      qualifiesForTokenBaseTier(accessByUser.get(userId)!, snapshot.balances)
+    ) {
       desiredTier = "token_base";
-      reason = `cron: balance ${snapshot.balance_raw} qualifies`;
+      reason = `cron: balance ${JSON.stringify(snapshot.display)} qualifies`;
     } else {
       // Below threshold (or no snapshot). Apply grace: hold the current
       // token-derived tier if the last snapshot is within the grace window;
@@ -351,7 +375,7 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
         reason = "cron: holding tier during downgrade grace";
       } else {
         desiredTier = "credit_base";
-        reason = `cron: balance ${snapshot?.balance_raw ?? "0"} below threshold`;
+        reason = `cron: balance ${JSON.stringify(snapshot?.display ?? {})} below threshold`;
       }
     }
 
