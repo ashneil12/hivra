@@ -113,6 +113,12 @@ describe('Vault Page', () => {
     expect(heading).toBeInTheDocument();
   });
 
+  it('calls the page API keys so it cannot be mistaken for the future Vault product', async () => {
+    render(<VaultPage />);
+    expect(await screen.findByRole('heading', { level: 2, name: /^API\s*keys\s*\.$/ })).toBeInTheDocument();
+    expect(screen.queryByText(/API Key Vault/i)).not.toBeInTheDocument();
+  });
+
   it('renders the Bind Keys to Active Instances header', async () => {
     render(<VaultPage />);
     const heading = await screen.findByText(/Bind Keys to Core Instance/i);
@@ -366,7 +372,7 @@ describe('Vault Page', () => {
     fireEvent.click(screen.getByRole('radio', { name: /nous portal/i }));
 
     expect(
-      await screen.findByText(/save a reusable encrypted session into vault for future nous deployments/i)
+      await screen.findByText(/save a reusable encrypted session for future nous deployments/i)
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect nous portal/i })).toBeInTheDocument();
   });
@@ -474,10 +480,10 @@ describe('Vault Page', () => {
     fireEvent.change(screen.getByPlaceholderText(/sk-\.\.\./i), {
       target: { value: 'sk-test-123' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save to vault/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save key$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/primary anthropic saved to vault/i)).toBeInTheDocument();
+      expect(screen.getByText(/primary anthropic saved securely/i)).toBeInTheDocument();
     });
   });
 
@@ -495,10 +501,10 @@ describe('Vault Page', () => {
       fireEvent.change(screen.getByPlaceholderText(/sk-\.\.\./i), {
         target: { value: 'sk-test-123' },
       });
-      fireEvent.click(screen.getByRole('button', { name: /save to vault/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^save key$/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/primary anthropic saved to vault/i)).toBeInTheDocument();
+        expect(screen.getByText(/primary anthropic saved securely/i)).toBeInTheDocument();
       });
 
       const successTimeoutCallIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 5000);

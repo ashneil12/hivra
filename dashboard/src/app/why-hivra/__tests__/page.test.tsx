@@ -2,7 +2,9 @@
 import "@testing-library/jest-dom";
 import { readFileSync } from "node:fs";
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+
+import { getAgent } from "@/lib/hivra/agent-catalog";
 
 import WhyHivraEvolutionPage from "../evolution/page";
 import WhyHivraPage from "../page";
@@ -91,19 +93,59 @@ describe("/why-hivra page", () => {
     expect(screen.getByText("No action is required from current users.")).toBeInTheDocument();
 
     expect(screen.getByRole("heading", { level: 2, name: "What happens to $HermesOS?" })).toBeInTheDocument();
-    expect(screen.getByText("Same token.")).toBeInTheDocument();
-    expect(screen.getByText("Same contract.")).toBeInTheDocument();
-    expect(screen.getByText("Same ecosystem.")).toBeInTheDocument();
+    expect(screen.getByText("Existing $HermesOS holders are grandfathered.")).toBeInTheDocument();
+    expect(screen.getByText("You keep your access, and you can keep using $HermesOS.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "token page" })).toHaveAttribute("href", "/token");
 
     expect(screen.getAllByText("Hermes Agent").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Codex").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("OpenClaw").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("AEON").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Aeon").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Make launching and operating AI agents as easy as launching a website.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /launch your first agent/i })).toHaveAttribute(
       "href",
       "/get-started?plan=free",
     );
+  });
+
+  it("describes the token migration as grandfathered $HermesOS plus a proposed $HIVRA, with no same-token claim", () => {
+    const { container } = render(<WhyHivraEvolutionPage />);
+
+    // The old copy said the token would never change, which contradicts the proposed migration.
+    for (const stale of [/Same token\./, /Same contract\./, /The token is not\./, /A discount mechanism/, /settlement layer/]) {
+      expect(container).not.toHaveTextContent(stale);
+    }
+
+    // Every statement about $HIVRA is labelled as a proposal.
+    const hivraStatements = Array.from(container.querySelectorAll("p, li")).filter((node) =>
+      node.textContent?.includes("$HIVRA"),
+    );
+    expect(hivraStatements.length).toBeGreaterThanOrEqual(4);
+    for (const statement of hivraStatements) {
+      expect(statement.textContent).toMatch(/propos/i);
+    }
+
+    // No price, return, scarcity or urgency language on the token.
+    expect(container).not.toHaveTextContent(/price|return|profit|scarce|limited time|before it'?s too late|don'?t miss/i);
+  });
+
+  it("lists agents by their agent catalog availability", () => {
+    render(<WhyHivraEvolutionPage />);
+    const availableCard = screen.getByRole("heading", { level: 3, name: "Available now" }).closest("div")!;
+    const previewCard = screen.getByRole("heading", { level: 3, name: "In preview" }).closest("div")!;
+    for (const [id, label] of [
+      ["hermes", "Hermes Agent"],
+      ["claude-code", "Claude Code"],
+      ["codex", "Codex"],
+      ["agent-zero", "Agent Zero"],
+      ["openclaw", "OpenClaw"],
+      ["aeon", "Aeon"],
+      ["deepseek-harness", "DeepSeek"],
+    ] as const) {
+      const card = getAgent(id)?.available ? availableCard : previewCard;
+      expect(within(card as HTMLElement).getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("heading", { level: 3, name: "Coming soon" })).not.toBeInTheDocument();
   });
 });
