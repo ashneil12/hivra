@@ -59,6 +59,15 @@ describe("ChannelConnectNudge", () => {
     });
   });
 
+  it("keeps the whole nudge readable on a phone instead of truncating it", async () => {
+    renderNudge();
+
+    const copy = await screen.findByText(NUDGE_COPY);
+    expect(copy).toHaveStyle({ whiteSpace: "normal" });
+    expect(copy).not.toHaveStyle({ textOverflow: "ellipsis" });
+    expect(screen.getByTestId("channel-connect-nudge")).toHaveStyle({ flexWrap: "wrap" });
+  });
+
   it("does not render (or probe) without the welcome param", async () => {
     mockSearchGet.mockReturnValue(null);
 
@@ -82,7 +91,7 @@ describe("ChannelConnectNudge", () => {
   it("routes the connect click to the Telegram tab and captures it", async () => {
     const { onConnect } = renderNudge();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^connect$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^connect telegram$/i }));
 
     expect(onConnect).toHaveBeenCalledTimes(1);
     expect(posthog.capture).toHaveBeenCalledWith("channel_connect_nudge_clicked", {

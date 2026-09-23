@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useCallback } from 'react';
+import { useEffect, useRef, useState, use, useCallback, useSyncExternalStore } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, Terminal, Box, ShieldCheck, Loader2, RotateCcw, Wrench, Clock3, DownloadCloud, CalendarClock, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,7 +13,9 @@ import ResourcesTab from './tabs/ResourcesTab';
 import { TasksPanel } from '@/components/scheduled-tasks/TasksPanel';
 import { fetchPlan, type PlanInfo } from '@/lib/hivra/agent-api';
 import { ConnectDesktopButton } from '@/components/instances/ConnectDesktopButton';
+import { ConnectDesktopModal } from '@/components/instances/ConnectDesktopModal';
 import { AutoUpdateModal } from '@/components/instances/AutoUpdateModal';
+import { SafePortal } from '@/components/ui/SafePortal';
 import {
   DEFAULT_AUTO_UPDATE_ENABLED,
   DEFAULT_AUTO_UPDATE_TIME,
@@ -23,6 +25,7 @@ import {
 import type { InstanceFailureAlert, RecoveryAction } from '@/lib/failure-ownership';
 import { clientLog } from '@/lib/client/logger';
 import { normalizeSshWarmupMessage } from '@/lib/ssh-warmup';
+import styles from './console.module.css';
 
 // ------------- Main Layout ------------- //
 
@@ -130,6 +133,39 @@ const CONSOLE_TABS = [
 
 const CONSOLE_TAB_IDS = CONSOLE_TABS.map((tab) => tab.id) as readonly string[];
 
+// At phone width the seven ops buttons collapse into one Actions disclosure
+// below the tabs, so the tabs stay on the first screen.
+const PHONE_OPS_QUERY = '(max-width: 640px)';
+// Below this the confirm buttons stack, primary action on top.
+const STACKED_CONFIRM_QUERY = '(max-width: 480px)';
+
+function useMediaMatch(query: string): boolean {
+  const subscribe = useCallback((onChange: () => void) => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
+    const list = window.matchMedia(query);
+    list.addEventListener?.('change', onChange);
+    return () => list.removeEventListener?.('change', onChange);
+  }, [query]);
+  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches;
+  return useSyncExternalStore(subscribe, read, () => false);
+}
+
+type OpsKey = 'redeploy' | 'auto_update' | 'restart_gateway' | 'update' | 'repair_runtime' | 'rebuild_runtime';
+
+const OPS_BUTTON_BASE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '10px 18px',
+  fontSize: 11,
+  fontWeight: 700,
+  fontFamily: 'var(--font-mono)',
+  cursor: 'pointer',
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  whiteSpace: 'nowrap',
+};
+
 // Deep-link target: /console?tab=tasks selects the Tasks tab on first paint.
 // Validated against the known tab ids; anything else falls back to settings.
 function resolveInitialTab(requested: string | null | undefined): string {
@@ -160,6 +196,29 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
   });
   const [hostIp, setHostIp] = useState<string | null>(null);
   const [failureAlert, setFailureAlert] = useState<InstanceFailureAlert | null>(null);
+  const phoneOps = useMediaMatch(PHONE_OPS_QUERY);
+  const stackedConfirm = useMediaMatch(STACKED_CONFIRM_QUERY);
+  // Owned here, not by the trigger: the trigger moves between the ops row and
+  // the phone Actions list, and rotating across 640px must not close the guide.
+  const [desktopGuideOpen, setDesktopGuideOpen] = useState(false);
+  const openDesktopGuide = useCallback(() => setDesktopGuideOpen(true), []);
+  const closeDesktopGuide = useCallback(() => setDesktopGuideOpen(false), []);
+  // A backdrop press closes the confirm modal only when it also started on the
+  // backdrop, so a text selection dragged out of the card does not.
+  const confirmBackdropPressRef = useRef(false);
+  const tabStripRef = useRef<HTMLDivElement>(null);
+
+  // Keep the selected tab visible in the horizontally scrolling strip.
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    const tab = strip?.querySelector<HTMLElement>(`[data-tab-id="${activeTab}"]`);
+    if (!strip || !tab) return;
+    const left = tab.offsetLeft;
+    const right = left + tab.offsetWidth;
+    if (left < strip.scrollLeft || right > strip.scrollLeft + strip.clientWidth) {
+      strip.scrollTo?.({ left: Math.max(0, left - 16), behavior: 'smooth' });
+    }
+  }, [activeTab]);
 
   const applySnapshotState = useCallback((snapshotData: unknown) => {
     if (!snapshotData || typeof snapshotData !== 'object') return;
@@ -382,16 +441,130 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
 
   const failureConsoleAction = failureAlert ? recoveryActionToConsoleAction(failureAlert.recoveryAction) : null;
 
+  const opsButtons: Record<OpsKey, { label: string; icon: React.ReactNode; onClick: () => void; tone: React.CSSProperties; disabled?: boolean }> = {
+    redeploy: {
+      label: ACTION_CONFIG.redeploy.buttonLabel,
+      icon: <RotateCcw size={14} />,
+      onClick: () => handleAction('redeploy'),
+      tone: { background: 'var(--ink-black)', color: 'var(--bg-surface)', border: 'none' },
+    },
+    auto_update: {
+      label: 'Auto-Update',
+      icon: autoUpdateLoading ? <Loader2 size={14} className="animate-spin" /> : <Clock3 size={14} />,
+      onClick: () => void handleOpenAutoUpdate(),
+      disabled: autoUpdateLoading,
+      tone: {
+        background: autoUpdateConfig.enabled ? 'rgba(22, 163, 74, 0.08)' : 'rgba(59, 130, 246, 0.08)',
+        color: autoUpdateConfig.enabled ? '#166534' : '#1d4ed8',
+        border: autoUpdateConfig.enabled ? '1px solid rgba(22, 163, 74, 0.24)' : '1px solid rgba(59, 130, 246, 0.24)',
+        cursor: autoUpdateLoading ? 'not-allowed' : 'pointer',
+        opacity: autoUpdateLoading ? 0.7 : 1,
+      },
+    },
+    restart_gateway: {
+      label: ACTION_CONFIG.restart_gateway.buttonLabel,
+      icon: <RotateCcw size={14} />,
+      onClick: () => handleAction('restart_gateway'),
+      tone: { background: 'rgba(125, 106, 247, 0.08)', color: '#5b4bc4', border: '1px solid rgba(125, 106, 247, 0.24)' },
+    },
+    update: {
+      label: ACTION_CONFIG.update.buttonLabel,
+      icon: <DownloadCloud size={14} />,
+      onClick: () => handleAction('update'),
+      tone: { background: 'rgba(59, 130, 246, 0.08)', color: '#1d4ed8', border: '1px solid rgba(59, 130, 246, 0.24)' },
+    },
+    repair_runtime: {
+      label: ACTION_CONFIG.repair_runtime.buttonLabel,
+      icon: <Wrench size={14} />,
+      onClick: () => handleAction('repair_runtime'),
+      tone: { background: 'rgba(217, 119, 6, 0.08)', color: '#92400e', border: '1px solid rgba(217, 119, 6, 0.24)' },
+    },
+    rebuild_runtime: {
+      label: ACTION_CONFIG.rebuild_runtime.buttonLabel,
+      icon: <RotateCcw size={14} />,
+      onClick: () => handleAction('rebuild_runtime'),
+      tone: { background: 'transparent', color: 'var(--ink-black)', border: '1px solid var(--ink-black)' },
+    },
+  };
+
+  const renderOpsButton = (key: OpsKey, stacked = false) => {
+    const op = opsButtons[key];
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={op.onClick}
+        disabled={op.disabled}
+        style={{ ...OPS_BUTTON_BASE, ...op.tone, ...(stacked ? { width: '100%', minHeight: 44 } : null) }}
+      >
+        {op.icon}
+        {op.label}
+      </button>
+    );
+  };
+
+  // Stacked on phones the primary action leads, in DOM order as well as
+  // visually, so reading and focus order match what is shown.
+  const cancelButton = pendingAction ? (
+    <button
+      key="cancel"
+      type="button"
+      onClick={() => setPendingAction(null)}
+      disabled={actionLoading}
+      style={{
+        border: '1px solid var(--etched-border)',
+        background: 'transparent',
+        color: 'var(--ink-black)',
+        padding: '10px 18px',
+        fontSize: 11,
+        fontWeight: 700,
+        fontFamily: 'var(--font-mono)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        cursor: actionLoading ? 'not-allowed' : 'pointer',
+      }}
+    >
+      Cancel
+    </button>
+  ) : null;
+  const confirmButton = pendingAction ? (
+    <button
+      key="confirm"
+      type="button"
+      onClick={confirmAction}
+      disabled={actionLoading}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        border: 'none',
+        background: 'var(--ink-black)',
+        color: 'var(--bg-surface)',
+        padding: '10px 18px',
+        fontSize: 11,
+        fontWeight: 700,
+        fontFamily: 'var(--font-mono)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        cursor: actionLoading ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+      {actionLoading ? 'Sending...' : ACTION_CONFIG[pendingAction].confirmTitle}
+    </button>
+  ) : null;
+
   return (
     <div style={{ maxWidth: 1100, margin: '2rem auto 8rem', padding: '0 clamp(16px, 5vw, 32px)', paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}>
 
       {/* Header */}
-      <div style={{ marginBottom: '3rem' }}>
+      <div className={styles.header}>
         <button
+          type="button"
           onClick={() => router.push(`/dashboard/instances/${id}`)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono), monospace', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', padding: 0, marginBottom: '2rem' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono), monospace', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '10px 12px 10px 0', marginBottom: '1.125rem' }}
         >
-          <ArrowLeft size={14} /> Back to Communications
+          <ArrowLeft size={14} /> Back to chat
         </button>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -421,110 +594,17 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
-              <ConnectDesktopButton instanceId={id} />
-              <button
-                onClick={() => handleAction('redeploy')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: 'var(--ink-black)', color: "var(--bg-surface)", border: 'none', padding: '10px 18px',
-                  fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: 'pointer',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap'
-                }}
-              >
-                <RotateCcw size={14} />
-                {ACTION_CONFIG.redeploy.buttonLabel}
-              </button>
-              <button
-                onClick={() => void handleOpenAutoUpdate()}
-                disabled={autoUpdateLoading}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: autoUpdateConfig.enabled ? 'rgba(22, 163, 74, 0.08)' : 'rgba(59, 130, 246, 0.08)',
-                  color: autoUpdateConfig.enabled ? '#166534' : '#1d4ed8',
-                  border: autoUpdateConfig.enabled ? '1px solid rgba(22, 163, 74, 0.24)' : '1px solid rgba(59, 130, 246, 0.24)',
-                  padding: '10px 18px',
-                  fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: autoUpdateLoading ? 'not-allowed' : 'pointer',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
-                  opacity: autoUpdateLoading ? 0.7 : 1,
-                }}
-              >
-                {autoUpdateLoading ? <Loader2 size={14} className="animate-spin" /> : <Clock3 size={14} />}
-                Auto-Update
-              </button>
-              <button
-                onClick={() => handleAction('restart_gateway')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: 'rgba(125, 106, 247, 0.08)',
-                  color: '#5b4bc4',
-                  border: '1px solid rgba(125, 106, 247, 0.24)',
-                  padding: '10px 18px',
-                  fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: 'pointer',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap'
-                }}
-              >
-                <RotateCcw size={14} />
-                {ACTION_CONFIG.restart_gateway.buttonLabel}
-              </button>
-              <button
-                onClick={() => handleAction('update')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: 'rgba(59, 130, 246, 0.08)',
-                  color: '#1d4ed8',
-                  border: '1px solid rgba(59, 130, 246, 0.24)',
-                  padding: '10px 18px',
-                  fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: 'pointer',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap'
-                }}
-              >
-                <DownloadCloud size={14} />
-                {ACTION_CONFIG.update.buttonLabel}
-              </button>
-              <button
-                onClick={() => handleAction('repair_runtime')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: 'rgba(217, 119, 6, 0.08)',
-                  color: '#92400e',
-                  border: '1px solid rgba(217, 119, 6, 0.24)',
-                  padding: '10px 18px',
-                  fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: 'pointer',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap'
-                }}
-              >
-                <Wrench size={14} />
-                {ACTION_CONFIG.repair_runtime.buttonLabel}
-              </button>
-              <button
-                onClick={() => handleAction('rebuild_runtime')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: 'transparent',
-                  color: 'var(--ink-black)',
-                  border: '1px solid var(--ink-black)',
-                  padding: '10px 18px',
-                  fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: 'pointer',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap'
-                }}
-              >
-                <RotateCcw size={14} />
-                {ACTION_CONFIG.rebuild_runtime.buttonLabel}
-              </button>
-            </div>
+            {phoneOps ? null : (
+              <div className={styles.opsRow} data-testid="console-ops-row">
+                <ConnectDesktopButton instanceId={id} onOpen={openDesktopGuide} />
+                {renderOpsButton('redeploy')}
+                {renderOpsButton('auto_update')}
+                {renderOpsButton('restart_gateway')}
+                {renderOpsButton('update')}
+                {renderOpsButton('repair_runtime')}
+                {renderOpsButton('rebuild_runtime')}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -588,12 +668,13 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                   letterSpacing: '0.08em',
                   whiteSpace: 'nowrap',
                 }}
+                className={styles.touchTarget}
               >
                 {failureAlert.recoveryLabel}
               </button>
             )}
           </div>
-          <div className="mono" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
+          <div className={`mono ${styles.failureMeta}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
             <span><strong style={{ color: 'var(--ink-black)' }}>Owner:</strong> {failureAlert.ownerLabel}</span>
             <span><strong style={{ color: 'var(--ink-black)' }}>Phase:</strong> {failureAlert.phaseLabel}</span>
             <span><strong style={{ color: 'var(--ink-black)' }}>Recovery:</strong> {failureAlert.recoveryLabel}</span>
@@ -604,23 +685,24 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
       )}
 
       {/* Top Tab Bar */}
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '2.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--etched-border)', overflowX: 'auto' }}>
+      <div ref={tabStripRef} className={styles.tabs}>
         {CONSOLE_TABS.map(tab => {
           const isActive = activeTab === tab.id;
           const Icon = tab.icon;
           return (
             <button
               key={tab.id}
+              type="button"
+              data-tab-id={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              className={styles.tab}
               style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 20px',
+                display: 'flex', alignItems: 'center',
                 flexShrink: 0,
                 background: isActive ? 'var(--ink-black)' : 'transparent',
                 color: isActive ? 'var(--bg-surface)' : 'var(--text-secondary)',
                 border: isActive ? '1px solid var(--ink-black)' : '1px solid transparent',
                 fontFamily: 'var(--font-mono), monospace',
-                fontSize: 10,
                 fontWeight: isActive ? 700 : 400,
                 textTransform: 'uppercase',
                 letterSpacing: '0.05em',
@@ -634,6 +716,22 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
           );
         })}
       </div>
+
+      {phoneOps ? (
+        <details className={styles.actions} data-testid="console-actions">
+          <summary className={styles.actionsSummary}>Actions</summary>
+          <div className={styles.actionsList}>
+            {renderOpsButton('redeploy', true)}
+            {renderOpsButton('update', true)}
+            {renderOpsButton('restart_gateway', true)}
+            {renderOpsButton('auto_update', true)}
+            <ConnectDesktopButton instanceId={id} fullWidth onOpen={openDesktopGuide} />
+            <p className={styles.actionsGroupLabel}>Recovery</p>
+            {renderOpsButton('repair_runtime', true)}
+            {renderOpsButton('rebuild_runtime', true)}
+          </div>
+        </details>
+      ) : null}
 
       <div style={{ minHeight: 600 }}>
         {activeTab === 'configuration' && <ConfigurationTab instanceId={id} />}
@@ -649,6 +747,8 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
         {activeTab === 'logs' && <LogsTab instanceId={id} />}
       </div>
 
+      {desktopGuideOpen ? <ConnectDesktopModal instanceId={id} onClose={closeDesktopGuide} /> : null}
+
       <AutoUpdateModal
         open={autoUpdateModalOpen}
         onClose={() => setAutoUpdateModalOpen(false)}
@@ -656,24 +756,32 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
         onSave={handleSaveAutoUpdate}
       />
 
+      <SafePortal>
       <AnimatePresence>
         {pendingAction && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="console-action-confirm-title"
             style={{
               position: 'fixed',
               inset: 0,
               background: 'rgba(7, 10, 20, 0.58)',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '24px',
-              zIndex: 200,
+              overflowY: 'auto',
+              padding: 'max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))',
+              zIndex: 1000,
             }}
-            onClick={() => {
-              if (!actionLoading) setPendingAction(null);
+            onPointerDown={(event) => {
+              confirmBackdropPressRef.current = event.target === event.currentTarget;
+            }}
+            onClick={(event) => {
+              const pressedBackdrop = confirmBackdropPressRef.current;
+              confirmBackdropPressRef.current = false;
+              if (pressedBackdrop && event.target === event.currentTarget && !actionLoading) setPendingAction(null);
             }}
           >
             <motion.div
@@ -683,9 +791,13 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
               transition={{ duration: 0.15 }}
               style={{
                 width: 'min(100%, 520px)',
+                maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                margin: 'auto',
                 background: 'var(--vellum-bg)',
                 border: '1px solid var(--ink-black)',
-                padding: '24px',
+                padding: 'clamp(16px, 4.2vw, 24px)',
                 boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
               }}
               onClick={(event) => event.stopPropagation()}
@@ -693,8 +805,9 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
                   <h2
+                    id="console-action-confirm-title"
                     className="serif"
-                    style={{ margin: 0, fontSize: '2rem', fontWeight: 400, color: 'var(--ink-black)' }}
+                    style={{ margin: 0, fontSize: 'clamp(1.5rem, 7vw, 2rem)', fontWeight: 400, color: 'var(--ink-black)' }}
                   >
                     {ACTION_CONFIG[pendingAction].confirmTitle}
                   </h2>
@@ -713,7 +826,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                 <div
                   className="mono"
                   style={{
-                    fontSize: 10,
+                    fontSize: 11,
                     textTransform: 'uppercase',
                     letterSpacing: '0.08em',
                     color: 'var(--text-muted)',
@@ -725,55 +838,15 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                   {ACTION_CONFIG[pendingAction].expectation}
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setPendingAction(null)}
-                    disabled={actionLoading}
-                    style={{
-                      border: '1px solid var(--etched-border)',
-                      background: 'transparent',
-                      color: 'var(--ink-black)',
-                      padding: '10px 18px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      fontFamily: 'var(--font-mono)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      cursor: actionLoading ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmAction}
-                    disabled={actionLoading}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      border: 'none',
-                      background: 'var(--ink-black)',
-                      color: 'var(--bg-surface)',
-                      padding: '10px 18px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      fontFamily: 'var(--font-mono)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      cursor: actionLoading ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                    {actionLoading ? 'Sending...' : ACTION_CONFIG[pendingAction].confirmTitle}
-                  </button>
+                <div className={styles.confirmActions}>
+                  {stackedConfirm ? [confirmButton, cancelButton] : [cancelButton, confirmButton]}
                 </div>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+      </SafePortal>
     </div>
   );
 }

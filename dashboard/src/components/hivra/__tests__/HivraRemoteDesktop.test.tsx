@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { TextEncoder } from "node:util";
 
 import { HivraRemoteDesktop } from "../HivraRemoteDesktop";
+import { WorkspaceModalLayerProvider } from "@/components/workspace/WorkspaceModalLayerContext";
 import { streamModeStorageKey } from "@/lib/remote-computers/streaming-mode-preference";
 
 const COMPUTER_ID = "00000000-0000-4000-8000-000000001041";
@@ -525,7 +526,7 @@ describe("HivraRemoteDesktop", () => {
     )).toHaveLength(1);
   });
 
-  it("keeps the authenticated desktop in place when fullscreen is unavailable", async () => {
+  it("expands in place with the shell chrome hidden when element fullscreen is unavailable", async () => {
     fetchMock.mockImplementation((input, init) => {
       if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") return response(201, { success: true, data: {
         id: "018f6d3c-1d91-7c65-9d86-37fc915b8377", exchangeCode: "e".repeat(43), handoff: "message",
@@ -534,14 +535,113 @@ describe("HivraRemoteDesktop", () => {
       } });
       return response(200, { success: true });
     });
+    // iPhone Safari: no element Fullscreen API at all.
     Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const layerChanges: boolean[] = [];
+    render(
+      <WorkspaceModalLayerProvider onActiveChange={(active) => layerChanges.push(active)}>
+        <nav><button type="button">Manage</button></nav>
+        <div data-testid="retained-pane" inert />
+        <HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />
+      </WorkspaceModalLayerProvider>,
+    );
+    const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+    const contentWindow = frame.contentWindow;
+    const manage = screen.getByText("Manage");
+    const retained = screen.getByTestId("retained-pane");
+    dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+    act(() => window.dispatchEvent(new MessageEvent("message", { origin: ORIGIN, source: frame.contentWindow, data: { type: "hivra.remote-desktop.connected.v1", sessionId: "018f6d3c-1d91-7c65-9d86-37fc915b8377" } })));
+    const surface = frame.closest("section")!;
+    expect(surface.getAttribute("data-immersive")).toBeNull();
+
+    expect(manage.closest("[inert]")).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Full screen" }));
+    expect(surface.getAttribute("data-immersive")).toBe("true");
+    expect(layerChanges.at(-1)).toBe(true);
+    // Controls hidden under the layer leave the tab order; the layer does not.
+    expect(manage.closest("[inert]")).not.toBeNull();
+    expect(frame.closest("[inert]")).toBeNull();
+    expect(screen.queryByText(/Fullscreen is not available/)).toBeNull();
+    // The same authenticated frame and browsing context stay mounted.
+    expect(screen.getByTitle("Codex remote desktop")).toBe(frame);
+    expect(frame.contentWindow).toBe(contentWindow);
+
+    fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+    expect(surface.getAttribute("data-immersive")).toBeNull();
+    expect(layerChanges.at(-1)).toBe(false);
+    expect(manage.closest("[inert]")).toBeNull();
+    // A pane that was already inert stays that way.
+    expect(retained.hasAttribute("inert")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+    expect(surface.getAttribute("data-immersive")).toBe("true");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(surface.getAttribute("data-immersive")).toBeNull();
+    expect(frame.getAttribute("src")).toBe(`${ORIGIN}/desktop/handoff`);
+  });
+
+  it("closes the settings panel on an outside tap or when the desktop frame takes focus", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") {
+        return response(201, { success: true, data: session("018f6d3c-1d91-7c65-9d86-37fc915b8377") });
+      }
+      return response(200, { success: true });
+    });
     render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
     const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
     dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
-    act(() => window.dispatchEvent(new MessageEvent("message", { origin: ORIGIN, source: frame.contentWindow, data: { type: "hivra.remote-desktop.connected.v1", sessionId: "018f6d3c-1d91-7c65-9d86-37fc915b8377" } })));
-    fireEvent.click(await screen.findByRole("button", { name: /full screen/i }));
-    expect(await screen.findByText(/Fullscreen is not available/)).toBeTruthy();
-    expect(frame.getAttribute("src")).toBe(`${ORIGIN}/desktop/handoff`);
+    dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1" });
+    await screen.findByText("Connected");
+    const details = screen.getByLabelText("Desktop settings").closest("details")!;
+    const open = () => {
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+    };
+
+    open();
+    expect(details.open).toBe(true);
+    fireEvent.pointerDown(screen.getByRole("region", { name: "Desktop options" }));
+    expect(details.open).toBe(true);
+    fireEvent.pointerDown(document.body);
+    expect(details.open).toBe(false);
+
+    open();
+    expect(details.open).toBe(true);
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(details.open).toBe(false);
+  });
+
+  it("bounds the settings panel by the room left above the bottom bar", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") {
+        return response(201, { success: true, data: session("018f6d3c-1d91-7c65-9d86-37fc915b8377") });
+      }
+      return response(200, { success: true });
+    });
+    const bar = document.createElement("nav");
+    bar.setAttribute("data-testid", "pwa-bottom-navigation");
+    document.body.appendChild(bar);
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 667, width: 667, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    jest.spyOn(bar, "getBoundingClientRect").mockReturnValue(rect(311, 64));
+    try {
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1" });
+      await screen.findByText("Connected");
+      const panel = screen.getByRole("region", { name: "Desktop options" });
+      // Phone landscape: the panel starts under the strip at y=172.
+      jest.spyOn(panel, "getBoundingClientRect").mockReturnValue(rect(172, 249));
+      const details = panel.closest("details")!;
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(panel.style.maxHeight).toBe(`${311 - 172 - 8}px`);
+      fireEvent.pointerDown(document.body);
+      expect(panel.style.maxHeight).toBe("");
+    } finally {
+      bar.remove();
+    }
   });
 
   it("signals the broker when the connected browser viewport changes", async () => {

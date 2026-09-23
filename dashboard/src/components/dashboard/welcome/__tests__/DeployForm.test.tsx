@@ -56,6 +56,7 @@ function DeployFormHarness({
   withVeniceVaultKey = false,
   // Retry-cooldown deadline (epoch ms). Drives the countdown effect under test.
   retryBlockedUntilMs = null,
+  deployAlert = null,
 }: {
   deploying?: boolean;
   handleDeploy?: () => void;
@@ -64,6 +65,7 @@ function DeployFormHarness({
   managed?: boolean;
   withVeniceVaultKey?: boolean;
   retryBlockedUntilMs?: number | null;
+  deployAlert?: React.ReactNode;
 }) {
   const [agentName, setAgentName] = useState("MY_FIRST_AGENT");
   const [selectedProvider, setSelectedProvider] = useState<Provider>(DEFAULT_PROVIDER);
@@ -135,6 +137,7 @@ function DeployFormHarness({
       }}
       onChangeAgentType={onChangeAgentType}
       retryBlockedUntilMs={retryBlockedUntilMs}
+      deployAlert={deployAlert}
     />
   );
 }
@@ -458,5 +461,52 @@ describe("DeployForm", () => {
     expect(
       countdownIntervalIds.some((id) => clearedIntervalIds.includes(id))
     ).toBe(true);
+  });
+
+  describe("on phones", () => {
+    function mockPointer(fine: boolean) {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        writable: true,
+        value: jest.fn((query: string) => ({ matches: query === "(pointer: fine)" ? fine : false, media: query })),
+      });
+    }
+
+    afterEach(() => {
+      delete (window as { matchMedia?: unknown }).matchMedia;
+    });
+
+    it("renders the deploy notice directly above the primary action", () => {
+      render(<DeployFormHarness deployAlert={<div role="alert">Name your agent, then try again.</div>} />);
+
+      const notice = screen.getByText("Name your agent, then try again.");
+      expect(notice.nextElementSibling).toBe(screen.getByTestId("deploy-primary-cta"));
+    });
+
+    it("does not open the keyboard on entry with a touch pointer", () => {
+      mockPointer(false);
+      render(<DeployFormHarness />);
+
+      expect(screen.getByLabelText("Hermes Agent Name")).not.toHaveFocus();
+    });
+
+    it("keeps focusing the name field for a mouse or trackpad", () => {
+      mockPointer(true);
+      render(<DeployFormHarness />);
+
+      expect(screen.getByLabelText("Hermes Agent Name")).toHaveFocus();
+    });
+
+    it("gives the size pickers 44px touch targets", () => {
+      render(<DeployFormHarness />);
+      fireEvent.click(screen.getByTestId("deploy-advanced-toggle"));
+
+      // Width comes from the shared .welcome-size-option rules (44px, or a
+      // 40px floor when five options share a 360px phone row).
+      const size = screen.getByRole("button", { name: "0.5" });
+      expect(size).toHaveStyle({ minHeight: "44px" });
+      expect(size).toHaveClass("welcome-size-option");
+      expect(size.parentElement).toHaveClass("welcome-size-row");
+    });
   });
 });

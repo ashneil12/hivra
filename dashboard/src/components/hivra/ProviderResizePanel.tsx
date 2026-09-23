@@ -27,7 +27,7 @@ const card: React.CSSProperties = {
 const button: React.CSSProperties = {
   border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)",
   fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800,
-  padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 7,
+  padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 7, minHeight: 40,
 };
 const ghost: React.CSSProperties = { ...button, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)" };
 
@@ -253,10 +253,11 @@ export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; o
               </div>
             ) : (
               <>
-                <label style={{ display: "grid", gap: 6, fontSize: 11 }}>
+                {/* A select's natural width is its longest option; the minmax track caps it to the card on phones. */}
+                <label style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6, fontSize: 11 }}>
                   <span className="mono" style={label}>Server type</span>
                   <select value={target} onChange={(event) => selectTarget(event.target.value)}
-                    style={{ padding: "9px 10px", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)" }}>
+                    style={{ width: "100%", maxWidth: "100%", minWidth: 0, boxSizing: "border-box", padding: "9px 10px", minHeight: 44, border: "1px solid var(--etched-border)", borderRadius: 0, background: "var(--bg-surface)", color: "var(--ink-black)", textOverflow: "ellipsis" }}>
                     {catalog.offers.map((offer) => <option value={offer.serverType} key={offer.serverType}>
                       {offer.serverType} · {offer.cores} CPU · {offer.memoryGb} GB · {offer.price.currency} {compactPrice(offer.price.monthlyGross)}/month server plan
                     </option>)}

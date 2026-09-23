@@ -293,7 +293,7 @@ export function WorkflowsPanel({ onRunWorkflow }: WorkflowsPanelProps) {
           type="button"
           onClick={() => setCreating(true)}
           data-testid="workflow-create-open"
-          className="mono"
+          className="mono cmdp-row cmdp-small"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -376,6 +376,7 @@ function WorkflowRow({
           aria-label={`Hide ${wf.title}`}
           title="Hide — stays in your Hidden list, restore any time"
           data-testid={`workflow-hide-${wf.id}`}
+          className="cmdp-icon-btn"
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'inline-flex', flexShrink: 0 }}
         >
           <EyeOff size={13} />
@@ -391,7 +392,7 @@ function WorkflowRow({
           type="button"
           onClick={onRun}
           data-testid={`workflow-run-${wf.id}`}
-          className="mono"
+          className="mono cmdp-row cmdp-small"
           style={{
             border: '1px solid var(--ink-black)',
             background: justRan ? 'transparent' : 'var(--ink-black)',
@@ -414,7 +415,7 @@ function WorkflowRow({
             type="button"
             onClick={onToggleSample}
             data-testid={`workflow-sample-${wf.id}`}
-            className="mono"
+            className="mono cmdp-row cmdp-small"
             style={{
               marginLeft: 'auto',
               border: 'none',
@@ -444,7 +445,7 @@ function WorkflowRow({
             gap: 4,
           }}
         >
-          <span className="mono" style={{ ...KICKER, fontSize: 8.5, letterSpacing: '0.14em' }}>
+          <span className="mono cmdp-small" style={{ ...KICKER, fontSize: 8.5, letterSpacing: '0.14em' }}>
             Sample result
           </span>
           <span className="mono" style={{ fontSize: 11, color: 'var(--ink-black)', lineHeight: 1.45 }}>
@@ -482,7 +483,7 @@ function HiddenWorkflowsDrawer({
         onClick={onToggle}
         aria-expanded={open}
         data-testid="workflow-hidden-toggle"
-        className="mono"
+        className="mono cmdp-row cmdp-small"
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -572,7 +573,7 @@ function HiddenWorkflowRow({
             onClick={onDelete}
             aria-label={`Confirm permanent delete of ${wf.title}`}
             data-testid={`workflow-delete-confirm-${wf.id}`}
-            className="mono"
+            className="mono cmdp-row cmdp-small"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -596,6 +597,7 @@ function HiddenWorkflowRow({
             onClick={() => setConfirming(false)}
             aria-label="Cancel delete"
             data-testid={`workflow-delete-cancel-${wf.id}`}
+            className="cmdp-icon-btn"
             style={{
               border: 'none',
               background: 'transparent',
@@ -616,7 +618,7 @@ function HiddenWorkflowRow({
             onClick={onRestore}
             aria-label={`Restore ${wf.title}`}
             data-testid={`workflow-restore-${wf.id}`}
-            className="mono"
+            className="mono cmdp-row cmdp-small"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -641,6 +643,7 @@ function HiddenWorkflowRow({
             aria-label={`Delete ${wf.title} permanently`}
             title="Delete permanently"
             data-testid={`workflow-delete-${wf.id}`}
+            className="cmdp-icon-btn"
             style={{
               border: 'none',
               background: 'transparent',
@@ -687,7 +690,7 @@ function CreateWorkflowForm({
       data-testid="workflow-create-form"
       style={{ border: '1px solid var(--etched-border)', background: 'rgba(255,255,255,0.02)', padding: '11px', display: 'grid', gap: 8 }}
     >
-      <span className="mono" style={KICKER}>
+      <span className="mono cmdp-small" style={KICKER}>
         New workflow
       </span>
       <input
@@ -712,7 +715,7 @@ function CreateWorkflowForm({
           onClick={() => onAdd(title, prompt)}
           disabled={!canAdd}
           data-testid="workflow-create-save"
-          className="mono"
+          className="mono cmdp-row cmdp-small"
           style={{
             border: '1px solid var(--ink-black)',
             background: canAdd ? 'var(--ink-black)' : 'transparent',
@@ -730,7 +733,7 @@ function CreateWorkflowForm({
         <button
           type="button"
           onClick={onCancel}
-          className="mono"
+          className="mono cmdp-row cmdp-small"
           style={{
             border: 'none',
             background: 'transparent',

@@ -6,6 +6,9 @@ import { listAgents, type HivraAgent } from "@/lib/hivra/agent-api";
 import styles from "./ComputerFolderRecovery.module.css";
 
 const ENDPOINT = "/api/hivra/folder-recovery";
+// iOS maps the custom extension to no file type and greys the file out in the
+// picker, so the octet-stream type keeps it selectable; the name is checked below.
+const ARCHIVE_ACCEPT = ".hivra-folder,application/octet-stream";
 
 async function requestRecovery(body: Record<string, unknown>): Promise<Response> {
   const response = await fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" },
@@ -20,6 +23,8 @@ async function requestRecovery(body: Record<string, unknown>): Promise<Response>
 export function ComputerFolderRecovery() {
   const [computers, setComputers] = useState<HivraAgent[]>([]);
   const [sourceId, setSourceId] = useState("");
+  // The computer whose Manage tab opened this page; the back link returns there.
+  const [entrySourceId, setEntrySourceId] = useState("");
   const [destinationId, setDestinationId] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [archive, setArchive] = useState<File | null>(null);
@@ -31,7 +36,7 @@ export function ComputerFolderRecovery() {
 
   useEffect(() => { let active = true;
     const selected = new URLSearchParams(window.location.search).get("source");
-    if (selected && /^[0-9a-f-]{36}$/i.test(selected)) setSourceId(selected);
+    if (selected && /^[0-9a-f-]{36}$/i.test(selected)) { setSourceId(selected); setEntrySourceId(selected); }
     listAgents().then((rows) => { if (active) setComputers(rows.filter((computer) =>
       computer.type === "linux-desktop" && computer.computer_profile === "ubuntu-desktop"
       && computer.computer_substrate === "proxmox-kvm" && computer.status !== "deleted")); })
@@ -54,6 +59,7 @@ export function ComputerFolderRecovery() {
         setMessage("Encrypted folder file downloaded. Save it and its passphrase separately. The source and its desktop sessions are unchanged.");
       } else {
         if (!archive || archive.size > 3 * 1024 * 1024) throw new Error("Choose a .hivra-folder file no larger than 3 MiB.");
+        if (!archive.name.toLowerCase().includes(".hivra-folder")) throw new Error("Choose the encrypted .hivra-folder file you exported.");
         const bytes = new Uint8Array(await archive.arrayBuffer());
         const chunks: string[] = [];
         for (let offset = 0; offset < bytes.length; offset += 32_768) {
@@ -74,8 +80,11 @@ export function ComputerFolderRecovery() {
   }
 
   const fieldClass = styles.input;
+  const entrySource = computers.find((computer) => computer.id === entrySourceId);
   return <div className={styles.page}>
-    <Link href="/dashboard/computers" className={styles.link}>Back to computers</Link>
+    {entrySourceId
+      ? <Link href={`/dashboard/agent/${encodeURIComponent(entrySourceId)}?tab=manage`} className={styles.link}>Back to {entrySource?.name || "computer"}</Link>
+      : <Link href="/dashboard/computers" className={styles.link}>Back to computers</Link>}
     <header>
       <h1>Move your Ubuntu Hivra folder</h1>
       <p className={styles.secondary}>Copy the Hivra folder from your Ubuntu desktop into a different freshly launched Ubuntu computer using an encrypted file. Your original computer is kept.</p>
@@ -110,7 +119,7 @@ export function ComputerFolderRecovery() {
       <h2>2. Restore to a fresh computer</h2>
       <p className={styles.hint}>Select the archive’s original computer above. <Link href="/dashboard/computers" className={styles.link}>Launch a new Ubuntu computer</Link>, then choose it here once running. Leave its Hivra folder empty and close destination apps and terminal/SSH sessions. Existing files are never overwritten. A pending transfer can be verified by submitting the same file and destination again.</p>
       <label className={styles.field}><span>Encrypted Hivra-folder file</span>
-        <input type="file" accept=".hivra-folder" disabled={Boolean(busy)} onChange={(event) => setArchive(event.target.files?.[0] ?? null)} className={fieldClass} />
+        <input type="file" accept={ARCHIVE_ACCEPT} disabled={Boolean(busy)} onChange={(event) => setArchive(event.target.files?.[0] ?? null)} className={fieldClass} />
       </label>
       <label className={styles.field}><span>Fresh destination Ubuntu computer</span>
         <select value={destinationId} disabled={Boolean(busy)} onChange={(event) => setDestinationId(event.target.value)} className={fieldClass}>

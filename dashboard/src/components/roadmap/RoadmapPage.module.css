@@ -39,6 +39,13 @@
   transform-origin: 0 50%;
 }
 
+/* The public header draws its own scroll-driven bar; keep one bar per browser. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: scroll()) {
+    .progressBar { display: none; }
+  }
+}
+
 .header {
   position: sticky;
   top: 0;
@@ -1193,12 +1200,14 @@
   }
 
   .visionSticky {
-    top: 76px;
-    min-height: calc(100vh - 76px);
+    top: 70px;
+    min-height: calc(100dvh - 70px);
   }
 
+  /* A stable track length: dvh would resize it under the finger as mobile toolbars collapse. */
   .visionSection {
-    height: 190vh;
+    height: 150vh;
+    height: 150lvh;
     padding-bottom: 5rem;
   }
 
@@ -1285,7 +1294,7 @@
 .primaryButton,.secondaryButton { min-height:48px; font-family:var(--public-mono); font-size:11px; box-shadow:none; }
 .primaryButton { background:var(--public-accent); color:var(--public-accent-ink); }
 .progressFill { box-shadow:none; }
-@media(max-width:700px) { .hero { padding-block:48px; } .heroTitle { font-size:42px; } .section,.sectionWide { padding-block:48px; } .chapterNav { gap:12px 22px; } }
+@media(max-width:700px) { .hero { padding-block:48px; } .heroTitle { font-size:42px; } .section,.sectionWide { padding-block:48px; } .chapterNav { gap:0 22px; } .chapterNav a { display:inline-flex; align-items:center; min-height:44px; } }
 
 .heroInner { margin:0; text-align:left; max-width:1000px; }
 .heroSubtitle { max-width:660px; margin-left:0; font-size:20px; line-height:1.7; }

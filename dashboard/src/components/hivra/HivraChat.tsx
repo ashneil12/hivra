@@ -5,7 +5,7 @@
 // CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
 // box in localStorage; each session resumes its own Claude session_id.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Children, isValidElement, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,18 +20,121 @@ import { captureClient } from "@/lib/telemetry/posthog-client";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { MemoryUsageBanner } from "@/components/memory/MemoryUsageBanner";
+import styles from "./HivraChat.module.css";
 
-// Fenced code → the shared syntax-highlighted CodeBlock (same component the
-// Hermes chat uses); inline code keeps a lightweight mono chip.
-const MD_COMPONENTS = {
- code(props: { className?: string; children?: React.ReactNode }) {
- const { className, children } = props;
- const text = String(children ?? "").replace(/\n$/, "");
- const lang = /language-(\w+)/.exec(className || "")?.[1];
- if (lang || text.includes("\n")) return <CodeBlock language={lang || "text"} value={text} />;
- return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", padding: "1px 5px" }}>{text}</code>;
+// Fenced code (any <pre>, including one-line blocks with no language) → the
+// shared syntax-highlighted CodeBlock, which scrolls inside its own box.
+// Inline code keeps a lightweight mono chip that wraps anywhere.
+export const CHAT_MARKDOWN_COMPONENTS = {
+ pre(props: { children?: React.ReactNode }) {
+ const child = Children.toArray(props.children)[0];
+ if (isValidElement<{ className?: string; children?: React.ReactNode }>(child)) {
+ const text = String(child.props.children ?? "").replace(/\n$/, "");
+ const lang = /language-([\w-]+)/.exec(child.props.className || "")?.[1];
+ return <CodeBlock language={lang || "text"} value={text} />;
+ }
+ return <CodeBlock language="text" value={String(props.children ?? "")} />;
+ },
+ code(props: { children?: React.ReactNode }) {
+ return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", padding: "1px 5px", overflowWrap: "anywhere" }}>{props.children}</code>;
+ },
+ table({ children }: { children?: React.ReactNode }) {
+ return <div className="chat-md-table-wrapper"><table className="chat-md-table">{children}</table></div>;
+ },
+ // Replies open links in a new tab so tapping one never navigates the
+ // dashboard (or the installed PWA) away and aborts the running turn.
+ a({ href, children }: { href?: string; children?: React.ReactNode }) {
+ return <a href={href} target="_blank" rel="noopener noreferrer" className="chat-md-link" style={{ overflowWrap: "anywhere" }}>{children}</a>;
  },
 };
+
+const COARSE_POINTER_QUERY = "(hover: none) and (pointer: coarse)";
+const NARROW_QUERY = "(max-width: 767px)";
+
+function matchesMedia(query: string): boolean {
+ return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+}
+
+function useMediaQuery(query: string): boolean {
+ const subscribe = useCallback((onChange: () => void) => {
+ if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+ const list = window.matchMedia(query);
+ list.addEventListener?.("change", onChange);
+ return () => list.removeEventListener?.("change", onChange);
+ }, [query]);
+ return useSyncExternalStore(subscribe, () => matchesMedia(query), () => false);
+}
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_EDGE = 2048;
+const PASSTHROUGH_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function formatMegabytes(bytes: number): string {
+ return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readBase64(blob: Blob): Promise<string> {
+ return new Promise<string>((resolve, reject) => {
+ const fr = new FileReader();
+ fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
+ fr.onerror = () => reject(new Error("read failed"));
+ fr.readAsDataURL(blob);
+ });
+}
+
+async function decodeImage(file: Blob): Promise<{ source: CanvasImageSource; width: number; height: number; release: () => void } | null> {
+ if (typeof createImageBitmap === "function") {
+ try {
+ const bitmap = await createImageBitmap(file);
+ return { source: bitmap, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
+ } catch {
+ // Fall through to <img>, which also decodes HEIC on Safari.
+ }
+ }
+ if (typeof Image === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
+ const url = URL.createObjectURL(file);
+ try {
+ const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+ const el = new Image();
+ el.onload = () => resolve(el);
+ el.onerror = () => reject(new Error("decode failed"));
+ el.src = url;
+ });
+ return { source: img, width: img.naturalWidth, height: img.naturalHeight, release: () => URL.revokeObjectURL(url) };
+ } catch {
+ URL.revokeObjectURL(url);
+ return null;
+ }
+}
+
+// Phone photos are 12+ MP JPEG or HEIC. Anything larger than 2048px, over the
+// upload limit, or in a format the box may not read is re-encoded as a JPEG no
+// larger than 2048px. Returns null to upload the original file unchanged.
+async function prepareImageAttachment(file: File): Promise<{ blob: Blob; name: string } | null> {
+ if (!file.type.startsWith("image/") || file.type === "image/gif" || file.type === "image/svg+xml") return null;
+ if (typeof document === "undefined") return null;
+ const decoded = await decodeImage(file);
+ if (!decoded) return null;
+ try {
+ const longest = Math.max(decoded.width, decoded.height);
+ if (!longest) return null;
+ if (longest <= MAX_IMAGE_EDGE && file.size <= MAX_ATTACHMENT_BYTES && PASSTHROUGH_IMAGE_TYPES.has(file.type)) return null;
+ const scale = Math.min(1, MAX_IMAGE_EDGE / longest);
+ const canvas = document.createElement("canvas");
+ canvas.width = Math.max(1, Math.round(decoded.width * scale));
+ canvas.height = Math.max(1, Math.round(decoded.height * scale));
+ const ctx = canvas.getContext("2d");
+ if (!ctx) return null;
+ ctx.fillStyle = "#fff";
+ ctx.fillRect(0, 0, canvas.width, canvas.height);
+ ctx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+ const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+ if (!blob) return null;
+ return { blob, name: `${(file.name || "photo").replace(/\.[^.]+$/, "")}.jpg` };
+ } finally {
+ decoded.release();
+ }
+}
 
 // Hover copy-the-whole-message affordance for assistant replies.
 function MessageCopy({ text }: { text: string }) {
@@ -47,8 +150,8 @@ function MessageCopy({ text }: { text: string }) {
  window.setTimeout(() => setCopied(false), 1600);
  });
  }}
- className="mono"
- style={{ display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: copied ? "#22c55e" : "var(--text-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
+ className={`mono ${styles.msgAction}`}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: copied ? "#22c55e" : "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
  >
  {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? "Copied" : "Copy"}
  </button>
@@ -62,6 +165,7 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  const base = {
  display: "inline-flex",
  alignItems: "center",
+ justifyContent: "center",
  border: "1px solid var(--etched-border)",
  background: "transparent",
  cursor: "pointer",
@@ -69,12 +173,13 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  marginTop: 6,
  } as const;
  return (
- <span style={{ display: "inline-flex", gap: 6, marginLeft: 8 }}>
+ <span className={styles.msgFeedback} style={{ display: "inline-flex", marginLeft: 8 }}>
  <button
  type="button"
  aria-label="Good response"
  aria-pressed={rating === "up"}
  onClick={() => onRate("up")}
+ className={styles.msgAction}
  style={{ ...base, color: rating === "up" ? "#22c55e" : "var(--text-muted)" }}
  >
  <ThumbsUp size={11} />
@@ -84,6 +189,7 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  aria-label="Bad response"
  aria-pressed={rating === "down"}
  onClick={() => onRate("down")}
+ className={styles.msgAction}
  style={{ ...base, color: rating === "down" ? "#c0392b" : "var(--text-muted)" }}
  >
  <ThumbsDown size={11} />
@@ -233,7 +339,7 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
     <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
       <button
         type="button"
-        className="hivra-chat-tool-toggle"
+        className={`hivra-chat-tool-toggle ${styles.msgAction}`}
         aria-label={`${tool.name}${tool.detail ? ` · ${tool.detail}` : ""} — ${statusLabel}`}
         disabled={!hasResult}
         aria-expanded={hasResult ? open : undefined}
@@ -254,7 +360,7 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  <span style={{ flex: 1 }} />
  )}
         {unconfirmed ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{statusLabel}</span>
+          <span style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{statusLabel}</span>
         ) : tool.status === "running" ? (
           <Loader2 className="hivra-chat-spinner" size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
  ) : tool.status === "error" ? (
@@ -386,19 +492,62 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const attachmentsRef = useRef<{ name: string; path: string }[]>([]);
  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
  const [uploading, setUploading] = useState(false);
+ const [attachError, setAttachError] = useState<string | null>(null);
  const fileInputRef = useRef<HTMLInputElement>(null);
  const composerRef = useRef<HTMLTextAreaElement>(null);
+ const composerDockRef = useRef<HTMLDivElement>(null);
+ // Touch keyboards have no Shift+Enter, so there Return inserts a newline and
+ // only the Send button sends.
+ const coarsePointer = useMediaQuery(COARSE_POINTER_QUERY);
+ const narrow = useMediaQuery(NARROW_QUERY);
+ const composerCap = narrow ? 120 : 160;
  useEffect(() => {
    const textarea = composerRef.current;
    if (!textarea) return;
    textarea.style.height = "auto";
-   textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, 160))}px`;
-   textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
- }, [input]);
- // Sessions rail visibility — collapsed by default on narrow screens.
+   textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, composerCap))}px`;
+   textarea.style.overflowY = textarea.scrollHeight > composerCap ? "auto" : "hidden";
+ }, [input, composerCap]);
+ // Sessions rail visibility. Below md it is an overlay drawer, closed by default.
  const [showRail, setShowRail] = useState(false);
+ const drawerOpen = showRail && narrow;
+ const railToggleRef = useRef<HTMLButtonElement>(null);
+ const drawerRef = useRef<HTMLDivElement>(null);
+ const drawerId = useId();
  useEffect(() => {
- if (typeof window !== "undefined" && window.innerWidth < 720) setShowRail(false);
+ if (!drawerOpen) return;
+ const onKey = (event: KeyboardEvent) => {
+ if (event.key === "Escape") setShowRail(false);
+ };
+ window.addEventListener("keydown", onKey);
+ return () => window.removeEventListener("keydown", onKey);
+ }, [drawerOpen]);
+ // The drawer is modal below md: focus moves into it on open and back to the
+ // toggle once it closes (Escape, backdrop, Close chats, or a pick).
+ const drawerWasOpenRef = useRef(false);
+ useEffect(() => {
+ if (drawerOpen) {
+ drawerWasOpenRef.current = true;
+ drawerRef.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus();
+ return;
+ }
+ if (!drawerWasOpenRef.current) return;
+ drawerWasOpenRef.current = false;
+ if (!showRail) railToggleRef.current?.focus();
+ }, [drawerOpen, showRail]);
+ const trapDrawerFocus = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+ if (event.key !== "Tab") return;
+ const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled])"));
+ if (focusable.length === 0) return;
+ const first = focusable[0];
+ const last = focusable[focusable.length - 1];
+ if (event.shiftKey && document.activeElement === first) {
+ event.preventDefault();
+ last.focus();
+ } else if (!event.shiftKey && document.activeElement === last) {
+ event.preventDefault();
+ first.focus();
+ }
  }, []);
 
  useEffect(() => {
@@ -419,20 +568,31 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
 
  const uploadAttachment = useCallback(async (file: File) => {
  if (!token || uploading || attachmentsRef.current.length >= 5) return;
- if (file.size > 8 * 1024 * 1024) return;
+ setAttachError(null);
  setUploading(true);
  try {
- const dataBase64 = await new Promise<string>((resolve, reject) => {
- const fr = new FileReader();
- fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
- fr.onerror = () => reject(new Error("read failed"));
- fr.readAsDataURL(file);
- });
- const r = await uploadBoxFile(boxUrl, file.name || "pasted.png", dataBase64, token);
- if (r.ok && r.path) setAttachments((prev) => [...prev, { name: file.name || "pasted.png", path: r.path! }]);
- } catch { /* drop silently; the user can retry */ }
- finally { setUploading(false); }
- }, [boxUrl, token, uploading]);
+ const prepared = await prepareImageAttachment(file).catch(() => null);
+ const blob: Blob = prepared?.blob ?? file;
+ const name = prepared?.name ?? (file.name || "pasted.png");
+ if (blob.size > MAX_ATTACHMENT_BYTES) {
+ setAttachError(`This file is ${formatMegabytes(blob.size)} — the limit is 8 MB`);
+ return;
+ }
+ const dataBase64 = await readBase64(blob);
+ const r = await uploadBoxFile(boxUrl, name, dataBase64, token);
+ if (r.ok && r.path) {
+ setAttachments((prev) => [...prev, { name, path: r.path! }]);
+ } else {
+ clientLog.warn("chat attachment upload rejected", { source: "hivra-chat", failureType: "hivra_chat_attachment_upload_failed", agentKind, reason: r.error });
+ setAttachError("Upload failed — try again");
+ }
+ } catch (err) {
+ clientLog.warn("chat attachment upload failed", { source: "hivra-chat", failureType: "hivra_chat_attachment_upload_failed", agentKind }, err);
+ setAttachError("Upload failed — try again");
+ } finally {
+ setUploading(false);
+ }
+ }, [agentKind, boxUrl, token, uploading]);
 
  // Load persisted sessions for this box (or start fresh), and re-open whichever
  // chat was active last time (falls back to the newest).
@@ -516,6 +676,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const selectSession = useCallback(
  (s: Session) => {
  setActiveId(s.id);
+ if (matchesMedia(NARROW_QUERY)) setShowRail(false);
  if (s.claudeSessionId && !s.loaded && s.messages.length === 0) {
  void readBoxSession(boxUrl, s.claudeSessionId, token).then((msgs) => {
  setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, messages: msgs.map(boxMsgToChat), loaded: true } : x)));
@@ -549,16 +710,40 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // A scroll-up between the stream event and this frame must win.
  if (!stickToBottomRef.current) return;
  const el = scrollRef.current;
- if (el) el.scrollTop = el.scrollHeight;
+ // An empty chat has nothing to follow; pinning it would clip the greeting
+ // on short screens.
+ if (el && el.dataset.empty !== "true") el.scrollTop = el.scrollHeight;
  });
  }, []);
  useEffect(() => {
  scrollDown(true);
+ const pane = scrollRef.current;
+ if (pane?.dataset.empty === "true") pane.scrollTop = 0;
  return () => {
  if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
  scrollFrameRef.current = null;
  };
  }, [activeId, scrollDown]);
+ // The pane also changes size without a scroll event: the soft keyboard
+ // opening, the composer growing. Re-pin when following, otherwise refresh
+ // the "Return to latest" state.
+ useEffect(() => {
+ const pane = scrollRef.current;
+ if (!pane) return;
+ const onResize = () => {
+ if (stickToBottomRef.current) scrollDown();
+ else onScrollPane();
+ };
+ const observer = typeof ResizeObserver === "function" ? new ResizeObserver(onResize) : null;
+ observer?.observe(pane);
+ if (composerDockRef.current) observer?.observe(composerDockRef.current);
+ const viewport = typeof window !== "undefined" ? window.visualViewport : null;
+ viewport?.addEventListener("resize", onResize);
+ return () => {
+ observer?.disconnect();
+ viewport?.removeEventListener("resize", onResize);
+ };
+ }, [onScrollPane, scrollDown]);
 
  // Stream updates target the session that started the turn, never whichever
  // chat happens to be open when the event arrives.
@@ -700,6 +885,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const images = attachmentsRef.current.map((a) => a.path);
  setInput("");
  setAttachments([]);
+ setAttachError(null);
  try { window.localStorage.removeItem(draftKey(skey, sessionId)); } catch { /* ignore */ }
  setSessionBusy(sessionId, true);
  setLastFailed(sessionId, null);
@@ -894,6 +1080,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  });
  setActiveId(s.id);
  setInput("");
+ if (matchesMedia(NARROW_QUERY)) setShowRail(false);
  }, []);
 
  const deleteChat = useCallback(
@@ -910,6 +1097,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [setLastFailed, stopSession],
  );
 
+ // Deleting has no undo, so it takes two taps: the first arms a red
+ // "Delete?" for 3s, the second deletes.
+ const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+ const confirmDeleteTimerRef = useRef<number | null>(null);
+ useEffect(() => () => {
+ if (confirmDeleteTimerRef.current !== null) window.clearTimeout(confirmDeleteTimerRef.current);
+ }, []);
+ const requestDeleteChat = useCallback((id: string) => {
+ if (confirmDeleteTimerRef.current !== null) {
+ window.clearTimeout(confirmDeleteTimerRef.current);
+ confirmDeleteTimerRef.current = null;
+ }
+ if (confirmDeleteId === id) {
+ setConfirmDeleteId(null);
+ deleteChat(id);
+ return;
+ }
+ setConfirmDeleteId(id);
+ confirmDeleteTimerRef.current = window.setTimeout(() => {
+ confirmDeleteTimerRef.current = null;
+ setConfirmDeleteId(null);
+ }, 3000);
+ }, [confirmDeleteId, deleteChat]);
+
  useEffect(() => {
  scrollDown();
  }, [active?.messages, scrollDown]);
@@ -922,31 +1133,63 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const starters = (goalDef ?? getGoal(undefined)).starters;
 
  return (
- <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)" }}>
- {/* Sessions sidebar */}
+ <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)", position: "relative" }}>
+ {/* Sessions sidebar: an overlay drawer below md, an inline column from md up. */}
  {showRail ? (
- <div className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">
+ <>
+ <button
+ type="button"
+ aria-hidden="true"
+ tabIndex={-1}
+ onClick={() => setShowRail(false)}
+ className="absolute inset-0 z-10 bg-black/40 md:hidden"
+ />
+ <div
+ ref={drawerRef}
+ id={drawerId}
+ role={drawerOpen ? "dialog" : undefined}
+ aria-modal={drawerOpen ? true : undefined}
+ aria-label={drawerOpen ? "Chats" : undefined}
+ onKeyDown={drawerOpen ? trapDrawerFocus : undefined}
+ className="absolute inset-y-0 left-0 z-20 flex w-[min(85vw,300px)] shrink-0 flex-col border-r border-[var(--etched-border)] bg-[var(--bg-surface)] md:static md:z-auto md:w-[232px]"
+ >
+ <div className="mx-3 mt-3 flex gap-2">
  <button
  type="button"
  onClick={newChat}
- className="mx-3 mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] disabled:opacity-50"
+ className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] md:min-h-[40px]"
  >
  <Plus size={15} /> New chat
  </button>
+ <button
+ type="button"
+ aria-label="Close chats"
+ onClick={() => setShowRail(false)}
+ className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center border border-[var(--etched-border)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:hidden"
+ >
+ <X size={15} />
+ </button>
+ </div>
  <div className="flex-1 overflow-y-auto p-2">
  {sessions.map((s) => {
  const isActive = s.id === activeId;
+ const armed = confirmDeleteId === s.id;
  const running = busyIds.has(s.id);
  return (
  <div
  key={s.id}
- onClick={() => selectSession(s)}
  className={[
- "group mb-0.5 flex cursor-pointer items-center gap-2 px-2.5 py-2",
+ "group mb-0.5 flex items-center",
  isActive
  ? "bg-[var(--hivra-red-soft)]"
  : "hover:bg-[var(--bg-elevated)]",
  ].join(" ")}
+ >
+ <button
+ type="button"
+ aria-current={isActive ? "true" : undefined}
+ onClick={() => selectSession(s)}
+ className="flex min-h-[44px] min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left md:min-h-0"
  >
  {running ? (
  <Loader2 size={13} className="hivra-chat-spinner shrink-0 text-[var(--gold-leaf)]" aria-label="Working" />
@@ -956,36 +1199,51 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink-black)]">
  {s.title || "New chat"}
  </span>
+ </button>
  {sessions.length > 1 ? (
+ armed ? (
+ <button
+ type="button"
+ aria-label="Confirm delete chat"
+ onClick={() => requestDeleteChat(s.id)}
+ className="mono mr-1.5 inline-flex min-h-[24px] shrink-0 items-center justify-center bg-[var(--hivra-red)] px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-white pointer-coarse:min-h-[40px]"
+ >
+ Delete?
+ </button>
+ ) : (
  <button
  type="button"
  aria-label={running ? "Stop and delete chat" : "Delete chat"}
- onClick={(e) => {
- e.stopPropagation();
- deleteChat(s.id);
- }}
- className="inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+ onClick={() => requestDeleteChat(s.id)}
+ className="mr-2.5 inline-flex shrink-0 items-center justify-center p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:min-h-[40px] pointer-coarse:min-w-[40px] [@media(hover:none)]:opacity-100"
  >
  <Trash2 size={12} />
  </button>
+ )
  ) : null}
  </div>
  );
  })}
  </div>
  </div>
+ </>
  ) : null}
 
  {/* Chat column */}
- <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
+ <div inert={drawerOpen} style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
  {instanceId ? <MemoryUsageBanner instanceId={instanceId} /> : null}
- <div className="absolute left-2 top-2 z-[5] flex items-center gap-1.5">
+ {/* Below md an in-flow row under the banner; from md up the floating pair.
+ Pixel sizes: the 14px root makes rem spacing 3.5px a step. */}
+ <div className="flex h-[48px] shrink-0 items-center gap-1 border-b border-[var(--etched-border)] px-2 md:absolute md:left-2 md:top-2 md:z-[5] md:h-auto md:gap-1.5 md:border-0 md:px-0">
  <button
+ ref={railToggleRef}
  type="button"
  aria-label={showRail ? "Hide chats" : "Show chats"}
+ aria-expanded={showRail}
+ aria-controls={showRail ? drawerId : undefined}
  title={showRail ? "Hide chats" : "Show chats"}
  onClick={() => setShowRail((v) => !v)}
- className="inline-flex border border-[var(--etched-border)] bg-[var(--bg-surface)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]"
+ className="inline-flex h-[44px] w-[44px] items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-surface)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:w-auto md:p-1.5"
  >
  <PanelLeft size={13} />
  </button>
@@ -995,22 +1253,23 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-label="New chat"
  title="New chat — runs alongside the others"
  onClick={newChat}
- className="inline-flex border border-[var(--etched-border)] bg-[var(--bg-surface)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]"
+ className="inline-flex h-[44px] items-center justify-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-3 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:gap-0 md:p-1.5"
  >
  <Plus size={13} />
+ <span className="mono text-[11px] uppercase tracking-[0.06em] md:hidden">New chat</span>
  </button>
  ) : null}
  {!showRail && busyIds.size > (busy ? 1 : 0) ? (
  <button
  type="button"
  onClick={() => setShowRail(true)}
- className="mono inline-flex items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)] hover:text-[var(--ink-black)]"
+ className="mono inline-flex h-[44px] items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 text-[11px] uppercase tracking-[0.06em] text-[var(--text-muted)] hover:text-[var(--ink-black)] md:h-auto md:py-1"
  >
  <Loader2 size={11} className="hivra-chat-spinner" aria-hidden /> {busyIds.size - (busy ? 1 : 0)} other{busyIds.size - (busy ? 1 : 0) === 1 ? "" : "s"} working
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} role="region" aria-label="Conversation" onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
+ <div ref={scrollRef} role="region" aria-label="Conversation" data-empty={messages.length === 0 ? "true" : undefined} onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
@@ -1045,7 +1304,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const isUser = m.role === "user";
  return (
  <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
+ {/* The user bubble is already tinted, so its avatar is dropped below md. */}
  <div
+ className={isUser ? "hidden md:flex" : "flex"}
  style={{
  width: 26,
  height: 26,
@@ -1054,10 +1315,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  border: "1px solid var(--etched-border)",
  background: isUser ? "var(--bg-elevated)" : accent,
  color: isUser ? "var(--ink-black)" : "#fff",
- display: "flex",
  alignItems: "center",
  justifyContent: "center",
- fontSize: 10,
+ fontSize: 11,
  fontWeight: 700,
  fontFamily: "var(--font-mono)",
  }}
@@ -1066,9 +1326,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
  {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
- <div className="hivra-md" style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
+ <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
  {m.role === "assistant" ? (
- <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
+ <ReactMarkdown remarkPlugins={[remarkGfm]} components={CHAT_MARKDOWN_COMPONENTS}>{m.text}</ReactMarkdown>
  ) : (
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
@@ -1092,8 +1352,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  </div>
 
- <div className="relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 pb-3 pt-3">
- {showLatest ? (
+ <div ref={composerDockRef} className={`relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] ${styles.composerDock}`}>
+ {showLatest && messages.length > 0 ? (
  <button type="button" onClick={() => scrollDown(true)} className="hivra-chat-latest">
  <ChevronDown size={14} aria-hidden /> Return to latest
  </button>
@@ -1107,7 +1367,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setLastFailed(activeId, null);
  void send(t);
  }}
- className="inline-flex items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)]"
+ className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] md:min-h-[34px] md:min-w-0"
  >
  <RotateCcw size={13} /> Retry
  </button>
@@ -1126,6 +1386,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  value={input}
  onChange={(e) => setInput(e.target.value)}
  onKeyDown={(e) => {
+ if (coarsePointer) return;
  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
  e.preventDefault();
  void send(input);
@@ -1139,8 +1400,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }}
  rows={1}
  placeholder={`Message ${agentName}…`}
- className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[14px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
- style={{ minHeight: 44, maxHeight: 160, fontFamily: "inherit" }}
+ enterKeyHint={coarsePointer ? "enter" : "send"}
+ autoCapitalize="sentences"
+ className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[16px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)] md:text-[14px]"
+ style={{ minHeight: 44, maxHeight: composerCap, fontFamily: "inherit" }}
  />
  <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
  {token ? (
@@ -1162,18 +1425,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  title="Attach an image or text file (the agent reads it on the box)"
  disabled={busy || uploading || attachments.length >= 5}
  onClick={() => fileInputRef.current?.click()}
- className="inline-flex min-h-[34px] items-center px-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] disabled:opacity-40"
+ className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] disabled:opacity-40 md:min-h-[34px] md:min-w-0"
  >
  {uploading ? <Loader2 size={15} className="hivra-chat-spinner" /> : <Paperclip size={15} />}
  </button>
  </>
  ) : null}
  <span
- className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-[var(--etched-border)] px-2.5 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)]"
+ className="mono hidden min-w-0 max-w-full items-center gap-1.5 px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--text-muted)] md:inline-flex"
  title="The model this agent is currently running"
  >
  <Cpu size={11} className="shrink-0" /> <span className="truncate">{shownModel}</span>
  </span>
+ {/* Hidden below md until the box confirms it reads the reasoning flag. */}
  <button
  type="button"
  role="switch"
@@ -1182,7 +1446,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  title="Think — let the agent reason for longer before answering"
  onClick={toggleThink}
  className={[
- "mono inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10.5px] uppercase tracking-[0.06em] transition-colors",
+ "mono hidden items-center gap-1.5 border px-2.5 py-1 text-[11px] uppercase tracking-[0.06em] transition-colors md:inline-flex",
  think
  ? "border-transparent bg-[var(--ink-black)] text-[var(--bg-surface)]"
  : "border-[var(--etched-border)] text-[var(--text-muted)] hover:text-[var(--ink-black)]",
@@ -1190,14 +1454,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  >
  <Brain size={11} /> Think{think ? " · On" : ""}
  </button>
- <span className="flex-1" />
  {busy ? (
  <button
  type="button"
  onClick={stop}
  aria-label="Stop response"
  title="Stop the agent"
- className="inline-flex min-h-[34px] items-center gap-1.5 border border-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--bg-elevated)]"
+ className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 border border-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--bg-elevated)] md:min-h-[34px] md:min-w-0"
  >
  <Square size={13} fill="currentColor" /> Stop response
  </button>
@@ -1206,7 +1469,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="submit"
  disabled={!input.trim()}
  aria-label="Send message"
- className="inline-flex min-h-[34px] items-center gap-1.5 bg-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--bg-surface)] transition-opacity disabled:opacity-40"
+ className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 bg-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--bg-surface)] transition-opacity disabled:opacity-40 md:min-h-[34px] md:min-w-0"
  >
  <Send size={14} />
  <span className="hidden md:inline">Send message</span>
@@ -1214,20 +1477,26 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  )}
  </div>
  </form>
+ {attachError ? (
+ <p role="alert" className="mono mx-auto mt-2 w-full max-w-[760px] text-[12px] text-[var(--hivra-red)]">
+ {attachError}
+ </p>
+ ) : null}
  {attachments.length > 0 ? (
  <div className="mx-auto mt-2 flex w-full max-w-[760px] flex-wrap gap-1.5">
  {attachments.map((a) => (
- <span key={a.path} className="mono inline-flex items-center gap-1.5 rounded-full border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
- <Paperclip size={10} /> {a.name}
- <button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))} className="inline-flex text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]">
+ <span key={a.path} className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] py-1 pl-2.5 pr-2.5 text-[11px] text-[var(--text-secondary)]">
+ <Paperclip size={10} className="shrink-0" />
+ <span className="min-w-0 truncate">{a.name}</span>
+ <button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))} className="-my-[11px] -mr-[8px] inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]">
  <X size={11} />
  </button>
  </span>
  ))}
  </div>
  ) : null}
- <p className="mx-auto mt-2 w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)]">
- Runs the official agent CLI on this computer · Enter to send, Shift+Enter for newline
+ <p className="mx-auto mt-2 hidden w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)] md:block">
+ Runs the official agent CLI on this computer{coarsePointer ? "" : " · Enter to send, Shift+Enter for newline"}
  </p>
  </div>
  </div>

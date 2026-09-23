@@ -102,6 +102,9 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
   // error step. Reset on any successful poll. Definite errors (persistenceError,
   // 4xx) still fail immediately.
   const transientPollFailuresRef = useRef(0);
+  // A backdrop press closes only when it also started on the backdrop, so a
+  // drag-select out of the URL or code mid-sign-in does not.
+  const backdropPressRef = useRef(false);
   const reduceMotion = useReducedMotion();
   const overlayVariants = buildHermesOverlayVariants(Boolean(reduceMotion));
   const modalVariants = buildHermesSurfaceVariants(Boolean(reduceMotion), {
@@ -165,6 +168,14 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
     }, 2000);
   }, [codexUrl]);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handleClose]);
+
   const handleOpenInNewTab = useCallback(() => {
     if (!codexUrl) return;
     const win = typeof window !== 'undefined'
@@ -175,6 +186,13 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
     // copy fallback instead of a false red error.
     setOpenFallbackVisible(!win);
   }, [codexUrl]);
+
+  // One tap on a phone: start the copy, then open sign-in in the same user
+  // gesture so the popup is not blocked. The copy settles after the tab opens.
+  const handleCopyCodeAndOpen = useCallback(() => {
+    void handleCodexCopy();
+    handleOpenInNewTab();
+  }, [handleCodexCopy, handleOpenInNewTab]);
 
   const handleCodexStart = useCallback(async () => {
     if (!instanceId) return;
@@ -411,25 +429,39 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
       animate="visible"
       exit="exit"
       variants={overlayVariants}
-      style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', padding: 20 }}
+      onPointerDown={(event) => {
+        backdropPressRef.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        const pressedBackdrop = backdropPressRef.current;
+        backdropPressRef.current = false;
+        if (pressedBackdrop && event.target === event.currentTarget) handleClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="codex-oauth-title"
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', overflowY: 'auto', background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
     >
       <motion.div
         initial="hidden"
         animate="visible"
         exit="exit"
         variants={modalVariants}
-        style={{ width: '100%', maxWidth: 520, background: 'var(--bg-surface)', border: '1px solid var(--ink-black)', borderRadius: 0, boxShadow: '8px 8px 0px var(--ink-black)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+        onClick={(event) => event.stopPropagation()}
+        style={{ width: '100%', maxWidth: 520, maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))', margin: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--ink-black)', borderRadius: 0, boxShadow: '8px 8px 0px var(--ink-black)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       >
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--etched-border)', background: 'var(--vellum-bg)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 20px', minHeight: 52, borderBottom: '1px solid var(--etched-border)', background: 'var(--vellum-bg)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Terminal size={18} style={{ color: 'var(--ink-black)' }} />
-            <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink-black)', margin: 0 }}>Codex / ChatGPT Plus OAuth</h2>
+            <h2 id="codex-oauth-title" style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink-black)', margin: 0 }}>Sign in with ChatGPT</h2>
           </div>
           <motion.button
+            type="button"
+            aria-label="Close"
             onClick={handleClose}
-            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+            style={{ width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginRight: -12, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
             whileTap={tapScale}
             transition={buttonSpring}
           >
@@ -438,16 +470,17 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
         </div>
 
         {/* Content */}
-        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: 'clamp(16px, 4vw, 24px)', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', minHeight: 0, overscrollBehavior: 'contain' }}>
           {codexStep === 'idle' && (
             <>
               <div style={{ padding: '16px', background: 'var(--vellum-bg)', border: '1px solid var(--etched-border)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
                 <strong style={{ color: 'var(--ink-black)', display: 'block', marginBottom: 6 }}>Sign in with your ChatGPT subscription</strong>
-                Codex uses OAuth — no API key needed. Click below to start the device login flow. A code will appear that you enter at OpenAI&apos;s site securely.
+                No API key needed. Use the button below to start sign-in; a code appears that you enter on OpenAI&apos;s sign-in page.
               </div>
               <motion.button
                 onClick={handleCodexStart}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 18px', background: 'var(--ink-black)', border: 'none', borderRadius: 0, color: 'var(--bg-surface)', fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%' }}
+                type="button"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, padding: '10px 18px', background: 'var(--ink-black)', border: 'none', borderRadius: 0, color: 'var(--bg-surface)', fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%' }}
                 whileTap={tapScale}
                 transition={buttonSpring}
               >
@@ -459,29 +492,58 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           {codexStep === 'starting' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '24px 0' }}>
               <Loader2 size={28} style={{ animation: 'spin 1s linear infinite', color: 'var(--ink-black)' }} />
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, textAlign: 'center' }}>Connecting to active container to begin OAuth…</p>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, textAlign: 'center' }}>Starting sign-in on your agent…</p>
             </div>
           )}
 
           {codexStep === 'waiting' && (
             <>
+              {/* The code comes first: on a phone, switching to the sign-in page
+                  before copying it strands the user without the code. */}
+              {codexCode && (
+                <div style={{ padding: '14px 16px', background: 'var(--vellum-bg)', border: '1px solid var(--etched-border)' }}>
+                  <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Step 1 — Copy this code</p>
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.15em', fontFamily: 'var(--font-mono), monospace', color: 'var(--ink-black)', overflowWrap: 'anywhere' }}>{codexCode}</span>
+                    <motion.button onClick={handleCodexCopy}
+                      type="button"
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, minHeight: 44, padding: '0 14px', background: 'transparent', border: '1px solid var(--etched-border)', fontSize: 11, fontWeight: 600, cursor: 'pointer', color: codexCopied ? 'var(--green)' : 'var(--text-secondary)' }}
+                      whileTap={tapScale}
+                      transition={buttonSpring}
+                    >
+                      <Copy size={11} />{codexCopied ? 'Copied!' : 'Copy'}
+                    </motion.button>
+                  </div>
+                  <motion.button
+                    type="button"
+                    onClick={handleCopyCodeAndOpen}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', minHeight: 44, padding: '0 16px', background: 'var(--ink-black)', border: 'none', color: 'var(--bg-surface)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                    whileTap={tapScale}
+                    transition={buttonSpring}
+                  >
+                    <ExternalLink size={13} /> Copy code &amp; open sign-in
+                  </motion.button>
+                </div>
+              )}
               <div style={{ padding: '14px 16px', background: 'var(--vellum-bg)', border: '1px solid var(--etched-border)' }}>
-                <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Step 1 — Open this URL</p>
+                <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>{codexCode ? 'Step 2 — Enter it on the sign-in page' : 'Step 1 — Open this URL'}</p>
                 {/* Both buttons are visible from t=0; do NOT defer behind a
                     delay or disclosure. Bury-the-fallback is how Sessions D
                     and E in the PostHog audit died on this flow. */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                   <motion.button
+                    type="button"
                     onClick={handleOpenInNewTab}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: 'var(--ink-black)', border: 'none', color: 'var(--bg-surface)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 44, padding: '0 14px', background: codexCode ? 'transparent' : 'var(--ink-black)', border: codexCode ? '1px solid var(--ink-black)' : 'none', color: codexCode ? 'var(--ink-black)' : 'var(--bg-surface)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
                     whileTap={tapScale}
                     transition={buttonSpring}
                   >
                     <ExternalLink size={12} /> Open authorization page
                   </motion.button>
                   <motion.button
+                    type="button"
                     onClick={handleUrlCopy}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: 'transparent', border: '1px solid var(--ink-black)', color: urlCopied ? 'var(--green)' : 'var(--ink-black)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 44, padding: '0 14px', background: 'transparent', border: '1px solid var(--ink-black)', color: urlCopied ? 'var(--green)' : 'var(--ink-black)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
                     whileTap={tapScale}
                     transition={buttonSpring}
                   >
@@ -497,21 +559,6 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
                   {codexUrl}
                 </code>
               </div>
-              {codexCode && (
-                <div style={{ padding: '14px 16px', background: 'var(--vellum-bg)', border: '1px solid var(--etched-border)' }}>
-                  <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Step 2 — Enter this code</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.15em', fontFamily: 'var(--font-mono), monospace', color: 'var(--ink-black)' }}>{codexCode}</span>
-                    <motion.button onClick={handleCodexCopy}
-                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', background: 'transparent', border: '1px solid var(--etched-border)', fontSize: 11, fontWeight: 600, cursor: 'pointer', color: codexCopied ? 'var(--green)' : 'var(--text-secondary)' }}
-                      whileTap={tapScale}
-                      transition={buttonSpring}
-                    >
-                      <Copy size={11} />{codexCopied ? 'Copied!' : 'Copy'}
-                    </motion.button>
-                  </div>
-                </div>
-              )}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--etched-border)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 <Loader2 size={13} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
                 <div style={{ display: 'grid', gap: 2 }}>
@@ -539,8 +586,9 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
                 <AlertTriangle size={14} style={{ flexShrink: 0 }} /><span>{codexError}</span>
               </div>
               <motion.button
+                type="button"
                 onClick={() => setCodexStep('idle')}
-                style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--ink-black)', fontSize: 13, fontWeight: 500, cursor: 'pointer', color: 'var(--ink-black)' }}
+                style={{ minHeight: 44, padding: '8px 16px', background: 'transparent', border: '1px solid var(--ink-black)', fontSize: 13, fontWeight: 500, cursor: 'pointer', color: 'var(--ink-black)' }}
                 whileTap={tapScale}
                 transition={buttonSpring}
               >

@@ -3,8 +3,10 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   CheckCircle2,
   Cloud,
+  Copy,
   ExternalLink,
   HardDrive,
   Loader2,
@@ -512,7 +514,14 @@ export function HetznerCloudCapacityDialog({
   useEffect(() => {
     if (previousScreenRef.current === screenKey) return;
     previousScreenRef.current = screenKey;
-    if (dialogRef.current) dialogRef.current.scrollTop = 0;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      dialog.scrollTop = 0;
+      // Phones scroll this dialog with the dashboard page, not inside itself.
+      if (window.getComputedStyle(dialog).overflowY === "visible") {
+        dialog.scrollIntoView?.({ block: "start" });
+      }
+    }
     headingRef.current?.focus({ preventScroll: true });
   }, [screenKey, dialogRef]);
 
@@ -811,6 +820,61 @@ export function HetznerCloudCapacityDialog({
   );
 }
 
+function CopyableValue({ label, value }: { label: string; value: string }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "selected">("idle");
+  const valueRef = useRef<HTMLSpanElement>(null);
+  const active = useRef(true);
+  const resetTimer = useRef<number | null>(null);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    };
+  }, []);
+
+  async function copyValue() {
+    let copiedToClipboard = true;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      copiedToClipboard = false;
+    }
+    if (!active.current) return;
+    if (!copiedToClipboard && valueRef.current) {
+      // Clipboard access can be denied or missing (insecure origin, some
+      // webviews). Selecting the value leaves the system Copy one step away.
+      window.getSelection()?.selectAllChildren(valueRef.current);
+    }
+    setCopyState(copiedToClipboard ? "copied" : "selected");
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => {
+      resetTimer.current = null;
+      if (active.current) setCopyState("idle");
+    }, copiedToClipboard ? 1_500 : 6_000);
+  }
+
+  const copied = copyState === "copied";
+  return (
+    <dd className={styles.copyableValue}>
+      <span ref={valueRef}>{value}</span>
+      <button
+        type="button"
+        className={styles.copyValueButton}
+        data-copied={copied ? "true" : undefined}
+        aria-label={copied ? `Copied ${label}` : `Copy ${label}`}
+        title={copied ? "Copied" : "Copy"}
+        onClick={() => void copyValue()}
+      >
+        {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      </button>
+      <span role="status" className={copyState === "selected" ? styles.copyStatus : styles.srOnly}>
+        {copied ? `Copied ${label}` : copyState === "selected" ? "Selected — use Copy" : ""}
+      </span>
+    </dd>
+  );
+}
+
 function CapacityRecovery({
   request,
   checking,
@@ -840,10 +904,13 @@ function CapacityRecovery({
         </div>
       </div>
 
-      <dl className={styles.capacityOperationFacts} aria-label="Saved recovery identifiers">
-        <div><dt>Connection</dt><dd>{request.connectionId}</dd></div>
-        <div><dt>Quote</dt><dd>{request.quoteId}</dd></div>
-        <div><dt>Request key</dt><dd>{request.idempotencyKey}</dd></div>
+      <dl
+        className={`${styles.capacityOperationFacts} ${styles.capacityRecoveryFacts}`}
+        aria-label="Saved recovery identifiers"
+      >
+        <div><dt>Connection</dt><CopyableValue label="connection id" value={request.connectionId} /></div>
+        <div><dt>Quote</dt><CopyableValue label="quote id" value={request.quoteId} /></div>
+        <div><dt>Request key</dt><CopyableValue label="request key" value={request.idempotencyKey} /></div>
       </dl>
 
       <div className={styles.capacityBoundary}>

@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 let mockSearchParams = new URLSearchParams();
 const mockPush = jest.fn();
@@ -704,5 +704,174 @@ describe("AdvancedConsolePage", () => {
     await waitFor(() => {
       expect(screen.getByText(/network error executing command\./i)).toBeInTheDocument();
     });
+  });
+
+  it("labels the back link as a way back to chat", async () => {
+    await act(async () => {
+      render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+    });
+
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /back to chat/i }));
+    expect(mockPush).toHaveBeenCalledWith("/dashboard/instances/inst_123");
+  });
+
+  it("collapses the ops buttons into one Actions disclosure below the tabs at phone width", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(max-width: 640px)",
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+    global.fetch = createConsoleFetchMock({ postResponse: { success: true } });
+
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+
+      expect(screen.queryByTestId("console-ops-row")).not.toBeInTheDocument();
+      const actions = screen.getByTestId("console-actions");
+      const backupsTab = screen.getByRole("button", { name: /backups/i });
+      expect(backupsTab.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      const labels = within(actions).getAllByRole("button", { hidden: true }).map((button) => button.textContent?.trim());
+      expect(labels).toEqual([
+        "REDEPLOY CONFIG",
+        "UPDATE NOW",
+        "RESTART GATEWAY",
+        "Auto-Update",
+        "Connect Desktop",
+        "REPAIR RUNTIME",
+        "REBUILD RUNTIME",
+      ]);
+      expect(within(actions).getByText("Recovery")).toBeInTheDocument();
+
+      fireEvent.click(within(actions).getByText("Actions"));
+      fireEvent.click(within(actions).getByRole("button", { name: /update now/i, hidden: true }));
+      expect(screen.getByRole("dialog")).toHaveTextContent(/without removing mounted docker volumes/i);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm update/i }));
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalledWith("/api/instances/inst_123", expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ action: "update" }),
+        }));
+      });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  // matchMedia whose answers can change, notifying subscribers like a rotate.
+  function mockViewport(initial: string[]) {
+    const originalMatchMedia = window.matchMedia;
+    const listeners = new Set<() => void>();
+    let matching = initial;
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return matching.includes(query);
+      },
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+    return {
+      set(next: string[]) {
+        matching = next;
+        act(() => listeners.forEach((listener) => listener()));
+      },
+      restore() {
+        window.matchMedia = originalMatchMedia;
+      },
+    };
+  }
+
+  // Renders and lets the initial snapshot fetch settle inside act.
+  async function renderConsole() {
+    await act(async () => {
+      render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+    });
+    await act(async () => {
+      jest.runOnlyPendingTimers();
+    });
+  }
+
+  it("keeps the Connect Desktop guide open when a phone rotates across 640px", async () => {
+    const viewport = mockViewport(["(max-width: 640px)"]);
+    try {
+      await renderConsole();
+
+      const actions = screen.getByTestId("console-actions");
+      fireEvent.click(within(actions).getByText("Actions"));
+      fireEvent.click(within(actions).getByRole("button", { name: /connect desktop/i, hidden: true }));
+      expect(screen.getByRole("dialog", { name: "Connect Hermes Desktop" })).toBeInTheDocument();
+
+      viewport.set([]);
+      expect(screen.getByTestId("console-ops-row")).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Connect Hermes Desktop" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("dialog", { name: "Connect Hermes Desktop" })).not.toBeInTheDocument();
+    } finally {
+      viewport.restore();
+    }
+  });
+
+  it("puts the primary action first in DOM order when the confirm buttons stack", async () => {
+    const viewport = mockViewport(["(max-width: 640px)", "(max-width: 480px)"]);
+    try {
+      await renderConsole();
+
+      const actions = screen.getByTestId("console-actions");
+      fireEvent.click(within(actions).getByText("Actions"));
+      fireEvent.click(within(actions).getByRole("button", { name: /redeploy config/i, hidden: true }));
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+        "Confirm Redeploy",
+        "Cancel",
+      ]);
+
+      viewport.set([]);
+      expect(within(dialog).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+        "Cancel",
+        "Confirm Redeploy",
+      ]);
+    } finally {
+      viewport.restore();
+    }
+  });
+
+  it("closes the confirm modal only on a press that starts on the backdrop", async () => {
+    await renderConsole();
+
+    fireEvent.click(screen.getByRole("button", { name: /redeploy config/i }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.pointerDown(within(dialog).getByRole("heading", { name: /confirm redeploy/i }));
+    fireEvent.click(dialog);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.pointerDown(dialog);
+    fireEvent.click(dialog);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -50,7 +50,8 @@ export function DashboardResourceSwitcher({ resources, loading, errors, onSelect
       <div className={styles.switcherSearch}>
         <Search size={18} aria-hidden />
         <label className={styles.srOnly} id={`${listId}-title`} htmlFor={`${listId}-input`}>Switch agent or computer</label>
-        <input ref={input} id={`${listId}-input`} role="combobox" autoComplete="off" value={query}
+        <input ref={input} id={`${listId}-input`} role="combobox" autoComplete="off" enterKeyHint="go"
+          autoCapitalize="none" autoCorrect="off" spellCheck={false} value={query}
           placeholder="Find an agent or computer…" aria-expanded="true" aria-controls={listId}
           aria-autocomplete="list" aria-activedescendant={ordered.length ? `${listId}-${active}` : undefined}
           onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
@@ -81,6 +82,7 @@ export function DashboardResourceSwitcher({ resources, loading, errors, onSelect
               const detail = duplicate ? `${item.description} · ${item.source} · ${item.id.slice(-8)}` : `${item.description} · ${item.kind === "agent" ? "Agent" : "Computer"}`;
               return <button type="button" id={`${listId}-${index}`} key={item.uid} role="option" aria-selected={index === active}
                 className={styles.switcherResult} title={`${item.description} · ${item.uid}`} onClick={() => onSelect(item)}>
+                <span className={`${styles.statusDot} ${styles.resultDot}`} data-state={item.status} aria-hidden />
                 <Icon size={17} aria-hidden /><span className={styles.resourceCopy}><strong>{item.name}</strong>
                   <small>{detail}</small></span>
                 <span className={styles.resultStatus}>{errors[item.source] ? "Last known: " : ""}{resourceStatusLabel(item.status)}</span>

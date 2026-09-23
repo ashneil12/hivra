@@ -26,6 +26,33 @@ interface InstanceData {
 }
 
 type BrowserReadiness = 'checking' | 'ready' | 'unavailable';
+
+// Touch and narrow-screen chrome: 44px icon buttons on coarse pointers. On
+// phones the header is one row (runtime details stay in the utility rail) and
+// the default-workspace star moves into the rail; the decorative badge drops
+// out on the narrowest screens. With the soft keyboard up the header goes
+// away entirely so the terminal keeps its rows.
+const TUI_RESPONSIVE_CSS = `
+.tui-rail-default { display: none !important; }
+@media (pointer: coarse) {
+  .tui-icon-button { width: 44px !important; height: 44px !important; }
+}
+@media (max-width: 639px) {
+  .tui-header { flex-wrap: nowrap !important; }
+  .tui-header-actions { flex-shrink: 0; flex-wrap: nowrap !important; }
+  .tui-header-subtitle, .tui-header-meta { display: none !important; }
+  .tui-default-toggle { display: none !important; }
+  .tui-rail-default { display: inline-flex !important; }
+}
+@media (max-width: 479px) {
+  .tui-badge { display: none !important; }
+}
+[data-keyboard-open="true"] .tui-header { display: none !important; }
+[data-keyboard-open="true"] .tui-workspace { grid-template-rows: minmax(0, 1fr) !important; gap: 0 !important; }
+[data-keyboard-open="true"] .tui-shell {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 4px) !important;
+  padding-bottom: 4px !important;
+}`;
 function InfoCard({
   label,
   value,
@@ -40,7 +67,7 @@ function InfoCard({
   return (
     <div style={{
       border: `1px solid ${theme.border}`,
-      borderRadius: 8,
+      borderRadius: 0,
       background: theme.panelBackground,
       padding: '12px',
       display: 'grid',
@@ -171,6 +198,9 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
   const isDefaultWorkspace = preferredSurface === 'tui';
   const pagePadding = 'clamp(10px, 2vw, 18px)';
   const pagePaddingTop = `calc(env(safe-area-inset-top, 0px) + ${pagePadding})`;
+  const pagePaddingBottom = `calc(env(safe-area-inset-bottom, 0px) + ${pagePadding})`;
+  const pagePaddingLeft = `max(${pagePadding}, env(safe-area-inset-left, 0px))`;
+  const pagePaddingRight = `max(${pagePadding}, env(safe-area-inset-right, 0px))`;
   const utilityRailButtonLabel = utilityRailOpen ? 'Hide workspace details' : 'Open workspace details';
   const colorMode = useMemo(() => resolveHermesTuiColorMode(resolvedTheme), [resolvedTheme]);
   const tuiTheme = useMemo(() => getHermesTuiTheme(colorMode), [colorMode]);
@@ -260,15 +290,19 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
 
   return (
     <div style={{
-      height: '100dvh',
+      // The visible viewport, so the prompt refits above the soft keyboard.
+      height: 'var(--workspace-viewport-height, 100dvh)',
       display: 'grid',
       boxSizing: 'border-box',
       background: workspaceTheme.pageBackground,
       color: workspaceTheme.textPrimary,
-      padding: pagePadding,
       paddingTop: pagePaddingTop,
+      paddingRight: pagePaddingRight,
+      paddingBottom: pagePaddingBottom,
+      paddingLeft: pagePaddingLeft,
       overflow: 'hidden',
-    }} data-testid="dedicated-tui-shell" data-color-mode={colorMode}>
+    }} className="tui-shell" data-testid="dedicated-tui-shell" data-color-mode={colorMode}>
+      <style>{TUI_RESPONSIVE_CSS}</style>
       <div style={{
         width: '100%',
         height: '100%',
@@ -277,10 +311,10 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
         gridTemplateRows: 'auto minmax(0, 1fr)',
         gap: 10,
         overflow: 'hidden',
-        }} data-testid="dedicated-tui-workspace">
-        <div style={{
+        }} className="tui-workspace" data-testid="dedicated-tui-workspace">
+        <div className="tui-header" data-testid="dedicated-tui-header" style={{
           border: `1px solid ${workspaceTheme.borderSoft}`,
-          borderRadius: 8,
+          borderRadius: 0,
           background: workspaceTheme.panelBackgroundAlt,
           boxShadow: workspaceTheme.shadow,
           padding: '9px 10px',
@@ -295,16 +329,17 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
             <button
               onClick={() => router.push(`/dashboard/instances/${id}?surface=chat`)}
               style={getIconButtonStyle(workspaceTheme)}
+              className="tui-icon-button"
               aria-label="Back to chat"
               title="Back to chat"
             >
               <ArrowLeft size={14} />
             </button>
 
-            <div style={{
+            <div className="tui-badge" aria-hidden="true" style={{
               width: 32,
               height: 32,
-              borderRadius: 6,
+              borderRadius: 0,
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -329,27 +364,27 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
                 }}>
                   {workspaceName}
                 </span>
-                <span style={{
+                <span className="tui-header-subtitle" style={{
                   fontFamily: 'var(--font-mono), monospace',
-                  fontSize: 10,
+                  fontSize: 11,
                   color: workspaceTheme.textMuted,
                 }}>
                   Hermes TUI
                 </span>
-                <span style={{
+                <span className="tui-header-subtitle" style={{
                   fontFamily: 'var(--font-mono), monospace',
-                  fontSize: 10,
+                  fontSize: 11,
                   color: workspaceTheme.textSubtle,
                 }}>
                   {id.slice(0, 8)}
                 </span>
               </div>
-              <div style={{
+              <div className="tui-header-meta" style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
                 flexWrap: 'wrap',
-                fontSize: 10,
+                fontSize: 11,
                 color: workspaceTheme.textMuted,
                 fontFamily: 'var(--font-mono), monospace',
               }}>
@@ -360,10 +395,11 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+          <div className="tui-header-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
             <button
               onClick={refreshWorkspace}
               style={getIconButtonStyle(workspaceTheme, refreshingWorkspace)}
+              className="tui-icon-button"
               disabled={refreshingWorkspace}
               aria-label="Reconnect terminal"
               title="Reconnect terminal"
@@ -376,6 +412,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
             <button
               onClick={openLiveBrowser}
               style={getIconButtonStyle(workspaceTheme, browserReadiness !== 'ready')}
+              className="tui-icon-button"
               disabled={browserReadiness !== 'ready'}
               aria-label={browserReadiness === 'ready' ? 'Open live browser' : browserValue}
               title={browserReadiness === 'ready' ? 'Open live browser' : browserValue}
@@ -391,6 +428,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
             <button
               onClick={() => setUtilityRailOpen((open) => !open)}
               style={getIconButtonStyle(workspaceTheme)}
+              className="tui-icon-button"
               aria-label={utilityRailButtonLabel}
               aria-controls="workspace-utility-rail"
               aria-expanded={utilityRailOpen}
@@ -401,6 +439,8 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
             <button
               onClick={toggleDefaultWorkspace}
               style={getIconButtonStyle(workspaceTheme, false, isDefaultWorkspace)}
+              className="tui-icon-button tui-default-toggle"
+              aria-pressed={isDefaultWorkspace}
               aria-label="Set as default workspace"
               title={isDefaultWorkspace ? 'Default workspace' : 'Set as default workspace'}
             >
@@ -424,7 +464,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
             minHeight: 0,
             height: '100%',
             border: `1px solid ${workspaceTheme.border}`,
-            borderRadius: 8,
+            borderRadius: 0,
             background: workspaceTheme.terminalCardBackground,
             boxShadow: workspaceTheme.shadow,
             overflow: 'hidden',
@@ -469,7 +509,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
                 justifyContent: 'space-between',
                 gap: 12,
                 border: `1px solid ${workspaceTheme.borderSoft}`,
-                borderRadius: 8,
+                borderRadius: 0,
                 background: workspaceTheme.panelBackgroundAlt,
                 padding: 12,
               }}>
@@ -494,6 +534,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
                 <button
                   onClick={() => setUtilityRailOpen(false)}
                   style={getIconButtonStyle(workspaceTheme)}
+                  className="tui-icon-button"
                   aria-label="Close utility rail"
                 >
                   <X size={14} />
@@ -504,7 +545,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
                 display: 'grid',
                 gap: 12,
                 border: `1px solid ${workspaceTheme.borderSoft}`,
-                borderRadius: 8,
+                borderRadius: 0,
                 background: workspaceTheme.panelBackgroundAlt,
                 padding: 12,
               }}>
@@ -544,7 +585,7 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
                 display: 'grid',
                 gap: 10,
                 border: `1px solid ${workspaceTheme.borderSoft}`,
-                borderRadius: 8,
+                borderRadius: 0,
                 background: workspaceTheme.panelBackgroundAlt,
                 padding: 12,
               }}>
@@ -579,6 +620,15 @@ export default function DedicatedHermesTuiPage(_props: { params?: Promise<{ id: 
                   )}
                   {browserReadiness === 'checking' ? 'Checking…' : 'Browser'}
                 </button>
+                <button
+                  onClick={toggleDefaultWorkspace}
+                  style={getActionButtonStyle(workspaceTheme)}
+                  className="tui-rail-default"
+                  aria-pressed={isDefaultWorkspace}
+                >
+                  <Star size={14} fill={isDefaultWorkspace ? 'currentColor' : 'none'} />
+                  {isDefaultWorkspace ? 'Default workspace' : 'Make default'}
+                </button>
               </div>
             </aside>
           ) : null}
@@ -597,7 +647,7 @@ function getActionButtonStyle(theme: HermesTuiTheme['workspace'], disabled = fal
     width: '100%',
     padding: '10px 12px',
     border: `1px solid ${theme.border}`,
-    borderRadius: 6,
+    borderRadius: 0,
     background: theme.buttonBackground,
     color: theme.buttonText,
     cursor: disabled ? 'wait' : 'pointer',
@@ -620,7 +670,7 @@ function getIconButtonStyle(
     justifyContent: 'center',
     width: 32,
     height: 32,
-    borderRadius: 6,
+    borderRadius: 0,
     border: `1px solid ${active ? theme.buttonBorder : theme.border}`,
     background: active ? theme.buttonBackgroundActive : theme.iconButtonBackground,
     color: active ? theme.labelAccent : theme.iconButtonText,
