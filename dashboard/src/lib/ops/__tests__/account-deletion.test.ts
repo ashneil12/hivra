@@ -5,6 +5,7 @@ import {
   ACCOUNT_DELETION_TABLES,
   assertClerkDeletionPolicy,
   assertConfirmedAccountDeletion,
+  assertNoLiveHivraComputers,
   buildDeletionTableSummary,
   extractStorageObjectPath,
   isMissingOptionalAccountDeletionTableError,
@@ -288,5 +289,41 @@ describe("account deletion safeguards", () => {
         { message: "Could not find the table 'public.hermes_instances' in the schema cache" }
       )
     ).toBe(false);
+  });
+
+  it("deletes the user's Hivra agent activity records by user id", () => {
+    for (const table of ["hivra_agent_events", "hivra_activity_collectors"]) {
+      const spec = ACCOUNT_DELETION_TABLES.find((entry) => entry.table === table);
+      expect(spec).toEqual(
+        expect.objectContaining({ filterColumn: "user_id", source: "userId" })
+      );
+    }
+    // The events table is required; only the newer collectors table may be absent.
+    expect(
+      ACCOUNT_DELETION_TABLES.find((entry) => entry.table === "hivra_agent_events")?.optionalIfMissing
+    ).toBeUndefined();
+  });
+
+  it("refuses an apply while the user still has Hivra computers that are not deleted", () => {
+    expect(() =>
+      assertNoLiveHivraComputers({ apply: true, liveComputerIds: ["agent-1"] })
+    ).toThrow(/Hivra computer\(s\) that are not deleted/);
+    expect(() =>
+      assertNoLiveHivraComputers({ apply: false, liveComputerIds: ["agent-1"] })
+    ).not.toThrow();
+    expect(() =>
+      assertNoLiveHivraComputers({ apply: true, liveComputerIds: [] })
+    ).not.toThrow();
+  });
+
+  it("checks for live Hivra computers before the delete-user script revokes the login", () => {
+    const script = readFileSync(
+      path.resolve(__dirname, "../../../../scripts/delete-user-account.ts"),
+      "utf8"
+    );
+    const guard = script.indexOf("assertNoLiveHivraComputers({ apply: args.apply");
+    const clerk = script.indexOf("await deleteClerkUser(args.userId)");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(clerk);
   });
 });
