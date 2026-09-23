@@ -871,6 +871,8 @@ describe("AgentPage", () => {
     expect(screen.getByLabelText("Focus")).toBeInTheDocument();
     expect(screen.getByLabelText("Context")).toBeInTheDocument();
     expect(screen.getByLabelText("First task")).toBeInTheDocument();
+    // The phone keyboard offers Done on the last field instead of a newline-style Return.
+    expect(screen.getByLabelText("First task")).toHaveAttribute("enterkeyhint", "done");
   });
 
   it.each([
@@ -1097,7 +1099,8 @@ describe("AgentPage", () => {
 
     render(<AgentPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^connect$/i }));
+    // The nudge's action reads "Connect Telegram" since the phone pass.
+    fireEvent.click(await screen.findByRole("button", { name: /^connect( telegram)?$/i }));
 
     expect(await screen.findByText("Telegram panel")).toBeInTheDocument();
     expect(screen.queryByTestId("channel-connect-nudge")).not.toBeInTheDocument();
