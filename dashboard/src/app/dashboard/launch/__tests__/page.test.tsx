@@ -1133,6 +1133,133 @@ describe("LaunchPage", () => {
     })));
   });
 
+  const RAISED_RESOURCES = { cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, source: "custom" };
+  const RAISED_TEXT = "Selected · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB";
+
+  // With the browser held off by the owner's 1 CPU / 2 GB on a destination
+  // whose default is on, raise the size past the 1.5 CPU / 3 GB browser floor.
+  // The default turns on as soon as the size holds it, in view, and the size
+  // stays exactly what the owner picked.
+  function raiseHeldOffSize() {
+    const browser = screen.getByRole("checkbox", { name: /Browser for Codex/ });
+    expect(browser).not.toBeChecked();
+    fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "2 CPU" }));
+    // 2 CPU / 2 GB is still below the browser's memory floor.
+    expect(browser).not.toBeChecked();
+    expect(storedDraft()).toMatchObject({ browser: false, resources: { cpu: 2, ram: 2, source: "custom" } });
+    fireEvent.click(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "4 GB" }));
+    expectRaisedWithBrowser();
+  }
+
+  function expectRaisedWithBrowser() {
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
+    expect(screen.getByText(RAISED_TEXT)).toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ browser: true, browserSource: "recommended", resources: RAISED_RESOURCES });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
+  }
+
+  it("turns a held-off browser default on in view when the owner raises the size, and a reload keeps it", async () => {
+    const first = await chooseSmallHostCustomCodex();
+    fireEvent.click(screen.getByRole("button", { name: /Hivra Cloud/i }));
+    expectSmallHostCustomKept();
+    raiseHeldOffSize();
+    const shown = storedDraft();
+    first.unmount();
+
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Where should Codex run?" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    await act(async () => { await Promise.resolve(); });
+    // The reload re-evaluates the default and finds nothing to change.
+    expect(storedDraft()).toEqual(shown);
+    expectRaisedWithBrowser();
+
+    // The owner's own choice still wins over the default.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(storedDraft()).toMatchObject({ browser: false, browserSource: "custom", resources: RAISED_RESOURCES });
+  });
+
+  it("turns a held-off browser default on in view when a raised size fits the host, and Refresh ready hosts keeps it", async () => {
+    infrastructureTargets = [SMALL_PROXMOX_TARGET, PROXMOX_TARGET];
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const own = await screen.findByRole("button", { name: /My infrastructure/i });
+    await waitFor(() => expect(own).toBeEnabled());
+    fireEvent.click(own);
+    const host = screen.getByRole("combobox", { name: /Ready host/ });
+    fireEvent.change(host, { target: { value: SMALL_PROXMOX_TARGET.id } });
+    fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "1 CPU" }));
+    fireEvent.click(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "2 GB" }));
+    // The big host defaults the browser on, but 1 CPU / 2 GB holds it off.
+    fireEvent.change(host, { target: { value: PROXMOX_TARGET.id } });
+    expectSmallHostCustomKept();
+    raiseHeldOffSize();
+    const shown = storedDraft();
+    expect(shown.capacity).toEqual({ mode: "self-managed", targetId: PROXMOX_TARGET.id });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh ready hosts" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ready hosts" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    await act(async () => { await Promise.resolve(); });
+    // A new host identity re-runs the default; it had nothing left to change.
+    expect(storedDraft()).toEqual(shown);
+    expectRaisedWithBrowser();
+
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    const review = screen.getByLabelText("Launch review");
+    expect(within(review).getByText("On · Codex can use a web browser on its computer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex", cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, browser: true,
+      deployment: expect.objectContaining({ mode: "self-managed", targetId: PROXMOX_TARGET.id }),
+    })));
+  });
+
+  it("launches and retries a rejected launch with the browser the owner saw after raising a held-off size", async () => {
+    createAgentMock.mockRejectedValueOnce(new HivraLaunchRejectedError(
+      "The selected infrastructure changed before launch.",
+      409,
+      "agent_insert_conflict",
+    ));
+    await chooseSmallHostCustomCodex();
+    fireEvent.click(screen.getByRole("button", { name: /Hivra Cloud/i }));
+    expectSmallHostCustomKept();
+    raiseHeldOffSize();
+
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    const firstReview = screen.getByLabelText("Launch review");
+    expect(within(firstReview).getByText("On · Codex can use a web browser on its computer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(await screen.findByRole("heading", {
+      name: "Nothing new will be started from this receipt.",
+    })).toBeInTheDocument();
+    const sent = { type: "codex", cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, browser: true };
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    expect(createAgentMock.mock.calls[0][0]).toMatchObject({ ...sent, deployment: { mode: "hivra-managed" } });
+    const failedRequestId = storedDraft().launchRequestId;
+
+    // Review mints a new launch request, which re-runs the default. It must
+    // show and send what the owner already saw, not a newly flipped choice.
+    fireEvent.click(screen.getByRole("button", { name: "Review launch" }));
+    expect(screen.getByRole("heading", { name: "Review this launch" })).toBeInTheDocument();
+    await act(async () => { await Promise.resolve(); });
+    const retryReview = screen.getByLabelText("Launch review");
+    expect(within(retryReview).getByText("On · Codex can use a web browser on its computer")).toBeInTheDocument();
+    expect(within(retryReview).getByText("2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ browser: true, browserSource: "recommended", resources: RAISED_RESOURCES });
+    expect(storedDraft().launchRequestId).not.toBe(failedRequestId);
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(2));
+    expect(createAgentMock.mock.calls[1][0]).toMatchObject({ ...sent, deployment: { mode: "hivra-managed" } });
+    expect(createAgentMock.mock.calls[1][0].launchRequestId).not.toBe(failedRequestId);
+  });
+
   it("shows Check again when the plan becomes unverified on Review, and recovers", async () => {
     const first = render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });

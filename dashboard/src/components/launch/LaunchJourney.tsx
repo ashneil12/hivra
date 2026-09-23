@@ -151,6 +151,45 @@ function codexResourcesFor(
   return recommendedForPlan("codex", plan, browser);
 }
 
+type CodexBrowserDefaultContext = {
+  /** The draft whose saved destination has been restored, if any. */
+  restoredFor: string | null;
+  browserDefault: boolean | null;
+  mode: LaunchDestinationState["mode"];
+  selectedTarget: DeploymentTargetDto | null;
+  plan: PlanInfo | null;
+};
+
+/** The draft with Codex's browser default applied. A pure function of the
+ * draft and its destination: applying it twice changes nothing, and it
+ * returns the same draft when nothing changes. Until the owner chooses, the
+ * browser follows the destination's default, but only a size that holds the
+ * browser floor holds it: a custom size below the floor keeps the browser off
+ * and is never raised, while a recommended size follows the default. */
+function withCodexBrowserDefault(current: LaunchDraft, context: CodexBrowserDefaultContext): LaunchDraft {
+  if (current.profileId !== "codex" || current.submittedDeployment) return current;
+  // Until a resumed draft's saved destination is restored, the hook still
+  // reports its initial Hivra Cloud choice; a default derived from it would
+  // be for a destination the owner did not pick.
+  if (current.launchRequestId !== context.restoredFor) return current;
+  const custom = current.resources.source === "custom";
+  const browser = current.browserSource === "recommended" && context.browserDefault !== null
+    ? context.browserDefault && (!custom || meetsCodexFloor(current.resources, true))
+    : current.browser;
+  const resources = custom ? current.resources : codexResourcesFor(
+    current.resources,
+    browser,
+    context.plan,
+    next => destinationHolds(context.mode, context.selectedTarget, context.plan, next),
+  );
+  if (
+    browser === current.browser
+    && resources.cpu === current.resources.cpu
+    && resources.ram === current.resources.ram
+  ) return current;
+  return { ...current, browser, resources };
+}
+
 function formatSize(cpu: number, ram: number): string {
   // Round down so a fractional remainder is never overstated.
   const tenth = (value: number) => Math.floor(value * 10 + 1e-9) / 10;
@@ -518,47 +557,38 @@ export function LaunchJourney() {
   }, [planCheckRevision]);
 
   // Until the owner chooses, Codex's browser follows the plan on Hivra Cloud
-  // and the selected host's measured capacity on their own infrastructure,
-  // re-evaluated whenever either changes. A submitted launch never changes.
-  // Applied before paint so a stale default is never shown or submitted.
+  // and the selected host's measured capacity on their own infrastructure.
+  // It is re-evaluated on every draft change as well as destination changes,
+  // so a size the owner raises past the browser floor turns the default on at
+  // once, in view, and no later unrelated re-run (a reload, a host refresh, a
+  // retried review) can flip a choice the owner was never shown. A submitted
+  // launch never changes. Applied before paint so a stale default is never
+  // shown or submitted.
   const destinationMode = destination.mode;
   const selectedTarget = destination.selectedTarget;
   const codexBrowserDefault = recommendedCodexBrowser(destinationMode, selectedTarget, plan);
-  const draftProfileId = draft?.profileId ?? null;
-  const draftSubmitted = Boolean(draft?.submittedDeployment);
   useLayoutEffect(() => {
-    setDraft(current => {
-      if (current?.profileId !== "codex" || current.submittedDeployment) return current;
-      // Until a resumed draft's saved destination is restored, the hook still
-      // reports its initial Hivra Cloud choice; a default derived from it would
-      // be for a destination the owner did not pick.
-      if (current.launchRequestId !== restoredDestinationFor) return current;
-      const custom = current.resources.source === "custom";
-      // Only the owner's own toggle raises a size they chose. A chosen size
-      // below the browser floor does not hold the browser, so it stays off.
-      const browser = current.browserSource === "recommended" && codexBrowserDefault !== null
-        ? codexBrowserDefault && (!custom || meetsCodexFloor(current.resources, true))
-        : current.browser;
-      const resources = custom ? current.resources : codexResourcesFor(
-        current.resources,
-        browser,
-        plan,
-        next => destinationHolds(destinationMode, selectedTarget, plan, next),
-      );
-      if (
-        browser === current.browser
-        && resources.cpu === current.resources.cpu
-        && resources.ram === current.resources.ram
-      ) return current;
-      return { ...current, browser, resources };
-    });
-  }, [codexBrowserDefault, destinationMode, draftProfileId, draftSubmitted, plan, restoredDestinationFor, selectedTarget]);
+    const context: CodexBrowserDefaultContext = {
+      restoredFor: restoredDestinationFor,
+      browserDefault: codexBrowserDefault,
+      mode: destinationMode,
+      selectedTarget,
+      plan,
+    };
+    // Most draft edits (a name, a stage) leave the default as it is; skip the
+    // state update for those.
+    if (!draft || withCodexBrowserDefault(draft, context) === draft) return;
+    setDraft(current => current ? withCodexBrowserDefault(current, context) : current);
+  }, [codexBrowserDefault, destinationMode, draft, plan, restoredDestinationFor, selectedTarget]);
 
   useEffect(() => {
     if (draft) writeLaunchDraft(draft);
   }, [draft]);
 
-  useEffect(() => {
+  // A layout effect, like the browser default that waits on it: the saved
+  // destination and its browser default both land before paint, so a host
+  // that finishes loading never paints a frame without its default applied.
+  useLayoutEffect(() => {
     if (!draft || destination.loading || restoredDestinationFor === draft.launchRequestId) return;
     setRestoredDestinationFor(draft.launchRequestId);
     if (handoff) return;
