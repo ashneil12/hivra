@@ -4,12 +4,11 @@
 import { renderOgCard } from "@/lib/og-card";
 import { OG_IMAGE, OG_CONTENT_TYPE } from "@/lib/og-meta";
 
-export const runtime = "edge";
 export const alt = OG_IMAGE.changelog.alt;
 export const size = { width: OG_IMAGE.changelog.width, height: OG_IMAGE.changelog.height };
 export const contentType = OG_CONTENT_TYPE;
 
-export default function ChangelogOpengraphImage() {
+export default async function ChangelogOpengraphImage() {
   return renderOgCard({
     eyebrow: "Changelog",
     title: "What shipped on Hivra",
