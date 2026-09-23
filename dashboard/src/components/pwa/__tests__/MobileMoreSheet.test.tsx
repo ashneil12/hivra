@@ -48,7 +48,7 @@ describe("MobileMoreSheet", () => {
       "Activity",
       "Infrastructure",
       "Settings",
-      "Billing & Access",
+      "Billing",
       "Applications",
       "Help",
       "Manage account",
@@ -57,7 +57,7 @@ describe("MobileMoreSheet", () => {
     ]);
     expect(within(sheet).getByRole("button", { name: "Close menu" })).toBeInTheDocument();
     expect(within(sheet).getByRole("link", { name: "2 agents or computers need attention" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
-    expect(within(sheet).getByRole("link", { name: "Billing & Access" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(within(sheet).getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/dashboard/billing");
     expect(within(sheet).getByText("a.very.long.operator.address@example-company.com")).toBeInTheDocument();
   });
 
@@ -136,7 +136,7 @@ describe("MobileMoreSheet", () => {
   it("hides hosted billing and profile management in local-auth mode but keeps sign-out", () => {
     process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "local";
     const { sheet } = renderSheet();
-    expect(within(sheet).queryByRole("link", { name: "Billing & Access" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
     expect(within(sheet).queryByRole("button", { name: "Manage account" })).not.toBeInTheDocument();
     expect(within(sheet).getByRole("button", { name: "Sign out" })).toBeEnabled();
   });

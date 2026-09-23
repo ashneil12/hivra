@@ -1004,4 +1004,56 @@ describe("HivraChat", () => {
     expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
   });
 
+  it("runs several chats at once and routes each stream to the chat that started it", async () => {
+    (listBoxSessions as jest.Mock).mockResolvedValue([
+      { id: "existing", title: "Existing session", updatedAt: 1 },
+    ]);
+    const firstRead = deferred<{ done: boolean; value?: Uint8Array }>();
+    const readA = jest.fn()
+      .mockImplementationOnce(() => firstRead.promise)
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const secondRead = deferred<{ done: boolean; value?: Uint8Array }>();
+    const readB = jest.fn()
+      .mockResolvedValueOnce({ done: false, value: streamChunk("B is working") })
+      .mockImplementationOnce(() => secondRead.promise);
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(chatResponse(readA))
+      .mockResolvedValueOnce(chatResponse(readB));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="parallel" agentName="Atlas" agentKind="generic" />);
+
+    await sendMessage("task A");
+    await waitFor(() => expect(readA).toHaveBeenCalledTimes(1));
+    const signalA = (fetchMock.mock.calls[0][1] as RequestInit).signal as AbortSignal;
+
+    // A new chat is available while A is still working, and sending there
+    // starts a second, independent turn instead of being blocked.
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(screen.queryByText("task A")).not.toBeInTheDocument();
+    await sendMessage("task B");
+    expect(await screen.findByText("B is working")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(signalA.aborted).toBe(false);
+    expect(screen.getByRole("button", { name: /1 other working/i })).toBeInTheDocument();
+
+    // A's output arrives while B is open: it must land in A, not in B.
+    await act(async () => {
+      firstRead.resolve({ done: false, value: streamChunk("A finished the job") });
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("A finished the job")).not.toBeInTheDocument();
+
+    // Stopping B leaves A's request alone.
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    const signalB = (fetchMock.mock.calls[1][1] as RequestInit).signal as AbortSignal;
+    expect(signalB.aborted).toBe(true);
+    expect(signalA.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    fireEvent.click(screen.getByText("task A", { selector: "span" }));
+    expect(await screen.findByText("A finished the job")).toBeInTheDocument();
+    expect(screen.queryByText("B is working")).not.toBeInTheDocument();
+  });
+
 });

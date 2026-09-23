@@ -30,6 +30,9 @@ export const YEARLY_TOKEN_TABLES = [
   "managed_venice_token_lots",
   "bankr_deposit_wallet_credentials",
   "hermes_subscriptions",
+  // Read by the one-active-crypto-payment lock when a yearly quote is minted.
+  "payment_transactions",
+  "deposit_quotes",
 ];
 
 export const YEARLY_TOKEN_UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {

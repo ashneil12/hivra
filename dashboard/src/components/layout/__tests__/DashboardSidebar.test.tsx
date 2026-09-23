@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { usePathname, useRouter } from 'next/navigation';
 import { LocaleProvider } from '@/components/i18n/LocaleProvider';
+import { MARKETING_COPY } from '@/lib/i18n';
 import { DashboardSidebar } from '../DashboardSidebar';
 import { useDashboardResources } from '../useDashboardResources';
 import type { DashboardResource } from '../dashboard-resources';
@@ -446,6 +447,23 @@ describe('DashboardSidebar', () => {
     expect(scroller).toContainElement(screen.getByRole('link', { name: 'Help' }));
     expect(scroller).toContainElement(screen.getByTitle('Switch to light mode'));
     expect(scroller).not.toContainElement(screen.getByTitle('Expand Sidebar'));
+  });
+
+  it('names the Billing link in English by the route name used everywhere', () => {
+    render(<DashboardSidebar {...props} />);
+    const manage = within(screen.getByRole('navigation', { name: 'Manage' }));
+    expect(manage.getByRole('link', { name: 'Billing' })).toHaveAttribute('href', '/dashboard/billing');
+    expect(screen.queryByRole('link', { name: /billing & access/i })).not.toBeInTheDocument();
+  });
+
+  it.each(['zh-CN', 'es', 'ja'] as const)('names the Billing link in the viewer\'s language (%s)', (locale) => {
+    const expected = MARKETING_COPY[locale].dashboard.nav.billing;
+    // A real translation, so a fixed English label cannot pass by accident.
+    expect(expected).not.toBe(MARKETING_COPY.en.dashboard.nav.billing);
+    render(<LocaleProvider initialLocale={locale}><DashboardSidebar {...props} /></LocaleProvider>);
+    const manage = within(screen.getByRole('navigation', { name: 'Manage' }));
+    expect(manage.getByRole('link', { name: expected })).toHaveAttribute('href', '/dashboard/billing');
+    expect(manage.queryByRole('link', { name: 'Billing' })).not.toBeInTheDocument();
   });
 
   it('keeps localized primary navigation and usable controls when storage is blocked', () => {

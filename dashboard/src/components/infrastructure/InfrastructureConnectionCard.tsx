@@ -17,7 +17,7 @@ import {
 import {
   isProxmoxDeploymentTarget,
   type DeploymentTargetDto,
-  type InfrastructureConnectionDto,
+  type SshInfrastructureConnectionDto,
   type ProxmoxPreflightResult,
 } from "@/lib/infrastructure/contracts";
 import {
@@ -30,10 +30,6 @@ import { canPrepareFromSavedTarget } from "@/lib/infrastructure/preparation-elig
 
 import styles from "./Infrastructure.module.css";
 
-type SshInfrastructureConnectionDto = Exclude<
-  InfrastructureConnectionDto,
-  { provider: "hetzner-cloud" }
->;
 
 type InfrastructureConnectionCardProps = {
   connection: SshInfrastructureConnectionDto;

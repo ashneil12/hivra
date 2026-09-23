@@ -3,6 +3,64 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import ApplicationsPage from "../applications/page";
 import HelpPage from "../help/page";
+import AccountMemoryPage from "../memory/page";
+import ReferralPage from "../referral/page";
+
+jest.mock("@clerk/nextjs/server", () => ({
+  auth: jest.fn(async () => ({ userId: "user_123" })),
+}));
+
+jest.mock("next/navigation", () => ({
+  redirect: jest.fn(),
+  notFound: jest.fn(),
+}));
+
+jest.mock("@/components/dashboard/AccountMemoryEditor", () => ({
+  AccountMemoryEditor: () => <div data-testid="account-memory-editor" />,
+}));
+
+jest.mock("@/components/dashboard/ReferralCard", () => ({
+  ReferralCard: () => <div data-testid="referral-card" />,
+}));
+
+describe("Pages under Settings", () => {
+  const previousReferralFlag = process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED;
+
+  afterEach(() => {
+    if (previousReferralFlag === undefined) delete process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED;
+    else process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED = previousReferralFlag;
+  });
+
+  it.each([
+    ["Applications", async () => ApplicationsPage()],
+    ["Help", async () => HelpPage()],
+    ["Shared agent memory", async () => AccountMemoryPage()],
+    ["Invite and earn", async () => {
+      process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED = "true";
+      return ReferralPage();
+    }],
+  ])("gives %s one heading and the same named way back to Settings", async (_name, renderPage) => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockImplementation((media: string) => ({ matches: false, media })),
+    });
+    render(await renderPage());
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Back to settings" })).toHaveAttribute("href", "/dashboard/settings");
+  });
+
+  it("keeps the shared memory and referral bodies on their pages", async () => {
+    render(await AccountMemoryPage());
+    expect(screen.getByRole("heading", { level: 1, name: "Shared agent memory" })).toBeInTheDocument();
+    expect(screen.getByTestId("account-memory-editor")).toBeInTheDocument();
+
+    process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED = "true";
+    render(await ReferralPage());
+    expect(screen.getByRole("heading", { level: 1, name: "Invite and earn" })).toBeInTheDocument();
+    expect(screen.getByTestId("referral-card")).toBeInTheDocument();
+  });
+});
 
 describe("Settings access and support destinations", () => {
   beforeEach(() => {

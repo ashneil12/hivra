@@ -42,6 +42,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
 import { PLANS, getWorkspaceCloudPlan } from "@/lib/subscription/plans";
 import { APPLE_ACCESS_STATUSES } from "@/lib/billing/apple-products";
+import {
+  YEARLY_LIVE_STATUSES,
+  pickEntitledYearlySubscription,
+  yearlyTierPlanKey,
+  type YearlyEntitlementRow,
+} from "@/lib/billing/yearly-entitlement";
 import { log } from "@/lib/logger";
 
 export interface EffectiveSubscription {
@@ -98,6 +104,17 @@ interface QualificationRow {
 // often $0) check `sub.status` themselves.
 const STRIPE_ACCESS_STATUSES = new Set(["active", "past_due", "trialing"]);
 
+export interface ResolveEffectiveSubscriptionOptions {
+  /**
+   * Leave the `hermes_subscriptions` row out entirely (paid Stripe and the
+   * Free fallback) and report only the other lanes: Apple IAP, yearly
+   * $HermesOS, token holdings. The Stripe lapse handlers use this to ask
+   * "does the user still pay through another lane?" while their own Stripe
+   * row can still read active or past_due.
+   */
+  excludeStripe?: boolean;
+}
+
 /**
  * Returns the effective subscription for the user, or null if neither
  * a paid Stripe sub nor a token-holding qualification entitles them.
@@ -107,15 +124,18 @@ const STRIPE_ACCESS_STATUSES = new Set(["active", "past_due", "trialing"]);
  * an active row.
  */
 export async function resolveEffectiveSubscription(
-  userId: string
+  userId: string,
+  options: ResolveEffectiveSubscriptionOptions = {}
 ): Promise<EffectiveSubscription | null> {
   if (!supabaseAdmin) return null;
 
-  const { data: subRow } = await supabaseAdmin
-    .from("hermes_subscriptions")
-    .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
-    .eq("user_id", userId)
-    .maybeSingle<SubscriptionRow>();
+  const { data: subRow } = options.excludeStripe
+    ? { data: null }
+    : await supabaseAdmin
+        .from("hermes_subscriptions")
+        .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
+        .eq("user_id", userId)
+        .maybeSingle<SubscriptionRow>();
 
   // Dunning cutoff: a `past_due` Stripe sub only grants access WHILE it is
   // still inside its grace window. Once `grace_period_ends_at` has elapsed, the
@@ -211,19 +231,23 @@ export async function resolveEffectiveSubscription(
   // Yearly $HermesOS one-time-payment sub — next-priority source.
   // The row in `yearly_token_subscriptions` carries paid_at + expires_at
   // (paid_at + 365d), and status 'active' or 'grace' means the user
-  // is currently entitled to the tier.
+  // is currently entitled to the tier. A user can hold one live row per
+  // tier, so the highest-ranked tier wins — never the newest payment: a Pro
+  // renewal inserts a fresh row while a paid Power year is still running.
+  // The ranking lives in lib/billing/yearly-entitlement, shared with the
+  // refresh-token-tiers cron so the two can never disagree.
   const { data: yearlyRows } = await supabaseAdmin
     .from("yearly_token_subscriptions")
-    .select("tier, status, expires_at")
+    .select("tier, status, expires_at, paid_at")
     .eq("user_id", userId)
-    .in("status", ["active", "grace"])
-    .order("paid_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ tier: "pro" | "power"; status: string; expires_at: string }>();
+    .in("status", [...YEARLY_LIVE_STATUSES]);
 
-  if (yearlyRows) {
-    const planKey = yearlyRows.tier === "power" ? "fleet" : "operator";
-    const plan = PLANS[planKey as keyof typeof PLANS];
+  const yearly = pickEntitledYearlySubscription(
+    Array.isArray(yearlyRows) ? (yearlyRows as YearlyEntitlementRow[]) : []
+  );
+  if (yearly) {
+    const planKey = yearlyTierPlanKey(yearly.tier);
+    const plan = PLANS[planKey];
     return {
       plan: planKey,
       status: "active",
@@ -231,10 +255,10 @@ export async function resolveEffectiveSubscription(
       total_cpu_budget: plan.totalCpu,
       total_ram_budget: plan.totalRam,
       source: "token_yearly",
-      tokenTier: yearlyRows.tier,
+      tokenTier: yearly.tier,
       // Surface the 365-day expiry so the dashboard can render
       // "Active until 1 May 2027" instead of "Renews on …".
-      currentPeriodEnd: yearlyRows.expires_at,
+      currentPeriodEnd: yearly.expires_at,
       canChangePlanInPlace: false,
     };
   }

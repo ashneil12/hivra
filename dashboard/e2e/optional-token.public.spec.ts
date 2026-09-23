@@ -22,7 +22,7 @@ for (const width of [1440, 390]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect(main).toContainText('0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3');
     await expect(main.getByRole('heading', { name: 'The proposed $HIVRA migration' })).toBeVisible();
-    await main.getByRole('link', { name: 'Open Billing & Access' }).click();
+    await main.getByRole('link', { name: 'Open Billing', exact: true }).click();
     await expect(page).toHaveURL(/\/sign-in|\/dashboard\/billing/);
     await expect(page.locator('body')).not.toContainText(/Application error|Internal Server Error/);
   });

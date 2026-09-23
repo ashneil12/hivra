@@ -104,7 +104,9 @@ describe("/token page", () => {
     expect(main.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
     expect(main.getByText(/No migration action is offered/)).toBeInTheDocument();
     expect(main.getByText(/Use Hivra and pay by card without connecting a wallet/)).toBeInTheDocument();
-    expect(main.getByRole("link", { name: "Open Billing & Access" })).toHaveAttribute("href", "/dashboard/billing");
+    // The dashboard calls this route "Billing" everywhere (nav, Settings row, page eyebrow).
+    expect(main.getByRole("link", { name: "Open Billing" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(main.queryByText(/Billing & Access/)).not.toBeInTheDocument();
     expect(main.queryByRole("button", { name: /buy|claim|migrate/i })).not.toBeInTheDocument();
   });
 });

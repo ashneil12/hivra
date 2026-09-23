@@ -259,6 +259,11 @@ export async function createInfrastructureConnection(
   if (validated.provider === "hetzner-cloud") {
     return (await connectHetznerCloudProject(validated)).connection;
   }
+  if (validated.provider === "digitalocean") {
+    // DigitalOcean connects through its own client, which also returns the
+    // published serverless target.
+    throw new InfrastructureApiError("Use the DigitalOcean connection dialog.", 0);
+  }
   const body = await requestJson(
     "/api/infrastructure/connections",
     { method: "POST", body: JSON.stringify(validated) },

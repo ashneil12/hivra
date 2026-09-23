@@ -100,7 +100,7 @@ describe("dashboard navigation", () => {
 
   it("localizes labels in one place", () => {
     const billing = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!;
-    expect(labelForNavigationItem(billing, MARKETING_COPY.en)).toBe("Billing & Access");
+    expect(labelForNavigationItem(billing, MARKETING_COPY.en)).toBe("Billing");
     expect(labelForNavigationItem(DASHBOARD_PRIMARY_NAVIGATION[0], MARKETING_COPY["zh-CN"])).toBe("首页");
   });
 
@@ -114,12 +114,12 @@ describe("dashboard navigation", () => {
       ...zh,
       dashboard: {
         ...zh.dashboard,
-        nav: { ...zh.dashboard.nav, activity: "动态", billingAccess: "账单与访问", applications: "应用", help: "帮助", more: "更多" },
+        nav: { ...zh.dashboard.nav, activity: "动态", billing: "账单", applications: "应用", help: "帮助", more: "更多" },
         mobileNav: { signOut: "退出登录", manage: "管理" },
       },
     };
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => labelForNavigationItem(item, localized)))
-      .toEqual(["动态", "基础设施", "设置", "账单与访问", "应用", "帮助"]);
+      .toEqual(["动态", "基础设施", "设置", "账单", "应用", "帮助"]);
     expect(mobileNavigationCopy(localized)).toMatchObject({ more: "更多", signOut: "退出登录", manage: "管理", account: "Account" });
   });
 
@@ -155,6 +155,100 @@ describe("dashboard navigation", () => {
     expect(isDashboardNavigationItemActive(settings!, "/dashboard/vault")).toBe(true);
     expect(isDashboardNavigationItemActive(billing!, "/dashboard/billing")).toBe(true);
     expect(isDashboardNavigationItemActive(settings!, "/dashboard/settings-not-real")).toBe(false);
+  });
+
+  it("gives Billing its own label and icon, distinct from Settings", () => {
+    const settings = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "settings")!;
+    const billing = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!;
+    // One name for the route everywhere (copy.dashboard.nav.billing is "Billing").
+    expect(billing).toMatchObject({ label: "Billing", href: "/dashboard/billing" });
+    // Two identical gears side by side in the collapsed rail were indistinguishable.
+    expect(billing.icon).not.toBe(settings.icon);
+  });
+
+  it("highlights Billing, not Settings, on the wallet page", () => {
+    const settings = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "settings")!;
+    const billing = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!;
+    for (const path of ["/dashboard/wallet", "/dashboard/wallet/withdraw"]) {
+      expect(isDashboardNavigationItemActive(billing, path)).toBe(true);
+      expect(isDashboardNavigationItemActive(settings, path)).toBe(false);
+    }
+    expect(isDashboardNavigationItemActive(billing, "/dashboard/wallet-not-real")).toBe(false);
+  });
+
+  describe("exactly one active item per route", () => {
+    // Every item the sidebar renders, in its groups.
+    const everyItem = [
+      DASHBOARD_LAUNCH_NAVIGATION,
+      ...DASHBOARD_PRIMARY_NAVIGATION,
+      ...DASHBOARD_SECONDARY_NAVIGATION,
+      ...DASHBOARD_UTILITY_NAVIGATION,
+    ];
+    const activeIds = (pathname: string, workspaceShellEnabled: boolean) =>
+      everyItem
+        .filter((item) => isDashboardNavigationItemActive(item, pathname, null, workspaceShellEnabled))
+        .map((item) => item.id);
+
+    it.each([
+      ["/dashboard/settings/help", "help"],
+      ["/dashboard/settings/applications", "applications"],
+      ["/dashboard/settings", "settings"],
+      ["/dashboard/settings/memory", "settings"],
+      ["/dashboard/settings/referral", "settings"],
+      ["/dashboard/vault", "settings"],
+      ["/dashboard/wallet", "billing"],
+      ["/dashboard/billing", "billing"],
+      ["/dashboard/billing/activity", "billing"],
+    ])("%s highlights only %s", (pathname, expected) => {
+      expect(activeIds(pathname, false)).toEqual([expected]);
+      expect(activeIds(pathname, true)).toEqual([expected]);
+    });
+
+    it("keeps Settings active on a settings route that merely starts like Help", () => {
+      const settings = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "settings")!;
+      expect(isDashboardNavigationItemActive(settings, "/dashboard/settings/helpers")).toBe(true);
+      expect(activeIds("/dashboard/settings/helpers", false)).toEqual(["settings"]);
+    });
+
+    describe("self-hosted (local auth), where Billing is filtered out", () => {
+      const previous = process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+      beforeEach(() => {
+        process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "local";
+      });
+      afterEach(() => {
+        if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+        else process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = previous;
+      });
+
+      // Only what the self-host sidebar actually renders.
+      const renderedActiveIds = (pathname: string, workspaceShellEnabled: boolean) =>
+        filterDashboardNavigation(everyItem, workspaceShellEnabled)
+          .filter((item) => isDashboardNavigationItemActive(item, pathname, null, workspaceShellEnabled))
+          .map((item) => item.id);
+
+      it.each([
+        // The wallet page and its PWA shortcut stay reachable without Billing.
+        ["/dashboard/wallet", "settings"],
+        ["/dashboard/wallet/withdraw", "settings"],
+        ["/dashboard/settings", "settings"],
+        ["/dashboard/vault", "settings"],
+        ["/dashboard/settings/help", "help"],
+        ["/dashboard/settings/applications", "applications"],
+      ])("%s highlights only %s", (pathname, expected) => {
+        expect(filterDashboardNavigation(everyItem, false).some((item) => item.id === "billing")).toBe(false);
+        expect(renderedActiveIds(pathname, false)).toEqual([expected]);
+        expect(renderedActiveIds(pathname, true)).toEqual([expected]);
+      });
+
+      it("does not let Settings claim a path that merely starts like the wallet", () => {
+        expect(renderedActiveIds("/dashboard/wallet-not-real", false)).toEqual([]);
+      });
+    });
+
+    it("leaves the wallet to Billing on hosted, even though Settings can hold it on self-host", () => {
+      const settings = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "settings")!;
+      expect(isDashboardNavigationItemActive(settings, "/dashboard/wallet")).toBe(false);
+    });
   });
 
   it.each(["agent", "computer", null] as const)("classifies shared detail routes using the resolved %s kind", (kind) => {

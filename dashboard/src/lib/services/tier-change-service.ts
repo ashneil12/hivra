@@ -51,7 +51,7 @@ export interface ApplyTierChangeParams {
   /** New canonical tier key. */
   newTier: TierKey;
   /** Where the change came from — used for audit logging. */
-  source: "stripe" | "token_snapshot" | "manual" | "apple_iap";
+  source: "stripe" | "token_snapshot" | "manual" | "apple_iap" | "token_yearly";
   /** Optional human-readable note (e.g. "operator plan via Stripe checkout"). */
   reason?: string;
   /**

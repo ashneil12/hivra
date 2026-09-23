@@ -19,6 +19,18 @@
 .surfaceToolbar { display: flex; align-items: center; flex-shrink: 0; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); min-width: 0; }
 .surfaceDescription { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; }
 .newTabButton:disabled { opacity: .5; cursor: default; }
+/* Parallel terminal sessions: one strip of session tabs over retained frames. */
+.terminalStack { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.sessionStrip { display: flex; align-items: stretch; flex-shrink: 0; gap: 2px; padding: 3px 8px 0; border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); overflow-x: auto; scrollbar-width: thin; }
+.sessionTab { display: inline-flex; align-items: center; flex-shrink: 0; border: 1px solid transparent; border-bottom: 0; color: var(--text-muted); }
+.sessionTab[data-active] { border-color: var(--etched-border); background: var(--bg-elevated); color: var(--ink-black); }
+.sessionTab > button:first-child { min-height: 30px; padding: 4px 10px; border: 0; background: transparent; color: inherit; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+.sessionClose, .sessionAdd { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 30px; padding: 0 6px; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
+.sessionClose:hover, .sessionAdd:hover:not(:disabled) { color: var(--ink-black); }
+.sessionAdd:disabled { opacity: .4; cursor: default; }
+.sessionPanel { flex: 1; min-height: 0; }
+.sessionPanel[hidden] { display: none; }
+.sessionTab button:focus-visible, .sessionAdd:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
 .statusPanel { flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: clamp(20px, 5cqi, 48px) clamp(16px, 4cqi, 32px); text-align: center; color: var(--text-muted); overflow-wrap: anywhere; }
 .statusPanel > h3 { color: var(--ink-black); font-size: 22px; font-weight: 400; }
 .statusPanel > p { max-width: 480px; margin-inline: auto; }
@@ -43,6 +55,7 @@ textarea.personalizationField { padding: 10px; resize: vertical; }
   .surfaceToolbar { padding: 4px 10px; }
   .surfaceDescription { font-size: 10px; }
   .newTabButton { min-height: 44px; padding-inline: 8px; font-size: 10px; }
+  .sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 40px; }
   .statusPanel { padding: 20px 16px; }
   /* One 44px identity line so the surfaces sit directly under it: icon,
      name, chevron, then a status dot and word at the far edge. The switcher

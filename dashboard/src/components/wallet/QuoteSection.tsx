@@ -1,12 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { CheckCircle2, Copy, Loader2, ShieldCheck, Zap } from 'lucide-react';
-import { LocalAddressQr } from '@/components/billing/LocalAddressQr';
+import { CheckCircle2, Loader2, ShieldCheck, Zap } from 'lucide-react';
+import {
+  CopyButton,
+  DepositAddressField,
+  OpenInWalletLink,
+  touchStyles,
+  wholeTokenQuoteRawAmount,
+} from '@/components/billing/TransferDetails';
 import { useLocale } from '@/components/i18n/LocaleProvider';
-import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { BankrTrustFooter } from '@/components/wallet/AgentWalletCards';
+import { hermesosTransferUri } from '@/lib/billing/eip681';
+import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
 import { tokenVerificationContent } from '@/lib/token-verification-content';
 import {
   LAUNCH_PROMO_END,
@@ -46,74 +53,19 @@ export function useNowMs(intervalMs: number): number {
   }, [intervalMs]);
   return nowMs;
 }
+/**
+ * The deposit address with its copy button under it and its QR code beside it
+ * (desktop) or behind a "Show QR code" disclosure after it (phones and touch).
+ */
 export function InlineCopyAddress({ label, address }: { label: string; address: string | null }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(async () => {
-    if (!address) return;
-    const ok = await copyTextToClipboard(address);
-    if (!ok) return;
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }, [address]);
-
   return (
-    <div
-      style={{
-        border: '1px solid var(--etched-border)',
-        padding: '0.65rem 0.85rem',
-        background: 'var(--bg-elevated, transparent)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-      }}
-    >
-      <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', opacity: 0.55, fontWeight: 700 }}>
-        {label}
-      </span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        {address && <LocalAddressQr address={address} size={124} label={`${label} QR code`} />}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', flex: '1 1 240px', minWidth: 0 }}>
-          <code
-            className="mono notranslate"
-            translate="no"
-            style={{
-              fontSize: 12.5,
-              wordBreak: 'break-all',
-              flex: 1,
-              minWidth: 0,
-              color: address ? 'var(--ink-black)' : 'var(--text-muted)',
-            }}
-            title={address ?? undefined}
-          >
-            {address ?? '—'}
-          </code>
-          <button
-            type="button"
-            onClick={handleCopy}
-            disabled={!address}
-            aria-label={`Copy ${label}`}
-            style={{
-              padding: '5px 9px',
-              border: '1px solid var(--etched-border)',
-              background: 'transparent',
-              cursor: address ? 'pointer' : 'not-allowed',
-              opacity: address ? 1 : 0.4,
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 9,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            {copied ? <CheckCircle2 size={11} /> : <Copy size={11} />}
-            {copied ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <DepositAddressField
+      label={label}
+      address={address}
+      qrLabel={`${label} QR code`}
+      copyLabel="Copy address"
+      copyAriaLabel={`Copy ${label}`}
+    />
   );
 }
 /**
@@ -131,14 +83,6 @@ export function BuyTokenCard() {
   const buyCopy = copy.dashboard.wallet.buyToken;
   const contract = HERMESOS_TOKEN_ADDRESS;
   const uniswapUrl = `https://app.uniswap.org/swap?chain=base&outputCurrency=${contract}`;
-
-  const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(async () => {
-    const ok = await copyTextToClipboard(contract);
-    if (!ok) return;
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }, [contract]);
 
   return (
     <section
@@ -166,6 +110,7 @@ export function BuyTokenCard() {
           href={uniswapUrl}
           target="_blank"
           rel="noopener noreferrer"
+          className={touchStyles.touchTarget}
           style={{
             padding: '8px 14px',
             border: '1px solid var(--ink-black)',
@@ -199,42 +144,26 @@ export function BuyTokenCard() {
         <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', opacity: 0.55, fontWeight: 700 }}>
           {buyCopy.contractLabel}
         </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <code
-            className="mono"
-            style={{
-              fontSize: 12.5,
-              wordBreak: 'break-all',
-              flex: 1,
-              minWidth: 0,
-              color: 'var(--ink-black)',
-            }}
-            title={contract}
-          >
-            {contract}
-          </code>
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label={buyCopy.copyContractLabel}
-            style={{
-              padding: '5px 9px',
-              border: '1px solid var(--etched-border)',
-              background: 'transparent',
-              cursor: 'pointer',
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 9,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            {copied ? <CheckCircle2 size={11} /> : <Copy size={11} />}
-            {copied ? buyCopy.copied : buyCopy.copy}
-          </button>
+        <code
+          className="mono notranslate"
+          translate="no"
+          style={{
+            fontSize: 12.5,
+            wordBreak: 'break-all',
+            minWidth: 0,
+            color: 'var(--ink-black)',
+          }}
+          title={contract}
+        >
+          {contract}
+        </code>
+        <div className={touchStyles.copyRow} style={{ marginTop: 6 }}>
+          <CopyButton
+            value={contract}
+            label={buyCopy.copy}
+            copiedLabel={buyCopy.copied}
+            ariaLabel={buyCopy.copyContractLabel}
+          />
         </div>
       </div>
 
@@ -322,6 +251,7 @@ export function SelfCustodyVerificationPanel({
                 type="button"
                 onClick={onLockPrice}
                 disabled={locking}
+                className={touchStyles.touchTarget}
                 style={{
                   padding: '9px 14px',
                   border: '1px solid var(--ink-black)',
@@ -346,6 +276,7 @@ export function SelfCustodyVerificationPanel({
                 type="button"
                 onClick={onConnect}
                 disabled={connecting || locking}
+                className={touchStyles.touchTarget}
                 style={{
                   padding: '9px 12px',
                   border: '1px solid var(--etched-border)',
@@ -372,6 +303,7 @@ export function SelfCustodyVerificationPanel({
               type="button"
               onClick={onConnect}
               disabled={connecting}
+              className={touchStyles.touchTarget}
               style={{
                 padding: '9px 14px',
                 border: '1px solid var(--ink-black)',
@@ -430,7 +362,7 @@ export function SelfCustodyVerificationPanel({
               <span key="quote-locked">
                 {interpolateCopy(verificationCopy.lockedFor20, { tier: lockTierName })}{' '}
                 <strong>
-                  <code className="mono notranslate" translate="no">{quoteAmountDisplay} {tokenSymbol}</code>
+                  <code className="mono notranslate" translate="no">{quoteAmountDisplay} {displayTokenUnit(tokenSymbol)}</code>
                 </strong>
                 . {verificationCopy.holdAtLeastThatAmount}
               </span>
@@ -438,7 +370,7 @@ export function SelfCustodyVerificationPanel({
               <span key="rate-locked">
                 {interpolateCopy(verificationCopy.yourRateLockedAt, { tier: eligibleTierName })}{' '}
                 <strong>
-                  <code className="mono notranslate" translate="no">{lockedAmountDisplay} {tokenSymbol}</code>
+                  <code className="mono notranslate" translate="no">{lockedAmountDisplay} {displayTokenUnit(tokenSymbol)}</code>
                 </strong>
                 . {lockTierName ? interpolateCopy(verificationCopy.lockNext, { tier: lockTierName }) : verificationCopy.keepEligible}
               </span>
@@ -446,7 +378,7 @@ export function SelfCustodyVerificationPanel({
               <span key="balance-detected">
                 {verificationCopy.detected}{' '}
                 <strong>
-                  <code className="mono notranslate" translate="no">{balanceDisplay} {tokenSymbol}</code>
+                  <code className="mono notranslate" translate="no">{balanceDisplay} {displayTokenUnit(tokenSymbol)}</code>
                 </strong>
                 . {lockTierName ? interpolateCopy(verificationCopy.snapshotInstruction, { tier: lockTierName }) : verificationCopy.refreshInstruction}
               </span>
@@ -488,38 +420,12 @@ export function SelfCustodyVerificationPanel({
  * like "46,046,512 Hivra" — they want plain digits.
  */
 export function CopyAmountButton({ amount }: { amount: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(async () => {
-    const ok = await copyTextToClipboard(amount);
-    if (!ok) return;
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }, [amount]);
-
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      aria-label="Copy amount"
+    <CopyButton
+      value={amount}
+      label="Copy amount"
       title="Copy raw amount (no commas) for pasting into your wallet"
-      style={{
-        padding: '5px 9px',
-        border: '1px solid var(--etched-border)',
-        background: 'transparent',
-        cursor: 'pointer',
-        fontFamily: 'var(--font-mono), monospace',
-        fontSize: 9,
-        fontWeight: 700,
-        textTransform: 'uppercase',
-        letterSpacing: '0.1em',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-      }}
-    >
-      {copied ? <CheckCircle2 size={11} /> : <Copy size={11} />}
-      {copied ? 'Copied' : 'Copy'}
-    </button>
+    />
   );
 }
 export function QuoteCard({
@@ -553,6 +459,17 @@ export function QuoteCard({
 
   const expired = quote ? Date.parse(quote.expiresAt) <= now : false;
   const remainingMs = quote ? Math.max(0, Date.parse(quote.expiresAt) - now) : 0;
+  // One-tap wallet link only for a live quote whose token, exact raw amount
+  // (matching the amount shown) and deposit address are all known.
+  const walletHref =
+    quote && !expired
+      ? hermesosTransferUri({
+          tokenSymbol: quote.tokenSymbol,
+          tokenDecimals: quote.tokenDecimals,
+          depositAddress,
+          amountRaw: wholeTokenQuoteRawAmount(quote),
+        })
+      : null;
 
   if (alreadyEligible) {
     return (
@@ -642,6 +559,7 @@ export function QuoteCard({
             type="button"
             onClick={onMint}
             disabled={minting}
+            className={touchStyles.touchTarget}
             style={{
               alignSelf: 'flex-start',
               padding: '10px 18px',
@@ -670,11 +588,11 @@ export function QuoteCard({
             <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', opacity: 0.55, fontWeight: 700 }}>
               Step 1 · Send exactly
             </span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-              <span className="serif notranslate" translate="no" style={{ fontSize: '1.65rem', fontWeight: 700, lineHeight: 1.1 }}>
-                {formatTokensWithCommas(quote.tokensRequiredDisplay)}{' '}
-                <span style={{ fontSize: '0.95rem', opacity: 0.7 }}>{quote.tokenSymbol}</span>
-              </span>
+            <span className="serif notranslate" translate="no" style={{ fontSize: '1.65rem', fontWeight: 700, lineHeight: 1.1, overflowWrap: 'anywhere' }}>
+              {formatTokensWithCommas(quote.tokensRequiredDisplay)}{' '}
+              <span style={{ fontSize: '0.95rem', opacity: 0.7 }}>{displayTokenUnit(quote.tokenSymbol)}</span>
+            </span>
+            <div className={touchStyles.copyRow} style={{ margin: '4px 0 2px' }}>
               <CopyAmountButton amount={quote.tokensRequiredDisplay} />
             </div>
             <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -687,6 +605,8 @@ export function QuoteCard({
             label="Step 2 · To this address (Base network)"
             address={depositAddress}
           />
+
+          <OpenInWalletLink href={walletHref} />
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             {/* Ticks every second — keep translators away from the live text
@@ -713,6 +633,7 @@ export function QuoteCard({
             type="button"
             onClick={onMint}
             disabled={minting}
+            className={touchStyles.touchTarget}
             style={{
               alignSelf: 'flex-start',
               padding: '8px 14px',
@@ -928,7 +849,7 @@ export function QuotePanel({
         ) : null}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 10 }}>
         <QuoteCard
           tier="pro"
           quote={proQuote}

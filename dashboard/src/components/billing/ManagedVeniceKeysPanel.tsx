@@ -1,3 +1,11 @@
+'use client';
+
+import { useId, useState } from "react";
+import { ChevronDown } from "lucide-react";
+
+import { CopyButton } from "@/components/billing/TransferDetails";
+import styles from "./ManagedVeniceKeysPanel.module.css";
+
 export interface ManagedVeniceKeySummary {
   id: string;
   name: string;
@@ -8,62 +16,112 @@ export interface ManagedVeniceKeySummary {
   revokedAt: string | null;
 }
 
+function isRevoked(key: ManagedVeniceKeySummary) {
+  return key.status === "revoked" || Boolean(key.revokedAt);
+}
+
+function formatDate(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function keyMeta(key: ManagedVeniceKeySummary) {
+  const parts: string[] = [];
+  const created = formatDate(key.createdAt);
+  if (created) parts.push(`Created ${created}`);
+  if (isRevoked(key)) {
+    const revoked = formatDate(key.revokedAt);
+    if (revoked) parts.push(`Revoked ${revoked}`);
+  } else {
+    const lastUsed = formatDate(key.lastUsedAt);
+    parts.push(lastUsed ? `Last used ${lastUsed}` : "Never used");
+  }
+  return parts.join(" · ");
+}
+
+function KeyRow({ keySummary, revoked = false }: { keySummary: ManagedVeniceKeySummary; revoked?: boolean }) {
+  const meta = keyMeta(keySummary);
+  const tone = keySummary.status === "active" || keySummary.status === "paused" ? keySummary.status : undefined;
+  return (
+    <li className={revoked ? `${styles.row} ${styles.revokedRow}` : styles.row}>
+      <span className={styles.name}>{keySummary.name}</span>
+      <code className={`notranslate ${styles.prefix}`} translate="no">
+        {keySummary.keyPrefix}...
+      </code>
+      <span className={styles.status} data-tone={tone}>
+        {keySummary.status}
+      </span>
+      {meta ? <span className={styles.meta}>{meta}</span> : null}
+    </li>
+  );
+}
+
 export function ManagedVeniceKeysPanel(props: {
   keys: ManagedVeniceKeySummary[];
   createdPlaintextKey?: string | null;
 }) {
+  const [showRevoked, setShowRevoked] = useState(false);
+  const revokedListId = useId();
+  const liveKeys = props.keys.filter((key) => !isRevoked(key));
+  const revokedKeys = props.keys.filter(isRevoked);
+  const revokedCount = revokedKeys.length;
+
   return (
-    <section
-      style={{
-        border: "1px solid var(--ink-black)",
-        background: "var(--bg-surface)",
-        padding: "clamp(1.25rem, 3vw, 2rem)",
-        marginBottom: "2rem",
-        boxShadow: "4px 4px 0px var(--ink-black)",
-      }}
-    >
-      <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.58 }}>
-        Managed Venice proxy keys
-      </div>
-      <h3 className="serif" style={{ fontSize: 28, margin: "4px 0 16px" }}>
+    <section className={styles.panel} aria-labelledby={`${revokedListId}-title`}>
+      <span className={`mono ${styles.eyebrow}`}>Keys your agents use for model credits</span>
+      <h3 id={`${revokedListId}-title`} className={`serif ${styles.title}`}>
         API access
       </h3>
 
       {props.createdPlaintextKey && (
-        <div style={{ border: "1px solid var(--ink-black)", padding: 12, marginBottom: 16 }}>
-          <div className="mono" style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
-            Shown once. Store it before leaving this page.
+        <div className={styles.created}>
+          <span className={styles.createdNote}>Shown once. Store it before leaving this page.</span>
+          <code className={`notranslate ${styles.secret}`} translate="no">
+            {props.createdPlaintextKey}
+          </code>
+          <div>
+            <CopyButton value={props.createdPlaintextKey} label="Copy key" />
           </div>
-          <code style={{ fontSize: 13, wordBreak: "break-all" }}>{props.createdPlaintextKey}</code>
         </div>
       )}
 
       {props.keys.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 13, opacity: 0.72 }}>
-          No managed Venice proxy keys yet.
-        </p>
+        <p className={styles.empty}>No model-credit keys yet.</p>
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
-          {props.keys.map((key) => (
-            <div
-              key={key.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(120px, 1fr) minmax(130px, auto) minmax(70px, auto)",
-                gap: 12,
-                alignItems: "center",
-                borderTop: "1px solid var(--etched-border)",
-                paddingTop: 10,
-              }}
-            >
-              <span style={{ fontSize: 14, fontWeight: 700 }}>{key.name}</span>
-              <code style={{ fontSize: 12 }}>{key.keyPrefix}...</code>
-              <span className="mono" style={{ fontSize: 11, textTransform: "uppercase" }}>
-                {key.status}
-              </span>
-            </div>
-          ))}
-        </div>
+        <>
+          {liveKeys.length > 0 ? (
+            <ul className={styles.list} aria-label="Keys">
+              {liveKeys.map((key) => (
+                <KeyRow key={key.id} keySummary={key} />
+              ))}
+            </ul>
+          ) : (
+            <p className={styles.empty}>No active keys.</p>
+          )}
+
+          {revokedCount > 0 && (
+            <>
+              <button
+                type="button"
+                className={styles.revokedToggle}
+                aria-expanded={showRevoked}
+                aria-controls={revokedListId}
+                onClick={() => setShowRevoked((open) => !open)}
+              >
+                {showRevoked
+                  ? `Hide revoked ${revokedCount === 1 ? "key" : "keys"}`
+                  : `Show ${revokedCount} revoked ${revokedCount === 1 ? "key" : "keys"}`}
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+              <ul id={revokedListId} className={styles.list} aria-label="Revoked keys" hidden={!showRevoked}>
+                {showRevoked &&
+                  revokedKeys.map((key) => <KeyRow key={key.id} keySummary={key} revoked />)}
+              </ul>
+            </>
+          )}
+        </>
       )}
     </section>
   );

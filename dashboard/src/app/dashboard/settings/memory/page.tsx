@@ -13,6 +13,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { AccountMemoryEditor } from "@/components/dashboard/AccountMemoryEditor";
+import styles from "../Settings.module.css";
 
 export const dynamic = "force-dynamic";
 
@@ -21,39 +22,22 @@ export default async function AccountMemoryPage() {
   if (!userId) redirect("/sign-in");
 
   return (
-    <DashboardPageShell maxWidth={800}>
-      <Link
-        href="/dashboard/settings"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          textDecoration: "none",
-          color: "var(--ink-black)",
-          marginBottom: "2rem",
-          fontFamily: "var(--font-mono), monospace",
-          fontSize: 10,
-          textTransform: "uppercase",
-          letterSpacing: "0.2em",
-          opacity: 0.5,
-        }}
-      >
-        <ArrowLeft size={12} /> Back to settings
-      </Link>
+    <DashboardPageShell maxWidth={824} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
+      <div className={styles.page}>
+        <header className={styles.header}>
+          <Link href="/dashboard/settings" className={styles.backLink}>
+            <ArrowLeft size={14} aria-hidden="true" />Back to settings
+          </Link>
+          <h1 className={styles.title}>Shared agent memory<span aria-hidden="true">.</span></h1>
+          <p className={styles.intro}>
+            Anything you write here is given to every <em>new</em> agent you deploy, so they start
+            already knowing the basics about you. Each agent still keeps its own private notes as it
+            works with you — this is just the warm start they all share.
+          </p>
+        </header>
 
-      <h1
-        className="serif"
-        style={{ fontSize: "2.5rem", fontWeight: 300, lineHeight: 1.1, marginBottom: "0.75rem" }}
-      >
-        Shared agent memory
-      </h1>
-      <p style={{ opacity: 0.8, fontSize: 14, maxWidth: 600, lineHeight: 1.6, marginBottom: "2rem" }}>
-        Anything you write here is given to every <em>new</em> agent you deploy, so they start
-        already knowing the basics about you. Each agent still keeps its own private notes as it
-        works with you — this is just the warm start they all share.
-      </p>
-
-      <AccountMemoryEditor />
+        <AccountMemoryEditor />
+      </div>
     </DashboardPageShell>
   );
 }

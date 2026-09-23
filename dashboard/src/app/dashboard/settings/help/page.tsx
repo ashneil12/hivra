@@ -1,14 +1,14 @@
 import Link from 'next/link';
-import { ArrowUpRight, Mail, MessageCircle } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Mail, MessageCircle } from 'lucide-react';
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
 import styles from '../Settings.module.css';
 
 export default function HelpPage() {
   return (
-    <DashboardPageShell maxWidth={900} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
+    <DashboardPageShell maxWidth={824} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
       <div className={styles.page}>
         <header className={styles.header}>
-          <Link href="/dashboard/settings" className={styles.eyebrow}>Settings /</Link>
+          <Link href="/dashboard/settings" className={styles.backLink}><ArrowLeft size={14} aria-hidden="true" />Back to settings</Link>
           <h1 className={styles.title}>A little <em>help.</em></h1>
           <p className={styles.intro}>Support and the Hivra community, in one place.</p>
         </header>

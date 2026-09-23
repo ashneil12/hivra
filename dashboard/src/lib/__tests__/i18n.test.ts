@@ -143,6 +143,7 @@ describe("i18n translation parity", () => {
   const INTENTIONALLY_IDENTICAL = new Set<string>([
     "dashboard.billing.activePlan.agents",
     "dashboard.billing.activity.llm",
+    "dashboard.billing.plate.vcpu",
     "dashboard.billing.switcher.agents",
     "dashboard.billing.titlePrefix",
     "dashboard.billing.titleSuffix",

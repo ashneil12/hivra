@@ -12,6 +12,7 @@ import { ArrowLeft } from "lucide-react";
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { ReferralCard } from "@/components/dashboard/ReferralCard";
 import { isReferralEnabled } from "@/lib/referral";
+import styles from "../Settings.module.css";
 
 export const dynamic = "force-dynamic";
 
@@ -22,38 +23,21 @@ export default async function ReferralPage() {
   if (!userId) redirect("/sign-in");
 
   return (
-    <DashboardPageShell maxWidth={800}>
-      <Link
-        href="/dashboard/settings"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          textDecoration: "none",
-          color: "var(--ink-black)",
-          marginBottom: "2rem",
-          fontFamily: "var(--font-mono), monospace",
-          fontSize: 10,
-          textTransform: "uppercase",
-          letterSpacing: "0.2em",
-          opacity: 0.5,
-        }}
-      >
-        <ArrowLeft size={12} /> Back to settings
-      </Link>
+    <DashboardPageShell maxWidth={824} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
+      <div className={styles.page}>
+        <header className={styles.header}>
+          <Link href="/dashboard/settings" className={styles.backLink}>
+            <ArrowLeft size={14} aria-hidden="true" />Back to settings
+          </Link>
+          <h1 className={styles.title}>Invite and earn<span aria-hidden="true">.</span></h1>
+          <p className={styles.intro}>
+            Invite people who&apos;d get real use out of an agent. When they get going, you both get
+            credits — no cap on how many you can send, capped on how many pay out.
+          </p>
+        </header>
 
-      <h1
-        className="serif"
-        style={{ fontSize: "2.5rem", fontWeight: 300, lineHeight: 1.1, marginBottom: "0.75rem" }}
-      >
-        Invite &amp; Earn
-      </h1>
-      <p style={{ opacity: 0.8, fontSize: 14, maxWidth: 600, lineHeight: 1.6, marginBottom: "2rem" }}>
-        Invite people who&apos;d get real use out of an agent. When they get going, you both get
-        credits — no cap on how many you can send, capped on how many pay out.
-      </p>
-
-      <ReferralCard />
+        <ReferralCard />
+      </div>
     </DashboardPageShell>
   );
 }

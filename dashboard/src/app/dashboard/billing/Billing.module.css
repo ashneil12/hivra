@@ -1,0 +1,1419 @@
+/* Billing — "etched ledger".
+   Vellum page, surface panels with 1px hairlines, square corners, mono
+   eyebrows, Space Grotesk for names and numbers. Red is an indicator only:
+   the plate's top rule, the popular card's rule, the tab underline, focus
+   rings and small badges. Layout adapts to the content width through the
+   `billing` container, never the viewport. */
+
+.page {
+  container: billing / inline-size;
+  width: 100%;
+  max-width: 1040px;
+  min-width: 0;
+  margin: 0 auto 5rem;
+  padding: clamp(1rem, 5vw, 3rem);
+  padding-top: calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + clamp(1.5rem, 5vw, 3rem));
+  color: var(--ink-black);
+}
+
+/* Tabs are left out: their list scrolls sideways, which would clip an outset
+   ring, so Tabs.module.css draws theirs inset. :where() keeps this rule's
+   specificity unchanged for everything else. */
+.page :is(a, button, summary, [role="radio"]):where(:not([role="tab"])):focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+/* Small red text (alert titles, status tags, plan-card deltas): the danger
+   token darkened with ink. The plain token is about 3.5:1 on white in the
+   light theme, below WCAG AA for small text; this mix is about 5:1 there and
+   stays light in the dark theme. Icons and borders keep the plain token. */
+.page {
+  --billing-danger-ink: color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black));
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Loading ─────────────────────────────────────────────────────────────── */
+
+.loading {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 60vh;
+  height: 100%;
+  color: var(--text-secondary);
+}
+
+.loadingLabel {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.spin {
+  animation: billingSpin 1s linear infinite;
+}
+
+@keyframes billingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1.75rem;
+}
+
+.headerText {
+  min-width: 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.6rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  background: var(--hivra-red);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: clamp(2.1rem, 1.5rem + 3cqi, 3.1rem);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+
+.title em {
+  font-style: normal;
+  color: var(--text-secondary);
+}
+
+.subtitle {
+  max-width: 60ch;
+  margin: 0.75rem 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 28px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* ── Alerts (above the tabs, any tab) ────────────────────────────────────── */
+
+.alerts {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  /* Clear a sticky mobile header when the page scrolls a result into view. */
+  scroll-margin-top: 72px;
+}
+
+.alerts:empty {
+  display: none;
+}
+
+/* The page focuses this region after a plan change so the result is seen. */
+.alerts:focus {
+  outline: none;
+}
+
+.alerts:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+.alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.85rem 0.85rem 0.85rem 1rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  min-width: 0;
+}
+
+.alertSuccess {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+}
+
+.alertSuccess .alertIcon {
+  color: var(--skills-success-text);
+}
+
+.alertDanger {
+  border-color: var(--skills-danger-border);
+  background: var(--skills-danger-bg);
+}
+
+.alertDanger .alertIcon {
+  color: var(--skills-danger-text);
+}
+
+.alertDanger .alertTitle {
+  color: var(--billing-danger-ink);
+}
+
+.alertInfo {
+  border-color: var(--ink-black);
+}
+
+.alertIcon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 22px;
+  color: var(--ink-black);
+}
+
+.alertBody {
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.alertTitle {
+  margin: 0 0 0.2rem;
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.alertText {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: 13.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.alertActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+/* The backup-intent banner: text and action wrap onto separate lines when
+   the row is narrow. */
+.intentRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--ink-black);
+  background: var(--bg-surface);
+}
+
+.intentText {
+  display: flex;
+  flex: 1 1 220px;
+  align-items: flex-start;
+  gap: 0.7rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.intentAction {
+  flex: 1 1 auto;
+  max-width: 100%;
+}
+
+@container billing (min-width: 560px) {
+  .intentAction {
+    flex: 0 0 auto;
+  }
+}
+
+.yearlyBanner {
+  margin-bottom: 1.5rem;
+  min-width: 0;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0.65rem 1.1rem;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--hivra-red);
+}
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.primary {
+  border-color: var(--ink-black);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+}
+
+.secondary {
+  border-color: var(--etched-border);
+  background: transparent;
+  color: var(--ink-black);
+}
+
+.block {
+  width: 100%;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--ink-black);
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.iconButton:hover:not(:disabled) {
+  border-color: var(--hivra-red);
+}
+
+.iconButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.dismiss {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: -0.55rem -0.55rem -0.55rem 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  color: var(--ink-black);
+}
+
+.textButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  padding: 0 0.25rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.textButton:hover {
+  color: var(--ink-black);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  color: var(--ink-black);
+  font-size: 13.5px;
+  text-decoration: underline;
+  text-decoration-color: var(--hivra-red-line);
+  text-underline-offset: 4px;
+}
+
+.link:hover {
+  text-decoration-color: var(--hivra-red);
+}
+
+/* ── Tabs + panels ───────────────────────────────────────────────────────── */
+
+.tabs {
+  margin-bottom: 1.75rem;
+}
+
+.stack {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+}
+
+.stack > * {
+  min-width: 0;
+  margin-bottom: 0 !important;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.panel {
+  min-width: 0;
+  padding: clamp(1rem, 4cqi, 1.75rem);
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+}
+
+.panelHead > div:first-child {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.panelEyebrow {
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.panelTitle {
+  margin: 0.3rem 0 0;
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: clamp(1.2rem, 1rem + 1cqi, 1.45rem);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+.panelText {
+  max-width: 62ch;
+  margin: 0.45rem 0 0;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+}
+
+.statusTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 28px;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--etched-border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.statusGood {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+  color: var(--skills-success-text);
+}
+
+.statusWarn {
+  border-color: var(--skills-warning-border);
+  background: var(--skills-warning-bg);
+  color: var(--skills-warning-text);
+}
+
+.statusBad {
+  border-color: var(--skills-danger-border);
+  background: var(--skills-danger-bg);
+  color: var(--billing-danger-ink);
+}
+
+.priceTag {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The rating plate (Overview, signature element) ──────────────────────── */
+
+.plate {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--etched-border);
+  border-top: 2px solid var(--hivra-red);
+  background: var(--bg-surface);
+}
+
+.plateEmpty {
+  border-top-color: var(--etched-border);
+}
+
+.plateHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  padding: clamp(1.1rem, 4cqi, 1.9rem) clamp(1rem, 4cqi, 1.9rem) clamp(1rem, 3cqi, 1.5rem);
+}
+
+.plateIdentity {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.plateEyebrow {
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.plateName {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  margin: 0.35rem 0 0;
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: clamp(2.2rem, 1.6rem + 3.5cqi, 3.4rem);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.05em;
+  overflow-wrap: anywhere;
+}
+
+.plateEmpty .plateName {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.plus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--hivra-red-line);
+  background: var(--hivra-red-soft);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.plateLine {
+  margin: 0.8rem 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.boost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.65rem 0 0;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--hivra-red-line);
+  background: var(--hivra-red-soft);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.plateStatus {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+/* Engraved spec cells separated by hairlines (grid gap over a hairline
+   background, so any column count keeps clean single-pixel rules). */
+.plateSpecs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border-top: 1px solid var(--etched-border);
+  border-bottom: 1px solid var(--etched-border);
+  background: var(--etched-border);
+}
+
+.plateSpec {
+  min-width: 0;
+  margin: 0;
+  padding: 0.95rem clamp(1rem, 4cqi, 1.9rem) 1rem;
+  background: var(--bg-surface);
+}
+
+.plateSpec dt {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.plateSpec dd {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: clamp(1.1rem, 0.95rem + 0.8cqi, 1.4rem);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.plateSpec dd small {
+  margin-left: 0.3rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.plateMeters {
+  display: grid;
+  gap: 1.25rem;
+  padding: clamp(1.1rem, 4cqi, 1.75rem) clamp(1rem, 4cqi, 1.9rem);
+}
+
+.meter {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.meterHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+
+.meterLabel {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.meterValue {
+  color: var(--ink-black);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.meterValueOver {
+  color: var(--skills-warning-text);
+}
+
+/* One square cell per slot. Cells are 28px, and shrink evenly (staying
+   square) when a long row would not fit the plate. Filled = in use, an
+   outlined, recessed cell = free. */
+.slots {
+  display: grid;
+  grid-template-columns: repeat(var(--slot-count, 12), minmax(0, 28px));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slot {
+  min-width: 0;
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--ink-black) 42%, transparent);
+  background: var(--bg-elevated);
+}
+
+.slotUsed {
+  border-color: var(--ink-black);
+  background: var(--ink-black);
+  box-shadow: inset 0 0 0 2px var(--bg-surface);
+}
+
+.bar {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  background: var(--etched-border);
+}
+
+.barFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ink-black);
+  transition: width 180ms ease;
+}
+
+.plateActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: clamp(0.9rem, 3cqi, 1.25rem) clamp(1rem, 4cqi, 1.9rem);
+  border-top: 1px solid var(--etched-border);
+  background: var(--bg-elevated);
+}
+
+.plateActionsEnd {
+  margin-left: auto;
+}
+
+.plateNote {
+  margin: 0;
+  padding: 0 clamp(1rem, 4cqi, 1.9rem) clamp(1.1rem, 4cqi, 1.75rem);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.6;
+  max-width: 64ch;
+}
+
+/* ── Overview tiles ──────────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.tile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  min-height: 96px;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease;
+}
+
+.tile:hover {
+  border-color: var(--hivra-red);
+}
+
+.tile > svg {
+  grid-row: 1 / span 3;
+  grid-column: 2;
+  color: var(--text-secondary);
+}
+
+.tileLabel {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.tileValue {
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: 1.6rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+.tileSub {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ── Plans ───────────────────────────────────────────────────────────────── */
+
+.intro {
+  max-width: 64ch;
+  margin: 0 0 1.25rem;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.control {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.controlLabel {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.controlRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+}
+
+.choice {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.choiceOption {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.choiceOption:hover {
+  color: var(--ink-black);
+}
+
+.choiceOption[aria-checked="true"] {
+  background: var(--ink-black);
+  color: var(--bg-surface);
+}
+
+.saveChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--hivra-red-line);
+  background: var(--hivra-red-soft);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.changeNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 0.9rem;
+  border-left: 2px solid var(--ink-black);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.changeNote svg {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--ink-black);
+}
+
+.ladder {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15.5rem), 1fr));
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.machine {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 1.5rem 1.35rem 1.35rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.machine[data-popular="true"]::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  height: 2px;
+  background: var(--hivra-red);
+}
+
+.machine[data-current="true"] {
+  border-color: var(--ink-black);
+}
+
+.machineEyebrow {
+  margin: 0 0 0.4rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.machineTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+}
+
+.machineName {
+  margin: 0;
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: 1.55rem;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--hivra-red-line);
+  background: var(--hivra-red-soft);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badgeCurrent {
+  border-color: var(--ink-black);
+  background: transparent;
+}
+
+.machinePrice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.45rem;
+  margin: 1.35rem 0 0;
+}
+
+.machinePrice strong {
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: clamp(2.2rem, 1.9rem + 1.2cqi, 2.75rem);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.machinePrice span {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.machineSub {
+  min-height: 1.5em;
+  margin: 0.45rem 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.machineSpecs {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1.1rem 0 0;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--etched-border);
+}
+
+.machineSpecs > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.machineSpecs dt {
+  color: var(--text-secondary);
+}
+
+.machineSpecs dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta {
+  margin-left: 0.35rem;
+  font-size: 11px;
+}
+
+.deltaUp {
+  color: var(--skills-success-text);
+}
+
+.deltaDown {
+  color: var(--billing-danger-ink);
+}
+
+.features {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 0.5rem;
+  margin: 1.1rem 0 1.35rem;
+  padding: 0;
+  list-style: none;
+}
+
+.features li {
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.6rem;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.features li::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  background: var(--ink-black);
+  transform: translateY(-2px);
+}
+
+.machineAction {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.currentMarker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  border: 1px dashed var(--etched-border);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cardNote {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.cardNote svg {
+  flex: 0 0 auto;
+}
+
+/* Planned sizes: dashed, quiet, clearly not a purchase surface. */
+.planned {
+  margin-top: 1.5rem;
+  padding: clamp(1rem, 3.5cqi, 1.5rem);
+  border: 1px dashed color-mix(in srgb, var(--ink-black) 22%, transparent);
+}
+
+.plannedHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.plannedTitle {
+  margin: 0;
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.plannedList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plannedItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.plannedName {
+  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+.plannedSpec {
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.footnotes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.5rem;
+  margin: 1.35rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.footnotes li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* ── Payment methods ─────────────────────────────────────────────────────── */
+
+.method {
+  min-width: 0;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.methodHead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.9rem;
+  padding: clamp(1rem, 4cqi, 1.6rem);
+}
+
+.methodIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--etched-border);
+  color: var(--hivra-red);
+}
+
+.methodBody {
+  min-width: 0;
+}
+
+.methodBlocks {
+  display: grid;
+}
+
+.methodBlock {
+  min-width: 0;
+  padding: clamp(1rem, 4cqi, 1.6rem);
+  border-top: 1px solid var(--etched-border);
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.blockText {
+  max-width: 62ch;
+  margin: 0.3rem 0 0;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.tierButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.blockStatus {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.6rem 0 0;
+  color: var(--ink-black);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.blockStatus svg {
+  flex: 0 0 auto;
+  color: var(--skills-success-text);
+}
+
+.nested {
+  margin-top: 1rem;
+}
+
+.rules {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: clamp(1rem, 4cqi, 1.6rem);
+  border-top: 1px solid var(--etched-border);
+  background: var(--bg-elevated);
+  list-style: none;
+}
+
+.rules li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rules li svg {
+  margin-top: 3px;
+  color: var(--ink-black);
+}
+
+.quietLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  padding: 0 clamp(1rem, 4cqi, 1.6rem) clamp(0.6rem, 3cqi, 1rem);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* ── Responsive (container, not viewport) ────────────────────────────────── */
+
+@container billing (max-width: 640px) {
+  .plateSpecs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plateStatus {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .plateActionsEnd {
+    margin-left: 0;
+  }
+
+  .plannedList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container billing (max-width: 480px) {
+  .tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .choice {
+    display: flex;
+    width: 100%;
+  }
+
+  .choiceOption {
+    padding: 0 0.6rem;
+  }
+
+  .plateActions > .button {
+    flex: 1 1 100%;
+  }
+
+  .alert {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding-left: 0.85rem;
+  }
+
+  .slots {
+    gap: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .iconButton,
+  .tile,
+  .choiceOption,
+  .barFill {
+    transition: none;
+  }
+
+  .spin {
+    animation-duration: 2.4s;
+  }
+}
