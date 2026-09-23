@@ -29,7 +29,7 @@ export const COMPACT_PAYMENT_QUERY = '(max-width: 767px), (pointer: coarse)';
  * Finality disclosure for every $HermesOS payment surface (the yearly plan
  * payment and managed Venice top-ups). Same wording as the Plans footnote.
  */
-export const TOKEN_PAYMENT_FINALITY = "$HermesOS payments are final and can't be refunded.";
+export const TOKEN_PAYMENT_FINALITY = "Token payments are final, except where the law gives you a right to cancel.";
 
 function subscribeCompact(onChange: () => void) {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {

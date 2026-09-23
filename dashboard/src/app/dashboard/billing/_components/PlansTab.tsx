@@ -398,7 +398,7 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
         {path === "token" && (
           <li>
             <Coins size={13} aria-hidden="true" />
-            $HermesOS payments are final and can&apos;t be refunded.
+            Token payments are final, except where the law gives you a right to cancel.
           </li>
         )}
       </ul>

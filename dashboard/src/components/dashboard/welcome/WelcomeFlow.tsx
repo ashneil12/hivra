@@ -5617,7 +5617,7 @@ function PlanGridCard({
   } else if (cryptoMode === 'yearly') {
     priceDisplay = `$${tier.cryptoYearlyUsd ?? 49}`;
     periodLabel = 'in $HERMESOS';
-    subline = `Pay once · 365 days of ${tier.name} · non-refundable`;
+    subline = `Pay once · 365 days of ${tier.name} · final, except where the law gives you a right to cancel`;
     ctaLabel = `Pay 1 year · $${tier.cryptoYearlyUsd ?? 49}`;
     onCta = () => onSelectCryptoYearly(tier.key);
   } else {
