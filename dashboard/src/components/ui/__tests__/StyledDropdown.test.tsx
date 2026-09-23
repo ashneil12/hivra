@@ -1,8 +1,22 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { StyledDropdown } from "../StyledDropdown";
+
+function setPointer(fine: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: jest.fn((query: string) => ({ matches: query === "(pointer: fine)" ? fine : false, media: query })),
+  });
+}
+
+const shortOptions = [
+  { value: "am", label: "AM" },
+  { value: "pm", label: "PM" },
+];
+const longOptions = Array.from({ length: 12 }, (_, index) => ({ value: `m-${index}`, label: `Model ${index}` }));
 
 describe("StyledDropdown", () => {
   beforeEach(() => {
@@ -12,6 +26,62 @@ describe("StyledDropdown", () => {
   afterEach(() => {
     jest.clearAllTimers();
     jest.useRealTimers();
+    Reflect.deleteProperty(window, "matchMedia");
+    Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  it("keeps the desktop search row and focuses it with a fine pointer, even for short lists", () => {
+    setPointer(true);
+    render(<StyledDropdown value="am" onChange={() => {}} options={shortOptions} />);
+    fireEvent.click(screen.getByRole("button", { name: "AM" }));
+    act(() => { jest.advanceTimersByTime(60); });
+    const search = screen.getByPlaceholderText("Search...");
+    expect(search).toHaveFocus();
+    expect(search).toHaveAttribute("type", "search");
+    expect(search).toHaveAttribute("enterkeyhint", "search");
+  });
+
+  it("does not raise the keyboard on touch: no search row for short lists, focus on the selected option", () => {
+    setPointer(false);
+    render(<StyledDropdown value="pm" onChange={() => {}} options={shortOptions} />);
+    fireEvent.click(screen.getByRole("button", { name: "PM" }));
+    act(() => { jest.advanceTimersByTime(60); });
+    expect(screen.queryByPlaceholderText("Search...")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "PM" })[1]).toHaveFocus();
+  });
+
+  it("offers search on touch for long lists without focusing it", () => {
+    setPointer(false);
+    render(<StyledDropdown value="" onChange={() => {}} options={longOptions} placeholder="Pick a model" />);
+    fireEvent.click(screen.getByRole("button", { name: "Pick a model" }));
+    act(() => { jest.advanceTimersByTime(60); });
+    expect(screen.getByPlaceholderText("Search...")).not.toHaveFocus();
+  });
+
+  it("closes on a touch outside the menu", () => {
+    setPointer(false);
+    render(<StyledDropdown value="am" onChange={() => {}} options={shortOptions} />);
+    const trigger = screen.getByRole("button", { name: "AM" });
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    fireEvent.pointerDown(document.body);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("positions the menu inside the visual viewport so an open keyboard cannot cover it", () => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { height: 500, offsetTop: 0, addEventListener: jest.fn(), removeEventListener: jest.fn() },
+    });
+    render(<StyledDropdown value="" onChange={() => {}} options={longOptions} placeholder="Pick a model" />);
+    const trigger = screen.getByRole("button", { name: "Pick a model" });
+    jest.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ top: 400, bottom: 440, left: 10, right: 210, width: 200, height: 40, x: 10, y: 400, toJSON: () => ({}) });
+    fireEvent.click(trigger);
+    // Only 48px remain above the keyboard, so the menu opens upward.
+    const menu = document.querySelector('[data-hermes-portal-root] div[style*="position: fixed"]');
+    expect(menu).toHaveStyle({ top: "76px" });
+    expect(window.visualViewport!.addEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
   });
 
   it("renders the open menu in a portal and caps the menu height when menuMaxHeight is provided", async () => {

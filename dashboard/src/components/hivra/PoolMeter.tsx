@@ -27,10 +27,10 @@ function Bar({ metric, unit }: { metric: PoolMetric; unit: string }) {
   return (
     <div style={{ display: "grid", gap: 5 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-        <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800, opacity: 0.6, width: 34 }}>{unit}</span>
+        <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800, opacity: 0.78, width: 36 }}>{unit}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-black)" }}>{fmt(metric.selected)}</span>
         <span style={{ flex: 1 }} />
-        <span className="mono" style={{ fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.55 }}>
+        <span className="mono" style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.78 }}>
           {fmt(free)} free · {fmt(total)} total
         </span>
       </div>
@@ -56,19 +56,19 @@ export function PoolMeter({
   const hasOthers = cpu.othersUsed > 0 || ram.othersUsed > 0;
   return (
     <div style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.02)", padding: "11px 13px", display: "grid", gap: 9 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800, opacity: 0.62 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800, opacity: 0.78 }}>
           {planName ? `${planName} pool` : "Compute pool"}
         </span>
         <span style={{ flex: 1 }} />
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--gold-leaf)", display: "inline-block" }} />
-          <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.6 }}>This box</span>
+          <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.78 }}>This box</span>
         </span>
         {hasOthers ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--text-muted)", opacity: 0.55, display: "inline-block" }} />
-            <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.6 }}>Other agents</span>
+            <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.78 }}>Other agents</span>
           </span>
         ) : null}
       </div>

@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import LandingHeader from "@/components/layout/LandingHeader";
+import LandingHeader, { HomeOrDashboardLink } from "@/components/layout/LandingHeader";
 import Footer from "@/components/landing/Footer";
 
 export const metadata: Metadata = {
@@ -16,9 +14,10 @@ export const metadata: Metadata = {
 // Branded 404 for the dashboard app root. Mirrors the public-page scaffold used
 // by /status and /stats (LocaleProvider + InteractiveBackground + LandingHeader +
 // Footer) so a mistyped URL stays inside the product instead of dropping to the
-// bare Next.js default. Pure presentational: no auth/Clerk, no DB/schema, no
+// bare Next.js default. Pure presentational: no server auth/Clerk, no DB/schema, no
 // tenant data. A sync server component — LocaleProvider resolves the visitor's
-// locale client-side, so no per-request work is needed.
+// locale client-side, and the header and CTA read Clerk's session hint there
+// too, so signed-in visitors are offered the dashboard without per-request work.
 export default function NotFound() {
   return (
     <LocaleProvider>
@@ -79,11 +78,11 @@ export default function NotFound() {
             The page you&rsquo;re looking for doesn&rsquo;t exist or has moved. Let&rsquo;s get
             you back to somewhere that does.
           </p>
-          <Link
-            href="/"
+          <HomeOrDashboardLink
             className="action-button"
             style={{
               padding: "12px 24px",
+              minHeight: 44,
               fontSize: 11,
               textDecoration: "none",
               display: "inline-flex",
@@ -91,9 +90,7 @@ export default function NotFound() {
               gap: 8,
               letterSpacing: "0.1em",
             }}
-          >
-            <ArrowLeft size={14} aria-hidden="true" /> Back to Hivra
-          </Link>
+          />
         </main>
 
         <Footer />

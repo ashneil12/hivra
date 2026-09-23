@@ -93,4 +93,24 @@ describe("DeployingState", () => {
     expect(screen.queryByLabelText("Context")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("First task")).not.toBeInTheDocument();
   });
+
+  it("opens at the top of the page instead of the deploy form's scroll offset", () => {
+    const main = document.body.appendChild(document.createElement("main"));
+    let assignedScrollTop: number | null = null;
+    Object.defineProperty(main, "scrollTop", {
+      configurable: true,
+      get: () => 900,
+      set: (value: number) => { assignedScrollTop = value; },
+    });
+    const rect = jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const top = this.tagName === "MAIN" ? 56 : this.getAttribute("aria-label") === "Setting up your agent" ? -600 : 0;
+      return { top } as DOMRect;
+    });
+
+    render(<DeployingState agentName="MY_FIRST_AGENT" />, { container: main.appendChild(document.createElement("div")) });
+
+    expect(assignedScrollTop).toBe(0);
+    rect.mockRestore();
+    main.remove();
+  });
 });

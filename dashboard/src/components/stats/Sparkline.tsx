@@ -68,7 +68,7 @@ export function Sparkline({
     return () => ro.disconnect();
   }, []);
 
-  const { bars, max, total, firstDate, lastDate, midDate, axisY } = useMemo(() => {
+  const { bars, barSlot, max, total, firstDate, lastDate, midDate, axisY } = useMemo(() => {
     const max = Math.max(1, ...data.map((d) => d.count));
     const total = data.reduce((sum, d) => sum + d.count, 0);
     const usableWidth = VIEWBOX_WIDTH - PADDING_X * 2;
@@ -90,6 +90,7 @@ export function Sparkline({
     });
     return {
       bars,
+      barSlot,
       max,
       total,
       firstDate: data[0]?.date ?? null,
@@ -140,6 +141,33 @@ export function Sparkline({
     labels.barLabel
       .replace("{date}", formatDate(iso))
       .replace("{count}", count.toLocaleString(locale));
+
+  // Touch has no hover: a tap selects the day, and its value is read out as
+  // HTML so it is legible and announced, not only in a <title> tooltip.
+  const hoveredPoint = hovered != null ? data[hovered] : undefined;
+  const caption = (
+    <figcaption
+      className="mono"
+      style={{
+        marginTop: "1.25rem",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 12,
+        fontSize: 10,
+        textTransform: "uppercase",
+        letterSpacing: "0.16em",
+        color: "var(--text-muted)",
+      }}
+    >
+      <span aria-live="polite" style={hoveredPoint ? { color: "var(--ink-black)" } : undefined}>
+        {hoveredPoint
+          ? formatBarTitle(hoveredPoint.date, hoveredPoint.count)
+          : `${labels.peak}: ${max.toLocaleString(locale)}`}
+      </span>
+      <span>{labels.total}: {total.toLocaleString(locale)}</span>
+    </figcaption>
+  );
 
   if (variant === "area") {
     return (
@@ -252,6 +280,7 @@ export function Sparkline({
               width={areaView.slot}
               height={areaView.axisY - PADDING_TOP}
               fill="transparent"
+              onPointerDown={() => setHovered(i)}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
               onFocus={() => setHovered(i)}
@@ -280,22 +309,7 @@ export function Sparkline({
           )}
         </svg>
 
-        <figcaption
-          className="mono"
-          style={{
-            marginTop: "1.25rem",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            fontSize: 10,
-            textTransform: "uppercase",
-            letterSpacing: "0.16em",
-            color: "var(--text-muted)",
-          }}
-        >
-          <span>{labels.peak}: {max.toLocaleString(locale)}</span>
-          <span>{labels.total}: {total.toLocaleString(locale)}</span>
-        </figcaption>
+        {caption}
       </figure>
     );
   }
@@ -305,118 +319,92 @@ export function Sparkline({
       style={{ width: "100%", margin: 0 }}
       aria-label={ariaLabel}
     >
-      <svg
-        viewBox={`0 0 ${VIEWBOX_WIDTH} ${height}`}
-        preserveAspectRatio="none"
-        style={{ display: "block", width: "100%", height }}
-        role="img"
-      >
-        <defs>
-          <linearGradient id="hermesBarGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--gold-leaf)" stopOpacity="0.95" />
-            <stop offset="100%" stopColor="var(--gold-leaf)" stopOpacity="0.55" />
-          </linearGradient>
-        </defs>
+      <div style={{ position: "relative" }}>
+        <svg
+          viewBox={`0 0 ${VIEWBOX_WIDTH} ${height}`}
+          preserveAspectRatio="none"
+          style={{ display: "block", width: "100%", height }}
+          role="img"
+        >
+          <defs>
+            <linearGradient id="hermesBarGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--gold-leaf)" stopOpacity="0.95" />
+              <stop offset="100%" stopColor="var(--gold-leaf)" stopOpacity="0.55" />
+            </linearGradient>
+          </defs>
 
-        <line
-          x1={PADDING_X}
-          x2={VIEWBOX_WIDTH - PADDING_X}
-          y1={axisY}
-          y2={axisY}
-          stroke="var(--etched-border)"
-          strokeWidth="1"
-        />
+          <line
+            x1={PADDING_X}
+            x2={VIEWBOX_WIDTH - PADDING_X}
+            y1={axisY}
+            y2={axisY}
+            stroke="var(--etched-border)"
+            strokeWidth="1"
+          />
 
-        {bars.map((bar, i) => {
-          const isHovered = hovered === i;
-          return (
-            <g key={`${bar.date}-${i}`}>
-              <motion.rect
-                x={bar.x}
-                width={bar.width}
-                y={bar.y}
-                height={bar.height}
-                rx={bar.width > 6 ? 1.5 : 0}
-                fill="url(#hermesBarGradient)"
-                opacity={bar.count === 0 ? 0 : isHovered ? 1 : 0.85}
-                initial={reduceMotion ? false : { opacity: 0 }}
-                whileInView={reduceMotion ? undefined : { opacity: bar.count === 0 ? 0 : 0.85 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: i * 0.015, ease: "easeOut" }}
-              />
-              <rect
-                x={bar.x - 2}
-                y={PADDING_TOP}
-                width={bar.width + 4}
-                height={axisY - PADDING_TOP}
-                fill="transparent"
-                onMouseEnter={() => setHovered(i)}
-                onMouseLeave={() => setHovered(null)}
-                onFocus={() => setHovered(i)}
-                onBlur={() => setHovered(null)}
-                tabIndex={0}
-                style={{ cursor: "pointer", outline: "none" }}
-              >
-                <title>{formatBarTitle(bar.date, bar.count)}</title>
-              </rect>
-            </g>
-          );
-        })}
+          {bars.map((bar, i) => {
+            const isHovered = hovered === i;
+            return (
+              <g key={`${bar.date}-${i}`}>
+                <motion.rect
+                  x={bar.x}
+                  width={bar.width}
+                  y={bar.y}
+                  height={bar.height}
+                  rx={bar.width > 6 ? 1.5 : 0}
+                  fill="url(#hermesBarGradient)"
+                  opacity={bar.count === 0 ? 0 : isHovered ? 1 : 0.85}
+                  initial={reduceMotion ? false : { opacity: 0 }}
+                  whileInView={reduceMotion ? undefined : { opacity: bar.count === 0 ? 0 : 0.85 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.4, delay: i * 0.015, ease: "easeOut" }}
+                />
+                <rect
+                  x={PADDING_X + i * barSlot}
+                  y={PADDING_TOP}
+                  width={barSlot}
+                  height={axisY - PADDING_TOP}
+                  fill="transparent"
+                  onPointerDown={() => setHovered(i)}
+                  onMouseEnter={() => setHovered(i)}
+                  onMouseLeave={() => setHovered(null)}
+                  onFocus={() => setHovered(i)}
+                  onBlur={() => setHovered(null)}
+                  tabIndex={0}
+                  style={{ cursor: "pointer", outline: "none" }}
+                >
+                  <title>{formatBarTitle(bar.date, bar.count)}</title>
+                </rect>
+              </g>
+            );
+          })}
+        </svg>
+        {/* Date axis in HTML: the bars' 1000-unit viewBox is stretched to the
+            chart width, which would squash SVG text on narrow screens. */}
+        <div
+          className="mono"
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: `${(PADDING_X / VIEWBOX_WIDTH) * 100}%`,
+            right: `${(PADDING_X / VIEWBOX_WIDTH) * 100}%`,
+            bottom: 3,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 8,
+            fontSize: 11,
+            lineHeight: 1,
+            color: "var(--text-muted)",
+            pointerEvents: "none",
+          }}
+        >
+          <span>{firstDate ? formatDate(firstDate) : ""}</span>
+          <span>{midDate ? formatDate(midDate) : ""}</span>
+          <span>{lastDate ? formatDate(lastDate) : ""}</span>
+        </div>
+      </div>
 
-        {firstDate && (
-          <text
-            x={PADDING_X}
-            y={height - 8}
-            fontSize="10"
-            fontFamily="var(--font-mono), monospace"
-            fill="var(--text-muted)"
-            textAnchor="start"
-          >
-            {formatDate(firstDate)}
-          </text>
-        )}
-        {midDate && (
-          <text
-            x={VIEWBOX_WIDTH / 2}
-            y={height - 8}
-            fontSize="10"
-            fontFamily="var(--font-mono), monospace"
-            fill="var(--text-muted)"
-            textAnchor="middle"
-          >
-            {formatDate(midDate)}
-          </text>
-        )}
-        {lastDate && (
-          <text
-            x={VIEWBOX_WIDTH - PADDING_X}
-            y={height - 8}
-            fontSize="10"
-            fontFamily="var(--font-mono), monospace"
-            fill="var(--text-muted)"
-            textAnchor="end"
-          >
-            {formatDate(lastDate)}
-          </text>
-        )}
-      </svg>
-
-      <figcaption
-        className="mono"
-        style={{
-          marginTop: "1.25rem",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontSize: 10,
-          textTransform: "uppercase",
-          letterSpacing: "0.16em",
-          color: "var(--text-muted)",
-        }}
-      >
-        <span>{labels.peak}: {max.toLocaleString(locale)}</span>
-        <span>{labels.total}: {total.toLocaleString(locale)}</span>
-      </figcaption>
+      {caption}
     </figure>
   );
 }

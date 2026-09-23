@@ -394,6 +394,20 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     );
     expect(screen.getByRole("button", { name: /Advanced/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Network bridge")).toHaveValue("vmbr0");
+    // Touch keyboards must not turn vmbr0 into Vmbr0 or autocorrect paths.
+    for (const label of [
+      "Node",
+      "Network bridge",
+      "VM storage",
+      "Expected template name",
+      "Provisioner directory",
+      "Provisioner version",
+    ]) {
+      const input = screen.getByLabelText(label);
+      expect(input).toHaveAttribute("autocapitalize", "none");
+      expect(input).toHaveAttribute("autocorrect", "off");
+      expect(input).toHaveAttribute("spellcheck", "false");
+    }
   });
 
   it("saves a generic host, discovers it first, then requires an explicit strict readiness check", async () => {
@@ -428,6 +442,82 @@ describe("InfrastructureConnectionWizard payload builders", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare recommended setup" }));
     expect(onPrepareRequested).toHaveBeenCalledWith(savedHost);
+  });
+
+  it.each([
+    ["phone", "visible", true],
+    ["desktop", "auto", false],
+  ])("on %s layouts, starts each in-place phase at the top only when the page scrolls the dialog", async (_layout, overflowY, scrolls) => {
+    // Phone CSS makes the in-flow dialog overflow visible so the dashboard
+    // main scrolls it; desktop dialogs scroll themselves.
+    const layout = document.createElement("style");
+    layout.textContent = `[role="dialog"] { overflow-y: ${overflowY}; }`;
+    document.head.appendChild(layout);
+    try {
+      render(
+        <InfrastructureConnectionWizard
+          onClose={jest.fn()}
+          onConnectionSaved={jest.fn()}
+          onPreflightComplete={jest.fn()}
+        />,
+      );
+      const dialog = screen.getByRole("dialog");
+      const scrollIntoView = jest.fn();
+      dialog.scrollIntoView = scrollIntoView;
+
+      // A validation error keeps the form phase; focus goes to the field instead.
+      fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+      expect(screen.getByLabelText("SSH host")).toHaveFocus();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "host.example.com" } });
+      fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
+      fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+      await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+
+      if (scrolls) {
+        expect(scrollIntoView).toHaveBeenCalled();
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "start" });
+      } else {
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      }
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it("shows a failed save's error instead of the form top when the page scrolls the dialog", async () => {
+    (createInfrastructureConnection as jest.Mock).mockRejectedValue(new Error("The host rejected the saved SSH key."));
+    const layout = document.createElement("style");
+    layout.textContent = '[role="dialog"] { overflow-y: visible; }';
+    document.head.appendChild(layout);
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrolled: Array<[Element, unknown]> = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element, options?: unknown) {
+      scrolled.push([this, options]);
+    };
+    try {
+      render(
+        <InfrastructureConnectionWizard
+          onClose={jest.fn()}
+          onConnectionSaved={jest.fn()}
+          onPreflightComplete={jest.fn()}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "host.example.com" } });
+      fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
+      fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+
+      const error = (await screen.findByText("The host rejected the saved SSH key.")).closest('[role="alert"]');
+      expect(error).not.toBeNull();
+      expect(scrolled.at(-1)).toEqual([error, { block: "center" }]);
+    } finally {
+      if (original) Object.defineProperty(Element.prototype, "scrollIntoView", original);
+      else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      layout.remove();
+    }
   });
 
   it("keeps the recommendation step current while the strict readiness check is running", async () => {

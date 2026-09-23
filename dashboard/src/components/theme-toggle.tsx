@@ -4,6 +4,22 @@ import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
+const THEME_TRANSITION_CLASS = "theme-transition"
+const THEME_TRANSITION_MS = 600
+let themeTransitionTimer: number | undefined
+
+/**
+ * Switch theme with the colour fade. Touch devices only fade while this class
+ * is on <html> (see globals.css), so taps elsewhere get instant feedback.
+ */
+export function switchThemeWithTransition(setTheme: (theme: string) => void, theme: string) {
+  const root = document.documentElement
+  root.classList.add(THEME_TRANSITION_CLASS)
+  window.clearTimeout(themeTransitionTimer)
+  themeTransitionTimer = window.setTimeout(() => root.classList.remove(THEME_TRANSITION_CLASS), THEME_TRANSITION_MS)
+  setTheme(theme)
+}
+
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
@@ -13,34 +29,15 @@ export function ThemeToggle() {
   }, [])
 
   if (!mounted) {
-    return <div style={{ width: 24, height: 24 }} /> // placeholder
+    return <div className="hivra-theme-toggle" aria-hidden="true" /> // placeholder
   }
 
   return (
     <button
-      onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+      type="button"
+      className="hivra-theme-toggle"
+      onClick={() => switchThemeWithTransition(setTheme, resolvedTheme === "dark" ? "light" : "dark")}
       title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-      style={{
-        width: 32,
-        height: 32,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        color: 'var(--text-secondary)',
-        background: 'transparent',
-        border: 'none',
-        transition: 'all 0.2s ease',
-        borderRadius: 0
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.color = 'var(--ink-black)';
-        e.currentTarget.style.background = 'var(--border-subtle)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.color = 'var(--text-secondary)';
-        e.currentTarget.style.background = 'transparent';
-      }}
     >
       {resolvedTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
       <span className="sr-only">Toggle theme</span>

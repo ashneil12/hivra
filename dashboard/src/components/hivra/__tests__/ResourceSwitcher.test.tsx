@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
@@ -166,6 +166,63 @@ describe("ResourceSwitcher", () => {
       ).not.toBeInTheDocument(),
     );
   });
+  it("returns focus to the trigger after Escape", async () => {
+    jest.useFakeTimers();
+    try {
+      render(<ResourceSwitcher currentUid="abc" />);
+      const trigger = screen.getByRole("button", { name: "Switch runtime" });
+      fireEvent.click(trigger);
+      screen.getByRole("combobox").focus();
+      fireEvent.keyDown(window, { key: "Escape" });
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("leaves focus in a Terminal or Desktop frame that takes it while the menu is open", () => {
+    // Clicking into a frame closes the menu through window blur; pulling focus
+    // back to the trigger would send the next keystrokes to the page instead.
+    jest.useFakeTimers();
+    const frame = document.createElement("iframe");
+    document.body.append(frame);
+    try {
+      render(<ResourceSwitcher currentUid="abc" />);
+      const trigger = screen.getByRole("button", { name: "Switch runtime" });
+      fireEvent.click(trigger);
+      frame.focus();
+      act(() => { window.dispatchEvent(new Event("blur")); });
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).not.toHaveFocus();
+      expect(frame).toHaveFocus();
+    } finally {
+      jest.useRealTimers();
+      frame.remove();
+    }
+  });
+
+  it("does not take focus back from another control clicked outside the menu", () => {
+    jest.useFakeTimers();
+    const other = document.createElement("button");
+    document.body.append(other);
+    try {
+      render(<ResourceSwitcher currentUid="abc" />);
+      const trigger = screen.getByRole("button", { name: "Switch runtime" });
+      fireEvent.click(trigger);
+      fireEvent.pointerDown(other);
+      other.focus();
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(other).toHaveFocus();
+    } finally {
+      jest.useRealTimers();
+      other.remove();
+    }
+  });
+
   it.each(['All agents and computers', 'Launch a runtime'])(
     'lets Enter activate %s without selecting a resource', (name) => {
       render(<ResourceSwitcher currentUid="abc" />);
@@ -205,4 +262,29 @@ describe("ResourceSwitcher", () => {
     }
   });
 
+});
+
+describe("ResourceSwitcher compact parts", () => {
+  it("tags the status so a narrow host can show it as a dot and one word", () => {
+    const { rerender } = render(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="running" />);
+    const trigger = screen.getByRole("button", { name: "Switch agent or computer: Atlas" });
+    expect(trigger.querySelector('[data-switcher-part="kind"]')).toHaveTextContent("Agent");
+    expect(trigger.querySelector('[data-switcher-part="separator"]')).toHaveAttribute("aria-hidden", "true");
+    expect(trigger.querySelector('[data-switcher-part="status"]')).toHaveAttribute("data-tone", "ok");
+    rerender(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="setting up" />);
+    expect(trigger.querySelector('[data-switcher-part="status"]')).toHaveAttribute("data-tone", "busy");
+    rerender(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="error" />);
+    expect(trigger.querySelector('[data-switcher-part="status"]')).toHaveAttribute("data-tone", "error");
+    rerender(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="stopped" />);
+    expect(trigger.querySelector('[data-switcher-part="status"]')).toHaveAttribute("data-tone", "off");
+    expect(trigger).toHaveTextContent("Agent · stopped");
+  });
+
+  it("gives screen readers the status the label and a narrow host would hide", () => {
+    const { rerender } = render(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="running" />);
+    const trigger = screen.getByRole("button", { name: "Switch agent or computer: Atlas" });
+    expect(trigger).toHaveAccessibleDescription("running");
+    rerender(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" />);
+    expect(trigger).not.toHaveAttribute("aria-describedby");
+  });
 });

@@ -19,6 +19,13 @@ const NOUS_OAUTH_POLL_TIMEOUT_MS = 12 * 60 * 1000;
 
 const nousAttemptByInstanceId = new Map<string, number>();
 
+// Desktop keeps the compact buttons; phones and touch screens get 44px targets.
+const NOUS_TOUCH_CSS = `
+@media (max-width: 767px), (pointer: coarse) {
+  .nous-oauth-action { min-height: 44px; justify-content: center; }
+}
+`;
+
 function captureOauthEvent(
   event: "provider_oauth_started" | "provider_oauth_completed" | "provider_oauth_failed",
   properties: Record<string, unknown>,
@@ -344,16 +351,20 @@ export function NousPortalOAuthModal({
       variants={overlayVariants}
       style={{
         position: "fixed",
-        inset: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "var(--workspace-viewport-height, 100dvh)",
         zIndex: 9999,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         background: "rgba(0,0,0,0.4)",
         backdropFilter: "blur(4px)",
-        padding: 20,
+        padding: "calc(20px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))",
       }}
     >
+      <style>{NOUS_TOUCH_CSS}</style>
       <motion.div
         initial="hidden"
         animate="visible"
@@ -368,6 +379,7 @@ export function NousPortalOAuthModal({
           boxShadow: "8px 8px 0px var(--ink-black)",
           display: "flex",
           flexDirection: "column",
+          maxHeight: "calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
           overflow: "hidden",
         }}
       >
@@ -376,7 +388,7 @@ export function NousPortalOAuthModal({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "14px 20px",
+            padding: "1px 8px 1px 20px",
             borderBottom: "1px solid var(--etched-border)",
             background: "var(--vellum-bg)",
             flexShrink: 0,
@@ -389,8 +401,10 @@ export function NousPortalOAuthModal({
             </h2>
           </div>
           <motion.button
+            type="button"
             onClick={handleClose}
-            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}
+            aria-label="Close"
+            style={{ width: 44, height: 44, padding: 0, flexShrink: 0, display: "grid", placeItems: "center", background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}
             whileTap={tapScale}
             transition={buttonSpring}
           >
@@ -398,7 +412,7 @@ export function NousPortalOAuthModal({
           </motion.button>
         </div>
 
-        <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 16, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
           {connectStep === "idle" && (
             <>
               <div
@@ -420,6 +434,7 @@ export function NousPortalOAuthModal({
               </div>
               <motion.button
                 onClick={handleStart}
+                className="nous-oauth-action"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -472,6 +487,7 @@ export function NousPortalOAuthModal({
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <motion.button
                     onClick={handleOpenInNewTab}
+                    className="nous-oauth-action"
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -491,6 +507,7 @@ export function NousPortalOAuthModal({
                   </motion.button>
                   <motion.button
                     onClick={handleUrlCopy}
+                    className="nous-oauth-action"
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -577,13 +594,14 @@ export function NousPortalOAuthModal({
                 }}
               >
                 <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-                <span>{connectError}</span>
+                <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{connectError}</span>
               </div>
               <motion.button
                 onClick={() => {
                   setConnectStep("idle");
                   setConnectError("");
                 }}
+                className="nous-oauth-action"
                 style={{
                   padding: "8px 16px",
                   background: "transparent",

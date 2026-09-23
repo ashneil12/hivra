@@ -112,23 +112,73 @@ describe('DashboardSidebar', () => {
     }
   });
 
-  it.each(['/dashboard/agent/desktop', '/dashboard/instances/same', '/dashboard/settings'])(
-    'keeps Home as the resume destination from %s', (pathname) => {
-      (usePathname as jest.Mock).mockReturnValue(pathname);
-      render(<DashboardSidebar {...props} />);
-      expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/dashboard');
-      fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
-      expect(screen.getByRole('link', { name: 'All agents and computers' })).toHaveAttribute('href', '/dashboard?runtimes=1');
-    },
-  );
+  // The resume at /dashboard follows the server shell flag, which self-host
+  // builds hide from the client, so the route decides, not the client flag.
+  it.each([
+    ['/dashboard/agent/desktop', '/dashboard?runtimes=1'],
+    ['/dashboard/instances/same', '/dashboard?runtimes=1'],
+    ['/dashboard/settings', '/dashboard'],
+  ])('sends Home and the brand from %s to %s with the client shell flag off', (pathname, href) => {
+    (usePathname as jest.Mock).mockReturnValue(pathname);
+    render(<DashboardSidebar {...props} />);
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', href);
+    expect(screen.getByRole('link', { name: 'Hivra home' })).toHaveAttribute('href', href);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    expect(screen.getByRole('link', { name: 'All agents and computers' })).toHaveAttribute('href', '/dashboard?runtimes=1');
+  });
 
-  it('closes mobile navigation when browsing all agents and computers', () => {
-    const onMobileClose = jest.fn();
-    render(<DashboardSidebar {...props} isMobileOpen onMobileClose={onMobileClose} />);
+  it('closes the switcher when browsing all agents and computers', () => {
+    render(<DashboardSidebar {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
     fireEvent.click(screen.getByRole('link', { name: 'All agents and computers' }));
-    expect(onMobileClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['/dashboard/agent/abc-123', '/dashboard?runtimes=1'],
+    ['/dashboard/instances/inst_1/console', '/dashboard?runtimes=1'],
+    ['/dashboard/settings', '/dashboard'],
+  ])('under the shell, sends Home from %s to %s so it cannot resume the runtime being left', (pathname, href) => {
+    process.env.NEXT_PUBLIC_HIVRA_WORKSPACE_SHELL_ENABLED = '1';
+    (usePathname as jest.Mock).mockReturnValue(pathname);
+    try {
+      render(<DashboardSidebar {...props} />);
+      expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', href);
+    } finally {
+      delete process.env.NEXT_PUBLIC_HIVRA_WORKSPACE_SHELL_ENABLED;
+    }
+  });
+
+  it('reports the attention count so the phone bar can badge More', () => {
+    const onAttentionCountChange = jest.fn();
+    (useDashboardResources as jest.Mock).mockReturnValue({ resources: [{ ...resources[0], status: 'error' }, resources[2]], loading: false, errors: { hermes: null, hivra: null }, refresh });
+    render(<DashboardSidebar {...props} onAttentionCountChange={onAttentionCountChange} />);
+    expect(onAttentionCountChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it('lets the shell open and close the switcher, refreshing once per open', () => {
+    const onSwitcherOpenChange = jest.fn();
+    const view = render(<DashboardSidebar {...props} switcherOpen={false} onSwitcherOpenChange={onSwitcherOpenChange} />);
+    expect(refresh).not.toHaveBeenCalled();
+    view.rerender(<DashboardSidebar {...props} switcherOpen onSwitcherOpenChange={onSwitcherOpenChange} />);
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Close switcher' }));
+    expect(onSwitcherOpenChange).toHaveBeenLastCalledWith(false);
+    view.rerender(<DashboardSidebar {...props} switcherOpen={false} onSwitcherOpenChange={onSwitcherOpenChange} />);
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    expect(onSwitcherOpenChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('labels the collapsed rail so touch tablets without tooltips can read it', () => {
+    window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
+    const { container } = render(<DashboardSidebar {...props} />);
+    const labels = [...container.querySelectorAll('.railLabel')].map((label) => label.textContent);
+    expect(labels).toEqual(['Search', 'Launch', 'Home', 'Computers', 'Agents', 'Activity', 'Infra', 'Settings', 'Billing', 'Apps', 'Help']);
+    expect(screen.getByRole('link', { name: 'Infrastructure' })).toHaveAttribute('title', 'Infrastructure');
+    fireEvent.click(screen.getByTitle('Expand Sidebar'));
+    expect(container.querySelector('.railLabel')).not.toBeInTheDocument();
   });
 
   it('shows attention only for current, actionable resource signals', () => {
@@ -204,16 +254,7 @@ describe('DashboardSidebar', () => {
     expect(window.localStorage.getItem('hivra:dashboard:sidebar-expanded')).toBe('true');
   });
 
-  it('does not persist mobile drawer visibility over the desktop preference', () => {
-    window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
-    const view = render(<DashboardSidebar {...props} isMobileOpen />);
-    expect(screen.getByText('Home')).toBeVisible();
-    view.rerender(<DashboardSidebar {...props} isMobileOpen={false} />);
-    expect(screen.queryByText('Home')).not.toBeInTheDocument();
-    expect(window.localStorage.getItem('hivra:dashboard:sidebar-expanded')).toBe('false');
-  });
-
-  it('removes closed mobile drawer controls from accessibility even when a child is explicitly visible', () => {
+  it('keeps the sidebar and all of its controls out of reach on phones, where the bottom bar navigates', () => {
     const style = document.createElement('style');
     style.textContent = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
     document.head.append(style);
@@ -226,22 +267,33 @@ describe('DashboardSidebar', () => {
         ...rules.filter((rule) => rule.type === CSSRule.STYLE_RULE),
         ...Array.from(mobile.cssRules),
       ].map((rule) => rule.cssText).join('\n');
-      const view = render(<DashboardSidebar {...props} />);
+      render(<DashboardSidebar {...props} />);
       const theme = screen.getByTitle('Switch to light mode');
       theme.style.visibility = 'visible';
       expect(screen.queryByRole('button', { name: 'Toggle theme' })).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Home' })).not.toBeInTheDocument();
-
-      view.rerender(<DashboardSidebar {...props} isMobileOpen />);
-      expect(screen.getByRole('button', { name: 'Toggle theme' })).toBeVisible();
-      expect(screen.getByRole('link', { name: 'Home' })).toBeVisible();
-      expect(screen.getByRole('button', { name: 'Switch agent or computer' })).toHaveFocus();
-
-      view.rerender(<DashboardSidebar {...props} isMobileOpen={false} />);
-      expect(screen.queryByRole('button', { name: 'Toggle theme' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument();
     } finally {
       style.remove();
     }
+  });
+
+  it('shows switcher status on phones with a dot that desktop keeps hidden', () => {
+    const css = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
+    const mobile = css.slice(css.indexOf('@media (max-width: 767px)'));
+    expect(css).toContain('.resultDot { display: none; }');
+    expect(mobile.slice(0, mobile.indexOf('\n}'))).toContain('.resultDot { display: block; }');
+    expect(mobile.slice(0, mobile.indexOf('\n}'))).not.toContain('.resultStatus { display: none; }');
+    render(<DashboardSidebar {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    const option = screen.getAllByRole('option')[0];
+    expect(option.querySelector('.resultDot')).toHaveAttribute('data-state', 'running');
+    expect(option).toHaveTextContent('Running');
+    const input = screen.getByRole('combobox');
+    expect(input).toHaveAttribute('enterkeyhint', 'go');
+    expect(input).toHaveAttribute('autocapitalize', 'none');
+    expect(input).toHaveAttribute('autocorrect', 'off');
+    expect(input).toHaveAttribute('spellcheck', 'false');
   });
 
   it.each([
@@ -346,12 +398,12 @@ describe('DashboardSidebar', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('closes the mobile drawer with Escape and after a primary navigation selection', () => {
-    const onMobileClose = jest.fn();
-    render(<DashboardSidebar {...props} isMobileOpen onMobileClose={onMobileClose} />);
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Switch agent or computer' }), { key: 'Escape' });
+  it('closes the tablet overlay after a primary navigation selection', () => {
+    setViewportWidth(900);
+    render(<DashboardSidebar {...props} />);
+    fireEvent.click(screen.getByTitle('Expand Sidebar'));
     fireEvent.click(screen.getByRole('link', { name: 'Agents' }));
-    expect(onMobileClose).toHaveBeenCalledTimes(2);
+    expect(screen.getByTitle('Expand Sidebar')).toHaveAttribute('aria-expanded', 'false');
   });
 
   // The rail is a fixed flex column. Its only grow child (the resource list) was
@@ -371,9 +423,30 @@ describe('DashboardSidebar', () => {
     expect(rule('.footer > .navigation + .navigation')).toContain('border-top');
 
     const { container } = render(<DashboardSidebar {...props} />);
-    const footer = container.querySelector('aside')?.querySelector(':scope > .footer');
+    const footer = container.querySelector('aside')?.querySelector(':scope > .body > .footer');
     const groups = [...(footer?.querySelectorAll(':scope > nav') ?? [])];
     expect(groups.map((nav) => nav.getAttribute('aria-label'))).toEqual(['Manage', 'Applications and help']);
+  });
+
+  // The labelled touch-tablet rail and short windows are taller than the
+  // viewport. Only the body scrolls: scrolling the fixed aside itself clips the
+  // collapse toggle that overhangs the collapsed rail.
+  it('scrolls the rail body, not the aside, so the footer and the collapse toggle stay reachable', () => {
+    const css = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
+    const body = css.slice(css.indexOf('\n.body {'), css.indexOf('}', css.indexOf('\n.body {')));
+    for (const declaration of ['flex: 1 1 auto', 'flex-direction: column', 'min-height: 0', 'overflow-y: auto']) {
+      expect(body).toContain(declaration);
+    }
+    expect(css).not.toMatch(/\.sidebar\s*\{[^}]*overflow/);
+    expect(css).toContain('.collapsed .collapseButton { position: absolute; right: -16px;');
+
+    window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
+    const { container } = render(<DashboardSidebar {...props} />);
+    const scroller = container.querySelector('aside > .body');
+    expect(scroller).toContainElement(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    expect(scroller).toContainElement(screen.getByRole('link', { name: 'Help' }));
+    expect(scroller).toContainElement(screen.getByTitle('Switch to light mode'));
+    expect(scroller).not.toContainElement(screen.getByTitle('Expand Sidebar'));
   });
 
   it('names the Billing link in English by the route name used everywhere', () => {
