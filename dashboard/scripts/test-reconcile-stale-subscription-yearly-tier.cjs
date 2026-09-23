@@ -20,6 +20,10 @@ const PREREQUISITES = [
 const RPC_MIGRATIONS = fs
   .readdirSync(MIGRATIONS)
   .filter((name) => name.endsWith(".sql"))
+  // From the dual platform token foundation on, these definitions depend on
+  // the token tables this script stubs out; that migration's own test
+  // (test-dual-platform-token-foundation.cjs) covers them and their grants.
+  .filter((name) => name < "20260923150000")
   .sort()
   .filter((name) =>
     /create or replace function public\.reconcile_stale_subscription_state_to_free\s*\(/i.test(
