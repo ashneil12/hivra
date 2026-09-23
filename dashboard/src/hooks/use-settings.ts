@@ -2,12 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import { clearHermesStorage } from '@/lib/client-storage';
 import { clientLog } from '@/lib/client/logger';
 
-// Default settings values
+// Default settings values. The four display switches that used to live here
+// (reduced motion, chat auto-scroll, streaming animations, expanded reasoning)
+// were only ever written to localStorage; nothing read them, so they are gone.
+// Motion follows the device's prefers-reduced-motion setting instead.
 export const DEFAULT_SETTINGS = {
-  enableChatAutoScroll: true,
-  enableStreamingAnimations: true,
-  expandThinkingBlocks: false,
-  reducedMotion: false,
   sessionExpiryHours: 24,
   memoryContextLimit: 2200,
   userContextLimit: 1375,

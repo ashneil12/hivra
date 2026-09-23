@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { clientLog } from "@/lib/client/logger";
 
+import styles from "./BillingPanels.module.css";
+
 interface ManagedVeniceInstanceSummary {
   id: string;
   name: string;
@@ -146,17 +148,8 @@ export function ManagedVeniceByokSwitchPanel() {
 
   if (instances === null) {
     return (
-      <section
-        data-testid="managed-venice-byok-switch-panel"
-        style={{
-          border: "1px solid var(--ink-black)",
-          background: "var(--bg-surface)",
-          padding: "clamp(1.25rem, 3vw, 2rem)",
-          marginBottom: "2rem",
-          boxShadow: "4px 4px 0px var(--ink-black)",
-        }}
-      >
-        <p style={{ margin: 0, fontSize: 13, opacity: 0.7 }}>Loading your managed Venice agents…</p>
+      <section data-testid="managed-venice-byok-switch-panel" className={styles.panel}>
+        <p className={styles.lede} style={{ margin: 0 }}>Loading your managed Venice agents…</p>
       </section>
     );
   }
@@ -168,102 +161,69 @@ export function ManagedVeniceByokSwitchPanel() {
   return (
     <section
       data-testid="managed-venice-byok-switch-panel"
-      style={{
-        border: "1px solid var(--ink-black)",
-        background: "var(--bg-surface)",
-        padding: "clamp(1.25rem, 3vw, 2rem)",
-        marginBottom: "2rem",
-        boxShadow: "4px 4px 0px var(--ink-black)",
-      }}
+      className={styles.panel}
+      aria-labelledby="managed-venice-byok-title"
     >
-      <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.58 }}>
-        Bring your own Venice key
-      </div>
-      <h3 className="serif" style={{ fontSize: 28, margin: "4px 0 8px" }}>
-        Switch off managed Venice
-      </h3>
-      <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.55, opacity: 0.78 }}>
+      <p className={styles.eyebrow}>Bring your own Venice key</p>
+      <h3 className={styles.title} id="managed-venice-byok-title">Switch off managed Venice</h3>
+      <p className={styles.lede}>
         Route this agent directly to api.venice.ai with your own Venice API key. Your managed
         proxy key is revoked, the agent&apos;s runtime is rewritten, and the container restarts.
       </p>
-      <p style={{ margin: "0 0 18px", fontSize: 13, lineHeight: 1.55, opacity: 0.78 }}>
+      <p className={styles.lede}>
         Want <strong>OpenAI, Anthropic, OpenRouter</strong> or another provider instead? You
         don&apos;t need this form — open your agent and switch the model from its built-in model
         picker, then add your provider key there. The form below only covers routing directly to
         api.venice.ai with your own Venice key.
       </p>
 
-      {loadError ? (
-        <p style={{ margin: "0 0 12px", color: "#b91c1c", fontSize: 13 }}>{loadError}</p>
-      ) : null}
+      {loadError ? <p className={styles.errorText} style={{ marginTop: "0.75rem" }}>{loadError}</p> : null}
 
-      <div style={{ display: "grid", gap: 14 }}>
+      <div className={styles.byokList}>
         {instances.map((inst) => {
           const result = resultByInstance[inst.id];
           const pending = pendingId === inst.id;
+          const inputId = `managed-venice-byok-key-${inst.id}`;
           return (
-            <div
-              key={inst.id}
-              style={{
-                borderTop: "1px solid var(--etched-border)",
-                paddingTop: 12,
-                display: "grid",
-                gap: 8,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <strong style={{ fontSize: 14 }}>{inst.name}</strong>
-                <span className="mono" style={{ fontSize: 11, opacity: 0.6, textTransform: "uppercase" }}>
+            <div key={inst.id} className={styles.byokRow}>
+              <div className={styles.byokRowHead}>
+                <label className={styles.byokName} htmlFor={inputId}>{inst.name}</label>
+                <span className={styles.byokMeta}>
                   {inst.status}
                   {inst.walletType ? ` · wallet: ${inst.walletType}` : null}
                 </span>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div className={styles.byokForm}>
                 <input
+                  id={inputId}
                   type="password"
                   autoComplete="off"
+                  autoCapitalize="off"
+                  autoCorrect="off"
                   spellCheck={false}
+                  enterKeyHint="done"
                   placeholder="Paste your Venice API key (from venice.ai/settings/api)"
                   value={keysByInstance[inst.id] || ""}
                   onChange={(event) =>
                     setKeysByInstance((prev) => ({ ...prev, [inst.id]: event.target.value }))
                   }
                   disabled={pending}
-                  style={{
-                    flex: "1 1 280px",
-                    minWidth: 220,
-                    border: "1px solid var(--etched-border)",
-                    background: "transparent",
-                    padding: "10px 12px",
-                    fontFamily: "var(--font-mono), monospace",
-                    fontSize: 13,
-                  }}
+                  className={styles.input}
                 />
                 <button
                   type="button"
                   onClick={() => handleSwitch(inst.id)}
                   disabled={pending}
-                  style={{
-                    border: "1px solid var(--ink-black)",
-                    background: pending ? "transparent" : "var(--ink-black)",
-                    color: pending ? "var(--ink-black)" : "var(--bg-surface)",
-                    padding: "10px 16px",
-                    cursor: pending ? "wait" : "pointer",
-                    fontFamily: "var(--font-mono), monospace",
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                    fontWeight: 800,
-                  }}
+                  className={`${styles.button} ${styles.primary}`}
                 >
                   {pending ? "Switching…" : "Switch to my key"}
                 </button>
               </div>
               {result && "error" in result ? (
-                <p style={{ margin: 0, color: "#b91c1c", fontSize: 12 }}>{result.error}</p>
+                <p className={styles.errorText}>{result.error}</p>
               ) : null}
               {result && !("error" in result) ? (
-                <p style={{ margin: 0, color: result.applied ? "#15803d" : "#b45309", fontSize: 12 }}>
+                <p className={result.applied ? styles.resultGood : styles.resultWarn}>
                   {result.applied
                     ? "Switched. The agent restarts with your Venice key on the next request."
                     : result.applyError ||

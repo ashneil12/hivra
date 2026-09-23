@@ -1,0 +1,312 @@
+/* Yearly $HermesOS progress banner (YearlyPaymentProgress) and trust footer. */
+
+.banner {
+  /* Small danger text needs AA contrast on light surfaces: the plain token
+     (#ef4444 in light) is only ~3.8:1, so text gets a darker mix. Borders
+     and icons keep the token. */
+  --yearly-danger-ink: color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black));
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  padding: 1.1rem clamp(1rem, 3vw, 1.4rem);
+  border: 1px solid var(--etched-border);
+  border-top: 2px solid var(--hivra-red);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+}
+
+.banner[data-tone='success'] {
+  border-color: var(--skills-success-border);
+  border-top-color: var(--skills-success-text);
+  background: var(--skills-success-bg);
+}
+
+.banner[data-tone='warning'] {
+  border-color: var(--skills-warning-border);
+  border-top-color: var(--skills-warning-text);
+  background: var(--skills-warning-bg);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+}
+
+.headText {
+  display: grid;
+  gap: 0.3rem;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-black);
+}
+
+.eyebrow > svg {
+  color: var(--hivra-red);
+}
+
+.banner[data-tone='success'] .eyebrow > svg { color: var(--skills-success-text); }
+.banner[data-tone='warning'] .eyebrow > svg { color: var(--skills-warning-text); }
+
+.message {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-black);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.countdown {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--skills-success-border);
+  background: var(--skills-success-bg);
+  color: var(--skills-success-text);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 40px;
+  padding: 0.55rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--ink-black) 24%, transparent);
+  background: transparent;
+  color: var(--ink-black);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--ink-black);
+}
+
+.action:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.actionPrimary {
+  border-color: var(--ink-black);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+}
+
+.actionPrimary:hover:not(:disabled) {
+  border-color: var(--hivra-red);
+}
+
+.action:focus-visible,
+.trust a:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+.stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.stage[data-status='done'] {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+}
+
+.stage[data-status='active'] {
+  border-color: color-mix(in srgb, var(--ink-black) 30%, transparent);
+  box-shadow: inset 0 2px 0 var(--hivra-red);
+}
+
+.stage[data-status='failed'] {
+  border-color: var(--skills-danger-border);
+  background: var(--skills-danger-bg);
+}
+
+.stageHead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-black);
+}
+
+.stage[data-status='pending'] .stageHead {
+  color: var(--text-secondary);
+}
+
+.stage[data-status='done'] .stageHead > svg { color: var(--skills-success-text); }
+.stage[data-status='active'] .stageHead > svg { color: var(--hivra-red); }
+.stage[data-status='failed'] .stageHead {
+  color: var(--yearly-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
+}
+
+.stageIndex {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid currentColor;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.stageSub {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.trust {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--etched-border);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.trust > span {
+  min-width: 0;
+}
+
+.trust > svg {
+  flex: 0 0 auto;
+}
+
+.trust a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--hivra-red-line);
+  text-underline-offset: 3px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.quoteMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  width: 100%;
+}
+
+.expires {
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--skills-success-text);
+}
+
+.locked {
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .action,
+  .countdown {
+    min-height: 44px;
+  }
+
+  /* The inline "Bankr" link is a 44px target on touch screens: vertical
+     padding on an inline box grows its hit area without opening up the
+     line spacing around it. */
+  .trust a {
+    padding-block: 15px;
+    padding-inline: 0.2rem;
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .actions > .action {
+    flex: 1 1 140px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation-duration: 2.4s;
+  }
+}

@@ -3,7 +3,7 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent } from "@testing-library/react";
 import posthog from "posthog-js";
 
-import { CancelSaveFlow } from "../CancelSaveFlow";
+import { CancelSaveFlow, yearlyOfferPrices } from "../CancelSaveFlow";
 
 jest.mock("posthog-js", () => ({
   __esModule: true,
@@ -46,7 +46,7 @@ describe("CancelSaveFlow", () => {
   });
 
   it.each([
-    ["It's too expensive", /switch to yearly — \$79\/yr/i, /\?cadence=yearly&from=cancel_save$/],
+    ["It's too expensive", /email us to switch to yearly/i, /^mailto:info@hermesos\.cloud\?subject=Switch%20my%20Pro%20plan%20to%20yearly%20billing$/],
     ["I'm not using it", /email us about pausing/i, /^mailto:info@hermesos\.cloud/],
     ["It's missing a feature I need", /email the founder/i, /^mailto:info@hermesos\.cloud/],
     ["Something broke", /email the founder/i, /^mailto:info@hermesos\.cloud/],
@@ -66,8 +66,57 @@ describe("CancelSaveFlow", () => {
   it("states the ~34% yearly saving for too-expensive", () => {
     renderFlow();
     fireEvent.click(screen.getByLabelText(/too expensive/i));
-    expect(screen.getByTestId("save-offer")).toHaveTextContent(/34% off/i);
-    expect(screen.getByTestId("save-offer")).toHaveTextContent(/\$79\/yr/);
+    expect(screen.getByTestId("save-offer")).toHaveTextContent(/about 34% less/i);
+    expect(screen.getByTestId("save-offer")).toHaveTextContent(/Pro yearly is \$79\/yr instead of \$9\.99\/mo/);
+  });
+
+  it("never links a card subscriber to a yearly switch that billing can't do", () => {
+    renderFlow();
+    fireEvent.click(screen.getByLabelText(/too expensive/i));
+    const offer = screen.getByTestId("save-offer");
+    for (const link of Array.from(offer.querySelectorAll("a"))) {
+      expect(link.getAttribute("href")).not.toMatch(/\/dashboard\/billing|cadence=yearly/);
+    }
+    expect(offer).toHaveTextContent(/isn't self-serve yet/i);
+  });
+
+  it("shows the support address as text beside every email offer", () => {
+    renderFlow();
+    fireEvent.click(screen.getByLabelText(/too expensive/i));
+    expect(screen.getByTestId("save-offer-address")).toHaveTextContent("info@hermesos.cloud");
+    fireEvent.click(screen.getByLabelText(/not using it/i));
+    expect(screen.getByTestId("save-offer-address")).toHaveTextContent("info@hermesos.cloud");
+  });
+
+  it("quotes a Power user's own yearly price, not Pro's", () => {
+    renderFlow({ plan: "fleet" });
+    fireEvent.click(screen.getByLabelText(/too expensive/i));
+    const offer = screen.getByTestId("save-offer");
+    expect(offer).toHaveTextContent(/Power yearly is \$149\/yr instead of \$19\.99\/mo/);
+    expect(offer).toHaveTextContent(/about 38% less/i);
+    expect(offer).not.toHaveTextContent(/\$79/);
+    expect(screen.getByRole("link", { name: /email us to switch to yearly/i }).getAttribute("href")).toContain(
+      encodeURIComponent("Switch my Power plan to yearly billing")
+    );
+  });
+
+  it.each([["command"], ["free"], [null], ["not-a-plan"]])(
+    "makes no yearly offer for plan %p, which has no yearly price",
+    (plan) => {
+      const { onCancelAnyway } = renderFlow({ plan });
+      fireEvent.click(screen.getByLabelText(/too expensive/i));
+      expect(screen.queryByTestId("save-offer")).not.toBeInTheDocument();
+      // Cancelling still works with no offer on screen.
+      fireEvent.click(screen.getByRole("button", { name: /cancel anyway/i }));
+      expect(onCancelAnyway).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("computes yearly offer prices from PLANS", () => {
+    expect(yearlyOfferPrices("operator")).toEqual({ planName: "Pro", monthly: 999, yearly: 7900, savingsPct: 34 });
+    expect(yearlyOfferPrices("fleet")).toEqual({ planName: "Power", monthly: 1999, yearly: 14900, savingsPct: 38 });
+    expect(yearlyOfferPrices("command")).toBeNull();
+    expect(yearlyOfferPrices("toString")).toBeNull();
   });
 
   it("shows a free-text field only for 'Something else'", () => {
@@ -124,7 +173,7 @@ describe("CancelSaveFlow", () => {
   it("accepting an offer submits the survey too, and only once", () => {
     renderFlow();
     fireEvent.click(screen.getByLabelText(/too expensive/i));
-    const cta = screen.getByRole("link", { name: /switch to yearly/i });
+    const cta = screen.getByRole("link", { name: /email us to switch to yearly/i });
     // jsdom doesn't navigate; just exercise the click handler.
     fireEvent.click(cta);
     fireEvent.click(screen.getByRole("button", { name: /cancel anyway/i }));
@@ -143,5 +192,29 @@ describe("CancelSaveFlow", () => {
     fireEvent.click(screen.getByRole("presentation"));
     expect(onClose).toHaveBeenCalledTimes(3);
     expect(onCancelAnyway).not.toHaveBeenCalled();
+  });
+
+  it("does not dismiss on clicks inside the dialog, and Escape closes it", () => {
+    const { onClose } = renderFlow();
+    fireEvent.click(screen.getByRole("dialog"));
+    fireEvent.click(screen.getByLabelText(/too expensive/i));
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders above the dashboard shell through a body portal with a labelled 44px close", () => {
+    const { container } = render(
+      <CancelSaveFlow plan="operator" onClose={jest.fn()} onCancelAnyway={jest.fn()} />
+    );
+    const dialog = screen.getByRole("dialog", { name: /before you cancel/i });
+    // Portalled out of the render container (i.e. out of <main>), into <body>.
+    expect(container).not.toContainElement(dialog);
+    expect(dialog.closest("[data-hermes-portal-root]")).not.toBeNull();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    // The X is named exactly "Close" and focus lands inside the dialog.
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
   });
 });
