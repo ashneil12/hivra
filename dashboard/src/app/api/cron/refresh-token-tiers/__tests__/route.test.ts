@@ -15,9 +15,6 @@ const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
 
 jest.mock("@/lib/billing/token-holdings", () => ({
   refreshVerifiedHermesTokenHoldings: jest.fn(),
-  HERMESOS_TOKEN_ADDRESS: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
-  HERMESOS_TOKEN_DECIMALS: 18,
-  HERMESOS_TOKEN_SYMBOL: "HERMESOS",
 }));
 
 // Base-tier caps (tier-specs is real). fleet = 4 vCPU / 8192 MB; token_base /
