@@ -112,6 +112,13 @@ const AgentPage = jest.requireActual("../page").default as typeof import("../pag
 if (previousHivraEnv === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 else process.env.NEXT_PUBLIC_HIVRA_AGENTS = previousHivraEnv;
 
+// A running Proxmox Ubuntu computer with its workspace connection up.
+const CONNECTED_UBUNTU = {
+  id: "agent_123", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+  name: "UBUNTU", status: "running", cpu: 2, ram: 4,
+  chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
+};
+
 // Exercise the same disclosure path owners use for advanced surfaces.
 function getSurfaceButton(name: string | RegExp) {
   const visible = screen.queryByRole("button", { name });
@@ -261,7 +268,7 @@ describe("AgentPage", () => {
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
   });
 
-  it("lets native chrome select existing surfaces while preserving connection guards and desktop sessions", async () => {
+  it("lets native chrome select existing surfaces while preserving connection guards, never a Desktop on an agent", async () => {
     const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown; webkit?: unknown };
     const postMessage = jest.fn();
     host.__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
@@ -275,13 +282,13 @@ describe("AgentPage", () => {
       expect(screen.queryByRole("navigation", { name: "Resource surfaces" })).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
       const select = (id: string) => act(() => { window.dispatchEvent(new CustomEvent("hivra:select-surface", { detail: { pathname: "/dashboard/agent/agent_123", id } })); });
+      // A CLI agent has no desktop: the desktop service refuses agent resources.
       select("desktop");
-      const desktop = await screen.findByTestId("remote-desktop");
-      expect(desktop).toBeVisible();
+      expect(screen.getByText("This computer needs a Chat update")).toBeInTheDocument();
+      expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
       select("manage");
       expect(await screen.findByText("Manage panel")).toBeInTheDocument();
-      expect(screen.getByTestId("remote-desktop")).toBe(desktop);
-      expect(desktop).not.toBeVisible();
+      expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
       expect(JSON.stringify(postMessage.mock.calls)).not.toMatch(/box-token|box\.example\.com/);
     } finally {
       view.unmount();
@@ -290,24 +297,93 @@ describe("AgentPage", () => {
     }
   });
 
-  it("lazily retains one desktop session while switching local surfaces", async () => {
-    render(<AgentPage />);
-    expect(await screen.findByText("Chat panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+  it("lets native chrome switch a computer away from Desktop and back without a new session", async () => {
+    const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown; webkit?: unknown };
+    host.__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
+    host.webkit = { messageHandlers: { hivraWorkspace: { postMessage: jest.fn() } } };
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    const view = render(<NativeWorkspaceProvider enabled pathname="/dashboard/agent/agent_123" ownerKey="user_123"><AgentPage /></NativeWorkspaceProvider>);
+    try {
+      const desktop = await screen.findByTestId("remote-desktop");
+      expect(desktop).toBeVisible();
+      const select = (id: string) => act(() => { window.dispatchEvent(new CustomEvent("hivra:select-surface", { detail: { pathname: "/dashboard/agent/agent_123", id } })); });
+      select("manage");
+      expect(await screen.findByText("Manage panel")).toBeInTheDocument();
+      expect(screen.getByTestId("remote-desktop")).toBe(desktop);
+      expect(desktop).not.toBeVisible();
+      select("desktop");
+      expect(screen.getByTestId("remote-desktop")).toBe(desktop);
+      expect(desktop).toBeVisible();
+    } finally {
+      view.unmount();
+      delete host.__HIVRA_NATIVE_WORKSPACE__;
+      delete host.webkit;
+    }
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Desktop" }));
+  it.each([
+    { type: "claude-code", name: "CLAUDE_CODE_AGENT", landing: "Chat panel" },
+    { type: "codex", name: "CODEX_AGENT", landing: "Chat panel" },
+  ])("never offers Desktop on a $type agent", async ({ type, name, landing }) => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type, name, status: "running", cpu: 2, ram: 4,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    expect(await screen.findByText(landing)).toBeInTheDocument();
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
+    const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
+    if (tools) fireEvent.click(tools);
+    expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+  });
+
+  it("never offers Desktop on a dashboard agent", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: /^dashboard$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+  });
+
+  it("keeps Desktop on a computer and retains its session while switching surfaces", async () => {
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    render(<AgentPage />);
     const desktop = await screen.findByTestId("remote-desktop");
     expect(desktop).toBeVisible();
-    expect(desktop).toHaveTextContent("CLAUDE_CODE_AGENT desktop session");
+    expect(desktop).toHaveTextContent("UBUNTU desktop session");
 
-    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
-    expect(screen.getByText("Chat panel")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(desktop).not.toBeVisible();
     expect(screen.getByTestId("remote-desktop")).toBe(desktop);
 
     fireEvent.click(screen.getByRole("button", { name: "Desktop" }));
     expect(screen.getByTestId("remote-desktop")).toBe(desktop);
     expect(desktop).toBeVisible();
+  });
+
+  it("lands a stale Desktop link on a CLI agent on Chat and corrects the URL", async () => {
+    window.history.replaceState(null, "", "/dashboard/agent/agent_123?hivra=1&tab=desktop#workspace");
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    render(<AgentPage />);
+    expect(await screen.findByText("Chat panel")).toBeVisible();
+    expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not ready")).not.toBeInTheDocument();
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("tab")).toBe("chat"));
+    expect(new URLSearchParams(window.location.search).get("hivra")).toBe("1");
+    expect(window.location.hash).toBe("#workspace");
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/remote-desktop"), expect.anything());
+  });
+
+  it("lands a stale Desktop link on a dashboard agent on its dashboard", async () => {
+    window.history.replaceState(null, "", "/dashboard/agent/agent_123?tab=desktop");
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    expect(await screen.findByTitle("OpenClaw · dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("tab")).toBe("aeon"));
   });
 
   it.each(["running", "stopped"])("hides Terminal and Files for a %s Windows computer", async status => {
@@ -396,6 +472,7 @@ describe("AgentPage", () => {
   it("keeps the selected surface in the URL without reloading or adding history entries", async () => {
     window.history.replaceState(null, "", "/dashboard/agent/agent_123?hivra=1&tab=desktop&prepare=1#workspace");
     mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
     const initialHistoryLength = window.history.length;
     const first = render(<AgentPage />);
     const desktop = await screen.findByTestId("remote-desktop");
@@ -414,12 +491,13 @@ describe("AgentPage", () => {
     first.unmount();
     render(<AgentPage />);
     expect(await screen.findByText("Manage panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+    expect(screen.getByTestId("remote-desktop")).not.toBeVisible();
   });
 
   it("follows changed tab deep links while preserving an already opened desktop", async () => {
     let requested = "manage";
     mockSearchGet.mockImplementation((key: string) => key === "tab" ? requested : null);
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
     const view = render(<AgentPage />);
     expect(await screen.findByText("Manage panel")).toBeInTheDocument();
     requested = "desktop";

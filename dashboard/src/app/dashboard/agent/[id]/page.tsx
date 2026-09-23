@@ -62,8 +62,9 @@ const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
 type Tab = "chat" | "aeon" | "desktop" | "files" | "git" | "skills" | "telegram" | "tasks" | "terminal" | "box" | "browser" | "manage";
 
 // Tabs shown for dashboard-surface agents (Aeon): the embedded dashboard + the
-// box shell + files + manage. No chat/browser/skills/telegram.
-const DASHBOARD_TABS: Tab[] = ["aeon", "desktop", "files", "box", "manage"];
+// box shell + files + manage. No chat/browser/skills/telegram. Desktop belongs
+// to computers only: the desktop service refuses agent resources.
+const DASHBOARD_TABS: Tab[] = ["aeon", "files", "box", "manage"];
 const COMPUTER_BASE_TABS: Tab[] = ["desktop", "manage"];
 const COMPUTER_WORKSPACE_TABS: Tab[] = ["files", "box"];
 
@@ -104,7 +105,7 @@ function Stub({ title, body }: { title: string; body: string }) {
   );
 }
 
-function CanonicalizeUnavailableComputerTab({
+function CanonicalizeUnavailableTab({
   unavailableTab,
   canonicalTab,
 }: {
@@ -571,22 +572,13 @@ export default function AgentPage() {
     }
     return "chat";
   });
-  // A desktop session is expensive to establish and is deliberately revoked
-  // when this page actually closes. Mount it only after the owner first opens
-  // Desktop, then retain the authenticated iframe while they switch among the
-  // local Hivra surfaces so returning does not force another media handshake.
-  const [desktopOpened, setDesktopOpened] = useState(
-    () => searchParams?.get("tab") === "desktop",
-  );
   const requestedTab = searchParams?.get("tab");
   const [lastRequestedTab, setLastRequestedTab] = useState(requestedTab);
-  // Reconcile a changed deep link before committing a stale surface. Keep the
-  // opened-session flag monotonic so history navigation cannot remount it.
+  // Reconcile a changed deep link before committing a stale surface.
   if (requestedTab !== lastRequestedTab) {
     setLastRequestedTab(requestedTab);
     if (requestedTab && TABS.some((candidate) => candidate.id === requestedTab)) {
       setTab(requestedTab as Tab);
-      if (requestedTab === "desktop") setDesktopOpened(true);
     }
   }
   // Chat turns are tied to the open request, so unmounting the chat would stop
@@ -728,7 +720,6 @@ export default function AgentPage() {
   // retained sessions or adding a Back entry for every local tab click.
   // Chat/terminal also retain their cross-computer sticky preference.
   const selectTab = useCallback((t: Tab) => {
-    if (t === "desktop") setDesktopOpened(true);
     setTab(t);
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("tab", t);
@@ -834,9 +825,10 @@ export default function AgentPage() {
         // box shell + files, plus the live Browser tab for browser-capable ones
         // (OpenClaw drives the box's CDP Chrome shown there).
         ? DASHBOARD_TABS.includes(t.id) || (t.id === "browser" && Boolean(def?.browser))
-        // CLI-chat agents: no dashboard tab; keep Browser discoverable for
-        // browser-capable agents even when the runtime has it toggled off.
-        : t.id !== "aeon" && (t.id !== "browser" || Boolean(def?.browser)),
+        // CLI-chat agents: no dashboard or desktop tab (Desktop is a computer
+        // surface); keep Browser discoverable for browser-capable agents even
+        // when the runtime has it toggled off.
+        : t.id !== "aeon" && t.id !== "desktop" && (t.id !== "browser" || Boolean(def?.browser)),
     )
     .map((t) => t.id === "terminal"
       ? { ...t, label: termLabel }
@@ -865,12 +857,16 @@ export default function AgentPage() {
         : landing.landing === "desktop" ? "desktop" : "manage"
     : isDashboard
       ? ((DASHBOARD_TABS.includes(tab) || (tab === "browser" && Boolean(def?.browser))) ? tab : "aeon")
-      : tab;
-  const unavailableComputerTab = isComputer
-    && COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
-    && !computerTabs.includes(requestedTab as Tab)
-      ? requestedTab as Tab
-      : null;
+      // A stale or shared link can name a surface this agent lacks (Desktop,
+      // Dashboard); land on Chat rather than an empty pane.
+      : tabs.some((t) => t.id === tab) ? tab : "chat";
+  const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
+  const unavailableTab = isComputer
+    ? COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
+      && !computerTabs.includes(requestedTab as Tab)
+        ? requestedTab as Tab
+        : null
+    : requestedKnownTab && !tabs.some((t) => t.id === requestedKnownTab) ? requestedKnownTab : null;
   const provisioning = agent.status === "provisioning";
   const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
     && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
@@ -896,8 +892,8 @@ export default function AgentPage() {
   return (
     <SurfaceActionProvider store={actionStore}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
-      <CanonicalizeUnavailableComputerTab
-        unavailableTab={unavailableComputerTab}
+      <CanonicalizeUnavailableTab
+        unavailableTab={unavailableTab}
         canonicalTab={effectiveTab}
       />
       {/* Keep identity, switching and work surfaces together. Native chrome owns
@@ -931,7 +927,10 @@ export default function AgentPage() {
       ) : null}
 
       <div className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {(desktopOpened || isComputer) && agent.status === "running" ? (
+        {/* A desktop session is expensive to establish and is revoked when this
+            page closes, so keep it mounted (hidden) while the owner switches
+            among local surfaces. Only computers have a desktop. */}
+        {isComputer && agent.status === "running" ? (
           agent.computer_profile === "omarchy" ? (
             <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
               active={effectiveTab === "desktop"}

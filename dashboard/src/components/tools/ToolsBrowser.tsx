@@ -34,7 +34,7 @@ interface ToolMeta {
 interface Target {
   uid: string; lane: "cli" | "hermes"; id: string; name: string;
   type: string; status: string; installable: boolean; blockedReason?: string;
-  installedTools?: string[];
+  blockedMessage?: string; installedTools?: string[];
 }
 interface FanResult { uid: string; ok: boolean; error?: string }
 
@@ -467,6 +467,8 @@ function InstallDialog({
                 const on = picked.has(tg.uid);
                 const isCurrentlyInstalled = tg.installedTools?.includes(tool.mcpName);
                 const res = results?.find((r) => r.uid === tg.uid);
+                // Sentences read better as body text than in the uppercase status tag.
+                const note = res && !res.ok ? res.error : !tg.installable ? tg.blockedMessage : undefined;
                 return (
                   <button
                     key={tg.uid}
@@ -489,6 +491,11 @@ function InstallDialog({
                       <span className="mono" style={{ ...mono, fontSize: 9, marginLeft: 8 }}>
                         {tg.lane === "hermes" ? "hermes" : tg.type}
                       </span>
+                      {note ? (
+                        <span style={{ display: "block", marginTop: 3, fontSize: 11.5, lineHeight: 1.45, color: res && !res.ok ? "#e06c5a" : "var(--text-muted)" }}>
+                          {note}
+                        </span>
+                      ) : null}
                     </span>
                     {isCurrentlyInstalled ? (
                       <span className="mono" style={{ ...mono, fontSize: 9, color: "var(--gold-leaf)", marginRight: 8 }}>
@@ -496,7 +503,7 @@ function InstallDialog({
                       </span>
                     ) : null}
                     <span className="mono" style={{ ...mono, fontSize: 9, color: res ? (res.ok ? "var(--gold-leaf)" : "#e06c5a") : undefined }}>
-                      {res ? (res.ok ? "done" : res.error || "failed") : tg.installable ? tg.status : tg.blockedReason || tg.status}
+                      {res ? (res.ok ? "done" : "failed") : tg.installable || tg.blockedMessage ? tg.status : tg.blockedReason || tg.status}
                     </span>
                   </button>
                 );

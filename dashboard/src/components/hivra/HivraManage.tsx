@@ -24,6 +24,7 @@ import {
   type HivraAgent, type HivraAgentSnapshot, type PlanInfo, type BoxRestrict, type McpServer,
 } from "@/lib/hivra/agent-api";
 import { resizeFloor, hostingDisclaimer, MAX_CPU, MAX_RAM, type AgentDef } from "@/lib/hivra/agent-catalog";
+import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
 import { PoolMeter } from "./PoolMeter";
 import { resizeBudget } from "@/lib/hivra/resize-budget";
@@ -206,6 +207,10 @@ export function HivraManage({
   const [mcpSupported, setMcpSupported] = useState(true);
   const [mcpName, setMcpName] = useState("");
   const [mcpCmd, setMcpCmd] = useState("");
+  // Catalog installs need a Proxmox host path; elsewhere say so instead of
+  // offering an install that can only fail. Advanced MCP talks to the box's
+  // own API, so it stays offered whenever the box answers.
+  const catalogToolsBlocked = catalogToolsUnavailableReason(agent.computer_substrate);
   // Deep link from the dashboard panel: ?tab=manage&tools=1 opens the picker
   // straight away, so "Tools" in the agent list is one click to the modal.
   const [toolsOpen, setToolsOpen] = useState(() => {
@@ -821,6 +826,11 @@ export function HivraManage({
         <>
           <div className="mono" style={{ ...label, marginBottom: 10 }}>Tools</div>
           <div style={{ ...card, marginBottom: 20 }}>
+            {catalogToolsBlocked ? (
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                {catalogToolsBlocked}
+              </div>
+            ) : <>
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
               Attach a capability to {def?.name || "the agent"} — crypto research, deeper web search, and more. Each tool wires up its own connector (and credentials) on the box; they load on the next message.
             </div>
@@ -833,6 +843,7 @@ export function HivraManage({
                 <Wrench size={13} /> Browse tools
               </button>
             </div>
+            </>}
 
             {/* Advanced escape hatch: connect a raw MCP server by hand. Power users
                 and tools not yet in the catalog rely on this. */}
@@ -890,7 +901,7 @@ export function HivraManage({
             </details>
             ) : null}
           </div>
-          {toolsOpen ? (
+          {toolsOpen && !catalogToolsBlocked ? (
             <ToolInstallPicker
               agentId={agent.id}
               boxUrl={agent.chat_url}
