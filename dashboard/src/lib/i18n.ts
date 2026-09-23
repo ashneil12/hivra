@@ -744,16 +744,18 @@ const BASE_MARKETING_COPY = {
         },
       },
       billing: {
-        eyebrow: "Billing & Subscription",
+        eyebrow: "Billing",
         titlePrefix: "Plan",
-        titleSeparator: " ",
-        titleEmphasis: "Management",
-        titleSuffix: ".",
+        titleSeparator: " & ",
+        titleEmphasis: "billing",
+        titleSuffix: "",
+        subtitle: "Your plan, how you pay, and what you've used.",
+        refreshing: "Refreshing…",
         credits: {
           title: "Credits",
           available: "available",
           description:
-            "Credits cover usage and future top-ups. Compute access comes from an active subscription or verified token holding.",
+            "Account credits pay for usage. They don't set your plan: that comes from a subscription, a yearly $HermesOS payment or holding $HermesOS.",
           monthlyGrantSuffix: "monthly plan credits",
         },
         activity: {
@@ -777,10 +779,10 @@ const BASE_MARKETING_COPY = {
           eyebrow: "Token Access",
           title: "$HermesOS Holding",
           description:
-            "Verified holdings unlock token base compute. If the holding drops below the minimum, active token-backed servers enter grace before suspension.",
+            "Hold at least the minimum $HermesOS in a verified wallet to unlock a basic machine. If your balance drops below the minimum, agents on that machine keep running for a grace period, then pause until you hold enough again.",
           checking: "Checking",
           unavailable: "Unavailable",
-          ready: "Base tier ready",
+          ready: "Minimum met",
           belowMinimum: "Below minimum",
           noWallet: "No verified wallet",
           wallet: "Wallet",
@@ -797,7 +799,7 @@ const BASE_MARKETING_COPY = {
         cryptoCredits: {
           eyebrow: "Crypto Credits",
           description:
-            "Create a pending credit top-up with a Bankr deposit wallet. Credits are granted after deposit reconciliation.",
+            "Pick an amount and we'll give you an address to send USDC to on Base. Credits are added once the transfer is confirmed.",
           bonusPath: "Bonus path prepared",
           pendingDeposit: "Pending Deposit",
           createTopUpLabel: "Create USDC top-up for {credits} credits",
@@ -806,17 +808,17 @@ const BASE_MARKETING_COPY = {
           reference: "Reference",
         },
         activePlan: {
-          title: "Active Plan",
+          title: "Current plan",
           heldViaTokens: "HELD VIA $HERMESOS",
           perMonth: "/month",
-          agents: "Agents",
-          cpuBudget: "CPU Budget",
-          ramBudget: "RAM Budget",
-          manageSubscription: "Manage Subscription",
+          agents: "Agents & computers",
+          cpuBudget: "vCPU",
+          ramBudget: "Memory",
+          manageSubscription: "Manage payment method",
           opening: "Opening...",
         },
         switcher: {
-          title: "Switch Plan",
+          title: "Change plan",
           description:
             "Upgrade anytime. Downgrades are not available — dedicated servers cannot be scaled down.",
           currentPlan: "Current Plan",
@@ -828,7 +830,15 @@ const BASE_MARKETING_COPY = {
           guarantee: "48-hour refund policy · Upgrade-only plans",
         },
         noSubscription: {
-          title: "No Active Subscription",
+          title: "No plan yet",
+        },
+        plate: {
+          slots: "Slots",
+          vcpu: "vCPU",
+          memory: "Memory",
+          idlePolicy: "Idle policy",
+          alwaysOn: "Always on",
+          sleepsAfterIdle: "Sleeps after {days} idle days",
         },
       },
       settings: {
@@ -846,14 +856,14 @@ const BASE_MARKETING_COPY = {
           dangerZone: "Danger Zone",
         },
         theme: {
-          label: "Interface Theme",
-          description: "Select your preferred reading environment for the console.",
+          label: "Theme",
+          description: "Light, dark, or match your device.",
           light: "Light",
           dark: "Dark",
           system: "System",
         },
         language: {
-          label: "Site Language",
+          label: "Language",
           description: "Choose the language used across Hivra.",
         },
         reducedMotion: {
@@ -882,10 +892,49 @@ const BASE_MARKETING_COPY = {
           description: "Give Hermes access to upstream MCP/ACP skills and experimental tools.",
         },
         clearCache: {
-          label: "Clear Application Cache",
+          label: "Clear the local cache",
           description:
-            "Wipes all local UI preferences, saved drafts, and forces a hard reload. Does not affect Supabase data.",
-          action: "Wipe Local State",
+            "Clears dashboard data cached in this browser and layout choices saved here, like terminal tabs, then reloads the page. Your account, agents and computers aren't affected.",
+          action: "Clear cache",
+        },
+        hub: {
+          title: "Settings",
+          intro: "Your account, billing, keys and agent tools, plus how Hivra looks in this browser.",
+          groups: {
+            account: "Account",
+            billing: "Plan and billing",
+            connections: "Keys and connections",
+            toolkit: "Agent toolkit",
+            device: "On this device",
+            apps: "Apps and help",
+            reset: "Reset this browser",
+          },
+          profile: {
+            title: "Profile and sign-in",
+            signedInAs: "Signed in as {email}",
+            fallback: "Your name, email, security and sign-out.",
+            selfHostTitle: "Sign-in",
+            selfHostFallback: "Signed in to this self-hosted Hivra.",
+            signOut: "Sign out",
+            signingOut: "Signing out…",
+            signOutFailed: "Couldn't sign out. Try again.",
+          },
+          rows: {
+            billing: { description: "Plan, payment methods, credits and invoices" },
+            wallets: { title: "Wallets", description: "Agent wallets and $HermesOS access" },
+            apiKeys: { title: "API keys", description: "Provider keys and which agents use them" },
+            infrastructure: { description: "The machines and cloud accounts your agents run on" },
+            memory: { title: "Shared agent memory", description: "What every new agent starts out knowing" },
+            tools: { title: "Tools and capabilities", description: "Add tools to the agents you choose" },
+            library: { title: "Prompt library", description: "Ready-made agent roles with tested prompts" },
+            templates: { title: "Templates", description: "Save a configured agent and launch it again" },
+            referral: { title: "Invite and earn", description: "Share your link and earn credits together" },
+            applications: { title: "Applications", description: "Use Hivra in your browser or as a web app" },
+            help: { title: "Help", description: "Support, community and legal information" },
+          },
+          motionNote: "Motion follows your device's reduce-motion setting.",
+          clearCacheConfirm: "Press again to clear and reload",
+          clearCacheArmed: "Press the button again within 4 seconds to clear the cache and reload.",
         },
       },
       userModeSuffix: "Mode",
@@ -1555,10 +1604,12 @@ const BASE_MARKETING_COPY = {
         titleSeparator: "",
         titleEmphasis: "管理",
         titleSuffix: "。",
+        subtitle: "你的计划、付款方式和用量。",
+        refreshing: "正在刷新…",
         credits: {
           title: "积分余额",
           available: "可用",
-          description: "积分用于用量和后续充值。计算资源来自有效订阅或已验证的代币持仓。",
+          description: "账户积分用于支付用量，不决定你的计划：计划来自订阅、按年用 $HermesOS 付款或持有 $HermesOS。",
           monthlyGrantSuffix: "每月计划积分",
         },
         activity: {
@@ -1581,10 +1632,10 @@ const BASE_MARKETING_COPY = {
         tokenAccess: {
           eyebrow: "代币访问",
           title: "$HermesOS 持仓",
-          description: "已验证的持仓会解锁代币基础算力。如果持仓低于最低要求，代币支持的服务器会先进入宽限期再暂停。",
+          description: "在已验证钱包中持有不少于最低数量的 $HermesOS，即可解锁一台基础机器。如果余额低于最低数量，该机器上的 Agent 会在宽限期内继续运行，之后暂停，直到你再次持有足够数量。",
           checking: "检查中",
           unavailable: "不可用",
-          ready: "基础层级已就绪",
+          ready: "已达最低要求",
           belowMinimum: "低于最低要求",
           noWallet: "没有已验证钱包",
           wallet: "钱包",
@@ -1600,7 +1651,7 @@ const BASE_MARKETING_COPY = {
         },
         cryptoCredits: {
           eyebrow: "加密货币积分",
-          description: "使用 Bankr 存款钱包创建待处理的积分充值。存款核对完成后会发放积分。",
+          description: "选择金额后，我们会给你一个在 Base 上接收 USDC 的地址。转账确认后积分就会到账。",
           bonusPath: "奖励路径已准备",
           pendingDeposit: "等待存款",
           createTopUpLabel: "为 {credits} 积分创建 USDC 充值",
@@ -1632,6 +1683,14 @@ const BASE_MARKETING_COPY = {
         noSubscription: {
           title: "没有有效订阅",
         },
+        plate: {
+          slots: "名额",
+          vcpu: "vCPU",
+          memory: "内存",
+          idlePolicy: "闲置策略",
+          alwaysOn: "始终运行",
+          sleepsAfterIdle: "闲置 {days} 天后休眠",
+        },
       },
       settings: {
         loading: "加载中...",
@@ -1648,8 +1707,8 @@ const BASE_MARKETING_COPY = {
           dangerZone: "危险区域",
         },
         theme: {
-          label: "界面主题",
-          description: "选择控制台的阅读环境。",
+          label: "主题",
+          description: "浅色、深色，或跟随设备。",
           light: "浅色",
           dark: "深色",
           system: "系统",
@@ -1683,9 +1742,48 @@ const BASE_MARKETING_COPY = {
           description: "允许 Hermes 使用上游 MCP/ACP 技能和实验性工具。",
         },
         clearCache: {
-          label: "清除应用缓存",
-          description: "清除本地 UI 偏好和保存的草稿，并强制重新加载。不影响 Supabase 数据。",
-          action: "清除本地状态",
+          label: "清除本地缓存",
+          description: "清除此浏览器中缓存的仪表板数据和保存在这里的布局选择（例如终端标签页），然后重新加载页面。你的账户、Agent 和电脑不受影响。",
+          action: "清除缓存",
+        },
+        hub: {
+          title: "设置",
+          intro: "你的账户、账单、密钥和 Agent 工具，以及 Hivra 在此浏览器中的外观。",
+          groups: {
+            account: "账户",
+            billing: "计划与账单",
+            connections: "密钥与连接",
+            toolkit: "Agent 工具箱",
+            device: "此设备",
+            apps: "应用与帮助",
+            reset: "重置此浏览器",
+          },
+          profile: {
+            title: "个人资料与登录",
+            signedInAs: "已登录为 {email}",
+            fallback: "你的姓名、邮箱、安全设置和退出登录。",
+            selfHostTitle: "登录",
+            selfHostFallback: "已登录此自托管的 Hivra。",
+            signOut: "退出登录",
+            signingOut: "正在退出…",
+            signOutFailed: "无法退出登录，请重试。",
+          },
+          rows: {
+            billing: { description: "计划、付款方式、额度和发票" },
+            wallets: { title: "钱包", description: "Agent 钱包和 $HermesOS 访问权限" },
+            apiKeys: { title: "API 密钥", description: "服务商密钥，以及使用它们的 Agent" },
+            infrastructure: { description: "运行你的 Agent 的机器和云账户" },
+            memory: { title: "共享 Agent 记忆", description: "每个新 Agent 一开始就知道的内容" },
+            tools: { title: "工具与能力", description: "为你选择的 Agent 添加工具" },
+            library: { title: "提示词库", description: "附带经过验证的提示词的现成 Agent 角色" },
+            templates: { title: "模板", description: "保存已配置的 Agent，之后再次启动" },
+            referral: { title: "邀请赚取", description: "分享你的链接，一起赚取额度" },
+            applications: { title: "应用", description: "在浏览器中或作为网页应用使用 Hivra" },
+            help: { title: "帮助", description: "支持、社区和法律信息" },
+          },
+          motionNote: "动态效果遵循设备的“减弱动态效果”设置。",
+          clearCacheConfirm: "再按一次以清除并重新加载",
+          clearCacheArmed: "请在 4 秒内再按一次该按钮，以清除缓存并重新加载。",
         },
       },
       userModeSuffix: "模式",
@@ -2405,10 +2503,12 @@ const LOCALE_COPY_OVERRIDES = {
         "titleSeparator": " de ",
         "titleEmphasis": "plan",
         "titleSuffix": ".",
+        "subtitle": "Tu plan, cómo pagas y lo que has usado.",
+        "refreshing": "Actualizando…",
         "credits": {
           "title": "Saldo de créditos",
           "available": "disponibles",
-          "description": "Los créditos cubren uso y recargas futuras. El acceso de cómputo viene de una suscripción activa o una tenencia de tokens verificada.",
+          "description": "Los créditos de la cuenta pagan el uso. No definen tu plan: eso viene de una suscripción, un pago anual con $HermesOS o de tener $HermesOS.",
           "monthlyGrantSuffix": "créditos mensuales del plan"
         },
         "activity": {
@@ -2431,10 +2531,10 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Acceso por token",
           "title": "Tenencia de $HermesOS",
-          "description": "Las tenencias verificadas desbloquean cómputo base por token. Si bajan del mínimo, los servidores respaldados por token entran en gracia antes de suspenderse.",
+          "description": "Mantén al menos el mínimo de $HermesOS en una billetera verificada para desbloquear una máquina básica. Si tu saldo baja del mínimo, los agentes de esa máquina siguen funcionando durante un periodo de gracia y luego se pausan hasta que vuelvas a tener suficiente.",
           "checking": "Verificando",
           "unavailable": "No disponible",
-          "ready": "Nivel base listo",
+          "ready": "Mínimo alcanzado",
           "belowMinimum": "Por debajo del mínimo",
           "noWallet": "Sin billetera verificada",
           "wallet": "Billetera",
@@ -2450,7 +2550,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cryptoCredits": {
           "eyebrow": "Créditos cripto",
-          "description": "Crea una recarga de créditos pendiente con una billetera de depósito Bankr.",
+          "description": "Elige una cantidad y te daremos una dirección a la que enviar USDC en Base. Los créditos se añaden cuando se confirma la transferencia.",
           "bonusPath": "Ruta bonus preparada",
           "pendingDeposit": "Depósito pendiente",
           "createTopUpLabel": "Crear recarga USDC por {credits} créditos",
@@ -2481,6 +2581,14 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "noSubscription": {
           "title": "Sin suscripción activa"
+        },
+        "plate": {
+          "slots": "Espacios",
+          "vcpu": "vCPU",
+          "memory": "Memoria",
+          "idlePolicy": "Inactividad",
+          "alwaysOn": "Siempre encendido",
+          "sleepsAfterIdle": "Se suspende tras {days} días sin actividad"
         }
       },
       "settings": {
@@ -2498,8 +2606,8 @@ const LOCALE_COPY_OVERRIDES = {
           "dangerZone": "Zona peligrosa"
         },
         "theme": {
-          "label": "Tema de interfaz",
-          "description": "Elige tu entorno de lectura para la consola.",
+          "label": "Tema",
+          "description": "Claro, oscuro o igual que tu dispositivo.",
           "light": "Claro",
           "dark": "Oscuro",
           "system": "Sistema"
@@ -2533,9 +2641,48 @@ const LOCALE_COPY_OVERRIDES = {
           "description": "Da acceso a skills MCP/ACP y herramientas experimentales."
         },
         "clearCache": {
-          "label": "Borrar caché",
-          "description": "Borra preferencias locales y fuerza recarga. No afecta Supabase.",
-          "action": "Borrar estado local"
+          "label": "Borrar la caché local",
+          "description": "Borra los datos del panel en caché de este navegador y las opciones de diseño guardadas aquí, como las pestañas del terminal, y recarga la página. Tu cuenta, tus agentes y tus ordenadores no se ven afectados.",
+          "action": "Borrar caché"
+        },
+        "hub": {
+          "title": "Configuración",
+          "intro": "Tu cuenta, facturación, claves y herramientas de agentes, además de cómo se ve Hivra en este navegador.",
+          "groups": {
+            "account": "Cuenta",
+            "billing": "Plan y facturación",
+            "connections": "Claves y conexiones",
+            "toolkit": "Herramientas de agentes",
+            "device": "En este dispositivo",
+            "apps": "Apps y ayuda",
+            "reset": "Restablecer este navegador"
+          },
+          "profile": {
+            "title": "Perfil e inicio de sesión",
+            "signedInAs": "Sesión iniciada como {email}",
+            "fallback": "Tu nombre, correo, seguridad y cierre de sesión.",
+            "selfHostTitle": "Inicio de sesión",
+            "selfHostFallback": "Sesión iniciada en este Hivra autoalojado.",
+            "signOut": "Cerrar sesión",
+            "signingOut": "Cerrando sesión…",
+            "signOutFailed": "No se pudo cerrar la sesión. Inténtalo de nuevo."
+          },
+          "rows": {
+            "billing": { "description": "Plan, métodos de pago, créditos y facturas" },
+            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes y acceso con $HermesOS" },
+            "apiKeys": { "title": "Claves de API", "description": "Claves de proveedores y qué agentes las usan" },
+            "infrastructure": { "description": "Las máquinas y cuentas en la nube donde se ejecutan tus agentes" },
+            "memory": { "title": "Memoria compartida de agentes", "description": "Lo que cada agente nuevo sabe desde el principio" },
+            "tools": { "title": "Herramientas y capacidades", "description": "Añade herramientas a los agentes que elijas" },
+            "library": { "title": "Biblioteca de prompts", "description": "Roles de agente listos con prompts probados" },
+            "templates": { "title": "Plantillas", "description": "Guarda un agente configurado y vuelve a lanzarlo" },
+            "referral": { "title": "Invita y gana", "description": "Comparte tu enlace y ganad créditos juntos" },
+            "applications": { "title": "Aplicaciones", "description": "Usa Hivra en tu navegador o como app web" },
+            "help": { "title": "Ayuda", "description": "Soporte, comunidad e información legal" }
+          },
+          "motionNote": "El movimiento sigue el ajuste de reducir movimiento de tu dispositivo.",
+          "clearCacheConfirm": "Pulsa de nuevo para borrar y recargar",
+          "clearCacheArmed": "Vuelve a pulsar el botón en 4 segundos para borrar la caché y recargar."
         }
       },
       "userModeSuffix": "Modo",
@@ -3208,10 +3355,12 @@ const LOCALE_COPY_OVERRIDES = {
         "titleSeparator": " de ",
         "titleEmphasis": "plano",
         "titleSuffix": ".",
+        "subtitle": "Seu plano, como você paga e o que já usou.",
+        "refreshing": "Atualizando…",
         "credits": {
           "title": "Saldo de créditos",
           "available": "disponíveis",
-          "description": "Créditos cobrem o uso e recargas futuras. O acesso ao compute vem de uma assinatura ativa ou holding de token verificado.",
+          "description": "Os créditos da conta pagam o uso. Eles não definem seu plano: isso vem de uma assinatura, de um pagamento anual em $HermesOS ou de manter $HermesOS.",
           "monthlyGrantSuffix": "créditos do plano mensal"
         },
         "activity": {
@@ -3234,10 +3383,10 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Acesso por token",
           "title": "Holding de $HermesOS",
-          "description": "Holdings verificados desbloqueiam compute base por token. Se o holding cair abaixo do mínimo, servidores ativos baseados em token entram em carência antes da suspensão.",
+          "description": "Mantenha pelo menos o mínimo de $HermesOS em uma carteira verificada para liberar uma máquina básica. Se o saldo cair abaixo do mínimo, os agentes dessa máquina continuam rodando por um período de carência e depois pausam até você voltar a ter o suficiente.",
           "checking": "Verificando",
           "unavailable": "Indisponível",
-          "ready": "Plano base pronto",
+          "ready": "Mínimo atingido",
           "belowMinimum": "Abaixo do mínimo",
           "noWallet": "Nenhuma carteira verificada",
           "wallet": "Carteira",
@@ -3253,7 +3402,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cryptoCredits": {
           "eyebrow": "Créditos cripto",
-          "description": "Crie uma recarga de crédito pendente com uma carteira de depósito Bankr. Créditos são concedidos após reconciliação do depósito.",
+          "description": "Escolha um valor e daremos um endereço para você enviar USDC na Base. Os créditos entram assim que a transferência for confirmada.",
           "bonusPath": "Caminho de bônus preparado",
           "pendingDeposit": "Depósito Pendente",
           "createTopUpLabel": "Criar recarga USDC de {credits} créditos",
@@ -3284,6 +3433,14 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "noSubscription": {
           "title": "Sem assinatura ativa"
+        },
+        "plate": {
+          "slots": "Vagas",
+          "vcpu": "vCPU",
+          "memory": "Memória",
+          "idlePolicy": "Inatividade",
+          "alwaysOn": "Sempre ligado",
+          "sleepsAfterIdle": "Hiberna após {days} dias sem atividade"
         }
       },
       "settings": {
@@ -3301,8 +3458,8 @@ const LOCALE_COPY_OVERRIDES = {
           "dangerZone": "Zona de Perigo"
         },
         "theme": {
-          "label": "Tema da Interface",
-          "description": "Selecione seu ambiente de leitura preferido para o console.",
+          "label": "Tema",
+          "description": "Claro, escuro ou igual ao seu dispositivo.",
           "light": "Claro",
           "dark": "Escuro",
           "system": "Sistema"
@@ -3336,9 +3493,48 @@ const LOCALE_COPY_OVERRIDES = {
           "description": "Dar ao Hermes acesso a skills MCP/ACP upstream e ferramentas experimentais."
         },
         "clearCache": {
-          "label": "Limpar Cache do Aplicativo",
-          "description": "Apaga todas as preferências locais de UI, rascunhos salvos e força um hard reload. Não afeta dados do Supabase.",
-          "action": "Limpar Estado Local"
+          "label": "Limpar o cache local",
+          "description": "Limpa os dados do painel em cache neste navegador e as escolhas de layout salvas aqui, como as abas do terminal, e recarrega a página. Sua conta, seus agentes e seus computadores não são afetados.",
+          "action": "Limpar cache"
+        },
+        "hub": {
+          "title": "Configurações",
+          "intro": "Sua conta, cobrança, chaves e ferramentas de agentes, além da aparência do Hivra neste navegador.",
+          "groups": {
+            "account": "Conta",
+            "billing": "Plano e cobrança",
+            "connections": "Chaves e conexões",
+            "toolkit": "Ferramentas de agentes",
+            "device": "Neste dispositivo",
+            "apps": "Apps e ajuda",
+            "reset": "Redefinir este navegador"
+          },
+          "profile": {
+            "title": "Perfil e login",
+            "signedInAs": "Conectado como {email}",
+            "fallback": "Seu nome, e-mail, segurança e saída da conta.",
+            "selfHostTitle": "Login",
+            "selfHostFallback": "Conectado a este Hivra auto-hospedado.",
+            "signOut": "Sair",
+            "signingOut": "Saindo…",
+            "signOutFailed": "Não foi possível sair. Tente de novo."
+          },
+          "rows": {
+            "billing": { "description": "Plano, formas de pagamento, créditos e faturas" },
+            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes e acesso com $HermesOS" },
+            "apiKeys": { "title": "Chaves de API", "description": "Chaves de provedores e quais agentes as usam" },
+            "infrastructure": { "description": "As máquinas e contas de nuvem onde seus agentes rodam" },
+            "memory": { "title": "Memória compartilhada dos agentes", "description": "O que todo agente novo já sabe desde o início" },
+            "tools": { "title": "Ferramentas e recursos", "description": "Adicione ferramentas aos agentes que você escolher" },
+            "library": { "title": "Biblioteca de prompts", "description": "Funções de agente prontas com prompts testados" },
+            "templates": { "title": "Modelos", "description": "Salve um agente configurado e lance-o de novo" },
+            "referral": { "title": "Indique e ganhe", "description": "Compartilhe seu link e ganhem créditos juntos" },
+            "applications": { "title": "Aplicativos", "description": "Use o Hivra no navegador ou como app web" },
+            "help": { "title": "Ajuda", "description": "Suporte, comunidade e informações legais" }
+          },
+          "motionNote": "O movimento segue a configuração de reduzir movimento do seu dispositivo.",
+          "clearCacheConfirm": "Pressione de novo para limpar e recarregar",
+          "clearCacheArmed": "Pressione o botão de novo em até 4 segundos para limpar o cache e recarregar."
         }
       },
       "userModeSuffix": "Modo",
@@ -4011,10 +4207,12 @@ const LOCALE_COPY_OVERRIDES = {
         "titleSeparator": " du ",
         "titleEmphasis": "plan",
         "titleSuffix": ".",
+        "subtitle": "Votre offre, votre mode de paiement et votre consommation.",
+        "refreshing": "Actualisation…",
         "credits": {
           "title": "Solde de crédits",
           "available": "disponibles",
-          "description": "Les crédits couvrent l'utilisation et les futures recharges. L'accès au compute provient d'un abonnement actif ou d'une détention de tokens vérifiée.",
+          "description": "Les crédits du compte paient l'utilisation. Ils ne définissent pas votre offre : elle vient d'un abonnement, d'un paiement annuel en $HermesOS ou de la détention de $HermesOS.",
           "monthlyGrantSuffix": "crédits du plan mensuel"
         },
         "activity": {
@@ -4037,10 +4235,10 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Accès par token",
           "title": "Détention $HermesOS",
-          "description": "Les détentions vérifiées débloquent le compute de base via token. Si la détention passe sous le minimum, les serveurs actifs adossés au token entrent en période de grâce avant suspension.",
+          "description": "Détenez au moins le minimum de $HermesOS dans un portefeuille vérifié pour débloquer une machine de base. Si votre solde passe sous le minimum, les agents de cette machine continuent de tourner pendant une période de grâce, puis se mettent en pause jusqu'à ce que vous déteniez de nouveau assez.",
           "checking": "Vérification",
           "unavailable": "Indisponible",
-          "ready": "Tier de base prêt",
+          "ready": "Minimum atteint",
           "belowMinimum": "Sous le minimum",
           "noWallet": "Aucun portefeuille vérifié",
           "wallet": "Portefeuille",
@@ -4056,7 +4254,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cryptoCredits": {
           "eyebrow": "Crédits crypto",
-          "description": "Créez une recharge de crédits en attente avec un portefeuille de dépôt Bankr. Les crédits sont accordés après réconciliation du dépôt.",
+          "description": "Choisissez un montant et nous vous donnerons une adresse où envoyer des USDC sur Base. Les crédits sont ajoutés une fois le transfert confirmé.",
           "bonusPath": "Voie bonus préparée",
           "pendingDeposit": "Dépôt en attente",
           "createTopUpLabel": "Créer une recharge USDC pour {credits} crédits",
@@ -4087,6 +4285,14 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "noSubscription": {
           "title": "Aucun abonnement actif"
+        },
+        "plate": {
+          "slots": "Emplacements",
+          "vcpu": "vCPU",
+          "memory": "Mémoire",
+          "idlePolicy": "Mise en veille",
+          "alwaysOn": "Toujours actif",
+          "sleepsAfterIdle": "En veille après {days} jours d'inactivité"
         }
       },
       "settings": {
@@ -4104,8 +4310,8 @@ const LOCALE_COPY_OVERRIDES = {
           "dangerZone": "Zone de danger"
         },
         "theme": {
-          "label": "Thème d'interface",
-          "description": "Sélectionnez votre environnement de lecture préféré pour la console.",
+          "label": "Thème",
+          "description": "Clair, sombre ou comme votre appareil.",
           "light": "Clair",
           "dark": "Sombre",
           "system": "Système"
@@ -4139,9 +4345,48 @@ const LOCALE_COPY_OVERRIDES = {
           "description": "Donner à Hermes accès aux compétences MCP/ACP upstream et aux outils expérimentaux."
         },
         "clearCache": {
-          "label": "Vider le cache de l'application",
-          "description": "Efface toutes les préférences d'interface locales, les brouillons sauvegardés et force un rechargement complet. N'affecte pas les données Supabase.",
-          "action": "Effacer l'état local"
+          "label": "Vider le cache local",
+          "description": "Efface les données du tableau de bord en cache dans ce navigateur et les choix de mise en page enregistrés ici, comme les onglets du terminal, puis recharge la page. Votre compte, vos agents et vos ordinateurs ne sont pas affectés.",
+          "action": "Vider le cache"
+        },
+        "hub": {
+          "title": "Paramètres",
+          "intro": "Votre compte, la facturation, les clés et les outils de vos agents, ainsi que l'apparence de Hivra dans ce navigateur.",
+          "groups": {
+            "account": "Compte",
+            "billing": "Offre et facturation",
+            "connections": "Clés et connexions",
+            "toolkit": "Boîte à outils des agents",
+            "device": "Sur cet appareil",
+            "apps": "Applis et aide",
+            "reset": "Réinitialiser ce navigateur"
+          },
+          "profile": {
+            "title": "Profil et connexion",
+            "signedInAs": "Connecté en tant que {email}",
+            "fallback": "Votre nom, votre e-mail, la sécurité et la déconnexion.",
+            "selfHostTitle": "Connexion",
+            "selfHostFallback": "Connecté à cette instance Hivra auto-hébergée.",
+            "signOut": "Se déconnecter",
+            "signingOut": "Déconnexion…",
+            "signOutFailed": "Impossible de se déconnecter. Réessayez."
+          },
+          "rows": {
+            "billing": { "description": "Offre, moyens de paiement, crédits et factures" },
+            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents et accès $HermesOS" },
+            "apiKeys": { "title": "Clés API", "description": "Clés des fournisseurs et agents qui les utilisent" },
+            "infrastructure": { "description": "Les machines et comptes cloud sur lesquels tournent vos agents" },
+            "memory": { "title": "Mémoire partagée des agents", "description": "Ce que chaque nouvel agent sait dès le départ" },
+            "tools": { "title": "Outils et capacités", "description": "Ajoutez des outils aux agents de votre choix" },
+            "library": { "title": "Bibliothèque de prompts", "description": "Rôles d'agent prêts à l'emploi avec des prompts éprouvés" },
+            "templates": { "title": "Modèles", "description": "Enregistrez un agent configuré et relancez-le" },
+            "referral": { "title": "Parrainer et gagner", "description": "Partagez votre lien et gagnez des crédits ensemble" },
+            "applications": { "title": "Applis", "description": "Utilisez Hivra dans votre navigateur ou comme appli web" },
+            "help": { "title": "Aide", "description": "Assistance, communauté et informations légales" }
+          },
+          "motionNote": "Les animations suivent le réglage « Réduire les animations » de votre appareil.",
+          "clearCacheConfirm": "Appuyez à nouveau pour vider et recharger",
+          "clearCacheArmed": "Appuyez à nouveau sur le bouton dans les 4 secondes pour vider le cache et recharger."
         }
       },
       "userModeSuffix": "Mode",
@@ -4814,10 +5059,12 @@ const LOCALE_COPY_OVERRIDES = {
         "titleSeparator": "-",
         "titleEmphasis": "Verwaltung",
         "titleSuffix": ".",
+        "subtitle": "Dein Tarif, wie du zahlst und was du verbraucht hast.",
+        "refreshing": "Wird aktualisiert…",
         "credits": {
           "title": "Guthaben",
           "available": "verfügbar",
-          "description": "Credits decken Nutzung und zukünftige Aufladungen. Compute-Zugang kommt über ein aktives Abo oder verifiziertes Token-Holding.",
+          "description": "Kontoguthaben bezahlt die Nutzung. Es bestimmt nicht deinen Tarif: Der kommt aus einem Abo, einer Jahreszahlung in $HermesOS oder dem Halten von $HermesOS.",
           "monthlyGrantSuffix": "monatliche Plan-Credits"
         },
         "activity": {
@@ -4840,10 +5087,10 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Token-Zugang",
           "title": "$HermesOS Holding",
-          "description": "Verifiziertes Holding schaltet token-basiertes Compute frei. Fällt das Holding unter das Minimum, treten aktive token-gesicherte Server in eine Kulanzfrist ein, bevor sie ausgesetzt werden.",
+          "description": "Halte mindestens das Minimum an $HermesOS in einer verifizierten Wallet, um eine Basis-Maschine freizuschalten. Fällt dein Guthaben unter das Minimum, laufen die Agents auf dieser Maschine für eine Kulanzfrist weiter und pausieren dann, bis du wieder genug hältst.",
           "checking": "Wird geprüft",
           "unavailable": "Nicht verfügbar",
-          "ready": "Base-Tier bereit",
+          "ready": "Minimum erreicht",
           "belowMinimum": "Unter Minimum",
           "noWallet": "Keine verifizierte Wallet",
           "wallet": "Wallet",
@@ -4859,7 +5106,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cryptoCredits": {
           "eyebrow": "Krypto-Guthaben",
-          "description": "Ausstehende Credit-Aufladung mit einer Bankr-Einzahlungs-Wallet erstellen. Credits werden nach Einzahlungsabgleich gutgeschrieben.",
+          "description": "Wähle einen Betrag, und wir geben dir eine Adresse, an die du USDC auf Base sendest. Das Guthaben wird gutgeschrieben, sobald die Überweisung bestätigt ist.",
           "bonusPath": "Bonuspfad vorbereitet",
           "pendingDeposit": "Ausstehende Einzahlung",
           "createTopUpLabel": "USDC-Aufladung für {credits} Credits erstellen",
@@ -4890,6 +5137,14 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "noSubscription": {
           "title": "Kein aktives Abo"
+        },
+        "plate": {
+          "slots": "Plätze",
+          "vcpu": "vCPU",
+          "memory": "Arbeitsspeicher",
+          "idlePolicy": "Leerlauf",
+          "alwaysOn": "Immer an",
+          "sleepsAfterIdle": "Ruht nach {days} Tagen ohne Aktivität"
         }
       },
       "settings": {
@@ -4907,8 +5162,8 @@ const LOCALE_COPY_OVERRIDES = {
           "dangerZone": "Gefahrenzone"
         },
         "theme": {
-          "label": "Interface-Theme",
-          "description": "Bevorzugte Leseumgebung für die Konsole wählen.",
+          "label": "Design",
+          "description": "Hell, dunkel oder wie dein Gerät.",
           "light": "Hell",
           "dark": "Dunkel",
           "system": "System"
@@ -4942,9 +5197,48 @@ const LOCALE_COPY_OVERRIDES = {
           "description": "Hermes Zugriff auf Upstream-MCP/ACP-Skills und experimentelle Tools geben."
         },
         "clearCache": {
-          "label": "Anwendungs-Cache leeren",
-          "description": "Alle lokalen UI-Einstellungen und gespeicherten Entwürfe löschen und einen Hard Reload erzwingen. Supabase-Daten werden nicht berührt.",
-          "action": "Lokalen Status zurücksetzen"
+          "label": "Lokalen Cache leeren",
+          "description": "Löscht zwischengespeicherte Dashboard-Daten in diesem Browser und die hier gespeicherten Layout-Einstellungen, etwa Terminal-Tabs, und lädt die Seite neu. Dein Konto, deine Agents und deine Computer bleiben unberührt.",
+          "action": "Cache leeren"
+        },
+        "hub": {
+          "title": "Einstellungen",
+          "intro": "Dein Konto, Abrechnung, Schlüssel und Agent-Tools – und wie Hivra in diesem Browser aussieht.",
+          "groups": {
+            "account": "Konto",
+            "billing": "Tarif und Abrechnung",
+            "connections": "Schlüssel und Verbindungen",
+            "toolkit": "Agent-Werkzeuge",
+            "device": "Auf diesem Gerät",
+            "apps": "Apps und Hilfe",
+            "reset": "Diesen Browser zurücksetzen"
+          },
+          "profile": {
+            "title": "Profil und Anmeldung",
+            "signedInAs": "Angemeldet als {email}",
+            "fallback": "Name, E-Mail, Sicherheit und Abmelden.",
+            "selfHostTitle": "Anmeldung",
+            "selfHostFallback": "Bei diesem selbst gehosteten Hivra angemeldet.",
+            "signOut": "Abmelden",
+            "signingOut": "Wird abgemeldet…",
+            "signOutFailed": "Abmelden fehlgeschlagen. Versuch es noch einmal."
+          },
+          "rows": {
+            "billing": { "description": "Tarif, Zahlungsmethoden, Guthaben und Rechnungen" },
+            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets und $HermesOS-Zugang" },
+            "apiKeys": { "title": "API-Schlüssel", "description": "Anbieter-Schlüssel und welche Agents sie nutzen" },
+            "infrastructure": { "description": "Die Maschinen und Cloud-Konten, auf denen deine Agents laufen" },
+            "memory": { "title": "Gemeinsames Agent-Gedächtnis", "description": "Was jeder neue Agent von Anfang an weiß" },
+            "tools": { "title": "Tools und Fähigkeiten", "description": "Füge den Agents deiner Wahl Tools hinzu" },
+            "library": { "title": "Prompt-Bibliothek", "description": "Fertige Agent-Rollen mit erprobten Prompts" },
+            "templates": { "title": "Vorlagen", "description": "Einen konfigurierten Agent speichern und erneut starten" },
+            "referral": { "title": "Einladen und verdienen", "description": "Teile deinen Link und verdient gemeinsam Guthaben" },
+            "applications": { "title": "Anwendungen", "description": "Nutze Hivra im Browser oder als Web-App" },
+            "help": { "title": "Hilfe", "description": "Support, Community und rechtliche Informationen" }
+          },
+          "motionNote": "Animationen folgen der Einstellung „Bewegung reduzieren“ deines Geräts.",
+          "clearCacheConfirm": "Erneut drücken zum Leeren und Neuladen",
+          "clearCacheArmed": "Drücke die Schaltfläche innerhalb von 4 Sekunden erneut, um den Cache zu leeren und neu zu laden."
         }
       },
       "userModeSuffix": "Modus",
@@ -5617,10 +5911,12 @@ const LOCALE_COPY_OVERRIDES = {
         "titleSeparator": "",
         "titleEmphasis": "管理",
         "titleSuffix": "。",
+        "subtitle": "プラン、支払い方法、利用状況。",
+        "refreshing": "更新中…",
         "credits": {
           "title": "クレジット残高",
           "available": "利用可能",
-          "description": "クレジットは利用料金と将来のチャージに使用されます。コンピュートへのアクセスには、有効なサブスクリプションまたは認証済みトークン保有が必要です。",
+          "description": "アカウントのクレジットは利用料金の支払いに使われます。プランはクレジットでは決まらず、サブスクリプション、$HermesOS での年払い、または $HermesOS の保有で決まります。",
           "monthlyGrantSuffix": "月次プランクレジット"
         },
         "activity": {
@@ -5643,10 +5939,10 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "トークンアクセス",
           "title": "$HermesOS 保有",
-          "description": "認証済みの保有によりトークンベースのコンピュートがアンロックされます。保有量が最低水準を下回ると、アクティブなトークン支援サーバーは停止前のグレース期間に入ります。",
+          "description": "認証済みウォレットで最低数量以上の $HermesOS を保有すると、ベーシックマシンが使えるようになります。残高が最低数量を下回ると、そのマシンのエージェントは猶予期間中は動き続け、その後は十分な量を再び保有するまで一時停止します。",
           "checking": "確認中",
           "unavailable": "利用不可",
-          "ready": "Base ティア準備完了",
+          "ready": "最低数量を満たしています",
           "belowMinimum": "最低水準以下",
           "noWallet": "認証済みウォレットなし",
           "wallet": "ウォレット",
@@ -5662,7 +5958,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cryptoCredits": {
           "eyebrow": "暗号資産クレジット",
-          "description": "Bankr 入金ウォレットで保留中のクレジットチャージを作成します。クレジットは入金の照合後に付与されます。",
+          "description": "金額を選ぶと、Base で USDC を送るためのアドレスが表示されます。送金が確認されるとクレジットが追加されます。",
           "bonusPath": "ボーナスパス準備完了",
           "pendingDeposit": "保留中の入金",
           "createTopUpLabel": "{credits} クレジットの USDC チャージを作成",
@@ -5693,6 +5989,14 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "noSubscription": {
           "title": "有効なサブスクリプションなし"
+        },
+        "plate": {
+          "slots": "スロット",
+          "vcpu": "vCPU",
+          "memory": "メモリ",
+          "idlePolicy": "アイドル時",
+          "alwaysOn": "常時稼働",
+          "sleepsAfterIdle": "{days} 日間アイドルでスリープ"
         }
       },
       "settings": {
@@ -5710,8 +6014,8 @@ const LOCALE_COPY_OVERRIDES = {
           "dangerZone": "危険ゾーン"
         },
         "theme": {
-          "label": "インターフェーステーマ",
-          "description": "コンソールの表示環境を選択してください。",
+          "label": "テーマ",
+          "description": "ライト、ダーク、またはデバイスに合わせる。",
           "light": "ライト",
           "dark": "ダーク",
           "system": "システム"
@@ -5745,9 +6049,48 @@ const LOCALE_COPY_OVERRIDES = {
           "description": "上流の MCP/ACP スキルと実験的ツールへのアクセスを Hermes に付与します。"
         },
         "clearCache": {
-          "label": "アプリケーションキャッシュをクリア",
-          "description": "すべてのローカル UI 設定・保存済み下書きを削除し、強制的にハードリロードします。Supabase のデータには影響しません。",
-          "action": "ローカル状態をリセット"
+          "label": "ローカルキャッシュを消去",
+          "description": "このブラウザにキャッシュされたダッシュボードのデータと、ここに保存されたレイアウトの選択（ターミナルのタブなど）を消去し、ページを再読み込みします。アカウント、エージェント、コンピューターには影響しません。",
+          "action": "キャッシュを消去"
+        },
+        "hub": {
+          "title": "設定",
+          "intro": "アカウント、請求、キー、エージェントのツール、そしてこのブラウザでの Hivra の表示。",
+          "groups": {
+            "account": "アカウント",
+            "billing": "プランと請求",
+            "connections": "キーと接続",
+            "toolkit": "エージェントツール",
+            "device": "このデバイス",
+            "apps": "アプリとヘルプ",
+            "reset": "このブラウザをリセット"
+          },
+          "profile": {
+            "title": "プロフィールとサインイン",
+            "signedInAs": "{email} でサインイン中",
+            "fallback": "名前、メール、セキュリティ、サインアウト。",
+            "selfHostTitle": "サインイン",
+            "selfHostFallback": "このセルフホストの Hivra にサインイン中。",
+            "signOut": "サインアウト",
+            "signingOut": "サインアウト中…",
+            "signOutFailed": "サインアウトできませんでした。もう一度お試しください。"
+          },
+          "rows": {
+            "billing": { "description": "プラン、支払い方法、クレジット、請求書" },
+            "wallets": { "title": "ウォレット", "description": "エージェントのウォレットと $HermesOS アクセス" },
+            "apiKeys": { "title": "API キー", "description": "プロバイダーのキーと、それを使うエージェント" },
+            "infrastructure": { "description": "エージェントが動くマシンとクラウドアカウント" },
+            "memory": { "title": "共有エージェントメモリー", "description": "新しいエージェントが最初から知っていること" },
+            "tools": { "title": "ツールと機能", "description": "選んだエージェントにツールを追加" },
+            "library": { "title": "プロンプトライブラリ", "description": "検証済みプロンプト付きのエージェントロール" },
+            "templates": { "title": "テンプレート", "description": "設定済みのエージェントを保存して再度起動" },
+            "referral": { "title": "招待して獲得", "description": "リンクを共有して一緒にクレジットを獲得" },
+            "applications": { "title": "アプリ", "description": "ブラウザまたは Web アプリで Hivra を使う" },
+            "help": { "title": "ヘルプ", "description": "サポート、コミュニティ、法的情報" }
+          },
+          "motionNote": "動きはデバイスの「視差効果を減らす」設定に従います。",
+          "clearCacheConfirm": "もう一度押すと消去して再読み込み",
+          "clearCacheArmed": "4 秒以内にもう一度ボタンを押すと、キャッシュを消去して再読み込みします。"
         }
       },
       "userModeSuffix": "モード",
@@ -6420,10 +6763,12 @@ const LOCALE_COPY_OVERRIDES = {
         "titleSeparator": " ",
         "titleEmphasis": "관리",
         "titleSuffix": ".",
+        "subtitle": "요금제, 결제 방법, 사용량.",
+        "refreshing": "새로고침 중…",
         "credits": {
           "title": "크레딧 잔액",
           "available": "사용 가능",
-          "description": "크레딧은 사용량과 향후 충전에 사용됩니다. 컴퓨팅 접근은 활성 구독 또는 검증된 토큰 보유에서 제공됩니다.",
+          "description": "계정 크레딧은 사용료를 결제합니다. 요금제는 크레딧이 아니라 구독, $HermesOS 연간 결제 또는 $HermesOS 보유로 정해집니다.",
           "monthlyGrantSuffix": "월간 플랜 크레딧"
         },
         "activity": {
@@ -6446,10 +6791,10 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "토큰 접근",
           "title": "$HermesOS 보유",
-          "description": "검증된 보유량이 토큰 기반 기본 컴퓨팅을 활성화합니다. 보유량이 최솟값 아래로 내려가면 활성 토큰 기반 서버가 유예 기간 후 정지됩니다.",
+          "description": "검증된 지갑에 최소 수량 이상의 $HermesOS를 보유하면 기본 머신이 열립니다. 잔액이 최소 수량 아래로 내려가면 해당 머신의 에이전트는 유예 기간 동안 계속 실행된 뒤, 다시 충분히 보유할 때까지 일시 중지됩니다.",
           "checking": "확인 중",
           "unavailable": "이용 불가",
-          "ready": "기본 티어 준비됨",
+          "ready": "최소 수량 충족",
           "belowMinimum": "최솟값 미달",
           "noWallet": "인증된 지갑 없음",
           "wallet": "지갑",
@@ -6465,7 +6810,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cryptoCredits": {
           "eyebrow": "크립토 크레딧",
-          "description": "Bankr 입금 지갑으로 대기 크레딧 충전을 생성하세요. 크레딧은 입금 조정 후 부여됩니다.",
+          "description": "금액을 선택하면 Base에서 USDC를 보낼 주소를 드립니다. 전송이 확인되면 크레딧이 추가됩니다.",
           "bonusPath": "보너스 경로 준비됨",
           "pendingDeposit": "대기 중인 입금",
           "createTopUpLabel": "{credits} 크레딧을 위한 USDC 충전 생성",
@@ -6496,6 +6841,14 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "noSubscription": {
           "title": "활성 구독 없음"
+        },
+        "plate": {
+          "slots": "슬롯",
+          "vcpu": "vCPU",
+          "memory": "메모리",
+          "idlePolicy": "유휴 정책",
+          "alwaysOn": "항상 켜짐",
+          "sleepsAfterIdle": "{days}일 유휴 시 절전"
         }
       },
       "settings": {
@@ -6513,8 +6866,8 @@ const LOCALE_COPY_OVERRIDES = {
           "dangerZone": "위험 구역"
         },
         "theme": {
-          "label": "인터페이스 테마",
-          "description": "콘솔의 선호 읽기 환경을 선택하세요.",
+          "label": "테마",
+          "description": "라이트, 다크 또는 기기 설정 따르기.",
           "light": "라이트",
           "dark": "다크",
           "system": "시스템"
@@ -6548,9 +6901,48 @@ const LOCALE_COPY_OVERRIDES = {
           "description": "Hermes에게 업스트림 MCP/ACP 스킬과 실험적 도구에 대한 접근을 부여합니다."
         },
         "clearCache": {
-          "label": "앱 캐시 지우기",
-          "description": "모든 로컬 UI 설정, 저장된 임시 저장본을 삭제하고 강제 새로고침합니다. Supabase 데이터에는 영향이 없습니다.",
-          "action": "로컬 상태 초기화"
+          "label": "로컬 캐시 지우기",
+          "description": "이 브라우저에 캐시된 대시보드 데이터와 여기에 저장된 레이아웃 선택(터미널 탭 등)을 지운 뒤 페이지를 새로고침합니다. 계정, 에이전트, 컴퓨터에는 영향이 없습니다.",
+          "action": "캐시 지우기"
+        },
+        "hub": {
+          "title": "설정",
+          "intro": "계정, 결제, 키, 에이전트 도구, 그리고 이 브라우저에서 Hivra가 보이는 방식.",
+          "groups": {
+            "account": "계정",
+            "billing": "요금제 및 결제",
+            "connections": "키 및 연결",
+            "toolkit": "에이전트 도구",
+            "device": "이 기기",
+            "apps": "앱 및 도움말",
+            "reset": "이 브라우저 초기화"
+          },
+          "profile": {
+            "title": "프로필 및 로그인",
+            "signedInAs": "{email}(으)로 로그인됨",
+            "fallback": "이름, 이메일, 보안, 로그아웃.",
+            "selfHostTitle": "로그인",
+            "selfHostFallback": "이 셀프 호스팅 Hivra에 로그인됨.",
+            "signOut": "로그아웃",
+            "signingOut": "로그아웃 중…",
+            "signOutFailed": "로그아웃하지 못했습니다. 다시 시도하세요."
+          },
+          "rows": {
+            "billing": { "description": "요금제, 결제 수단, 크레딧, 청구서" },
+            "wallets": { "title": "지갑", "description": "에이전트 지갑과 $HermesOS 이용 권한" },
+            "apiKeys": { "title": "API 키", "description": "제공업체 키와 이를 쓰는 에이전트" },
+            "infrastructure": { "description": "에이전트가 실행되는 머신과 클라우드 계정" },
+            "memory": { "title": "공유 에이전트 메모리", "description": "새 에이전트가 처음부터 알고 있는 내용" },
+            "tools": { "title": "도구 및 기능", "description": "원하는 에이전트에 도구 추가" },
+            "library": { "title": "프롬프트 라이브러리", "description": "검증된 프롬프트가 담긴 에이전트 역할" },
+            "templates": { "title": "템플릿", "description": "설정한 에이전트를 저장하고 다시 실행" },
+            "referral": { "title": "초대하고 받기", "description": "링크를 공유하고 함께 크레딧 받기" },
+            "applications": { "title": "앱", "description": "브라우저나 웹 앱으로 Hivra 사용" },
+            "help": { "title": "도움말", "description": "지원, 커뮤니티, 법적 정보" }
+          },
+          "motionNote": "모션은 기기의 '동작 줄이기' 설정을 따릅니다.",
+          "clearCacheConfirm": "한 번 더 누르면 지우고 새로고침",
+          "clearCacheArmed": "4초 안에 버튼을 다시 누르면 캐시를 지우고 새로고침합니다."
         }
       },
       "userModeSuffix": "모드",

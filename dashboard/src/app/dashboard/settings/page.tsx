@@ -1,40 +1,154 @@
 'use client';
 
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { motion, useReducedMotion } from 'framer-motion';
-import { BrainCircuit, ChevronRight, CircleHelp, CreditCard, Download, Gift, KeyRound, Moon, MonitorSmartphone, ServerCog, ShieldAlert, Sun, Trash2 } from 'lucide-react';
+import { UserButton, useUser } from '@clerk/nextjs';
+import {
+  BrainCircuit,
+  ChevronRight,
+  CircleHelp,
+  CreditCard,
+  Download,
+  Eraser,
+  Gift,
+  KeyRound,
+  Languages,
+  LayoutTemplate,
+  LibraryBig,
+  LogOut,
+  Moon,
+  MonitorSmartphone,
+  Palette,
+  ServerCog,
+  Sun,
+  Trash2,
+  UserRound,
+  Wallet,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useSettings } from '@/hooks/use-settings';
 import { LanguageSwitcher, useLocale } from '@/components/i18n/LocaleProvider';
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
+import { useNativeWorkspace } from '@/components/layout/NativeWorkspaceBridge';
 import { buildHermesFadeSlideVariants, buildHermesStaggerVariants } from '@/components/ui/motion';
 import { isLocalAuthMode } from '@/lib/self-host/config';
+import { clientLog } from '@/lib/client/logger';
 import styles from './Settings.module.css';
 
-function PreferenceSwitch({ id, label, description, checked, onChange }: {
+/** How long the first press of "Clear cache" stays armed before it resets. */
+const CLEAR_CACHE_CONFIRM_MS = 4000;
+
+type LinkRowItem = {
   id: string;
-  label: string;
+  href: string;
+  icon: LucideIcon;
+  title: string;
   description: string;
-  checked: boolean;
-  onChange: () => void;
+};
+
+type SettingsGroupItem = {
+  id: string;
+  heading: string;
+  content: ReactNode;
+  note?: ReactNode;
+};
+
+function RowIcon({ icon: Icon }: { icon: LucideIcon }) {
+  return (
+    <span className={styles.rowIcon} aria-hidden="true">
+      <Icon size={16} strokeWidth={1.75} />
+    </span>
+  );
+}
+
+function LinkRows({ items }: { items: readonly LinkRowItem[] }) {
+  return (
+    <ul className={styles.panel} role="list">
+      {items.map(({ id, href, icon, title, description }) => (
+        <li key={id}>
+          <Link
+            href={href}
+            className={styles.linkRow}
+            aria-labelledby={`settings-${id}-title`}
+            aria-describedby={`settings-${id}-description`}
+          >
+            <RowIcon icon={icon} />
+            <span className={styles.rowText}>
+              <span id={`settings-${id}-title`} className={styles.rowTitle}>{title}</span>
+              <span id={`settings-${id}-description`} className={styles.rowDescription}>{description}</span>
+            </span>
+            <ChevronRight className={styles.chevron} size={16} aria-hidden="true" />
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ControlRow({ id, icon, title, description, children, className }: {
+  id: string;
+  icon: LucideIcon;
+  title: string;
+  description: ReactNode;
+  children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className={styles.preferenceRow}>
-      <div>
-        <span id={id + '-label'} className={styles.label}>{label}</span>
-        <p id={id + '-description'} className={styles.description}>{description}</p>
+    <div className={[styles.row, styles.controlRow, className].filter(Boolean).join(' ')}>
+      <RowIcon icon={icon} />
+      <div className={styles.rowText}>
+        <span id={`${id}-label`} className={styles.rowTitle}>{title}</span>
+        <p id={`${id}-description`} className={styles.rowDescription}>{description}</p>
       </div>
+      <div className={styles.control}>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Self-hosted sign-out. The self-host auth shim's UserButton is a bare "H"
+ * avatar that signs out on one press, which reads as a profile menu in a row
+ * titled for the account, so this row gets a labelled button instead.
+ */
+function SelfHostSignOutButton({ labels }: { labels: { signOut: string; signingOut: string; failed: string } }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle');
+
+  const signOut = async () => {
+    setState('busy');
+    try {
+      const response = await fetch('/api/self-host/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error(`Self-hosted sign-out returned ${response.status}`);
+      // A full load, not router.push: the local auth provider read the session
+      // once on mount, so only a fresh document drops the signed-out user.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign('/sign-in');
+    } catch (error) {
+      clientLog.error('Self-hosted sign-out failed', error, {
+        source: 'settings',
+        failureType: 'self_host_sign_out_failed',
+      });
+      setState('failed');
+    }
+  };
+
+  return (
+    <div className={styles.signOutControl}>
       <button
         type="button"
-        role="switch"
-        aria-labelledby={id + '-label'}
-        aria-describedby={id + '-description'}
-        aria-checked={checked}
-        onClick={onChange}
-        className={styles.switch}
+        onClick={() => void signOut()}
+        disabled={state === 'busy'}
+        aria-describedby="account-profile-description"
+        className={styles.signOutButton}
       >
-        <span className={styles.switchTrack} aria-hidden="true"><span /></span>
+        <LogOut size={14} aria-hidden="true" />
+        {state === 'busy' ? labels.signingOut : labels.signOut}
       </button>
+      <span role="status" className={state === 'failed' ? styles.controlError : 'sr-only'}>
+        {state === 'failed' ? labels.failed : ''}
+      </span>
     </div>
   );
 }
@@ -42,136 +156,178 @@ function PreferenceSwitch({ id, label, description, checked, onChange }: {
 export default function SettingsPage() {
   const { copy } = useLocale();
   const { theme, setTheme } = useTheme();
-  const { settings, updateSettings, clearCacheAndReload, isLoaded } = useSettings();
+  const { clearCacheAndReload, isLoaded } = useSettings();
+  const { user } = useUser();
+  const { enabled: nativeWorkspace, ownerKey: nativeOwner } = useNativeWorkspace();
   const reduceMotion = Boolean(useReducedMotion());
   const sectionVariants = buildHermesFadeSlideVariants(reduceMotion, { offset: 12 });
   const sectionGroupVariants = buildHermesStaggerVariants(reduceMotion, 0.06);
   const settingsCopy = copy.dashboard.settings;
+  const hub = settingsCopy.hub;
   const selfHosted = isLocalAuthMode();
+
+  // Clearing wipes local state and reloads, so the first press only arms it.
+  const [clearCacheArmed, setClearCacheArmed] = useState(false);
+  const clearCacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (clearCacheTimerRef.current) clearTimeout(clearCacheTimerRef.current);
+  }, []);
+
+  const handleClearCache = () => {
+    if (clearCacheTimerRef.current) clearTimeout(clearCacheTimerRef.current);
+    clearCacheTimerRef.current = null;
+    if (clearCacheArmed) {
+      setClearCacheArmed(false);
+      clearCacheAndReload();
+      return;
+    }
+    setClearCacheArmed(true);
+    clearCacheTimerRef.current = setTimeout(() => {
+      clearCacheTimerRef.current = null;
+      setClearCacheArmed(false);
+    }, CLEAR_CACHE_CONFIRM_MS);
+  };
 
   if (!isLoaded) {
     return (
-      <DashboardPageShell maxWidth={1000}>
-        <p role="status" className={styles.description}>{settingsCopy.loading}</p>
+      <DashboardPageShell maxWidth={824} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
+        <p role="status" className={styles.loading}>{settingsCopy.loading}</p>
       </DashboardPageShell>
     );
   }
 
+  const email = user?.primaryEmailAddress?.emailAddress;
+  const profile = hub.profile;
+  // A replacer function, so "$&"-style sequences in an address are never expanded.
+  const signedInDescription = email ? profile.signedInAs.replace('{email}', () => email) : null;
   const themes = [
     { id: 'light', label: settingsCopy.theme.light, icon: Sun },
     { id: 'dark', label: settingsCopy.theme.dark, icon: Moon },
     { id: 'system', label: settingsCopy.theme.system, icon: MonitorSmartphone },
   ];
-  const destinations = [
-    ...(!selfHosted ? [{ href: '/dashboard/billing', label: copy.dashboard.nav.billing, description: 'Plan, payments and credits.', icon: CreditCard }] : []),
-    { href: '/dashboard/vault', label: 'Vault', description: 'Provider keys and agent assignments.', icon: KeyRound },
-    { href: '/dashboard/infrastructure', label: copy.dashboard.nav.infrastructure, description: 'Connections, nodes and capacity.', icon: ServerCog },
-    { href: '/dashboard/settings/applications', label: 'Applications', description: 'Use Hivra in your browser or as a web app.', icon: Download },
-    { href: '/dashboard/settings/help', label: 'Help', description: 'Support, community and legal information.', icon: CircleHelp },
+
+  const billingRows: LinkRowItem[] = [
+    { id: 'billing', href: '/dashboard/billing', icon: CreditCard, title: copy.dashboard.nav.billing, description: hub.rows.billing.description },
+    // Agent wallets exist whether or not crypto billing is switched on.
+    { id: 'wallets', href: '/dashboard/wallet', icon: Wallet, title: hub.rows.wallets.title, description: hub.rows.wallets.description },
+  ];
+  const connectionRows: LinkRowItem[] = [
+    { id: 'api-keys', href: '/dashboard/vault', icon: KeyRound, title: hub.rows.apiKeys.title, description: hub.rows.apiKeys.description },
+    { id: 'infrastructure', href: '/dashboard/infrastructure', icon: ServerCog, title: copy.dashboard.nav.infrastructure, description: hub.rows.infrastructure.description },
+  ];
+  const toolkitRows: LinkRowItem[] = [
+    { id: 'memory', href: '/dashboard/settings/memory', icon: BrainCircuit, title: hub.rows.memory.title, description: hub.rows.memory.description },
+    { id: 'tools', href: '/dashboard/tools', icon: Wrench, title: hub.rows.tools.title, description: hub.rows.tools.description },
+    { id: 'library', href: '/dashboard/library', icon: LibraryBig, title: hub.rows.library.title, description: hub.rows.library.description },
+    { id: 'templates', href: '/dashboard/templates', icon: LayoutTemplate, title: hub.rows.templates.title, description: hub.rows.templates.description },
+    ...(process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED === 'true'
+      ? [{ id: 'referral', href: '/dashboard/settings/referral', icon: Gift, title: hub.rows.referral.title, description: hub.rows.referral.description }]
+      : []),
+  ];
+  const appRows: LinkRowItem[] = [
+    { id: 'applications', href: '/dashboard/settings/applications', icon: Download, title: hub.rows.applications.title, description: hub.rows.applications.description },
+    { id: 'help', href: '/dashboard/settings/help', icon: CircleHelp, title: hub.rows.help.title, description: hub.rows.help.description },
+  ];
+
+  const groups: SettingsGroupItem[] = [
+    // The native macOS shell renders its own account header on this route.
+    ...(nativeWorkspace && nativeOwner ? [] : [{
+      id: 'account',
+      heading: hub.groups.account,
+      content: (
+        <div className={styles.panel}>
+          {selfHosted ? (
+            // Self-host has no profile or security management to promise.
+            <ControlRow
+              id="account-profile"
+              icon={UserRound}
+              title={profile.selfHostTitle}
+              description={signedInDescription ?? profile.selfHostFallback}
+            >
+              <SelfHostSignOutButton
+                labels={{ signOut: profile.signOut, signingOut: profile.signingOut, failed: profile.signOutFailed }}
+              />
+            </ControlRow>
+          ) : (
+            <ControlRow
+              id="account-profile"
+              icon={UserRound}
+              title={profile.title}
+              description={signedInDescription ?? profile.fallback}
+              className={styles.accountRow}
+            >
+              <div className={styles.accountControl}><UserButton /></div>
+            </ControlRow>
+          )}
+        </div>
+      ),
+    }]),
+    ...(!selfHosted ? [{ id: 'billing', heading: hub.groups.billing, content: <LinkRows items={billingRows} /> }] : []),
+    { id: 'connections', heading: hub.groups.connections, content: <LinkRows items={connectionRows} /> },
+    { id: 'toolkit', heading: hub.groups.toolkit, content: <LinkRows items={toolkitRows} /> },
+    {
+      id: 'device',
+      heading: hub.groups.device,
+      content: (
+        <div className={styles.panel}>
+          <ControlRow id="theme" icon={Palette} title={settingsCopy.theme.label} description={settingsCopy.theme.description} className={styles.fixedControlRow}>
+            <div role="group" aria-labelledby="theme-label" aria-describedby="theme-description" className={styles.segmented}>
+              {themes.map(({ id, label, icon: Icon }) => (
+                <button key={id} type="button" onClick={() => setTheme(id)} aria-pressed={theme === id}>
+                  <Icon size={14} aria-hidden="true" />{label}
+                </button>
+              ))}
+            </div>
+          </ControlRow>
+          <ControlRow id="language" icon={Languages} title={settingsCopy.language.label} description={settingsCopy.language.description} className={styles.fixedControlRow}>
+            <div className={styles.languageControl}><LanguageSwitcher /></div>
+          </ControlRow>
+        </div>
+      ),
+      note: hub.motionNote,
+    },
+    { id: 'apps', heading: hub.groups.apps, content: <LinkRows items={appRows} /> },
+    {
+      id: 'reset',
+      heading: hub.groups.reset,
+      content: (
+        <div className={styles.panel}>
+          <ControlRow id="cache" icon={Eraser} title={settingsCopy.clearCache.label} description={settingsCopy.clearCache.description}>
+            <button
+              type="button"
+              onClick={handleClearCache}
+              aria-describedby="cache-description"
+              data-armed={clearCacheArmed ? 'true' : undefined}
+              className={styles.resetButton}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              {clearCacheArmed ? hub.clearCacheConfirm : settingsCopy.clearCache.action}
+            </button>
+            <span role="status" className="sr-only">{clearCacheArmed ? hub.clearCacheArmed : ''}</span>
+          </ControlRow>
+        </div>
+      ),
+    },
   ];
 
   return (
-    <DashboardPageShell maxWidth={1000} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
+    <DashboardPageShell maxWidth={824} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
       <div className={styles.page}>
         <header className={styles.header}>
-          <h1 className={styles.title}>
-            {settingsCopy.titlePrefix}{settingsCopy.titleSeparator}
-            <em>{settingsCopy.titleEmphasis}</em>{settingsCopy.titleSuffix}
-          </h1>
-          <p className={styles.intro}>{settingsCopy.intro}</p>
+          <h1 className={styles.title}>{hub.title}<span aria-hidden="true">{settingsCopy.titleSuffix}</span></h1>
+          <p className={styles.intro}>{hub.intro}</p>
         </header>
 
-        <nav aria-label="Settings destinations" className={styles.destinations}>
-          {destinations.map(({ href, label, description, icon: Icon }) => (
-            <Link key={href} href={href} className={styles.destination}>
-              <Icon size={17} aria-hidden="true" />
-              <span><strong>{label}</strong><small>{description}</small></span>
-              <ChevronRight size={14} aria-hidden="true" />
-            </Link>
-          ))}
-        </nav>
-
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants} className={styles.sections}>
-          <motion.section variants={sectionVariants} aria-labelledby="appearance-heading">
-            <h2 id="appearance-heading" className={styles.sectionHeading}>{settingsCopy.sections.appearance}</h2>
-            <div className={styles.panel}>
-              <div className={styles.themeRow}>
-                <div>
-                  <span id="theme-label" className={styles.label}>{settingsCopy.theme.label}</span>
-                  <p id="theme-description" className={styles.description}>{settingsCopy.theme.description}</p>
-                </div>
-                <div role="group" aria-labelledby="theme-label" aria-describedby="theme-description" className={styles.themeChoices}>
-                  {themes.map(({ id, label, icon: Icon }) => (
-                    <button key={id} type="button" onClick={() => setTheme(id)} aria-pressed={theme === id}>
-                      <Icon size={14} aria-hidden="true" />{label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className={styles.preferenceRow + ' ' + styles.languageRow}>
-                <div>
-                  <span className={styles.label}>{settingsCopy.language.label}</span>
-                  <p className={styles.description}>{settingsCopy.language.description}</p>
-                </div>
-                <div className={styles.languageControl}><LanguageSwitcher /></div>
-              </div>
-              <PreferenceSwitch id="reduced-motion" {...settingsCopy.reducedMotion} checked={settings.reducedMotion} onChange={() => updateSettings({ reducedMotion: !settings.reducedMotion })} />
-            </div>
-          </motion.section>
-
-          <motion.section variants={sectionVariants} aria-labelledby="chat-preferences-heading">
-            <h2 id="chat-preferences-heading" className={styles.sectionHeading}>{settingsCopy.sections.chatInterface}</h2>
-            <div className={styles.panel}>
-              <PreferenceSwitch id="auto-scroll" {...settingsCopy.autoScroll} checked={settings.enableChatAutoScroll} onChange={() => updateSettings({ enableChatAutoScroll: !settings.enableChatAutoScroll })} />
-              <PreferenceSwitch id="streaming-animations" {...settingsCopy.streamingAnimations} checked={settings.enableStreamingAnimations} onChange={() => updateSettings({ enableStreamingAnimations: !settings.enableStreamingAnimations })} />
-              <PreferenceSwitch id="ai-reasoning" {...settingsCopy.aiReasoning} checked={settings.expandThinkingBlocks} onChange={() => updateSettings({ expandThinkingBlocks: !settings.expandThinkingBlocks })} />
-            </div>
-          </motion.section>
-
-          <motion.section variants={sectionVariants} aria-labelledby="memory-heading">
-            <h2 id="memory-heading" className={styles.sectionHeading}>Shared agent memory</h2>
-            <Link href="/dashboard/settings/memory" className={styles.destination}>
-              <BrainCircuit size={18} aria-hidden="true" />
-              <span><strong>What all your agents should know</strong><small>Set account-wide context that every new agent starts with. Per-agent memory stays private.</small></span>
-              <ChevronRight size={16} aria-hidden="true" />
-            </Link>
-          </motion.section>
-
-          {process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED === 'true' && (
-            <motion.section variants={sectionVariants} aria-labelledby="referral-heading">
-              <h2 id="referral-heading" className={styles.sectionHeading}>Invite &amp; Earn</h2>
-              <Link href="/dashboard/settings/referral" className={styles.destination}>
-                <Gift size={18} aria-hidden="true" />
-                <span><strong>Invite people, earn credits</strong><small>Share your link. When someone you invite gets going, you both get credits.</small></span>
-                <ChevronRight size={16} aria-hidden="true" />
-              </Link>
+          {groups.map(({ id, heading, content, note }) => (
+            <motion.section key={id} variants={sectionVariants} aria-labelledby={`settings-group-${id}`} className={styles.group}>
+              {/* Unnumbered: these groups are not steps, and the set differs between hosted, self-host and the native shell. */}
+              <h2 id={`settings-group-${id}`} className={styles.groupHeading}>{heading}</h2>
+              {content}
+              {note ? <p className={styles.groupNote}>{note}</p> : null}
             </motion.section>
-          )}
-
-          <details className={styles.moreTools}>
-            <summary>More tools</summary>
-            <nav aria-label="More settings tools" className={styles.toolLinks}>
-              <Link href="/dashboard/tools">Tools &amp; capabilities<ChevronRight size={14} aria-hidden="true" /></Link>
-              <Link href="/dashboard/library">{copy.dashboard.nav.promptLibrary}<ChevronRight size={14} aria-hidden="true" /></Link>
-              <Link href="/dashboard/templates">Templates<ChevronRight size={14} aria-hidden="true" /></Link>
-              {!selfHosted && <Link href="/dashboard/wallet">{copy.dashboard.nav.wallet}<ChevronRight size={14} aria-hidden="true" /></Link>}
-            </nav>
-          </details>
-
-          <motion.section variants={sectionVariants} aria-labelledby="danger-heading">
-            <h2 id="danger-heading" className={styles.sectionHeading + ' ' + styles.dangerHeading}><ShieldAlert size={14} aria-hidden="true" />{settingsCopy.sections.dangerZone}</h2>
-            <div className={styles.panel + ' ' + styles.dangerPanel}>
-              <div className={styles.preferenceRow + ' ' + styles.cacheRow}>
-                <div>
-                  <span className={styles.label}>{settingsCopy.clearCache.label}</span>
-                  <p id="cache-description" className={styles.description}>{settingsCopy.clearCache.description}</p>
-                </div>
-                <button type="button" onClick={clearCacheAndReload} aria-describedby="cache-description" className={styles.dangerButton}>
-                  <Trash2 size={13} aria-hidden="true" />{settingsCopy.clearCache.action}
-                </button>
-              </div>
-            </div>
-          </motion.section>
+          ))}
         </motion.div>
       </div>
     </DashboardPageShell>

@@ -1,15 +1,11 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { HOSTED_MACHINES } from "@/lib/subscription/hosted-ladder";
 import styles from "./pricing.module.css";
 
-// Owner-approved relaunch offer. This is public-site copy, not the billing or
-// allocation contract. Managed capacity and billing require separate acceptance.
-export const HOSTED_MACHINES = [
-  { name: "Starter", price: "$9.99", ram: "4 GB", cpu: "2", storage: "40 GB", computers: "1", windows: false, support: "Standard", body: "One machine, always awake. Enough for an agent that works while you don't." },
-  { name: "Pro", price: "$19.99", ram: "8 GB", cpu: "4", storage: "160 GB", computers: "3", windows: true, support: "Standard", body: "Three machines means the coding agent, the research agent and the half-finished experiment all get their own room.", popular: true },
-  { name: "Studio", price: "$49", ram: "16 GB", cpu: "8", storage: "320 GB", computers: "Unlimited", windows: true, support: "Priority", body: "Spin one up for a project on Monday. Delete it on Friday. Nobody has to order hardware." },
-  { name: "Max", price: "$99", ram: "32 GB", cpu: "12", storage: "640 GB", computers: "Unlimited", windows: true, support: "Priority", body: "For when the job is genuinely big." },
-] as const;
+// The ladder data lives in lib/subscription/hosted-ladder.ts so the billing
+// page's "planned sizes" strip reads the same numbers as this public preview.
+export { HOSTED_MACHINES };
 
 export default function PricingSection() {
   return <section id="pricing" className={styles.pricing} aria-labelledby="pricing-heading">

@@ -10,7 +10,7 @@ function SettingsProbe() {
   return (
     <div>
       <span data-testid="loaded">{String(isLoaded)}</span>
-      <span data-testid="enable-streaming">{String(settings.enableStreamingAnimations)}</span>
+      <span data-testid="session-expiry">{String(settings.sessionExpiryHours)}</span>
     </div>
   );
 }
@@ -59,7 +59,7 @@ describe('useSettings', () => {
     }).not.toThrow();
 
     expect(screen.getByTestId('loaded')).toHaveTextContent('true');
-    expect(screen.getByTestId('enable-streaming')).toHaveTextContent(String(DEFAULT_SETTINGS.enableStreamingAnimations));
+    expect(screen.getByTestId('session-expiry')).toHaveTextContent(String(DEFAULT_SETTINGS.sessionExpiryHours));
     expect(errorSpy).toHaveBeenCalledWith(
       '[use-settings] Failed to load Hivra settings from localStorage',
       expect.objectContaining({ name: 'SyntaxError' }),
@@ -116,6 +116,38 @@ describe('useSettings', () => {
       configurable: true,
       value: originalLocation,
     });
+  });
+
+  // Settings describes this action as clearing cached dashboard data and saved
+  // layout choices such as terminal tabs, and deliberately says nothing about
+  // dismissed notices. This pins the storage behaviour that copy relies on.
+  it('clears the saved layout the Settings copy promises and not the notices it no longer mentions', () => {
+    localStorage.setItem('hermes_terminal_workspace_inst_123', '{"tabs":[]}');
+    localStorage.setItem('dashboard_usage_user_123', '{}');
+    localStorage.setItem('hivra_standing_tasks_nudge_dismissed', '1');
+    localStorage.setItem('hermes:onboarding_checklist_dismissed', '1');
+    localStorage.setItem('theme', 'dark');
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, reload: jest.fn() },
+    });
+
+    try {
+      render(<SettingsActionsProbe />);
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /clear cache/i }));
+
+      expect(localStorage.getItem('hermes_terminal_workspace_inst_123')).toBeNull();
+      expect(localStorage.getItem('dashboard_usage_user_123')).toBeNull();
+      expect(localStorage.getItem('hivra_standing_tasks_nudge_dismissed')).toBe('1');
+      expect(localStorage.getItem('hermes:onboarding_checklist_dismissed')).toBe('1');
+      expect(localStorage.getItem('theme')).toBe('dark');
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    }
   });
 
   it('clears the pending cloud sync timer on unmount', () => {

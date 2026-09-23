@@ -30,9 +30,13 @@ describe("UpgradePaywallModal", () => {
         <UpgradePaywallModal feature={feature} currentPlan="free" onClose={jest.fn()} />
       );
 
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
-      expect(screen.getByText(title)).toBeInTheDocument();
-      expect(screen.getByText(/free: not included · pro \(\$9\.99\/mo\): included/i)).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: title })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+      // Free vs Pro comparison, one row each.
+      expect(screen.getByText("Free").nextElementSibling).toHaveTextContent("Not included");
+      expect(screen.getByText("Pro · $9.99/mo").nextElementSibling).toHaveTextContent(
+        /included · 2 vCPU total · 3 agents/i
+      );
       expect(screen.getByRole("link", { name: /upgrade to pro, \$9\.99\/mo/i })).toHaveAttribute(
         "href",
         `/dashboard/billing?from=paywall&feature=${feature}`
@@ -105,9 +109,7 @@ describe("UpgradePaywallModal", () => {
 
   it("dismisses quietly via Not now, the X button, and the backdrop — but not card clicks", () => {
     const onClose = jest.fn();
-    const { container } = render(
-      <UpgradePaywallModal feature="memory" currentPlan="free" onClose={onClose} />
-    );
+    render(<UpgradePaywallModal feature="memory" currentPlan="free" onClose={onClose} />);
 
     fireEvent.click(screen.getByRole("button", { name: /not now/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -120,7 +122,26 @@ describe("UpgradePaywallModal", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
 
     // Clicking the backdrop does.
-    fireEvent.click(container.firstChild as Element);
+    fireEvent.click(screen.getByRole("presentation"));
     expect(onClose).toHaveBeenCalledTimes(3);
+
+    // So does Escape.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(4);
+  });
+
+  it("renders through a body portal so the dashboard header and bottom bar cannot cover it", () => {
+    const { container } = render(
+      <UpgradePaywallModal feature="browser" currentPlan="free" onClose={jest.fn()} />
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(container).not.toContainElement(dialog);
+    expect(dialog.closest("[data-hermes-portal-root]")).not.toBeNull();
+  });
+
+  it("names the X button exactly 'Close' and keeps 'Not now' a real button", () => {
+    render(<UpgradePaywallModal feature="cron" currentPlan="free" onClose={jest.fn()} />);
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Not now" })).toHaveAttribute("type", "button");
   });
 });

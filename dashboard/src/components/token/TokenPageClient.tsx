@@ -24,8 +24,8 @@ export default function TokenPageClient() {
         <p className="mono" style={{ fontSize: 11 }}>CURRENT ACCESS</p>
         <h2 id="access-title">Existing holder access</h2>
         <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>
-        <p>Open Billing &amp; Access to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
-        <Link href="/dashboard/billing">Open Billing &amp; Access</Link>
+        <p>Open Billing to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
+        <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
       <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>

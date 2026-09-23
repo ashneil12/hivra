@@ -17,6 +17,10 @@ const eslintConfig = defineConfig([
     ".jest-cache/**",
     ".vercel/**",
     "next-env.d.ts",
+    // Staged by scripts/stage-litepaper.mjs (predev/prebuild) from the
+    // reviewed root litepaper source, including minified vendor bundles.
+    // Gitignored generated output; not dashboard source.
+    "public/docs/litepaper/**",
     "**/*.bak",
     "**/eslint-errors.txt",
     "**/eslint_output.txt",

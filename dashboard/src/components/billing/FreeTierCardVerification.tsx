@@ -3,8 +3,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe, type StripeElementsOptions } from "@stripe/stripe-js";
-import { AlertTriangle, CheckCircle2, CreditCard, Loader2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 
+import { BillingDialog, billingDialogStyles as styles } from "@/components/billing/BillingDialog";
 import { DEFAULT_CARD_REQUIRED_MESSAGE } from "@/lib/billing/card-required";
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
@@ -18,6 +19,31 @@ type SetupIntentResponse = {
   };
   error?: unknown;
 };
+
+/**
+ * Stripe's card form lives in an iframe that cannot read the dashboard's CSS
+ * variables, so its appearance is resolved from the live tokens once the form
+ * is created: light or dark to match the dashboard, square corners, ink text.
+ */
+function stripeAppearance(): NonNullable<StripeElementsOptions["appearance"]> {
+  const root = typeof document !== "undefined" ? document.documentElement : null;
+  const token = (name: string, fallback: string) => {
+    if (!root || typeof getComputedStyle !== "function") return fallback;
+    return getComputedStyle(root).getPropertyValue(name).trim() || fallback;
+  };
+  const dark = Boolean(root?.classList.contains("dark"));
+  return {
+    theme: dark ? "night" : "stripe",
+    variables: {
+      colorPrimary: token("--ink-black", dark ? "#fdfcf9" : "#111111"),
+      colorText: token("--ink-black", dark ? "#fdfcf9" : "#111111"),
+      colorBackground: token("--bg-surface", dark ? "#141414" : "#ffffff"),
+      colorDanger: token("--red", "#dc2626"),
+      borderRadius: "0px",
+      fontFamily: "system-ui, sans-serif",
+    },
+  };
+}
 
 interface FreeTierCardVerificationProps {
   open: boolean;
@@ -94,134 +120,42 @@ export function FreeTierCardVerification({
 
     return {
       clientSecret,
-      appearance: {
-        theme: "stripe",
-        variables: {
-          colorPrimary: "#111111",
-          colorText: "#111111",
-          colorDanger: "#dc2626",
-          borderRadius: "0px",
-          fontFamily: "Inter, system-ui, sans-serif",
-        },
-      },
+      appearance: stripeAppearance(),
     };
   }, [clientSecret]);
 
   if (!open) return null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="free-tier-card-verification-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 10000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "1rem",
-        background: "rgba(0,0,0,0.42)",
-        backdropFilter: "blur(8px)",
-      }}
+    <BillingDialog
+      icon={<CreditCard size={17} />}
+      eyebrow="Free plan"
+      title="Card verification required"
+      description={message || DEFAULT_CARD_REQUIRED_MESSAGE}
+      onClose={onClose}
+      // A stray tap outside must not throw away half-typed card details.
+      dismissOnBackdrop={false}
     >
-      <div
-        style={{
-          width: "min(100%, 520px)",
-          background: "var(--bg-surface)",
-          color: "var(--ink-black)",
-          border: "1px solid var(--etched-border)",
-          boxShadow: "0 24px 70px rgba(0,0,0,0.22)",
-          padding: "clamp(1.25rem, 4vw, 2rem)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--etched-border)",
-              flexShrink: 0,
-            }}
-          >
-            <CreditCard size={17} />
-          </div>
-
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <h2
-              id="free-tier-card-verification-title"
-              className="serif"
-              style={{ margin: 0, fontSize: "1.35rem", fontWeight: 700, lineHeight: 1.2 }}
-            >
-              Card verification required
-            </h2>
-            <p style={{ margin: "0.5rem 0 0", fontSize: 13, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-              {message || DEFAULT_CARD_REQUIRED_MESSAGE}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close card verification"
-            style={{
-              width: 34,
-              height: 34,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "1px solid var(--etched-border)",
-              background: "transparent",
-              color: "var(--ink-black)",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
-            <X size={15} />
-          </button>
+      {loading && (
+        <div className={styles.text} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Loader2 size={15} className={styles.spin} aria-hidden="true" />
+          Starting secure card verification...
         </div>
+      )}
 
-        <div style={{ marginTop: "1.5rem" }}>
-          {loading && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--text-secondary)" }}>
-              <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} />
-              Starting secure card verification...
-            </div>
-          )}
-
-          {error && (
-            <div
-              role="alert"
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 10,
-                border: "1px solid rgba(220,38,38,0.25)",
-                background: "rgba(220,38,38,0.06)",
-                padding: "0.85rem",
-                color: "#991b1b",
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {stripePromise && elementsOptions && (
-            <Elements stripe={stripePromise} options={elementsOptions}>
-              <FreeTierCardVerificationForm onVerified={onVerified} />
-            </Elements>
-          )}
+      {error && (
+        <div role="alert" className={styles.callout} data-tone="danger">
+          <AlertTriangle size={14} aria-hidden="true" />
+          <span>{error}</span>
         </div>
-      </div>
-    </div>
+      )}
+
+      {stripePromise && elementsOptions && (
+        <Elements stripe={stripePromise} options={elementsOptions}>
+          <FreeTierCardVerificationForm onVerified={onVerified} />
+        </Elements>
+      )}
+    </BillingDialog>
   );
 }
 
@@ -273,46 +207,22 @@ function FreeTierCardVerificationForm({
     setSubmitting(false);
   }
 
+  const disabled = !stripe || !elements || submitting;
+
   return (
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       <PaymentElement options={{ layout: "tabs" }} />
 
       {error && (
-        <div
-          role="alert"
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 10,
-            border: "1px solid rgba(220,38,38,0.25)",
-            background: "rgba(220,38,38,0.06)",
-            padding: "0.85rem",
-            color: "#991b1b",
-            fontSize: 12,
-            lineHeight: 1.5,
-          }}
-        >
-          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+        <div role="alert" className={styles.callout} data-tone="danger">
+          <AlertTriangle size={14} aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
       {verified && (
-        <div
-          role="status"
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 10,
-            border: "1px solid rgba(22,163,74,0.25)",
-            background: "rgba(22,163,74,0.06)",
-            padding: "0.85rem",
-            color: "#166534",
-            fontSize: 12,
-            lineHeight: 1.5,
-          }}
-        >
-          <CheckCircle2 size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+        <div role="status" className={styles.callout} data-tone="success">
+          <CheckCircle2 size={14} aria-hidden="true" />
           <span>
             {retryReady
               ? "Card verification is saved. If provisioning did not resume, retry deployment now."
@@ -323,32 +233,16 @@ function FreeTierCardVerificationForm({
 
       <button
         type={retryReady ? "button" : "submit"}
-        disabled={!stripe || !elements || submitting}
+        disabled={disabled}
+        aria-busy={submitting || undefined}
         onClick={retryReady ? () => void onVerified() : undefined}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 10,
-          width: "100%",
-          minHeight: 46,
-          border: "none",
-          background: "var(--btn-bg)",
-          color: "var(--btn-text)",
-          cursor: !stripe || !elements || submitting ? "not-allowed" : "pointer",
-          opacity: !stripe || !elements || submitting ? 0.65 : 1,
-          fontFamily: "var(--font-mono), monospace",
-          fontSize: 11,
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: "0.12em",
-        }}
+        className={`${styles.button} ${styles.primary} ${styles.block}`}
       >
-        {submitting && <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />}
+        {submitting && <Loader2 size={14} className={styles.spin} aria-hidden="true" />}
         {retryReady ? "Retry Deployment" : submitting ? "Verifying..." : "Verify Card"}
       </button>
 
-      <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: "var(--text-muted)" }}>
+      <p className={styles.fineprint}>
         This is a fraud-prevention card-on-file check for Free plan access. Crypto/token access does not
         require this card flow.
       </p>

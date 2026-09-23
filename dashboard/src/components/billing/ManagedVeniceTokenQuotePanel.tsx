@@ -1,24 +1,34 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, ArrowRight, CheckCircle, Copy, Loader2, RefreshCw, Sparkles, Wallet } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle, Loader2, RefreshCw, Sparkles, Wallet } from "lucide-react";
 
-import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { clientLog } from "@/lib/client/logger";
-import { LocalAddressQr } from "@/components/billing/LocalAddressQr";
 import { formatMicroUsd } from "@/components/billing/ManagedVeniceSubsidyBanner";
+import {
+  DepositAddressField,
+  OpenInWalletLink,
+  TOKEN_PAYMENT_FINALITY,
+  TransferAmountField,
+} from "@/components/billing/TransferDetails";
+import { hermesosTransferUri } from "@/lib/billing/eip681";
+import { displayTokenUnit } from "@/lib/billing/token-plan-prices";
 import {
   checkManagedVeniceHermesQuote,
   type ManagedVeniceTokenQuotePayload,
 } from "@/lib/billing/managed-venice-client";
+import styles from "./ManagedVeniceTokenQuotePanel.module.css";
 
+const GROUPED = /\B(?=(\d{3})+(?!\d))/g;
+
+// Exact decimal rendering of a raw token amount (BigInt only, no floats).
 function formatTokenAmount(rawValue: string, decimals: number, grouped = true) {
   const raw = BigInt(rawValue || "0");
   const scale = 10n ** BigInt(decimals);
   const whole = raw / scale;
   const fraction = raw % scale;
   const fractionText = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
-  const wholeText = grouped ? Number(whole).toLocaleString("en-US") : whole.toString();
+  const wholeText = grouped ? whole.toString().replace(GROUPED, ",") : whole.toString();
   return fractionText ? `${wholeText}.${fractionText}` : wholeText;
 }
 
@@ -44,8 +54,6 @@ export function ManagedVeniceTokenQuotePanel({
   onSettled?: () => void | Promise<void>;
   onContinue?: () => void;
 }) {
-  const [copiedAmount, setCopiedAmount] = useState(false);
-  const [copiedAddress, setCopiedAddress] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [pollMessage, setPollMessage] = useState(INITIAL_POLL_MESSAGE);
   const [polling, setPolling] = useState(false);
@@ -153,7 +161,6 @@ export function ManagedVeniceTokenQuotePanel({
   const countdown = `${String(Math.floor(remainingMs / 60000)).padStart(2, "0")}:${String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, "0")}`;
   const exactTokenAmount = formatTokenAmount(quote.tokenAmountRaw, quote.tokenDecimals, false);
   const displayTokenAmount = formatTokenAmount(quote.tokenAmountRaw, quote.tokenDecimals, true);
-  const borderColor = settled ? "#16a34a" : manualReview ? "#b3261e" : "#16a34a";
   const checking = polling || manualChecking;
 
   if (settled) {
@@ -163,114 +170,52 @@ export function ManagedVeniceTokenQuotePanel({
         : quote.creditValueMicroUsd;
 
     return (
-      <div
-        style={{
-          border: "1px solid #16a34a",
-          background: "linear-gradient(135deg, rgba(22,163,74,0.12), rgba(255, 44, 45,0.10))",
-          padding: "16px",
-          display: "grid",
-          gap: 14,
-          marginTop: 14,
-          boxShadow: "0 18px 40px rgba(22,163,74,0.10)",
-          animation: "managedVeniceConfirmedCard 680ms cubic-bezier(0.16, 1, 0.3, 1)",
-        }}
-      >
-        <style>{`
-          @keyframes managedVeniceConfirmedCard {
-            0% { transform: translateY(8px) scale(0.985); opacity: 0; }
-            100% { transform: translateY(0) scale(1); opacity: 1; }
-          }
-          @keyframes managedVeniceConfirmedPulse {
-            0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.35); }
-            70% { box-shadow: 0 0 0 12px rgba(22, 163, 74, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
-          }
-        `}</style>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#16a34a" }}>
-            <span
-              style={{
-                width: 30,
-                height: 30,
-                border: "1px solid #16a34a",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                animation: "managedVeniceConfirmedPulse 1.6s ease-out 1",
-              }}
-            >
+      <div className={styles.settled}>
+        <div className={styles.settledHead}>
+          <div className={styles.settledTitle}>
+            <span className={styles.settledIcon} aria-hidden="true">
               <CheckCircle size={17} />
             </span>
             <div>
-              <div className="mono" style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.13em" }}>
+              <div className="mono" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em" }}>
                 Payment confirmed
               </div>
-              <p style={{ margin: "3px 0 0", fontSize: 12.5, color: "var(--text-secondary)" }}>
-                Managed Venice credits are active.
-              </p>
+              <p className={styles.settledCopy}>Managed Venice credits are active.</p>
             </div>
           </div>
-          <span className="mono" style={{ fontSize: 10, color: "#16a34a", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            Ready to deploy
-          </span>
+          <span className={styles.statusLabel}>Ready to deploy</span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-          <div style={{ border: "1px solid rgba(22,163,74,0.28)", background: "rgba(255,255,255,0.04)", padding: "11px 12px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-              <Wallet size={13} style={{ color: "#16a34a" }} />
-              <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.62, fontWeight: 800 }}>
-                Wallet balance
-              </span>
-            </div>
-            <strong style={{ fontSize: 20 }}>{formatMicroUsd(balanceMicroUsd, 4)}</strong>
+        <div className={styles.tiles}>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>
+              <Wallet size={13} aria-hidden="true" />
+              Wallet balance
+            </span>
+            <strong className={styles.tileValue}>{formatMicroUsd(balanceMicroUsd, 4)}</strong>
           </div>
-          <div style={{ border: "1px solid rgba(255, 44, 45,0.35)", background: "rgba(255, 44, 45,0.08)", padding: "11px 12px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-              <Sparkles size={13} style={{ color: "var(--gold-leaf)" }} />
-              <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", opacity: 0.62, fontWeight: 800 }}>
-                Credits added
-              </span>
-            </div>
-            <strong style={{ fontSize: 20 }}>{formatMicroUsd(quote.creditValueMicroUsd, 2)}</strong>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>
+              <Sparkles size={13} aria-hidden="true" />
+              Credits added
+            </span>
+            <strong className={styles.tileValue}>{formatMicroUsd(quote.creditValueMicroUsd, 2)}</strong>
             {quote.bonusValueMicroUsd > 0 && (
-              <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--text-secondary)" }}>
-                Includes {formatMicroUsd(quote.bonusValueMicroUsd, 2)} bonus
-              </p>
+              <p className={styles.tileNote}>Includes {formatMicroUsd(quote.bonusValueMicroUsd, 2)} bonus</p>
             )}
           </div>
         </div>
 
         {quote.transactionHash && (
-          <p className="mono" style={{ margin: 0, fontSize: 10, opacity: 0.58, wordBreak: "break-all" }}>
+          <p className={`notranslate ${styles.txHash}`} translate="no">
             Confirmed on Base: {quote.transactionHash}
           </p>
         )}
 
         {onContinue && (
-          <button
-            type="button"
-            onClick={onContinue}
-            style={{
-              justifySelf: "start",
-              border: "none",
-              background: "var(--btn-bg)",
-              color: "var(--btn-text)",
-              padding: "10px 14px",
-              cursor: "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              fontFamily: "var(--font-mono), monospace",
-              fontSize: 10,
-              fontWeight: 900,
-              textTransform: "uppercase",
-              letterSpacing: "0.12em",
-            }}
-          >
+          <button type="button" onClick={onContinue} className={styles.continueButton}>
             Continue to deploy setup
-            <ArrowRight size={13} />
+            <ArrowRight size={14} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -279,118 +224,87 @@ export function ManagedVeniceTokenQuotePanel({
 
   if (quoteClosed) {
     return (
-      <div style={{ border: "1px solid #b3261e", padding: "14px 16px", display: "grid", gap: 10, marginTop: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#b3261e" }}>
-          <AlertCircle size={14} />
-          <span className="mono" style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            Quote closed
-          </span>
-        </div>
-        <p role="status" style={{ margin: 0, fontSize: 12, color: "var(--text-secondary)" }}>
-          {QUOTE_CLOSED_MESSAGE}
-        </p>
+      <div className={styles.closed}>
+        <span className={styles.statusLabel} data-tone="danger">
+          <AlertCircle size={14} aria-hidden="true" />
+          Quote closed
+        </span>
+        <p role="status">{QUOTE_CLOSED_MESSAGE}</p>
       </div>
     );
   }
 
+  // Only a live, payable quote gets a one-tap wallet link: never an expired
+  // rate window or a transfer that is already waiting for review.
+  const walletHref =
+    !expired && !manualReview
+      ? hermesosTransferUri({
+          tokenSymbol: quote.tokenSymbol,
+          tokenDecimals: quote.tokenDecimals,
+          depositAddress: quote.depositAddress,
+          amountRaw: quote.tokenAmountRaw,
+        })
+      : null;
+  const tone = manualReview ? "danger" : undefined;
+
   return (
-    <div style={{ border: `1px solid ${borderColor}`, padding: "14px 16px", display: "grid", gap: 14, marginTop: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: borderColor }}>
-          {polling && !settled ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle size={14} />}
-          <span className="mono" style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            {settled ? "Payment confirmed" : manualReview ? "Review needed" : "Rate locked"}
-          </span>
-        </div>
-        <span className="mono" style={{ fontSize: 10, color: settled ? "#16a34a" : expired ? "#b3261e" : "#16a34a" }}>
-          {settled ? "Confirmed" : expired ? "Rate window ended" : `Expires in ${countdown}`}
+    <div className={styles.panel} data-tone={tone}>
+      <div className={styles.statusRow}>
+        <span className={styles.statusLabel} data-tone={tone}>
+          {polling ? (
+            <Loader2 size={14} className={styles.spin} aria-hidden="true" />
+          ) : manualReview ? (
+            <AlertCircle size={14} aria-hidden="true" />
+          ) : (
+            <CheckCircle size={14} aria-hidden="true" />
+          )}
+          {manualReview ? "Review needed" : "Rate locked"}
+        </span>
+        <span className={`notranslate ${styles.countdown}`} translate="no" data-tone={expired ? "danger" : undefined}>
+          {expired ? "Rate window ended" : `Expires in ${countdown}`}
         </span>
       </div>
 
-      <div>
-        <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", opacity: 0.55, fontWeight: 700 }}>
-          Send exactly
-        </span>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-          <span className="serif" style={{ fontSize: "1.55rem", fontWeight: 700 }}>
-            {displayTokenAmount} <span style={{ fontSize: "0.95rem", opacity: 0.7 }}>{quote.tokenSymbol}</span>
-          </span>
-          <button
-            type="button"
-            onClick={async () => {
-              const ok = await copyTextToClipboard(exactTokenAmount);
-              if (!ok) return;
-              setCopiedAmount(true);
-              window.setTimeout(() => setCopiedAmount(false), 1400);
-            }}
-            style={{ padding: "5px 9px", border: "1px solid var(--etched-border)", background: "transparent", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "var(--font-mono), monospace", fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}
-          >
-            {copiedAmount ? <CheckCircle size={11} /> : <Copy size={11} />}
-            {copiedAmount ? "Copied" : "Copy"}
-          </button>
-        </div>
-        <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-secondary)" }}>
-          Pay {formatMicroUsd(quote.paidValueMicroUsd, 2)} at ${quote.snapshotPriceUsd} per token; we credit {formatMicroUsd(quote.creditValueMicroUsd, 2)}
-          {quote.bonusValueMicroUsd > 0 ? ` including ${formatMicroUsd(quote.bonusValueMicroUsd, 2)} bonus` : ""}. Send one Base transfer.
+      <TransferAmountField
+        label="Send exactly"
+        amount={displayTokenAmount}
+        unit={displayTokenUnit(quote.tokenSymbol)}
+        copyValue={exactTokenAmount}
+        copyTitle="Copies the exact amount without separators, ready to paste into a wallet"
+      >
+        Pay {formatMicroUsd(quote.paidValueMicroUsd, 2)} at ${quote.snapshotPriceUsd} per token; we credit {formatMicroUsd(quote.creditValueMicroUsd, 2)}
+        {quote.bonusValueMicroUsd > 0 ? ` including ${formatMicroUsd(quote.bonusValueMicroUsd, 2)} bonus` : ""}. Send one Base transfer.{" "}
+        <strong>{TOKEN_PAYMENT_FINALITY}</strong>
+      </TransferAmountField>
+
+      <DepositAddressField
+        label="Deposit address · Base network"
+        address={quote.depositAddress}
+        qrLabel="Managed Venice deposit address QR code"
+      />
+
+      <OpenInWalletLink href={walletHref} />
+
+      <div className={styles.verifyRow}>
+        <p role="status" className={styles.pollMessage}>
+          {expired
+            ? "The rate window has ended. If you already sent the exact transfer, we are still checking it here; otherwise start a fresh quote."
+            : pollMessage}
         </p>
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <p role="status" style={{ margin: 0, fontSize: 12, color: settled ? "#16a34a" : "var(--text-secondary)", flex: "1 1 260px" }}>
-            {settled
-              ? "Payment confirmed. You can continue with deployment."
-              : expired
-                ? "The rate window has ended. If you already sent the exact transfer, we are still checking it here; otherwise start a fresh quote."
-                : pollMessage}
-          </p>
-          <button
-            type="button"
-            onClick={() => void checkQuote({ manual: true })}
-            disabled={checking}
-            style={{
-              border: "1px solid var(--etched-border)",
-              background: checking ? "rgba(255, 44, 45,0.08)" : "transparent",
-              color: "var(--ink-black)",
-              padding: "8px 10px",
-              cursor: checking ? "wait" : "pointer",
-              opacity: checking ? 0.72 : 1,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              fontFamily: "var(--font-mono), monospace",
-              fontSize: 9,
-              fontWeight: 900,
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-            }}
-          >
-            {checking ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={12} />}
-            {checking ? "Checking..." : "Verify payment"}
-          </button>
-        </div>
-      </div>
-
-      <div style={{ border: "1px solid var(--etched-border)", padding: "0.75rem", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <LocalAddressQr address={quote.depositAddress} size={124} label="Managed Venice deposit address QR code" />
-        <div style={{ flex: "1 1 230px", minWidth: 0, display: "grid", gap: 8 }}>
-          <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.14em", opacity: 0.55, fontWeight: 700 }}>
-            Deposit address
-          </span>
-          <code className="mono" style={{ fontSize: 12, wordBreak: "break-all" }}>
-            {quote.depositAddress}
-          </code>
-          <button
-            type="button"
-            onClick={async () => {
-              const ok = await copyTextToClipboard(quote.depositAddress);
-              if (!ok) return;
-              setCopiedAddress(true);
-              window.setTimeout(() => setCopiedAddress(false), 1400);
-            }}
-            style={{ justifySelf: "start", padding: "5px 9px", border: "1px solid var(--etched-border)", background: "transparent", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "var(--font-mono), monospace", fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}
-          >
-            {copiedAddress ? <CheckCircle size={11} /> : <Copy size={11} />}
-            {copiedAddress ? "Copied" : "Copy address"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void checkQuote({ manual: true })}
+          disabled={checking}
+          aria-busy={checking || undefined}
+          className={styles.verifyButton}
+        >
+          {checking ? (
+            <Loader2 size={13} className={styles.spin} aria-hidden="true" />
+          ) : (
+            <RefreshCw size={13} aria-hidden="true" />
+          )}
+          {checking ? "Checking..." : "Verify payment"}
+        </button>
       </div>
     </div>
   );

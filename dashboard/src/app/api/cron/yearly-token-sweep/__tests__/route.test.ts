@@ -57,7 +57,14 @@ jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: (...args: unknown[]) => mockReportOpsEvent(...args),
 }));
 
+// The instance side of a settled payment (tier change + resume) is unit-tested
+// in yearly-activation.test.ts; here we only check the sweep hands it over.
+jest.mock("@/lib/billing/yearly-activation", () => ({
+  applyYearlyPaymentToInstances: jest.fn(async () => undefined),
+}));
+
 import { GET } from "../route";
+import { applyYearlyPaymentToInstances } from "@/lib/billing/yearly-activation";
 
 const REQUIRED = 1_000n * 10n ** 18n;
 const originalFetch = global.fetch;
@@ -136,6 +143,7 @@ describe("YR-1: activation and sweep use the quote's credit_deposit wallet", () 
     ]);
     expect(world.chain.balanceOf(TEST_DEPOSIT_ADDRESS)).toBe(0n);
     expect(world.chain.balanceOf(TEST_TREASURY_ADDRESS)).toBe(REQUIRED);
+    expect(applyYearlyPaymentToInstances).toHaveBeenCalledWith(TEST_USER_ID, "activated");
   });
 
   it("sweeps only the subscription's own amount when the shared wallet also holds a managed-Venice deposit", async () => {
@@ -258,6 +266,7 @@ describe("YR-3: a renewal payment is credited", () => {
     expect(Date.parse(String(live[0].expires_at))).toBe(Date.parse(currentEnd) + YEAR_MS);
     expect(world.subscriptions().find((row) => row.id === "ys_current")).toMatchObject({ status: "renewed" });
     expect(world.quote("yq_1")).toMatchObject({ status: "consumed" });
+    expect(applyYearlyPaymentToInstances).toHaveBeenCalledWith(TEST_USER_ID, "renewed");
   });
 
   it("runs a renewal paid during grace for a year from the payment", async () => {

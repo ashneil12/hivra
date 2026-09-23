@@ -1,0 +1,99 @@
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 0.6rem;
+}
+
+.choice {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  min-height: 88px;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.choice:hover {
+  border-color: color-mix(in srgb, var(--ink-black) 30%, transparent);
+}
+
+.choice[aria-pressed='true'] {
+  border-color: var(--ink-black);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 2px 0 var(--hivra-red);
+}
+
+.choiceHead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.choiceBody {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.refreshGroup {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  min-width: 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.badge[data-tone='success'] {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+  color: var(--skills-success-text);
+}
+
+.choice:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+@container billing-dialog (max-width: 440px) {
+  .refreshGroup {
+    width: 100%;
+  }
+
+  .refreshGroup > button {
+    flex: 1 1 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .choice {
+    transition: none;
+  }
+}

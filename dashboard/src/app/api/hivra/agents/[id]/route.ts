@@ -67,6 +67,8 @@ import {
   type HivraPrivateAccessAgentRow,
 } from "@/lib/hivra/tailscale-private-access";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
+import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import {
   recordCollectorInstallResult,
   supportsNativeTracing,
@@ -389,6 +391,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         ...(sameOperation && latest.status === "provisioning" && readiness ? { readiness_stage: readiness } : {}),
         ...(sameOperation && latest.status === "provisioning" && power ? { power_stage: power } : {}),
         ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}) } });
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
+    if (agent.computer_substrate === "do-managed-session") {
+      // DigitalOcean sessions are observed through their own reconcile path;
+      // never pass them to the Proxmox poll, seed, or managed-fleet fallback.
+      const response = apiSuccess({ agent: sanitizeHivraAgentRow(agent) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
@@ -929,6 +938,20 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       .eq("user_id", userId)
       .single();
     if (!existingAgent) return apiError("Agent not found", 404);
+
+    if (existingAgent.computer_substrate === "do-managed-session") {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra_managed_session_lifecycle", userId, limit: 20, windowMs: 60_000 });
+      if (limited) return limited;
+      try {
+        const session = await managedSessionAction(userId, String(existingAgent.id), "delete");
+        const response = apiSuccess({ ok: session.status === "deleted", session });
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      } catch (error) {
+        return managedSessionFailure(error, "/api/hivra/agents/[id]");
+      }
+    }
 
     if (existingAgent.computer_substrate === "gvisor") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);

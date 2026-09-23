@@ -15,7 +15,7 @@ import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { isActiveComputeStatus } from "@/lib/hivra/resource-gate";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 
-import { calculateUsage } from "./helpers";
+import { calculateUsage, resolveBackupAddon } from "./helpers";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -90,7 +90,9 @@ export async function GET() {
 
     const { data: instances, error: instancesError } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, name, status, cpu_limit, ram_limit, disk_size_gb, disk_upgraded, backups_enabled")
+      .select(
+        "id, name, status, cpu_limit, ram_limit, disk_size_gb, disk_upgraded, backups_enabled, hetzner_server_id, proxmox_node, proxmox_vmid, resource_tier"
+      )
       .eq("user_id", userId)
       .not("status", "in", '("deleted")')
       // Exclude gone/cold-archived instances: they're routinely left at
@@ -176,6 +178,9 @@ export async function GET() {
         usedRam,
         totalRam,
         instances: mappedInstances,
+        // Whether the daily-backup add-on can be sold, by the same checks the
+        // backup-addon route makes, so the page never offers one it rejects.
+        backupAddon: resolveBackupAddon(sub, activeInstances),
       },
       credits,
     });

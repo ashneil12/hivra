@@ -1,0 +1,278 @@
+/*
+ * Small danger text needs AA contrast on light surfaces: the plain token
+ * (#ef4444 in light) is only ~3.8:1 on white, so text gets a darker mix.
+ * Borders keep the token.
+ */
+.panel,
+.closed {
+  --venice-danger-ink: color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black));
+}
+
+.panel {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+  margin-top: 14px;
+  padding: 0.95rem;
+  border: 1px solid var(--etched-border);
+  border-top: 2px solid var(--skills-success-text);
+  background: var(--bg-surface);
+}
+
+.panel[data-tone='danger'] {
+  border-top-color: var(--skills-danger-text);
+}
+
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+}
+
+.statusLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--skills-success-text);
+}
+
+.statusLabel[data-tone='danger'] {
+  color: var(--venice-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
+}
+
+.countdown {
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.countdown[data-tone='danger'] {
+  color: var(--venice-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
+}
+
+.verifyRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--etched-border);
+}
+
+.pollMessage {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.verifyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--ink-black) 24%, transparent);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.verifyButton:hover:not(:disabled) {
+  border-color: var(--ink-black);
+}
+
+.verifyButton:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.verifyButton:focus-visible,
+.continueButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+/* Settled */
+
+.settled {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 14px;
+  padding: 1rem;
+  border: 1px solid var(--skills-success-border);
+  border-top: 2px solid var(--skills-success-text);
+  background: var(--skills-success-bg);
+  animation: settledIn 180ms ease-out both;
+}
+
+.settledHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.settledTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--skills-success-text);
+}
+
+.settledIcon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--skills-success-border);
+  background: var(--bg-surface);
+}
+
+.settledCopy {
+  margin: 0.15rem 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 0.6rem;
+}
+
+.tile {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.tileLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.tileValue {
+  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-size: 1.3rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-black);
+}
+
+.tileNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.txHash {
+  margin: 0;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.continueButton {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.65rem 1.05rem;
+  border: 1px solid var(--ink-black);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* Closed */
+
+.closed {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 14px;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--skills-danger-border);
+  border-top: 2px solid var(--skills-danger-text);
+  background: var(--skills-danger-bg);
+}
+
+.closed p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes settledIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .verifyButton {
+    min-height: 44px;
+    flex: 1 1 100%;
+  }
+
+  .continueButton {
+    justify-self: stretch;
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settled {
+    animation: none;
+  }
+
+  .spin {
+    animation-duration: 2.4s;
+  }
+}

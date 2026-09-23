@@ -3,6 +3,7 @@ import {
   Activity,
   Bot,
   CircleHelp,
+  CreditCard,
   Download,
   LayoutDashboard,
   MonitorUp,
@@ -33,6 +34,17 @@ export type DashboardNavigationItem = {
   icon: LucideIcon;
   exactPaths?: readonly string[];
   routePrefixes?: readonly string[];
+  /**
+   * Routes under one of this item's prefixes that another item owns. Scoped to
+   * the item that declares it, so global prefix matching stays unchanged.
+   */
+  excludedPrefixes?: readonly string[];
+  /**
+   * Routes this item claims only in self-hosted (local auth) mode, where the
+   * hosted-only item that owns them is filtered out of the nav but the route
+   * stays reachable. Without this, those routes would highlight nothing.
+   */
+  selfHostRoutePrefixes?: readonly string[];
   /** Held back until the workspace shell rollout flag is enabled for this environment. */
   requiresWorkspaceShell?: boolean;
 };
@@ -75,6 +87,12 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
   },
 ];
 
+// Applications and Help live under /dashboard/settings for URL stability, but
+// each has its own utility item, so Settings must not also claim them.
+const APPLICATIONS_ROUTE = "/dashboard/settings/applications";
+const HELP_ROUTE = "/dashboard/settings/help";
+const WALLET_ROUTE = "/dashboard/wallet";
+
 export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] = [
   {
     id: "infrastructure",
@@ -90,19 +108,24 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     icon: Settings,
     routePrefixes: [
       "/dashboard/settings",
-      "/dashboard/wallet",
       "/dashboard/vault",
       "/dashboard/tools",
       "/dashboard/library",
       "/dashboard/templates",
     ],
+    excludedPrefixes: [APPLICATIONS_ROUTE, HELP_ROUTE],
+    // Billing owns the wallet, but self-host hides Billing while the wallet
+    // page (and its PWA shortcut) stays reachable, so Settings holds it there.
+    selfHostRoutePrefixes: [WALLET_ROUTE],
   },
   {
     id: "billing",
-    label: "Billing & Access",
+    label: "Billing",
     href: "/dashboard/billing",
-    icon: Settings,
-    routePrefixes: ["/dashboard/billing"],
+    icon: CreditCard,
+    // The wallet is where $HermesOS access is paid for and agent wallets are
+    // funded, so it belongs with Billing, not Settings.
+    routePrefixes: ["/dashboard/billing", WALLET_ROUTE],
   },
 ];
 
@@ -119,16 +142,16 @@ export const DASHBOARD_UTILITY_NAVIGATION: readonly DashboardNavigationItem[] = 
   {
     id: "applications",
     label: "Applications",
-    href: "/dashboard/settings/applications",
+    href: APPLICATIONS_ROUTE,
     icon: Download,
-    routePrefixes: ["/dashboard/settings/applications"],
+    routePrefixes: [APPLICATIONS_ROUTE],
   },
   {
     id: "help",
     label: "Help",
-    href: "/dashboard/settings/help",
+    href: HELP_ROUTE,
     icon: CircleHelp,
-    routePrefixes: ["/dashboard/settings/help"],
+    routePrefixes: [HELP_ROUTE],
   },
 ];
 
@@ -184,6 +207,7 @@ export function isDashboardNavigationItemActive(
   workspaceShellEnabled = false,
 ): boolean {
   if (!pathname) return false;
+  if (item.excludedPrefixes?.some((prefix) => matchesRoutePrefix(pathname, prefix))) return false;
 
   if (workspaceShellEnabled) {
     // Under the workspace shell, Home is the runtime home, so opening a runtime
@@ -212,5 +236,9 @@ export function isDashboardNavigationItemActive(
   }
 
   if (item.exactPaths?.includes(pathname)) return true;
-  return item.routePrefixes?.some((prefix) => matchesRoutePrefix(pathname, prefix)) ?? false;
+  if (item.routePrefixes?.some((prefix) => matchesRoutePrefix(pathname, prefix))) return true;
+  return Boolean(
+    item.selfHostRoutePrefixes?.some((prefix) => matchesRoutePrefix(pathname, prefix)) &&
+    isLocalAuthMode(),
+  );
 }

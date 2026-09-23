@@ -12,9 +12,10 @@
 // paywalls apart from pricing-page upgrades.
 
 import { useEffect } from "react";
-import { CalendarClock, Database, Globe, Layers, Lock, X } from "lucide-react";
+import { CalendarClock, Database, Globe, Layers, Lock } from "lucide-react";
 import posthog from "posthog-js";
 
+import { BillingDialog, billingDialogStyles as styles } from "@/components/billing/BillingDialog";
 import { PLANS, formatPrice } from "@/lib/subscription";
 
 export type PaywallFeature = "browser" | "memory" | "cron" | "agents" | "generic";
@@ -63,15 +64,6 @@ const FEATURE_CONTENT: Record<PaywallFeature, {
   },
 };
 
-const labelStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
-  fontSize: 9,
-  fontWeight: 700,
-  textTransform: "uppercase",
-  letterSpacing: "0.15em",
-  color: "var(--text-muted)",
-};
-
 function capture(event: string, properties: Record<string, unknown>) {
   try {
     posthog.capture(event, properties);
@@ -106,71 +98,18 @@ export function UpgradePaywallModal({
   }, [feature, currentPlan, surface]);
 
   return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(10, 10, 10, 0.55)",
-        display: "grid", placeItems: "center", padding: 16,
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={content.title}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "100%", maxWidth: 440,
-          border: "1px solid var(--ink-black)",
-          background: "var(--bg-surface)",
-          boxShadow: "4px 4px 0px var(--ink-black)",
-          position: "relative", padding: "2rem",
-        }}
-      >
-        {/* Gold bar */}
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "var(--gold-leaf)" }} />
-
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          style={{
-            position: "absolute", top: 14, right: 14,
-            border: "none", background: "transparent", cursor: "pointer",
-            color: "var(--text-muted)", padding: 4, display: "inline-flex",
-          }}
-        >
-          <X size={16} />
-        </button>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <span style={{ color: "var(--gold-leaf)", display: "inline-flex" }}>{content.icon}</span>
-          <span className="mono" style={labelStyle}>Pro feature</span>
-        </div>
-
-        <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, margin: "0 0 0.6rem", color: "var(--ink-black)" }}>
-          {content.title}
-        </h2>
-
-        <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 0.6rem" }}>
-          {content.body}
-        </p>
-        <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, fontStyle: "italic", margin: "0 0 1.1rem" }}>
-          {content.example}
-        </p>
-
-        {/* Plan comparison line */}
-        <div style={{
-          border: "1px solid var(--etched-border)", background: "var(--bg-elevated)",
-          padding: "9px 12px", marginBottom: "1.25rem",
-        }}>
-          <span className="mono" style={{ fontSize: 10, letterSpacing: "0.04em", color: "var(--text-secondary)", lineHeight: 1.6, display: "block" }}>
-            Free: not included · Pro ({PRO_PRICE}): included, {PLANS.operator.specs.cpu}, {PLANS.operator.specs.agents}
-          </span>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+    <BillingDialog
+      ariaLabel={content.title}
+      icon={content.icon}
+      eyebrow="Pro feature"
+      title={content.title}
+      size="sm"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className={styles.quiet} onClick={onClose}>
+            Not now
+          </button>
           <a
             href={`/dashboard/billing?from=paywall&feature=${feature}`}
             onClick={() => {
@@ -185,29 +124,29 @@ export function UpgradePaywallModal({
                 to_plan: "operator",
               });
             }}
-            className="mono"
-            style={{
-              width: "100%", boxSizing: "border-box", textAlign: "center",
-              padding: "12px 20px", textDecoration: "none",
-              background: "var(--ink-black)", color: "var(--bg-surface)",
-              border: "1px solid var(--ink-black)",
-              fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em",
-            }}
+            className={`mono ${styles.button} ${styles.primary}`}
           >
             Upgrade to Pro, {PRO_PRICE}
           </a>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              border: "none", background: "transparent", cursor: "pointer",
-              fontSize: 12, color: "var(--text-muted)", padding: 4,
-            }}
-          >
-            Not now
-          </button>
+        </>
+      }
+    >
+      <p className={styles.text}>{content.body}</p>
+      <p className={styles.example}>{content.example}</p>
+
+      {/* Plan comparison */}
+      <dl className={styles.ledger}>
+        <div className={styles.ledgerRow}>
+          <dt>Free</dt>
+          <dd>Not included</dd>
         </div>
-      </div>
-    </div>
+        <div className={styles.ledgerRow}>
+          <dt>Pro · {PRO_PRICE}</dt>
+          <dd>
+            Included · {PLANS.operator.specs.cpu} · {PLANS.operator.specs.agents}
+          </dd>
+        </div>
+      </dl>
+    </BillingDialog>
   );
 }

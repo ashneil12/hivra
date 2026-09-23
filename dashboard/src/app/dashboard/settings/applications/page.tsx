@@ -1,15 +1,15 @@
 import Link from 'next/link';
-import { ArrowUpRight, Monitor, Smartphone } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Monitor, Smartphone } from 'lucide-react';
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
 import { PwaInstallPrompt } from '@/components/pwa/PwaInstallPrompt';
 import styles from '../Settings.module.css';
 
 export default function ApplicationsPage() {
   return (
-    <DashboardPageShell maxWidth={900} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
+    <DashboardPageShell maxWidth={824} padding="clamp(1rem, 3vw, 2rem)" topPadding="clamp(1rem, 3vw, 2rem)">
       <div className={styles.page}>
         <header className={styles.header}>
-          <Link href="/dashboard/settings" className={styles.eyebrow}>Settings /</Link>
+          <Link href="/dashboard/settings" className={styles.backLink}><ArrowLeft size={14} aria-hidden="true" />Back to settings</Link>
           <h1 className={styles.title}>Applications<span aria-hidden="true">.</span></h1>
           <p className={styles.intro}>Keep your Hivra workspace close, on your computer or phone.</p>
         </header>

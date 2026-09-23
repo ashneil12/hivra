@@ -1,0 +1,249 @@
+/*
+ * Touch-sized payment details: amount and address fields, copy buttons,
+ * the "Open in wallet" link and the phone QR disclosure (TransferDetails.tsx).
+ *
+ * "Compact" means a phone-width screen OR a touch pointer. It is the same
+ * query TransferDetails uses to move the QR code behind a disclosure, so
+ * sizing and placement always agree.
+ */
+
+.field {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-elevated);
+}
+
+.fieldLabel {
+  display: block;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.amount {
+  display: block;
+  margin: 0;
+  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-size: 1.7rem;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-black);
+  overflow-wrap: anywhere;
+}
+
+.amountUnit {
+  margin-left: 0.35em;
+  font-size: 0.55em;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+
+.fieldNote {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.addressLayout {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.addressMain {
+  display: grid;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.address {
+  display: block;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-black);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.address[data-empty='true'] {
+  color: var(--text-secondary);
+}
+
+.copyRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--ink-black) 22%, transparent);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.copyButton:hover:not(:disabled) {
+  border-color: var(--ink-black);
+}
+
+.copyButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.copyButton[data-copied='true'] {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+  color: var(--skills-success-text);
+}
+
+.walletLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0.65rem 1.05rem;
+  border: 1px solid var(--ink-black);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.walletLink:hover {
+  border-color: var(--hivra-red);
+}
+
+.walletBlock {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: start;
+}
+
+.walletHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.qrDetails {
+  border-top: 1px solid var(--etched-border);
+  margin-top: 0.1rem;
+}
+
+.qrDetails > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0.35rem 0;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-black);
+  cursor: pointer;
+  list-style: none;
+}
+
+.qrDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.qrChevron {
+  margin-left: auto;
+  transition: transform 150ms ease;
+}
+
+.qrDetails[open] .qrChevron {
+  transform: rotate(180deg);
+}
+
+.qrBody {
+  display: grid;
+  justify-items: start;
+  gap: 0.4rem;
+  padding-bottom: 0.35rem;
+}
+
+.field :is(a, button, summary):focus-visible,
+.walletLink:focus-visible,
+.copyButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .copyButton {
+    min-height: 44px;
+    padding: 0.6rem 0.9rem;
+    font-size: 11px;
+  }
+
+  .copyRow > .copyButton,
+  .copyButton[data-block='true'] {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .walletLink {
+    width: 100%;
+  }
+
+  .walletBlock {
+    justify-items: stretch;
+  }
+
+  /* Opt-in 44px minimum for small inline actions on compact screens. */
+  .touchTarget {
+    min-height: 44px;
+  }
+
+  .amount {
+    font-size: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copyButton,
+  .qrChevron {
+    transition: none;
+  }
+}

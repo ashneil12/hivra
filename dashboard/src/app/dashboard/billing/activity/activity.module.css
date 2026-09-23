@@ -1,0 +1,39 @@
+.page {
+  width: 100%;
+  max-width: 960px;
+  margin: 1rem auto 5rem;
+  padding: clamp(1.5rem, 5vw, 3rem);
+  /*
+   * Page top padding contract: the dashboard shell sets
+   * --dashboard-page-safe-top when its header already covers the safe area
+   * (so pages must not add the inset again); without the shell variable this
+   * falls back to the raw inset.
+   */
+  padding-top: calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + clamp(1.5rem, 5vw, 3rem));
+}
+
+/* 44px back link (breadcrumb), matching the Settings sub-page eyebrow. */
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  margin: 0 0 0.5rem -0.25rem;
+  padding: 0 0.25rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--ink-black);
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}

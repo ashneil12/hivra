@@ -11,6 +11,7 @@ import {
 } from "@/components/billing/BillingActivityPanel";
 import { buildHermesFadeSlideVariants } from "@/components/ui/motion";
 import { clientLog } from "@/lib/client/logger";
+import styles from "./activity.module.css";
 
 // Standalone activity view. The main /dashboard/billing page truncates the
 // Managed Venice activity to 5 most recent rows; this page renders the full
@@ -51,33 +52,11 @@ export default function BillingActivityPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.4 }}
-      style={{
-        maxWidth: 960,
-        margin: "1rem auto 5rem",
-        padding: "clamp(1.5rem, 5vw, 3rem)",
-        paddingTop: "calc(env(safe-area-inset-top, 0px) + clamp(1.5rem, 5vw, 3rem))",
-        width: "100%",
-      }}
+      className={styles.page}
     >
       <header style={{ marginBottom: "2rem" }}>
-        <Link
-          href="/dashboard/billing"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "var(--ink-black)",
-            textDecoration: "none",
-            fontFamily: "var(--font-mono), monospace",
-            opacity: 0.7,
-            marginBottom: 16,
-          }}
-        >
-          <ArrowLeft size={12} />
+        <Link href="/dashboard/billing" className={styles.backLink}>
+          <ArrowLeft size={14} aria-hidden="true" />
           Back to billing
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -94,10 +73,10 @@ export default function BillingActivityPage() {
           <span
             className="mono"
             style={{
-              fontSize: 10,
+              fontSize: 11,
               textTransform: "uppercase",
-              letterSpacing: "0.3em",
-              opacity: 0.6,
+              letterSpacing: "0.2em",
+              color: "var(--text-secondary)",
             }}
           >
             Billing · Activity

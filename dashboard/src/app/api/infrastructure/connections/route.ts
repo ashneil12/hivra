@@ -15,6 +15,8 @@ import {
   connectHetznerCloudProject,
   HetznerCloudConnectionError,
 } from "@/lib/infrastructure/hetzner-cloud";
+import { connectDigitalOcean, ManagedSessionError } from "@/lib/hivra/do-managed-sessions";
+import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   createInfrastructureConnection,
   InfrastructureConnectionStoreError,
@@ -33,6 +35,15 @@ function noStore(response: Response): Response {
 }
 
 function storeFailure(error: unknown, method: "GET" | "POST"): Response {
+  if (error instanceof ManagedSessionError) {
+    if (error.code === "invalid_credentials" || error.code === "provider_forbidden") {
+      return noStore(apiError(error.message, 422, undefined, { code: error.code }));
+    }
+    if (error.code === "conflict") {
+      return noStore(apiError("An infrastructure connection with this name already exists.", 409));
+    }
+    if (error.code === "provider_unavailable") return noStore(apiError(error.message, 502));
+  }
   if (error instanceof HetznerCloudConnectionError) {
     if (error.code === "invalid_credentials") {
       return noStore(apiError("Hetzner Cloud rejected this project API token.", 422));
@@ -127,6 +138,18 @@ export async function POST(request: NextRequest) {
     if (parsed.data.provider === "hetzner-cloud") {
       const result = await connectHetznerCloudProject({
         userId,
+        name: parsed.data.name,
+        apiToken: parsed.data.credentials.apiToken,
+      });
+      return noStore(apiSuccess(result, 201));
+    }
+
+    if (parsed.data.provider === "digitalocean") {
+      // DigitalOcean sessions are Hivra agents, which are canary-only.
+      if (!isHivraApiAllowed(request.headers.get("host"))) {
+        return noStore(apiError("DigitalOcean Managed Agents is not available here yet.", 404));
+      }
+      const result = await connectDigitalOcean(userId, {
         name: parsed.data.name,
         apiToken: parsed.data.credentials.apiToken,
       });

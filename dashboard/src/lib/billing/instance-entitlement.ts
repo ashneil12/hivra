@@ -42,6 +42,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
 import { PLANS, getWorkspaceCloudPlan } from "@/lib/subscription/plans";
 import { APPLE_ACCESS_STATUSES } from "@/lib/billing/apple-products";
+import {
+  YEARLY_LIVE_STATUSES,
+  pickEntitledYearlySubscription,
+  yearlyTierPlanKey,
+  type YearlyEntitlementRow,
+} from "@/lib/billing/yearly-entitlement";
 import { log } from "@/lib/logger";
 
 export interface EffectiveSubscription {
@@ -90,37 +96,6 @@ interface QualificationRow {
   currently_eligible: boolean;
 }
 
-interface YearlySubscriptionRow {
-  tier: "pro" | "power";
-  status: string;
-  expires_at: string;
-  paid_at: string;
-}
-
-const YEARLY_TIER_RANK: Record<YearlySubscriptionRow["tier"], number> = { pro: 1, power: 2 };
-
-/**
- * The live yearly row that entitles the user: highest tier first (Power >
- * Pro), then the later expiry, then the later payment. Keep in step with the
- * ORDER BY in public.reconcile_stale_subscription_state_to_free.
- */
-function compareYearlyEntitlement(a: YearlySubscriptionRow, b: YearlySubscriptionRow): number {
-  return (
-    YEARLY_TIER_RANK[a.tier] - YEARLY_TIER_RANK[b.tier] ||
-    Date.parse(a.expires_at) - Date.parse(b.expires_at) ||
-    Date.parse(a.paid_at) - Date.parse(b.paid_at)
-  );
-}
-
-function pickEntitledYearlySubscription(rows: YearlySubscriptionRow[]): YearlySubscriptionRow | null {
-  return rows
-    .filter((row) => row.tier in YEARLY_TIER_RANK)
-    .reduce<YearlySubscriptionRow | null>(
-      (best, row) => (!best || compareYearlyEntitlement(row, best) > 0 ? row : best),
-      null
-    );
-}
-
 // Includes 'trialing' to preserve the abuse-gate bypass behavior the
 // previous isPaidSubscriber() helper had — trialing subs are billed
 // (Stripe holds a payment method) and that's a strong-enough signal to
@@ -128,6 +103,17 @@ function pickEntitledYearlySubscription(rows: YearlySubscriptionRow[]): YearlySu
 // reject trialing (instance-service does, since trialing budgets are
 // often $0) check `sub.status` themselves.
 const STRIPE_ACCESS_STATUSES = new Set(["active", "past_due", "trialing"]);
+
+export interface ResolveEffectiveSubscriptionOptions {
+  /**
+   * Leave the `hermes_subscriptions` row out entirely (paid Stripe and the
+   * Free fallback) and report only the other lanes: Apple IAP, yearly
+   * $HermesOS, token holdings. The Stripe lapse handlers use this to ask
+   * "does the user still pay through another lane?" while their own Stripe
+   * row can still read active or past_due.
+   */
+  excludeStripe?: boolean;
+}
 
 /**
  * Returns the effective subscription for the user, or null if neither
@@ -138,15 +124,18 @@ const STRIPE_ACCESS_STATUSES = new Set(["active", "past_due", "trialing"]);
  * an active row.
  */
 export async function resolveEffectiveSubscription(
-  userId: string
+  userId: string,
+  options: ResolveEffectiveSubscriptionOptions = {}
 ): Promise<EffectiveSubscription | null> {
   if (!supabaseAdmin) return null;
 
-  const { data: subRow } = await supabaseAdmin
-    .from("hermes_subscriptions")
-    .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
-    .eq("user_id", userId)
-    .maybeSingle<SubscriptionRow>();
+  const { data: subRow } = options.excludeStripe
+    ? { data: null }
+    : await supabaseAdmin
+        .from("hermes_subscriptions")
+        .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
+        .eq("user_id", userId)
+        .maybeSingle<SubscriptionRow>();
 
   // Dunning cutoff: a `past_due` Stripe sub only grants access WHILE it is
   // still inside its grace window. Once `grace_period_ends_at` has elapsed, the
@@ -245,18 +234,20 @@ export async function resolveEffectiveSubscription(
   // is currently entitled to the tier. A user can hold one live row per
   // tier, so the highest-ranked tier wins — never the newest payment: a Pro
   // renewal inserts a fresh row while a paid Power year is still running.
+  // The ranking lives in lib/billing/yearly-entitlement, shared with the
+  // refresh-token-tiers cron so the two can never disagree.
   const { data: yearlyRows } = await supabaseAdmin
     .from("yearly_token_subscriptions")
     .select("tier, status, expires_at, paid_at")
     .eq("user_id", userId)
-    .in("status", ["active", "grace"]);
+    .in("status", [...YEARLY_LIVE_STATUSES]);
 
   const yearly = pickEntitledYearlySubscription(
-    Array.isArray(yearlyRows) ? (yearlyRows as YearlySubscriptionRow[]) : []
+    Array.isArray(yearlyRows) ? (yearlyRows as YearlyEntitlementRow[]) : []
   );
   if (yearly) {
-    const planKey = yearly.tier === "power" ? "fleet" : "operator";
-    const plan = PLANS[planKey as keyof typeof PLANS];
+    const planKey = yearlyTierPlanKey(yearly.tier);
+    const plan = PLANS[planKey];
     return {
       plan: planKey,
       status: "active",

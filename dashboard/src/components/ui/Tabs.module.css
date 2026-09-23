@@ -1,0 +1,88 @@
+/* Etched-ledger tabs: mono uppercase labels on a hairline, the selected tab
+   marked by a 2px red underline. The bar is its own inline-size container so
+   the component adapts to the width it is given, not the viewport. */
+
+.bar {
+  container-type: inline-size;
+  min-width: 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.list {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  scroll-padding-inline: 1rem;
+}
+
+.list::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 1.1rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.tab:hover {
+  color: var(--ink-black);
+  background: var(--bg-elevated);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--ink-black);
+  box-shadow: inset 0 -2px 0 var(--hivra-red);
+}
+
+/* The list scrolls horizontally, which would clip an outset ring, so the
+   focus ring sits just inside the tab. */
+.tab:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: -3px;
+}
+
+.panel {
+  min-width: 0;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+@container (max-width: 560px) {
+  .list {
+    padding-right: 2rem;
+    mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+  }
+
+  .tab {
+    padding: 0 0.85rem;
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition: none;
+  }
+}
