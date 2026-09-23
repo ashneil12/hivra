@@ -90,6 +90,37 @@ interface QualificationRow {
   currently_eligible: boolean;
 }
 
+interface YearlySubscriptionRow {
+  tier: "pro" | "power";
+  status: string;
+  expires_at: string;
+  paid_at: string;
+}
+
+const YEARLY_TIER_RANK: Record<YearlySubscriptionRow["tier"], number> = { pro: 1, power: 2 };
+
+/**
+ * The live yearly row that entitles the user: highest tier first (Power >
+ * Pro), then the later expiry, then the later payment. Keep in step with the
+ * ORDER BY in public.reconcile_stale_subscription_state_to_free.
+ */
+function compareYearlyEntitlement(a: YearlySubscriptionRow, b: YearlySubscriptionRow): number {
+  return (
+    YEARLY_TIER_RANK[a.tier] - YEARLY_TIER_RANK[b.tier] ||
+    Date.parse(a.expires_at) - Date.parse(b.expires_at) ||
+    Date.parse(a.paid_at) - Date.parse(b.paid_at)
+  );
+}
+
+function pickEntitledYearlySubscription(rows: YearlySubscriptionRow[]): YearlySubscriptionRow | null {
+  return rows
+    .filter((row) => row.tier in YEARLY_TIER_RANK)
+    .reduce<YearlySubscriptionRow | null>(
+      (best, row) => (!best || compareYearlyEntitlement(row, best) > 0 ? row : best),
+      null
+    );
+}
+
 // Includes 'trialing' to preserve the abuse-gate bypass behavior the
 // previous isPaidSubscriber() helper had — trialing subs are billed
 // (Stripe holds a payment method) and that's a strong-enough signal to
@@ -211,18 +242,20 @@ export async function resolveEffectiveSubscription(
   // Yearly $HermesOS one-time-payment sub — next-priority source.
   // The row in `yearly_token_subscriptions` carries paid_at + expires_at
   // (paid_at + 365d), and status 'active' or 'grace' means the user
-  // is currently entitled to the tier.
+  // is currently entitled to the tier. A user can hold one live row per
+  // tier, so the highest-ranked tier wins — never the newest payment: a Pro
+  // renewal inserts a fresh row while a paid Power year is still running.
   const { data: yearlyRows } = await supabaseAdmin
     .from("yearly_token_subscriptions")
-    .select("tier, status, expires_at")
+    .select("tier, status, expires_at, paid_at")
     .eq("user_id", userId)
-    .in("status", ["active", "grace"])
-    .order("paid_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ tier: "pro" | "power"; status: string; expires_at: string }>();
+    .in("status", ["active", "grace"]);
 
-  if (yearlyRows) {
-    const planKey = yearlyRows.tier === "power" ? "fleet" : "operator";
+  const yearly = pickEntitledYearlySubscription(
+    Array.isArray(yearlyRows) ? (yearlyRows as YearlySubscriptionRow[]) : []
+  );
+  if (yearly) {
+    const planKey = yearly.tier === "power" ? "fleet" : "operator";
     const plan = PLANS[planKey as keyof typeof PLANS];
     return {
       plan: planKey,
@@ -231,10 +264,10 @@ export async function resolveEffectiveSubscription(
       total_cpu_budget: plan.totalCpu,
       total_ram_budget: plan.totalRam,
       source: "token_yearly",
-      tokenTier: yearlyRows.tier,
+      tokenTier: yearly.tier,
       // Surface the 365-day expiry so the dashboard can render
       // "Active until 1 May 2027" instead of "Renews on …".
-      currentPeriodEnd: yearlyRows.expires_at,
+      currentPeriodEnd: yearly.expires_at,
       canChangePlanInPlace: false,
     };
   }
