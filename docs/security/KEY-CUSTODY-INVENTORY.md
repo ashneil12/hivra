@@ -276,6 +276,16 @@ conclusions. Custody and regulatory treatment are under legal review.
   clear `BANKR_*` values (`webui-runtime-env.ts`). The dashboard reports which
   of these happened and, when removal isn't confirmed, tells the user to
   revoke the key at Bankr. Disconnect never revokes the key at Bankr.
+- **Agent deletion:** when the agent reaches its terminal deleted state
+  (`hermes_instances.status` or `hivra_agents.status = 'deleted'`, from any
+  delete path), a database trigger
+  (`drop_user_bankr_key_after_agent_delete`, migration
+  `20260924090000_drop_user_bankr_key_on_agent_delete.sql`) deletes Hivra's
+  stored copy exactly as Disconnect does and records
+  `disconnectReason = 'agent_deleted'`. It is best effort: a failure is logged
+  as a database warning and never blocks the delete. It does not revoke the
+  key at Bankr. Hivra-provisioned wallets (row 9) are left as they are, so
+  their funds can still be withdrawn.
 - **Delivery timing:** on Hermes "webfree" boxes a newly connected key reaches
   the agent at its next runtime update, as Hivra-provisioned keys always have.
   A Hivra box that isn't running doesn't receive it; the dashboard says so.
@@ -339,8 +349,11 @@ conclusions. Custody and regulatory treatment are under legal review.
 4. Single-use transfer keys (row 5) and stored sweeper keys (rows 2–4) are not
    revoked by the code; they stay active at Bankr until revoked.
 5. Deleting an agent or an account does not revoke keys or close wallets at
-   Bankr (rows 2–4, 8, 9). Deleting an agent also leaves its encrypted wallet
-   key row in place (rows 9 and 10), because agent deletion is a soft delete.
+   Bankr (rows 2–4, 8, 9). Deleting an agent leaves its encrypted
+   Hivra-provisioned wallet key in place (row 9), because agent deletion is a
+   soft delete and the wallet's funds may still need withdrawing. For a
+   user-connected wallet (row 10) Hivra's copy of the key is deleted when the
+   agent is deleted; the key stays valid at Bankr until the user revokes it.
 6. On Hermes "webfree" boxes, `BANKR_*` values in the persisted box
    environment are never cleared by Hivra (rows 9 and 10). A stopped Hivra box
    keeps its `bankr.env` after a disconnect.
