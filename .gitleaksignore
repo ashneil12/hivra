@@ -1,6 +1,8 @@
 # Exact current-tree false-positive fingerprints reviewed on 2026-08-29.
 # A moved or changed fixture must be reviewed again; never suppress whole token rules.
 # 2026-08-31: re-reviewed the two unchanged synthetic launch-key fixtures after line moves.
+# 2026-09-23: re-reviewed the Base token-contract address fixtures in the agent wallet tests after line moves,
+# and added the synthetic bk_ptr_ partner-key fixture that the connect flow must refuse.
 dashboard/auth.ts:generic-api-key:40
 dashboard/src/app/api/billing/crypto/top-up/__tests__/route.test.ts:generic-api-key:63
 dashboard/src/app/api/billing/token-holding/__tests__/route.test.ts:generic-api-key:22
@@ -12,12 +14,13 @@ dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generi
 dashboard/src/app/api/cron/refresh-token-tiers/__tests__/route.test.ts:generic-api-key:20
 dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2126
 dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2202
-dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:135
-dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:191
-dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:186
-dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:209
-dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:294
-dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:345
+dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:138
+dashboard/src/app/api/instances/[id]/bankr-wallet/__tests__/route.test.ts:generic-api-key:197
+dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:218
+dashboard/src/app/api/instances/[id]/bankr-wallet/withdraw/__tests__/route.test.ts:generic-api-key:241
+dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:300
+dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:351
+dashboard/src/components/wallet/__tests__/agent-wallet-connect.test.tsx:generic-api-key:135
 dashboard/src/components/infrastructure/__tests__/InfrastructureConnectionsPage.test.tsx:generic-api-key:351
 dashboard/src/components/infrastructure/__tests__/InfrastructureConnectionsPage.test.tsx:generic-api-key:678
 dashboard/src/components/landing/DemoVideoSection.tsx:generic-api-key:59
@@ -27,16 +30,17 @@ dashboard/src/lib/__tests__/crypto.test.ts:stripe-access-token:60
 dashboard/src/lib/__tests__/instance-settings.test.ts:generic-api-key:141
 dashboard/src/lib/__tests__/instance-settings.test.ts:generic-api-key:57
 dashboard/src/lib/__tests__/posthog.test.ts:generic-api-key:57
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:510
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:517
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:524
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:531
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:538
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:578
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:585
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:592
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:599
-dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:606
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:613
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:620
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:627
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:634
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:641
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:681
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:688
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:695
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:702
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:709
+dashboard/src/lib/billing/__tests__/bankr-instance-wallets.test.ts:generic-api-key:823
 dashboard/src/lib/billing/__tests__/bankr-instance-withdraw.test.ts:generic-api-key:204
 dashboard/src/lib/billing/__tests__/bankr-instance-withdraw.test.ts:generic-api-key:28
 dashboard/src/lib/billing/__tests__/bankr-instance-withdraw.test.ts:generic-api-key:364
