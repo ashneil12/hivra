@@ -19,24 +19,48 @@ function fmtCompact(n: number): string {
 }
 
 function shortModel(model: string): string {
-  // "anthropic/claude-3.5" / "NousResearch/Hermes-4" -> trailing segment.
-  const tail = model.split(/[/:]/).pop() ?? model;
-  return tail.length > 22 ? `${tail.slice(0, 21)}…` : tail;
+  // "anthropic/claude-3.5" / "NousResearch/Hermes-4" -> trailing segment,
+  // shown in full on its own row.
+  return model.split(/[/:]/).pop() || model;
 }
 
 const LABEL: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   textTransform: "uppercase",
   letterSpacing: "0.12em",
-  opacity: 0.55,
+  color: "var(--text-muted)",
   fontWeight: 700,
 };
 
-function Stat({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
+function Stat({
+  icon,
+  value,
+  label,
+  title,
+  wide = false,
+}: {
+  icon: React.ReactNode;
+  value: string;
+  label: string;
+  title?: string;
+  /** A text value (a model name) at a smaller size that wraps in full. */
+  wide?: boolean;
+}) {
   return (
     <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 5, opacity: 0.5 }}>{icon}</span>
-      <span className="serif" style={{ fontSize: "1.3rem", fontWeight: 600, lineHeight: 1 }}>{value}</span>
+      <span
+        className="serif"
+        title={title}
+        style={{
+          fontSize: wide ? "1rem" : "1.3rem",
+          fontWeight: 600,
+          lineHeight: wide ? 1.2 : 1,
+          ...(wide ? { overflowWrap: "anywhere" } : null),
+        }}
+      >
+        {value}
+      </span>
       <span className="mono" style={LABEL}>{label}</span>
     </div>
   );
@@ -90,19 +114,26 @@ export function AgentUsageSummary({ instanceId, days = 7 }: { instanceId: string
     <div style={wrap} data-testid="agent-usage-summary">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <span className="mono" style={LABEL}>Recent work · last {summary.days} days</span>
-        <span className="mono" style={{ ...LABEL, opacity: 0.4 }}>
+        <span className="mono" style={LABEL}>
           active {summary.activeDays} {summary.activeDays === 1 ? "day" : "days"}
           {summary.lastActiveDate ? ` · last ${summary.lastActiveDate}` : ""}
         </span>
       </div>
+      {/* Counts share a row; the model name takes its own row so it never truncates. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 14 }}>
         <Stat icon={<Activity size={13} />} value={fmtCompact(summary.sessions)} label="sessions" />
         <Stat icon={<Wrench size={13} />} value={fmtCompact(summary.toolCalls)} label="tool calls" />
         <Stat icon={<Cpu size={13} />} value={fmtCompact(summary.totalTokens)} label="tokens" />
-        {summary.topModel ? (
-          <Stat icon={<Sparkles size={13} />} value={shortModel(summary.topModel)} label="top model" />
-        ) : null}
       </div>
+      {summary.topModel ? (
+        <Stat
+          icon={<Sparkles size={13} />}
+          value={shortModel(summary.topModel)}
+          title={summary.topModel}
+          label="top model"
+          wide
+        />
+      ) : null}
     </div>
   );
 }

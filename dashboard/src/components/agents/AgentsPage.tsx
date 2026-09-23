@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bot, Plus } from "lucide-react";
+import { ArrowRight, Bot, ChevronDown, Plus } from "lucide-react";
 
 import {
   HivraAgentsPanel,
@@ -15,6 +15,8 @@ import styles from "./AgentsPage.module.css";
 
 const deepSeekHarness = getCatalogAgent("deepseek-harness");
 const deepSeekPreview = getHivraPreview("deepseek-harness");
+// Height of the opened catalog that must already show before it is scrolled to.
+const CATALOG_PEEK = 120;
 
 type InstanceSummary = {
   id: string;
@@ -31,6 +33,7 @@ export function AgentsPage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const catalogBodyRef = useRef<HTMLDivElement>(null);
 
   const loadHermesInstances = useCallback(async () => {
     setLoading(true);
@@ -108,7 +111,24 @@ export function AgentsPage() {
           router.push(`/dashboard/instances/${encodeURIComponent(id)}/console`)
         }
       />
-      <details className={styles.catalog}>
+      <details
+        className={styles.catalog}
+        onToggle={(event) => {
+          const details = event.currentTarget;
+          const body = catalogBodyRef.current;
+          if (!details.open || !body) return;
+          // On phones the body can open below the fold (or behind the bottom
+          // navigation, its scroll margin). Bring the section heading to the
+          // top so the tap visibly did something and collapse stays in reach.
+          const reserved =
+            Number.parseFloat(getComputedStyle(body).scrollMarginBlockEnd) || 0;
+          if (
+            body.getBoundingClientRect().top + CATALOG_PEEK >
+            window.innerHeight - reserved
+          )
+            details.scrollIntoView?.({ block: "start" });
+        }}
+      >
         <summary>
           <span>
             <strong>Browse agent runtimes</strong>
@@ -116,9 +136,9 @@ export function AgentsPage() {
               Explore the catalog when you’re ready to add an agent.
             </small>
           </span>
-          <ArrowRight size={15} aria-hidden />
+          <ChevronDown size={15} className={styles.disclosureIcon} aria-hidden />
         </summary>
-        <div className={styles.catalogBody}>
+        <div ref={catalogBodyRef} className={styles.catalogBody}>
           <ul className={styles.runtimeList}>
             {AGENTS.filter((agent) => agent.resourceKind !== "computer").map(
               (agent) => (
