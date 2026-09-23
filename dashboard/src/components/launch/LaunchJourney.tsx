@@ -21,6 +21,7 @@ import {
   DeploymentDestinationControl,
   measuredTargetCapacity,
   useLaunchDestination,
+  type LaunchDestinationChoice,
   type LaunchDestinationState,
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
@@ -35,6 +36,7 @@ import {
 import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import {
   PROFILE_DETAILS,
+  type LaunchCapacityChoice,
   type LaunchDraft,
   type LaunchProfileId,
   type LaunchResourceKind,
@@ -82,6 +84,14 @@ function planFitsCodexBrowser(plan: PlanInfo | null): boolean {
   const floor = CODEX_BROWSER_FLOOR;
   return paidPlan(plan)
     && planCanFit(plan, { ...floor, maximumCpu: floor.cpu, maximumRam: floor.ram, source: "recommended" });
+}
+
+function sameResources(a: LaunchDraft["resources"], b: LaunchDraft["resources"]): boolean {
+  return a.source === b.source
+    && a.cpu === b.cpu
+    && a.ram === b.ram
+    && (a.maximumCpu ?? a.cpu) === (b.maximumCpu ?? b.cpu)
+    && (a.maximumRam ?? a.ram) === (b.maximumRam ?? b.ram);
 }
 
 function meetsCodexFloor(resources: LaunchDraft["resources"], browser: boolean): boolean {
@@ -188,6 +198,17 @@ function withCodexBrowserDefault(current: LaunchDraft, context: CodexBrowserDefa
     && resources.ram === current.resources.ram
   ) return current;
   return { ...current, browser, resources };
+}
+
+/** The capacity a fresh draft records. The owner's destination stays selected
+ * when they change kind or profile, and the draft must say so: a reload
+ * restores the draft's capacity, so recording Hivra Cloud here would silently
+ * move the launch, and Codex's browser default with it. It records the owner's
+ * own choice, not a placement the previous runtime forced. */
+function freshDraftCapacity(choice: LaunchDestinationChoice): LaunchCapacityChoice {
+  return choice.mode === "self-managed"
+    ? { mode: "self-managed", targetId: choice.targetId }
+    : { mode: "hivra-managed", targetId: null };
 }
 
 function formatSize(cpu: number, ram: number): string {
@@ -637,12 +658,16 @@ export function LaunchJourney() {
   const managedFits = planCanFit(plan, draft.resources);
   const managedPlanAllowed = !managedPaidRequired || paidPlan(plan);
   // Codex resources after a browser change, sized against the chosen destination.
-  const resourcesWithBrowser = (browser: boolean): LaunchDraft["resources"] => codexResourcesFor(
-    draft.resources,
-    browser,
-    plan,
-    resources => destinationHolds(destination.mode, destination.selectedTarget, plan, resources),
-  );
+  const holdsHere = (resources: LaunchDraft["resources"]) => destinationHolds(destination.mode, destination.selectedTarget, plan, resources);
+  const resourcesWithBrowser = (browser: boolean): LaunchDraft["resources"] => {
+    const raisedFrom = draft.browserRaisedFrom;
+    // Turning off a browser the owner turned on undoes the raise it made, as
+    // long as the owner has not changed the size since.
+    if (!browser && raisedFrom && sameResources(draft.resources, codexResourcesFor(raisedFrom, true, plan, holdsHere))) {
+      return raisedFrom;
+    }
+    return codexResourcesFor(draft.resources, browser, plan, holdsHere);
+  };
   const sizeWithoutBrowser = wholeProviderComputer && currentProfile
     ? providerComputerResourceFloor(currentProfile.runtimeId, false)
     : resourcesWithBrowser(false);
@@ -680,7 +705,14 @@ export function LaunchJourney() {
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "This prepared Canary computer currently runs on Hivra Cloud.";
   else if (destination.mode === "self-managed" && !destination.deployment) capacityBlocker = "No compatible capacity is ready for this profile.";
   else if (destination.mode === "self-managed" && !selectedTargetFits) {
-    capacityBlocker = "The selected host does not have enough measured capacity for this size.";
+    // A size the owner chose is never lowered for them, so say how to get out
+    // when a smaller size would fit this host.
+    const smallerSizeFits = !wholeProviderComputer && resourceFloor !== null
+      && targetCapacity.cpu >= resourceFloor.cpu
+      && targetCapacity.ramGb >= resourceFloor.ram;
+    capacityBlocker = smallerSizeFits
+      ? "The selected host does not have enough measured capacity for this size. Lower the size under Resources, or choose another host."
+      : "The selected host does not have enough measured capacity for this size.";
     offerBrowserOff = codexBrowser && targetFitsWithoutBrowser;
   }
   else if (destination.mode === "hivra-managed" && managedEntitlementRequired) capacityBlocker = "Hivra Cloud is unavailable for Windows. Choose compatible customer-owned or self-hosted capacity.";
@@ -716,11 +748,16 @@ export function LaunchJourney() {
   }
 
   const updateDraft = (change: Partial<LaunchDraft>) => setDraft(current => current ? { ...current, ...change } : current);
-  const chooseCodexBrowser = (browser: boolean) => updateDraft({
-    browser,
-    browserSource: "custom",
-    resources: resourcesWithBrowser(browser),
-  });
+  const chooseCodexBrowser = (browser: boolean) => {
+    const resources = resourcesWithBrowser(browser);
+    const raised = browser && draft.resources.source === "custom" && !sameResources(resources, draft.resources);
+    updateDraft({
+      browser,
+      browserSource: "custom",
+      resources,
+      browserRaisedFrom: raised ? draft.resources : null,
+    });
+  };
   const recheckPlan = () => {
     setPlanChecked(false);
     setPlanCheckRevision(value => value + 1);
@@ -728,7 +765,7 @@ export function LaunchJourney() {
   const chooseKind = (kind: LaunchResourceKind) => {
     if (draft.resourceKind === kind) return;
     const fresh = createLaunchDraft();
-    setDraft({ ...fresh, resourceKind: kind, stage: "type" });
+    setDraft({ ...fresh, resourceKind: kind, stage: "type", capacity: freshDraftCapacity(destination.choice) });
     setRestoredDestinationFor(null);
   };
   const chooseProfile = (profileId: LaunchProfileId) => {
@@ -739,6 +776,7 @@ export function LaunchJourney() {
       && (recommendedCodexBrowser(destination.mode, destination.selectedTarget, plan) ?? false);
     setDraft({
       ...fresh,
+      capacity: freshDraftCapacity(destination.choice),
       stage: "profile",
       resourceKind: details.resourceKind,
       profileId,

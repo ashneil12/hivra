@@ -1133,6 +1133,75 @@ describe("LaunchPage", () => {
     })));
   });
 
+  const BROWSER_RAISED_TEXT = "Selected · 1.5 CPU / 3 GB reserved · up to 1.5 CPU / 3 GB";
+
+  it("gives back the owner's own size when the browser they turned on is turned off again, even after a reload", async () => {
+    const first = await chooseSmallHostCustomCodex();
+    const browser = screen.getByRole("checkbox", { name: /Browser for Codex/ });
+    fireEvent.click(browser);
+    expect(browser).toBeChecked();
+    // The browser raised 1 CPU / 2 GB to its floor, which this host cannot hold.
+    expect(screen.getByText(BROWSER_RAISED_TEXT)).toBeInTheDocument();
+    const blocker = screen.getByRole("alert");
+    expect(blocker).toHaveTextContent("The selected host does not have enough measured capacity for this size.");
+    expect(within(blocker).getByRole("button", { name: "Turn off the browser" })).toBeInTheDocument();
+    first.unmount();
+
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Where should Codex run?" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Turn off the browser" }));
+    expectSmallHostCustomKept();
+    expect(storedDraft()).toMatchObject({ browserSource: "custom", browserRaisedFrom: null });
+
+    // Unticking the checkbox itself gives the size back the same way.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    expect(screen.getByText(BROWSER_RAISED_TEXT)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    expectSmallHostCustomKept();
+  });
+
+  it("keeps a size the owner changed after the browser raised it when the browser is turned off", async () => {
+    await chooseSmallHostCustomCodex();
+    const browser = screen.getByRole("checkbox", { name: /Browser for Codex/ });
+    fireEvent.click(browser);
+    expect(screen.getByText(BROWSER_RAISED_TEXT)).toBeInTheDocument();
+    fireEvent.click(within(screen.getByLabelText("Maximum memory")).getByRole("button", { name: "4 GB" }));
+    const edited = "Selected · 1.5 CPU / 3 GB reserved · up to 1.5 CPU / 4 GB";
+    expect(screen.getByText(edited)).toBeInTheDocument();
+
+    fireEvent.click(browser);
+    expect(browser).not.toBeChecked();
+    // Turning the browser off never shrinks a size the owner chose.
+    expect(screen.getByText(edited)).toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ browser: false, browserRaisedFrom: null });
+  });
+
+  it("says how to get out when the owner's own size does not fit a smaller host", async () => {
+    infrastructureTargets = [PROXMOX_TARGET, SMALL_PROXMOX_TARGET];
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const own = await screen.findByRole("button", { name: /My infrastructure/i });
+    await waitFor(() => expect(own).toBeEnabled());
+    fireEvent.click(own);
+    // Editing only the maximum makes the recommended size the owner's own.
+    fireEvent.click(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "4 CPU" }));
+    fireEvent.change(screen.getByRole("combobox", { name: /Ready host/ }), { target: { value: SMALL_PROXMOX_TARGET.id } });
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(screen.getByText("Selected · 1.5 CPU / 3 GB reserved · up to 4 CPU / 4 GB")).toBeInTheDocument();
+    const blocker = screen.getByRole("alert");
+    expect(blocker).toHaveTextContent(
+      "The selected host does not have enough measured capacity for this size. Lower the size under Resources, or choose another host.",
+    );
+    expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+
+    fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "1 CPU" }));
+    fireEvent.click(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "2 GB" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
+  });
+
   const RAISED_RESOURCES = { cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, source: "custom" };
   const RAISED_TEXT = "Selected · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB";
 
@@ -1585,6 +1654,120 @@ describe("LaunchPage", () => {
       resources: { cpu: 4, ram: 8, source: "custom" },
     });
     expect(createAgentMock).not.toHaveBeenCalled();
+  });
+
+  // The owner picks the big host for Codex, goes back to look at Computer, and
+  // returns to Codex. The host stays selected on screen, so the fresh drafts
+  // must record it too: otherwise a reload moves the launch to Hivra Cloud and
+  // changes the browser the owner saw.
+  async function roundTripKindOnHost() {
+    infrastructureTargets = [PROXMOX_TARGET];
+    const view = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const own = await screen.findByRole("button", { name: /My infrastructure/i });
+    await waitFor(() => expect(own).toBeEnabled());
+    fireEvent.click(own);
+    expect(storedDraft().capacity).toEqual({ mode: "self-managed", targetId: PROXMOX_TARGET.id });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    chooseResource("Computer");
+    expect(screen.getByRole("heading", { name: "Choose an operating system" })).toBeInTheDocument();
+    expect(storedDraft().capacity).toEqual({ mode: "self-managed", targetId: PROXMOX_TARGET.id });
+    return view;
+  }
+
+  function expectHostSelected() {
+    expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: /Ready host/ })).toHaveValue(PROXMOX_TARGET.id);
+    expect(storedDraft().capacity).toEqual({ mode: "self-managed", targetId: PROXMOX_TARGET.id });
+  }
+
+  it.each([
+    ["Free", FREE_PLAN],
+    ["paid", PAID_PLAN],
+  ])("keeps the owner's host and browser across a kind round trip and a reload on a %s plan", async (_label, plan) => {
+    fetchPlanStrictMock.mockResolvedValue(plan);
+    const first = await roundTripKindOnHost();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const browser = screen.getByRole("checkbox", { name: /Browser for Codex/ });
+    await waitFor(() => expect(browser).toBeChecked());
+    expectHostSelected();
+    fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "2 CPU" }));
+    fireEvent.click(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "4 GB" }));
+    expect(browser).toBeChecked();
+    expect(screen.getByText(RAISED_TEXT)).toBeInTheDocument();
+    expectHostSelected();
+    const shown = storedDraft();
+    expect(shown).toMatchObject({ browser: true, browserSource: "recommended", resources: RAISED_RESOURCES });
+    first.unmount();
+
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Where should Codex run?" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    await act(async () => { await Promise.resolve(); });
+    // The reload restores exactly what the owner saw and changes nothing.
+    expect(storedDraft()).toEqual(shown);
+    expectHostSelected();
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
+    expect(screen.getByText(RAISED_TEXT)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    const review = screen.getByLabelText("Launch review");
+    expect(within(review).getByText(PROXMOX_TARGET.displayName)).toBeInTheDocument();
+    expect(within(review).getByText("On · Codex can use a web browser on its computer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex", cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, browser: true,
+      deployment: expect.objectContaining({ mode: "self-managed", targetId: PROXMOX_TARGET.id }),
+    })));
+  });
+
+  it("keeps the owner's host when the page reloads between a kind change and the next profile", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    (await roundTripKindOnHost()).unmount();
+
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Choose an operating system" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked());
+    expectHostSelected();
+    expect(screen.getByText("Recommended · 1.5 CPU / 3 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not carry a placement Linux Sandbox forces into the next computer's draft", async () => {
+    const gvisorHost = { ...GVISOR_TARGET, id: "77777777-7777-4777-8777-777777777777" };
+    infrastructureTargets = [gvisorHost, PROXMOX_TARGET];
+    const first = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseResource("Computer");
+    chooseProfile("Linux Sandbox");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expect(screen.getByRole("combobox", { name: /Ready host/ })).toHaveValue(gvisorHost.id);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    chooseProfile("Ubuntu Desktop");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    // The owner never chose their own infrastructure; only the sandbox needed it.
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
+    expect(storedDraft().capacity).toEqual({ mode: "hivra-managed", targetId: null });
+    first.unmount();
+
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Where should Ubuntu Desktop run?" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
+    expect(storedDraft().capacity).toEqual({ mode: "hivra-managed", targetId: null });
   });
 
   it("keeps the name before placement and leaves the final action in the active step", async () => {

@@ -30,8 +30,19 @@ import { isLocalAuthMode } from "@/lib/self-host/config";
 
 type LaunchDestinationMode = AgentDeploymentDestination["mode"];
 
+/** The owner's own placement choice, as distinct from what one runtime shows. */
+export type LaunchDestinationChoice = {
+  /** Before a runtime Hivra Cloud cannot run forces self-managed placement. */
+  mode: LaunchDestinationMode;
+  /** Kept while a lookup is pending and after the target disappears. */
+  targetId: string | null;
+};
+
 export type LaunchDestinationState = {
   mode: LaunchDestinationMode;
+  /** What stays selected across runtime changes; `mode` and `selectedTarget`
+   * are what the current runtime shows of it. */
+  choice: LaunchDestinationChoice;
   setMode: (mode: LaunchDestinationMode) => void;
   readyTargets: DeploymentTargetDto[];
   incompatibleReadyTargetCount: number;
@@ -167,9 +178,17 @@ export function useLaunchDestination(
       : selfHosted ? null : DEFAULT_AGENT_DEPLOYMENT_DESTINATION,
     [loading, mode, selectedTarget, selfHosted],
   );
+  const chosenMode = currentChoice.mode;
+  // An invalid handoff's empty ID is a blocked selection, not a target.
+  const chosenTargetId = currentChoice.targetId || null;
+  const ownerChoice = useMemo<LaunchDestinationChoice>(
+    () => ({ mode: chosenMode, targetId: chosenTargetId }),
+    [chosenMode, chosenTargetId],
+  );
 
   return {
     mode,
+    choice: ownerChoice,
     setMode,
     readyTargets: targets,
     incompatibleReadyTargetCount,

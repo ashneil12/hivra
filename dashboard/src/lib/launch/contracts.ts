@@ -72,6 +72,10 @@ export type LaunchDraft = {
   browser: boolean;
   /** "recommended" follows the plan-derived default until the owner chooses. */
   browserSource: "recommended" | "custom";
+  /** The owner's own Codex size from before they turned the browser on and it
+   * raised that size to the browser floor. Turning the browser off gives it
+   * back while the raised size is unchanged. */
+  browserRaisedFrom: LaunchResources | null;
   capacity: LaunchCapacityChoice;
   submittedDeployment: LaunchDeploymentSnapshot | null;
   launchState: LaunchState;

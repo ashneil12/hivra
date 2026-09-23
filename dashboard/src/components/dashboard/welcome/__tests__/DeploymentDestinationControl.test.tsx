@@ -94,6 +94,7 @@ function Harness({
         capacitySetupHref={capacitySetupHref}
       />
       <output data-testid="deployment">{JSON.stringify(state.deployment)}</output>
+      <output data-testid="choice">{JSON.stringify(state.choice)}</output>
     </>
   );
 }
@@ -173,6 +174,27 @@ describe("DeploymentDestinationControl", () => {
     view.rerender(<Harness managedAvailable />);
     expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("deployment")).toHaveTextContent('{"mode":"hivra-managed"}');
+  });
+
+  it("reports the owner's own choice, not a placement a runtime forces or a vanished host", async () => {
+    (listInfrastructureTargets as jest.Mock)
+      .mockResolvedValueOnce([TARGET])
+      .mockResolvedValueOnce([]);
+    const view = render(<Harness managedAvailable={false} />);
+    await waitFor(() => expect(screen.getByLabelText("Ready host")).toHaveValue(TARGET.id));
+    // The runtime shows self-managed placement; the owner never chose it.
+    expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("choice")).toHaveTextContent(`{"mode":"hivra-managed","targetId":"${TARGET.id}"}`);
+
+    view.rerender(<Harness />);
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: /My infrastructure/i }));
+    expect(screen.getByTestId("choice")).toHaveTextContent(`{"mode":"self-managed","targetId":"${TARGET.id}"}`);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh ready hosts" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ready hosts" })).toBeEnabled());
+    // The host vanished from the refreshed evidence but stays the owner's choice.
+    expect(screen.getByTestId("deployment")).toHaveTextContent("null");
+    expect(screen.getByTestId("choice")).toHaveTextContent(`{"mode":"self-managed","targetId":"${TARGET.id}"}`);
   });
 
   it("defaults a standalone installation to its connected host and removes Hivra Cloud", async () => {

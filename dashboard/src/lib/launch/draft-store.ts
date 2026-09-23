@@ -6,6 +6,7 @@ import {
   type LaunchDeploymentSnapshot,
   type LaunchProfileId,
   type LaunchResourceKind,
+  type LaunchResources,
   type LaunchStage,
   type LaunchState,
 } from "./contracts";
@@ -44,6 +45,7 @@ export function createLaunchDraft(): LaunchDraft {
     windowsRightsAttested: false,
     browser: false,
     browserSource: "recommended",
+    browserRaisedFrom: null,
     capacity: { mode: "hivra-managed", targetId: null },
     submittedDeployment: null,
     launchState: "idle",
@@ -56,6 +58,19 @@ function finiteResource(value: unknown, min: number, max: number): number | null
   return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
     ? value
     : null;
+}
+
+function safeResources(value: unknown): LaunchResources | null {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const cpu = finiteResource(input.cpu, 0.5, 8);
+  const ram = finiteResource(input.ram, 1, 16);
+  if (cpu === null || ram === null) return null;
+  // Draft v1 predates explicit ceilings. Preserve those drafts as pinned
+  // allocations instead of silently granting a larger burst envelope.
+  const maximumCpu = finiteResource(input.maximumCpu, cpu, 8) ?? cpu;
+  const maximumRam = finiteResource(input.maximumRam, ram, 16) ?? ram;
+  const source = input.source === "custom" ? "custom" as const : "recommended" as const;
+  return { cpu, ram, maximumCpu, maximumRam, source };
 }
 
 function safeSubmittedDeployment(value: unknown): LaunchDeploymentSnapshot | null {
@@ -99,17 +114,10 @@ function safeDraft(value: unknown): LaunchDraft | null {
     : null;
   if (profileId && PROFILE_DETAILS[profileId].resourceKind !== resourceKind) return null;
 
-  const resourcesInput = input.resources && typeof input.resources === "object"
-    ? input.resources as Record<string, unknown>
-    : {};
-  const cpu = finiteResource(resourcesInput.cpu, 0.5, 8);
-  const ram = finiteResource(resourcesInput.ram, 1, 16);
-  if (cpu === null || ram === null) return null;
-  // Draft v1 predates explicit ceilings. Preserve those drafts as pinned
-  // allocations instead of silently granting a larger burst envelope.
-  const maximumCpu = finiteResource(resourcesInput.maximumCpu, cpu, 8) ?? cpu;
-  const maximumRam = finiteResource(resourcesInput.maximumRam, ram, 16) ?? ram;
-  const source = resourcesInput.source === "custom" ? "custom" as const : "recommended" as const;
+  const resources = safeResources(input.resources);
+  if (!resources) return null;
+  // Only an owner's own Codex size is ever given back after a browser raise.
+  const browserRaisedFrom = profileId === "codex" ? safeResources(input.browserRaisedFrom) : null;
 
   const capacityInput = input.capacity && typeof input.capacity === "object"
     ? input.capacity as Record<string, unknown>
@@ -164,7 +172,7 @@ function safeDraft(value: unknown): LaunchDraft | null {
     resourceKind,
     profileId,
     name: typeof input.name === "string" ? input.name.slice(0, 64) : "",
-    resources: { cpu, ram, maximumCpu, maximumRam, source },
+    resources,
     windowsIsoVolume: typeof input.windowsIsoVolume === "string"
       && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}:iso\/[A-Za-z0-9][A-Za-z0-9._+@() -]{0,190}\.iso$/i.test(input.windowsIsoVolume)
       ? input.windowsIsoVolume : null,
@@ -184,6 +192,7 @@ function safeDraft(value: unknown): LaunchDraft | null {
     // sidecar. Restore that intent so an uncertain replay repeats it exactly.
     browser: profileId === "codex" ? (typeof input.browser === "boolean" ? input.browser : true) : false,
     browserSource: input.browserSource === "custom" ? "custom" : "recommended",
+    browserRaisedFrom: browserRaisedFrom?.source === "custom" ? browserRaisedFrom : null,
     capacity,
     submittedDeployment: safeSubmittedDeployment(input.submittedDeployment),
     launchState,
