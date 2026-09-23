@@ -7,6 +7,8 @@ import FeaturesSection from "../FeaturesSection";
 import WhatsComingSection from "../WhatsComingSection";
 import VisionSection from "../VisionSection";
 import { HOMEPAGE_FAQ } from "../public-home-content";
+import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
+import { COMPUTER_TEMPLATES } from "@/lib/hivra/computer-catalog";
 
 test("all named agents retain working catalog destinations without false waitlists", () => {
   render(<ChooseAgentSection />);
@@ -15,7 +17,6 @@ test("all named agents retain working catalog destinations without false waitlis
     ["Codex", "/dashboard/welcome?step=deploy&agentType=codex"],
     ["Hermes", "/dashboard/welcome?step=deploy&agentType=general"],
     ["Agent Zero", "/dashboard/welcome?step=deploy&agentType=agent-zero"],
-    ["DeepSeek", "/dashboard/agents#deepseek-harness"],
     ["OpenClaw", "/dashboard/welcome?step=deploy&agentType=openclaw"],
     ["Aeon", "/dashboard/welcome?step=deploy&agentType=aeon"],
   ];
@@ -23,6 +24,11 @@ test("all named agents retain working catalog destinations without false waitlis
     const row = screen.getByRole("heading", { name }).closest("article")!;
     expect(within(row).getByRole("link", {name:"Choose agent"})).toHaveAttribute("href", href);
   }
+  // DeepSeek Harness is not launchable in the agent catalog, so it is a labelled preview, not a launch choice.
+  const deepseek = screen.getByRole("heading", { name: "DeepSeek" }).closest("article")!;
+  expect(within(deepseek).getByText(/· Preview$/)).toBeInTheDocument();
+  expect(within(deepseek).queryByRole("link", { name: "Choose agent" })).not.toBeInTheDocument();
+  expect(within(deepseek).getByRole("link", { name: "See the preview" })).toHaveAttribute("href", "/dashboard/agents#deepseek-harness");
   expect(screen.queryByText(/join waitlist|private preview|coming soon/i)).not.toBeInTheDocument();
   expect(screen.getByText(/work directly in its terminal, or move between the two/)).toBeInTheDocument();
   expect(screen.getByText("More agents are coming.")).toBeVisible();
@@ -39,6 +45,19 @@ test("the FAQ renders the same answers used by homepage structured data", () => 
   expect(screen.getByText(/without attaching an agent/)).toBeInTheDocument();
   expect(screen.getByText(/Self-hosting needs no token/)).toBeInTheDocument();
   expect(screen.queryByText(/free managed tier/)).not.toBeInTheDocument();
+});
+
+test("FAQ availability and agent limits match the catalogs and plan caps", () => {
+  const answer = (q: string) => HOMEPAGE_FAQ.find(item => item.q === q)!.a;
+  const slots = answer("How many agents can I run?");
+  expect(slots).not.toMatch(/as many as fit/i);
+  expect(slots).toContain(`${AGENT_SLOTS.free}, ${AGENT_SLOTS.operator} or ${AGENT_SLOTS.fleet} agents`);
+  const computers = answer("Do I have to use an agent?");
+  for (const template of COMPUTER_TEMPLATES.filter(item => item.status === "private-preview")) {
+    expect(computers).toContain(template.name);
+  }
+  expect(computers).toContain("private preview");
+  expect(answer("Which agents can I use?")).toContain("DeepSeek is in preview");
 });
 
 test("workspace features keep interface choice and activity limits explicit", () => {

@@ -23,9 +23,11 @@ function getTwitterValue(metadataValue: unknown, key: string): unknown {
 
 describe('route Open Graph metadata', () => {
   it('reflects the current homepage computer choices in metadata', () => {
-    expect(homeMetadata.description).toContain('Launch Ubuntu, Windows or Omarchy');
+    expect(homeMetadata.description).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
     expect(String(homeMetadata.description)).not.toMatch(/launching now/i);
-    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, Windows or Omarchy');
+    // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
+    expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
+    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
   });
 
   it('keeps the shared website Open Graph defaults on every static route that overrides openGraph metadata', () => {

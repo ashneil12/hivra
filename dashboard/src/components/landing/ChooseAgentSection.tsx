@@ -25,13 +25,15 @@ export default function ChooseAgentSection({ embedded = false }: { embedded?: bo
     </div>}
     {embedded && <p className={refresh.agentIntro}>Choose an agent and connect the account or key it uses. Its tools and files live on a separate computer.</p>}
     <p className={refresh.agentIntro}>Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it.</p>
-    <div className={styles.agentList}>{AGENTS.filter(agent => agent.id === "deepseek-harness" || getAgent(agent.id)?.available).map(agent => {
+    <div className={styles.agentList}>{AGENTS.filter(agent => getAgent(agent.id)?.available || getHivraPreview(agent.id)).map(agent => {
       const Icon = agent.icon;
+      // Catalog truth: a runtime that is not launchable yet is labelled as a preview.
+      const preview = !getAgent(agent.id)?.available;
       return <article className={styles.agentRow} key={agent.id}>
         <Icon size={30} aria-hidden="true" />
-        <div><h3>{agent.name}</h3><small>{agent.role}</small></div>
+        <div><h3>{agent.name}</h3><small>{preview ? `${agent.role} · Preview` : agent.role}</small></div>
         <p>{agent.description}</p>
-        <div><Link className={styles.textLink} href={agent.href}>Choose agent<ArrowRight size={16} aria-hidden="true" /></Link></div>
+        <div><Link className={styles.textLink} href={agent.href}>{preview ? "See the preview" : "Choose agent"}<ArrowRight size={16} aria-hidden="true" /></Link></div>
       </article>;
     })}</div>
     <div className={refresh.moreAgents}><span><i aria-hidden="true" />More agents are coming.</span><p>Your workspace stays yours as the lineup grows.</p><Link href="/roadmap">Follow what&apos;s next<ArrowRight size={16} aria-hidden="true" /></Link></div>
