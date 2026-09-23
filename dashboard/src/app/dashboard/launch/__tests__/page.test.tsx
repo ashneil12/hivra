@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import type { LaunchDestinationState } from "@/components/dashboard/welcome/DeploymentDestinationControl";
@@ -991,6 +991,144 @@ describe("LaunchPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "codex", cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1, browser: false,
+      deployment: expect.objectContaining({ mode: "self-managed", targetId: SMALL_PROXMOX_TARGET.id }),
+    })));
+  });
+
+  const storedDraft = () => JSON.parse(window.sessionStorage.getItem(LAUNCH_DRAFT_STORAGE_KEY) || "{}");
+  const SMALL_HOST_CUSTOM_RESOURCES = { cpu: 1, ram: 2, maximumCpu: 1, maximumRam: 2, source: "custom" };
+  const SMALL_HOST_CUSTOM_TEXT = "Selected · 1 CPU / 2 GB reserved · up to 1 CPU / 2 GB";
+
+  // Codex on the 1 CPU / 2 GB host, browser at its default (off), and the
+  // owner's own 1 CPU / 2 GB size: below the browser floor, above the base.
+  async function chooseSmallHostCustomCodex() {
+    infrastructureTargets = [SMALL_PROXMOX_TARGET];
+    const view = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const own = await screen.findByRole("button", { name: /My infrastructure/i });
+    await waitFor(() => expect(own).toBeEnabled());
+    fireEvent.click(own);
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "1 CPU" }));
+    fireEvent.click(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "2 GB" }));
+    expect(screen.getByText(SMALL_HOST_CUSTOM_TEXT)).toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
+    expect(storedDraft()).toMatchObject({
+      browser: false,
+      browserSource: "recommended",
+      resources: SMALL_HOST_CUSTOM_RESOURCES,
+      capacity: { mode: "self-managed", targetId: SMALL_PROXMOX_TARGET.id },
+    });
+    return view;
+  }
+
+  // Holds the host lookup until the returned release is called.
+  function holdTargetLookup(): () => void {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const respond = global.fetch as jest.Mock;
+    const impl = respond.getMockImplementation()!;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/infrastructure/targets")) await gate;
+      return impl(input, init);
+    });
+    return release;
+  }
+
+  function expectSmallHostCustomKept() {
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(screen.getByText(SMALL_HOST_CUSTOM_TEXT)).toBeInTheDocument();
+    expect(storedDraft()).toMatchObject({ browser: false, resources: SMALL_HOST_CUSTOM_RESOURCES });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
+  }
+
+  it("keeps a resumed self-managed Codex draft's own size when the plan resolves before its host", async () => {
+    (await chooseSmallHostCustomCodex()).unmount();
+
+    const releaseTargets = holdTargetLookup();
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Where should Codex run?" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
+    await act(async () => { await Promise.resolve(); });
+    // The paid plan is known but the saved host is not restored yet.
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(storedDraft()).toMatchObject({ browser: false, resources: SMALL_HOST_CUSTOM_RESOURCES });
+
+    await act(async () => { releaseTargets(); });
+    await waitFor(() => expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expectSmallHostCustomKept();
+    expect(storedDraft().capacity).toEqual({ mode: "self-managed", targetId: SMALL_PROXMOX_TARGET.id });
+  });
+
+  it("keeps a resumed self-managed Codex draft's own size when its host loads before the plan", async () => {
+    (await chooseSmallHostCustomCodex()).unmount();
+
+    let resolvePlan: (plan: typeof PAID_PLAN) => void = () => undefined;
+    fetchPlanStrictMock.mockReturnValue(new Promise(resolve => { resolvePlan = resolve; }));
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Where should Codex run?" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true"));
+
+    await act(async () => { resolvePlan(PAID_PLAN); });
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expectSmallHostCustomKept();
+  });
+
+  it("never shows a Hivra Cloud browser default on a resumed self-managed draft before its host is restored", async () => {
+    infrastructureTargets = [SMALL_PROXMOX_TARGET];
+    const first = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const own = await screen.findByRole("button", { name: /My infrastructure/i });
+    await waitFor(() => expect(own).toBeEnabled());
+    fireEvent.click(own);
+    expect(screen.getByText("Recommended · 0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB")).toBeInTheDocument();
+    first.unmount();
+
+    const releaseTargets = holdTargetLookup();
+    const writes = jest.spyOn(Storage.prototype, "setItem");
+    try {
+      render(<LaunchPage />);
+      expect(await screen.findByRole("heading", { name: "Where should Codex run?" })).toBeInTheDocument();
+      await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
+      await act(async () => { await Promise.resolve(); });
+      await act(async () => { releaseTargets(); });
+      await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+      const drafts = writes.mock.calls
+        .filter(([key]) => key === LAUNCH_DRAFT_STORAGE_KEY)
+        .map(([, value]) => JSON.parse(value));
+      // The paid plan's browser-on size was never applied, even for a moment.
+      expect(drafts.filter(draft => draft.browser || draft.resources.cpu !== 0.5)).toEqual([]);
+    } finally {
+      writes.mockRestore();
+    }
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(screen.getByText("Recommended · 0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB")).toBeInTheDocument();
+  });
+
+  it("never raises the owner's own size when a destination change flips the browser default", async () => {
+    await chooseSmallHostCustomCodex();
+
+    // A paid Hivra Cloud plan would default the browser on, but the owner's
+    // 1 CPU / 2 GB is below its floor, so the default stays off instead.
+    fireEvent.click(screen.getByRole("button", { name: /Hivra Cloud/i }));
+    expectSmallHostCustomKept();
+
+    fireEvent.click(screen.getByRole("button", { name: /My infrastructure/i }));
+    expectSmallHostCustomKept();
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    const review = screen.getByLabelText("Launch review");
+    expect(within(review).getByText("Off · Codex runs without a browser")).toBeInTheDocument();
+    expect(within(review).getByText(SMALL_PROXMOX_TARGET.displayName)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex", cpu: 1, ram: 2, maximumCpu: 1, maximumRam: 2, browser: false,
       deployment: expect.objectContaining({ mode: "self-managed", targetId: SMALL_PROXMOX_TARGET.id }),
     })));
   });

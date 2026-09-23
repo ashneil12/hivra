@@ -84,6 +84,11 @@ function planFitsCodexBrowser(plan: PlanInfo | null): boolean {
     && planCanFit(plan, { ...floor, maximumCpu: floor.cpu, maximumRam: floor.ram, source: "recommended" });
 }
 
+function meetsCodexFloor(resources: LaunchDraft["resources"], browser: boolean): boolean {
+  const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
+  return resources.cpu >= floor.cpu && resources.ram >= floor.ram;
+}
+
 function isWholeProviderComputer(target: DeploymentTargetDto | null): boolean {
   return target !== null && (target.capabilities as unknown as { kind?: string }).kind === "provider-vm";
 }
@@ -129,7 +134,7 @@ function codexResourcesFor(
   holds: (resources: LaunchDraft["resources"]) => boolean,
 ): LaunchDraft["resources"] {
   const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
-  const meetsFloor = resources.cpu >= floor.cpu && resources.ram >= floor.ram;
+  const meetsFloor = meetsCodexFloor(resources, browser);
   if (resources.source === "custom") {
     if (meetsFloor) return resources;
     const cpu = Math.max(resources.cpu, floor.cpu);
@@ -296,7 +301,10 @@ export function LaunchJourney() {
   const [windowsDownloadStorage, setWindowsDownloadStorage] = useState("");
   const [windowsDownloadTask, setWindowsDownloadTask] = useState<{ taskId: string; state: "queued" | "running" | "succeeded" | "failed"; bytesDownloaded: number; message: string | null } | null>(null);
   const [windowsDownloadStarting, setWindowsDownloadStarting] = useState(false);
-  const restoredDestinationRef = useRef<string | null>(null);
+  // The draft whose saved destination has been restored into the destination
+  // hook. State, not a ref: the Codex browser default waits on it and must
+  // re-run once it lands.
+  const [restoredDestinationFor, setRestoredDestinationFor] = useState<string | null>(null);
   const journeyRef = useRef<HTMLElement | null>(null);
   // Phones and touch tablets start with Resources collapsed: the recommended
   // size is already selected, and four open pickers pushed "Review launch"
@@ -521,10 +529,17 @@ export function LaunchJourney() {
   useLayoutEffect(() => {
     setDraft(current => {
       if (current?.profileId !== "codex" || current.submittedDeployment) return current;
+      // Until a resumed draft's saved destination is restored, the hook still
+      // reports its initial Hivra Cloud choice; a default derived from it would
+      // be for a destination the owner did not pick.
+      if (current.launchRequestId !== restoredDestinationFor) return current;
+      const custom = current.resources.source === "custom";
+      // Only the owner's own toggle raises a size they chose. A chosen size
+      // below the browser floor does not hold the browser, so it stays off.
       const browser = current.browserSource === "recommended" && codexBrowserDefault !== null
-        ? codexBrowserDefault
+        ? codexBrowserDefault && (!custom || meetsCodexFloor(current.resources, true))
         : current.browser;
-      const resources = codexResourcesFor(
+      const resources = custom ? current.resources : codexResourcesFor(
         current.resources,
         browser,
         plan,
@@ -537,15 +552,15 @@ export function LaunchJourney() {
       ) return current;
       return { ...current, browser, resources };
     });
-  }, [codexBrowserDefault, destinationMode, draftProfileId, draftSubmitted, plan, selectedTarget]);
+  }, [codexBrowserDefault, destinationMode, draftProfileId, draftSubmitted, plan, restoredDestinationFor, selectedTarget]);
 
   useEffect(() => {
     if (draft) writeLaunchDraft(draft);
   }, [draft]);
 
   useEffect(() => {
-    if (!draft || destination.loading || restoredDestinationRef.current === draft.launchRequestId) return;
-    restoredDestinationRef.current = draft.launchRequestId;
+    if (!draft || destination.loading || restoredDestinationFor === draft.launchRequestId) return;
+    setRestoredDestinationFor(draft.launchRequestId);
     if (handoff) return;
     if (draft.capacity.mode === "self-managed" && draft.capacity.targetId) {
       // Restore the selected authority even if the target disappeared. The
@@ -557,7 +572,7 @@ export function LaunchJourney() {
         destination.setSelectedTargetId(savedTarget.id);
       }
     }
-  }, [destination, draft, handoff]);
+  }, [destination, draft, handoff, restoredDestinationFor]);
 
   useEffect(() => {
     if (draft?.launchState !== "accepted" || !draft.result) return;
@@ -684,7 +699,7 @@ export function LaunchJourney() {
     if (draft.resourceKind === kind) return;
     const fresh = createLaunchDraft();
     setDraft({ ...fresh, resourceKind: kind, stage: "type" });
-    restoredDestinationRef.current = null;
+    setRestoredDestinationFor(null);
   };
   const chooseProfile = (profileId: LaunchProfileId) => {
     if (draft.profileId === profileId) return;
@@ -707,7 +722,7 @@ export function LaunchJourney() {
       windowsIsoDownload: null,
       windowsRightsAttested: false,
     });
-    restoredDestinationRef.current = null;
+    setRestoredDestinationFor(null);
   };
   const chooseDestinationMode = (mode: "hivra-managed" | "self-managed") => {
     destination.setMode(mode);
@@ -790,7 +805,7 @@ export function LaunchJourney() {
     const next = createLaunchDraft();
     clearLaunchDraft();
     writeLaunchDraft(next);
-    restoredDestinationRef.current = null;
+    setRestoredDestinationFor(null);
     destination.setMode("hivra-managed");
     setDraft(next);
     writeStageHistory(next.stage, "replace");
