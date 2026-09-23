@@ -72,11 +72,22 @@ export interface BankrEnvSeedResult {
   error?: string;
 }
 
-// Write the wallet creds onto a running CLI box. Best-effort; the caller logs
-// failures (the wallet row is already provisioned, so this can be retried).
-export async function seedBankrWalletEnvOntoBox(
+// Guest script that deletes the wallet env file. The chat server re-reads it
+// on every spawn, so the agent's next turn runs without the key.
+export function buildBankrEnvRemoveGuestScript(): string {
+  return `set -e
+BUX=/home/bux
+[ -d "$BUX" ] || { echo "no box home" >&2; exit 1; }
+rm -f "$BUX/.hivra/bankr.env"
+[ ! -e "$BUX/.hivra/bankr.env" ] || { echo "bankr.env still present" >&2; exit 1; }
+echo HIVRA_BANKR_ENV_REMOVED
+`;
+}
+
+async function runBankrEnvGuestScript(
   agent: BankrEnvSeedAgent,
-  cfg: InstanceBankrAgentConfig,
+  guestScript: string,
+  okMarker: RegExp,
   env: Parameters<typeof runProxmoxHostScript>[1],
 ): Promise<BankrEnvSeedResult> {
   // Same CLI-only scope as the skills seeder (codex / claude-code).
@@ -84,13 +95,32 @@ export async function seedBankrWalletEnvOntoBox(
   const ip = (agent.ip || "").trim();
   if (!/^[0-9.]+$/.test(ip)) return { ok: false, error: "missing or invalid box ip" };
 
-  const script = buildBankrEnvHostScript(ip, buildBankrEnvGuestScript(buildBankrEnvFileContent(cfg)));
+  const script = buildBankrEnvHostScript(ip, guestScript);
   let res: HostScriptResult;
   try {
     res = await runProxmoxHostScript(script, env, 30_000);
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
-  if (res.ok && /HIVRA_BANKR_ENV_OK/.test(res.stdout || "")) return { ok: true };
-  return { ok: false, error: (res.error || res.stderr || "env seed failed").slice(0, 200) };
+  if (res.ok && okMarker.test(res.stdout || "")) return { ok: true };
+  return { ok: false, error: (res.error || res.stderr || "env script failed").slice(0, 200) };
+}
+
+// Write the wallet creds onto a running CLI box. Best-effort; the caller logs
+// failures (the wallet row is already provisioned, so this can be retried).
+export async function seedBankrWalletEnvOntoBox(
+  agent: BankrEnvSeedAgent,
+  cfg: InstanceBankrAgentConfig,
+  env: Parameters<typeof runProxmoxHostScript>[1],
+): Promise<BankrEnvSeedResult> {
+  return runBankrEnvGuestScript(agent, buildBankrEnvGuestScript(buildBankrEnvFileContent(cfg)), /HIVRA_BANKR_ENV_OK/, env);
+}
+
+// Remove the wallet creds from a running CLI box (user disconnected their
+// Bankr account). Best-effort like the seed; the caller reports the outcome.
+export async function removeBankrWalletEnvFromBox(
+  agent: BankrEnvSeedAgent,
+  env: Parameters<typeof runProxmoxHostScript>[1],
+): Promise<BankrEnvSeedResult> {
+  return runBankrEnvGuestScript(agent, buildBankrEnvRemoveGuestScript(), /HIVRA_BANKR_ENV_REMOVED/, env);
 }

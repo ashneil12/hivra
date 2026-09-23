@@ -125,6 +125,9 @@ describe("/api/instances/[id]/bankr-wallet", () => {
       status: "active",
       withdrawalDestinationEvm: null,
       apiKeyStatus: "active",
+      custody: "hivra_provisioned" as const,
+      apiKeyPreview: null,
+      connectedAt: null,
     });
     mockedProvision.mockResolvedValue({ status: "existing", record });
     mockedBalances.mockResolvedValue([
@@ -181,6 +184,9 @@ describe("/api/instances/[id]/bankr-wallet", () => {
           status: "active",
           withdrawalDestinationEvm: null,
           apiKeyStatus: "active",
+          custody: "hivra_provisioned" as const,
+          apiKeyPreview: null,
+          connectedAt: null,
         },
         balance: { chain: "Base", tokenSymbol: "ETH", tokenAddress: null, tokenDecimals: 18, balanceDisplay: "0.0250" },
         balances: [
@@ -267,6 +273,22 @@ describe("/api/instances/[id]/bankr-wallet", () => {
     expect(JSON.stringify(body)).not.toContain("bk_agent_secret");
   });
 
+  it("refuses to create a Hivra wallet for an agent without one and points at the connect flow", async () => {
+    mockedProvision.mockResolvedValueOnce({ status: "connect_required", record: null });
+
+    const response = await POST(new NextRequest("http://localhost/api/instances/inst_123/bankr-wallet", {
+      method: "POST",
+    }), {
+      params: Promise.resolve({ id: "inst_123" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/connect to your own Bankr account/i);
+    expect(mockedConfigWrite).not.toHaveBeenCalled();
+    expect(mockedPreinstall).not.toHaveBeenCalled();
+  });
+
   it("reports Bankr skill seeding failure so the dashboard can retry later", async () => {
     mockedPreinstall.mockRejectedValueOnce(new Error("agent offline"));
 
@@ -314,6 +336,9 @@ describe("/api/instances/[id]/bankr-wallet", () => {
       status: "pending",
       withdrawalDestinationEvm: null,
       apiKeyStatus: "missing",
+      custody: "hivra_provisioned" as const,
+      apiKeyPreview: null,
+      connectedAt: null,
     });
 
     const response = await POST(new NextRequest("http://localhost/api/instances/inst_123/bankr-wallet", {

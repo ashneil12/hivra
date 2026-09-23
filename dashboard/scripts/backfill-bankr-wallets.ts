@@ -94,8 +94,9 @@ function printUsage(): void {
     [
       "Usage: backfill:bankr-wallets [options]",
       "",
-      "Provisions Bankr deposit wallets (credit_deposit + hermesos_lock)",
-      "for every existing Clerk user. Idempotent — safe to re-run.",
+      "Provisions the credit_deposit Bankr payment address (Hivra's own receipt",
+      "address, swept to the treasury) for every existing Clerk user. It never",
+      "creates hermesos_lock wallets. Idempotent — safe to re-run.",
       "",
       "Options:",
       "  --dry-run         List users without calling Bankr or writing to DB",
@@ -124,24 +125,20 @@ async function provisionForUser(userId: string, dryRun: boolean): Promise<{ outc
   }
 
   try {
-    const [creditResult, lockResult] = await Promise.all([
-      ensureBankrDepositWalletForUser({
-        userId,
-        purpose: "credit_deposit",
-        makePrimary: true,
-      }),
-      ensureBankrDepositWalletForUser({
-        userId,
-        purpose: "hermesos_lock",
-        makePrimary: false,
-      }),
-    ]);
+    // Only Hivra's own payment-receipt address. hermesos_lock wallets held
+    // users' tokens for a tier; they are no longer created (holders move to
+    // their own wallet), so this backfill never makes one.
+    const creditResult = await ensureBankrDepositWalletForUser({
+      userId,
+      purpose: "credit_deposit",
+      makePrimary: true,
+    });
 
-    if (creditResult.status === "not_configured" || lockResult.status === "not_configured") {
+    if (creditResult.status === "not_configured") {
       return { outcome: "not_configured" };
     }
 
-    if (creditResult.status === "existing" && lockResult.status === "existing") {
+    if (creditResult.status === "existing") {
       return { outcome: "existing" };
     }
 

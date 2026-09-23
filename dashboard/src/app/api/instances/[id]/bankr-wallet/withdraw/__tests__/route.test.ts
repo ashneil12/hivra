@@ -8,6 +8,7 @@ import {
   withdrawBaseTokenForInstance,
   withdrawHermesTokensForInstance,
 } from "@/lib/billing/bankr-instance-withdraw";
+import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { log } from "@/lib/logger";
 
 jest.mock("@clerk/nextjs/server", () => ({
@@ -20,6 +21,10 @@ jest.mock("@/lib/billing/bankr-instance-withdraw", () => ({
   withdrawBaseEthForInstance: jest.fn(),
   withdrawBaseTokenForInstance: jest.fn(),
   withdrawHermesTokensForInstance: jest.fn(),
+}));
+
+jest.mock("@/lib/billing/bankr-instance-wallets", () => ({
+  isUserConnectedBankrWallet: jest.fn(),
 }));
 
 jest.mock("@/lib/rate-limit", () => ({
@@ -44,6 +49,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
   const mockedWithdrawBaseToken = withdrawBaseTokenForInstance as jest.MockedFunction<typeof withdrawBaseTokenForInstance>;
   const mockedWithdraw = withdrawHermesTokensForInstance as jest.MockedFunction<typeof withdrawHermesTokensForInstance>;
   const mockedLogError = log.error as jest.MockedFunction<typeof log.error>;
+  const mockedIsUserConnected = isUserConnectedBankrWallet as jest.MockedFunction<typeof isUserConnectedBankrWallet>;
 
   function mockOwnedInstance(owner: boolean) {
     mockedFrom.mockReturnValue({
@@ -60,6 +66,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
     jest.clearAllMocks();
     mockedAuth.mockResolvedValue({ userId: "user_123" } as Awaited<ReturnType<typeof auth>>);
     mockOwnedInstance(true);
+    mockedIsUserConnected.mockResolvedValue(false);
     mockedWithdraw.mockResolvedValue({
       status: "submitted",
       txHash: "0xwithdraw",
@@ -72,6 +79,9 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         status: "active",
         withdrawalDestinationEvm: "0x1111111111111111111111111111111111111111",
         apiKeyStatus: "active",
+        custody: "hivra_provisioned" as const,
+        apiKeyPreview: null,
+        connectedAt: null,
       },
     });
     mockedWithdrawEth.mockResolvedValue({
@@ -86,6 +96,9 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         status: "active",
         withdrawalDestinationEvm: "0x1111111111111111111111111111111111111111",
         apiKeyStatus: "active",
+        custody: "hivra_provisioned" as const,
+        apiKeyPreview: null,
+        connectedAt: null,
       },
     });
     mockedWithdrawBaseToken.mockResolvedValue({
@@ -100,6 +113,9 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         status: "active",
         withdrawalDestinationEvm: "0x2222222222222222222222222222222222222222",
         apiKeyStatus: "active",
+        custody: "hivra_provisioned" as const,
+        apiKeyPreview: null,
+        connectedAt: null,
       },
     });
   });
@@ -120,6 +136,22 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
 
     expect(response.status).toBe(404);
     expect(mockedWithdraw).not.toHaveBeenCalled();
+  });
+
+  it("refuses to move funds from a user's own connected Bankr account", async () => {
+    mockedIsUserConnected.mockResolvedValueOnce(true);
+
+    const response = await POST(makeReq({ expectedRecipient: "0x1111111111111111111111111111111111111111", amount: "1" }), {
+      params: Promise.resolve({ id: "inst_123" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/your own Bankr account/i);
+    expect(mockedIsUserConnected).toHaveBeenCalledWith({ owner: { instanceId: "inst_123" } });
+    expect(mockedWithdraw).not.toHaveBeenCalled();
+    expect(mockedWithdrawEth).not.toHaveBeenCalled();
+    expect(mockedWithdrawBaseToken).not.toHaveBeenCalled();
   });
 
   it("submits a withdrawal for the owned agent wallet without exposing API keys", async () => {
