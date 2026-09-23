@@ -13,8 +13,21 @@ const TOKEN = HERMESOS_TOKEN.address;
 const SATELLITE = `0x${"99".repeat(32)}`;
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-function pair(pairAddress: string, priceUsd: string, liquidityUsd: number) {
-  return { chainId: "base", pairAddress, baseToken: { address: TOKEN }, quoteToken: { address: "0xweth" }, priceUsd, liquidity: { usd: liquidityUsd } };
+/**
+ * A DEXScreener pair. By default the paired token is worth $1, so native and
+ * USD prices are equal and candle closes read as USD; `usdPerNative` changes
+ * that (an ETH move).
+ */
+function pair(pairAddress: string, priceUsd: string, liquidityUsd: number, usdPerNative = 1) {
+  return {
+    chainId: "base",
+    pairAddress,
+    baseToken: { address: TOKEN },
+    quoteToken: { address: "0xweth" },
+    priceUsd,
+    priceNative: String(Number(priceUsd) / usdPerNative),
+    liquidity: { usd: liquidityUsd },
+  };
 }
 
 /**
@@ -49,8 +62,10 @@ describe("platform token price gates", () => {
     });
     const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
     // The satellite pool is ignored even though it is deeper and pricier.
-    expect(quote.priceUsd).toBe("0.000001100");
+    expect(Number(quote.priceUsd)).toBeCloseTo(0.0000011, 12);
     expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining(`/pools/${HERMESOS_POOL_ID}/ohlcv/minute`), expect.anything());
+    // The median is read in the paired token, not in USD.
+    expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining("currency=token"), expect.anything());
   });
 
   it("fails closed below the liquidity floor", async () => {
@@ -98,7 +113,35 @@ describe("platform token price gates", () => {
       candles: [[30 * 60, 0.000001]], // one trade, 30 hours ago
     });
     const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
-    expect(quote.raw).toMatchObject({ gates: { medianCloseUsd: 0.000001, medianCandles: 0 } });
+    // Spot is 5% above that median: allowed, but priced at the median.
+    expect(quote.priceUsd).toBe("0.000001");
+    expect(quote.raw).toMatchObject({ gates: { medianNative: 0.000001, medianCandles: 0, aboveMedianBps: 500, pricedAt: "median" } });
+  });
+
+  it("prices a real drop at the lower spot instead of blocking quotes", async () => {
+    const fetchImpl = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000006", 80_000)], candles: [[60, 0.000001]] });
+    const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    expect(quote.priceUsd).toBe("0.0000006");
+    expect(quote.raw).toMatchObject({ gates: { pricedAt: "spot" } });
+  });
+
+  it("does not mistake an ETH move in a quiet pool for a token move", async () => {
+    // No trades for two days; ETH is up 20%, so the USD spot is 20% above the
+    // last USD close, but the price in WETH has not moved.
+    const fetchImpl = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000012", 80_000, 1.2)], candles: [[48 * 60, 0.000001]] });
+    const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    expect(quote.raw).toMatchObject({ gates: { aboveMedianBps: 0, pricedAt: "spot" } });
+    expect(Number(quote.priceUsd)).toBeCloseTo(0.0000012, 12);
+  });
+
+  it("reuses a failed reference read briefly instead of hammering the source", async () => {
+    const down = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 429 });
+    for (let i = 0; i < 3; i++) {
+      await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: down as never, env: env() })).rejects.toMatchObject({
+        gate: "reference_unavailable",
+      });
+    }
+    expect(down.mock.calls.filter(([url]) => String(url).includes("geckoterminal"))).toHaveLength(1);
   });
 
   it("weighs wall-clock time, not trade count: a burst of pumped trades cannot move the median", async () => {

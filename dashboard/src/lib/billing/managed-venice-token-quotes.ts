@@ -1125,6 +1125,9 @@ export async function createManagedVeniceTokenQuote(
     );
   }
 
+  // The cross-check is the pool's recent median (the reference the gated
+  // price was already checked against), not an independent source: this
+  // applies the tighter MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS band around it.
   const crossCheckQuote =
     params.crossCheckQuote === undefined
       ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {

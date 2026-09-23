@@ -24,13 +24,18 @@
  *      set, else the highest-liquidity Base pair) must hold at least the
  *      token's minPriceLiquidityUsd. A thin pool is what makes
  *      pump-quote-dump profitable.
- *   2. Median cross-check: the spot price must sit within
- *      PLATFORM_PRICE_MAX_DEVIATION_BPS of the median price over the last
+ *   2. Median cross-check: the reference is the median price over the last
  *      PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES of wall-clock time, from the
  *      pool's 5-minute candles on GeckoTerminal (an independent indexer).
  *      Each 5-minute bucket carries the last traded close forward, so a quiet
- *      pool still has a reference (its last price), and a price pumped just
- *      before a quote is refused until it has held for half the window.
+ *      pool still has a reference (its last price). Both sides are compared
+ *      in the pool's paired token (WETH), so an ETH move while the pool is
+ *      quiet is not mistaken for a token move.
+ *
+ * Every flow gains from a higher token price (fewer tokens to hold or pay,
+ * more credit per token), so a quote is priced at min(spot, median): a pump
+ * never buys a cheaper quote. A spot more than PLATFORM_PRICE_MAX_DEVIATION_BPS
+ * above the median is refused outright; a spot below it is simply used.
  */
 
 import { VVV_TOKEN_ADDRESS } from "./token-holdings";
@@ -77,6 +82,8 @@ interface DexScreenerPair {
   baseToken: { address: string; symbol?: string };
   quoteToken: { address: string; symbol?: string };
   priceUsd?: string;
+  /** Price in the pair's quote token (WETH for the platform pools). */
+  priceNative?: string;
   liquidity?: { usd?: number };
 }
 
@@ -87,7 +94,7 @@ interface DexScreenerTokensResponse {
 const DEXSCREENER_BASE_URL = "https://api.dexscreener.com";
 const GECKOTERMINAL_BASE_URL = "https://api.geckoterminal.com/api/v2";
 
-/** Spot may differ from the recent median close by at most this much. */
+/** Spot may sit at most this far above the recent median; the quote is priced at the lower of the two. */
 export const PLATFORM_PRICE_MAX_DEVIATION_BPS = 1_000;
 /** The wall-clock window the reference median covers, in 5-minute buckets. */
 export const PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES = 4 * 60;
@@ -99,6 +106,8 @@ const BUCKET_SEC = 5 * 60;
  */
 const CANDLES_FETCHED = 1_000;
 const REFERENCE_CACHE_MS = 60_000;
+/** A failed reference read is reused this long, so an outage does not become a request storm (and a 429). */
+const REFERENCE_FAILURE_CACHE_MS = 30_000;
 
 /** A platform-token price failed a safety gate; quotes must not be issued. */
 export class PlatformTokenPriceGateError extends Error {
@@ -208,20 +217,24 @@ async function fetchTokenPriceUsd(
 
 interface GeckoOhlcvResponse {
   data?: { attributes?: { ohlcv_list?: unknown } };
+  meta?: { base?: { address?: string }; quote?: { address?: string } };
 }
 
 interface PoolReference {
-  priceUsd: number;
+  /** Median price in the pool's paired token (WETH). */
+  priceNative: number;
   /** Candles with trades inside the window (the rest carry a close forward). */
   candles: number;
   fetchedAtMs: number;
 }
 
 const referenceCache = new Map<string, PoolReference>();
+const referenceFailures = new Map<string, { error: Error; fetchedAtMs: number }>();
 
 /** Test seam. */
 export function _resetPlatformPriceReferenceCacheForTests() {
   referenceCache.clear();
+  referenceFailures.clear();
 }
 
 function median(values: number[]) {
@@ -232,13 +245,13 @@ function median(values: number[]) {
 
 /**
  * Median price of the pool over the last PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES
- * of wall-clock time, from GeckoTerminal 5-minute candles priced in USD for
- * the token side. Each 5-minute bucket holds the close of the latest candle at
+ * of wall-clock time, from GeckoTerminal 5-minute candles priced in the
+ * pool's paired token. Each 5-minute bucket holds the close of the latest candle at
  * or before it, so buckets with no trades carry the last price forward: a
  * quiet pool keeps a reference, and a burst of trades cannot outvote hours of
  * earlier price. Throws only when the pool has no candle at all.
  */
-async function fetchPoolMedianCloseUsd(
+async function fetchPoolMedianCloseNative(
   poolId: string,
   tokenAddress: string,
   options: FetchTokenPriceOptions = {}
@@ -247,13 +260,32 @@ async function fetchPoolMedianCloseUsd(
   const nowMs = Date.now();
   const cached = referenceCache.get(cacheKey);
   if (cached && nowMs - cached.fetchedAtMs < REFERENCE_CACHE_MS) return cached;
+  const failed = referenceFailures.get(cacheKey);
+  if (failed && nowMs - failed.fetchedAtMs < REFERENCE_FAILURE_CACHE_MS) throw failed.error;
+  try {
+    const reference = await readPoolMedianCloseNative(poolId, tokenAddress, nowMs, options);
+    referenceCache.set(cacheKey, reference);
+    referenceFailures.delete(cacheKey);
+    return reference;
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    referenceFailures.set(cacheKey, { error: failure, fetchedAtMs: nowMs });
+    throw failure;
+  }
+}
 
+async function readPoolMedianCloseNative(
+  poolId: string,
+  tokenAddress: string,
+  nowMs: number,
+  options: FetchTokenPriceOptions
+): Promise<PoolReference> {
   const fetchImpl = options.fetchImpl || (fetch as FetchImpl);
   const env = options.env ?? process.env;
   const baseUrl = env.GECKOTERMINAL_BASE_URL || GECKOTERMINAL_BASE_URL;
   const url =
     `${baseUrl}/networks/base/pools/${poolId}/ohlcv/minute` +
-    `?aggregate=5&limit=${CANDLES_FETCHED}&currency=usd&token=${tokenAddress}`;
+    `?aggregate=5&limit=${CANDLES_FETCHED}&currency=token&token=${tokenAddress}`;
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), options.timeoutMs ?? 8000);
   let response: Response;
@@ -268,6 +300,10 @@ async function fetchPoolMedianCloseUsd(
   }
   if (!response.ok) throw new Error(`GeckoTerminal OHLCV fetch failed status=${response.status}`);
   const payload = (await response.json()) as GeckoOhlcvResponse;
+  const base = payload.meta?.base?.address?.toLowerCase();
+  if (base && base !== tokenAddress.toLowerCase()) {
+    throw new Error(`GeckoTerminal priced pool ${poolId} for ${base}, not ${tokenAddress}`);
+  }
   const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
   const nowSec = Math.floor(nowMs / 1000);
   const candles = list
@@ -289,13 +325,11 @@ async function fetchPoolMedianCloseUsd(
     if (carried !== null) closes.push(carried);
   }
   if (closes.length === 0) throw new Error(`GeckoTerminal has no candles for pool ${poolId} before now`);
-  const reference = {
-    priceUsd: median(closes),
+  return {
+    priceNative: median(closes),
     candles: candles.filter((c) => c.at >= firstBucket).length,
     fetchedAtMs: nowMs,
   };
-  referenceCache.set(cacheKey, reference);
-  return reference;
 }
 
 /** A positive float as a plain decimal string with ~12 significant digits (never exponent notation). */
@@ -304,10 +338,6 @@ export function toDecimalString(value: number): string {
   const decimals = Math.min(100, Math.max(0, 11 - Math.floor(Math.log10(value))));
   const fixed = value.toFixed(decimals);
   return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
-}
-
-function deviationBps(spot: number, reference: number) {
-  return Math.round((Math.abs(spot - reference) / reference) * 10_000);
 }
 
 /**
@@ -338,64 +368,88 @@ export async function fetchPlatformTokenPriceUsd(
       `${token.displayUnit} pricing pool holds $${Math.floor(liquidityUsd)}, below the $${token.minPriceLiquidityUsd} floor`
     );
   }
-  const poolId = token.poolId ?? pair.pairAddress;
-  if (!poolId) throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`);
-  let reference: PoolReference;
-  try {
-    reference = await fetchPoolMedianCloseUsd(poolId, token.address, options);
-  } catch (error) {
-    throw new PlatformTokenPriceGateError(
-      "reference_unavailable",
-      `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`
-    );
+  const spotUsd = Number(quote.priceUsd);
+  const spotNative = Number(pair.priceNative);
+  if (!(spotNative > 0) || !Number.isFinite(spotNative)) {
+    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`);
   }
-  const deviation = deviationBps(Number(quote.priceUsd), reference.priceUsd);
-  if (deviation > PLATFORM_PRICE_MAX_DEVIATION_BPS) {
+  const reference = await referenceFor(token, pair, options);
+  // Positive = spot above the median (the direction a pump pushes).
+  const aboveMedianBps = Math.round(((spotNative - reference.priceNative) / reference.priceNative) * 10_000);
+  if (aboveMedianBps > PLATFORM_PRICE_MAX_DEVIATION_BPS) {
     throw new PlatformTokenPriceGateError(
       "deviation",
-      `${token.displayUnit} spot ${quote.priceUsd} is ${deviation} bps from its recent median ${reference.priceUsd}`
+      `${token.displayUnit} spot is ${aboveMedianBps} bps above its ${PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES}-minute median`
     );
   }
+  // The median in USD at today's paired-token rate (the spot's own rate).
+  const medianUsd = reference.priceNative * (spotUsd / spotNative);
+  const pricedAt = aboveMedianBps > 0 ? "median" : "spot";
   return {
     ...quote,
+    priceUsd: pricedAt === "median" ? toDecimalString(medianUsd) : quote.priceUsd,
     raw: {
       pair,
       gates: {
         liquidityUsd,
         minLiquidityUsd: token.minPriceLiquidityUsd,
-        medianCloseUsd: reference.priceUsd,
+        spotUsd: quote.priceUsd,
+        medianUsd,
+        medianNative: reference.priceNative,
         medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
         medianCandles: reference.candles,
-        deviationBps: deviation,
+        aboveMedianBps,
+        pricedAt,
       },
     },
   };
 }
 
-/**
- * The same recent-median reference as a cross-check quote (for flows that
- * compare two sources explicitly, e.g. managed Venice deposits).
- */
-export async function fetchPlatformTokenPriceCrossCheck(
+async function referenceFor(
   token: PlatformToken,
-  options: FetchTokenPriceOptions = {}
-): Promise<HermesPriceCrossCheck> {
-  let reference: PoolReference;
+  pair: DexScreenerPair,
+  options: FetchTokenPriceOptions
+): Promise<PoolReference> {
+  const poolId = token.poolId ?? pair.pairAddress;
+  if (!poolId) throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`);
   try {
-    let poolId = token.poolId;
-    if (!poolId) poolId = (await fetchTokenPriceUsd(token.address, options)).pair.pairAddress ?? null;
-    if (!poolId) throw new Error("pool has no address");
-    reference = await fetchPoolMedianCloseUsd(poolId, token.address, options);
+    return await fetchPoolMedianCloseNative(poolId, token.address, options);
   } catch (error) {
-    if (error instanceof PlatformTokenPriceGateError) throw error;
     throw new PlatformTokenPriceGateError(
       "reference_unavailable",
       `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+/**
+ * The recent median alone, in USD at today's paired-token rate, as a
+ * cross-check quote. It is the same reference the gated price was checked
+ * against, not an independent source: flows that compare the two (managed
+ * Venice deposits) are applying a tighter band around the median.
+ */
+export async function fetchPlatformTokenPriceCrossCheck(
+  token: PlatformToken,
+  options: FetchTokenPriceOptions = {}
+): Promise<HermesPriceCrossCheck> {
+  let pair: DexScreenerPair;
+  try {
+    pair = (await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId })).pair;
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw error;
+    throw new PlatformTokenPriceGateError(
+      "spot_unavailable",
+      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  const usdPerNative = Number(pair.priceUsd) / Number(pair.priceNative);
+  if (!(usdPerNative > 0) || !Number.isFinite(usdPerNative)) {
+    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`);
+  }
+  const reference = await referenceFor(token, pair, options);
   return {
     source: "geckoterminal_ohlcv_median",
-    priceUsd: toDecimalString(reference.priceUsd),
+    priceUsd: toDecimalString(reference.priceNative * usdPerNative),
     // When the reference was read (it is cached briefly), not when it was asked for.
     lastUpdatedAt: Math.floor(reference.fetchedAtMs / 1000),
     raw: { medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES, medianCandles: reference.candles },
