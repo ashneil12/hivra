@@ -134,6 +134,33 @@ describe("platform token price gates", () => {
     expect(Number(quote.priceUsd)).toBeCloseTo(0.0000012, 12);
   });
 
+  it("fails closed as a misconfigured pool when GeckoTerminal prices another token", async () => {
+    const fetchImpl = jest.fn(async (url: string) => {
+      if (url.includes("dexscreener")) {
+        return { ok: true, status: 200, json: async () => ({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)] }) } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { attributes: { ohlcv_list: [[nowSec(), 1, 1, 1, 0.0000011, 1]] } },
+          meta: { base: { address: "0x4200000000000000000000000000000000000006" } },
+        }),
+      } as unknown as Response;
+    });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "pool_missing",
+    });
+  });
+
+  it("fails closed without a native price for the pair", async () => {
+    const noNative = { ...pair(HERMESOS_POOL_ID, "0.0000011", 80_000), priceNative: undefined };
+    const fetchImpl = fakeFetch({ pairs: [noNative], closes: [0.0000011] });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "spot_unavailable",
+    });
+  });
+
   it("reuses a failed reference read briefly instead of hammering the source", async () => {
     const down = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 429 });
     for (let i = 0; i < 3; i++) {

@@ -315,7 +315,7 @@ function decimalToScale(parsed: { integer: bigint; scale: number }, scale: numbe
   return parsed.integer * 10n ** BigInt(scale - parsed.scale);
 }
 
-function pricesDisagreeAboveBps(
+function priceExceedsCrossCheckAboveBps(
   primaryPriceUsd: string,
   crossCheckPriceUsd: string,
   maxDisagreementBps: number
@@ -325,12 +325,11 @@ function pricesDisagreeAboveBps(
   const scale = Math.max(primary.scale, crossCheck.scale);
   const primaryScaled = decimalToScale(primary, scale);
   const crossCheckScaled = decimalToScale(crossCheck, scale);
-  const diff =
-    primaryScaled > crossCheckScaled
-      ? primaryScaled - crossCheckScaled
-      : crossCheckScaled - primaryScaled;
-
-  return diff * 10_000n > primaryScaled * BigInt(maxDisagreementBps);
+  // One-sided: only a primary price ABOVE the cross-check is refused. A
+  // higher price credits more per token (the user's gain); a lower one is the
+  // conservative side, so a real drop keeps deposits open.
+  if (primaryScaled <= crossCheckScaled) return false;
+  return (primaryScaled - crossCheckScaled) * 10_000n > primaryScaled * BigInt(maxDisagreementBps);
 }
 
 function isoFromUnixSeconds(value: number | null | undefined) {
@@ -1126,8 +1125,10 @@ export async function createManagedVeniceTokenQuote(
   }
 
   // The cross-check is the pool's recent median (the reference the gated
-  // price was already checked against), not an independent source: this
-  // applies the tighter MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS band around it.
+  // price was already checked against), not an independent source. The gated
+  // price is already min(spot, median), so this only bites for an injected
+  // price quote that sits more than MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
+  // above the median.
   const crossCheckQuote =
     params.crossCheckQuote === undefined
       ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {
@@ -1146,14 +1147,14 @@ export async function createManagedVeniceTokenQuote(
   }
   if (
     crossCheckQuote &&
-    pricesDisagreeAboveBps(
+    priceExceedsCrossCheckAboveBps(
       priceQuote.priceUsd,
       crossCheckQuote.priceUsd,
       MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
     )
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because token price sources disagree"
+      "Managed Venice token deposits are temporarily disabled because the token price is above its recent median"
     );
   }
 

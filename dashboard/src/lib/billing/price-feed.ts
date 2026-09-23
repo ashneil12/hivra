@@ -302,7 +302,8 @@ async function readPoolMedianCloseNative(
   const payload = (await response.json()) as GeckoOhlcvResponse;
   const base = payload.meta?.base?.address?.toLowerCase();
   if (base && base !== tokenAddress.toLowerCase()) {
-    throw new Error(`GeckoTerminal priced pool ${poolId} for ${base}, not ${tokenAddress}`);
+    // A misconfigured pool, not an outage: fail closed, never serve a cached price.
+    throw new PlatformTokenPriceGateError("pool_missing", `GeckoTerminal priced pool ${poolId} for ${base}, not ${tokenAddress}`);
   }
   const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
   const nowSec = Math.floor(nowMs / 1000);
@@ -415,6 +416,7 @@ async function referenceFor(
   try {
     return await fetchPoolMedianCloseNative(poolId, token.address, options);
   } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw error;
     throw new PlatformTokenPriceGateError(
       "reference_unavailable",
       `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`
