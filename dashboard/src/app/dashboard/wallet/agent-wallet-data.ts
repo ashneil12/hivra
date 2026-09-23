@@ -26,6 +26,14 @@ export interface InstanceBankrWalletPublicSummary {
   status: "active" | "pending" | "failed" | "revoked";
   withdrawalDestinationEvm: string | null;
   apiKeyStatus: "active" | "missing" | "revoked" | "rotating" | "failed";
+  /**
+   * "user_connected": the user's own Bankr account, connected with a key they
+   * created. "hivra_provisioned": a wallet Hivra created (existing agents
+   * only). Absent means hivra_provisioned.
+   */
+  custody?: "hivra_provisioned" | "user_connected";
+  apiKeyPreview?: string | null;
+  connectedAt?: string | null;
 }
 
 export interface AgentWalletBalance {

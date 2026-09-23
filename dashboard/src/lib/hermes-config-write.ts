@@ -1,6 +1,6 @@
 import type { AgentWebApiClient } from "@/lib/agent-web-api";
 import {
-  decryptInstanceBankrApiKey,
+  decryptInstanceBankrRuntimeApiKey,
   getBankrWalletForInstance,
   type SupabaseLike,
 } from "@/lib/billing/bankr-instance-wallets";
@@ -130,7 +130,7 @@ export async function buildHermesConfigWithInstanceBankrWallet(params: {
     return configWithoutBankr;
   }
   const apiKey = record?.status === "active"
-    ? await decryptInstanceBankrApiKey(record)
+    ? await decryptInstanceBankrRuntimeApiKey(record)
     : null;
 
   if (!record || record.status !== "active" || !apiKey) {

@@ -4,6 +4,8 @@ import {
   buildBankrEnvFileContent,
   buildBankrEnvGuestScript,
   buildBankrEnvHostScript,
+  buildBankrEnvRemoveGuestScript,
+  removeBankrWalletEnvFromBox,
   seedBankrWalletEnvOntoBox,
 } from "../bankr-wallet-env-seed";
 
@@ -108,5 +110,41 @@ describe("seedBankrWalletEnvOntoBox", () => {
     const res = await seedBankrWalletEnvOntoBox({ id: "a", type: "codex", ip: "10.250.20.42" }, cfg, {});
     expect(res.ok).toBe(false);
     expect(res.error).toBeTruthy();
+  });
+});
+
+describe("removeBankrWalletEnvFromBox", () => {
+  beforeEach(() => mockedRunScript.mockReset());
+
+  it("deletes the env file, verifies it is gone and carries no key material", () => {
+    const script = buildBankrEnvRemoveGuestScript();
+    expect(script).toContain('rm -f "$BUX/.hivra/bankr.env"');
+    expect(script).toContain('[ ! -e "$BUX/.hivra/bankr.env" ]');
+    expect(script.trim().endsWith("echo HIVRA_BANKR_ENV_REMOVED")).toBe(true);
+    expect(script).not.toContain("BANKR_API_KEY");
+  });
+
+  it("returns ok only when the box reports the removal marker", async () => {
+    mockedRunScript.mockResolvedValueOnce({
+      ok: true,
+      stdout: "HIVRA_BANKR_ENV_REMOVED\n",
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    await expect(removeBankrWalletEnvFromBox({ id: "a", type: "codex", ip: "10.250.20.42" }, {})).resolves.toEqual({ ok: true });
+
+    mockedRunScript.mockResolvedValueOnce({
+      ok: true,
+      stdout: "HIVRA_BANKR_ENV_OK\n",
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    await expect(removeBankrWalletEnvFromBox({ id: "a", type: "codex", ip: "10.250.20.42" }, {})).resolves.toMatchObject({ ok: false });
+  });
+
+  it("skips non-CLI agent types without touching SSH", async () => {
+    await expect(removeBankrWalletEnvFromBox({ id: "a", type: "aeon", ip: "10.240.0.1" }, {})).resolves.toEqual({
+      ok: false,
+      skipped: "unsupported_type",
+    });
+    expect(mockedRunScript).not.toHaveBeenCalled();
   });
 });
