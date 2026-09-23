@@ -30,13 +30,14 @@ export function PendingPromptBadge({
 
   const label =
     pendingPrompt.kind === "clarify" ? "Needs your input" : "Needs approval";
+  const summary = pendingPrompt.summary?.trim() || null;
   const title =
-    pendingPrompt.summary?.trim() ||
+    summary ||
     (pendingPrompt.kind === "clarify"
       ? "Your agent is waiting for your answer"
       : "Your agent is waiting for your approval");
 
-  return (
+  const chip = (
     <span
       data-testid="pending-prompt-badge"
       title={title}
@@ -45,7 +46,7 @@ export function PendingPromptBadge({
         alignItems: "center",
         gap: "4px",
         padding: "2px 7px",
-        borderRadius: "999px",
+        borderRadius: 0,
         fontSize: "11px",
         fontWeight: 600,
         lineHeight: 1.4,
@@ -57,6 +58,40 @@ export function PendingPromptBadge({
     >
       <ShieldAlert size={11} aria-hidden="true" />
       {label}
+    </span>
+  );
+
+  if (!summary) return chip;
+
+  // What the agent is waiting on must be readable without hover (touch has
+  // none), so the redacted summary is shown under the chip, clamped to two lines.
+  return (
+    <span
+      style={{
+        display: "inline-grid",
+        justifyItems: "end",
+        gap: "3px",
+        minWidth: 0,
+        maxWidth: "min(220px, 50vw)",
+      }}
+    >
+      {chip}
+      <span
+        data-testid="pending-prompt-summary"
+        style={{
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          overflowWrap: "anywhere",
+          textAlign: "right",
+          fontSize: "11px",
+          lineHeight: 1.35,
+          color: "var(--text-secondary)",
+        }}
+      >
+        {summary}
+      </span>
     </span>
   );
 }

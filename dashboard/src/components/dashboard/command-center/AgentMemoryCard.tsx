@@ -172,7 +172,9 @@ export function AgentMemoryCard() {
 
       <Link
         href={SETTINGS_HREF}
+        className="pointer-coarse:min-h-[44px]"
         style={{
+          justifyContent: "center",
           border: "1px solid var(--etched-border)",
           background: "transparent",
           color: "var(--ink-black)",

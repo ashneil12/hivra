@@ -1,0 +1,36 @@
+/* Assistant markdown. Tailwind preflight strips list markers, paragraph margins
+   and heading sizes; restore them for chat replies only. */
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 0.45em 0; }
+.markdown ul { list-style: square; padding-left: 1.3em; margin: 0.45em 0; }
+.markdown ol { list-style: decimal; padding-left: 1.5em; margin: 0.45em 0; }
+.markdown li { margin: 0.15em 0; }
+.markdown h1 { font-size: 1.3em; font-weight: 700; margin: 0.8em 0 0.3em; }
+.markdown h2 { font-size: 1.15em; font-weight: 700; margin: 0.7em 0 0.25em; }
+.markdown h3 { font-size: 1.05em; font-weight: 700; margin: 0.6em 0 0.2em; }
+/* The reply container breaks long words; table cells scroll instead. */
+.markdown :global(.chat-md-table) :is(th, td) {
+  word-break: normal;
+  overflow-wrap: normal;
+  min-width: 8ch;
+}
+.markdown :global(.chat-md-table) th { font-size: 11px; }
+
+/* Per-message copy, thumbs and tool toggles. */
+.msgFeedback { gap: 6px; }
+@media (pointer: coarse) {
+  .msgAction { min-height: 40px; min-width: 40px; }
+  .msgFeedback { gap: 10px; }
+}
+
+/* Composer dock. Below 768px the bottom bar owns the home-indicator inset. */
+.composerDock {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+@media (min-width: 768px) {
+  .composerDock { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+}

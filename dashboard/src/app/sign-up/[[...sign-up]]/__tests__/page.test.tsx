@@ -78,4 +78,16 @@ describe("SignUpPage", () => {
     expect(redirect).not.toHaveBeenCalled();
     expect(screen.queryByRole("link", { name: /back/i })).not.toBeInTheDocument();
   });
+
+  it("shows the same three-step count as get-started and a Hivra home bar", async () => {
+    const ui = await SignUpPage({
+      searchParams: Promise.resolve({}),
+    });
+
+    render(ui);
+
+    expect(screen.getByText("Step 1 of 3 — Create Account")).toBeInTheDocument();
+    expect(screen.queryByText(/of 2/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+  });
 });

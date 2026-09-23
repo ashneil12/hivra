@@ -70,6 +70,13 @@ describe("HeroSection", () => {
     expect(screen.queryByText(/no terminals/i)).not.toBeInTheDocument();
   });
 
+  it("gives phones a computer-first secondary action instead of pending desktop installers", () => {
+    render(<HeroSection />);
+    // CSS shows this link only at phone widths, where Download the app is hidden.
+    expect(screen.getByRole("link", { name: /start with a computer/i })).toHaveAttribute("href", "#computers");
+    expect(screen.getAllByRole("link", { name: /download the app/i })).toHaveLength(1);
+  });
+
   it("renders complete Chinese hero copy when scoped to Chinese", () => {
     render(
       <LocaleProvider initialLocale="zh-CN">

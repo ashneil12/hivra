@@ -163,6 +163,15 @@ select,
     transition: background-color 0.5s ease, border-color 0.5s ease, color 0.5s ease, box-shadow 0.5s ease;
 }
 
+/* Touch: tabs and buttons need instant press feedback. Theme switches still
+   fade while switchThemeWithTransition holds .theme-transition on <html>.
+   Specificity (0,0,1) beats the rule above but not component transitions. */
+@media (pointer: coarse) {
+    :where(html:not(.theme-transition)) :is(button, a, input, textarea, select) {
+        transition-duration: 0s;
+    }
+}
+
 /* Disable transitions on initial load to prevent flash of unstyled theme */
 .preload * {
     -webkit-transition: none !important;
@@ -194,9 +203,11 @@ select,
     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.etched-card:hover {
-    border-color: var(--hivra-red);
-    transform: translateY(-2px);
+@media (hover: hover) and (pointer: fine) {
+    .etched-card:hover {
+        border-color: var(--hivra-red);
+        transform: translateY(-2px);
+    }
 }
 
 .action-button {
@@ -367,6 +378,13 @@ select,
 .hivra-chat-tool-history > button:focus-visible { color: var(--ink-black); }
 .hivra-chat-tool-history-list { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
 .hivra-chat-turn-state { color: var(--text-muted); font-family: var(--font-mono), monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+@media (max-width: 767px) {
+  .hivra-chat-activity { font-size: 12px; }
+  .hivra-chat-tool-history > button { font-size: 11px; }
+}
+@media (pointer: coarse) {
+  .hivra-chat-tool-history > button { min-height: 40px; }
+}
 @keyframes hivra-chat-activity-in {
   from { opacity: 0; transform: translate3d(0, 3px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
@@ -1035,9 +1053,11 @@ select,
     transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.interrogation-box:hover {
-    box-shadow: 4px 4px 0px var(--ink-black);
-    transform: translate(-2px, -2px);
+@media (hover: hover) and (pointer: fine) {
+    .interrogation-box:hover {
+        box-shadow: 4px 4px 0px var(--ink-black);
+        transform: translate(-2px, -2px);
+    }
 }
 
 .terminal-light {
@@ -1243,11 +1263,13 @@ select,
     border-radius: 0;
     box-shadow: none;
 }
-.hivra-net .etched-card:hover {
-    transform: translateY(-3px);
-    box-shadow:
-        0 0 0 1px var(--hivra-red-soft),
-        0 24px 50px -28px var(--hivra-red-glow);
+@media (hover: hover) and (pointer: fine) {
+    .hivra-net .etched-card:hover {
+        transform: translateY(-3px);
+        box-shadow:
+            0 0 0 1px var(--hivra-red-soft),
+            0 24px 50px -28px var(--hivra-red-glow);
+    }
 }
 
 /* ── Network node primitives ─────────────────────────────────────────────── */
@@ -1379,5 +1401,62 @@ select,
     .instance-chat-banner button,
     .instance-chat-banner a {
         min-height: 40px;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SHARED PRIMITIVES — touch guards
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* iOS zooms into any focused field under 16px and stays zoomed, which also
+   disables the keyboard handling in useWorkspaceViewport (it needs scale 1).
+   !important beats the inline 10–14px sizes many controls set. Coarse-pointer
+   phones only, so desktop and tablet fields keep their sizes. */
+@media (max-width: 767px) and (pointer: coarse) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]),
+    select,
+    textarea {
+        font-size: max(16px, 1em) !important;
+    }
+}
+
+.hivra-theme-toggle {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+@media (hover: hover) {
+    .hivra-theme-toggle:hover {
+        color: var(--ink-black);
+        background: var(--border-subtle);
+    }
+}
+@media (pointer: coarse) {
+    .hivra-theme-toggle { width: 44px; height: 44px; }
+}
+
+/* Search fields in shared pickers use type="search" for the mobile keyboard;
+   they keep their existing look, so hide the native clear button. */
+.hivra-search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* ModalPicker overlay: centred on desktop; top-aligned on phones so the
+   keyboard cannot push the header and search off-screen. */
+.hivra-modal-picker-overlay {
+    align-items: center;
+    padding: 20px;
+}
+@media (max-width: 767px) {
+    .hivra-modal-picker-overlay {
+        align-items: flex-start;
+        padding: calc(20px + env(safe-area-inset-top, 0px)) 16px calc(20px + env(safe-area-inset-bottom, 0px));
     }
 }

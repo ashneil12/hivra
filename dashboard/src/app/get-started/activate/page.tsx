@@ -10,6 +10,7 @@ import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billin
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import InteractiveBackground from "@/components/InteractiveBackground";
+import funnelStyles from "@/components/public-site/public-site.module.css";
 
 const ACTIVATION_ROUTE = "/get-started/activate";
 
@@ -39,7 +40,7 @@ function captureActivationEvent(event: string, properties: Record<string, unknow
 export default function ActivatePage() {
   return (
     <Suspense fallback={
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
       </div>
     }>
@@ -201,7 +202,7 @@ function ActivatePageContent() {
   // Wait for Clerk to load
   if (!isLoaded) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
       </div>
     );
@@ -210,7 +211,7 @@ function ActivatePageContent() {
   // Not signed in — send back to get-started
   if (!isSignedIn) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: 400 }}>
           <p style={{ fontSize: 14, marginBottom: "1rem" }}>Please sign in to continue.</p>
           <a
@@ -234,7 +235,7 @@ function ActivatePageContent() {
 
   if (wasCanceled) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <Loader2 size={24} style={{ opacity: 0.4, animation: "spin 1s linear infinite" }} />
           <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
@@ -253,15 +254,15 @@ function ActivatePageContent() {
     return (
       <>
         <InteractiveBackground />
-        <div style={{
-          minHeight: "100vh",
+        <div className={funnelStyles.funnelPage} style={{
+          minHeight: "100dvh",
           display: "grid",
           placeItems: "center",
           padding: "2rem",
           position: "relative",
           zIndex: 10,
         }}>
-          <div style={{
+          <div className={funnelStyles.funnelCard} style={{
             border: "1px solid var(--etched-border)",
             background: "var(--bg-surface)",
             padding: "3rem",
@@ -324,15 +325,15 @@ function ActivatePageContent() {
   return (
     <>
       <InteractiveBackground />
-      <div style={{
-        minHeight: "100vh",
+      <div className={funnelStyles.funnelPage} style={{
+        minHeight: "100dvh",
         display: "grid",
         placeItems: "center",
         padding: "2rem",
         position: "relative",
         zIndex: 10,
       }}>
-        <div style={{
+        <div className={funnelStyles.funnelCard} style={{
           border: "1px solid var(--etched-border)",
           background: "var(--bg-surface)",
           padding: "3rem",
@@ -378,7 +379,7 @@ function ActivatePageContent() {
                 </button>
                 <a
                   href="/dashboard/billing"
-                  style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
                 >
                   or go to billing page →
                 </a>

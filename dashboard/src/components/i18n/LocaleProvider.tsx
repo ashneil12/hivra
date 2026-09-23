@@ -118,13 +118,17 @@ export function useLocale() {
 export function LanguageSwitcher({
   compact = false,
   presentation = "popover",
+  placement = "bottom",
 }: {
   compact?: boolean;
   presentation?: "popover" | "modal";
+  /** Popover only: "top" opens the list above the trigger, for triggers near the bottom of a scroller. */
+  placement?: "bottom" | "top";
 }) {
   const { locale, setLocale, copy } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const listboxId = useId();
   const dialogId = useId();
   const selectedLocaleLabel = MARKETING_COPY[locale].localeLabel;
@@ -176,9 +180,9 @@ export function LanguageSwitcher({
           alignItems: "center",
           gap: 8,
           width: "100%",
-          minHeight: 36,
+          minHeight: 44,
           border: 0,
-          borderRadius: 6,
+          borderRadius: 0,
           background: isSelected ? "rgba(255,255,255,0.08)" : "transparent",
           color: "inherit",
           padding: "0 10px",
@@ -220,13 +224,16 @@ export function LanguageSwitcher({
           <div
             style={{
               width: "min(320px, calc(100vw - 40px))",
+              maxHeight: "calc(100dvh - 40px)",
+              overflowY: "auto",
               border: "1px solid rgba(255,255,255,0.16)",
-              borderRadius: 18,
+              borderRadius: 0,
               background: "rgba(20, 20, 19, 0.94)",
               boxShadow: "0 24px 70px rgba(0,0,0,0.48)",
               backdropFilter: "blur(18px)",
               color: "rgba(255,255,255,0.92)",
               padding: 8,
+              paddingBottom: "max(8px, env(safe-area-inset-bottom, 0px))",
             }}
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -235,8 +242,8 @@ export function LanguageSwitcher({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                minHeight: 34,
-                padding: "0 4px 4px 10px",
+                minHeight: 44,
+                padding: "0 0 4px 10px",
               }}
             >
               <span
@@ -256,10 +263,10 @@ export function LanguageSwitcher({
                 aria-label={`Close ${copy.languageSelectorLabel}`}
                 onClick={() => setIsOpen(false)}
                 style={{
-                  width: 30,
-                  height: 30,
+                  width: 44,
+                  height: 44,
                   border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 8,
+                  borderRadius: 0,
                   background: "rgba(255,255,255,0.04)",
                   color: "inherit",
                   display: "inline-flex",
@@ -293,6 +300,14 @@ export function LanguageSwitcher({
     <div
       ref={containerRef}
       title={copy.languageSelectorLabel}
+      onKeyDown={(event) => {
+        // Close only this list; an enclosing dialog must not also see the Escape.
+        if (event.key !== "Escape" || !isOpen) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -304,6 +319,7 @@ export function LanguageSwitcher({
       }}
     >
       <button
+        ref={triggerRef}
         type="button"
         aria-label={copy.languageSelectorLabel}
         aria-haspopup={isModal ? "dialog" : "listbox"}
@@ -351,14 +367,16 @@ export function LanguageSwitcher({
           className="mono"
           style={{
             position: "absolute",
-            top: "calc(100% + 8px)",
+            ...(placement === "top"
+              ? { bottom: "calc(100% + 8px)", maxHeight: "calc(100dvh - 160px)", overflowY: "auto" as const }
+              : { top: "calc(100% + 8px)" }),
             left: compact ? 0 : undefined,
             right: compact ? undefined : 0,
             zIndex: 120,
             minWidth: 176,
             padding: 6,
             border: "1px solid rgba(255,255,255,0.16)",
-            borderRadius: 8,
+            borderRadius: 0,
             background: "rgba(20, 20, 19, 0.94)",
             boxShadow: "0 18px 55px rgba(0,0,0,0.42)",
             backdropFilter: "blur(18px)",

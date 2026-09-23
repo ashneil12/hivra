@@ -20,6 +20,9 @@ export function ComposioKeyPanel({
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Removing the key disconnects every Composio app for every agent, so the
+  // first tap only asks; the second one removes.
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   if (composioKey.loading) {
     return (
@@ -31,6 +34,55 @@ export function ComposioKeyPanel({
   }
 
   if (composioKey.hasKey) {
+    if (confirmingRemove) {
+      const confirmButton: React.CSSProperties = {
+        minHeight: 44,
+        padding: "0 14px",
+        fontSize: 11,
+        textTransform: "uppercase",
+        letterSpacing: "0.1em",
+        fontWeight: 800,
+        cursor: "pointer",
+        borderRadius: 0,
+      };
+      return (
+        <div
+          data-testid="composio-remove-confirm"
+          style={{
+            border: "1px solid var(--hivra-red)",
+            background: "var(--hivra-red-soft)",
+            padding: "12px 13px",
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.45 }}>
+            Remove key? All connected apps stop working.
+          </span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmingRemove(false);
+                void composioKey.remove();
+              }}
+              className="mono"
+              style={{ ...confirmButton, border: "1px solid var(--hivra-red)", background: "var(--hivra-red)", color: "#fff" }}
+            >
+              Remove key
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingRemove(false)}
+              className="mono"
+              style={{ ...confirmButton, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div
         style={{
@@ -53,17 +105,18 @@ export function ComposioKeyPanel({
         </div>
         <button
           type="button"
-          onClick={() => void composioKey.remove()}
+          onClick={() => setConfirmingRemove(true)}
           className="mono"
           style={{
             border: "1px solid var(--etched-border)",
             background: "transparent",
             color: "var(--text-secondary)",
-            fontSize: 9.5,
+            fontSize: 11,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             fontWeight: 700,
-            padding: "7px 10px",
+            minHeight: 44,
+            padding: "0 12px",
             cursor: "pointer",
             flexShrink: 0,
           }}
@@ -163,7 +216,12 @@ export function ComposioKeyPanel({
             if (e.key === "Enter" && !saving) void onSave();
           }}
           placeholder="ck_..."
+          aria-label="Composio consumer API key"
           autoComplete="off"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="done"
           style={{
             border: "none",
             outline: "none",
@@ -187,11 +245,12 @@ export function ComposioKeyPanel({
           border: "1px solid var(--ink-black)",
           background: "transparent",
           color: "var(--ink-black)",
-          fontSize: 10,
+          fontSize: 11,
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           fontWeight: 800,
-          padding: "9px 12px",
+          minHeight: 44,
+          padding: "0 14px",
           cursor: saving || !value.trim() ? "default" : "pointer",
           opacity: saving || !value.trim() ? 0.6 : 1,
           display: "inline-flex",

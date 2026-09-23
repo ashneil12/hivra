@@ -3,6 +3,7 @@
   font-size: 13px;
   line-height: 1.55;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .root p {
   margin: 0;
@@ -150,7 +151,8 @@
   margin-top: 3px;
   color: var(--text-muted);
 }
-.event[aria-pressed="true"] {
+.event[aria-pressed="true"],
+.event[aria-expanded="true"] {
   background: rgba(239, 85, 68, 0.06);
   box-shadow: inset 2px 0 var(--hivra-red);
 }
@@ -179,6 +181,12 @@
   border-radius: 0;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* Opened in place under its record: continue the record's red rule. */
+.inspectorInline {
+  margin-bottom: 12px;
+  border-top: 0;
+  box-shadow: inset 2px 0 var(--hivra-red);
 }
 .summary {
   margin-top: 14px !important;
@@ -301,20 +309,51 @@
     grid-template-columns: 1fr;
     gap: 8px;
   }
+  .heading {
+    row-gap: 4px;
+  }
+  .heading .muted {
+    display: none;
+  }
   .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
     gap: 18px;
+    margin-top: 16px;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tabs button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
+  .tabs button:focus-visible {
+    outline-offset: -2px;
+  }
+  .toolbar {
+    padding: 12px 0 16px;
   }
   .toolbar input {
     flex-basis: 100%;
   }
   .toolbar select {
-    flex: 1;
+    flex: 1 1 calc(50% - 4px);
+    width: 0;
   }
   .heading h1 {
     font-size: 32px;
   }
   .facts > div {
     grid-template-columns: 80px minmax(0, 1fr);
+  }
+  /* Keep a tapped record clear of the fixed bottom navigation. */
+  .event {
+    scroll-margin-block: 12px calc(64px + env(safe-area-inset-bottom, 0px) + 12px);
   }
 }
 @media (pointer: coarse) {
@@ -343,10 +382,23 @@
   outline: 2px solid var(--hivra-red);
   outline-offset: 3px;
 }
+@media (pointer: coarse) {
+  .technical summary {
+    min-height: 44px;
+    padding-block: 12px;
+    box-sizing: border-box;
+  }
+}
 .viewHelp {
   margin-top: 18px !important;
   color: var(--text-secondary);
   font-size: 12px;
+}
+.aboutView > :not(summary) + :not(summary) {
+  margin-top: 8px !important;
+}
+.aboutView > .viewHelp {
+  margin-top: 0 !important;
 }
 .inlineButton {
   border: 0;

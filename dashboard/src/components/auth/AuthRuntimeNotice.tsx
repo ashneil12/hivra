@@ -132,19 +132,21 @@ export function AuthRuntimeNotice() {
     <div
       role="alert"
       style={{
-        margin: '16px auto 0',
-        maxWidth: 720,
+        // At most 720px wide, and never touching the screen edge.
+        margin: '16px max(16px, calc((100% - 720px) / 2)) 0',
         border: '1px solid rgba(239,68,68,0.24)',
         background: 'rgba(239,68,68,0.05)',
         color: 'var(--ink-black)',
         padding: '12px 14px',
         display: 'flex',
+        flexWrap: 'wrap',
         alignItems: 'flex-start',
         gap: 12,
       }}
     >
       <AlertTriangle size={16} style={{ color: 'var(--red)', flexShrink: 0, marginTop: 1 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* The large grow ratio keeps the button compact beside the text, and full width once it wraps. */}
+      <div style={{ flex: '999 1 240px', minWidth: 0 }}>
         <p
           className="mono"
           style={{
@@ -173,7 +175,8 @@ export function AuthRuntimeNotice() {
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
           fontWeight: 700,
-          flexShrink: 0,
+          flex: '1 0 auto',
+          minHeight: 44,
         }}
       >
         Dismiss Notice

@@ -35,7 +35,9 @@ export default function DashboardError({
 
   return (
     <div
-      className="min-h-[100dvh] w-full flex items-center justify-center px-6 py-10"
+      // Fill <main>, which already sits between the mobile header and bottom
+      // bar; a full-viewport height pushed the card below the fold on phones.
+      className="min-h-full w-full flex items-center justify-center px-4 py-6 md:px-6 md:py-10"
       style={{ background: 'var(--vellum-bg)' }}
     >
       <div
@@ -43,7 +45,7 @@ export default function DashboardError({
         style={{
           border: '1px solid var(--etched-border)',
           background: 'var(--bg-surface)',
-          padding: '2rem',
+          padding: 'clamp(1.25rem, 5vw, 2rem)',
           boxShadow: '0 12px 30px rgba(0,0,0,0.06)',
         }}
       >
@@ -79,7 +81,7 @@ export default function DashboardError({
             type="button"
             onClick={() => unstable_retry()}
             className="action-button"
-            style={{ padding: '10px 16px', fontSize: 11, letterSpacing: '0.12em' }}
+            style={{ minHeight: 44, padding: '10px 16px', fontSize: 11, letterSpacing: '0.12em' }}
           >
             Retry Dashboard
           </button>
