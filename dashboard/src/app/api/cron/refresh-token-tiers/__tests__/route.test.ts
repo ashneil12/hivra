@@ -63,6 +63,12 @@ interface YearlyFixture {
   expires_at: string;
 }
 
+interface AppleFixture {
+  user_id: string;
+  plan: string;
+  status: "active" | "trialing" | "grace_period" | "past_due" | "expired" | "revoked";
+}
+
 type QueryResult<Row> = { data: Row[] | null; error: { message: string } | null };
 
 interface FilteringBuilder<Row> extends PromiseLike<QueryResult<Row>> {
@@ -106,6 +112,8 @@ function mockSupabase(opts: {
   qualifications: QualificationFixture[];
   yearly?: YearlyFixture[];
   yearlyError?: string;
+  apple?: AppleFixture[];
+  appleError?: string;
   boosts?: string[];
 }) {
   const instancesBuilder = {
@@ -140,6 +148,10 @@ function mockSupabase(opts: {
     opts.yearly ?? [],
     opts.yearlyError ? { message: opts.yearlyError } : null
   );
+  const appleBuilder = filteringBuilder(
+    opts.apple ?? [],
+    opts.appleError ? { message: opts.appleError } : null
+  );
 
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
     if (table === "hermes_instances") return instancesBuilder;
@@ -147,6 +159,7 @@ function mockSupabase(opts: {
     if (table === "hermes_subscriptions") return subscriptionsBuilder;
     if (table === "token_tier_qualifications") return qualificationsBuilder;
     if (table === "yearly_token_subscriptions") return yearlyBuilder;
+    if (table === "apple_iap_subscriptions") return appleBuilder;
     if (table === "venice_compute_boost_qualifications") return boostsBuilder;
     throw new Error(`Unexpected table ${table}`);
   });
@@ -157,6 +170,7 @@ function mockSupabase(opts: {
     subscriptionsBuilder,
     qualificationsBuilder,
     yearlyBuilder,
+    appleBuilder,
     boostsBuilder,
   };
 }
@@ -713,6 +727,112 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         subscriptions: [],
         qualifications: [],
         yearlyError: "connection reset",
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(500);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Apple IAP subscriptions", () => {
+    it("keeps an Apple Pro subscriber on operator when they hold no tokens", async () => {
+      // apple_iap_subscriptions is its own lane: nothing lands in
+      // hermes_subscriptions, so before the fix this user fell through to
+      // credit_base every tick and was live-resized off the plan Apple bills.
+      mockSupabase({
+        instances: [
+          { user_id: "user_apple_pro", resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 },
+        ],
+        snapshots: [],
+        subscriptions: [{ user_id: "user_apple_pro", status: "active", plan: "free" }],
+        qualifications: [],
+        apple: [{ user_id: "user_apple_pro", plan: "operator", status: "active" }],
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+
+    it("upgrades an Apple Power subscriber in billing grace to fleet", async () => {
+      const { appleBuilder } = mockSupabase({
+        instances: [
+          { user_id: "user_apple_power", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        apple: [{ user_id: "user_apple_power", plan: "fleet", status: "grace_period" }],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user_apple_power",
+          newTier: "fleet",
+          reason: "cron: apple iap plan fleet",
+        })
+      );
+      expect(appleBuilder.in).toHaveBeenCalledWith("user_id", ["user_apple_power"]);
+    });
+
+    it("drops an Apple subscriber whose billing retry has no grace to credit_base", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_apple_lapsed", resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        apple: [{ user_id: "user_apple_lapsed", plan: "operator", status: "past_due" }],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_apple_lapsed", newTier: "credit_base" })
+      );
+    });
+
+    it("ranks Apple above a yearly subscription and below paid Stripe", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_apple_yearly", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+          { user_id: "user_stripe_apple", resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 },
+        ],
+        snapshots: [],
+        subscriptions: [{ user_id: "user_stripe_apple", status: "active", plan: "operator" }],
+        qualifications: [],
+        yearly: [yearlyRow("user_apple_yearly", "power")],
+        apple: [
+          { user_id: "user_apple_yearly", plan: "operator", status: "active" },
+          { user_id: "user_stripe_apple", plan: "fleet", status: "active" },
+        ],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      // Same order as resolveEffectiveSubscription: paid Stripe → Apple → yearly.
+      expect(applyTierChange).toHaveBeenCalledTimes(1);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_apple_yearly", newTier: "operator" })
+      );
+    });
+
+    it("fails the run instead of downgrading anyone when the Apple scan errors", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_apple_pro", resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [],
+        appleError: "connection reset",
       });
 
       const res = await POST(makeRequest());
