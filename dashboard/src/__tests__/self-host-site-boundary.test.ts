@@ -35,7 +35,7 @@ describe("self-host website boundary", () => {
 
   it("keeps operational, authentication, documentation and similarly named routes available", async () => {
     const nextConfig = await loadConfig("local");
-    for (const path of ["/dashboard", "/dashboard/infrastructure", "/sign-in", "/api/self-host/auth/login", "/docs/litepaper/index.html", "/blogger", "/features-extra", "/robots.txt", "/sitemap.xml", "/icon.svg"]) {
+    for (const path of ["/dashboard", "/dashboard/infrastructure", "/sign-in", "/api/self-host/auth/login", "/docs/litepaper/index.html", "/blogger", "/features-extra", "/robots.txt", "/sitemap.xml", "/favicon.ico", "/brand/hivra-icon-192.png"]) {
       const response = await unstable_getResponseFromNextConfig({
         url: `https://operator.example.test${path}`, nextConfig,
       });

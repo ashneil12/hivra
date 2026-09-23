@@ -8,9 +8,9 @@
     "fontLicenseEvidence": "docs/release/font-license-evidence.json",
     "fontLicenseEvidenceSha256": "f1ab8fdea33a532394e2218d886f353e42dc6227730f3a640dee588355856b1a",
     "ownerAssertions": "docs/release/asset-owner-assertions.json",
-    "ownerAssertionsSha256": "22646e5e1e3b521d3d6c1997a80016e7505d7b79cdaf4c5f6bf7a5a2ba4bbc37",
+    "ownerAssertionsSha256": "372615acf7b27d8e1f7815a16fd1f9ae5e5977a80c85cc1d120486a8b52ac82f",
     "openAiTermsUrl": "https://openai.com/policies/terms-of-use/",
-    "finding": "The earlier generated-asset review remains byte-bound. Four retained font files now have exact official-upstream byte matches and adjacent OFL-1.1 evidence. Five artwork files have repository-owner originality assertions recorded separately from independent evidence; only the selected Hivra logo has an independently verified owner-supplied original byte match. No missing prompts, generation tools, or receipts are inferred.",
+    "finding": "The earlier generated-asset review remains byte-bound. Four retained font files now have exact official-upstream byte matches and adjacent OFL-1.1 evidence. Five artwork files have repository-owner originality assertions recorded separately from independent evidence; only the selected Hivra logo has an independently verified owner-supplied original byte match. Eight token-image and app-icon files are resized exports of that logo and carry its assertion. No missing prompts, generation tools, or receipts are inferred.",
     "publicSnapshotBasis": "Retained asset bytes are also bound to the first public root commit; original creation, generation and licensing evidence remains in the corresponding origin records. This is a public snapshot identity, not a new authorship claim."
   },
   "assets": [
@@ -135,16 +135,6 @@
       "redistributionDecision": "include"
     },
     {
-      "path": "dashboard/src/app/icon.svg",
-      "sha256": "70a6c710ed5d07f882ba10c6fe275a3d4cf33e276a63980dfa35c186b51fa0e0",
-      "bytes": 349,
-      "class": "hivra-brand-asset",
-      "origin": "Hivra project-authored SVG geometry recorded in docs/release/asset-generation-records.json.",
-      "provenanceCommit": "250fd9d9c929f0afdda9c74dc2513763a93851e2",
-      "rightsStatus": "documented-first-party",
-      "redistributionDecision": "include"
-    },
-    {
       "path": "docs/litepaper/assets/agent-computer-hero-v2.png",
       "sha256": "ff789243915db5325495d364a27cb4e7b4cb30b431879a17eb370eae888dd173",
       "bytes": 1868417,
@@ -172,6 +162,86 @@
       "origin": "Base prompt, corrective edit prompt, built-in-tool output receipt, terms review and visual acceptance are recorded in docs/release/asset-generation-records.json.",
       "provenanceCommit": "250fd9d9c929f0afdda9c74dc2513763a93851e2",
       "rightsStatus": "documented-project-generated",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/brand/hivra-icon-192.png",
+      "sha256": "1d1c4851fec1846a692b2236ee58bb3898f61178d931aac63ffd0e4d1e1a479d",
+      "bytes": 38032,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/brand/hivra-icon-512.png",
+      "sha256": "5d3ee5d906648daf6f1c22631066a0242e7b2a658f530ae2309931cd245a9c53",
+      "bytes": 232005,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/brand/hivra-token-1024.png",
+      "sha256": "1a5518f79b5ebc1357f7d47b9457d03d89cefc8cba672663320f0c63d17f70ce",
+      "bytes": 905157,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/brand/hivra-token-256.png",
+      "sha256": "f500fd90cc8c85cb2d73f6591d3222eda152985aaf4a3dede490733bf376b80c",
+      "bytes": 63484,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/brand/hivra-token-512.png",
+      "sha256": "5d3ee5d906648daf6f1c22631066a0242e7b2a658f530ae2309931cd245a9c53",
+      "bytes": 232005,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/src/app/apple-icon.png",
+      "sha256": "3b5807ff03ba6f7f1958121b6756d63ac0967982340b0d10d1c597075aa4acc3",
+      "bytes": 33623,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/src/app/favicon.ico",
+      "sha256": "a707ce900244400ec7df7143c628e4c83014ab8819a728a83e0b089e4f2cdac9",
+      "bytes": 7943,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/src/app/icon.png",
+      "sha256": "1d1c4851fec1846a692b2236ee58bb3898f61178d931aac63ffd0e4d1e1a479d",
+      "bytes": 38032,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "afd750bbec44befbfcfb60623227210623a53a7d",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
       "redistributionDecision": "include"
     }
   ]

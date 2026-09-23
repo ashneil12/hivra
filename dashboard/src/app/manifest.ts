@@ -11,23 +11,33 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#0d0d0d",
     theme_color: "#0d0d0d",
     categories: ["productivity", "utilities", "business"],
+    // The approved Hivra mark (docs/brand/hivra-logo.jpg), exported by
+    // docs/brand/export-brand-assets.py. It is a full-bleed opaque square whose
+    // red H sits inside the maskable safe zone, so one file serves both purposes.
     icons: [
       {
-        src: "/pwa-icon-192",
+        src: "/brand/hivra-icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: "/brand/hivra-icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: "/brand/hivra-icon-192.png",
         sizes: "192x192",
         type: "image/png",
         purpose: "maskable",
       },
       {
-        src: "/pwa-icon-512",
+        src: "/brand/hivra-icon-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",
-      },
-      {
-        src: "/apple-icon",
-        sizes: "180x180",
-        type: "image/png",
       },
     ],
     shortcuts: [
