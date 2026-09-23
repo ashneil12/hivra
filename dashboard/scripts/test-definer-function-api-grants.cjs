@@ -42,7 +42,7 @@ const FUNCTION_MIGRATIONS = fs
   .filter(
     (name) =>
       name !== "20260923150000_dual_platform_token_foundation.sql" &&
-      name !== "20260923160000_reconcile_token_base_any_allowed_token.sql"
+      name !== "20260923203000_reconcile_token_base_any_allowed_token.sql"
   )
   .sort()
   .filter((name) => FUNCTION_NAMES.some((fn) => new RegExp(`public\\.${fn}\\s*\\(`, "i").test(read(name))));

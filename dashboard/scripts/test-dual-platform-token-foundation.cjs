@@ -25,7 +25,7 @@ const PREREQUISITES = [
 ];
 const MIGRATION = "20260923150000_dual_platform_token_foundation.sql";
 // Follow-up: the stale-state reset's base tier counts every allowed token.
-const FOLLOW_UP = "20260923160000_reconcile_token_base_any_allowed_token.sql";
+const FOLLOW_UP = "20260923203000_reconcile_token_base_any_allowed_token.sql";
 const HERMESOS = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
 const HIVRA = "0x1111111111111111111111111111111111111111";
 const ACTIVATED_AT = "2026-10-01T00:00:00.000Z";
