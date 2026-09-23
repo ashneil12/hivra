@@ -50,6 +50,7 @@ import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
+import { DigitalOceanAgentWorkspace } from "@/components/hivra/DigitalOceanAgentWorkspace";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
 import {
   buildWelcomePersonalizationContext,
@@ -749,6 +750,11 @@ export default function AgentPage() {
   }
   if (!agent || agent.id !== id) {
     return <LoadingState label="Opening your workspace…" />;
+  }
+  if (agent.computer_substrate === "do-managed-session") {
+    // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
+    // surface. Box tabs (files, git, terminal, skills) do not apply.
+    return <DigitalOceanAgentWorkspace agentId={agent.id} onDeleted={() => go("/dashboard")} />;
   }
 
   const def = catalogAgent(agent.type);

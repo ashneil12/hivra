@@ -1,0 +1,99 @@
+/** @jest-environment jsdom */
+import "@testing-library/jest-dom";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+const mockHistory = jest.fn();
+const mockSend = jest.fn();
+const mockAnswer = jest.fn();
+const mockChange = jest.fn();
+const mockGet = jest.fn();
+
+jest.mock("react-markdown", () => ({ __esModule: true, default: ({ children }: { children: string }) => <p>{children}</p> }));
+jest.mock("remark-gfm", () => ({ __esModule: true, default: () => undefined }));
+jest.mock("@/components/markdown/CodeBlock", () => ({ CodeBlock: ({ value }: { value: string }) => <pre>{value}</pre> }));
+jest.mock("@/lib/hivra/managed-session-client", () => {
+  const actual = jest.requireActual("@/lib/hivra/managed-session-client");
+  return {
+    ...actual,
+    readManagedSessionHistory: (...args: unknown[]) => mockHistory(...args),
+    sendManagedSessionMessage: (...args: unknown[]) => mockSend(...args),
+    answerManagedSessionApproval: (...args: unknown[]) => mockAnswer(...args),
+    changeManagedSession: (...args: unknown[]) => mockChange(...args),
+    getManagedSession: (...args: unknown[]) => mockGet(...args),
+  };
+});
+
+import { ManagedSessionChat } from "../ManagedSessionChat";
+import type { ManagedSessionDto } from "@/lib/hivra/managed-session-contracts";
+
+class FakeEventSource {
+  static CLOSED = 2;
+  static instances: FakeEventSource[] = [];
+  readyState = 1;
+  onopen: (() => void) | null = null;
+  onmessage: ((message: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(public url: string) { FakeEventSource.instances.push(this); }
+  addEventListener() {}
+  close() { this.readyState = 2; }
+  emit(event: unknown) { this.onmessage?.({ data: JSON.stringify(event) }); }
+}
+
+const session: ManagedSessionDto = {
+  agentId: "11111111-1111-4111-8111-111111111111", name: "Builder", harness: "claude-code", size: "mars-2vcpu-4gb",
+  status: "ready", providerStatus: "SESSION_STATUS_READY", pauseReason: null, sessionId: "sess_1",
+  connectionId: "22222222-2222-4222-8222-222222222222", error: null, createdAt: "2026-09-23T10:00:00Z",
+};
+
+beforeEach(() => {
+  FakeEventSource.instances = [];
+  (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+  mockHistory.mockResolvedValue({
+    events: [
+      { id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "Looking at the repo.", isReasoning: false } },
+      { id: "e2", runId: "run_1", type: "run.human_input_requested", at: null, data: { requestId: "hitl_1", action: "HITL_ACTION_BASH", summary: "Run a command: npm test" } },
+    ],
+    prompts: [{ runId: "run_1", text: "Run the tests", createdAt: "2026-09-23T10:00:01Z" }],
+  });
+});
+
+it("rebuilds the conversation from history and resumes the live stream after the last event", async () => {
+  render(<ManagedSessionChat initialSession={session} />);
+  expect(await screen.findByText("Run the tests")).toBeInTheDocument();
+  expect(screen.getByText("Looking at the repo.")).toBeInTheDocument();
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  expect(FakeEventSource.instances[0].url).toBe(`/api/hivra/managed-sessions/${session.agentId}/events?after=e2`);
+});
+
+it("sends an approval and shows it as pending until DigitalOcean confirms the decision", async () => {
+  mockAnswer.mockResolvedValue(undefined);
+  render(<ManagedSessionChat initialSession={session} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(mockAnswer).toHaveBeenCalledWith(session.agentId, "hitl_1", "approve"));
+  expect(screen.getByText(/waiting for DigitalOcean to confirm/)).toBeInTheDocument();
+  expect(screen.queryByText("Approved")).not.toBeInTheDocument();
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  act(() => FakeEventSource.instances[0].emit({ id: "e3", runId: "run_1", type: "run.human_input_received", at: null, data: { requestId: "hitl_1", outcome: "approved" } }));
+  expect(await screen.findByText("Approved")).toBeInTheDocument();
+});
+
+it("forwards a typed message and attaches it to the run DigitalOcean started", async () => {
+  mockSend.mockResolvedValue({ runId: "run_2" });
+  render(<ManagedSessionChat initialSession={session} />);
+  const input = await screen.findByLabelText("Message Builder");
+  fireEvent.change(input, { target: { value: "Now fix it" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(mockSend).toHaveBeenCalledWith(session.agentId, "Now fix it"));
+  expect(await screen.findByText("Now fix it")).toBeInTheDocument();
+});
+
+it("asks for confirmation before deleting the session", async () => {
+  mockChange.mockResolvedValue({ ...session, status: "deleted" });
+  const onDeleted = jest.fn();
+  render(<ManagedSessionChat initialSession={session} onDeleted={onDeleted} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
+  expect(mockChange).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: /Delete session and workspace/ }));
+  await waitFor(() => expect(onDeleted).toHaveBeenCalled());
+  expect(mockChange).toHaveBeenCalledWith(session.agentId, "delete");
+});

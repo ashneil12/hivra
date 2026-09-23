@@ -29,6 +29,23 @@ describe("guided infrastructure paths", () => {
     expect(callbacks.onConnectHetzner).toHaveBeenCalledTimes(1);
   });
 
+  it("offers DigitalOcean Managed Agents as a no-terminal cloud path only when the page can connect it", () => {
+    const onConnectDigitalOcean = jest.fn();
+    render(<InfrastructureEntryChooser firstConnection hivraCloud={null} selfHosted={false}
+      onChooseHivraCloud={jest.fn()} onConnectHetzner={jest.fn()} onConnectExisting={jest.fn()} onConnectDigitalOcean={onConnectDigitalOcean} />);
+    fireEvent.click(screen.getByRole("button", { name: /Choose cloud provider/i }));
+    expect(screen.getByRole("heading", { name: "DigitalOcean Managed Agents" })).toBeInTheDocument();
+    expect(screen.getByText(/No server to set up and no terminal/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Start with DigitalOcean/i }));
+    expect(onConnectDigitalOcean).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show the DigitalOcean path when no connect handler is provided", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: /Choose cloud provider/i }));
+    expect(screen.queryByRole("heading", { name: "DigitalOcean Managed Agents" })).not.toBeInTheDocument();
+  });
+
   it("blocks the hosted local-network path and offers reachable remote capacity", () => {
     const callbacks = setup();
     fireEvent.click(screen.getByRole("button", { name: /Choose my machine/i }));

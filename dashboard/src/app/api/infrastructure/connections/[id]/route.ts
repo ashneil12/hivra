@@ -48,6 +48,14 @@ function storeFailure(error: unknown, method: "GET" | "PATCH" | "DELETE"): Respo
         ),
       );
     }
+    if (method === "DELETE" && error.code === "agents_bound") {
+      return noStore(apiError(
+        "Delete the agents running on this DigitalOcean connection first, so none keep billing without a way to stop them.",
+        409,
+        undefined,
+        { code: "agents_bound" },
+      ));
+    }
     if (method === "DELETE" && error.code === "capacity_busy") {
       return noStore(apiError(
         "A Hetzner provider mutation is still creating, pending, or inside its reconciliation lease.",

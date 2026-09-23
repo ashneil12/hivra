@@ -9,7 +9,7 @@ import {
 // `proxmox` is retained for backwards compatibility with existing prepared
 // connections. New host-first connections use `host`; discovery decides which
 // isolation driver, if any, can safely prepare and launch on that host.
-const INFRASTRUCTURE_PROVIDERS = ["proxmox", "host", "hetzner-cloud"] as const;
+const INFRASTRUCTURE_PROVIDERS = ["proxmox", "host", "hetzner-cloud", "digitalocean"] as const;
 const INFRASTRUCTURE_OPERATING_MODES = ["self-managed"] as const;
 const INFRASTRUCTURE_SETUP_MODES = ["simple", "advanced"] as const;
 export const INFRASTRUCTURE_CONNECTION_STATUSES = [
@@ -24,6 +24,35 @@ export const HETZNER_CLOUD_CONNECTION_ERROR_CODES = [
   "provider_unavailable",
   "provider_response_invalid",
 ] as const;
+/** Provider-API failures for a DigitalOcean Managed Agents connection. These
+ * never share the Proxmox preflight vocabulary. */
+export const DIGITALOCEAN_CONNECTION_ERROR_CODES = [
+  "invalid_credentials",
+  "managed_agents_forbidden",
+  "provider_unavailable",
+  "provider_response_invalid",
+] as const;
+/** Reviewed Hivra relay for DigitalOcean harness sessions. Bumping it retires
+ * every published target until the connection is re-validated. */
+export const DIGITALOCEAN_MANAGED_AGENTS_ADAPTER_VERSION = "2026.09.23.1" as const;
+/** DigitalOcean adapters Hivra can drive today, keyed to catalog agent ids. */
+export const DIGITALOCEAN_HARNESSES = ["claude-code", "codex", "hermes"] as const;
+/** Sandbox sizes accepted by the harness runtime (environment-spec reference). */
+export const DIGITALOCEAN_SANDBOX_SIZES = [
+  "mars-1vcpu-1gb",
+  "mars-2vcpu-2gb",
+  "mars-2vcpu-4gb",
+  "mars-4vcpu-8gb",
+  "mars-16vcpu-32gb",
+] as const;
+export const DIGITALOCEAN_CONNECTION_CAPABILITIES = {
+  inventory: false,
+  offerCatalog: false,
+  createCapacity: false,
+  agentLaunch: true,
+  reason:
+    "DigitalOcean runs each agent in its own managed session. Sessions bill your DigitalOcean account while they run.",
+} as const;
 const HETZNER_CLOUD_CAPACITY_ERROR_CODES = [
   "selection_invalid",
   "quote_expired",
@@ -441,10 +470,34 @@ export const HetznerCloudConnectionCreateSchema = z
   })
   .strict();
 
+const DigitalOceanApiTokenSchema = z
+  .string()
+  .trim()
+  .min(20, "DigitalOcean API token is incomplete")
+  .max(512, "DigitalOcean API token is too long")
+  .refine((value) => !/[\s\u0000-\u001f\u007f]/.test(value), {
+    message: "DigitalOcean API token cannot contain whitespace or control characters",
+  });
+
+export const DigitalOceanConnectionCreateSchema = z
+  .object({
+    name: ConnectionNameSchema,
+    provider: z.literal("digitalocean"),
+    operatingMode: z.literal("self-managed"),
+    setupMode: z.literal("simple"),
+    credentials: z
+      .object({
+        apiToken: DigitalOceanApiTokenSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export const InfrastructureConnectionCreateSchema = z.union([
   HostConnectionCreateSchema,
   ProxmoxConnectionCreateSchema,
   HetznerCloudConnectionCreateSchema,
+  DigitalOceanConnectionCreateSchema,
 ]);
 
 const ProxmoxConnectionUpdateObjectSchema = z
@@ -540,6 +593,25 @@ export const InfrastructureConnectionDtoSchema = z.discriminatedUnion("provider"
       // be cast into Proxmox readiness failures, but a failed refresh still has
       // to remain visible after the browser reloads.
       lastErrorCode: z.enum(HETZNER_CLOUD_CONNECTION_ERROR_CODES).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      ...InfrastructureConnectionDtoCommonFields,
+      provider: z.literal("digitalocean"),
+      setupMode: z.literal("simple"),
+      endpoint: z.null(),
+      configuration: z.null(),
+      capabilities: z
+        .object({
+          inventory: z.literal(false),
+          offerCatalog: z.literal(false),
+          createCapacity: z.literal(false),
+          agentLaunch: z.literal(true),
+          reason: SafeMessageSchema,
+        })
+        .strict(),
+      lastErrorCode: z.enum(DIGITALOCEAN_CONNECTION_ERROR_CODES).nullable(),
     })
     .strict(),
 ]);
@@ -1315,6 +1387,62 @@ export const GvisorDeploymentTargetDtoSchema = z.object({
   }
 });
 
+/** A DigitalOcean target is the team's serverless Harness Runtime. Each launch
+ * creates one provider-managed Firecracker microVM session. DigitalOcean
+ * attests that boundary; Hivra did not measure it, hence `provider-microvm`.
+ */
+export const DigitalOceanDeploymentTargetDtoSchema = z.object({
+  id: UuidSchema,
+  connectionId: UuidSchema,
+  evidenceConnectionRevision: z.number().int().positive().safe(),
+  externalId: z.literal("do-harness-runtime"),
+  displayName: z.string().trim().min(1).max(128),
+  status: z.enum(["ready", "unavailable"]),
+  capacity: z.object({
+    model: z.literal("serverless-sessions"),
+    sizes: z.array(z.object({
+      slug: z.enum(DIGITALOCEAN_SANDBOX_SIZES),
+      vcpus: z.number().int().nonnegative(),
+      memoryMb: z.number().int().nonnegative(),
+    }).strict()).max(DIGITALOCEAN_SANDBOX_SIZES.length),
+  }).strict(),
+  capabilities: z.object({
+    kind: z.literal("digitalocean-managed-agents"),
+    launchReady: z.boolean(),
+    adapter: z.object({ version: z.literal(DIGITALOCEAN_MANAGED_AGENTS_ADAPTER_VERSION) }).strict(),
+    harnesses: z.array(z.enum(DIGITALOCEAN_HARNESSES)).max(DIGITALOCEAN_HARNESSES.length),
+    sizes: z.array(z.enum(DIGITALOCEAN_SANDBOX_SIZES)).max(DIGITALOCEAN_SANDBOX_SIZES.length),
+    access: z.object({
+      chat: z.literal("hivra-relay-v1"),
+      approvals: z.literal("hivra-relay-v1"),
+      terminal: z.literal(false),
+      publicPorts: z.literal(false),
+    }).strict(),
+    desktop: z.literal(false),
+    windows: z.literal(false),
+  }).strict(),
+  supportedIsolationDrivers: z.tuple([z.literal("do-harness-microvm")]),
+  isolationClass: z.literal("provider-microvm"),
+  lastPreflightAt: IsoDateTimeSchema.nullable(),
+  lastErrorCode: z.enum(DIGITALOCEAN_CONNECTION_ERROR_CODES).nullable(),
+  createdAt: IsoDateTimeSchema,
+  updatedAt: IsoDateTimeSchema,
+}).strict().superRefine((target, context) => {
+  const ready = target.status === "ready";
+  if (ready !== target.capabilities.launchReady || ready !== (target.lastErrorCode === null)
+    || (ready && (!target.lastPreflightAt || target.capabilities.harnesses.length === 0
+      || target.capabilities.sizes.length === 0))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["status"],
+      message: "DigitalOcean launch authority is incomplete",
+    });
+  }
+});
+
+// DigitalOcean targets are deliberately not part of this union: the generic
+// target list and launch journey admit host capacity only, and a serverless
+// DigitalOcean target launches through its own session path.
 export const DeploymentTargetDtoSchema = z.union([
   ProxmoxDeploymentTargetDtoSchema,
   ProviderVmDeploymentTargetDtoSchema,
@@ -1324,6 +1452,7 @@ export const DeploymentTargetDtoSchema = z.union([
 export type ProxmoxDeploymentTargetDto = z.infer<typeof ProxmoxDeploymentTargetDtoSchema>;
 export type ProviderVmDeploymentTargetDto = z.infer<typeof ProviderVmDeploymentTargetDtoSchema>;
 export type GvisorDeploymentTargetDto = z.infer<typeof GvisorDeploymentTargetDtoSchema>;
+export type DigitalOceanDeploymentTargetDto = z.infer<typeof DigitalOceanDeploymentTargetDtoSchema>;
 
 export function isProxmoxDeploymentTarget(target: DeploymentTargetDto): target is ProxmoxDeploymentTargetDto {
   return !("kind" in target.capabilities);
@@ -1332,6 +1461,8 @@ export function isProxmoxDeploymentTarget(target: DeploymentTargetDto): target i
 export function isGvisorDeploymentTarget(target: DeploymentTargetDto): target is GvisorDeploymentTargetDto {
   return "kind" in target.capabilities && target.capabilities.kind === "gvisor";
 }
+
+
 
 const ProxmoxPreflightSuccessSchema = z
   .object({
@@ -1414,6 +1545,29 @@ export type HetznerCloudConnectionDto = Extract<
   InfrastructureConnectionDto,
   { provider: "hetzner-cloud" }
 >;
+/** Connections whose credential is an SSH endpoint and key. Provider-API
+ * connections (Hetzner, DigitalOcean) never reach SSH preflight or preparation. */
+export type SshInfrastructureConnectionDto = Extract<
+  InfrastructureConnectionDto,
+  { provider: "proxmox" | "host" }
+>;
+export type SshInfrastructureConnectionCreate = Extract<
+  InfrastructureConnectionCreate,
+  { provider: "proxmox" | "host" }
+>;
+export function isProviderApiConnection(
+  connection: { provider: InfrastructureConnectionDto["provider"] },
+): connection is { provider: "hetzner-cloud" | "digitalocean" } {
+  return connection.provider === "hetzner-cloud" || connection.provider === "digitalocean";
+}
+export type DigitalOceanConnectionDto = Extract<
+  InfrastructureConnectionDto,
+  { provider: "digitalocean" }
+>;
+export type DigitalOceanConnectionCreate = z.infer<typeof DigitalOceanConnectionCreateSchema>;
+export type DigitalOceanConnectionErrorCode = (typeof DIGITALOCEAN_CONNECTION_ERROR_CODES)[number];
+export type DigitalOceanHarness = (typeof DIGITALOCEAN_HARNESSES)[number];
+export type DigitalOceanSandboxSize = (typeof DIGITALOCEAN_SANDBOX_SIZES)[number];
 export type HetznerCloudServerInventoryDto = z.infer<
   typeof HetznerCloudServerInventoryDtoSchema
 >;

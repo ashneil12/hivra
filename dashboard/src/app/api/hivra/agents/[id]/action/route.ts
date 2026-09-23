@@ -82,6 +82,8 @@ import {
 } from "@/lib/hivra/prepared-canary-computers";
 import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
+import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import {
   issueActivityCollectorCredential,
   recordActivityCollectorIssued,
@@ -287,6 +289,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         soulPromptId: soulPromptId ?? null,
       });
       return apiSuccess({ agent: sanitizeHivraAgentRow(updated || { ...agent, ...patch }) });
+    }
+
+    if (agent.computer_substrate === "do-managed-session") {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      const managedAction = action === "start" ? "resume" : action === "stop" ? "pause" : action === "delete" ? "delete" : null;
+      if (!managedAction) {
+        return apiError("DigitalOcean sessions support start (resume), stop (pause), and delete.", 400);
+      }
+      try {
+        return apiSuccess({ session: await managedSessionAction(userId, String(agent.id), managedAction) });
+      } catch (error) {
+        return managedSessionFailure(error, "/api/hivra/agents/[id]/action");
+      }
     }
 
     if (agent.computer_substrate === "gvisor") {
