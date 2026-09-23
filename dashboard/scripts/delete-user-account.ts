@@ -9,6 +9,7 @@ import {
   ACCOUNT_DELETION_TABLES,
   assertClerkDeletionPolicy,
   assertConfirmedAccountDeletion,
+  assertNoLiveHivraComputers,
   buildDeletionTableSummary,
   extractStorageObjectPath,
   isMissingOptionalAccountDeletionTableError,
@@ -160,6 +161,16 @@ async function loadInstances(supabase: SupabaseAdmin, userId: string): Promise<I
 
   if (error) throw new Error(`Failed to load instances for deletion: ${error.message}`);
   return (data || []) as InstanceRow[];
+}
+
+async function loadLiveHivraComputerIds(supabase: SupabaseAdmin, userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("hivra_agents")
+    .select("id")
+    .eq("user_id", userId)
+    .neq("status", "deleted");
+  if (error) throw new Error(`Failed to load Hivra computers for deletion: ${error.message}`);
+  return ((data || []) as { id: string }[]).map((row) => row.id);
 }
 
 async function loadStripeCustomerIds(
@@ -533,6 +544,7 @@ async function main(): Promise<void> {
 
   const instances = await loadInstances(supabase, args.userId);
   const instanceIds = instances.map((row) => row.id);
+  const liveHivraComputerIds = await loadLiveHivraComputerIds(supabase, args.userId);
   const stripeCustomerIds = args.skipStripe
     ? []
     : await loadStripeCustomerIds(supabase, stripe, args.userId, args.email);
@@ -540,6 +552,7 @@ async function main(): Promise<void> {
   const counts = await collectDeletionCounts(supabase, args.userId, args.email, instanceIds);
 
   console.log(`[delete-user] instances found: ${instances.length} (${instances.filter((row) => !isDeletedInstance(row)).length} active/non-deleted)`);
+  console.log(`[delete-user] Hivra computers not yet deleted: ${liveHivraComputerIds.length}`);
   console.log(`[delete-user] Stripe customers found: ${stripeCustomerIds.length ? stripeCustomerIds.join(", ") : "none"}`);
   console.log(`[delete-user] storage objects found: ${storageBatches.reduce((total, batch) => total + batch.paths.length, 0)}`);
   console.log(`[delete-user] DB row summary: ${buildDeletionTableSummary(counts)}`);
@@ -548,6 +561,8 @@ async function main(): Promise<void> {
     console.log("[delete-user] Dry run only. Re-run with --apply --confirm-delete-user-id <same id> to delete.");
     return;
   }
+
+  assertNoLiveHivraComputers({ apply: args.apply, liveComputerIds: liveHivraComputerIds });
 
   // Order matters: revoke login FIRST, then destroy resources. If Clerk
   // deletion fails (network / API error / missing CLERK_SECRET_KEY) we

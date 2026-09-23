@@ -36,7 +36,7 @@ type ComparisonData = {
 
 const COMPARISONS: Record<string, ComparisonData> = {
   "vs-self-hosted": {
-    title: "Hivra vs Self-Hosted VPS — Which Should You Choose?",
+    title: "Hivra vs Self-Hosted VPS: Which Should You Choose?",
     h1: "Self-hosting Hermes: the honest tradeoff.",
     metaDescription:
       "Hivra vs self-hosted VPS on Hetzner or DigitalOcean. Honest comparison of cost, setup time, maintenance, and reliability for running a persistent Hermes AI agent.",
@@ -126,7 +126,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
   },
 
   "vs-railway": {
-    title: "Hivra vs Railway — Running Hermes Agent on Railway",
+    title: "Hivra vs Railway: Running Hermes Agent on Railway",
     h1: "Railway is a great platform. Just not for Hermes agents.",
     metaDescription:
       "Hivra vs Railway for hosting a Hermes AI agent. Railway is generic cloud — Hivra is purpose-built. Here's the honest difference in setup, cost, and capabilities.",
@@ -202,7 +202,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
   },
 
   "vs-render": {
-    title: "Hivra vs Render — Which is Better for AI Agent Hosting?",
+    title: "Hivra vs Render: Which is Better for AI Agent Hosting?",
     h1: "Render was not built for agents. Hivra was.",
     metaDescription:
       "Comparing Hivra vs Render for hosting a Hermes AI agent. Render is a solid general host but lacks agent-specific tooling. Here's the honest breakdown.",
@@ -280,7 +280,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
   },
 
   "openclaw-to-hermes": {
-    title: "Migrating from OpenClaw to Hivra — Step-by-Step",
+    title: "Migrating from OpenClaw to Hivra: Step-by-Step",
     h1: "Your OpenClaw setup. Hivra's infrastructure.",
     metaDescription:
       "How to migrate from OpenClaw to Hivra managed hosting. Keep your agents, prompts, and tools — drop the self-hosting maintenance. Native migration built in.",

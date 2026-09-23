@@ -180,6 +180,29 @@ Native events are stored in `hivra_agent_events` with `event = 'otel_log'`,
 `role`, `producer`, `toolName`, `durationMs`, `conversationId`,
 `parentSpanId`, `errorType`; the feed re-validates every field on read.
 
+## Retention and deletion
+
+Records stay content-free (no prompts, commands or file contents), and they are
+kept for a bounded time (migration `20260923190000_hivra_activity_retention.sql`):
+
+- **Computer deleted:** when `hivra_agents.status` becomes `deleted` (only after
+  verified teardown, on every delete path), the trigger
+  `delete_hivra_activity_after_agent_delete` deletes that computer's
+  `hivra_agent_events` rows (up to 20,000; the job removes any rest) and its
+  `hivra_activity_collectors` row in the same transaction. A `deleted`
+  lifecycle event that a delete path logs after the flip is kept as a
+  tombstone and ages out with the window. No audit consumer needs the rest:
+  billing reads its own ledgers, and ops reads `ops_events`.
+- **Age:** `/api/cron/prune-hivra-activity` (daily) calls
+  `prune_hivra_activity(cutoff, batch, dry_run)` in bounded batches to delete
+  rows older than `ACTIVITY_RETENTION_DAYS` (default and maximum 90, minimum 30), plus
+  leftovers of computers deleted before the trigger existed. It is OFF unless
+  `ACTIVITY_RETENTION_ENABLED=true`; while off, every run is a dry run that
+  reports counts. `?dryRun=1` forces a preview.
+- **Account deleted:** `ACCOUNT_DELETION_TABLES` deletes both tables by
+  `user_id`. Account deletion refuses to apply while the user still has a Hivra
+  computer that is not deleted.
+
 ## Coverage states (per computer, capability `native_tracing`)
 
 Evaluated in order, first match wins:
