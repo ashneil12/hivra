@@ -24,6 +24,16 @@ test("each OS has a launch link before interaction, while the selector changes i
   expect(screen.getAllByText("Coming soon")).toHaveLength(2);
 });
 
+test("computer choices carry the catalog availability and the attach-later line is labelled coming", () => {
+  render(<ComputersSection />);
+  expect(screen.getByRole("button", { name: /^Ubuntu.*Available now/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Windows.*Private preview/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Omarchy.*Private preview/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^Windows/ }));
+  expect(screen.getByText(/your own Proxmox host from your own licensed Windows ISO/)).toBeVisible();
+  expect(screen.getByText(/Bringing an agent into a computer you already have is coming soon/)).toBeVisible();
+});
+
 test("hosting choices explain independent computers, own capacity and model keys", () => {
   render(<HostingSection />);
   ["Hivra Cloud", "Your infrastructure", "Self-host Hivra"].forEach(name => expect(screen.getByRole("heading", { name })).toBeVisible());

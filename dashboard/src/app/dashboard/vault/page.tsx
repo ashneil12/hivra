@@ -245,7 +245,7 @@ export default function VaultPage() {
             );
           }
           if (sd?.data?.persistenceError) {
-            throw new Error(`Codex connected on ${targetLabel}, but reusable Vault save failed: ${sd.data.persistenceError}`);
+            throw new Error(`Codex connected on ${targetLabel}, but saving the reusable session failed: ${sd.data.persistenceError}`);
           }
           if (readCodexAuthenticatedFlag(sd)) {
             clearInterval(codexPollRef.current!);
@@ -256,7 +256,7 @@ export default function VaultPage() {
               await fetchData();
               setCodexStep('idle');
               setIsAddingMode(false);
-              setSuccess(`Codex session stored in Vault and authenticated via ${targetLabel}.`);
+              setSuccess(`Codex session saved to your API keys and authenticated via ${targetLabel}.`);
               if (successMessageTimerRef.current) {
                 clearTimeout(successMessageTimerRef.current);
               }
@@ -309,7 +309,7 @@ export default function VaultPage() {
         });
       }
     } catch {
-      setError("Failed to load vault securely.");
+      setError("Failed to load your API keys.");
     } finally {
       setLoading(false);
     }
@@ -371,7 +371,7 @@ export default function VaultPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setSuccess(`${trimmedName} saved to Vault securely.`);
+        setSuccess(`${trimmedName} saved securely.`);
         setNewName("");
         setNewKey("");
         setIsAddingMode(false);
@@ -381,7 +381,7 @@ export default function VaultPage() {
         setError(data.error);
       }
     } catch {
-      setError("Failed to save key into vault.");
+      setError("Failed to save the key.");
     } finally {
       setSavingKey(false);
     }
@@ -492,7 +492,7 @@ export default function VaultPage() {
           <Lock size={12} style={{ color: "var(--ink-black)" }} />
           <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.3em", opacity: 0.6 }}>Infrastructure Security</span>
         </div>
-        <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 300, lineHeight: 1.1 }}>API Key <em>Vault</em>.</h2>
+        <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 300, lineHeight: 1.1 }}>API <em>keys</em>.</h2>
         <p style={{ marginTop: 16, opacity: 0.6, lineHeight: 1.6, fontSize: 14, maxWidth: 500 }}>
           Manage your individual API credentials globally. Bind these secure keys to instances to swap configurations dynamically.
         </p>
@@ -514,7 +514,7 @@ export default function VaultPage() {
 
       {loading && keys.length === 0 ? (
         <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span className="mono" style={{ opacity: 0.5, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.2em' }}>Decrypting Vault...</span>
+          <span className="mono" style={{ opacity: 0.5, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.2em' }}>Loading keys...</span>
         </div>
       ) : (
         <motion.div 
@@ -586,14 +586,14 @@ export default function VaultPage() {
                     </div>
                     <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
                       <button type="submit" disabled={savingKey} style={{ background: 'var(--ink-black)', color: "var(--bg-surface)", border: 'none', padding: '10px 24px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                        {savingKey ? 'Saving to Vault...' : 'Save to Vault'}
+                        {savingKey ? 'Saving key...' : 'Save key'}
                       </button>
                     </div>
                   </>
                 ) : (
                   <div style={{ padding: '0.5rem 0' }}>
                     <p style={{ margin: '0 0 1.5rem', fontSize: 12, lineHeight: 1.5, opacity: 0.8 }}>
-                      Use a running agent to complete the official Hermes OAuth flow in-container. Once it finishes, the dashboard stores an encrypted reusable session in Vault and applies the same session to other agents when you sync them.
+                      Use a running agent to complete the official Hermes OAuth flow in-container. Once it finishes, the dashboard stores an encrypted reusable session with your API keys and applies the same session to other agents when you sync them.
                     </p>
 
                     {agents.length === 0 ? (
@@ -635,12 +635,12 @@ export default function VaultPage() {
                               loading={codexProfilesLoading}
                               disabled={codexProfilesLoading}
                               dialogTitle="Choose Target Agent Profile"
-                              dialogDescription="Pick which agent profile should receive the refreshed Codex runtime session after Vault auth completes."
+                              dialogDescription="Pick which agent profile should receive the refreshed Codex runtime session after authentication completes."
                               searchPlaceholder="Search profiles..."
                               emptyMessage="No matching profiles found."
                             />
                             <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, opacity: 0.65 }}>
-                              Vault auth is saved globally. Choosing a Codex-configured sub-agent here also refreshes that profile&apos;s local runtime session.
+                              The saved session is account-wide. Choosing a Codex-configured sub-agent here also refreshes that profile&apos;s local runtime session.
                             </p>
                           </>
                         )}
@@ -684,12 +684,12 @@ export default function VaultPage() {
                                       </div>
                                     )}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, marginTop: 12, opacity: 0.7 }}>
-                                      <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Waiting for browser auth and Vault save...
+                                      <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Waiting for browser auth and key save...
                                     </div>
                                   </div>
                                ) : codexStep === 'success' ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px', color: 'var(--green)' }}>
-                                    <CheckCircle2 size={18} /> <span style={{ fontSize: 12, fontWeight: 600 }}>Codex session stored in Vault and applied on the selected agent.</span>
+                                    <CheckCircle2 size={18} /> <span style={{ fontSize: 12, fontWeight: 600 }}>Codex session saved and applied on the selected agent.</span>
                                   </div>
                                ) : (
                                   <div style={{ padding: '12px', color: 'var(--red)', fontSize: 12, border: '1px solid rgba(239,68,68,0.2)' }}>
@@ -707,7 +707,7 @@ export default function VaultPage() {
                              <input type="radio" checked={newProvider === 'nous'} onChange={() => setNewProvider('nous')} style={{ accentColor: 'var(--ink-black)' }} />
                              <div>
                                 <span style={{ fontWeight: 600, fontSize: 14 }}>Nous Portal</span>
-                                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>Uses Hermes device auth + reusable Vault session</div>
+                                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>Uses Hermes device auth + a reusable saved session</div>
                              </div>
                            </label>
 
@@ -715,7 +715,7 @@ export default function VaultPage() {
                              <div style={{ paddingTop: '1rem', marginTop: '1rem', borderTop: '1px dashed var(--etched-border)' }}>
                                <p style={{ margin: '0 0 12px', fontSize: 12, opacity: 0.8, lineHeight: 1.5 }}>
                                  Start the official Hermes Nous Portal login on the selected agent. When it completes,
-                                 Hermes will save a reusable encrypted session into Vault for future Nous deployments.
+                                 Hermes will save a reusable encrypted session for future Nous deployments.
                                </p>
                                <button
                                  type="button"
@@ -754,7 +754,7 @@ export default function VaultPage() {
                                  xAI's OAuth client only accepts redirects to <code style={{ fontSize: 11 }}>http://127.0.0.1:*</code> so
                                  the handshake has to run on the VM itself. Open your agent's WebUI, go to <strong>Settings → Providers</strong> or
                                  the onboarding wizard, and click <strong>Sign in with xAI (SuperGrok)</strong>. The session refreshes
-                                 automatically after that — no vault entry needed here.
+                                 automatically after that — no saved key needed here.
                                </p>
                                <Link
                                  href="/dashboard/instances"
@@ -781,7 +781,7 @@ export default function VaultPage() {
                   onSuccess={async () => {
                     await fetchData();
                     const targetAgent = agents.find((agent) => agent.id === (codexAgentId || agents[0]?.id)) || agents[0];
-                    setSuccess(`Nous Portal session stored in Vault and authenticated via ${targetAgent?.name || "the selected agent"}.`);
+                    setSuccess(`Nous Portal session saved and authenticated via ${targetAgent?.name || "the selected agent"}.`);
                     scheduleSuccessMessageClear(3000);
                   }}
                 />
