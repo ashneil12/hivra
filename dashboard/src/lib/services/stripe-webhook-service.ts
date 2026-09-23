@@ -18,6 +18,10 @@ import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-
 import { tryReactivateManagedVeniceKeysAfterTopUp } from "@/lib/billing/managed-venice-auto-recover";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
 import { upsertPool } from "@/lib/pools/pool-service";
+import {
+  resolveEffectiveSubscription,
+  type EffectiveSubscription,
+} from "@/lib/billing/instance-entitlement";
 
 const LOG_SOURCE = "stripe-webhook-service";
 
@@ -1048,7 +1052,12 @@ export class StripeWebhookService {
     // unpaid via subscription.updated (e.g. trial ended with no payment method,
     // or manual cancellation from Stripe dashboard). We SUSPEND (laddered,
     // archivable, recoverable) rather than arm an immediate deletion fuse.
-    if (subscription.status === "past_due" || subscription.status === "canceled" || subscription.status === "unpaid") {
+    if (
+      (subscription.status === "past_due" ||
+        subscription.status === "canceled" ||
+        subscription.status === "unpaid") &&
+      !(await this.findOtherLaneEntitlement(userId, `subscription_${subscription.status}`))
+    ) {
       log.info("subscription moved to non-active state — suspending instances", {
         source: LOG_SOURCE,
         subscriptionId: subscription.id,
@@ -1246,6 +1255,31 @@ export class StripeWebhookService {
       updated_at: new Date().toISOString(),
     }).eq("user_id", userId);
 
+    // Still paid through another lane: move the instances onto that lane's
+    // tier and leave them running. Nothing is suspended or scheduled.
+    const otherLane = await this.findOtherLaneEntitlement(userId, "subscription_deleted");
+    if (otherLane) {
+      try {
+        const { applyTierChange } = await import("@/lib/services/tier-change-service");
+        const { tierFromPlanKey } = await import("@/lib/services/tier-specs");
+        await applyTierChange({
+          userId,
+          newTier: tierFromPlanKey(otherLane.plan),
+          source: "stripe",
+          reason: `subscription deleted (${subscription.id}); ${otherLane.source} ${otherLane.plan} entitlement remains`,
+        });
+      } catch (err) {
+        log.error("tier change to remaining entitlement on subscription deletion failed", err, {
+          source: LOG_SOURCE,
+          failureType: "subscription_deletion_remaining_tier_failed",
+          userId,
+          subscriptionId: subscription.id,
+          remainingSource: otherLane.source,
+        });
+      }
+      return;
+    }
+
     // Downgrade to free/sandbox tier so warden's daily cap kicks in for any
     // remaining running instances during the deletion grace window. The
     // resize itself is a no-op-on-failure: schedule_for_deletion already
@@ -1276,6 +1310,50 @@ export class StripeWebhookService {
     } else {
       await this.suspendInstancesForBilling(userId, "subscription_canceled");
     }
+  }
+
+  /**
+   * Cross-lane guard for every Stripe lapse path (invoice.payment_failed,
+   * subscription.updated → past_due / canceled / unpaid, and
+   * subscription.deleted); the Stripe twin of the Apple webhook's
+   * suspendUnlessOtherEntitlement. A lapsing card subscription says nothing
+   * about the user's other paid lanes: an Apple IAP subscription, a yearly
+   * $HermesOS subscription or a Pro/Power token qualification. Without this a
+   * yearly subscriber whose old card subscription ended had their instances
+   * stopped and forced to credit_base while their paid year was still running.
+   *
+   * The Stripe row is left out because at call time it can still read active
+   * or past_due. Returns the other lane's entitlement when it grants seats,
+   * else null. If the check itself fails it throws: the webhook route then
+   * marks the event failed and answers 500, so Stripe redelivers it rather
+   * than this handler suspending someone it could not check.
+   */
+  private static async findOtherLaneEntitlement(
+    userId: string,
+    trigger: string
+  ): Promise<EffectiveSubscription | null> {
+    let other: EffectiveSubscription | null;
+    try {
+      other = await resolveEffectiveSubscription(userId, { excludeStripe: true });
+    } catch (err) {
+      log.error("stripe lapse entitlement cross-check failed; leaving instances for redelivery", err, {
+        source: LOG_SOURCE,
+        failureType: "stripe_lapse_crosscheck_failed",
+        userId,
+        trigger,
+      });
+      throw err;
+    }
+    if (!other || other.instance_limit <= 0) return null;
+
+    log.info("stripe lapse: user keeps another paid entitlement — skipping suspension", {
+      source: LOG_SOURCE,
+      userId,
+      trigger,
+      remainingSource: other.source,
+      remainingPlan: other.plan,
+    });
+    return other;
   }
 
   static async scheduleInstancesForDeletion(userId: string) {
@@ -1677,11 +1755,14 @@ export class StripeWebhookService {
     // A failed invoice is often a transient decline; Stripe smart-retries over
     // the next several days. NEVER arm VM destruction here — suspend instead so
     // the data survives until either the retry succeeds (resume) or the
-    // subscription truly terminates and the laddered sweep takes over.
-    if (isBillingLegacyHardDelete()) {
-      await this.scheduleInstancesForDeletion(userId);
-    } else {
-      await this.suspendInstancesForBilling(userId, "subscription_past_due");
+    // subscription truly terminates and the laddered sweep takes over. A user
+    // still paid through another lane is not suspended at all.
+    if (!(await this.findOtherLaneEntitlement(userId, "invoice_payment_failed"))) {
+      if (isBillingLegacyHardDelete()) {
+        await this.scheduleInstancesForDeletion(userId);
+      } else {
+        await this.suspendInstancesForBilling(userId, "subscription_past_due");
+      }
     }
 
     // Dunning recovery email (flag-gated, at most once per invoice — see

@@ -50,8 +50,13 @@ jest.mock("@/components/instances/AgentSwitcher", () => ({
   AgentSwitcher: () => <div data-testid="agent-switcher" />,
 }));
 
+const mockChatMounts = jest.fn();
 jest.mock("@/components/hivra/HivraChat", () => ({
-  HivraChat: () => <div>Chat panel</div>,
+  HivraChat: function MockHivraChat() {
+    const { useEffect } = jest.requireActual<typeof import("react")>("react");
+    useEffect(() => { mockChatMounts(); }, []);
+    return <div>Chat panel</div>;
+  },
 }));
 
 jest.mock("@/components/hivra/HivraLogin", () => ({
@@ -657,6 +662,64 @@ describe("AgentPage", () => {
     expect(screen.getByTitle("Box · shell")).toBe(boxFrame);
     expect(boxFrame).toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens parallel terminal sessions that each keep their own shell", async () => {
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    const first = await screen.findByTitle("Claude Code · terminal");
+    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    const second = await screen.findByTitle("Claude Code · terminal · 2");
+    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+    expect(second.getAttribute("name")).not.toBe(first.getAttribute("name"));
+    expect(second).toBeVisible();
+    expect(first).toBeInTheDocument();
+    expect(first).not.toBeVisible();
+    expect(screen.getByRole("tab", { name: "Session 2" })).toHaveAttribute("aria-selected", "true");
+
+    // Switching back is a view change, not a new shell.
+    fireEvent.click(screen.getByRole("tab", { name: "Session 1" }));
+    expect(screen.getByTitle("Claude Code · terminal")).toBe(first);
+    expect(first).toBeVisible();
+    expect(second).not.toBeVisible();
+    expect(requestSubmit).toHaveBeenCalledTimes(2);
+
+    // Closing a session drops its frame (ending that process) and keeps the rest.
+    fireEvent.click(screen.getByRole("button", { name: "Close session 2" }));
+    expect(second).not.toBeInTheDocument();
+    expect(first).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Close session 1" })).not.toBeInTheDocument();
+  });
+
+  it("caps parallel terminal sessions per surface", async () => {
+    render(<AgentPage />);
+    await screen.findByRole("button", { name: /claude code terminal/i });
+    fireEvent.click(getSurfaceButton("Box Terminal"));
+    await screen.findByTitle("Box · shell");
+    const add = screen.getByRole("button", { name: "New terminal session" });
+    for (let i = 0; i < 10; i += 1) fireEvent.click(add);
+    expect(screen.getAllByRole("tab")).toHaveLength(8);
+    expect(add).toBeDisabled();
+  });
+
+  it("keeps the chat mounted while working in other surfaces", async () => {
+    mockChatMounts.mockClear();
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Chat" }));
+    const chat = await screen.findByText("Chat panel");
+    expect(mockChatMounts).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /claude code terminal/i }));
+    await screen.findByTitle("Claude Code · terminal");
+    expect(chat).toBeInTheDocument();
+    expect(chat).not.toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.getByText("Chat panel")).toBe(chat);
+    expect(chat).toBeVisible();
+    expect(mockChatMounts).toHaveBeenCalledTimes(1);
   });
 
   it("disposes retained terminals immediately when changing computers", async () => {

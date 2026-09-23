@@ -50,7 +50,12 @@ jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: jest.fn(),
 }));
 
+jest.mock("@/lib/billing/yearly-activation", () => ({
+  applyYearlyPaymentToInstances: jest.fn(async () => undefined),
+}));
+
 import { POST } from "../route";
+import { applyYearlyPaymentToInstances } from "@/lib/billing/yearly-activation";
 
 const REQUIRED = 1_000n * 10n ** 18n;
 const originalFetch = global.fetch;
@@ -107,6 +112,7 @@ it("activates a payment made inside the window when the user checks after the qu
   ]);
   const body = await response.json();
   expect(body.data.summary.activated).toBe(1);
+  expect(applyYearlyPaymentToInstances).toHaveBeenCalledWith(TEST_USER_ID, "activated");
 });
 
 it("only reconciles the signed-in user's quotes", async () => {

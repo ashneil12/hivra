@@ -347,4 +347,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260922222737", name: "yearly_token_payment_attribution" },
   { version: "20260922224500", name: "managed_venice_token_transfer_dedupe" },
   { version: "20260922234806", name: "reconcile_rpc_yearly_tier_rank" },
+  { version: "20260923001301", name: "revoke_api_execute_on_definer_functions" },
 ];
