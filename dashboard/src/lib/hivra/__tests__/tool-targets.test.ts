@@ -19,7 +19,7 @@ jest.mock("@/lib/supabase", () => ({
 import { listToolTargets } from "../tool-targets";
 
 function cliRow(overrides: Record<string, unknown>) {
-  return { id: "a1", name: "Agent", type: "codex", status: "running", ip: "10.0.0.5", computer_substrate: "proxmox-kvm", ...overrides };
+  return { id: "a1", name: "Agent", type: "codex", status: "running", ip: "192.0.2.5", computer_substrate: "proxmox-kvm", ...overrides };
 }
 
 describe("listToolTargets", () => {
