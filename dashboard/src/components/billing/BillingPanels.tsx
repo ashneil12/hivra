@@ -3,7 +3,8 @@
 import { motion, type Variants } from 'framer-motion';
 import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
 import { CheckCircle, CreditCard, Loader2, RefreshCw, ShieldCheck, Wallet } from 'lucide-react';
-import { CopyButton, DepositAddressField, TransferAmountField } from '@/components/billing/TransferDetails';
+import { CopyButton, DepositAddressField, OpenInWalletLink, TransferAmountField } from '@/components/billing/TransferDetails';
+import { buildBaseErc20TransferUri } from '@/lib/billing/eip681';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { useLocale } from '@/components/i18n/LocaleProvider';
 import {
@@ -151,6 +152,14 @@ export function CryptoTopUpPanel({
               qrSize={116}
             />
           </div>
+          <OpenInWalletLink
+            href={buildBaseErc20TransferUri({
+              tokenAddress: intent.asset.tokenAddress,
+              chainId: intent.asset.chainId,
+              recipient: intent.depositAddress,
+              amountRaw: intent.amountRaw,
+            })}
+          />
           <div className={styles.reference}>
             {cryptoCopy.reference} {intent.referenceId}
           </div>
