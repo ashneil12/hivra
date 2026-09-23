@@ -54,13 +54,13 @@ test('rejects source and destination symlinks without modifying their target', (
   const root = fixture(t);
   const outside = path.join(root, 'outside.txt');
   writeFileSync(outside, 'keep');
-  const source = path.join(root, 'WHY.md');
+  const source = path.join(root, 'THOUGHTS.md');
   rmSync(source);
   symlinkSync(outside, source);
   assert.throws(() => stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }), /Symlink/);
   rmSync(source);
-  writeFileSync(source, 'WHY.md\n');
-  symlinkSync(outside, path.join(root, 'dashboard/public/WHY.md'));
+  writeFileSync(source, 'THOUGHTS.md\n');
+  symlinkSync(outside, path.join(root, 'dashboard/public/THOUGHTS.md'));
   assert.throws(() => stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }), /Symlink/);
   assert.equal(readFileSync(outside, 'utf8'), 'keep');
 });

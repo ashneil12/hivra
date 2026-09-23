@@ -26,6 +26,7 @@
 
 import {
   fetchPlatformTokenPriceUsd,
+  PlatformTokenPriceGateError,
   computeTokensRequiredForUsdTarget,
   type HermesPriceQuote,
 } from "./price-feed";
@@ -128,7 +129,15 @@ async function getCachedOrFreshPrice(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const stale = cachedByToken.get(cacheKey);
-    if (stale) {
+    // A tripped safety gate (thin pool, pumped spot, missing canonical pool)
+    // means the market itself is unsafe to price from right now: fail closed
+    // rather than keep an older price for up to STALE_TTL_MS. Only a source
+    // outage falls back to the cached price.
+    const sourceOutage =
+      !(error instanceof PlatformTokenPriceGateError) ||
+      error.gate === "spot_unavailable" ||
+      error.gate === "reference_unavailable";
+    if (stale && sourceOutage) {
       const age = now.getTime() - stale.fetchedAt.getTime();
       if (age >= 0 && age < STALE_TTL_MS) {
         // Visible only in server logs — caller doesn't differentiate.
