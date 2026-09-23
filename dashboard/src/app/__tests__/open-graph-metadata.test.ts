@@ -1,5 +1,6 @@
 import { metadata as homeMetadata } from '../page';
 import { metadata as downloadMetadata } from '../download/page';
+import { metadata as tokenomicsMetadata } from '../tokenomics/page';
 import { metadata as roadmapMetadata } from '../roadmap/page';
 import { metadata as tokenMetadata } from '../token/page';
 import { metadata as blogIndexMetadata } from '../blog/page';
@@ -29,6 +30,11 @@ describe('route Open Graph metadata', () => {
     // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
     expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
     expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
+  });
+
+  it('labels the /tokenomics title as proposed and sets its own description', () => {
+    expect(tokenomicsMetadata.title).toBe('Proposed $HIVRA tokenomics');
+    expect(String(tokenomicsMetadata.description)).toMatch(/proposed migration/);
   });
 
   it('gives /download its own title and description, not the site defaults', () => {
