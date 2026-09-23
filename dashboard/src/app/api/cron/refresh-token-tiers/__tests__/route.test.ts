@@ -3,10 +3,7 @@ import { NextRequest } from "next/server";
 import { POST } from "../route";
 import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
-import {
-  refreshVerifiedHermesTokenHoldings,
-  qualifiesForHermesBaseTier,
-} from "@/lib/billing/token-holdings";
+import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
@@ -14,9 +11,10 @@ jest.mock("@/lib/services/tier-change-service", () => ({
   applyTierChange: jest.fn(),
 }));
 
+const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
+
 jest.mock("@/lib/billing/token-holdings", () => ({
   refreshVerifiedHermesTokenHoldings: jest.fn(),
-  qualifiesForHermesBaseTier: jest.fn(),
   HERMESOS_TOKEN_ADDRESS: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
   HERMESOS_TOKEN_DECIMALS: 18,
   HERMESOS_TOKEN_SYMBOL: "HERMESOS",
@@ -38,6 +36,8 @@ interface InstanceFixture {
 
 interface SnapshotFixture {
   user_id: string;
+  /** Defaults to the $HermesOS contract. */
+  token_address?: string;
   balance_raw: string;
   qualifies_base_tier: boolean;
   checked_at: string;
@@ -125,7 +125,10 @@ function mockSupabase(opts: {
     in: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
-    order: jest.fn().mockResolvedValue({ data: opts.snapshots, error: null }),
+    order: jest.fn().mockResolvedValue({
+      data: opts.snapshots.map((snapshot) => ({ token_address: HERMESOS_CONTRACT, ...snapshot })),
+      error: null,
+    }),
   };
   const subscriptionsBuilder = {
     select: jest.fn().mockReturnThis(),
@@ -210,7 +213,6 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       refreshed: 0,
       failed: 0,
     });
-    (qualifiesForHermesBaseTier as jest.Mock).mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -359,10 +361,9 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     expect(applyTierChange).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "user_base", newTier: "token_base" })
     );
-    expect(snapshotsBuilder.eq).toHaveBeenCalledWith(
-      "token_address",
-      "0x95ccfd2b81a9667b0cc979992632f98fc853eba3"
-    );
+    // Snapshots are read for the live platform tokens only: $HermesOS while
+    // $HIVRA is dormant.
+    expect(snapshotsBuilder.in).toHaveBeenCalledWith("token_address", [HERMESOS_CONTRACT]);
   });
 
   it("does not re-apply for a steady paid Stripe user when tier and caps are unchanged", async () => {

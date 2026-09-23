@@ -51,8 +51,20 @@
  *     h. unchanged — none of the above. UPDATE only last_balance_seen and
  *        last_evaluated_at.
  *
- * The function fails-closed when thresholds are not configured: returns
- * `configured: false` with a warning, writes nothing.
+ * Platform tokens. Each row is held in ONE token (token_key): $HermesOS or
+ * $HIVRA. Rows compare against the balance of their own token. New rows are
+ * written in a token the user may hold (token-access.ts): $HermesOS before
+ * $HIVRA is active and for the grandfather cohort, $HIVRA otherwise. A
+ * converted member's $HermesOS rows count either token during the conversion
+ * grace (the $HIVRA side against the threshold locked at conversion) and then
+ * move to $HIVRA at the then-current threshold.
+ *
+ * Live prices. Only steps that need a NEW threshold read a live price: a
+ * first qualification without a deposit quote, a re-qualification after
+ * suspension, and moving a row to $HIVRA. Breach, grace, recovery and suspend
+ * compare balances with the row's fixed qualifying_quantity and run whether
+ * or not the price feed is up. When a price is missing, the steps that need it
+ * are skipped for that tick with a warning.
  *
  * Caller is the `refresh-token-holdings` cron (or its successor). After
  * the cron writes a fresh balance snapshot, it calls this evaluator with
@@ -66,22 +78,25 @@ import {
   REQUALIFICATION_COOLDOWN_DAYS,
   REQUALIFICATION_GRACE_HOURS,
   REQUALIFICATION_WINDOW_DAYS,
-  bestQualifyingTier,
-  getTierThresholds,
   isFoundersRateUser,
-  resolveActiveThresholds,
   type ResolvedThreshold,
   type ThresholdTierCode,
   type TierKey,
-  type TierThresholds,
-  type TierThresholdsForEpoch,
 } from "./tier-thresholds";
-import { getLiveActiveThresholds } from "./live-thresholds";
+import { getLiveActiveThresholds, type LiveTierThresholds } from "./live-thresholds";
 import {
   consumeDepositQuote,
   getActiveDepositQuotes,
   type DepositQuote,
 } from "./deposit-quotes";
+import { platformTokenByKey, type PlatformTokenKey } from "./token-registry";
+import {
+  conversionDue,
+  resolveUserTokenAccess,
+  tierRowTokenCounts,
+  type TokenAccessDb,
+  type UserTokenAccess,
+} from "./token-access";
 
 export type { TierKey } from "./tier-thresholds";
 
@@ -97,10 +112,14 @@ export type EligibilityTransition =
 
 export type { ThresholdTierCode } from "./tier-thresholds";
 
+/** Balances per platform token, in raw units. A missing token was not read. */
+export type PlatformTokenBalances = Partial<Record<PlatformTokenKey, bigint>>;
+
 interface TierQualificationRow {
   id: string;
   user_id: string;
   tier: TierKey;
+  token_key?: PlatformTokenKey | null;
   qualifying_quantity: string;          // numeric column → string from PostgREST
   threshold_at_qualification: string;
   qualifying_threshold_tier: ThresholdTierCode;
@@ -120,8 +139,11 @@ interface TierQualificationRow {
 
 interface TierEvaluationResult {
   tier: TierKey;
-  threshold: bigint;
-  thresholdCode: ThresholdTierCode;
+  /** Token the tier is held in after this evaluation; null when none. */
+  tokenKey: PlatformTokenKey | null;
+  /** Current threshold for a NEW qualification, when one could be resolved. */
+  threshold: bigint | null;
+  thresholdCode: ThresholdTierCode | null;
   balance: bigint;
   qualifyingQuantity: bigint | null;
   qualifyingThresholdTier: ThresholdTierCode | null;
@@ -129,6 +151,8 @@ interface TierEvaluationResult {
   inGrace: boolean;
   cooldownEndsAt: Date | null;
   transition: EligibilityTransition;
+  /** Set when this evaluation moved a $HermesOS row to $HIVRA. */
+  movedToHivra?: boolean;
 }
 
 export interface EligibilityResult {
@@ -167,7 +191,12 @@ type SupabaseLike = {
 
 interface EvaluateParams {
   userId: string;
-  currentBalance: bigint;
+  /** $HermesOS balance. Kept for callers that only read $HermesOS. */
+  currentBalance?: bigint;
+  /** Balance per platform token; takes precedence over currentBalance. */
+  balances?: PlatformTokenBalances;
+  /** Token access, when the caller already resolved it (crons). */
+  access?: UserTokenAccess;
   db?: SupabaseLike | null;
   now?: Date;
 }
@@ -177,8 +206,8 @@ const DAY_MS = 24 * HOUR_MS;
 // ERC-20 wallets and swaps can leave harmless sub-token dust around a
 // copied whole-token quote. Keep the tolerance far below one token so
 // users cannot meaningfully underpay, but a few raw units do not block
-// eligibility.
-const TOKEN_DUST_TOLERANCE_RAW = 10_000_000_000n; // 0.00000001 Hivra
+// eligibility. Both platform tokens have 18 decimals.
+const TOKEN_DUST_TOLERANCE_RAW = 10_000_000_000n; // 0.00000001 token
 const ONE_TOKEN_RAW = 10n ** 18n;
 
 function nowIso(now?: Date): string {
@@ -198,8 +227,8 @@ function meetsRequiredBalance(balance: bigint, required: bigint): boolean {
   return balance >= required || required - balance <= tolerance;
 }
 
-function isBelowRequiredBalance(balance: bigint, required: bigint): boolean {
-  return !meetsRequiredBalance(balance, required);
+function rowTokenKey(row: TierQualificationRow): PlatformTokenKey {
+  return row.token_key === "hivra" ? "hivra" : "hermesos";
 }
 
 async function loadRow(
@@ -214,7 +243,7 @@ async function loadRow(
   const { data, error } = await db
     .from("token_tier_qualifications")
     .select(
-      "id, user_id, tier, qualifying_quantity::text, threshold_at_qualification::text, qualifying_threshold_tier, qualified_at, currently_eligible, last_balance_seen::text, last_evaluated_at, last_breach_at, last_suspend_at, cooldown_ends_at, requalification_count, requalification_window_start, metadata, created_at, updated_at"
+      "id, user_id, tier, token_key, qualifying_quantity::text, threshold_at_qualification::text, qualifying_threshold_tier, qualified_at, currently_eligible, last_balance_seen::text, last_evaluated_at, last_breach_at, last_suspend_at, cooldown_ends_at, requalification_count, requalification_window_start, metadata, created_at, updated_at"
     )
     .eq("user_id", userId)
     .eq("tier", tier)
@@ -281,128 +310,257 @@ function nextRequalificationWindow(
   };
 }
 
+type ThresholdLookup = (token: PlatformTokenKey) => Promise<ResolvedThreshold | null>;
+
 interface EvaluateTierContext {
   db: SupabaseLike;
   userId: string;
-  active: ResolvedThreshold;
-  balance: bigint;
+  tier: TierKey;
+  access: UserTokenAccess;
+  balances: PlatformTokenBalances;
+  thresholdFor: ThresholdLookup;
   now: Date;
   warnings: string[];
 }
 
-async function evaluateTier(
-  ctx: EvaluateTierContext
-): Promise<TierEvaluationResult> {
-  const { db, userId, active, balance, now, warnings } = ctx;
-  const tier = active.tier;
-  const thresholdCode = active.code;
-  const row = await loadRow(db, userId, tier);
-  const nowStamp = nowIso(now);
+async function updateRow(
+  db: SupabaseLike,
+  row: TierQualificationRow,
+  payload: Record<string, unknown>,
+  failure: string
+) {
+  const { error } = await db.from("token_tier_qualifications").update(payload).eq("id", row.id);
+  if (error) throw new Error(`${failure} for ${row.user_id}/${row.tier}`);
+}
 
+async function loadActiveQuote(ctx: EvaluateTierContext): Promise<DepositQuote | null> {
   // Quote-aware threshold resolution.
   //
   // If the user has an active deposit quote for this tier, the
   // qualifying quantity is the quote's tokens_required (the locked-in
-  // rate), NOT the constants module's threshold. Quotes are minted
+  // rate) in the quote's token, NOT the live threshold. Quotes are minted
   // when the user clicks "Get quote" and lock for 20 minutes.
-  //
-  // The constants threshold remains the fallback for the legacy
-  // path where no quote exists — e.g. someone deposited via direct
-  // on-chain transfer without ever touching the dashboard.
-  let activeQuote: DepositQuote | null = null;
   try {
-    const quotes = await getActiveDepositQuotes({ userId, tier, now });
-    activeQuote = quotes[0] ?? null;
+    const quotes = await getActiveDepositQuotes({ userId: ctx.userId, tier: ctx.tier, now: ctx.now });
+    return quotes[0] ?? null;
   } catch (quoteErr) {
-    warnings.push(
-      `Could not load deposit quotes for ${userId}/${tier}: ${
+    ctx.warnings.push(
+      `Could not load deposit quotes for ${ctx.userId}/${ctx.tier}: ${
         quoteErr instanceof Error ? quoteErr.message : String(quoteErr)
       }`
     );
+    return null;
   }
+}
 
-  const threshold = activeQuote ? activeQuote.tokensRequiredRaw : active.amount;
+function quoteTokenKey(quote: DepositQuote): PlatformTokenKey {
+  return quote.tokenKey === "hivra" ? "hivra" : "hermesos";
+}
 
-  // Diagnostic: log the comparison so we can see exactly what bigints
-  // the evaluator is working with on preview/prod. Gated on non-test.
-  if (process.env.NODE_ENV !== "test") {
-    // eslint-disable-next-line no-console
-    console.log(
-      `[evaluateTier] user=${userId} tier=${tier} balance=${balance.toString()} threshold=${threshold.toString()} quoteId=${activeQuote?.id ?? "none"} hasRow=${Boolean(row)} cmp(balance>=threshold)=${balance >= threshold} meetsRequired=${meetsRequiredBalance(balance, threshold)}`
+async function consumeQuoteQuietly(
+  ctx: EvaluateTierContext,
+  quote: DepositQuote,
+  balance: bigint,
+  what: string
+) {
+  try {
+    await consumeDepositQuote({ quoteId: quote.id, consumedBalanceRaw: balance, now: ctx.now });
+  } catch (consumeErr) {
+    ctx.warnings.push(
+      `${what} ${quote.id}: ${consumeErr instanceof Error ? consumeErr.message : String(consumeErr)}`
     );
   }
+}
 
-  // ──────────────────────────────────────────────────────────────────
-  // Case (a) — first-time qualification: no row yet.
-  // ──────────────────────────────────────────────────────────────────
-  if (!row) {
-    if (meetsRequiredBalance(balance, threshold)) {
-      const { error } = await db.from("token_tier_qualifications").insert({
-        user_id: userId,
-        tier,
-        qualifying_quantity: threshold.toString(),
-        threshold_at_qualification: threshold.toString(),
-        qualifying_threshold_tier: thresholdCode,
-        qualified_at: nowStamp,
-        currently_eligible: true,
-        last_balance_seen: balance.toString(),
-        last_evaluated_at: nowStamp,
-        metadata: activeQuote
-          ? {
-              consumed_quote_id: activeQuote.id,
-              quote_price_usd: activeQuote.priceUsdAtQuote,
-              quote_usd_cents: activeQuote.usdTargetCents,
-            }
-          : {},
-      });
-      if (error) {
-        throw new Error(`Failed to insert qualification row for ${userId}/${tier}`);
-      }
-      // Mark the quote consumed so subsequent ticks don't re-fire.
-      if (activeQuote) {
-        try {
-          await consumeDepositQuote({
-            quoteId: activeQuote.id,
-            consumedBalanceRaw: balance,
-            now,
-          });
-        } catch (consumeErr) {
-          warnings.push(
-            `Qualification recorded but quote ${activeQuote.id} could not be marked consumed: ${
-              consumeErr instanceof Error ? consumeErr.message : String(consumeErr)
-            }`
-          );
-        }
-      }
-      return {
-        tier,
-        threshold,
-        thresholdCode,
-        balance,
-        qualifyingQuantity: threshold,
-        qualifyingThresholdTier: thresholdCode,
-        currentlyEligible: true,
-        inGrace: false,
-        cooldownEndsAt: null,
-        transition: "qualified",
-      };
+// ──────────────────────────────────────────────────────────────────────
+// Case (a) — first-time qualification: no row yet.
+// ──────────────────────────────────────────────────────────────────────
+async function evaluateFirstQualification(
+  ctx: EvaluateTierContext,
+  activeQuote: DepositQuote | null
+): Promise<TierEvaluationResult> {
+  const { db, userId, tier, access, balances, now, warnings } = ctx;
+  const nowStamp = nowIso(now);
+
+  type Candidate = { token: PlatformTokenKey; amount: bigint; code: ThresholdTierCode; quote: DepositQuote | null };
+  const candidates: Candidate[] = [];
+  if (activeQuote) {
+    const token = quoteTokenKey(activeQuote);
+    if (access.qualifyTokens.includes(token)) {
+      candidates.push({ token, amount: activeQuote.tokensRequiredRaw, code: activeQuote.thresholdTierCode, quote: activeQuote });
+    } else {
+      warnings.push(
+        `Ignoring deposit quote ${activeQuote.id} for ${userId}/${tier}: ${token} is not a token this user can qualify in.`
+      );
     }
-    // No row, balance below threshold — nothing to record.
+  }
+  if (candidates.length === 0) {
+    for (const token of access.qualifyTokens) {
+      const active = await ctx.thresholdFor(token);
+      if (active) candidates.push({ token, amount: active.amount, code: active.code, quote: null });
+    }
+  }
+
+  for (const candidate of candidates) {
+    const balance = balances[candidate.token];
+    if (balance === undefined || !meetsRequiredBalance(balance, candidate.amount)) continue;
+    const { error } = await db.from("token_tier_qualifications").insert({
+      user_id: userId,
+      tier,
+      token_key: candidate.token,
+      qualifying_quantity: candidate.amount.toString(),
+      threshold_at_qualification: candidate.amount.toString(),
+      qualifying_threshold_tier: candidate.code,
+      qualified_at: nowStamp,
+      currently_eligible: true,
+      last_balance_seen: balance.toString(),
+      last_evaluated_at: nowStamp,
+      metadata: candidate.quote
+        ? {
+            consumed_quote_id: candidate.quote.id,
+            quote_price_usd: candidate.quote.priceUsdAtQuote,
+            quote_usd_cents: candidate.quote.usdTargetCents,
+          }
+        : {},
+    });
+    if (error) {
+      throw new Error(`Failed to insert qualification row for ${userId}/${tier}`);
+    }
+    // Mark the quote consumed so subsequent ticks don't re-fire.
+    if (candidate.quote) {
+      await consumeQuoteQuietly(ctx, candidate.quote, balance, "Qualification recorded but quote could not be marked consumed:");
+    }
     return {
       tier,
-      threshold,
-      thresholdCode,
+      tokenKey: candidate.token,
+      threshold: candidate.amount,
+      thresholdCode: candidate.code,
       balance,
-      qualifyingQuantity: null,
-      qualifyingThresholdTier: null,
-      currentlyEligible: false,
+      qualifyingQuantity: candidate.amount,
+      qualifyingThresholdTier: candidate.code,
+      currentlyEligible: true,
       inGrace: false,
       cooldownEndsAt: null,
-      transition: "unchanged",
+      transition: "qualified",
     };
   }
 
-  // Existing row → derive state.
+  // No row, balance below every threshold (or no threshold) — nothing to record.
+  const shown = candidates[0] ?? null;
+  return {
+    tier,
+    tokenKey: null,
+    threshold: shown?.amount ?? null,
+    thresholdCode: shown?.code ?? null,
+    balance: balances[shown?.token ?? access.qualifyTokens[0]] ?? 0n,
+    qualifyingQuantity: null,
+    qualifyingThresholdTier: null,
+    currentlyEligible: false,
+    inGrace: false,
+    cooldownEndsAt: null,
+    transition: "unchanged",
+  };
+}
+
+/**
+ * Move a $HermesOS row to $HIVRA at the current $HIVRA threshold: after a
+ * converted member's grace, or for a $HermesOS row that no longer counts. A
+ * row that was eligible or in grace becomes eligible in $HIVRA, so the normal
+ * flow either keeps it (enough $HIVRA) or opens a fresh breach grace: never an
+ * immediate loss. A suspended row stays suspended and re-qualifies in $HIVRA.
+ */
+async function moveRowToHivra(
+  ctx: EvaluateTierContext,
+  row: TierQualificationRow,
+  threshold: ResolvedThreshold
+): Promise<TierQualificationRow> {
+  const nowStamp = nowIso(ctx.now);
+  const suspended = !!row.last_suspend_at;
+  const payload: Record<string, unknown> = {
+    token_key: "hivra",
+    qualifying_quantity: threshold.amount.toString(),
+    threshold_at_qualification: threshold.amount.toString(),
+    qualifying_threshold_tier: threshold.code,
+    qualified_at: nowStamp,
+    metadata: {
+      ...(row.metadata ?? {}),
+      moved_from_hermesos: {
+        at: nowStamp,
+        qualifying_quantity: row.qualifying_quantity,
+        qualifying_threshold_tier: row.qualifying_threshold_tier,
+        qualified_at: row.qualified_at,
+      },
+    },
+    ...(suspended ? {} : { currently_eligible: true, last_breach_at: null }),
+  };
+  await updateRow(ctx.db, row, payload, "Failed to move the tier to $HIVRA");
+  return {
+    ...row,
+    ...(payload as Partial<TierQualificationRow>),
+    token_key: "hivra",
+    qualifying_quantity: threshold.amount.toString(),
+    threshold_at_qualification: threshold.amount.toString(),
+  };
+}
+
+async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationResult> {
+  const { db, userId, tier, access, balances, now, warnings } = ctx;
+  let row = await loadRow(db, userId, tier);
+  const activeQuote = await loadActiveQuote(ctx);
+
+  if (!row) return evaluateFirstQualification(ctx, activeQuote);
+
+  let tokenKey = rowTokenKey(row);
+  let movedToHivra = false;
+
+  // A $HermesOS row whose owner converted and whose grace is over, or that
+  // no longer counts for this user, moves to $HIVRA at today's threshold.
+  if (
+    tokenKey === "hermesos" &&
+    access.phase === "active" &&
+    (conversionDue(access, now) || !tierRowTokenCounts(access, "hermesos"))
+  ) {
+    const hivraThreshold = await ctx.thresholdFor("hivra");
+    if (hivraThreshold) {
+      row = await moveRowToHivra(ctx, row, hivraThreshold);
+      tokenKey = "hivra";
+      movedToHivra = true;
+    } else {
+      warnings.push(
+        `User ${userId} (${tier}) is due to move to $HIVRA but no live $HIVRA price is available; retrying next tick.`
+      );
+    }
+  }
+
+  const rowBalance = balances[tokenKey];
+  if (rowBalance === undefined) {
+    // Never judge a row on a balance that was not read this tick.
+    warnings.push(`No ${tokenKey} balance for ${userId}/${tier}; row left unchanged.`);
+    return {
+      tier,
+      tokenKey,
+      threshold: null,
+      thresholdCode: null,
+      balance: 0n,
+      qualifyingQuantity: BigInt(row.qualifying_quantity),
+      qualifyingThresholdTier: row.qualifying_threshold_tier,
+      currentlyEligible: row.currently_eligible,
+      inGrace: !!row.last_breach_at && !row.last_suspend_at,
+      cooldownEndsAt: row.cooldown_ends_at ? new Date(row.cooldown_ends_at) : null,
+      transition: "unchanged",
+      movedToHivra,
+    };
+  }
+
+  // Conversion grace: a converted member's $HermesOS row counts either token.
+  const lockedHivra = access.conversionThresholds[tier];
+  const eitherToken =
+    tokenKey === "hermesos" && access.phase === "active" && !!access.convertedAt && !!lockedHivra;
+  const hivraBalance = balances.hivra;
+  const meetsWithEither = (required: bigint) =>
+    meetsRequiredBalance(rowBalance, required) ||
+    (eitherToken && hivraBalance !== undefined && meetsRequiredBalance(hivraBalance, lockedHivra!.amount));
+
   const qualifyingQuantity = BigInt(row.qualifying_quantity);
   const qualifyingThresholdTier = row.qualifying_threshold_tier;
   const wasStrictlyEligible = row.currently_eligible;
@@ -411,37 +569,57 @@ async function evaluateTier(
   const cooldownEndsAt = row.cooldown_ends_at
     ? new Date(row.cooldown_ends_at)
     : null;
+  const nowStamp = nowIso(now);
+  const base = { tier, tokenKey, balance: rowBalance, movedToHivra };
+
+  // Only re-qualification needs the current threshold (a quote in the row's
+  // token, else the live threshold). Resolved lazily.
+  const resolveRequalification = async (): Promise<{ amount: bigint; code: ThresholdTierCode } | null> => {
+    if (activeQuote && quoteTokenKey(activeQuote) === tokenKey) {
+      return { amount: activeQuote.tokensRequiredRaw, code: activeQuote.thresholdTierCode };
+    }
+    const active = await ctx.thresholdFor(tokenKey);
+    return active ? { amount: active.amount, code: active.code } : null;
+  };
+
+  // Diagnostic: gated on non-test.
+  if (process.env.NODE_ENV !== "test") {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[evaluateTier] user=${userId} tier=${tier} token=${tokenKey} balance=${rowBalance.toString()} qualifying=${qualifyingQuantity.toString()} quoteId=${activeQuote?.id ?? "none"} eitherToken=${eitherToken}`
+    );
+  }
 
   // ──────────────────────────────────────────────────────────────────
   // Case (e/f/g) — currently suspended branch.
   // ──────────────────────────────────────────────────────────────────
   if (suspendAt) {
     const cooldownActive = cooldownEndsAt !== null && now < cooldownEndsAt;
+    const requal = await resolveRequalification();
+    const touch = { last_balance_seen: rowBalance.toString(), last_evaluated_at: nowStamp };
+    const suspendedResult = {
+      ...base,
+      threshold: requal?.amount ?? null,
+      thresholdCode: requal?.code ?? null,
+      qualifyingQuantity,
+      qualifyingThresholdTier,
+      currentlyEligible: false,
+      inGrace: false,
+      cooldownEndsAt,
+    };
+
+    if (!requal) {
+      warnings.push(
+        `User ${userId} (${tier}) re-qualification skipped: no live ${tokenKey} price.`
+      );
+      await updateRow(db, row, touch, "Failed to update suspended row");
+      return { ...suspendedResult, transition: "unchanged" };
+    }
 
     // Still strictly below threshold — nothing to do.
-    if (isBelowRequiredBalance(balance, threshold)) {
-      const { error } = await db
-        .from("token_tier_qualifications")
-        .update({
-          last_balance_seen: balance.toString(),
-          last_evaluated_at: nowStamp,
-        })
-        .eq("id", row.id);
-      if (error) {
-        throw new Error(`Failed to update suspended row for ${userId}/${tier}`);
-      }
-      return {
-        tier,
-        threshold,
-        thresholdCode,
-        balance,
-        qualifyingQuantity,
-        qualifyingThresholdTier,
-        currentlyEligible: false,
-        inGrace: false,
-        cooldownEndsAt,
-        transition: "unchanged",
-      };
+    if (!meetsRequiredBalance(rowBalance, requal.amount)) {
+      await updateRow(db, row, touch, "Failed to update suspended row");
+      return { ...suspendedResult, transition: "unchanged" };
     }
 
     // Balance is back above the active threshold. Either:
@@ -453,28 +631,8 @@ async function evaluateTier(
         `User ${userId} (${tier}) re-qualification blocked: cooldown ends at ` +
           `${cooldownEndsAt!.toISOString()}.`
       );
-      const { error } = await db
-        .from("token_tier_qualifications")
-        .update({
-          last_balance_seen: balance.toString(),
-          last_evaluated_at: nowStamp,
-        })
-        .eq("id", row.id);
-      if (error) {
-        throw new Error(`Failed to update cooldown-blocked row for ${userId}/${tier}`);
-      }
-      return {
-        tier,
-        threshold,
-        thresholdCode,
-        balance,
-        qualifyingQuantity,
-        qualifyingThresholdTier,
-        currentlyEligible: false,
-        inGrace: false,
-        cooldownEndsAt,
-        transition: "requalification_blocked_cooldown",
-      };
+      await updateRow(db, row, touch, "Failed to update cooldown-blocked row");
+      return { ...suspendedResult, transition: "requalification_blocked_cooldown" };
     }
 
     const window = nextRequalificationWindow(row, now);
@@ -484,65 +642,58 @@ async function evaluateTier(
           `${REQUALIFICATION_CAP_PER_YEAR} per ${REQUALIFICATION_WINDOW_DAYS}d ` +
           `reached.`
       );
-      const { error } = await db
-        .from("token_tier_qualifications")
-        .update({
-          last_balance_seen: balance.toString(),
-          last_evaluated_at: nowStamp,
-        })
-        .eq("id", row.id);
-      if (error) {
-        throw new Error(`Failed to update cap-blocked row for ${userId}/${tier}`);
-      }
-      return {
-        tier,
-        threshold,
-        thresholdCode,
-        balance,
-        qualifyingQuantity,
-        qualifyingThresholdTier,
-        currentlyEligible: false,
-        inGrace: false,
-        cooldownEndsAt,
-        transition: "requalification_blocked_cap",
-      };
+      await updateRow(db, row, touch, "Failed to update cap-blocked row");
+      return { ...suspendedResult, transition: "requalification_blocked_cap" };
     }
 
     // Re-qualify at the *current* epoch's threshold and code (lose launch
     // grandfathering if applicable).
-    const { error } = await db
-      .from("token_tier_qualifications")
-      .update({
-        qualifying_quantity: threshold.toString(),
-        threshold_at_qualification: threshold.toString(),
-        qualifying_threshold_tier: thresholdCode,
+    await updateRow(
+      db,
+      row,
+      {
+        qualifying_quantity: requal.amount.toString(),
+        threshold_at_qualification: requal.amount.toString(),
+        qualifying_threshold_tier: requal.code,
         qualified_at: nowStamp,
         currently_eligible: true,
-        last_balance_seen: balance.toString(),
+        last_balance_seen: rowBalance.toString(),
         last_evaluated_at: nowStamp,
         last_breach_at: null,
         last_suspend_at: null,
         cooldown_ends_at: null,
         requalification_count: window.nextCount,
         requalification_window_start: window.nextWindowStart,
-      })
-      .eq("id", row.id);
-    if (error) {
-      throw new Error(`Failed to re-qualify ${userId}/${tier}`);
+      },
+      "Failed to re-qualify"
+    );
+    if (activeQuote && quoteTokenKey(activeQuote) === tokenKey) {
+      await consumeQuoteQuietly(ctx, activeQuote, rowBalance, "Re-qualified but quote could not be marked consumed:");
     }
     return {
-      tier,
-      threshold,
-      thresholdCode,
-      balance,
-      qualifyingQuantity: threshold,
-      qualifyingThresholdTier: thresholdCode,
+      ...base,
+      threshold: requal.amount,
+      thresholdCode: requal.code,
+      qualifyingQuantity: requal.amount,
+      qualifyingThresholdTier: requal.code,
       currentlyEligible: true,
       inGrace: false,
       cooldownEndsAt: null,
       transition: "re_qualified",
     };
   }
+
+  // The current threshold is informational for a held row (the UI and emails
+  // quote it as "re-qualify at"); the state machine below never needs it, so
+  // a price outage only blanks it.
+  const current = await ctx.thresholdFor(tokenKey);
+  const heldResult = {
+    ...base,
+    threshold: current?.amount ?? null,
+    thresholdCode: current?.code ?? null,
+    qualifyingQuantity,
+    qualifyingThresholdTier,
+  };
 
   // ──────────────────────────────────────────────────────────────────
   // Mid-grace branches: row has last_breach_at but no last_suspend_at.
@@ -551,26 +702,20 @@ async function evaluateTier(
     const graceEndsAt = addHours(breachAt, REQUALIFICATION_GRACE_HOURS);
 
     // (c) grace recovery: balance returned to ≥ qualifying_quantity.
-    if (meetsRequiredBalance(balance, qualifyingQuantity)) {
-      const { error } = await db
-        .from("token_tier_qualifications")
-        .update({
+    if (meetsWithEither(qualifyingQuantity)) {
+      await updateRow(
+        db,
+        row,
+        {
           currently_eligible: true,
-          last_balance_seen: balance.toString(),
+          last_balance_seen: rowBalance.toString(),
           last_evaluated_at: nowStamp,
           last_breach_at: null,
-        })
-        .eq("id", row.id);
-      if (error) {
-        throw new Error(`Failed to record grace recovery for ${userId}/${tier}`);
-      }
+        },
+        "Failed to record grace recovery"
+      );
       return {
-        tier,
-        threshold,
-        thresholdCode,
-        balance,
-        qualifyingQuantity,
-        qualifyingThresholdTier,
+        ...heldResult,
         currentlyEligible: true,
         inGrace: false,
         cooldownEndsAt: null,
@@ -581,26 +726,20 @@ async function evaluateTier(
     // (d) grace expired without recovery → suspend.
     if (now >= graceEndsAt) {
       const cooldownEnd = addDays(now, REQUALIFICATION_COOLDOWN_DAYS);
-      const { error } = await db
-        .from("token_tier_qualifications")
-        .update({
+      await updateRow(
+        db,
+        row,
+        {
           last_suspend_at: nowStamp,
           cooldown_ends_at: cooldownEnd.toISOString(),
-          last_balance_seen: balance.toString(),
+          last_balance_seen: rowBalance.toString(),
           last_evaluated_at: nowStamp,
           currently_eligible: false,
-        })
-        .eq("id", row.id);
-      if (error) {
-        throw new Error(`Failed to suspend ${userId}/${tier}`);
-      }
+        },
+        "Failed to suspend"
+      );
       return {
-        tier,
-        threshold,
-        thresholdCode,
-        balance,
-        qualifyingQuantity,
-        qualifyingThresholdTier,
+        ...heldResult,
         currentlyEligible: false,
         inGrace: false,
         cooldownEndsAt: cooldownEnd,
@@ -611,23 +750,14 @@ async function evaluateTier(
     // Still in grace, balance still below qualifying_quantity → unchanged
     // (the access-layer caller may treat this as "still has access" until
     // suspend, but the eligibility row already records the breach).
-    const { error } = await db
-      .from("token_tier_qualifications")
-      .update({
-        last_balance_seen: balance.toString(),
-        last_evaluated_at: nowStamp,
-      })
-      .eq("id", row.id);
-    if (error) {
-      throw new Error(`Failed to update grace-pending row for ${userId}/${tier}`);
-    }
+    await updateRow(
+      db,
+      row,
+      { last_balance_seen: rowBalance.toString(), last_evaluated_at: nowStamp },
+      "Failed to update grace-pending row"
+    );
     return {
-      tier,
-      threshold,
-      thresholdCode,
-      balance,
-      qualifyingQuantity,
-      qualifyingThresholdTier,
+      ...heldResult,
       currentlyEligible: false,
       inGrace: true,
       cooldownEndsAt: null,
@@ -638,26 +768,20 @@ async function evaluateTier(
   // ──────────────────────────────────────────────────────────────────
   // Case (b) — fresh breach: was strictly eligible, now below qualifying.
   // ──────────────────────────────────────────────────────────────────
-  if (wasStrictlyEligible && isBelowRequiredBalance(balance, qualifyingQuantity)) {
-    const { error } = await db
-      .from("token_tier_qualifications")
-      .update({
+  if (wasStrictlyEligible && !meetsWithEither(qualifyingQuantity)) {
+    await updateRow(
+      db,
+      row,
+      {
         currently_eligible: false,
-        last_balance_seen: balance.toString(),
+        last_balance_seen: rowBalance.toString(),
         last_evaluated_at: nowStamp,
         last_breach_at: nowStamp,
-      })
-      .eq("id", row.id);
-    if (error) {
-      throw new Error(`Failed to mark breach for ${userId}/${tier}`);
-    }
+      },
+      "Failed to mark breach"
+    );
     return {
-      tier,
-      threshold,
-      thresholdCode,
-      balance,
-      qualifyingQuantity,
-      qualifyingThresholdTier,
+      ...heldResult,
       currentlyEligible: false,
       inGrace: true,
       cooldownEndsAt: null,
@@ -680,52 +804,35 @@ async function evaluateTier(
   // is idempotent (only flips status 'active'→'consumed'). Best-effort — a
   // reconcile failure must not derail the eligibility tick.
   if (wasStrictlyEligible && activeQuote) {
-    try {
-      await consumeDepositQuote({
-        quoteId: activeQuote.id,
-        consumedBalanceRaw: balance,
-        now,
-      });
-    } catch (consumeErr) {
-      warnings.push(
-        `Could not reconcile orphaned deposit quote ${activeQuote.id} for ` +
-          `${userId}/${tier}: ${
-            consumeErr instanceof Error ? consumeErr.message : String(consumeErr)
-          }`
-      );
-    }
+    await consumeQuoteQuietly(
+      ctx,
+      activeQuote,
+      rowBalance,
+      `Could not reconcile orphaned deposit quote for ${userId}/${tier}:`
+    );
   }
 
-  const { error } = await db
-    .from("token_tier_qualifications")
-    .update({
-      last_balance_seen: balance.toString(),
-      last_evaluated_at: nowStamp,
-    })
-    .eq("id", row.id);
-  if (error) {
-    throw new Error(`Failed to update last_balance for ${userId}/${tier}`);
-  }
+  await updateRow(
+    db,
+    row,
+    { last_balance_seen: rowBalance.toString(), last_evaluated_at: nowStamp },
+    "Failed to update last_balance"
+  );
   return {
-    tier,
-    threshold,
-    thresholdCode,
-    balance,
-    qualifyingQuantity,
-    qualifyingThresholdTier,
+    ...heldResult,
     currentlyEligible: wasStrictlyEligible,
     inGrace: false,
     cooldownEndsAt: null,
-    transition: "unchanged",
+    transition: movedToHivra ? "re_qualified" : "unchanged",
   };
 }
 
 /**
- * Evaluate a user's $HERMESOS balance against the configured tier thresholds
- * and persist any transitions to `token_tier_qualifications`.
+ * Evaluate a user's platform-token balances against the tier thresholds and
+ * persist any transitions to `token_tier_qualifications`.
  *
- * Fails-closed when thresholds are not configured: returns `configured: false`
- * with a warning, writes nothing. Caller decides how to surface that to ops.
+ * Live thresholds are resolved per token, lazily and once per call. A price
+ * outage only skips the steps that need a new threshold (see the header).
  */
 export async function evaluateAndRecordTokenTierEligibility(
   params: EvaluateParams
@@ -733,60 +840,60 @@ export async function evaluateAndRecordTokenTierEligibility(
   const warnings: string[] = [];
   const now = params.now ?? new Date();
 
-  // Live-priced thresholds with in-process cache (5 min) and a stale-
-  // cache window (60 min) for transient CoinGecko hiccups. If both
-  // live and cached price are unavailable we INTENTIONALLY skip the
-  // evaluation rather than fall back to a stale static threshold —
-  // existing holders are unaffected because their qualifying_quantity
-  // is already snapshotted on the row. The next cron run picks up
-  // when the price feed recovers.
-  let active: TierThresholdsForEpoch;
-  try {
-    // Allowlisted founders are pinned to the launch epoch past the global
-    // promo window, so they qualify against (and snapshot) the cheaper
-    // launch threshold. No-op for everyone else.
-    const live = await getLiveActiveThresholds({
-      now,
-      forceLaunchEpoch: isFoundersRateUser(params.userId),
-    });
-    active = {
-      epoch: live.epoch,
-      promoEndsAt: live.promoEndsAt,
-      pro: live.pro,
-      power: live.power,
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    warnings.push(`Live $HERMESOS price unavailable; skipping evaluation: ${reason}`);
-    return { configured: false, warnings, pro: null, power: null };
-  }
-
   const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
   if (!db) {
     warnings.push("Supabase admin client unavailable; eligibility not recorded.");
     return { configured: true, warnings, pro: null, power: null };
   }
 
+  const balances: PlatformTokenBalances =
+    params.balances ??
+    (params.currentBalance !== undefined ? { hermesos: params.currentBalance } : {});
+  const access =
+    params.access ??
+    (await resolveUserTokenAccess(params.userId, { db: db as unknown as TokenAccessDb, now }));
+
+  // Allowlisted founders are pinned to the launch epoch past the global
+  // promo window, so they qualify against (and snapshot) the cheaper launch
+  // threshold, in whichever token. No-op for everyone else.
+  const forceLaunchEpoch = isFoundersRateUser(params.userId);
+  const liveByToken = new Map<PlatformTokenKey, Promise<LiveTierThresholds | null>>();
+  const liveThresholds = (key: PlatformTokenKey) => {
+    let pending = liveByToken.get(key);
+    if (!pending) {
+      const token = platformTokenByKey(key);
+      pending = token
+        ? getLiveActiveThresholds({ now, forceLaunchEpoch, token }).catch((error) => {
+            const reason = error instanceof Error ? error.message : String(error);
+            warnings.push(`Live ${token.displayUnit} price unavailable; new thresholds skipped: ${reason}`);
+            return null;
+          })
+        : Promise.resolve(null);
+      liveByToken.set(key, pending);
+    }
+    return pending;
+  };
+  const lookupFor = (tier: TierKey): ThresholdLookup => async (key) => {
+    const live = await liveThresholds(key);
+    return live ? (tier === "pro" ? live.pro : live.power) : null;
+  };
+
   // Evaluate Pro and Power independently. A user can be eligible for Pro
   // (qualifying_quantity recorded) and not eligible for Power.
-  const [pro, power] = await Promise.all([
-    evaluateTier({
-      db,
-      userId: params.userId,
-      active: active.pro,
-      balance: params.currentBalance,
-      now,
-      warnings,
-    }),
-    evaluateTier({
-      db,
-      userId: params.userId,
-      active: active.power,
-      balance: params.currentBalance,
-      now,
-      warnings,
-    }),
-  ]);
+  const [pro, power] = await Promise.all(
+    (["pro", "power"] as const).map((tier) =>
+      evaluateTier({
+        db,
+        userId: params.userId,
+        tier,
+        access,
+        balances,
+        thresholdFor: lookupFor(tier),
+        now,
+        warnings,
+      })
+    )
+  );
 
   return { configured: true, warnings, pro, power };
 }
