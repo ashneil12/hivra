@@ -25,15 +25,29 @@ function isStandaloneMode() {
   return window.matchMedia("(display-mode: standalone)").matches || Boolean(navigatorWithStandalone.standalone);
 }
 
-function isIosSafari() {
+/** Every iOS browser (Safari, Chrome, Edge, Firefox) installs through Share, then Add to Home Screen. */
+function isIosBrowser() {
   const ua = window.navigator.userAgent;
   const isiOS =
     /iPad|iPhone|iPod/i.test(ua) ||
     (/Macintosh/i.test(ua) && /Mobile\//i.test(ua));
-  const isWebKit = /WebKit/i.test(ua);
-  const isOtherBrowser = /CriOS|FxiOS|EdgiOS/i.test(ua);
-  return isiOS && isWebKit && !isOtherBrowser;
+  return isiOS && /WebKit/i.test(ua);
 }
+
+function isTouchDevice() {
+  try {
+    return window.matchMedia("(pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Browsers that never fire beforeinstallprompt get manual steps after this.
+ * Chromium also skips the event once the app is installed, so the copy must not
+ * claim that it is missing.
+ */
+const MANUAL_INSTALL_FALLBACK_MS = 3000;
 
 function macInstallMode(): Extract<InstallMode, "mac-safari" | "mac-chromium"> | null {
   const ua = window.navigator.userAgent;
@@ -47,24 +61,21 @@ function macInstallMode(): Extract<InstallMode, "mac-safari" | "mac-chromium"> |
 }
 
 export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
-  const [mode, setMode] = useState<InstallMode>(() => {
-    if (typeof window === "undefined") {
-      return "hidden";
-    }
-
-    if (isStandaloneMode()) {
-      return "hidden";
-    }
-
-    if (isIosSafari()) return "ios";
-    return macInstallMode() ?? "hidden";
-  });
+  // Starts hidden on the server and the client alike; the platform is read after
+  // mount so the first client render matches the server HTML.
+  const [mode, setMode] = useState<InstallMode>("hidden");
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEventLike | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [installPending, setInstallPending] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isStandaloneMode()) {
+      const platformMode = isIosBrowser() ? "ios" : macInstallMode();
+      // Browser-only platform detection runs once after hydration.
+      if (platformMode) setMode((current) => (current === "hidden" ? platformMode : current));
+    }
+
     const handleBeforeInstallPrompt = (event: Event) => {
       if (isStandaloneMode()) return;
       const beforeInstallPromptEvent = event as BeforeInstallPromptEventLike;
@@ -83,8 +94,12 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt as EventListener);
     window.addEventListener("appinstalled", handleAppInstalled);
+    const manualFallback = !isStandaloneMode() && isTouchDevice()
+      ? window.setTimeout(() => setMode((current) => (current === "hidden" ? "manual" : current)), MANUAL_INSTALL_FALLBACK_MS)
+      : undefined;
 
     return () => {
+      window.clearTimeout(manualFallback);
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt as EventListener);
       window.removeEventListener("appinstalled", handleAppInstalled);
     };
@@ -106,7 +121,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
     } else if (expanded && mode === "ios") {
       content = {
         title: "Add Hivra to your Home Screen",
-        description: "On iPhone or iPad, tap Share, then Add to Home Screen in Safari to launch Hivra like an app.",
+        description: "On iPhone or iPad, tap Share, then Add to Home Screen to launch Hivra like an app.",
       };
     } else if (expanded && mode === "mac-safari") {
       content = {
@@ -121,7 +136,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
     } else if (mode === "manual") {
       content = {
         title: "Install Hivra",
-        description: "The native install prompt is unavailable. Use your browser menu to install this app or create a shortcut.",
+        description: "If Hivra isn't installed on this device yet, use your browser menu to install it or create a shortcut.",
       };
     }
   }
@@ -145,7 +160,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
       setMode("hidden");
     } catch {
       setDeferredPrompt(null);
-      setMode(isIosSafari() ? "ios" : macInstallMode() ?? "manual");
+      setMode(isIosBrowser() ? "ios" : macInstallMode() ?? "manual");
       setInstallError(
         "The install prompt is unavailable. Use your browser menu to install Hivra.",
       );

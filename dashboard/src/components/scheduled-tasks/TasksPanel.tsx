@@ -78,6 +78,13 @@ const labelStyle: React.CSSProperties = {
   color: "var(--text-muted)",
 };
 
+// Task actions become a 2x2 grid on narrow phones so Delete is not a small
+// neighbour of Edit.
+const TASKS_CSS = `@media (max-width: 479px) {
+  .task-actions { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-actions > button { justify-content: center; }
+}`;
+
 function rawScheduleString(schedule: unknown): string {
   if (typeof schedule === "string") return schedule;
   // The box returns the parsed cron dict on schedule; the human string lives on
@@ -397,19 +404,21 @@ export function TasksPanel({
     fontSize: 10,
     textTransform: "uppercase",
     letterSpacing: "0.08em",
-    padding: "6px 9px",
+    padding: "10px 12px",
+    minHeight: 40,
     cursor: "pointer",
   };
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "clamp(16px, 4vw, 28px)" }}>
+      <style>{TASKS_CSS}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
         <CalendarClock size={18} style={{ color: "var(--gold-leaf)" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: "1 1 220px", minWidth: 0 }}>
           <h2 className="serif" style={{ fontSize: "1.4rem", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
             Scheduled Tasks
           </h2>
-          <div className="mono" style={{ fontSize: 10, marginTop: 4, opacity: 0.55 }}>
+          <div className="mono" style={{ fontSize: 12, marginTop: 4, opacity: 0.6, lineHeight: 1.45 }}>
             Recurring jobs {agentName} runs on its own — reports, monitors, follow-ups.
           </div>
         </div>
@@ -438,6 +447,7 @@ export function TasksPanel({
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             padding: "8px 14px",
+            minHeight: 40,
             cursor: "pointer",
           }}
         >
@@ -496,6 +506,7 @@ export function TasksPanel({
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               padding: "9px 16px",
+              minHeight: 40,
               cursor: "pointer",
             }}
           >
@@ -577,13 +588,13 @@ export function TasksPanel({
                     <span style={labelStyle}>Next</span> {formatTime(job.next_run_at)}
                   </span>
                   {job.last_error ? (
-                    <span style={{ color: "#ef4444" }}>
+                    <span style={{ color: "#ef4444", flexBasis: "100%", minWidth: 0, overflowWrap: "anywhere" }}>
                       <span style={{ ...labelStyle, color: "#ef4444" }}>Error</span> {job.last_error}
                     </span>
                   ) : null}
                 </div>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div className="task-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     type="button"
                     onClick={() => void runLifecycle(job, "trigger")}
@@ -627,6 +638,7 @@ export function TasksPanel({
         onSave={handleSave}
         saving={saving}
         agents={[agentForModal]}
+        agentName={agentName}
         editingJobInitial={editingJob}
         editingAgentId={instanceId}
         editingProfileName={editingJob?.profileName || "default"}

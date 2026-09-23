@@ -117,6 +117,8 @@ export function BuzzConnectionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingLeave, setConfirmingLeave] = useState<string | null>(null);
+  // Removing the runtime deletes the sidecar and its in-guest secret file.
+  const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
   const [runtimeDrafts, setRuntimeDrafts] = useState<Record<string, RuntimeDraft>>({});
 
   const load = useCallback(async () => {
@@ -242,7 +244,7 @@ export function BuzzConnectionsPage() {
     <main id="buzz" className={styles.page}>
       <div className={styles.gridBackdrop} aria-hidden="true" />
       <div className={styles.inner}>
-        <Link href="/dashboard" className={styles.breadcrumb}>Command center <span>/</span> Collaboration</Link>
+        <Link href="/dashboard?runtimes=1" className={styles.breadcrumb}>Home <span>/</span> Collaboration</Link>
 
         <header className={styles.header}>
           <div>
@@ -392,6 +394,7 @@ export function BuzzConnectionsPage() {
                                   <option value="venice">Venice · saved API key</option>
                                 </select></label>
                                 <label><span>Model</span><input aria-label={`Buzz runtime model for ${binding.agentName}`} value={draft.model}
+                                  autoCapitalize="none" autoCorrect="off" spellCheck={false}
                                   onChange={(event) => updateRuntimeDraft(binding.id, { model: event.target.value })} /></label>
                                 {draft.provider === "venice" ? (
                                   <div className={styles.vaultCredential}><span>Credential</span><strong>Venice key from your API keys</strong>
@@ -418,7 +421,15 @@ export function BuzzConnectionsPage() {
                           {binding.status === "joined" && binding.runtimeAdapter === "active" && (
                             <div className={styles.runtimeBar}><span><span className={styles.healthyDot} /> Owner-only Buzz sidecar active{binding.runtimeLastObservedAt ? ` · checked ${new Date(binding.runtimeLastObservedAt).toLocaleString()}` : ""}</span><div>
                               <button onClick={() => void runtimeAction(binding, "health")} disabled={busy !== null}>Check runtime</button>
-                              <button onClick={() => void runtimeAction(binding, "remove")} disabled={busy !== null}>Remove runtime</button>
+                              {/* Remove becomes Cancel in place, so it keeps focus and a double tap cannot confirm. */}
+                              <button aria-label={confirmingRemove === binding.id ? `Cancel Buzz runtime removal for ${binding.agentName}` : undefined}
+                                onClick={() => setConfirmingRemove(confirmingRemove === binding.id ? null : binding.id)} disabled={busy !== null}>
+                                {confirmingRemove === binding.id ? "Cancel" : "Remove runtime"}
+                              </button>
+                              {confirmingRemove === binding.id && (
+                                <button aria-label={`Confirm remove runtime for ${binding.agentName}`} className={styles.dangerButton}
+                                  onClick={() => { setConfirmingRemove(null); void runtimeAction(binding, "remove"); }} disabled={busy !== null}>Confirm remove</button>
+                              )}
                             </div></div>
                           )}
                           {binding.status === "joined" && binding.runtimeAdapter === "remove_pending" && (

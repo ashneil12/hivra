@@ -112,3 +112,35 @@ it("provides a separately confirmed credential revocation path after token failu
   await waitFor(()=>expect(forgot).toHaveBeenCalledTimes(1));
   expect(advanceCleanup).not.toHaveBeenCalled();expect(complete).not.toHaveBeenCalled();
 });
+it("keeps confirmation typing literal on touch keyboards and says when it does not match yet",async()=>{
+  render(<HetznerCloudCleanupDialog connection={connection} onClose={jest.fn()} onComplete={jest.fn()}/>);
+  const input=await screen.findByRole("textbox",{name:`Type ${view.serverName} to confirm`});
+  await waitFor(()=>expect(input).toBeEnabled());
+  expect(input).toHaveAttribute("autocapitalize","none");
+  expect(input).toHaveAttribute("autocorrect","off");
+  expect(input).toHaveAttribute("spellcheck","false");
+  expect(screen.queryByText("Doesn't match yet")).not.toBeInTheDocument();
+  fireEvent.change(input,{target:{value:"Hivra-22222222222242228222"}});
+  expect(input).toHaveAccessibleDescription("Doesn't match yet");
+  expect(screen.getByRole("button",{name:"Delete confirmed resources"})).toBeDisabled();
+  fireEvent.change(input,{target:{value:view.serverName}});
+  expect(screen.queryByText("Doesn't match yet")).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:"Delete confirmed resources"})).toBeEnabled();
+});
+it("keeps the forget-access phrase uppercase and literal",async()=>{
+  const stuck={...view,status:"cleaning",cleanup:{...state,error:"provider_unavailable"}};
+  (listCleanupOrders as jest.Mock).mockResolvedValue({orders:[stuck]});
+  (previewCleanup as jest.Mock).mockRejectedValue(new Error("Token no longer works"));
+  render(<HetznerCloudCleanupDialog connection={connection} onClose={jest.fn()} onComplete={jest.fn()}/>);
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByText("Cannot access the project anymore?"));
+  const input=screen.getByRole("textbox",{name:"Type "+HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION});
+  expect(input).toHaveAttribute("autocapitalize","characters");
+  expect(input).toHaveAttribute("autocorrect","off");
+  expect(input).toHaveAttribute("spellcheck","false");
+  fireEvent.change(input,{target:{value:"FORGET HIVRA"}});
+  expect(input).toHaveAccessibleDescription("Doesn't match yet");
+  fireEvent.change(input,{target:{value:HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION}});
+  expect(input).not.toHaveAccessibleDescription();
+  expect(screen.getByRole("button",{name:"Forget access, keep provider resources"})).toBeEnabled();
+});

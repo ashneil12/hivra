@@ -219,4 +219,58 @@ describe("BuzzConnectionsPage", () => {
       `/api/hivra/buzz/bindings/${BINDING}`, expect.objectContaining({ method: "POST" }),
     ));
   });
+
+  it("asks before removing an active runtime and its in-guest secret", async () => {
+    const summary = {
+      connections: [connection],
+      bindings: [{
+        id: BINDING, connectionId: CONNECTION, agentId: AGENT, agentName: "Research", agentType: "codex",
+        publicKey: PUBLIC_KEY, status: "joined", lastHealthAt: null, joinedAt: "2026-09-01T00:00:00.000Z",
+        revokedAt: null, lastErrorCode: null, runtimeAdapter: "active", runtimeProvider: "openai",
+        runtimeModel: "gpt-5", runtimeLastObservedAt: "2026-09-01T12:00:00.000Z", runtimeLastErrorCode: null,
+      }],
+      agents: [agent],
+    };
+    const posts: unknown[] = [];
+    global.fetch = jest.fn((input, init) => {
+      if (String(input) === `/api/hivra/buzz/bindings/${BINDING}` && init?.method === "POST") {
+        posts.push(JSON.parse(String(init.body)));
+        return response({ bindingId: BINDING, status: "removed" });
+      }
+      return response(summary);
+    }) as typeof fetch;
+
+    render(<BuzzConnectionsPage />);
+    const remove = await screen.findByRole("button", { name: "Remove runtime" });
+    remove.focus();
+    fireEvent.click(remove);
+    expect(posts).toHaveLength(0);
+    // The Remove button becomes Cancel in place, so keyboard focus stays on the safe choice.
+    expect(screen.getByRole("button", { name: "Cancel Buzz runtime removal for Research" })).toBe(remove);
+    expect(remove).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Buzz runtime removal for Research" }));
+    expect(screen.queryByRole("button", { name: "Confirm remove runtime for Research" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm remove runtime for Research" }));
+    await waitFor(() => expect(posts).toEqual([{ action: "runtime_remove" }]));
+  });
+
+  it("links the breadcrumb to the runtime list and keeps model ids lowercase", async () => {
+    global.fetch = jest.fn(() => response({
+      connections: [connection],
+      bindings: [{
+        id: BINDING, connectionId: CONNECTION, agentId: AGENT, agentName: "Research", agentType: "codex",
+        publicKey: PUBLIC_KEY, status: "joined", lastHealthAt: null, joinedAt: "2026-09-01T00:00:00.000Z",
+        revokedAt: null, lastErrorCode: null, runtimeAdapter: "not_installed", runtimeProvider: null,
+        runtimeModel: null, runtimeLastObservedAt: null, runtimeLastErrorCode: null,
+      }],
+      agents: [agent],
+    })) as typeof fetch;
+    render(<BuzzConnectionsPage />);
+    expect(screen.getByRole("link", { name: /^Home/ })).toHaveAttribute("href", "/dashboard?runtimes=1");
+    const model = await screen.findByLabelText("Buzz runtime model for Research");
+    expect(model).toHaveAttribute("autocapitalize", "none");
+    expect(model).toHaveAttribute("autocorrect", "off");
+    expect(model).toHaveAttribute("spellcheck", "false");
+  });
 });

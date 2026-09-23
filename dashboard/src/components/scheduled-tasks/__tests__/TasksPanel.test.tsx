@@ -8,8 +8,8 @@ import { TasksPanel } from "../TasksPanel";
 // modal is observable. It stays pure here — we only care that it was opened.
 jest.mock("../TaskModal", () => ({
   __esModule: true,
-  TaskModal: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div data-testid="task-modal-open" /> : null,
+  TaskModal: ({ isOpen, agentName }: { isOpen: boolean; agentName?: string }) =>
+    isOpen ? <div data-testid="task-modal-open">{agentName}</div> : null,
 }));
 
 // The paywall renders a marker whenever it is mounted (the panel only mounts it
@@ -100,5 +100,26 @@ describe("TasksPanel — Free keeps one standing task", () => {
 
     expect(screen.getByTestId("task-modal-open")).toBeInTheDocument();
     expect(screen.queryByTestId("paywall-open")).not.toBeInTheDocument();
+  });
+
+  it("names the agent in the task modal", async () => {
+    mockCronList([]);
+    await renderPanel({ isFreePlan: false });
+
+    fireEvent.click(screen.getByRole("button", { name: /new task/i }));
+
+    expect(screen.getByTestId("task-modal-open")).toHaveTextContent("Atlas");
+  });
+
+  it("wraps a long unbroken run error instead of scrolling the panel sideways", async () => {
+    const longError = "E".repeat(240);
+    mockCronList([
+      { id: "job-1", name: "Daily digest", enabled: true, prompt: "x", last_error: longError },
+    ]);
+    await renderPanel({ isFreePlan: false });
+
+    const error = screen.getByText(longError, { exact: false });
+    expect(error).toHaveStyle({ flexBasis: "100%", minWidth: "0", overflowWrap: "anywhere" });
+    expect(screen.getByRole("button", { name: /delete/i }).parentElement).toHaveClass("task-actions");
   });
 });

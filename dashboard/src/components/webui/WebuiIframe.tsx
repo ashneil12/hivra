@@ -120,13 +120,14 @@ const LIVENESS_TIMEOUT_REASON = "Your workspace opened but never finished starti
 // surface: the panel was invisible, so a broken agent looked like an empty chat
 // with no error and no Retry. Drive both surface and text off the theme tokens
 // (which flip with :root.dark) so every state is legible in both themes.
+// The surface scrolls, and PANEL_BODY_STYLE centres with auto margins, so a
+// tall panel (landscape, keyboard up) scrolls instead of clipping both ends.
 const PANEL_SURFACE_STYLE: React.CSSProperties = {
   position: 'relative',
   display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
   width: '100%',
   height: '100%',
+  overflowY: 'auto',
   padding: 24,
   textAlign: 'center',
   fontSize: 13,
@@ -134,23 +135,43 @@ const PANEL_SURFACE_STYLE: React.CSSProperties = {
   color: 'var(--text-primary)',
 };
 
+const PANEL_BODY_STYLE: React.CSSProperties = {
+  margin: 'auto',
+  maxWidth: '100%',
+};
+
 const PANEL_DETAIL_STYLE: React.CSSProperties = {
   margin: 0,
   marginBottom: 16,
+  marginInline: 'auto',
+  maxWidth: 420,
+  overflowWrap: 'anywhere',
   fontSize: 12,
   color: 'var(--text-secondary)',
 };
 
 const PANEL_BUTTON_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 6,
+  minHeight: 44,
+  padding: '0 16px',
+  fontFamily: 'var(--font-mono), monospace',
   fontSize: 12,
   fontWeight: 600,
-  padding: '6px 14px',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
   border: '1px solid var(--border)',
-  borderRadius: 6,
+  borderRadius: 0,
   background: 'var(--btn-bg)',
   color: 'var(--btn-text)',
   cursor: 'pointer',
 };
+
+// Recovery CTAs sit in one centred row and stack full width below 480px.
+const PANEL_ACTIONS_CLASS =
+  'flex flex-wrap items-center justify-center gap-2 max-[479px]:flex-col max-[479px]:items-stretch';
 
 // Shown on every dead-end panel. The point is that a user can copy one string
 // that pins the exact server-side log line, instead of describing a blank box.
@@ -191,15 +212,11 @@ function PanelDiagnosticsBlock({
             .catch(() => setCopied(false));
         }}
         style={{
+          ...PANEL_BUTTON_STYLE,
           marginTop: 8,
           fontSize: 11,
-          fontWeight: 600,
-          padding: '4px 10px',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
           background: 'transparent',
           color: 'var(--text-secondary)',
-          cursor: 'pointer',
         }}
       >
         {copied ? 'Copied' : 'Copy details'}
@@ -1131,40 +1148,36 @@ export function WebuiIframe({
         data-variant={state.variant}
         style={PANEL_SURFACE_STYLE}
       >
-        <div>
+        <div style={PANEL_BODY_STYLE}>
           <p style={{ margin: 0, marginBottom: 8 }}>
             {headline}
           </p>
           <p style={PANEL_DETAIL_STYLE}>
             {detail}
           </p>
-          {showStartButton ? (
+          <div className={PANEL_ACTIONS_CLASS}>
+            {showStartButton ? (
+              <button
+                type="button"
+                data-testid="webui-stopped-start"
+                onClick={() => onRequestStart?.()}
+                style={{
+                  ...PANEL_BUTTON_STYLE,
+                  background: 'var(--gold-leaf, #c9a24b)',
+                  color: 'var(--ink-black, #11151b)',
+                }}
+              >
+                {state.variant === 'error' ? 'Restart' : 'Start'}
+              </button>
+            ) : null}
             <button
               type="button"
-              data-testid="webui-stopped-start"
-              onClick={() => onRequestStart?.()}
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                padding: '6px 14px',
-                border: '1px solid var(--border)',
-                borderRadius: 6,
-                background: 'var(--gold-leaf, #c9a24b)',
-                color: 'var(--ink-black, #11151b)',
-                cursor: 'pointer',
-                marginRight: 8,
-              }}
+              onClick={() => void refresh({ force: true })}
+              style={PANEL_BUTTON_STYLE}
             >
-              {state.variant === 'error' ? 'Restart' : 'Start'}
+              Refresh
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void refresh({ force: true })}
-            style={PANEL_BUTTON_STYLE}
-          >
-            Refresh
-          </button>
+          </div>
         </div>
       </div>
     );
@@ -1178,33 +1191,30 @@ export function WebuiIframe({
         data-testid="webui-error-state"
         style={PANEL_SURFACE_STYLE}
       >
-        <div>
+        <div style={PANEL_BODY_STYLE}>
           <p style={{ margin: 0, marginBottom: 8 }}>
             We couldn&apos;t open your workspace just now.
           </p>
           <p style={PANEL_DETAIL_STYLE}>
             {state.reason}
           </p>
-          <button
-            type="button"
-            onClick={() => void refresh({ force: true })}
-            style={{ ...PANEL_BUTTON_STYLE, marginRight: 8 }}
-          >
-            Retry
-          </button>
-          <button
-            type="button"
-            onClick={() => void openInNewTab()}
-            style={{
-              ...PANEL_BUTTON_STYLE,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            Open in new tab
-            <ExternalLink size={12} aria-hidden="true" />
-          </button>
+          <div className={PANEL_ACTIONS_CLASS}>
+            <button
+              type="button"
+              onClick={() => void refresh({ force: true })}
+              style={PANEL_BUTTON_STYLE}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => void openInNewTab()}
+              style={PANEL_BUTTON_STYLE}
+            >
+              Open in new tab
+              <ExternalLink size={12} aria-hidden="true" />
+            </button>
+          </div>
           {newTabFallbackUrl ? (
             <p style={{ margin: 0, marginTop: 14, fontSize: 12 }}>
               Your browser blocked the new tab.{' '}
@@ -1215,7 +1225,7 @@ export function WebuiIframe({
                 onClick={() => setNewTabFallbackUrl(null)}
                 style={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline' }}
               >
-                Click here to open
+                Open it here
               </a>
             </p>
           ) : null}
@@ -1233,7 +1243,7 @@ export function WebuiIframe({
         data-testid="webui-repairing-state"
         style={PANEL_SURFACE_STYLE}
       >
-        <div>
+        <div style={PANEL_BODY_STYLE}>
           <p style={{ margin: 0, marginBottom: 8, fontWeight: 650 }}>
             Something&apos;s wrong with your agent.
           </p>
@@ -1241,13 +1251,15 @@ export function WebuiIframe({
             We&apos;ve been notified and are working to repair it. You can try
             again in a moment, or reach out if it stays stuck.
           </p>
-          <button
-            type="button"
-            onClick={() => void refresh({ force: true })}
-            style={PANEL_BUTTON_STYLE}
-          >
-            Retry
-          </button>
+          <div className={PANEL_ACTIONS_CLASS}>
+            <button
+              type="button"
+              onClick={() => void refresh({ force: true })}
+              style={PANEL_BUTTON_STYLE}
+            >
+              Retry
+            </button>
+          </div>
           <PanelDiagnosticsBlock instanceId={instanceId} diagnostics={state.diagnostics} />
           <div style={{ marginTop: 14 }}>
             <ReportProblemLink

@@ -3,7 +3,7 @@
 import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ExternalLink, Loader2, LockKeyhole, ShieldCheck, X } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type RefObject } from "react";
 
-import { connectDigitalOceanAccount } from "@/lib/hivra/managed-session-client";
+import { connectDigitalOceanAccount, replaceDigitalOceanAccountToken } from "@/lib/hivra/managed-session-client";
 import {
   DigitalOceanConnectionCreateSchema,
   type DigitalOceanConnectionDto,
@@ -21,12 +21,15 @@ export function DigitalOceanConnectionDialog({
   onClose,
   returnFocusRef,
   onConnected,
+  replacing,
 }: {
+  /** When set, replace this connection's token instead of creating one. */
+  replacing?: DigitalOceanConnectionDto;
   onClose: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onConnected: (connection: DigitalOceanConnectionDto, target: DigitalOceanDeploymentTargetDto) => void;
 }) {
-  const [name, setName] = useState("My DigitalOcean team");
+  const [name, setName] = useState(replacing?.name ?? "My DigitalOcean team");
   const [apiToken, setApiToken] = useState("");
   const [errors, setErrors] = useState<{ name?: string; apiToken?: string }>({});
   const [operationError, setOperationError] = useState<string | null>(null);
@@ -59,7 +62,9 @@ export function DigitalOceanConnectionDialog({
     }
     setConnecting(true);
     try {
-      const result = await connectDigitalOceanAccount(parsed.data);
+      const result = replacing
+        ? await replaceDigitalOceanAccountToken(replacing.id, parsed.data.credentials.apiToken)
+        : await connectDigitalOceanAccount(parsed.data);
       setApiToken("");
       onConnected(result.connection, result.target);
     } catch (error) {
@@ -81,8 +86,8 @@ export function DigitalOceanConnectionDialog({
       >
         <header className={styles.wizardHeader}>
           <div>
-            <span className={styles.eyebrow}>Managed Agents · Public preview</span>
-            <h1 id="digitalocean-connection-title">Connect DigitalOcean</h1>
+            <span className={styles.eyebrow}>{replacing ? replacing.name : "Managed Agents · Public preview"}</span>
+            <h1 id="digitalocean-connection-title">{replacing ? "Replace DigitalOcean token" : "Connect DigitalOcean"}</h1>
           </div>
           <button ref={closeButtonRef} type="button" className={styles.closeButton} onClick={onClose} disabled={connecting} aria-label="Close DigitalOcean setup">
             <X size={19} aria-hidden="true" />
@@ -93,10 +98,11 @@ export function DigitalOceanConnectionDialog({
           <div className={styles.providerGuide}>
             <span className={styles.providerGuideIcon} aria-hidden="true"><Bot size={20} /></span>
             <div>
-              <strong>Paste one token. No terminal, no doctl.</strong>
+              <strong>{replacing ? "Paste a new token from the same DigitalOcean team." : "Paste one token. No terminal, no doctl."}</strong>
               <p>
-                Hivra checks the token against DigitalOcean Managed Agents, encrypts it, and then launches
-                Claude Code, Codex, or Hermes sessions in your team from this browser.
+                {replacing
+                  ? "Hivra checks that the new token can reach this connection’s agents, then swaps it in. Your agents keep running and keep their conversations."
+                  : "Hivra checks the token against DigitalOcean Managed Agents, encrypts it, and then launches Claude Code, Codex, or Hermes sessions in your team from this browser."}
               </p>
             </div>
           </div>
@@ -136,7 +142,7 @@ export function DigitalOceanConnectionDialog({
                     {errors.apiToken ?? "Encrypted before storage and never returned to this browser."}
                   </span>
                 </label>
-                <details className={`${styles.connectionNameDisclosure} ${styles.fullField}`}>
+                {replacing ? null : <details className={`${styles.connectionNameDisclosure} ${styles.fullField}`}>
                   <summary>Customize connection name</summary>
                   <label className={styles.field} htmlFor={nameId}>
                     <span className={styles.fieldLabel}>Connection name</span>
@@ -151,7 +157,7 @@ export function DigitalOceanConnectionDialog({
                     />
                     {errors.name ? <span className={styles.fieldError}>{errors.name}</span> : null}
                   </label>
-                </details>
+                </details>}
               </div>
             </div>
 
@@ -179,7 +185,7 @@ export function DigitalOceanConnectionDialog({
               </button>
               <button type="submit" className={styles.primaryButton} disabled={connecting}>
                 {connecting ? <Loader2 size={15} className={styles.spin} aria-hidden="true" /> : <CheckCircle2 size={15} aria-hidden="true" />}
-                {connecting ? "Checking Managed Agents access…" : "Connect DigitalOcean"}
+                {connecting ? "Checking Managed Agents access…" : replacing ? "Replace token" : "Connect DigitalOcean"}
               </button>
             </div>
           </form>

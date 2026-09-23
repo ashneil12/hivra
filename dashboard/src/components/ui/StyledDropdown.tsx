@@ -22,6 +22,16 @@ const DEFAULT_MENU_MAX_HEIGHT = 320;
 const MENU_VIEWPORT_MARGIN = 8;
 const MENU_OFFSET = 4;
 const MIN_MENU_HEIGHT = 120;
+/** Touch devices only get a search row once a list is long enough to need one. */
+const TOUCH_SEARCH_MIN_OPTIONS = 9;
+
+function hasFinePointer(): boolean {
+  try {
+    return window.matchMedia?.("(pointer: fine)").matches ?? false;
+  } catch {
+    return false;
+  }
+}
 
 function dedupeOptions(options: DropdownOption[]): DropdownOption[] {
   const seen = new Set<string>();
@@ -63,6 +73,7 @@ export function StyledDropdown({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [finePointer, setFinePointer] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const focusTimerRef = useRef<number | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
@@ -96,7 +107,12 @@ export function StyledDropdown({
 
     const rect = trigger.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
+    // The visual viewport excludes an open on-screen keyboard; the layout
+    // viewport (innerHeight) does not, which put options under the keyboard.
+    const visualViewport = window.visualViewport;
+    const viewportTop = visualViewport?.offsetTop ?? 0;
+    const viewportHeight = visualViewport?.height ?? window.innerHeight;
+    const viewportBottom = viewportTop + viewportHeight;
     const viewportMaxHeight = Math.max(
       viewportHeight - MENU_VIEWPORT_MARGIN * 2,
       MIN_MENU_HEIGHT
@@ -106,8 +122,8 @@ export function StyledDropdown({
       viewportWidth - MENU_VIEWPORT_MARGIN * 2
     );
     const spaceBelow =
-      viewportHeight - rect.bottom - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
-    const spaceAbove = rect.top - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
+      viewportBottom - rect.bottom - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - viewportTop - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
     const preferredHeight = Math.min(
       resolvedMenuMaxHeight,
       viewportMaxHeight
@@ -137,15 +153,17 @@ export function StyledDropdown({
       ? rect.top - MENU_OFFSET - maxHeight
       : rect.bottom + MENU_OFFSET;
     top = Math.max(
-      MENU_VIEWPORT_MARGIN,
-      Math.min(top, viewportHeight - MENU_VIEWPORT_MARGIN - maxHeight)
+      viewportTop + MENU_VIEWPORT_MARGIN,
+      Math.min(top, viewportBottom - MENU_VIEWPORT_MARGIN - maxHeight)
     );
 
     setMenuPosition({ top, left, width, maxHeight });
   }, [resolvedMenuMaxHeight]);
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
+    // pointerdown fires for touch as well as mouse; mousedown is late or
+    // missing on touch, so the menu stayed open.
+    function handleClickOutside(event: PointerEvent) {
       const target = event.target as Node;
       if (
         (ref.current && ref.current.contains(target)) ||
@@ -157,8 +175,8 @@ export function StyledDropdown({
       closeMenu();
     }
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("pointerdown", handleClickOutside);
+    return () => document.removeEventListener("pointerdown", handleClickOutside);
   }, [closeMenu]);
 
   useEffect(() => {
@@ -172,8 +190,14 @@ export function StyledDropdown({
 
     updateMenuPosition();
 
+    // Focus moves into the menu. The search field only takes it with a fine
+    // pointer: on touch it raised the keyboard over the list (and zoomed iOS).
     focusTimerRef.current = window.setTimeout(() => {
-      inputRef.current?.focus();
+      const search = finePointer ? inputRef.current : null;
+      const target = search
+        ?? menuRef.current?.querySelector<HTMLButtonElement>('button[data-selected="true"]:not(:disabled)')
+        ?? menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      target?.focus({ preventScroll: true });
       focusTimerRef.current = null;
     }, 50);
 
@@ -188,6 +212,8 @@ export function StyledDropdown({
 
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
+    window.visualViewport?.addEventListener("resize", handleViewportChange);
+    window.visualViewport?.addEventListener("scroll", handleViewportChange);
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
@@ -198,15 +224,18 @@ export function StyledDropdown({
 
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
+      window.visualViewport?.removeEventListener("resize", handleViewportChange);
+      window.visualViewport?.removeEventListener("scroll", handleViewportChange);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeMenu, open, updateMenuPosition]);
+  }, [closeMenu, finePointer, open, updateMenuPosition]);
 
   const selectedOption = options.find(
     (o) => String(o.value) === String(value)
   );
 
   const uniqueOptions = useMemo(() => dedupeOptions(options), [options]);
+  const showSearch = finePointer || uniqueOptions.length >= TOUCH_SEARCH_MIN_OPTIONS;
 
   const filteredOptions = uniqueOptions.filter(
     (o) =>
@@ -228,6 +257,7 @@ export function StyledDropdown({
           }
 
           setSearchQuery("");
+          setFinePointer(hasFinePointer());
           updateMenuPosition();
           setOpen(true);
         }}
@@ -300,7 +330,7 @@ export function StyledDropdown({
                   maxHeight: menuPosition.maxHeight,
                 }}
               >
-                <div
+                {showSearch && <div
                   style={{
                     padding: "8px 10px",
                     borderBottom: "1px solid var(--etched-border)",
@@ -316,7 +346,13 @@ export function StyledDropdown({
                   <Search size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
                   <input
                     ref={inputRef}
-                    type="text"
+                    type="search"
+                    className="hivra-search-input"
+                    enterKeyHint="search"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-label="Search options"
                     placeholder="Search..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -330,7 +366,7 @@ export function StyledDropdown({
                       color: "var(--ink-black)",
                     }}
                   />
-                </div>
+                </div>}
                 {filteredOptions.length === 0 ? (
                   <div
                     style={{
@@ -348,6 +384,7 @@ export function StyledDropdown({
                     <button
                       key={opt.value}
                       type="button"
+                      data-selected={String(opt.value) === String(value)}
                       disabled={opt.disabled}
                       onClick={() => {
                         onChange(opt.value);

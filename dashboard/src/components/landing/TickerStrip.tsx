@@ -3,6 +3,7 @@
 import { Fragment } from "react";
 
 import { useLocale } from "@/components/i18n/LocaleProvider";
+import styles from "./home.module.css";
 
 export default function TickerStrip() {
   const { copy, locale } = useLocale();
@@ -35,7 +36,7 @@ export default function TickerStrip() {
         {proofPoints.map((label, i) => (
           <Fragment key={label}>
             <span
-              className="mono"
+              className={`mono ${styles.tickerLabel}`}
               style={{
                 fontSize: 10,
                 textTransform: "uppercase",

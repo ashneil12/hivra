@@ -71,6 +71,7 @@ const SCOPED_CSS = `
 @keyframes wcc-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 .wcc-prov { background: linear-gradient(90deg, rgba(212,160,55,0.06) 0%, rgba(212,160,55,0.16) 50%, rgba(212,160,55,0.06) 100%); background-size: 200% 100%; animation: wcc-shimmer 1.8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .wcc-in, .wcc-prov { animation: none; } }
+@media (pointer: coarse) { .wcc-btn { min-height: 44px; min-width: 44px; } }
 `;
 
 type Tone = "ghost" | "solid";

@@ -20,6 +20,9 @@ const mono: React.CSSProperties = {
   opacity: 0.62,
 };
 
+// The destructive remove control grows to a 44px square on touch screens.
+const SKILLS_CSS = `@media (pointer: coarse) { .skill-remove { min-width: 44px; min-height: 44px; } }`;
+
 export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string | null }) {
   const params = useParams();
   const rawId = params?.id;
@@ -54,6 +57,7 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto", padding: "32px 20px", height: "100%", overflowY: "auto" }}>
+      <style>{SKILLS_CSS}</style>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 6, flexWrap: "wrap" }}>
         <div>
           <div className="mono" style={{ ...mono, marginBottom: 6 }}>Skills</div>
@@ -65,7 +69,7 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
           <button
             type="button"
             onClick={() => setPicking(true)}
-            style={{ border: "1px solid var(--gold-leaf)", background: "transparent", color: "var(--ink-black)", padding: "8px 16px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13 }}
+            style={{ border: "1px solid var(--gold-leaf)", background: "transparent", color: "var(--ink-black)", padding: "8px 16px", minHeight: 40, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13 }}
           >
             <Plus size={14} style={{ color: "var(--gold-leaf)" }} /> Add skills
           </button>
@@ -94,7 +98,8 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
                   disabled={removing === s.id}
                   aria-label="Remove skill"
                   title="Remove skill"
-                  style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "4px 6px", cursor: removing === s.id ? "default" : "pointer", display: "inline-flex", flexShrink: 0 }}
+                  className="skill-remove"
+                  style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "4px 6px", cursor: removing === s.id ? "default" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                 >
                   {removing === s.id ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
                 </button>

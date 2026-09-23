@@ -79,6 +79,7 @@ export function OpsRowActions({ eventId, title }: OpsRowActionsProps) {
           type="button"
           onClick={handleArchive}
           disabled={disabled}
+          className="pointer-coarse:min-h-[44px]"
           style={buttonStyle}
         >
           {busy === 'archive' ? 'Archiving…' : 'Archive'}
@@ -87,6 +88,7 @@ export function OpsRowActions({ eventId, title }: OpsRowActionsProps) {
           type="button"
           onClick={handleDelete}
           disabled={disabled}
+          className="pointer-coarse:min-h-[44px]"
           style={{
             ...buttonStyle,
             background: '#7f1d1d',

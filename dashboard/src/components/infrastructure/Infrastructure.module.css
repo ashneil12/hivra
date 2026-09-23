@@ -1545,6 +1545,63 @@
   text-transform: capitalize;
 }
 
+.capacityOperationFacts .copyableValue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  /* Ids wrap instead of truncating; the copy button's focus ring stays visible. */
+  overflow: visible;
+  white-space: normal;
+}
+
+.copyableValue > span:first-child {
+  min-width: 0;
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+}
+
+/* Shown only when the clipboard is blocked and the value was selected instead. */
+.copyStatus {
+  flex: 1 0 100%;
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.copyValueButton {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--infra-line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--infra-muted);
+  cursor: pointer;
+}
+
+.copyValueButton:hover,
+.copyValueButton:focus-visible {
+  color: var(--ink-black);
+  border-color: color-mix(in srgb, var(--ink-black) 34%, transparent);
+}
+
+.copyValueButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.copyValueButton[data-copied="true"] {
+  color: var(--skills-success-text);
+  border-color: var(--skills-success-border);
+}
+
 .capacityResultInventory {
   margin-top: 20px;
 }
@@ -2304,6 +2361,12 @@
   flex: 1;
 }
 
+/* Narrow cards label the connection-level disconnect instead of relying on
+   an icon-only trash button next to server-level removal. */
+.disconnectLabelled {
+  display: none;
+}
+
 .iconButton,
 .closeButton {
   width: 44px;
@@ -2314,6 +2377,7 @@
 }
 
 .closeButton {
+  flex-shrink: 0;
   background: var(--vellum-bg);
 }
 
@@ -3730,13 +3794,32 @@
     flex-direction: column;
   }
 
+  /* Name on the first line, Open and Manage resources as full tap targets
+     on the second. */
   .managedComputerRow {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 13px;
+  }
+
+  .managedComputerRow > span:nth-child(2) {
+    flex: 1 1 calc(100% - 21px);
   }
 
   .managedComputerRow > span:nth-child(3),
   .managedComputerRow > span:nth-child(4) {
     display: none;
+  }
+
+  .managedComputerRow > a {
+    min-width: 0;
+    min-height: 44px;
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 0 10px;
+    border: 1px solid var(--infra-line);
+    font-size: 10px;
   }
 
   .providerSteps {
@@ -3781,6 +3864,79 @@
 
   .capacityOperationFacts > div:nth-last-child(-n + 2) {
     border-bottom: 0;
+  }
+
+  /* Recovery and operation ids must stay readable and selectable. */
+  .capacityOperationFacts dd,
+  .connectionMeta strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .copyableValue > span:first-child {
+    font-family: var(--font-mono), "Space Mono", monospace;
+    text-transform: none;
+  }
+
+  /* One recovery id per row keeps each value on a single line. */
+  .capacityOperationFacts.capacityRecoveryFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .capacityOperationFacts.capacityRecoveryFacts > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--infra-line-soft);
+  }
+
+  .capacityOperationFacts.capacityRecoveryFacts > div:last-child {
+    border-bottom: 0;
+  }
+
+  .savedTargetFacts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .savedTargetFacts small,
+  .savedTargetFacts strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .capacityOperationFacts dt,
+  .providerServerFacts dt,
+  .connectionMeta span,
+  .savedTargetFacts small,
+  .savedTargetHeading > span,
+  .prepareReceipt small,
+  .quoteExpiry,
+  .capacitySelectionFacts dt,
+  .managedCapacityPlan span,
+  .managedCapacityFacts span,
+  .managedComputerRow small,
+  .providerServerHeader > div > span,
+  .providerLaunchBoundary,
+  .capacityPriceBreakdown dd span,
+  .capacityTraffic > strong small,
+  .capacityNextActions li,
+  .capacityNextActions strong {
+    font-size: 10px;
+  }
+
+  .capacityOperationFacts dd,
+  .providerServerFacts dd,
+  .savedTargetFacts strong,
+  .capacityReviewGrid dt,
+  .capacityReviewGrid dd,
+  .capacityVatNote,
+  .capacityResultInventory article div span,
+  .providerInventoryEmpty span,
+  .providerInventoryLoading,
+  .providerInventoryError,
+  .providerSteps p,
+  .providerSafetyNote span,
+  .whatHappens li,
+  .managedEntryAction > p {
+    font-size: 11px;
   }
 
   .whatHappens ol {
@@ -3833,13 +3989,59 @@
     border: 0;
   }
 
+  /* In-flow dialogs become the page on phones: the dashboard main is the
+     only scroller, so the sticky header pins under the shell header and the
+     final actions clear the bottom bar. overflow: clip keeps the page glow
+     clipped without making .page the sticky scroll container. */
+  .page {
+    overflow: clip;
+  }
+
+  .modalAnchor:has(.modalBackdrop),
+  .modalAnchor > .modalTheme {
+    display: flex;
+    flex: 1 0 auto;
+    flex-direction: column;
+  }
+
+  /* The inert page is not rendered under an open dialog, so main's scroll
+     range is the dialog alone. React removes the dialog before its focus
+     cleanup runs, so the opener is visible again when focus returns to it. */
+  .page:has(> .modalAnchor .modalBackdrop) > .pageInner {
+    display: none;
+  }
+
+  /* A short confirm still fills the area between the shell header and the
+     bottom bar. */
+  .modalAnchor .modalBackdrop {
+    flex: 1 0 auto;
+    min-height: calc(
+      var(--workspace-viewport-height, 100dvh) - var(--dashboard-mobile-header-height, 0px) -
+        var(--hivra-bottom-chrome, 0px) - env(safe-area-inset-bottom, 0px)
+    );
+    padding: 0;
+  }
+
+  .modalAnchor .wizard,
+  .modalAnchor .confirmDialog {
+    width: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* Focus scrolling keeps body controls below the pinned dialog header. */
+  .modalAnchor :is(.wizardBody, .cleanupContent) :is(a[href], button, input, select, textarea, summary, [tabindex]) {
+    scroll-margin-top: 160px;
+  }
+
   .wizardHeader {
     padding: 22px 18px 19px;
   }
 
   .wizardProgress {
     padding: 10px 12px;
-    font-size: 7px;
+    font-size: 10px;
     letter-spacing: 0.03em;
   }
 
@@ -3882,6 +4084,11 @@
   .fullField,
   .wideField {
     grid-column: auto;
+  }
+
+  .field textarea {
+    font-size: 13px;
+    line-height: 1.5;
   }
 
   .connectionMeta {
@@ -4027,9 +4234,24 @@
     flex: 1;
   }
 
+  .disconnectIcon {
+    display: none;
+  }
+
+  .cardActions .disconnectLabelled {
+    display: inline-flex;
+    flex: 1 0 100%;
+  }
+
   .wizardActions,
   .resultActions {
     flex-direction: column-reverse;
+  }
+
+  /* The safe first action takes initial focus; keep it above the destructive
+     one so it opens in view rather than under the bottom bar. */
+  .confirmDialog[role="alertdialog"] > .resultActions {
+    flex-direction: column;
   }
 
   .wizardActions button,
@@ -4052,7 +4274,7 @@
   }
 }
 
-@media (max-width: 380px) {
+@media (max-width: 520px) {
   .wizardProgress li {
     min-height: 36px;
   }
@@ -4064,6 +4286,46 @@
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
+  }
+}
+
+/* Touch tablets keep the row layout; each link gets a 44px hit area. */
+@media (pointer: coarse) and (min-width: 761px) {
+  .managedComputerRow > a {
+    position: relative;
+  }
+
+  .managedComputerRow > a::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -6px;
+    left: -6px;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}
+
+@media (pointer: coarse) {
+  .copyValueButton {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* The disclosure to the force-forget fallback is a full-height tap target. */
+@media (max-width: 760px), (pointer: coarse) {
+  .cleanupFallback {
+    padding-top: 4px;
+  }
+
+  .cleanupFallback summary {
+    min-height: 44px;
+    padding-block: 12px;
+  }
+
+  .cleanupFallback p {
+    margin-top: 4px;
   }
 }
 
