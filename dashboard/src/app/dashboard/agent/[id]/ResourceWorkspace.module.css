@@ -31,6 +31,8 @@
 .sessionPanel { flex: 1; min-height: 0; }
 .sessionPanel[hidden] { display: none; }
 .sessionTab button:focus-visible, .sessionAdd:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+/* Touch tablets keep the wide strip but need finger-sized close and add. */
+@media (pointer: coarse) { .sessionClose, .sessionAdd { min-width: 44px; min-height: 44px; } }
 .statusPanel { flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: clamp(20px, 5cqi, 48px) clamp(16px, 4cqi, 32px); text-align: center; color: var(--text-muted); overflow-wrap: anywhere; }
 .statusPanel > h3 { color: var(--ink-black); font-size: 22px; font-weight: 400; }
 .statusPanel > p { max-width: 480px; margin-inline: auto; }
@@ -55,7 +57,8 @@ textarea.personalizationField { padding: 10px; resize: vertical; }
   .surfaceToolbar { padding: 4px 10px; }
   .surfaceDescription { font-size: 10px; }
   .newTabButton { min-height: 44px; padding-inline: 8px; font-size: 10px; }
-  .sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 40px; }
+  .sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 44px; }
+  .sessionClose, .sessionAdd { min-width: 44px; }
   .statusPanel { padding: 20px 16px; }
   /* One 44px identity line so the surfaces sit directly under it: icon,
      name, chevron, then a status dot and word at the far edge. The switcher

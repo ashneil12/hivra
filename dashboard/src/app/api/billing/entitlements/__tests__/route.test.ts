@@ -127,7 +127,7 @@ describe("GET /api/billing/entitlements", () => {
     });
     expect(getCreditSummary).toHaveBeenCalledWith(mockUserId, "operator");
     expect(deriveReservedCreditBalance).toHaveBeenCalledWith(mockUserId);
-    expect(getLatestHermesTokenHoldingSnapshot).toHaveBeenCalledWith(mockUserId);
+    expect(getLatestHermesTokenHoldingSnapshot).toHaveBeenCalledWith(mockUserId, undefined);
   });
 
   it("uses the latest token snapshot for dry-run token-base access", async () => {

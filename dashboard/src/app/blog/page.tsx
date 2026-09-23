@@ -12,7 +12,7 @@ import { SITE_URL } from "@/lib/seo-urls";
 // SCRIPTURE_ANCHOR: blog-proclaim | Psalm 96:3 | Verse: Declare his glory among the nations, his marvelous works among all the peoples.
 
 export const metadata: Metadata = {
-  title: "Blog — AI agent guides and deep dives",
+  title: "Blog: AI agent guides and deep dives",
   description:
     "Practical guides to running AI agents: how persistent memory works, self-hosting vs managed hosting, real automation examples, and more from the Hivra team.",
   ...buildWebsiteMetadata({

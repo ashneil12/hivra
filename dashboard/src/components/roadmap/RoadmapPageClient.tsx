@@ -617,7 +617,7 @@ export default function RoadmapPageClient() {
                     ✕
                   </span>
                   <p className={styles.outOfScopeText}>
-                    <strong>{item.title}</strong> — {item.description}
+                    <strong>{item.title}</strong>: {item.description}
                   </p>
                 </div>
               </Reveal>
