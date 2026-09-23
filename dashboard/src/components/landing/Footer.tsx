@@ -25,7 +25,7 @@ const COLUMNS = [
   { title: "Company", links: [
     { label: "Why I’m building Hivra", href: "/why-hivra" },
     { label: "Stats", href: "/stats" },
-    { label: "Contact", href: "mailto:info@hermesos.cloud" },
+    { label: "Contact", href: "mailto:info@hivra.cloud" },
     { label: "Terms", href: "/terms" },
     { label: "Privacy", href: "/privacy" },
   ] },

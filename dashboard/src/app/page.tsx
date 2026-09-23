@@ -29,7 +29,7 @@ import FounderSection from "@/components/landing/FounderSection";
 import FAQSection from "@/components/landing/FAQSection";
 
 const homepageTitle = "Hivra | A computer for you and your agents";
-const homepageDescription = "Launch Ubuntu, Windows or Omarchy. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
+const homepageDescription = "Launch Ubuntu, with Windows and Omarchy in private preview. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
 
 export const metadata: Metadata = {
   title: homepageTitle,
@@ -77,7 +77,7 @@ const homepageSchema = {
       name: "Hivra",
       alternateName: "HermesOS",
       applicationCategory: "DeveloperApplication",
-      operatingSystem: "Ubuntu, Windows, Omarchy",
+      operatingSystem: "Ubuntu",
       description:
         homepageDescription,
       url: SITE_URL,
@@ -91,7 +91,7 @@ const homepageSchema = {
       },
       featureList: [
         "Launch a computer with or without an agent",
-        "Ubuntu, Windows and Omarchy",
+        "Ubuntu, with Windows and Omarchy in private preview",
         "Terminal and graphical interfaces",
         "Persistent files, tools and settings",
         "Use Hivra Cloud or your own infrastructure",
