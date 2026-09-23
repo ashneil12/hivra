@@ -193,14 +193,15 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
         </div>
         {mode === "byok" ? <label className={styles.field}>Venice API key
           <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} autoComplete="off" spellCheck={false}
-            maxLength={256} placeholder="Paste your API key" />
+            autoCapitalize="none" enterKeyHint="done" maxLength={256} placeholder="Paste your API key" />
         </label> : <label className={styles.field}>Pay from
           <select value={wallet} onChange={e => setWallet(e.target.value as "hermesos" | "card")}>
             <option value="hermesos">Token wallet</option><option value="card">Card balance</option>
           </select>
         </label>}
         <label className={styles.field}><span>Model <span className={styles.help}>(optional)</span></span>
-          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: deepseek-v4-pro" spellCheck={false} />
+          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: deepseek-v4-pro" spellCheck={false}
+            autoCapitalize="none" autoCorrect="off" enterKeyHint="done" />
         </label>
         <p className={styles.help}>{mode === "byok"
           ? "Stored encrypted and delivered by Hivra directly to this computer. Your infrastructure key and model API key are separate."

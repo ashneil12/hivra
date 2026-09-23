@@ -32,10 +32,20 @@ export const dynamic = "force-dynamic";
 // the generic invalid-link card rather than being echoed into API calls.
 const INSTANCE_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
+// Boxy CTA shared by the wake cards (and mirrored in WakeFlow).
+const WAKE_CTA =
+  "mt-6 inline-flex min-h-[44px] items-center px-5 font-mono text-[11px] uppercase tracking-[0.12em] bg-[var(--hivra-red)] text-white";
+
 function WakePageShell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="min-h-screen flex items-center justify-center px-4 py-16">
-      <div className="w-full max-w-md rounded-2xl border border-[var(--ink-black)]/10 bg-[var(--vellum-bg)] p-8 shadow-sm">
+    <main
+      className="flex min-h-dvh items-center justify-center py-8 sm:py-16"
+      style={{
+        paddingLeft: "max(16px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(16px, env(safe-area-inset-right, 0px))",
+      }}
+    >
+      <div className="w-full max-w-md border border-[var(--ink-black)]/10 bg-[var(--vellum-bg)] p-6 shadow-sm sm:p-8">
         {children}
       </div>
     </main>
@@ -60,10 +70,7 @@ export default async function WakePage({
           This wake link is malformed. Open your dashboard to find your agent
           instead.
         </p>
-        <Link
-          href="/dashboard"
-          className="mt-6 inline-block rounded-lg bg-[#ff3a3b] px-4 py-2 text-sm font-medium text-white"
-        >
+        <Link href="/dashboard" className={WAKE_CTA}>
           Go to dashboard
         </Link>
       </WakePageShell>
@@ -87,10 +94,7 @@ export default async function WakePage({
           Sign in to wake it — you&apos;ll be sent straight back to your agent
           once it&apos;s up.
         </p>
-        <Link
-          href={signInHref}
-          className="mt-6 inline-block rounded-lg bg-[#ff3a3b] px-4 py-2 text-sm font-medium text-white"
-        >
+        <Link href={signInHref} className={WAKE_CTA}>
           Sign in to wake it
         </Link>
       </WakePageShell>

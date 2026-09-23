@@ -151,20 +151,33 @@
 }
 .filters {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--etched-border);
+}
+.filters::-webkit-scrollbar {
+  display: none;
 }
 .filters button {
+  flex: 1 0 auto;
   min-height: 44px;
   padding: 8px 11px;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 12px;
-  border: 1px solid transparent;
+  border: 0;
+  border-right: 1px solid var(--etched-border);
+}
+.filters button:last-child {
+  border-right: 0;
 }
 .filters button[aria-pressed="true"] {
-  color: var(--ink-black);
-  background: color-mix(in srgb, var(--ink-black) 7%, transparent);
-  border-color: var(--etched-border);
+  color: var(--bg-surface);
+  background: var(--ink-black);
 }
 .agentRow {
   display: flex;
@@ -176,7 +189,7 @@
 .agentPrimary {
   flex: 1;
   display: grid;
-  grid-template-columns: 35px minmax(0, 1fr) auto 110px 16px;
+  grid-template-columns: 35px minmax(0, 1fr) auto 124px 16px;
   align-items: center;
   gap: 13px;
   min-width: 0;
@@ -391,6 +404,12 @@
 .catalog summary svg {
   color: var(--hivra-red);
 }
+.disclosureIcon {
+  transition: transform 0.15s ease;
+}
+.catalog[open] .disclosureIcon {
+  transform: rotate(180deg);
+}
 .catalogBody {
   border-top: 1px solid var(--etched-border);
   padding: 0 18px 18px;
@@ -462,6 +481,10 @@
   outline: 2px solid var(--hivra-red);
   outline-offset: 3px;
 }
+/* The segmented row scrolls, so an outer ring would be clipped. */
+.filters button:focus-visible {
+  outline-offset: -3px;
+}
 .spin {
   animation: agent-inventory-spin 1s linear infinite;
 }
@@ -473,6 +496,9 @@
 @media (prefers-reduced-motion: reduce) {
   .spin {
     animation: none;
+  }
+  .disclosureIcon {
+    transition: none;
   }
 }
 
@@ -515,7 +541,7 @@
     display: none;
   }
   .agentPrimary {
-    grid-template-columns: 35px minmax(0, 1fr) 110px 16px;
+    grid-template-columns: 35px minmax(0, 1fr) 124px 16px;
   }
 }
 @container agent-inventory (max-width: 540px) {
@@ -529,8 +555,9 @@
   .toolbar {
     padding: 8px 13px 13px;
   }
+  /* 7px sides keep all five chips on one row down to a 320px phone. */
   .filters button {
-    padding: 7px 9px;
+    padding: 7px;
     font-size: 11px;
   }
   .agentPrimary {
@@ -567,10 +594,6 @@
   }
 }
 @container agent-inventory (max-width: 320px) {
-  .filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .inventoryHeading h2 {
     font-size: 20px;
   }
@@ -616,5 +639,12 @@
 @media (pointer: coarse) {
   .search input {
     font-size: 16px;
+  }
+}
+@media (max-width: 767px) {
+  /* Keep the opened catalog and row menus clear of the fixed bottom navigation. */
+  .catalogBody,
+  .rowActions > div {
+    scroll-margin-block-end: calc(64px + env(safe-area-inset-bottom, 0px) + 12px);
   }
 }

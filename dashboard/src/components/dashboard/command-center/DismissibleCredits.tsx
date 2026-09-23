@@ -6,7 +6,7 @@
 // localStorage; a small "Show credits" affordance brings it back.
 
 import { useEffect, useState } from "react";
-import { X, Wallet } from "lucide-react";
+import { Wallet } from "lucide-react";
 
 import { ManagedVeniceCreditsPocket } from "./ManagedVeniceCreditsPocket";
 import type { ManagedVeniceWalletSummaryPayload } from "@/lib/billing/managed-venice-client";
@@ -64,7 +64,7 @@ export function DismissibleCredits(props: {
       <button
         type="button"
         onClick={restore}
-        className="mono"
+        className="mono pointer-coarse:min-h-[44px]"
         style={{
           border: "1px solid var(--etched-border)",
           background: "transparent",
@@ -85,33 +85,5 @@ export function DismissibleCredits(props: {
     );
   }
 
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={dismiss}
-        aria-label="Hide credits"
-        title="Hide credits"
-        style={{
-          position: "absolute",
-          top: 8,
-          right: 8,
-          zIndex: 2,
-          border: "1px solid var(--etched-border)",
-          background: "var(--bg-surface)",
-          color: "var(--text-muted)",
-          width: 22,
-          height: 22,
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 0,
-        }}
-      >
-        <X size={12} />
-      </button>
-      <ManagedVeniceCreditsPocket {...props} />
-    </div>
-  );
+  return <ManagedVeniceCreditsPocket {...props} onHide={dismiss} />;
 }

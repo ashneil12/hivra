@@ -86,3 +86,27 @@ it("repositions an open menu when the usable screen space changes", () => {
     bottomNav.remove();
   }
 });
+
+it("closes Tools when a surface iframe takes focus, which never reaches the document", () => {
+  render(<ResourceSurfaceNavigation surfaces={surfaces} active="terminal" onSelect={jest.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Tools" }));
+  expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute("aria-expanded", "true");
+  fireEvent(window, new Event("blur"));
+  expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute("aria-expanded", "false");
+});
+
+it("closes Tools from the tap-catcher layer without selecting anything", () => {
+  const onSelect = jest.fn();
+  render(<ResourceSurfaceNavigation surfaces={surfaces} active="desktop" onSelect={onSelect} />);
+  fireEvent.click(screen.getByRole("button", { name: "Tools" }));
+  const catcher = screen.getByTestId("surface-tools-catcher");
+  // The layer must outlive pointerdown, or the tap's click lands on whatever
+  // sits underneath (a pill, a frame) once it unmounts.
+  fireEvent.pointerDown(catcher);
+  fireEvent.pointerUp(catcher);
+  expect(screen.getByTestId("surface-tools-catcher")).toBe(catcher);
+  fireEvent.click(catcher);
+  expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByTestId("surface-tools-catcher")).not.toBeInTheDocument();
+  expect(onSelect).not.toHaveBeenCalled();
+});

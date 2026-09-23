@@ -1,0 +1,65 @@
+.root { display: flex; flex-direction: column; height: 100%; min-height: 0; container: hivra-git / inline-size; }
+.repoHeader { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); flex-wrap: wrap; }
+.select { background: var(--bg-surface); color: var(--ink-black); border: 1px solid var(--etched-border); padding: 5px 8px; }
+.branchInput { width: 120px; background: rgba(255,255,255,0.04); color: var(--ink-black); border: 1px solid var(--etched-border); padding: 5px 8px; outline: none; }
+.iconButton, .textButton, .backButton, .confirmButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; border: 1px solid var(--etched-border); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.iconButton { padding: 5px 7px; }
+.iconButton:disabled { opacity: .5; cursor: default; }
+.textButton { padding: 4px 10px; color: var(--ink-black); text-transform: uppercase; }
+.textButton:disabled { opacity: .5; cursor: default; }
+.lastCommit { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--text-muted); }
+
+.confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 18px; border-bottom: 1px solid var(--etched-border); background: var(--hivra-red-soft); color: var(--ink-black); }
+.confirm > span { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.confirmButton { min-height: 32px; padding: 4px 12px; color: var(--ink-black); text-transform: uppercase; }
+.confirmDanger { border-color: var(--hivra-red); background: var(--hivra-red); color: #fff; }
+
+/* Change list and diff share the row while there is room for both; narrow
+   panes show one or the other so the diff never shrinks to a sliver. The query
+   reads this component's own width, so it holds on every host. */
+.split { flex: 1; min-height: 0; display: flex; }
+.changes { width: 100%; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
+.split[data-open="true"] .changes { width: min(360px, 45%); border-right: 1px solid var(--etched-border); }
+.entry { display: flex; align-items: center; gap: 9px; padding: 8px 14px; border-bottom: 1px solid var(--etched-border); }
+.entry[data-selected="true"] { background: rgba(255,255,255,0.05); }
+.stage { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer; }
+.stage > input { margin: 0; accent-color: var(--gold-leaf); cursor: pointer; }
+.entryButton { flex: 1; min-width: 0; text-align: left; border: none; background: transparent; color: var(--ink-black); cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 0; }
+.chip { flex-shrink: 0; font-family: var(--font-mono), monospace; font-size: 10px; letter-spacing: .02em; }
+
+.diff { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.diffHeader { display: flex; align-items: center; gap: 8px; padding: 9px 16px; border-bottom: 1px solid var(--etched-border); }
+.closeButton { border: 1px solid var(--etched-border); background: transparent; color: var(--text-muted); padding: 4px 8px; cursor: pointer; }
+.backButton { display: none; align-self: stretch; min-width: 44px; min-height: 44px; margin: -9px 0 -9px -16px; padding: 0 12px; border-width: 0 1px 0 0; text-transform: uppercase; }
+
+.iconButton:focus-visible, .textButton:focus-visible, .backButton:focus-visible, .closeButton:focus-visible, .confirmButton:focus-visible, .entryButton:focus-visible, .select:focus-visible { outline: 2px solid var(--hivra-red); outline-offset: -2px; }
+/* Keyboard focus only: a clicked checkbox takes focus but draws no ring. */
+.stage:has(> input:focus-visible) { outline: 2px solid var(--hivra-red); outline-offset: -2px; }
+.stage > input:focus-visible { outline: none; }
+
+@container hivra-git (max-width: 640px) {
+  .split[data-open="true"] .changes { display: none; }
+  .split[data-open="true"] .diff { flex: 1 1 100%; }
+  .backButton { display: inline-flex; }
+  .closeButton { display: none; }
+  .select { flex: 1 1 200px; min-width: 0; max-width: 100%; }
+  .branchInput { flex: 1 1 140px; width: auto; min-width: 0; }
+  .lastCommit { flex-basis: 100%; order: 10; text-align: left; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .repoHeader { padding-block: 6px; row-gap: 6px; }
+  .select { min-height: 40px; }
+  .branchInput { min-height: 40px; }
+  .iconButton, .textButton, .confirmButton { min-width: 44px; min-height: 44px; }
+  .closeButton { min-height: 44px; padding-inline: 12px; }
+  .entry { min-height: 44px; padding-block: 0; }
+  /* A 44px hit area for the stage box, flush with the row edge, so a near
+     miss selects the file instead of opening its diff. */
+  .stage { width: 44px; height: 44px; margin: 0 -8px 0 -14px; }
+  .entryButton { align-self: stretch; }
+  .commitInput, .commitButton { min-height: 44px; }
+  .chip { font-size: 11px; }
+  .diffHeader { padding-block: 4px; }
+  .backButton { margin-block: -4px; }
+}

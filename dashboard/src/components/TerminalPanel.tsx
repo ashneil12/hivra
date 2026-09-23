@@ -1,6 +1,6 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { AlertTriangle, Clipboard, Eraser, Loader2, RefreshCw, RotateCcw, Terminal as TerminalIcon, Wifi } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { AlertTriangle, Clipboard, Eraser, Keyboard, Loader2, RefreshCw, RotateCcw, Terminal as TerminalIcon, Wifi } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import styles from './TerminalPanel.module.css';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -19,6 +19,52 @@ const RESIZE_DEBOUNCE_MS = 120;
 const SSE_RETRY_DELAY_MS = 500;
 const MAX_INPUT_CHUNK_BYTES = 4096;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RESTART_CONFIRM_MS = 3000;
+// A touch counts as a tap (and may raise the keyboard) only when it barely moved.
+const TAP_MAX_MOVE_PX = 8;
+const TAP_MAX_MS = 300;
+// Keys a phone keyboard lacks, shown in the coarse-pointer key strip after the
+// keyboard toggle. Esc and Ctrl lead (Ctrl is rendered between them and the
+// arrows) and Tab follows the arrows, so the toggle and all four arrows fit
+// the first screenful at 360px.
+type TouchKey = { label: string; aria: string; data: string };
+const TOUCH_LEAD_KEYS: ReadonlyArray<TouchKey> = [
+    { label: 'Esc', aria: 'Escape', data: '\x1b' },
+];
+const TOUCH_KEYS: ReadonlyArray<TouchKey> = [
+    { label: '←', aria: 'Left arrow', data: '\x1b[D' },
+    { label: '↑', aria: 'Up arrow', data: '\x1b[A' },
+    { label: '↓', aria: 'Down arrow', data: '\x1b[B' },
+    { label: '→', aria: 'Right arrow', data: '\x1b[C' },
+    { label: 'Tab', aria: 'Tab', data: '\t' },
+    { label: '|', aria: 'Pipe', data: '|' },
+    { label: '~', aria: 'Tilde', data: '~' },
+    { label: '/', aria: 'Slash', data: '/' },
+    { label: '-', aria: 'Dash', data: '-' },
+];
+// Ctrl chords as xterm sends them. Only letters and @ [ \ ] ^ _ map by masking
+// with 0x1f; anything without a control code is sent unmodified.
+const CTRL_CHORDS: Readonly<Record<string, string>> = {
+    ' ': '\x00', '2': '\x00', '3': '\x1b', '4': '\x1c', '5': '\x1d', '6': '\x1e',
+    '7': '\x1f', '8': '\x7f', '/': '\x1f', '-': '\x1f', '?': '\x7f',
+};
+function applyCtrlModifier(data: string) {
+    if (data.length !== 1) return data;
+    const chord = CTRL_CHORDS[data];
+    if (chord !== undefined) return chord;
+    const code = data.charCodeAt(0);
+    if (code >= 0x61 && code <= 0x7a) return String.fromCharCode(code - 0x60);
+    if (code >= 0x40 && code <= 0x5f) return String.fromCharCode(code & 0x1f);
+    return data;
+}
+function matchesMedia(query: string) {
+    return typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia(query).matches;
+}
+function isPhoneViewport() {
+    return matchesMedia('(max-width: 767px)');
+}
 function shouldPersistTerminalSession(surfaceKey: string | undefined) { return surfaceKey?.startsWith('tui-') === true; }
 function terminalRttDebugEnabled() { return process.env.NEXT_PUBLIC_TERMINAL_DEBUG_RTT === '1'; }
 function withIncludeScrollback(rawUrl: string, includeScrollback: boolean): string | null {
@@ -63,6 +109,15 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
     const pendingTerminalRttKeysByCharRef = useRef(new Map<string, string[]>());
     const [connState, setConnState] = useState<ConnState>('init');
     const [errMsg, setErrMsg] = useState<string | null>(null);
+    // Sticky Ctrl from the touch key strip: the next typed character is sent as
+    // its control code (c → ^C). A ref so xterm's onData closure sees it.
+    const ctrlArmedRef = useRef(false);
+    const [ctrlArmed, setCtrlArmed] = useState(false);
+    const [restartConfirming, setRestartConfirming] = useState(false);
+    const restartConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const touchStartRef = useRef<{ x: number; y: number; at: number } | null>(null);
+    const keyStripRef = useRef<HTMLDivElement>(null);
+    const [keyStripMore, setKeyStripMore] = useState(false);
     const apiBase = `/api/instances/${instanceId}/terminal/interactive`;
     const surfaceKeySuffix = surfaceKey ? `:${surfaceKey}` : '';
     const persistedSessionStorageKey = `${apiBase}:${sessionMode}:persisted-session${surfaceKeySuffix}`;
@@ -76,6 +131,15 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
     }, []);
     useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
     const focusTerminal = useCallback(() => { termRef.current?.focus(); }, []);
+    const setCtrl = useCallback((armed: boolean) => {
+        ctrlArmedRef.current = armed;
+        setCtrlArmed(armed);
+    }, []);
+    const consumeCtrl = useCallback((data: string) => {
+        if (!ctrlArmedRef.current) return data;
+        setCtrl(false);
+        return applyCtrlModifier(data);
+    }, [setCtrl]);
     const logTerminalWarning = useCallback((message: string, failureType: string, err?: unknown) => {
         clientLog.warn(message, {
             source: 'terminal-panel',
@@ -550,7 +614,8 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
             const term = new Terminal({
                 theme: tuiTheme.terminal.xterm,
                 fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", "Courier New", monospace',
-                fontSize: 13,
+                // Smaller glyphs on phones buy ~10 more columns for TUI layouts.
+                fontSize: isPhoneViewport() ? 11 : 13,
                 lineHeight: 1.55,
                 letterSpacing: 0,
                 cursorBlink: true,
@@ -568,8 +633,9 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
                 sendResize(cols, rows);
             });
             term.onData((data) => {
-                recordTerminalRttInput(data);
-                sendInput(data);
+                const input = consumeCtrl(data);
+                recordTerminalRttInput(input);
+                sendInput(input);
             });
             focusTerminal();
             fitTerminal();
@@ -579,7 +645,7 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
         return () => {
             cancelled = true;
         };
-    }, [fitTerminal, focusTerminal, isActive, recordTerminalRttInput, scheduleConnect, sendInput, sendResize, sessionMode, tuiTheme]);
+    }, [consumeCtrl, fitTerminal, focusTerminal, isActive, recordTerminalRttInput, scheduleConnect, sendInput, sendResize, sessionMode, tuiTheme]);
     useEffect(() => {
         const term = termRef.current;
         if (!term || !term.options) return;
@@ -632,6 +698,7 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
             if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
             if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
             if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+            if (restartConfirmTimerRef.current) clearTimeout(restartConfirmTimerRef.current);
             closeEventStream();
             closeWebSocket();
             const sessionKey = sessionKeyRef.current;
@@ -722,6 +789,89 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
             scheduleConnect();
         })();
     }, [clearPersistedSession, closeEventStream, closeWebSocket, logTerminalWarning, postAction, scheduleConnect, sessionMode]);
+    // Restart stops the running shell or TUI. On touch, where a near-miss on
+    // Copy lands here, it needs a second tap within 3s; a mouse restarts at once.
+    const handleRestartPress = useCallback(() => {
+        if (restartConfirmTimerRef.current) {
+            clearTimeout(restartConfirmTimerRef.current);
+            restartConfirmTimerRef.current = null;
+        }
+        if (!restartConfirming && matchesMedia('(pointer: coarse)')) {
+            setRestartConfirming(true);
+            restartConfirmTimerRef.current = setTimeout(() => {
+                restartConfirmTimerRef.current = null;
+                setRestartConfirming(false);
+            }, RESTART_CONFIRM_MS);
+            return;
+        }
+        setRestartConfirming(false);
+        handleRestartTerminal();
+    }, [handleRestartTerminal, restartConfirming]);
+    const sendTouchKey = useCallback((data: string) => {
+        const input = consumeCtrl(data);
+        recordTerminalRttInput(input);
+        sendInput(input);
+    }, [consumeCtrl, recordTerminalRttInput, sendInput]);
+    const toggleTouchKeyboard = useCallback(() => {
+        const term = termRef.current as (import('@xterm/xterm').Terminal & { textarea?: HTMLTextAreaElement }) | null;
+        if (!term) return;
+        const textarea = term.textarea;
+        if (textarea && typeof document !== 'undefined' && document.activeElement === textarea) {
+            term.blur?.();
+        } else {
+            term.focus();
+        }
+    }, []);
+    // Keep xterm's hidden textarea focused while a strip key is pressed.
+    const keepTerminalFocus = useCallback((event: ReactPointerEvent | ReactMouseEvent) => {
+        event.preventDefault();
+    }, []);
+    const renderTouchKey = (key: TouchKey) => (
+        <button
+            key={key.aria}
+            type="button"
+            aria-label={key.aria}
+            onPointerDown={keepTerminalFocus}
+            onMouseDown={keepTerminalFocus}
+            onClick={() => sendTouchKey(key.data)}
+            className={styles.stripKey}
+        >
+            {key.label}
+        </button>
+    );
+    // The strip scrolls sideways on phones; fade its right edge while keys
+    // remain past it so the overflow is visible.
+    const updateKeyStripOverflow = useCallback(() => {
+        const strip = keyStripRef.current;
+        setKeyStripMore(strip ? strip.scrollWidth - strip.scrollLeft - strip.clientWidth > 1 : false);
+    }, []);
+    useEffect(() => {
+        const strip = keyStripRef.current;
+        updateKeyStripOverflow();
+        if (!strip || typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(updateKeyStripOverflow);
+        observer.observe(strip);
+        return () => observer.disconnect();
+    }, [updateKeyStripOverflow]);
+    // Mouse focuses on press. Touch focuses only on a short, still tap, so
+    // scrolling back through output never raises the keyboard.
+    const handleViewportPointerDown = useCallback((event: ReactPointerEvent) => {
+        if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+            touchStartRef.current = { x: event.clientX, y: event.clientY, at: Date.now() };
+            return;
+        }
+        focusTerminal();
+    }, [focusTerminal]);
+    const handleViewportPointerUp = useCallback((event: ReactPointerEvent) => {
+        const start = touchStartRef.current;
+        touchStartRef.current = null;
+        if (!start || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return;
+        const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+        if (moved < TAP_MAX_MOVE_PX && Date.now() - start.at < TAP_MAX_MS) focusTerminal();
+    }, [focusTerminal]);
+    const handleViewportPointerCancel = useCallback(() => {
+        touchStartRef.current = null;
+    }, []);
     const statusColor: Record<ConnState, string> = {
         init: tuiTheme.status.init, connecting: tuiTheme.status.connecting, connected: tuiTheme.status.connected,
         error: tuiTheme.status.error, closed: tuiTheme.status.closed,
@@ -743,7 +893,6 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
     const terminalActions = [
         { label: 'Clear', icon: Eraser, onClick: handleClearTerminal },
         { label: 'Copy output', icon: Clipboard, onClick: handleCopyTerminalOutput },
-        { label: 'Restart', icon: RotateCcw, onClick: handleRestartTerminal },
     ];
     const chromeVars = {
         '--terminal-panel-bg': isLight ? '#f7f2ea' : '#050711',
@@ -797,6 +946,19 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
                             </button>
                         );
                     })}
+                    <button
+                        type="button"
+                        aria-label={restartConfirming ? 'Tap again to restart' : 'Restart'}
+                        title={restartConfirming ? 'Tap again to restart the session' : 'Restart'}
+                        onClick={handleRestartPress}
+                        data-confirming={restartConfirming ? 'true' : undefined}
+                        className={`${styles.iconButton} ${styles.restartButton} ${restartConfirming ? styles.restartConfirming : ''}`}
+                    >
+                        <RotateCcw size={13} />
+                        {/* Touch only: both labels fill the same width, so the first tap
+                            never moves the button out from under the second. */}
+                        <span className={styles.restartLabel}>{restartConfirming ? 'Tap again' : 'Restart'}</span>
+                    </button>
                     <span className={styles.statusPill}>
                         <span className={styles.statusDot} />
                         {statusLabel[connState]}
@@ -816,11 +978,47 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
                     )}
                 </div>
             </div>
-            <div style={{ position: "relative", minHeight: 0 }}>
+            <div
+                ref={keyStripRef}
+                role="toolbar"
+                aria-label="Terminal keys"
+                onScroll={updateKeyStripOverflow}
+                data-more={keyStripMore ? 'true' : undefined}
+                className={`${styles.keyStrip} ${keyStripMore ? styles.keyStripMore : ''}`}
+            >
+                {/* First, so it is in view without scrolling: iOS has no key to
+                    dismiss the keyboard from a textarea. */}
+                <button
+                    type="button"
+                    aria-label="Show or hide keyboard"
+                    onPointerDown={keepTerminalFocus}
+                    onMouseDown={keepTerminalFocus}
+                    onClick={toggleTouchKeyboard}
+                    className={styles.stripKey}
+                >
+                    <Keyboard size={16} aria-hidden="true" />
+                </button>
+                {TOUCH_LEAD_KEYS.map(renderTouchKey)}
+                <button
+                    type="button"
+                    aria-label="Control"
+                    aria-pressed={ctrlArmed}
+                    onPointerDown={keepTerminalFocus}
+                    onMouseDown={keepTerminalFocus}
+                    onClick={() => setCtrl(!ctrlArmedRef.current)}
+                    className={`${styles.stripKey} ${ctrlArmed ? styles.stripKeyArmed : ''}`}
+                >
+                    Ctrl
+                </button>
+                {TOUCH_KEYS.map(renderTouchKey)}
+            </div>
+            <div className={styles.viewportFrame}>
                 <div
                     ref={containerRef}
                     id={terminalSurfaceId}
-                    onPointerDownCapture={focusTerminal}
+                    onPointerDownCapture={handleViewportPointerDown}
+                    onPointerUpCapture={handleViewportPointerUp}
+                    onPointerCancelCapture={handleViewportPointerCancel}
                     className={styles.viewport}
                 />
                 {isActive && (connState === "init" || connState === "connecting") && (
