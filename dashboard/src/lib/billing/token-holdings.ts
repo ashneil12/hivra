@@ -1,6 +1,6 @@
 import { requireDb } from "@/lib/billing/db-utils";
 import { supabaseAdmin } from "@/lib/supabase";
-import { tokenVerificationContent } from "@/lib/token-verification-content";
+import { BASE_CHAIN_ID, HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 import {
   normalizeRpcRetryConfig,
   RpcHttpError,
@@ -130,12 +130,13 @@ export interface HermesTokenBalanceCheck {
   blockNumber: number | null;
 }
 
-export const BASE_CHAIN_ID = 8453;
-export const HERMESOS_TOKEN_SYMBOL = "Hivra";
-export const HERMESOS_TOKEN_DECIMALS = 18;
-export const HERMESOS_TOKEN_ADDRESS = normalizeEvmAddress(
-  tokenVerificationContent.tokenDetails.contractAddress ?? ""
-);
+export { BASE_CHAIN_ID };
+// The legacy $HermesOS token, from the platform token registry. The stored
+// symbol is "HermesOS": rows written before the registry say "Hivra", which
+// displayTokenUnit still maps to $HermesOS.
+export const HERMESOS_TOKEN_SYMBOL = HERMESOS_TOKEN.symbol;
+export const HERMESOS_TOKEN_DECIMALS = HERMESOS_TOKEN.decimals;
+export const HERMESOS_TOKEN_ADDRESS = HERMESOS_TOKEN.address;
 export const HERMESOS_BASE_TIER_MIN_RAW = parseTokenAmountToRaw(
   "1",
   HERMESOS_TOKEN_DECIMALS

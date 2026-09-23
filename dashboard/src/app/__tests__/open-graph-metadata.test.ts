@@ -1,4 +1,5 @@
 import { metadata as homeMetadata } from '../page';
+import { metadata as downloadMetadata } from '../download/page';
 import { metadata as roadmapMetadata } from '../roadmap/page';
 import { metadata as tokenMetadata } from '../token/page';
 import { metadata as blogIndexMetadata } from '../blog/page';
@@ -28,6 +29,12 @@ describe('route Open Graph metadata', () => {
     // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
     expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
     expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
+  });
+
+  it('gives /download its own title and description, not the site defaults', () => {
+    expect(downloadMetadata.title).toBe('Download Hivra');
+    expect(downloadMetadata.description).toBe('The Hivra desktop app for macOS is coming soon. Open Hivra in your browser today.');
+    expect(String(downloadMetadata.description)).not.toMatch(/Windows/);
   });
 
   it('keeps the shared website Open Graph defaults on every static route that overrides openGraph metadata', () => {

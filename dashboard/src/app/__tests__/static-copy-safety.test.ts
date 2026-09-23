@@ -38,6 +38,28 @@ describe("Static copy safety", () => {
     }
   });
 
+  it("never uses buildWebsiteMetadata as a page's whole metadata, which drops the page title", () => {
+    // buildWebsiteMetadata returns only canonical, Open Graph and Twitter fields.
+    // A page that exports it alone shows the site default title and description.
+    // /tokenomics still does; its title is token copy owned by the token workstream.
+    const allowed = new Set([path.join("tokenomics", "page.tsx")]);
+    const appRoot = path.join(__dirname, "..");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "__tests__" && entry.name !== "api") walk(full);
+        } else if (entry.name === "page.tsx" && /metadata\s*=\s*buildWebsiteMetadata\(/.test(fs.readFileSync(full, "utf8"))) {
+          const relative = path.relative(appRoot, full);
+          if (!allowed.has(relative)) offenders.push(relative);
+        }
+      }
+    };
+    walk(appRoot);
+    expect(offenders).toEqual([]);
+  });
+
   it("gives the site a current default title with no dashes and a Hivra contact address", () => {
     const layout = fs.readFileSync(path.join(__dirname, "..", "layout.tsx"), "utf8");
     const defaultTitle = layout.match(/default:\s*"([^"]+)"/)?.[1];
