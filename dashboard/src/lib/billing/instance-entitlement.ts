@@ -104,6 +104,17 @@ interface QualificationRow {
 // often $0) check `sub.status` themselves.
 const STRIPE_ACCESS_STATUSES = new Set(["active", "past_due", "trialing"]);
 
+export interface ResolveEffectiveSubscriptionOptions {
+  /**
+   * Leave the `hermes_subscriptions` row out entirely (paid Stripe and the
+   * Free fallback) and report only the other lanes: Apple IAP, yearly
+   * $HermesOS, token holdings. The Stripe lapse handlers use this to ask
+   * "does the user still pay through another lane?" while their own Stripe
+   * row can still read active or past_due.
+   */
+  excludeStripe?: boolean;
+}
+
 /**
  * Returns the effective subscription for the user, or null if neither
  * a paid Stripe sub nor a token-holding qualification entitles them.
@@ -113,15 +124,18 @@ const STRIPE_ACCESS_STATUSES = new Set(["active", "past_due", "trialing"]);
  * an active row.
  */
 export async function resolveEffectiveSubscription(
-  userId: string
+  userId: string,
+  options: ResolveEffectiveSubscriptionOptions = {}
 ): Promise<EffectiveSubscription | null> {
   if (!supabaseAdmin) return null;
 
-  const { data: subRow } = await supabaseAdmin
-    .from("hermes_subscriptions")
-    .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
-    .eq("user_id", userId)
-    .maybeSingle<SubscriptionRow>();
+  const { data: subRow } = options.excludeStripe
+    ? { data: null }
+    : await supabaseAdmin
+        .from("hermes_subscriptions")
+        .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
+        .eq("user_id", userId)
+        .maybeSingle<SubscriptionRow>();
 
   // Dunning cutoff: a `past_due` Stripe sub only grants access WHILE it is
   // still inside its grace window. Once `grace_period_ends_at` has elapsed, the
