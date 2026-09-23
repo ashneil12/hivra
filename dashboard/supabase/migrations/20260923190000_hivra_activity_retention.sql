@@ -11,8 +11,8 @@
 -- WHAT
 -- 1. Per-computer deletion (always on). When a computer reaches the terminal
 --    status 'deleted' (only after verified teardown, on every delete path), its
---    activity events and its reporter-state row are deleted in the same
---    transaction. There is no audit reason to keep them: billing reads its own
+--    activity events (up to 20,000; the job removes any rest) and its
+--    reporter-state row are deleted in the same transaction. There is no audit reason to keep them: billing reads its own
 --    ledgers, and ops keeps its own ops_events. The 'deleted' lifecycle event
 --    that the app logs after the flip remains as a content-free tombstone and
 --    ages out with the retention window.
@@ -34,7 +34,16 @@ create or replace function public.delete_hivra_activity_after_agent_delete()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if old.status is distinct from 'deleted' and new.status = 'deleted' then
-    delete from public.hivra_agent_events where agent_id = new.id;
+    -- Bounded so a computer with a long history cannot push its delete
+    -- finalization past the statement timeout; anything beyond the bound is a
+    -- leftover that prune_hivra_activity removes.
+    delete from public.hivra_agent_events e
+     using (
+       select id from public.hivra_agent_events
+        where agent_id = new.id
+        limit 20000
+     ) doomed
+     where e.id = doomed.id;
     -- Tolerate a database that predates the collectors table: a failure here
     -- would abort the computer's delete finalization.
     if to_regclass('public.hivra_activity_collectors') is not null then

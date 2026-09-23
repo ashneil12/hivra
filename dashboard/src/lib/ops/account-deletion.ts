@@ -77,6 +77,8 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     filterColumn: "user_id",
     source: "userId",
     reason: "Hivra activity reporter state per computer",
+    // Newer than hivra_agent_events; a database without it has nothing to delete.
+    optionalIfMissing: true,
   },
   {
     table: "hermes_conversations",

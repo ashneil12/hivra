@@ -188,13 +188,14 @@ kept for a bounded time (migration `20260923190000_hivra_activity_retention.sql`
 - **Computer deleted:** when `hivra_agents.status` becomes `deleted` (only after
   verified teardown, on every delete path), the trigger
   `delete_hivra_activity_after_agent_delete` deletes that computer's
-  `hivra_agent_events` rows and its `hivra_activity_collectors` row in the same
-  transaction. The `deleted` lifecycle event logged after the flip is kept as a
+  `hivra_agent_events` rows (up to 20,000; the job removes any rest) and its
+  `hivra_activity_collectors` row in the same transaction. A `deleted`
+  lifecycle event that a delete path logs after the flip is kept as a
   tombstone and ages out with the window. No audit consumer needs the rest:
   billing reads its own ledgers, and ops reads `ops_events`.
 - **Age:** `/api/cron/prune-hivra-activity` (daily) calls
   `prune_hivra_activity(cutoff, batch, dry_run)` in bounded batches to delete
-  rows older than `ACTIVITY_RETENTION_DAYS` (default 90, floor 30), plus
+  rows older than `ACTIVITY_RETENTION_DAYS` (default and maximum 90, minimum 30), plus
   leftovers of computers deleted before the trigger existed. It is OFF unless
   `ACTIVITY_RETENTION_ENABLED=true`; while off, every run is a dry run that
   reports counts. `?dryRun=1` forces a preview.

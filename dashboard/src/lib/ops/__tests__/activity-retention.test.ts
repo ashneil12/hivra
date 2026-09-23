@@ -46,9 +46,11 @@ describe("resolveActivityRetentionConfig", () => {
     }
   });
 
-  it("floors a too-small window and ignores garbage", () => {
+  it("clamps the window to 30..90 days and ignores garbage", () => {
     expect(resolveActivityRetentionConfig({ ACTIVITY_RETENTION_DAYS: "0" }).retentionDays).toBe(MIN_ACTIVITY_RETENTION_DAYS);
     expect(resolveActivityRetentionConfig({ ACTIVITY_RETENTION_DAYS: "45" }).retentionDays).toBe(45);
+    // Never longer than the Privacy Policy's 90 days.
+    expect(resolveActivityRetentionConfig({ ACTIVITY_RETENTION_DAYS: "365" }).retentionDays).toBe(90);
     expect(resolveActivityRetentionConfig({ ACTIVITY_RETENTION_DAYS: "-5" }).retentionDays).toBe(90);
     expect(resolveActivityRetentionConfig({ ACTIVITY_RETENTION_DAYS: "abc" }).retentionDays).toBe(90);
   });

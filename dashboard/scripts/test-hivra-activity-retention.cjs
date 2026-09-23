@@ -67,6 +67,21 @@ async function main() {
     await db.query("update public.hivra_agents set status = 'deleted' where id = $1", [doomed]);
     assert.equal(await count("select count(*) n from public.hivra_agent_events where agent_id = $1", [doomed]), 1);
 
+    // The trigger's delete is bounded; the job's leftover class removes the rest.
+    const big = await agent("user_big");
+    await db.query(
+      `insert into public.hivra_agent_events (agent_id, user_id, event, created_at)
+       select $1, 'user_big', 'otel_log', now() - interval '1 day' from generate_series(1, 20005)`,
+      [big]
+    );
+    await db.query("update public.hivra_agents set status = 'deleted' where id = $1", [big]);
+    assert.equal(await count("select count(*) n from public.hivra_agent_events where agent_id = $1", [big]), 5);
+    assert.equal(
+      (await one("select public.prune_hivra_activity(now() - interval '90 days', 100, false) r")).r.deletedComputerEvents,
+      5
+    );
+    assert.equal(await count("select count(*) n from public.hivra_agent_events where agent_id = $1", [big]), 0);
+
     // --- Retention function ---------------------------------------------------
     await db.exec("delete from public.hivra_agent_events; delete from public.hivra_activity_collectors;");
     const live = await agent("user_b");

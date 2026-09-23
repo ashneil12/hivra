@@ -297,8 +297,11 @@ describe("account deletion safeguards", () => {
       expect(spec).toEqual(
         expect.objectContaining({ filterColumn: "user_id", source: "userId" })
       );
-      expect(spec?.optionalIfMissing).toBeUndefined();
     }
+    // The events table is required; only the newer collectors table may be absent.
+    expect(
+      ACCOUNT_DELETION_TABLES.find((entry) => entry.table === "hivra_agent_events")?.optionalIfMissing
+    ).toBeUndefined();
   });
 
   it("refuses an apply while the user still has Hivra computers that are not deleted", () => {
