@@ -102,7 +102,8 @@ const UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
     columnIndex(
       "uq_managed_venice_token_lots_deposit_quote",
       ["quote_id"],
-      (row) => row.source === "hermesos_deposit" && row.quote_id != null
+      // 20260923204000: one deposit lot per quote in either platform token.
+      (row) => (row.source === "hermesos_deposit" || row.source === "hivra_deposit") && row.quote_id != null
     ),
   ],
   managed_venice_financial_events: [

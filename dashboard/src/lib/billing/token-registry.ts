@@ -249,3 +249,19 @@ export function platformTokenByAddress(
 export function isPlatformTokenKey(value: unknown): value is PlatformTokenKey {
   return value === "hermesos" || value === "hivra";
 }
+
+/**
+ * The platform token a quote, subscription or lot row is denominated in, from
+ * its stored contract address (legacy rows without one are $HermesOS). Throws
+ * for an address the registry does not know: money never moves in a token
+ * the platform cannot name.
+ */
+export function platformTokenForRow(
+  row: { token_address?: string | null; tokenAddress?: string | null },
+  config: HivraTokenLaunchConfig = HIVRA_TOKEN_LAUNCH
+): PlatformToken {
+  const address = row.token_address ?? row.tokenAddress ?? HERMESOS_TOKEN.address;
+  const token = platformTokenByAddress(address, config);
+  if (!token) throw new Error(`Unknown platform token ${address}`);
+  return token;
+}
