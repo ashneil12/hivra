@@ -10,7 +10,7 @@ import styles from "./ResourceWorkspace.module.css";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock } from "lucide-react";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
@@ -327,16 +327,59 @@ function TerminalView({ url, token, label, onManage, surfaceId, active = true }:
   return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} />;
 }
 
-function RetainedTerminal({ active, surfaceId, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
+// Each ttyd websocket spawns its own process on the box, so every extra frame
+// is an independent shell (or agent CLI) running alongside the others. The cap
+// bounds how many CLIs one page can start on a small box.
+const MAX_TERMINAL_SESSIONS = 8;
+
+function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
   const [opened, setOpened] = useState(active);
+  const [sessions, setSessions] = useState<number[]>([1]);
+  const [current, setCurrent] = useState(1);
+  const nextSessionRef = useRef(2);
   // Lazily open once, then preserve this browsing context between tab changes.
   // Navigating an active ttyd frame can be cancelled by its beforeunload guard;
   // reusing it would show one shell under the other terminal's heading.
   if (active && !opened) setOpened(true);
   if (!opened && !active) return null;
+  const addSession = () => {
+    if (sessions.length >= MAX_TERMINAL_SESSIONS) return;
+    const n = nextSessionRef.current++;
+    setSessions((prev) => [...prev, n]);
+    setCurrent(n);
+  };
+  // Removing a frame closes its websocket, which ends that session's process.
+  const closeSession = (n: number) => {
+    const index = sessions.indexOf(n);
+    const next = sessions.filter((s) => s !== n);
+    if (!next.length) return;
+    setSessions(next);
+    if (n === current) setCurrent(next[Math.max(0, index - 1)]);
+  };
   return (
-    <div hidden={!active} inert={!active} style={{ height: "100%", minHeight: 0 }}>
-      <TerminalView {...surface} surfaceId={surfaceId} active={active} />
+    <div hidden={!active} inert={!active} className={styles.terminalStack}>
+      <div role="tablist" aria-label={`${label} sessions`} className={styles.sessionStrip}>
+        {sessions.map((n) => (
+          <div key={n} className={styles.sessionTab} data-active={n === current ? "true" : undefined}>
+            <button type="button" role="tab" aria-selected={n === current} aria-controls={`${surfaceId || "terminal"}-session-${n}`} onClick={() => setCurrent(n)} className="mono">
+              Session {n}
+            </button>
+            {sessions.length > 1 ? (
+              <button type="button" aria-label={`Close session ${n}`} title="Close — ends this session's process" onClick={() => closeSession(n)} className={styles.sessionClose}>
+                <X size={12} aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        ))}
+        <button type="button" aria-label="New terminal session" title={sessions.length >= MAX_TERMINAL_SESSIONS ? `Up to ${MAX_TERMINAL_SESSIONS} sessions` : "New session"} disabled={sessions.length >= MAX_TERMINAL_SESSIONS} onClick={addSession} className={styles.sessionAdd}>
+          <Plus size={13} aria-hidden="true" />
+        </button>
+      </div>
+      {sessions.map((n) => (
+        <div key={n} id={`${surfaceId || "terminal"}-session-${n}`} role="tabpanel" hidden={n !== current} className={styles.sessionPanel}>
+          <TerminalView {...surface} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -546,6 +589,10 @@ export default function AgentPage() {
       if (requestedTab === "desktop") setDesktopOpened(true);
     }
   }
+  // Chat turns are tied to the open request, so unmounting the chat would stop
+  // every running conversation. Once opened, keep it mounted (hidden) while the
+  // owner works in other surfaces so parallel chats keep doing their work.
+  const [chatOpened, setChatOpened] = useState(false);
   const [browserOn, setBrowserOn] = useState<boolean | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
@@ -825,6 +872,9 @@ export default function AgentPage() {
       ? requestedTab as Tab
       : null;
   const provisioning = agent.status === "provisioning";
+  const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
+    && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
+  if (effectiveTab === "chat" && chatSurfaceReady && !chatOpened) setChatOpened(true);
   const activity = agentActivityPresentation(agent, def?.name || "the agent");
   // Every surface verifies the running gateway's auth capability, then POSTs
   // its bearer in the body for an opaque HttpOnly cookie and clean URL.
@@ -903,6 +953,11 @@ export default function AgentPage() {
               handoffWarmOrigin={(() => { try { return agent.chat_url ? new URL(agent.chat_url).origin : null; } catch { return null; } })()}
             />
           )
+        ) : null}
+        {chatOpened && chatSurfaceReady && agent.chat_url ? (
+          <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
+          </div>
         ) : null}
         {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
           <>
@@ -1017,9 +1072,7 @@ export default function AgentPage() {
             </div>
           ) : loggedIn === null ? (
             <LoadingState compact label="Checking access…" />
-          ) : loggedIn ? (
-            <HivraChat boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
-          ) : (
+          ) : loggedIn ? null : (
             <HivraLogin boxUrl={agent.chat_url} onDone={() => setReloadKey(k => k + 1)} agentKind={cliKind} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} />
           )
         ) : effectiveTab === "desktop" ? (
