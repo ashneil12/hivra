@@ -120,13 +120,33 @@ const homepageSchema = {
   ],
 };
 
-async function getLandingLocale(explicitLocale?: string | null) {
-  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
+async function getLandingLocale(explicitLocale: string | null, headerStore: Pick<Headers, "get">) {
+  const cookieStore = await cookies();
   return resolveRequestLocale({
     explicitLocale,
     cookieLocale: cookieStore.get(LOCALE_COOKIE_NAME)?.value,
     acceptLanguage: headerStore.get("accept-language"),
   });
+}
+
+/**
+ * Header and footer links such as /#pricing come from this site. A signed-in
+ * visitor following one wants that section, not the dashboard; direct visits
+ * (typed URL, external link, bookmark) still land on the dashboard.
+ * "same-site" covers an internal link whose request passed through Clerk's
+ * handshake on the clerk.<domain> subdomain; direct visits stay "none".
+ */
+function isSameSiteNavigation(headerStore: Pick<Headers, "get">): boolean {
+  const fetchSite = headerStore.get("sec-fetch-site");
+  if (fetchSite) return fetchSite === "same-origin" || fetchSite === "same-site";
+  const referer = headerStore.get("referer");
+  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
+  if (!referer || !host) return false;
+  try {
+    return new URL(referer).host === host;
+  } catch {
+    return false;
+  }
 }
 
 export default async function LandingPage({
@@ -142,15 +162,18 @@ export default async function LandingPage({
       : typeof resolvedSearchParams?.locale === "string"
         ? resolvedSearchParams.locale
         : null;
-  const locale = await getLandingLocale(explicitLocale);
+  const headerStore = await headers();
+  const locale = await getLandingLocale(explicitLocale, headerStore);
 
-  if (userId) {
+  if (userId && !isSameSiteNavigation(headerStore)) {
     redirect("/dashboard");
   }
 
   return (
     <LocaleProvider initialLocale={locale}>
-      <PublicSite variant="home" isSignedIn={Boolean(userId)}>
+      {/* No ClerkProvider refreshes the session here: an expired token reads as
+          signed out, so leave that case to the header's session hint. */}
+      <PublicSite variant="home" isSignedIn={userId ? true : undefined}>
         <StructuredData schema={homepageSchema} />
         <main id="main-content" className={styles.home}>
           <HeroSection agentsCounter={<ComputerScene />} liveStat={<AgentsDeployedStat />} />

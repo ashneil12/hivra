@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 
 import StructuredData from "@/components/StructuredData";
@@ -88,7 +88,7 @@ function NetworkMap() {
         <div
           key={node.label}
           className={`${styles.node} ${styles[`node_${node.variant}`]}`}
-          style={{ left: `${node.x}%`, top: `${node.y}%` }}
+          style={{ "--x": `${node.x}%`, "--y": `${node.y}%` } as CSSProperties}
         >
           <span className={styles.nodeLabel}>{node.label}</span>
           <span className={styles.nodeDetail}>{node.detail}</span>

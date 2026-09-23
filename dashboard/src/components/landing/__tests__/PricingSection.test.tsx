@@ -46,3 +46,12 @@ test("identifies hosted offers as a pricing preview", () => {
   expect(screen.getByText("Pricing preview")).toBeVisible();
   expect(screen.getByText(/are proposed and are not yet available as shown/)).toBeVisible();
 });
+
+test("each hosted card carries its own hosted-options action for phone layouts", () => {
+  render(<PricingSection />);
+  for (const name of ["Starter", "Pro", "Studio", "Max"]) {
+    const card = screen.getByRole("article", { name });
+    expect(within(card).getByRole("link", { name: `View hosted options for ${name}` })).toHaveAttribute("href", "/dashboard/infrastructure");
+  }
+  expect(within(screen.getByRole("article", { name: "Free" })).queryByRole("link", { name: /hosted options/ })).not.toBeInTheDocument();
+});

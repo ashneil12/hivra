@@ -39,6 +39,7 @@ export default function PricingSection() {
           <div><dt>Support</dt><dd>{plan.support}</dd></div>
         </dl>
         <p className={styles.description}>{plan.body}</p>
+        <Link className={styles.cardAction} href="/dashboard/infrastructure" aria-label={`View hosted options for ${plan.name}`}>View hosted options<ArrowRight size={16} aria-hidden="true" /></Link>
       </article>)}
     </div>
     <div className={styles.purchaseRow}>

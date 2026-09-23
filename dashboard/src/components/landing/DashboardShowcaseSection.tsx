@@ -22,7 +22,7 @@ export default function DashboardShowcaseSection() {
         {active === 1 && <>{["workspace / projects", "workspace / notes", "workspace / research"].map(name => <div className={styles.previewAgent} key={name}><Folder size={20} /><span>{name}</span></div>)}</>}
         {active === 2 && <pre>{"~/workspace $ pwd\n/workspace\n\n~/workspace $ ls\nprojects  notes  research\n\n~/workspace $ ▍"}</pre>}
       </div>
-      <div className={styles.previewBottom}>Click a tab to look around.</div>
+      <div className={styles.previewBottom}>Choose a tab to look around.</div>
     </div>
   </section>;
 }
