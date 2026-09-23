@@ -15,7 +15,7 @@ import styles from "./Infrastructure.module.css";
 const DIGITALOCEAN_CONSOLE_URL = "https://cloud.digitalocean.com/managed-agents/harness-runtime";
 
 function persistedError(code: DigitalOceanConnectionDto["lastErrorCode"]): string {
-  if (code === "invalid_credentials") return "DigitalOcean rejected this token. Reconnect with a new token.";
+  if (code === "invalid_credentials") return "DigitalOcean rejected this token. Replace it with a new token from the same team; your agents keep running.";
   if (code === "managed_agents_forbidden") return "This token cannot use Managed Agents. Check the team’s preview access and token scope.";
   if (code === "provider_response_invalid") return "DigitalOcean returned a response Hivra could not safely accept.";
   return "The latest DigitalOcean check did not complete.";
@@ -39,6 +39,7 @@ export function DigitalOceanConnectionCard({
   error,
   onLaunch,
   onRefresh,
+  onReplaceToken,
   onDelete,
 }: {
   connection: DigitalOceanConnectionDto;
@@ -48,6 +49,7 @@ export function DigitalOceanConnectionCard({
   error?: string | null;
   onLaunch: () => void;
   onRefresh: () => void;
+  onReplaceToken: () => void;
   onDelete: () => void;
 }) {
   const ready = connection.status === "ready" && target?.status === "ready";
@@ -126,6 +128,9 @@ export function DigitalOceanConnectionCard({
         <button type="button" className={styles.secondaryButton} onClick={onRefresh} disabled={refreshing}>
           {refreshing ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
           {refreshing ? "Checking…" : "Re-check access"}
+        </button>
+        <button type="button" className={connection.lastErrorCode === "invalid_credentials" ? styles.primaryButton : styles.secondaryButton} onClick={onReplaceToken}>
+          <KeyRound size={14} aria-hidden="true" /> Replace token
         </button>
         <a className={styles.tertiaryButton} href={DIGITALOCEAN_CONSOLE_URL} target="_blank" rel="noreferrer">
           Manage in DigitalOcean <ExternalLink size={13} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span>
