@@ -22,7 +22,7 @@ test("token access is distinct from an optional claim and does not promise a con
   expect(screen.getByText(/Self-hosting Hivra requires neither the token nor a Hivra account/)).toBeVisible();
   expect(screen.getByRole("heading", { name: "Keeping access and converting tokens are separate decisions." })).toBeVisible();
   expect(screen.getByText(/without forced conversion or a claim deadline/)).toBeVisible();
-  expect(screen.getByText(/The rate is a live market quote, not a fixed ratio/)).toBeVisible();
+  expect(screen.getByText(/Bankr would run the conversion/)).toBeVisible();
   expect(screen.getByText(/new users hold and pay with \$HIVRA/)).toBeVisible();
   expect(screen.queryByText(/1:1|guaranteed return|buy now/i)).not.toBeInTheDocument();
 });
@@ -55,8 +55,8 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
   for (const sentence of [
     "The amount you need is fixed when your holding first qualifies.",
     "a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final.",
-    "You'd sign it from your own wallet, and Hivra never holds your tokens.",
-    "The rate is a live market quote, not a fixed ratio. The fees and a maximum slippage limit get published before claims open.",
+    "Bankr would run the conversion.",
+    "The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps.",
     "Once $HIVRA launches, new users hold and pay with $HIVRA.",
     "Nothing here is an offer or an inducement to buy any asset.",
     "The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.",
@@ -64,5 +64,5 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
     expect(litepaper).toContain(sentence);
     expect(container.textContent).toContain(sentence);
   }
-  expect(container.textContent).not.toMatch(/Nibbii|remain to be settled|fixed at deposit/);
+  expect(container.textContent).not.toMatch(/Nibbii|remain to be settled|fixed at deposit|own wallet|market quote/);
 });

@@ -363,9 +363,9 @@ The token launched as $HermesOS in April 2026, alongside the original platform, 
 
 **It is designed as an active claim, not a snapshot or an airdrop.** Holders choose to convert. $HIVRA is not distributed automatically to every wallet holding $HermesOS.
 
-The claim would sell the holder's $HermesOS into the existing pool and use the ETH proceeds to buy $HIVRA in the new pool. The holder signs it from their own wallet, and Hivra never holds the tokens. The proceeds move to the new pool rather than being stranded behind (the old pool's locked liquidity stays where it is), and dormant wallets do not receive assets they will never use.
+The claim would sell the holder's $HermesOS into the existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion, and its exact steps are published with the terms. The proceeds move to the new pool rather than being stranded behind (the old pool's locked liquidity stays where it is), and dormant wallets do not receive assets they will never use.
 
-The rate is a live market quote, not a fixed ratio. The fees, including each pool's swap fee and who receives it, and a maximum slippage limit are published before claims open.
+The conversion rate, the fees (including each pool's swap fee and who receives it) and how price movement during a conversion is handled are published before claims open. None of this is a fixed ratio or a price guarantee.
 
 ### 8.3 Commitment to existing holders
 
@@ -385,13 +385,13 @@ The prior contract does not disappear. Two similarly named assets will exist, an
 
 ### 8.6 Wallets and keys
 
-Hivra uses Bankr for wallets, and Bankr holds the private keys. Hivra holds scoped API keys for three kinds of wallet.
+Hivra uses Bankr for wallets, and Bankr holds the private keys.
 
 **Payment addresses.** Token payments for Hivra's services arrive at a per-customer address and are swept to Hivra's treasury. Once paid, the funds are Hivra's.
 
-**Agent wallets.** An agent can have a wallet so it can pay for things its owner approves. Hivra stores that wallet's API key and passes it to the agent.
+**Agent wallets.** An agent can use a wallet so it can pay for things its owner approves. New agents connect the owner's own Bankr account. The owner creates the key, sets its limits at Bankr and can revoke it there at any time. Hivra stores that key encrypted, passes it to the agent, and never starts transfers from it. Agents set up earlier keep a wallet Hivra created until their owner switches.
 
-**Older access wallets.** Some early holders qualified for access by depositing tokens into a platform wallet. New access uses the holder's own wallet, and the older wallets are being retired.
+**Older access wallets.** Some early holders qualified for access by depositing tokens into a platform wallet. New access uses the holder's own wallet, and no new platform wallets are created for it.
 
 The custody and regulatory treatment of each is under legal review.
 

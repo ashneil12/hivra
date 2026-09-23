@@ -26,9 +26,9 @@ export default function FullTokenomicsSection({ headingLevel = 2 }: { headingLev
       <article className={styles.migration}>
         <span className={styles.eyebrow}>Proposed migration</span>
         <h3>Keeping access and converting tokens are separate decisions.</h3>
-        <p>The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. You&apos;d sign it from your own wallet, and Hivra never holds your tokens.</p>
+        <p>The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.</p>
         <ol className={styles.claimFlow} aria-label="Proposed claim flow"><li><span>01</span>$HermesOS</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>ETH proceeds</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>$HIVRA</li></ol>
-        <p>Existing holders keep their access, without forced conversion or a claim deadline. The rate is a live market quote, not a fixed ratio. The fees and a maximum slippage limit get published before claims open. Once $HIVRA launches, new users hold and pay with $HIVRA.</p>
+        <p>Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.</p>
       </article>
     </div>
 

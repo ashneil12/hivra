@@ -2,7 +2,7 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`11313c967764fac0691f08ac9670db2b40543f8f2395d5ac876d4dcf4d091310`
+`8ccc34344b3a00884e6f37295ebefa9208a43c0826632508ea9a68d185dddca7`
 (v2.1, approved 23 September 2026). `test_content.py` checks the source against
 that pin. The founder section, all 15 product stories and all 12 token utilities
 are intact. The linked `THOUGHTS.md` publishes the founder section and its

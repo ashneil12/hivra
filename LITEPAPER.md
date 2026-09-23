@@ -401,7 +401,7 @@ $HIVRA, on Base, launched through Bankr.
 
 The proposed route is an active claim. You choose to convert. New tokens aren't automatically sent to every wallet holding the old one.
 
-The claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool, so the value moves across rather than being stranded behind. You'd sign it from your own wallet, and Hivra never holds your tokens. The rate is a live market quote, not a fixed ratio. The fees and a maximum slippage limit get published before claims open.
+The claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool, so the value moves across rather than being stranded behind. Bankr would run the conversion. The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps.
 
 **Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new thresholds run side by side for people who already have access, and the final terms will set out exactly who is covered and how eligibility carries over. Once $HIVRA launches, new users hold and pay with $HIVRA.
 
