@@ -77,6 +77,66 @@ describe("ComposioAppPicker", () => {
     expect(screen.getByTestId("composio-app-tile:gmail")).toHaveAttribute("data-connected", "false");
   });
 
+  it("gives the search a search keyboard, a 44px close and layers above the command panel sheet", async () => {
+    render(
+      <ComposioAppPicker open onClose={jest.fn()} onConnect={jest.fn()} launching={null} connectedApps={new Set()} />,
+    );
+    const search = await screen.findByTestId("composio-app-picker-search");
+    expect(search).toHaveAttribute("type", "search");
+    expect(search).toHaveAttribute("inputmode", "search");
+    expect(search).toHaveAttribute("enterkeyhint", "search");
+    expect(search).toHaveAttribute("autocapitalize", "none");
+    expect(screen.getByTestId("composio-app-picker-close")).toHaveStyle({ width: "44px", height: "44px" });
+    // The sheet sits at z-index 1001, so the picker it opens must clear it.
+    expect(Number(screen.getByTestId("composio-app-picker").style.zIndex)).toBeGreaterThan(1001);
+  });
+
+  it("takes focus, keeps Tab inside and hands focus back to its trigger", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Connect apps";
+    document.body.appendChild(trigger);
+    trigger.focus();
+    try {
+      const view = render(
+        <ComposioAppPicker open onClose={jest.fn()} onConnect={jest.fn()} launching={null} connectedApps={new Set()} />,
+      );
+      const search = await screen.findByTestId("composio-app-picker-search");
+      await waitFor(() => expect(search).toHaveFocus());
+
+      // Close is the first focusable, the Composio link the last: Tab wraps between them.
+      const close = screen.getByTestId("composio-app-picker-close");
+      const manage = screen.getByRole("link", { name: /manage or remove connections/i });
+      manage.focus();
+      fireEvent.keyDown(window, { key: "Tab" });
+      expect(close).toHaveFocus();
+      fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+      expect(manage).toHaveFocus();
+
+      view.unmount();
+      expect(trigger).toHaveFocus();
+    } finally {
+      trigger.remove();
+    }
+  });
+
+  it("focuses the close button on touch so the soft keyboard stays down", async () => {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: jest.fn((query: string) => ({ matches: query === "(pointer: coarse)", media: query, addEventListener: jest.fn(), removeEventListener: jest.fn() })),
+    });
+    try {
+      render(
+        <ComposioAppPicker open onClose={jest.fn()} onConnect={jest.fn()} launching={null} connectedApps={new Set()} />,
+      );
+      const close = await screen.findByTestId("composio-app-picker-close");
+      await waitFor(() => expect(close).toHaveFocus());
+    } finally {
+      Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: originalMatchMedia });
+    }
+  });
+
   it("closes on the X button", async () => {
     const onClose = jest.fn();
     render(

@@ -91,6 +91,10 @@ export async function refreshDigitalOceanAccount(connectionId: string) {
   return request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/refresh`, { method: "POST" }, ConnectionResultSchema);
 }
 
+export async function replaceDigitalOceanAccountToken(connectionId: string, apiToken: string) {
+  return request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/token`, { method: "POST", body: JSON.stringify({ apiToken }) }, ConnectionResultSchema);
+}
+
 export async function listManagedSessions(signal?: AbortSignal) {
   return request("/api/hivra/managed-sessions", { method: "GET", signal }, z.object({
     sessions: z.array(ManagedSessionDtoSchema),

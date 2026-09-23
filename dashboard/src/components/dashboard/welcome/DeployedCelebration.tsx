@@ -340,6 +340,7 @@ export function DeployedCelebration({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 9,
+                  minHeight: 44,
                   padding: "0.9rem 1.7rem",
                   border: "1px solid var(--gold-leaf)",
                   background: "var(--gold-leaf)",
@@ -363,6 +364,7 @@ export function DeployedCelebration({
                   onClick={onConnectTelegram}
                   style={{
                     display: "inline-flex",
+                  minHeight: 44,
                     alignItems: "center",
                     gap: 7,
                     padding: "0.5rem 0.6rem",
@@ -414,6 +416,7 @@ export function DeployedCelebration({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 7,
+                  minHeight: 44,
                   padding: "0.5rem 0.6rem",
                   border: "none",
                   background: "transparent",

@@ -21,7 +21,10 @@ export default function HeroSection({ agentsCounter, liveStat }: HeroSectionProp
         <p className={styles.heroDescription}>{english ? "Give it room to work. Decide what it can reach. Launch an agent on a computer of its own, or start with a computer and use it yourself." : hero.primary}</p>
         <div className={styles.heroActions}>
           <Link id="hero-primary-cta" href={english ? AGENT_LAUNCH_HREF : "/get-started?plan=free"} className={styles.primary}>{english ? "Launch an agent" : hero.primaryCta}<ArrowRight size={18} aria-hidden="true" /></Link>
-          {english ? <Link id="hero-secondary-cta" href="/download" className={styles.secondary} aria-describedby={downloadsPending ? "desktop-availability" : undefined}>Download the app<Download size={18} aria-hidden="true" /></Link> : <a id="hero-secondary-cta" href="#launch" className={styles.secondary}>{hero.secondaryCta}<ChevronDown size={16} aria-hidden="true" /></a>}
+          {english ? <>
+            <Link id="hero-secondary-cta" href="/download" className={`${styles.secondary} ${styles.desktopOnly}`} aria-describedby={downloadsPending ? "desktop-availability" : undefined}>Download the app<Download size={18} aria-hidden="true" /></Link>
+            <a href="#computers" className={`${styles.secondary} ${styles.phoneOnly}`}>Start with a computer<ArrowRight size={18} aria-hidden="true" /></a>
+          </> : <a id="hero-secondary-cta" href="#launch" className={styles.secondary}>{hero.secondaryCta}<ChevronDown size={16} aria-hidden="true" /></a>}
         </div>
         {english && downloadsPending && <p id="desktop-availability" className={styles.downloadAvailability}>The Mac app is coming soon. Browser access is available now.</p>}
         <p className={styles.heroNote}>{english ? "Ubuntu now, with Windows and Omarchy in private preview. Hivra Cloud or your own infrastructure. Your model key stays your choice." : hero.secondary}</p>

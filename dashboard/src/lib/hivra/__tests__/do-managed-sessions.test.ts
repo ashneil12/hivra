@@ -1,6 +1,8 @@
 const mockLoadSecret = jest.fn();
 const mockLoadTarget = jest.fn();
 const mockCreateRecord = jest.fn();
+const mockReplaceToken = jest.fn();
+const mockRefreshRecord = jest.fn();
 
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), error: jest.fn(), info: jest.fn() } }));
@@ -8,11 +10,12 @@ jest.mock("@/lib/infrastructure/digitalocean-store", () => ({
   loadDigitalOceanConnectionSecret: (...args: unknown[]) => mockLoadSecret(...args),
   loadDigitalOceanTarget: (...args: unknown[]) => mockLoadTarget(...args),
   createDigitalOceanConnectionRecord: (...args: unknown[]) => mockCreateRecord(...args),
-  refreshDigitalOceanTargetRecord: jest.fn(),
+  refreshDigitalOceanTargetRecord: (...args: unknown[]) => mockRefreshRecord(...args),
+  replaceDigitalOceanConnectionToken: (...args: unknown[]) => mockReplaceToken(...args),
 }));
 
 type Row = Record<string, unknown>;
-const tables: Record<string, Row[]> = { hivra_agents: [], hivra_do_session_inputs: [] };
+const tables: Record<string, Row[]> = { hivra_agents: [], hivra_do_session_inputs: [], infrastructure_connections: [] };
 
 class Query {
   private filters: Array<(row: Row) => boolean> = [];
@@ -50,8 +53,10 @@ class Query {
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (table: string) => new Query(table) } }));
 
 import { DigitalOceanApiError } from "@/lib/digitalocean/managed-agents-client";
+import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
 import {
   connectDigitalOcean,
+  replaceDigitalOceanToken,
   digitalOceanSessionName,
   launchDigitalOceanSession,
   managedSessionAction,
@@ -89,6 +94,7 @@ function launchInput(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   tables.hivra_agents = [];
   tables.hivra_do_session_inputs = [];
+  tables.infrastructure_connections = [{ id: connectionId, user_id: userId, provider: "digitalocean", revision: 1 }];
   fake = new FakeDigitalOcean();
   vendorFetch = jest.fn(async () => new Response("{}", { status: 200 }));
   restore = setManagedSessionDependenciesForTest({ client: fake.client, sleep: async () => undefined, fetch: vendorFetch as unknown as typeof fetch });
@@ -232,5 +238,38 @@ describe("session lifecycle", () => {
     const agentId = await launched();
     mockLoadSecret.mockResolvedValue({ connection: { id: connectionId, status: "ready" }, revision: 2, apiToken: TOKEN });
     await expect(managedSessionAction(userId, agentId, "pause")).rejects.toMatchObject({ code: "not_ready" });
+  });
+});
+
+describe("replaceDigitalOceanToken", () => {
+  const NEW_TOKEN = "dop_v1_" + "9".repeat(64);
+  beforeEach(() => {
+    mockRefreshRecord.mockImplementation(async (input) => ({ connection: { id: connectionId, status: input.errorCode ? "error" : "ready" }, target: input.target }));
+  });
+
+  it("swaps in a token from the same team without touching the agents, then republishes the target", async () => {
+    await launchDigitalOceanSession(userId, launchInput());
+    const before = { ...tables.hivra_agents[0] };
+    await expect(replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN)).resolves.toMatchObject({ connection: { status: "ready" } });
+    expect(mockReplaceToken).toHaveBeenCalledWith({ userId, connectionId, expectedRevision: 1, apiToken: NEW_TOKEN });
+    expect(tables.hivra_agents[0]).toEqual(before);
+  });
+
+  it("refuses a token from another team that cannot see this connection's sessions", async () => {
+    await launchDigitalOceanSession(userId, launchInput());
+    fake.sessions.clear();
+    await expect(replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN)).rejects.toMatchObject({ code: "provider_rejected" });
+    expect(mockReplaceToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token DigitalOcean rejects", async () => {
+    await expect(replaceDigitalOceanToken(userId, connectionId, "bad-token-000000000000000")).rejects.toMatchObject({ code: "invalid_credentials" });
+    expect(mockReplaceToken).not.toHaveBeenCalled();
+  });
+
+  it("still repairs a connection whose stored token can no longer be read", async () => {
+    mockLoadSecret.mockRejectedValueOnce(new InfrastructureConnectionStoreError("credential_error", 1));
+    await replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN);
+    expect(mockReplaceToken).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 1, apiToken: NEW_TOKEN }));
   });
 });

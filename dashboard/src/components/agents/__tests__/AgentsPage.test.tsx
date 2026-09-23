@@ -44,6 +44,39 @@ describe("AgentsPage", () => {
     ).toHaveAttribute("href", "/dashboard/runtimes/deepseek-harness");
   });
 
+  it("brings an opened runtime catalog below the fold to the top under its heading", async () => {
+    const scroll = jest.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      render(<AgentsPage />);
+      await screen.findByRole("heading", { name: "No agents yet" });
+      const details = screen.getByText("Browse agent runtimes").closest("details") as HTMLDetailsElement;
+      const body = screen.getByRole("link", { name: "Open full runtime catalog" })
+        .parentElement as HTMLElement;
+      const top = jest.spyOn(body, "getBoundingClientRect");
+
+      // Opened with its first entries already on screen: the page stays put.
+      top.mockReturnValue({ top: 200 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).not.toHaveBeenCalled();
+
+      // Opened at the bottom edge: the heading (and its collapse control) goes
+      // to the top, not the body, so the tapped summary stays visible.
+      details.open = false;
+      fireEvent(details, new Event("toggle"));
+      top.mockReturnValue({ top: window.innerHeight - 40 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll).toHaveBeenCalledWith({ block: "start" });
+      expect(scroll.mock.instances[0]).toBe(details);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
   it("opens the existing Hermes detail route from the merged inventory", async () => {
     (global.fetch as jest.Mock).mockImplementation(async (input) =>
       String(input).includes("browser-sessions")

@@ -91,6 +91,7 @@ export function AccountMemoryEditor() {
             : "e.g. I run a B2B SaaS for dentists. I prefer concise, direct answers. Always show your work before taking destructive actions."
         }
         rows={10}
+        autoCapitalize="sentences"
         style={{
           width: "100%",
           resize: "vertical",

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Cpu,
   KeyRound,
@@ -69,12 +69,38 @@ function formatElapsed(ms: number): string {
   return `${mm}:${ss}`;
 }
 
+// Phone overrides for the inline STYLES (hence !important): tighten the hero
+// so the included list starts above the fold at 375x667, and keep the
+// three setup facts on one row with long names wrapping inside their cell.
+const DEPLOYING_PHONE_CSS = `
+@media (max-width: 767px) {
+  .welcome-deploying-card { padding: 1rem !important; margin-top: 1rem !important; gap: 1rem !important; }
+  .welcome-deploying-status { margin-bottom: 1rem !important; }
+  .welcome-deploying-icon { width: 48px !important; height: 48px !important; }
+  .welcome-deploying-title { font-size: 1.6rem !important; margin-bottom: 0.75rem !important; }
+  .welcome-deploying-subtitle { font-size: 14px !important; line-height: 1.6 !important; margin-bottom: 1rem !important; }
+  .welcome-deploying-stats { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) !important; }
+  .welcome-deploying-stat { padding: 0.65rem 0.75rem !important; gap: 6px !important; }
+}
+`;
+
 export function DeployingState({ agentName }: { agentName?: string | null } = {}) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const name = (agentName ?? "").trim() || "your agent";
   const displayName = (agentName ?? "").trim() || "Your agent";
   const items = buildIncludedItems(name);
   const securityFacts = buildSecurityFacts(name);
+  const cardRef = useRef<HTMLElement>(null);
+
+  // The deploy tap usually happens at the bottom of a long form; open this
+  // screen at its top instead of at the form's old scroll offset.
+  useEffect(() => {
+    const card = cardRef.current;
+    const scroller = card?.closest("main");
+    if (!card || !scroller) return;
+    // Scroll the page, not the card: the card is still mid entrance animation.
+    if (card.getBoundingClientRect().top < scroller.getBoundingClientRect().top) scroller.scrollTop = 0;
+  }, []);
 
   // Elapsed time is the only thing on this screen that changes: it is real
   // (wall clock since the request started), unlike a timed step list.
@@ -86,15 +112,18 @@ export function DeployingState({ agentName }: { agentName?: string | null } = {}
 
   return (
     <AnimateIn>
+      <style>{DEPLOYING_PHONE_CSS}</style>
       <section
         role="status"
         aria-live="polite"
         aria-label="Setting up your agent"
+        ref={cardRef}
+        className="welcome-deploying-card"
         style={STYLES.deployingCard}
       >
         <div style={STYLES.deployingHeroPane}>
-          <div style={STYLES.deployingStatusRow}>
-            <div style={STYLES.deployingIconWrap}>
+          <div className="welcome-deploying-status" style={STYLES.deployingStatusRow}>
+            <div className="welcome-deploying-icon" style={STYLES.deployingIconWrap}>
               <Loader2
                 size={30}
                 aria-hidden="true"
@@ -105,22 +134,22 @@ export function DeployingState({ agentName }: { agentName?: string | null } = {}
               Request pending
             </span>
           </div>
-          <h2 className="serif" style={STYLES.deployingTitle}>
+          <h2 className="serif welcome-deploying-title" style={STYLES.deployingTitle}>
             Getting {name} ready…
           </h2>
-          <p style={STYLES.deployingSubtitle}>
+          <p className="welcome-deploying-subtitle" style={STYLES.deployingSubtitle}>
             Hivra is creating {name}&apos;s computer. This is a pending request, not installation
             progress. Keep this page open; it changes as soon as Hivra answers. This typically
             takes 2-4 minutes.
           </p>
 
-          <div style={STYLES.deployingStatsGrid} aria-label="Setup summary">
+          <div className="welcome-deploying-stats" style={STYLES.deployingStatsGrid} aria-label="Setup summary">
             {[
               ["Agent", displayName],
               ["Ready in", "2-4 min"],
               ["Elapsed", formatElapsed(elapsedMs)],
             ].map(([label, value]) => (
-              <div key={label} style={STYLES.deployingStatCell}>
+              <div key={label} className="welcome-deploying-stat" style={STYLES.deployingStatCell}>
                 <span className="mono" style={STYLES.deployingStatLabel}>
                   {label}
                 </span>
