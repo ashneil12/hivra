@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
 import {
@@ -124,7 +124,6 @@ export function InfrastructureConnectionsPage() {
   // DigitalOcean sessions are Hivra agents; offer them only where those are on.
   const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the hostname flag after hydration, as the agent page does.
     setHivraAgentsEnabled(isHivraEnabled());
   }, []);
   const searchParams = useSearchParams();
@@ -145,6 +144,7 @@ export function InfrastructureConnectionsPage() {
   const [hivraCloudDialogOpen, setHivraCloudDialogOpen] = useState(false);
   const [hetznerDialogOpen, setHetznerDialogOpen] = useState(false);
   const [digitalOceanDialogOpen, setDigitalOceanDialogOpen] = useState(false);
+  const [replacingDigitalOcean, setReplacingDigitalOcean] = useState<DigitalOceanConnectionDto | null>(null);
   const [digitalOceanLaunch, setDigitalOceanLaunch] = useState<{ connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto } | null>(null);
   const [digitalOceanTargets, setDigitalOceanTargets] = useState<DigitalOceanDeploymentTargetDto[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSessionDto[]>([]);
@@ -166,6 +166,34 @@ export function InfrastructureConnectionsPage() {
   const [checkDialog, setCheckDialog] = useState<CheckDialogState | null>(null);
   const [hetznerInventory, setHetznerInventory] = useState<Record<string, HetznerInventoryState>>({});
   const addCapacityButtonRef = useRef<HTMLButtonElement>(null);
+  const modalAnchorRef = useRef<HTMLDivElement>(null);
+  const openDialogKey = [
+    hetznerDialogOpen ? "hetzner" : "",
+    !selfHosted && hivraCloudDialogOpen ? "hivra-cloud" : "",
+    cleanupConnection ? `cleanup:${cleanupConnection.id}` : "",
+    setupConnection ? `setup:${setupConnection.id}` : "",
+    capacityConnection ? `capacity:${capacityConnection.id}` : "",
+    wizardOpen ? `wizard:${editingConnection?.id ?? "new"}` : "",
+    deletingConnection ? `delete:${deletingConnection.id}` : "",
+    forceForgetConnection ? `forget:${forceForgetConnection.id}` : "",
+    preparingConnection ? `prepare:${preparingConnection.id}` : "",
+    checkDialog ? `check:${checkDialog.connection.id}` : "",
+  ].filter(Boolean).join("|");
+
+  // A layout effect so the scroll lands before useInfrastructureDialog's
+  // passive effect moves focus into the dialog; that focus then only scrolls
+  // when its target is out of view.
+  useLayoutEffect(() => {
+    if (!openDialogKey) return;
+    const anchor = modalAnchorRef.current;
+    const dialog = anchor?.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+    // Phones render an open dialog as the page itself, scrolled by the
+    // dashboard main. Start it at its top rather than at the scroll offset of
+    // the control that opened it; focusing its sticky header does not scroll.
+    if (anchor && dialog && window.getComputedStyle(dialog).overflowY === "visible") {
+      anchor.scrollIntoView?.({ block: "start" });
+    }
+  }, [openDialogKey]);
 
   const loadHetznerInventory = useCallback(async (
     connectionId: string,
@@ -752,6 +780,7 @@ export function InfrastructureConnectionsPage() {
                         error={digitalOceanErrors[connection.id] ?? null}
                         onLaunch={() => { if (target) setDigitalOceanLaunch({ connection, target }); }}
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
+                        onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
                       />
                     );
@@ -779,7 +808,7 @@ export function InfrastructureConnectionsPage() {
       {/* WKWebView scrolls the dashboard's inner main element. Present setup as
           a full in-app workflow before the inert infrastructure content instead
           of opening a body portal outside the visible scroll position. */}
-      <div className={styles.modalAnchor} data-infrastructure-modal-anchor>
+      <div ref={modalAnchorRef} className={styles.modalAnchor} data-infrastructure-modal-anchor>
         <div className={styles.modalTheme}>
           {hetznerDialogOpen ? (
             <HetznerCloudConnectionDialog
@@ -806,6 +835,24 @@ export function InfrastructureConnectionsPage() {
                 setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
                 setDigitalOceanDialogOpen(false);
                 setDigitalOceanLaunch({ connection, target });
+              }}
+            />
+          ) : null}
+
+          {replacingDigitalOcean ? (
+            <DigitalOceanConnectionDialog
+              replacing={replacingDigitalOcean}
+              onClose={() => setReplacingDigitalOcean(null)}
+              returnFocusRef={addCapacityButtonRef}
+              onConnected={(connection, target) => {
+                upsertConnection(connection);
+                setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
+                setDigitalOceanErrors((current) => {
+                  const next = { ...current };
+                  delete next[connection.id];
+                  return next;
+                });
+                setReplacingDigitalOcean(null);
               }}
             />
           ) : null}
@@ -1070,6 +1117,7 @@ function ForceForgetHetznerDialog({
     initialFocusRef: confirmationRef,
   });
   const confirmed = confirmation === HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION;
+  const mismatch = confirmation.length > 0 && !confirmed;
 
   return (
     <div className={styles.modalBackdrop}>
@@ -1120,13 +1168,22 @@ function ForceForgetHetznerDialog({
             value={confirmation}
             onChange={(event) => setConfirmation(event.target.value)}
             autoComplete="off"
+            autoCapitalize="characters"
+            autoCorrect="off"
             spellCheck={false}
             disabled={forgetting}
-            aria-describedby="force-forget-confirmation-hint"
+            aria-describedby={mismatch
+              ? "force-forget-confirmation-hint force-forget-confirmation-mismatch"
+              : "force-forget-confirmation-hint"}
           />
           <span id="force-forget-confirmation-hint" className={styles.fieldHint}>
             {HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION}
           </span>
+          {mismatch ? (
+            <span id="force-forget-confirmation-mismatch" className={styles.fieldHint}>
+              Doesn&apos;t match yet
+            </span>
+          ) : null}
         </label>
 
         {error ? (

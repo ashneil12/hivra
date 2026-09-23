@@ -10,9 +10,9 @@ test("locked relaunch ladder includes all resources and computer entitlements", 
   expect(screen.getByRole("heading",{name:/Pick a size. Use it how you like./})).toBeVisible();
   for(const [name,price,ram,cpu,storage,computers,windows,support] of [
     ["Starter","$9.99","4 GB","2","40 GB","1","Not included","Standard"],
-    ["Pro","$19.99","8 GB","4","160 GB","3","Yes","Standard"],
-    ["Studio","$49","16 GB","8","320 GB","Unlimited","Yes","Priority"],
-    ["Max","$99","32 GB","12","640 GB","Unlimited","Yes","Priority"],
+    ["Pro","$19.99","8 GB","4","160 GB","3","Planned","Standard"],
+    ["Studio","$49","16 GB","8","320 GB","Unlimited","Planned","Priority"],
+    ["Max","$99","32 GB","12","640 GB","Unlimited","Planned","Priority"],
   ]){
     const card=screen.getByRole("article",{name});
     expect(card).toHaveTextContent(price);
@@ -45,4 +45,13 @@ test("identifies hosted offers as a pricing preview", () => {
   render(<PricingSection />);
   expect(screen.getByText("Pricing preview")).toBeVisible();
   expect(screen.getByText(/are proposed and are not yet available as shown/)).toBeVisible();
+});
+
+test("each hosted card carries its own hosted-options action for phone layouts", () => {
+  render(<PricingSection />);
+  for (const name of ["Starter", "Pro", "Studio", "Max"]) {
+    const card = screen.getByRole("article", { name });
+    expect(within(card).getByRole("link", { name: `View hosted options for ${name}` })).toHaveAttribute("href", "/dashboard/infrastructure");
+  }
+  expect(within(screen.getByRole("article", { name: "Free" })).queryByRole("link", { name: /hosted options/ })).not.toBeInTheDocument();
 });

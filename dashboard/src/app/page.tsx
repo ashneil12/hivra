@@ -29,7 +29,7 @@ import FounderSection from "@/components/landing/FounderSection";
 import FAQSection from "@/components/landing/FAQSection";
 
 const homepageTitle = "Hivra | A computer for you and your agents";
-const homepageDescription = "Launch Ubuntu, Windows or Omarchy. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
+const homepageDescription = "Launch Ubuntu, with Windows and Omarchy in private preview. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
 
 export const metadata: Metadata = {
   title: homepageTitle,
@@ -55,9 +55,9 @@ const homepageSchema = {
       url: SITE_URL,
       logo: {
         "@type": "ImageObject",
-        url: `${SITE_URL}/icon.svg`,
-        width: 128,
-        height: 128,
+        url: `${SITE_URL}/brand/hivra-token-512.png`,
+        width: 512,
+        height: 512,
       },
       sameAs: [],
     },
@@ -77,7 +77,7 @@ const homepageSchema = {
       name: "Hivra",
       alternateName: "HermesOS",
       applicationCategory: "DeveloperApplication",
-      operatingSystem: "Ubuntu, Windows, Omarchy",
+      operatingSystem: "Ubuntu",
       description:
         homepageDescription,
       url: SITE_URL,
@@ -91,7 +91,7 @@ const homepageSchema = {
       },
       featureList: [
         "Launch a computer with or without an agent",
-        "Ubuntu, Windows and Omarchy",
+        "Ubuntu, with Windows and Omarchy in private preview",
         "Terminal and graphical interfaces",
         "Persistent files, tools and settings",
         "Use Hivra Cloud or your own infrastructure",
@@ -120,13 +120,33 @@ const homepageSchema = {
   ],
 };
 
-async function getLandingLocale(explicitLocale?: string | null) {
-  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
+async function getLandingLocale(explicitLocale: string | null, headerStore: Pick<Headers, "get">) {
+  const cookieStore = await cookies();
   return resolveRequestLocale({
     explicitLocale,
     cookieLocale: cookieStore.get(LOCALE_COOKIE_NAME)?.value,
     acceptLanguage: headerStore.get("accept-language"),
   });
+}
+
+/**
+ * Header and footer links such as /#pricing come from this site. A signed-in
+ * visitor following one wants that section, not the dashboard; direct visits
+ * (typed URL, external link, bookmark) still land on the dashboard.
+ * "same-site" covers an internal link whose request passed through Clerk's
+ * handshake on the clerk.<domain> subdomain; direct visits stay "none".
+ */
+function isSameSiteNavigation(headerStore: Pick<Headers, "get">): boolean {
+  const fetchSite = headerStore.get("sec-fetch-site");
+  if (fetchSite) return fetchSite === "same-origin" || fetchSite === "same-site";
+  const referer = headerStore.get("referer");
+  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
+  if (!referer || !host) return false;
+  try {
+    return new URL(referer).host === host;
+  } catch {
+    return false;
+  }
 }
 
 export default async function LandingPage({
@@ -142,15 +162,18 @@ export default async function LandingPage({
       : typeof resolvedSearchParams?.locale === "string"
         ? resolvedSearchParams.locale
         : null;
-  const locale = await getLandingLocale(explicitLocale);
+  const headerStore = await headers();
+  const locale = await getLandingLocale(explicitLocale, headerStore);
 
-  if (userId) {
+  if (userId && !isSameSiteNavigation(headerStore)) {
     redirect("/dashboard");
   }
 
   return (
     <LocaleProvider initialLocale={locale}>
-      <PublicSite variant="home" isSignedIn={Boolean(userId)}>
+      {/* No ClerkProvider refreshes the session here: an expired token reads as
+          signed out, so leave that case to the header's session hint. */}
+      <PublicSite variant="home" isSignedIn={userId ? true : undefined}>
         <StructuredData schema={homepageSchema} />
         <main id="main-content" className={styles.home}>
           <HeroSection agentsCounter={<ComputerScene />} liveStat={<AgentsDeployedStat />} />

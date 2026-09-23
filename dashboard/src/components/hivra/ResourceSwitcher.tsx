@@ -2,7 +2,7 @@
 
 import { Bot, Monitor, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState, type RefObject } from "react";
+import { useCallback, useId, useRef, useState, type RefObject } from "react";
 
 import { AgentSwitcherMenu } from "@/components/workspace/AgentSwitcherMenu";
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
@@ -32,6 +32,15 @@ export interface ResourceSwitcherProps {
   name?: string;
   kind?: "agent" | "computer";
   status?: string;
+}
+
+/** Colour family for the status word; unknown in-progress labels read as busy. */
+export function statusTone(status: string): "ok" | "busy" | "off" | "error" {
+  const value = status.trim().toLowerCase();
+  if (value === "running") return "ok";
+  if (value === "error" || value === "failed") return "error";
+  if (value === "stopped" || value === "suspended" || value === "paused") return "off";
+  return "busy";
 }
 
 function agentHref(agent: UnifiedAgent): string {
@@ -86,11 +95,20 @@ function ResourceSwitcherTrigger({
   onFirstOpen: () => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const statusId = useId();
   const [open, setOpen] = useState(false);
 
-  const close = useCallback(() => {
+  // Focus returns to the trigger only when it would otherwise be lost with
+  // the menu. A click into a Terminal or Desktop frame, or onto another
+  // control, keeps the focus it took.
+  const close = useCallback((options?: { restoreFocus?: boolean }) => {
     setOpen(false);
-    window.setTimeout(() => triggerRef.current?.focus(), 0);
+    if (options?.restoreFocus === false) return;
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      triggerRef.current?.focus();
+    }, 0);
   }, []);
 
   const toggle = useCallback(() => {
@@ -108,13 +126,21 @@ function ResourceSwitcherTrigger({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={name ? `Switch agent or computer: ${name}` : "Switch runtime"}
+        // The label replaces the visible copy, so the status rides along as
+        // the description; narrow hosts also hide its word.
+        aria-describedby={name && status ? statusId : undefined}
         title={name ? `Switch from ${name}` : "Switch runtime"}
         onClick={toggle}
         className={styles.switcher}
       >
         {name ? <>
           {kind === "computer" ? <Monitor size={18} aria-hidden /> : <Bot size={18} aria-hidden />}
-          <span className={styles.copy}><strong>{name}</strong><small>{kind === "computer" ? "Computer" : "Agent"}{status ? ` · ${status}` : ""}</small></span>
+          {/* Parts are tagged so a narrow host can fold this onto one line
+              (name, then a status dot and word) without a second markup. */}
+          <span className={styles.copy}><strong>{name}</strong><small>
+            <span data-switcher-part="kind">{kind === "computer" ? "Computer" : "Agent"}</span>
+            {status ? <><span data-switcher-part="separator" aria-hidden="true"> · </span><span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}>{status}</span></> : null}
+          </small></span>
         </> : <span>Switch</span>}
         <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-[var(--text-muted)]" />
       </button>
@@ -145,7 +171,7 @@ function ResourceSwitcherMenu({
   currentUid: string | null;
   router: ReturnType<typeof useRouter>;
   triggerRef: RefObject<HTMLButtonElement | null>;
-  onClose: () => void;
+  onClose: (options?: { restoreFocus?: boolean }) => void;
 }) {
   // Fetches only while this component is mounted, i.e. after the first open.
   const workspaceAgents = useWorkspaceAgents();

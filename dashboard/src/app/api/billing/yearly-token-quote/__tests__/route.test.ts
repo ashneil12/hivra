@@ -27,6 +27,7 @@ jest.mock("@/lib/billing/billing-v2-availability", () => ({
 }));
 
 jest.mock("@/lib/billing/yearly-token-quotes", () => ({
+  ActiveYearlyQuoteTokenMismatchError: class ActiveYearlyQuoteTokenMismatchError extends Error {},
   createYearlyTokenQuote: (...args: unknown[]) => mockCreateYearlyQuote(...args),
   getActiveYearlyTokenQuote: (...args: unknown[]) => mockGetActiveYearlyQuote(...args),
   getActiveYearlyTokenQuotes: (...args: unknown[]) => mockGetActiveYearlyQuotes(...args),
@@ -47,6 +48,11 @@ jest.mock("@/lib/billing/live-thresholds", () => {
   }
   return { LivePriceUnavailableError };
 });
+
+const mockResolveEffectiveSubscription = jest.fn();
+jest.mock("@/lib/billing/instance-entitlement", () => ({
+  resolveEffectiveSubscription: (...args: unknown[]) => mockResolveEffectiveSubscription(...args),
+}));
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
@@ -89,6 +95,7 @@ describe("/api/billing/yearly-token-quote", () => {
     mockBillingEnabled.mockReturnValue(true);
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
     mockGetPendingYearlyQuotes.mockResolvedValue([]);
+    mockResolveEffectiveSubscription.mockResolvedValue(null);
     mockGetCredential.mockResolvedValue({
       id: "cred_1",
       userId: "user_a",
@@ -171,6 +178,36 @@ describe("/api/billing/yearly-token-quote", () => {
         makeReq("http://localhost/api/billing/yearly-token-quote", { tier: "platinum" })
       );
       expect(response.status).toBe(400);
+    });
+
+    it.each(["token_yearly", "token_holding"])(
+      "refuses a Pro year when %s already gives Power, before touching the wallet",
+      async (source) => {
+        mockResolveEffectiveSubscription.mockResolvedValueOnce({ plan: "fleet", source, tokenTier: "power" });
+        const response = await POST(makeReq("http://localhost/api/billing/yearly-token-quote", { tier: "pro" }));
+        expect(response.status).toBe(409);
+        expect(mockResolveEffectiveSubscription).toHaveBeenCalledWith("user_a", { excludeStripe: true });
+        expect(mockGetCredential).not.toHaveBeenCalled();
+        expect(mockCreateYearlyQuote).not.toHaveBeenCalled();
+      }
+    );
+
+    it("mints the quote when the entitlement lookup fails", async () => {
+      mockResolveEffectiveSubscription.mockRejectedValueOnce(new Error("db down"));
+      mockCreateYearlyQuote.mockResolvedValueOnce(stubQuote);
+      const response = await POST(makeReq("http://localhost/api/billing/yearly-token-quote", { tier: "pro" }));
+      expect(response.status).toBe(200);
+      expect(mockCreateYearlyQuote).toHaveBeenCalledTimes(1);
+    });
+
+    it("still sells a same-tier or higher year to a token user", async () => {
+      mockResolveEffectiveSubscription.mockResolvedValue({ plan: "operator", source: "token_yearly", tokenTier: "pro" });
+      mockCreateYearlyQuote.mockResolvedValue(stubQuote);
+      for (const tier of ["pro", "power"]) {
+        const response = await POST(makeReq("http://localhost/api/billing/yearly-token-quote", { tier }));
+        expect(response.status).not.toBe(409);
+      }
+      expect(mockCreateYearlyQuote).toHaveBeenCalledTimes(2);
     });
 
     it("looks up the user's shared credit_deposit wallet (NOT yearly_subscription, NOT hermesos_lock)", async () => {

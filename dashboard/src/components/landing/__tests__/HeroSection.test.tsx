@@ -60,12 +60,21 @@ describe("HeroSection", () => {
       })
     ).toHaveAttribute("href", "#founder");
     expect(screen.getByRole("link", { name: /Download the app/i })).toHaveAttribute("href", "/download");
-    expect(screen.getByText(/Mac and Windows apps are coming soon/)).toBeVisible();
+    expect(screen.getByText(/The Mac app is coming soon/)).toBeVisible();
+    // No Windows desktop app exists, so the hero must not promise one.
+    expect(screen.queryByText(/Windows apps? (is|are) coming soon/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Explore the ecosystem/i })).toHaveAttribute("href", "/ecosystem");
 
     expect(screen.queryByRole("link", { name: /launch a computer/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/Ubuntu, Windows or Omarchy/)).toBeInTheDocument();
+    expect(screen.getByText(/Ubuntu now, with Windows and Omarchy in private preview/)).toBeInTheDocument();
     expect(screen.queryByText(/no terminals/i)).not.toBeInTheDocument();
+  });
+
+  it("gives phones a computer-first secondary action instead of pending desktop installers", () => {
+    render(<HeroSection />);
+    // CSS shows this link only at phone widths, where Download the app is hidden.
+    expect(screen.getByRole("link", { name: /start with a computer/i })).toHaveAttribute("href", "#computers");
+    expect(screen.getAllByRole("link", { name: /download the app/i })).toHaveLength(1);
   });
 
   it("renders complete Chinese hero copy when scoped to Chinese", () => {

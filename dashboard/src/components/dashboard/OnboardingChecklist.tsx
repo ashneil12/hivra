@@ -15,10 +15,11 @@
 //   ④ browser  — Pro feature; locked on Free → UpgradePaywallModal('browser').
 //   ⑤ cron     — Pro feature; locked on Free → UpgradePaywallModal('cron').
 //
-// Dismiss persists in localStorage. Funnel instrumentation:
-// `onboarding_checklist_item_clicked` {item, locked} + `onboarding_checklist_dismissed`.
+// Dismiss persists in localStorage, with a short inline Undo. Funnel instrumentation:
+// `onboarding_checklist_item_clicked` {item, locked} + `onboarding_checklist_dismissed`
+// (+ `onboarding_checklist_dismiss_undone` when Undo restores it).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarClock, Check, ChevronRight, Globe, Lock, MessageSquareText, Rocket, Send, X } from "lucide-react";
 import posthog from "posthog-js";
@@ -36,6 +37,7 @@ const ONBOARDING_CHECKLIST_DISMISSED_KEY = "hermes:onboarding_checklist_dismisse
 const FIRST_MESSAGE_KEY_PREFIX = "hermes:first_message_sent:";
 const ACK_KEY_PREFIX = "hermes:onboarding_checklist_done:";
 const MAX_FIRST_DEPLOY_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const UNDO_WINDOW_MS = 8000;
 
 /** The slice of an instance the checklist needs (matches /api/instances?summary=true). */
 export interface OnboardingChecklistInstance {
@@ -61,6 +63,14 @@ function writeLocalFlag(key: string) {
     window.localStorage.setItem(key, "1");
   } catch {
     // Privacy mode / quota — the checklist just won't remember.
+  }
+}
+
+function clearLocalFlag(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable — the in-memory state still restores the checklist.
   }
 }
 
@@ -104,6 +114,15 @@ export function OnboardingChecklist({
 }) {
   const router = useRouter();
   const [dismissed, setDismissed] = useState<boolean>(() => readLocalFlag(ONBOARDING_CHECKLIST_DISMISSED_KEY));
+  // Dismissal is permanent, so a mis-tap gets a brief chance to take it back.
+  const [undoable, setUndoable] = useState(false);
+  // The window closed while Undo held focus; the row goes once focus moves on.
+  const [undoExpired, setUndoExpired] = useState(false);
+  // Only a keyboard dismiss moves focus to Undo; pointer users get the timed row.
+  const [focusUndo, setFocusUndo] = useState(false);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const dismissButton = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
   const [acks, setAcks] = useState<{ browser: boolean; cron: boolean }>(() => ({
     browser: readLocalFlag(`${ACK_KEY_PREFIX}browser`),
     cron: readLocalFlag(`${ACK_KEY_PREFIX}cron`),
@@ -147,6 +166,25 @@ export function OnboardingChecklist({
       alive = false;
     };
   }, [includeHivra]);
+
+  useEffect(() => {
+    if (!undoable) return;
+    const timer = window.setTimeout(() => {
+      // Removing the focused Undo would drop keyboard and screen-reader users
+      // onto <body>, so it stays until they move on.
+      if (undoButton.current && document.activeElement === undoButton.current) setUndoExpired(true);
+      else setUndoable(false);
+    }, UNDO_WINDOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [undoable]);
+
+  // Undo unmounts the focused button; hand focus back to the restored
+  // checklist's dismiss button instead of <body>.
+  useEffect(() => {
+    if (dismissed || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    dismissButton.current?.focus();
+  }, [dismissed]);
 
   useEffect(() => {
     let alive = true;
@@ -288,6 +326,61 @@ export function OnboardingChecklist({
     firstDeployAtMs !== null && nowMs !== null && nowMs - firstDeployAtMs < MAX_FIRST_DEPLOY_AGE_MS;
   const visible = !dismissed && agentsLoaded && totalDeployments > 0 && fresh && !allDone;
 
+  if (dismissed && undoable) {
+    return (
+      <div
+        role="status"
+        data-testid="onboarding-checklist-undo"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          border: "1px solid var(--etched-border)",
+          padding: "0 0 0 clamp(1rem, 3vw, 1.4rem)",
+          marginBottom: 18,
+        }}
+      >
+        <span className="mono" style={monoLabel}>
+          Checklist hidden
+        </span>
+        <button
+          ref={undoButton}
+          type="button"
+          onClick={() => {
+            clearLocalFlag(ONBOARDING_CHECKLIST_DISMISSED_KEY);
+            restoreFocus.current = true;
+            setDismissed(false);
+            setUndoable(false);
+            setUndoExpired(false);
+            capture("onboarding_checklist_dismiss_undone", { plan: plan?.key ?? null });
+          }}
+          onBlur={() => {
+            if (undoExpired) setUndoable(false);
+          }}
+          // After a keyboard dismiss focus lands here with the dismiss button
+          // gone; the name says what was hidden, since the status text is often
+          // not announced.
+          aria-label="Undo hiding the checklist"
+          autoFocus={focusUndo}
+          className="mono"
+          style={{
+            ...monoLabel,
+            minHeight: 44,
+            padding: "0 16px",
+            border: "none",
+            borderLeft: "1px solid var(--etched-border)",
+            background: "transparent",
+            color: "var(--ink-black)",
+            cursor: "pointer",
+          }}
+        >
+          Undo
+        </button>
+      </div>
+    );
+  }
+
   if (!visible) {
     return paywallFeature ? (
       <UpgradePaywallModal
@@ -298,9 +391,13 @@ export function OnboardingChecklist({
     ) : null;
   }
 
-  const dismiss = () => {
+  const dismiss = (event: React.MouseEvent<HTMLButtonElement>) => {
     writeLocalFlag(ONBOARDING_CHECKLIST_DISMISSED_KEY);
     setDismissed(true);
+    setUndoable(true);
+    setUndoExpired(false);
+    // Enter/Space activation reports detail 0; a pointer click counts its clicks.
+    setFocusUndo(event.detail === 0);
     capture("onboarding_checklist_dismissed", {
       done_count: doneCount,
       plan: plan?.key ?? null,
@@ -328,19 +425,24 @@ export function OnboardingChecklist({
       }}
     >
       <button
+        ref={dismissButton}
         type="button"
         onClick={dismiss}
         aria-label="Dismiss checklist"
         style={{
           position: "absolute",
-          top: 10,
-          right: 10,
+          top: 0,
+          right: 0,
+          width: 44,
+          height: 44,
           border: "none",
           background: "transparent",
           cursor: "pointer",
           color: "var(--text-muted)",
-          padding: 4,
+          padding: 0,
           display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
         <X size={14} />
@@ -355,7 +457,8 @@ export function OnboardingChecklist({
             First steps
           </h3>
         </div>
-        <span className="mono" style={{ ...monoLabel, marginLeft: "auto", paddingRight: 24 }}>
+        {/* Clear the 44px dismiss target whatever the card padding is. */}
+        <span className="mono" style={{ ...monoLabel, marginLeft: "auto", paddingRight: "calc(48px - clamp(1rem, 3vw, 1.4rem))" }}>
           {doneCount} of {items.length} done
         </span>
       </div>

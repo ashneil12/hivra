@@ -3,7 +3,8 @@ import { HERMESOS_DISPLAY_UNIT, displayTokenUnit } from "../token-plan-prices";
 describe("displayTokenUnit", () => {
   it("shows $HermesOS for the stored Hivra symbol and for missing symbols", () => {
     expect(displayTokenUnit("Hivra")).toBe(HERMESOS_DISPLAY_UNIT);
-    expect(displayTokenUnit("HIVRA")).toBe("$HermesOS");
+    // "HIVRA" is the new token's stored symbol, no longer a legacy spelling.
+    expect(displayTokenUnit("HIVRA")).toBe("$HIVRA");
     expect(displayTokenUnit("HermesOS")).toBe("$HermesOS");
     expect(displayTokenUnit("$HermesOS")).toBe("$HermesOS");
     expect(displayTokenUnit(undefined)).toBe("$HermesOS");

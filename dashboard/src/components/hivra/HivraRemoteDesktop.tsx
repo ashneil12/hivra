@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { Loader2, Maximize2, Monitor, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, Monitor, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 
 import styles from "./HivraRemoteDesktop.module.css";
+import { useWorkspaceModalLayer } from "@/components/workspace/WorkspaceModalLayerContext";
 
 import { HivraDesktopViewport } from "./HivraDesktopViewport";
 import {
@@ -175,6 +176,33 @@ function warmHandoffOrigin(origin: string | null | undefined): void {
   }
 }
 
+/**
+ * While an in-page immersive layer covers the page, everything outside it is
+ * made inert, so the controls it hides leave the tab order and the
+ * accessibility tree. Elements that were already inert are left as they were.
+ */
+export function useInertOutside(layerRef: RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!active || !layer) return;
+    const made: Element[] = [];
+    let branch: Element = layer;
+    while (branch.parentElement) {
+      const parent: HTMLElement = branch.parentElement;
+      for (const element of Array.from(parent.children)) {
+        if (element === branch || element.hasAttribute("inert")) continue;
+        element.setAttribute("inert", "");
+        made.push(element);
+      }
+      if (parent === document.body) break;
+      branch = parent;
+    }
+    return () => {
+      for (const element of made) element.removeAttribute("inert");
+    };
+  }, [active, layerRef]);
+}
+
 export function HivraRemoteDesktop({
   computerId,
   name,
@@ -192,6 +220,14 @@ export function HivraRemoteDesktop({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const fullscreenRef = useRef<HTMLElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // In-page stand-in for element fullscreen where the browser has none.
+  const [immersive, setImmersive] = useState(false);
+  if (immersive && !active) setImmersive(false);
+  useWorkspaceModalLayer("surface", immersive);
+  useInertOutside(fullscreenRef, immersive);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDetailsElement>(null);
+  const menuPanelRef = useRef<HTMLDivElement>(null);
   const [fitDesktop, setFitDesktop] = useState(true);
   const [streamMode, setStreamMode] = useState<StreamMode>(() => readStreamModePreference(computerId));
   const streamModeRef = useRef(streamMode);
@@ -205,6 +241,53 @@ export function HivraRemoteDesktop({
     document.addEventListener("fullscreenchange", changed);
     return () => document.removeEventListener("fullscreenchange", changed);
   }, []);
+  // Escape only reaches this window while focus is outside the desktop frame;
+  // the strip's Exit full screen button is the dependable way out.
+  useEffect(() => {
+    if (!immersive) return;
+    const exit = (event: KeyboardEvent) => { if (event.key === "Escape") setImmersive(false); };
+    window.addEventListener("keydown", exit);
+    return () => window.removeEventListener("keydown", exit);
+  }, [immersive]);
+  // Taps on the desktop land in its cross-origin frame and never reach this
+  // document, so the settings panel also closes when the window loses focus.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const blurred = () => setMenuOpen(false);
+    document.addEventListener("pointerdown", outside);
+    window.addEventListener("blur", blurred);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      window.removeEventListener("blur", blurred);
+    };
+  }, [menuOpen]);
+  // The panel hangs below the strip, whose height and offset vary (landscape,
+  // banner, immersive), so it is bounded by the room actually left above the
+  // bottom bar or the visual viewport.
+  useLayoutEffect(() => {
+    const panel = menuPanelRef.current;
+    if (!menuOpen || !panel) return;
+    const viewport = window.visualViewport;
+    const place = () => {
+      let bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+      const bar = document.querySelector('[data-testid="pwa-bottom-navigation"]')?.getBoundingClientRect();
+      if (bar && bar.height > 0) bottom = Math.min(bottom, bar.top);
+      panel.style.maxHeight = `${Math.max(120, Math.floor(bottom - panel.getBoundingClientRect().top - 8))}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
+    return () => {
+      window.removeEventListener("resize", place);
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
+      panel.style.maxHeight = "";
+    };
+  }, [menuOpen]);
   const sessionIdRef = useRef<string | null>(null);
   const handoffRef = useRef<PendingHandoff | null>(null);
   const attemptRef = useRef(0);
@@ -995,6 +1078,10 @@ export function HivraRemoteDesktop({
   const enterFullscreen = async () => {
     const frame = frameRef.current;
     const surface = fullscreenRef.current;
+    if (immersive) {
+      setImmersive(false);
+      return;
+    }
     if (document.fullscreenElement === surface && surface) {
       try {
         await document.exitFullscreen();
@@ -1005,7 +1092,9 @@ export function HivraRemoteDesktop({
     }
     if (!frame || state !== "connected") return;
     if (!document.fullscreenEnabled || !surface || typeof surface.requestFullscreen !== "function") {
-      setMessage("Fullscreen is not available in this browser. The secure desktop remains connected here.");
+      // The same iframe and decoder stay mounted; only the layout changes.
+      setImmersive(true);
+      frame.focus();
       return;
     }
     try {
@@ -1032,19 +1121,24 @@ export function HivraRemoteDesktop({
       ? `${formatTimingSample(browserInputSamples.at(-1)!)} · ${browserEvidenceSuffix}`
       : `p50 ${formatTimingSample(browserP50!)} · p95 ${formatTimingSample(browserP95!)} · ${browserEvidenceSuffix}`;
 
+  const expanded = isFullscreen || immersive;
+  if (state !== "connected" && menuOpen) setMenuOpen(false);
+
   return (
     <section
       ref={fullscreenRef}
       aria-label={`${name} remote desktop`}
       aria-hidden={!active}
-      style={{ height: "100%", minHeight: 0, display: active ? "flex" : "none", flexDirection: "column", background: "#090909" }}
+      data-immersive={immersive ? "true" : undefined}
+      className={immersive ? styles.immersive : undefined}
+      style={{ height: immersive ? "var(--workspace-viewport-height, 100dvh)" : "100%", minHeight: 0, display: active ? "flex" : "none", flexDirection: "column", background: "#090909" }}
     >
       {/* ONE strip. This used to be two and a half: a 48px header, a 45px
           evidence grid, and the surface bar above them. Everything that is not
           an everyday action now lives behind the gear — quality, fit, full
           screen, runtime maintenance, and the session evidence — because the
           desktop itself is the product here, not the toolbar. */}
-      <header className={styles.strip}>
+      <header className={styles.strip} data-state={state}>
         <span className={styles.stripStatus} aria-hidden="true">
           {state === "connected" ? (
             <ShieldCheck size={13} color="var(--success, #33c978)" />
@@ -1105,23 +1199,23 @@ export function HivraRemoteDesktop({
             {state === "disconnected" ? "Reconnect" : "Try again"} <RefreshCw size={11} />
           </button>
         ) : null}
-        {state === "connected" || isFullscreen ? (
+        {state === "connected" || expanded ? (
           <button
             type="button"
             onClick={() => void enterFullscreen()}
-            aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
-            title={isFullscreen ? "Exit full screen" : "Full screen"}
+            aria-label={expanded ? "Exit full screen" : "Full screen"}
+            title={expanded ? "Exit full screen" : "Full screen"}
             className={styles.stripIcon}
           >
-            <Maximize2 size={13} />
+            {immersive ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
         ) : null}
         {state === "connected" ? (
-          <details className={styles.stripDetails}>
+          <details ref={menuRef} open={menuOpen} onToggle={(event) => setMenuOpen(event.currentTarget.open)} className={styles.stripDetails}>
             <summary aria-label="Desktop settings" title="Desktop settings" className={styles.stripIcon}>
               <Settings2 size={13} />
             </summary>
-            <div role="region" aria-label="Desktop options" className={styles.stripMenu}>
+            <div ref={menuPanelRef} role="region" aria-label="Desktop options" className={styles.stripMenu}>
               <label className={styles.stripToggle}>
                 <input
                   type="checkbox"

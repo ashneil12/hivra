@@ -31,11 +31,17 @@
 .sessionPanel { flex: 1; min-height: 0; }
 .sessionPanel[hidden] { display: none; }
 .sessionTab button:focus-visible, .sessionAdd:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+/* Touch tablets keep the wide strip but need finger-sized close and add. */
+@media (pointer: coarse) { .sessionClose, .sessionAdd { min-width: 44px; min-height: 44px; } }
 .statusPanel { flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: clamp(20px, 5cqi, 48px) clamp(16px, 4cqi, 32px); text-align: center; color: var(--text-muted); overflow-wrap: anywhere; }
 .statusPanel > h3 { color: var(--ink-black); font-size: 22px; font-weight: 400; }
 .statusPanel > p { max-width: 480px; margin-inline: auto; }
 .statusPanel button { min-height: 44px; font-size: 13px; }
 .backButton:focus-visible, .newTabButton:focus-visible, .statusPanel button:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+/* First-launch "While you wait" fields. */
+.personalizationField { border: 1px solid var(--etched-border); background: transparent; color: var(--ink-black); padding: 9px 10px; font-size: 13px; }
+textarea.personalizationField { padding: 10px; resize: vertical; }
+@media (max-width: 767px) { .personalizationField { min-height: 44px; } }
 @container resource-workspace (max-width: 760px) { .metadata { display: none; } }
 /* Preserve the resource name on narrow screens; surfaces get their own row. */
 @container resource-workspace (max-width: 900px) {
@@ -51,6 +57,31 @@
   .surfaceToolbar { padding: 4px 10px; }
   .surfaceDescription { font-size: 10px; }
   .newTabButton { min-height: 44px; padding-inline: 8px; font-size: 10px; }
-  .sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 40px; }
+  .sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 44px; }
+  .sessionClose, .sessionAdd { min-width: 44px; }
   .statusPanel { padding: 20px 16px; }
+  /* One 44px identity line so the surfaces sit directly under it: icon,
+     name, chevron, then a status dot and word at the far edge. The switcher
+     keeps its markup and accessible name; its copy is flattened in place. */
+  .identity > button { width: 100%; gap: 8px; padding-block: 0; }
+  .identity > button > span { display: contents; }
+  .identity > button > svg:first-child { width: 16px; height: 16px; }
+  .identity > button strong { flex: 0 1 auto; min-width: 0; }
+  .identity > button > svg:last-child { order: 2; }
+  .identity > button small { order: 3; display: inline-flex; align-items: center; flex-shrink: 0; margin-left: auto; padding-left: 8px; }
+  .identity [data-switcher-part="kind"], .identity [data-switcher-part="separator"] { display: none; }
+  .identity [data-switcher-part="status"] { display: inline-flex; align-items: center; gap: 6px; }
+  /* Shape as well as colour, so the state still reads once the word goes:
+     running solid, busy half filled, stopped hollow, error a diamond. */
+  .identity [data-switcher-part="status"]::before { content: ""; box-sizing: border-box; width: 6px; height: 6px; flex-shrink: 0; border: 1px solid var(--text-muted); background: transparent; }
+  .identity [data-tone="ok"]::before { border-color: var(--green); background: var(--green); }
+  .identity [data-tone="busy"]::before { border-color: var(--yellow); background: linear-gradient(to top, var(--yellow) 50%, transparent 50%); }
+  .identity [data-tone="error"]::before { border-color: var(--hivra-red); background: var(--hivra-red); transform: rotate(45deg); }
+  /* While typing, only the surface row stays above the work surface. The
+     switcher's own search keeps its anchor, so the menu stays put. */
+  :global([data-keyboard-open="true"]) .identity:not(:has([aria-haspopup="dialog"][aria-expanded="true"])) { display: none; }
+}
+@container resource-workspace (max-width: 359px) {
+  .identity [data-switcher-part="status"] { font-size: 0; gap: 0; }
+  .identity [data-switcher-part="status"]::before { width: 8px; height: 8px; }
 }

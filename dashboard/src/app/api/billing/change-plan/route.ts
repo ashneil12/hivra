@@ -59,7 +59,10 @@ function stripeCustomerId(customer: Stripe.Subscription["customer"]): string | n
  *
  * Switches the user's Stripe subscription to a different plan.
  *
- * Upgrade: always allowed — Stripe charges prorated difference immediately.
+ * Upgrade: always allowed. With proration_behavior 'create_prorations' the
+ *   prorated difference lands on the next invoice for a monthly subscription;
+ *   moving a yearly subscription to the monthly price changes the billing
+ *   interval, which Stripe invoices immediately.
  * Downgrade (paid → lower paid, e.g. Power → Pro): allowed only when
  *   HERMES_SELF_SERVE_DOWNGRADE_ENABLED is "true". Stripe is updated with
  *   proration_behavior:'create_prorations', which credits the unused time on

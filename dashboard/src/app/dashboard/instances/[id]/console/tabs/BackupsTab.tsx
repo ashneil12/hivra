@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
 import { ShieldCheck, HardDrive, AlertTriangle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import styles from '../console.module.css';
+
+// iOS types "Restore"; the server requires the exact word, so compare loosely
+// and send the canonical form.
+function isRestoreConfirmation(input: string): boolean {
+  return input.trim().toUpperCase() === 'RESTORE';
+}
 
 export default function BackupsTab({ instanceId }: { instanceId: string }) {
   const [backupsEnabled, setBackupsEnabled] = useState(false);
@@ -62,7 +69,7 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
       const res = await fetch(`/api/instances/${instanceId}/backups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backupId, confirm: restoreInputText })
+        body: JSON.stringify({ backupId, confirm: isRestoreConfirmation(restoreInputText) ? 'RESTORE' : restoreInputText })
       });
       const data = await res.json();
       if (data.success) {
@@ -90,19 +97,19 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
         border: backupsEnabled ? '1px solid #16a34a' : '1px solid var(--etched-border)',
         background: backupsEnabled ? 'rgba(22,163,74,0.05)' : 'var(--bg-surface)' 
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', gap: 16 }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: '50%',
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', gap: 16, flex: '1 1 220px', minWidth: 0 }}>
+            <div className={styles.backupsIcon} style={{
+              borderRadius: '50%',
               background: backupsEnabled ? 'rgba(22,163,74,0.1)' : 'rgba(0,0,0,0.05)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
             }}>
               <ShieldCheck size={24} color={backupsEnabled ? '#16a34a' : 'var(--ink-black)'} style={{ opacity: backupsEnabled ? 1 : 0.4 }} />
             </div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <h3 className="mono" style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 8px 0', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
                 Daily Data Backups
-                <span style={{ fontSize: 9, padding: '2px 6px', background: backupsEnabled ? '#16a34a' : '#d1d5db', color: backupsEnabled ? '#fff' : '#374151', borderRadius: 0 }}>
+                <span style={{ fontSize: 11, padding: '2px 6px', background: backupsEnabled ? '#16a34a' : '#d1d5db', color: backupsEnabled ? '#fff' : '#374151', borderRadius: 0 }}>
                   {backupsEnabled ? 'ACTIVE' : 'INACTIVE'}
                 </span>
               </h3>
@@ -121,9 +128,11 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
           {!backupsEnabled && (
             <Link 
               href={`/dashboard/billing?intent=backups&instanceId=${encodeURIComponent(instanceId)}`}
+              className={styles.upgradeLink}
               style={{
+                display: 'inline-flex', alignItems: 'center',
                 background: 'var(--ink-black)', color: 'var(--bg-surface)', border: 'none',
-                padding: '10px 20px', fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
+                padding: '10px 20px', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
                 textTransform: 'uppercase', letterSpacing: '0.05em', textDecoration: 'none', whiteSpace: 'nowrap'
               }}
             >
@@ -135,17 +144,19 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
 
       {/* Snapshot Management */}
       <div className="interrogation-box" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ flex: '1 1 220px', minWidth: 0 }}>
              <h4 className="mono" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0, fontWeight: 700 }}>Restore Points</h4>
-             <p style={{ fontSize: 10, opacity: 0.5, margin: '4px 0 0', fontFamily: 'var(--font-mono)' }}>Encrypted daily snapshots of your chats &amp; workspace. Requesting a restore never overwrites your live agent.</p>
+             <p style={{ fontSize: 11, opacity: 0.5, margin: '4px 0 0', fontFamily: 'var(--font-mono)' }}>Encrypted daily snapshots of your chats &amp; workspace. Requesting a restore never overwrites your live agent.</p>
           </div>
           <button
+             type="button"
              onClick={loadBackups}
              disabled={fetchingBackups}
+             className={styles.touchTarget}
              style={{
                background: 'transparent', border: '1px solid var(--ink-black)', color: 'var(--ink-black)',
-               padding: '8px 16px', fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: fetchingBackups ? 'not-allowed' : 'pointer',
+               padding: '8px 16px', fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', cursor: fetchingBackups ? 'not-allowed' : 'pointer',
                textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 6, opacity: fetchingBackups ? 0.5 : 1
              }}
           >
@@ -163,51 +174,62 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
         {backups.length > 0 ? (
           <div style={{ border: '1px solid var(--etched-border)', background: 'rgba(0,0,0,0.01)' }}>
             {backups.map(b => (
-               <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--etched-border)' }}>
-                 <div>
+               <div key={b.id} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--etched-border)' }}>
+                 <div style={{ flex: '1 1 200px', minWidth: 0, overflowWrap: 'anywhere' }}>
                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700 }}>{b.description || 'Data restore point'}</div>
-                   <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
                      {b.created ? new Date(b.created).toLocaleString() : 'unknown time'} • chats + workspace files • restore point {b.id}
                    </div>
                    {b.sha256 && (
-                     <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
                        sha256 {b.sha256.slice(0, 12)}…{b.sha256.slice(-8)}
                      </div>
                    )}
                  </div>
                  
                  {restoreConfirmBackupId === b.id ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div className={styles.restoreConfirm} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ef4444' }}>
                           <AlertTriangle size={14} />
-                          <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>Type RESTORE</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Type RESTORE</span>
                        </div>
                        <input 
+                         aria-label="Type RESTORE to confirm"
                          value={restoreInputText}
                          onChange={e => setRestoreInputText(e.target.value)}
                          placeholder="RESTORE"
-                         style={{ fontSize: 10, padding: '6px 8px', width: 90, border: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono)' }}
+                         autoCapitalize="characters"
+                         autoCorrect="off"
+                         spellCheck={false}
+                         autoComplete="off"
+                         style={{ flex: '1 1 120px', minWidth: 0, fontSize: 11, padding: '6px 8px', border: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono)' }}
                        />
-                       <div style={{ display: 'flex', gap: 4 }}>
+                       <div style={{ display: 'flex', gap: 10 }}>
                          <button 
-                           onClick={() => restoreBackup(b.id)} 
-                           disabled={restoring || restoreInputText !== 'RESTORE'}
-                           style={{ background: '#ef4444', color: '#fff', border: 'none', fontSize: 10, padding: '6px 12px', cursor: (restoring || restoreInputText !== 'RESTORE') ? 'not-allowed' : 'pointer', opacity: (restoring || restoreInputText !== 'RESTORE') ? 0.5 : 1, fontWeight: 700, textTransform: 'uppercase' }}
-                         >
-                           Confirm
-                         </button>
-                         <button 
+                           type="button"
                            onClick={() => setRestoreConfirmBackupId(null)} 
-                           style={{ background: 'transparent', border: '1px solid var(--etched-border)', color: 'var(--ink-black)', fontSize: 10, padding: '6px 12px', cursor: 'pointer' }}
+                           className={styles.touchTarget}
+                           style={{ background: 'transparent', border: '1px solid var(--etched-border)', color: 'var(--ink-black)', fontSize: 11, padding: '6px 12px', cursor: 'pointer' }}
                          >
                            Cancel
+                         </button>
+                         <button 
+                           type="button"
+                           onClick={() => restoreBackup(b.id)} 
+                           disabled={restoring || !isRestoreConfirmation(restoreInputText)}
+                           className={styles.touchTarget}
+                           style={{ background: '#ef4444', color: '#fff', border: 'none', fontSize: 11, padding: '6px 12px', cursor: (restoring || !isRestoreConfirmation(restoreInputText)) ? 'not-allowed' : 'pointer', opacity: (restoring || !isRestoreConfirmation(restoreInputText)) ? 0.5 : 1, fontWeight: 700, textTransform: 'uppercase' }}
+                         >
+                           Confirm
                          </button>
                        </div>
                     </div>
                  ) : (
                    <button
+                     type="button"
                      onClick={() => { setRestoreConfirmBackupId(b.id); setRestoreInputText(''); }}
-                     style={{ background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', fontSize: 10, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', padding: '6px 16px', cursor: 'pointer', fontWeight: 700 }}
+                     className={styles.touchTarget}
+                     style={{ background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', padding: '6px 16px', cursor: 'pointer', fontWeight: 700 }}
                    >
                      Request Restore
                    </button>

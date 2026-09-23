@@ -31,10 +31,11 @@ export default function PricingSection() {
           <div><dt>vCPU</dt><dd>{plan.cpu}</dd></div>
           <div><dt>Storage</dt><dd>{plan.storage}</dd></div>
           <div><dt>Computers</dt><dd>{plan.computers}</dd></div>
-          <div><dt>Windows</dt><dd>{plan.windows ? "Yes" : "Not included"}</dd></div>
+          <div><dt>Windows</dt><dd>{plan.windows ? "Planned" : "Not included"}</dd></div>
           <div><dt>Support</dt><dd>{plan.support}</dd></div>
         </dl>
         <p className={styles.description}>{plan.body}</p>
+        <Link className={styles.cardAction} href="/dashboard/infrastructure" aria-label={`View hosted options for ${plan.name}`}>View hosted options<ArrowRight size={16} aria-hidden="true" /></Link>
       </article>)}
     </div>
     <div className={styles.purchaseRow}>

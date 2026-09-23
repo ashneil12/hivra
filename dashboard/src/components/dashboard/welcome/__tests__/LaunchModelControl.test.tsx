@@ -32,3 +32,13 @@ it("removes Hivra model credits from a standalone launch", () => {
   expect(screen.getByRole("button", { name: /My Venice API key/i })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Hivra model credits/i })).not.toBeInTheDocument();
 });
+
+it("keeps phone keyboards from capitalizing the Venice model ID", () => {
+  render(<LaunchModelControl draft={{ mode: "byok", model: "deepseek-v4-pro", apiKey: "", walletType: "card" }}
+    launch={{ ...launch(true, false), saved: null }} onChange={jest.fn()} onOpen={jest.fn()} onReview={jest.fn()}
+    disabled={false} supported />);
+  const modelId = screen.getByRole("textbox", { name: /Venice model ID/i });
+  expect(modelId).toHaveAttribute("autocapitalize", "none");
+  expect(modelId).toHaveAttribute("autocorrect", "off");
+  expect(modelId).toHaveAttribute("enterkeyhint", "done");
+});

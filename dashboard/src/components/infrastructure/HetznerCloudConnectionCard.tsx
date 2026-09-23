@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Server,
   Trash2,
+  Unplug,
 } from "lucide-react";
 
 import type {
@@ -253,12 +254,20 @@ export function HetznerCloudConnectionCard({
         <div className={styles.actionSpacer} />
         <button
           type="button"
-          className={styles.iconButton}
+          className={`${styles.iconButton} ${styles.disconnectIcon}`}
           aria-label={`Disconnect ${connection.name}`}
           title={`Disconnect ${connection.name}`}
           onClick={onDelete}
         >
           <Trash2 size={15} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={`${styles.tertiaryButton} ${styles.disconnectLabelled}`}
+          aria-label={`Disconnect project ${connection.name}`}
+          onClick={onDelete}
+        >
+          <Unplug size={14} aria-hidden="true" /> Disconnect project
         </button>
       </div>
     </article>

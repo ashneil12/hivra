@@ -113,6 +113,12 @@ describe('Vault Page', () => {
     expect(heading).toBeInTheDocument();
   });
 
+  it('calls the page API keys so it cannot be mistaken for the future Vault product', async () => {
+    render(<VaultPage />);
+    expect(await screen.findByRole('heading', { level: 2, name: /^API\s*keys\s*\.$/ })).toBeInTheDocument();
+    expect(screen.queryByText(/API Key Vault/i)).not.toBeInTheDocument();
+  });
+
   it('renders the Bind Keys to Active Instances header', async () => {
     render(<VaultPage />);
     const heading = await screen.findByText(/Bind Keys to Core Instance/i);
@@ -366,7 +372,7 @@ describe('Vault Page', () => {
     fireEvent.click(screen.getByRole('radio', { name: /nous portal/i }));
 
     expect(
-      await screen.findByText(/save a reusable encrypted session into vault for future nous deployments/i)
+      await screen.findByText(/save a reusable encrypted session for future nous deployments/i)
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect nous portal/i })).toBeInTheDocument();
   });
@@ -442,7 +448,8 @@ describe('Vault Page', () => {
 
     const providerSelect = await waitFor(() => screen.getAllByDisplayValue('Leave current')[0]);
     fireEvent.change(providerSelect, { target: { value: 'vault-codex' } });
-    fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+    // Desktop table row and mobile card both show Apply Changes for the agent.
+    fireEvent.click(screen.getAllByRole('button', { name: /apply changes/i })[0]);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -464,6 +471,94 @@ describe('Vault Page', () => {
     expect(body.model).toBeTruthy();
   });
 
+  it('marks a mobile agent card unsaved until its changes are applied', async () => {
+    const fetchMock = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/vault')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: [{ id: 'vault-or', name: 'Router Key', provider: 'openrouter', key_preview: 'sk-or…1234', created_at: '2026-05-06T00:00:00.000Z' }],
+          }),
+        });
+      }
+      if (url.includes('/api/instances/inst-1') && init?.method === 'PATCH') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, data: {} }) });
+      }
+      return defaultFetchImplementation(input);
+    });
+    Object.defineProperty(global, 'fetch', { configurable: true, writable: true, value: fetchMock });
+
+    render(<VaultPage />);
+
+    // Desktop row selects come first in the DOM; index 2 is the mobile card's provider select.
+    const mobileProviderSelect = await waitFor(() => screen.getAllByDisplayValue('Leave current')[2]);
+    expect(screen.queryByText('Unsaved — tap Apply to update this agent')).not.toBeInTheDocument();
+    fireEvent.change(mobileProviderSelect, { target: { value: 'vault-or' } });
+
+    expect(screen.getByText('Unsaved — tap Apply to update this agent')).toBeInTheDocument();
+    const applyButtons = screen.getAllByRole('button', { name: /apply changes/i });
+    expect(applyButtons).toHaveLength(2);
+
+    fireEvent.click(applyButtons[1]);
+    await waitFor(() => {
+      expect(screen.queryByText('Unsaved — tap Apply to update this agent')).not.toBeInTheDocument();
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/instances/inst-1', expect.objectContaining({ method: 'PATCH' }));
+  });
+
+  it('clears the mobile unsaved state when every select goes back to Leave current', async () => {
+    Object.defineProperty(global, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: jest.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/api/vault')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              success: true,
+              data: [{ id: 'vault-or', name: 'Router Key', provider: 'openrouter', key_preview: 'sk-or…1234', created_at: '2026-05-06T00:00:00.000Z' }],
+            }),
+          });
+        }
+        return defaultFetchImplementation(input);
+      }),
+    });
+
+    render(<VaultPage />);
+
+    const mobileProviderSelect = await waitFor(() => screen.getAllByDisplayValue('Leave current')[2]);
+    fireEvent.change(mobileProviderSelect, { target: { value: 'vault-or' } });
+    expect(screen.getByText('Unsaved — tap Apply to update this agent')).toBeInTheDocument();
+
+    fireEvent.change(mobileProviderSelect, { target: { value: '' } });
+    expect(screen.queryByText('Unsaved — tap Apply to update this agent')).not.toBeInTheDocument();
+    const mobileSync = screen.getByRole('button', { name: /sync instance/i });
+    expect(mobileSync).toBeDisabled();
+  });
+
+  it('links the no-agent Codex auth state to the agents list', async () => {
+    Object.defineProperty(global, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: jest.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/api/instances?summary=true')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, data: [] }) });
+        }
+        return defaultFetchImplementation(input);
+      }),
+    });
+
+    render(<VaultPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /add new key/i }));
+    fireEvent.click(screen.getByLabelText(/automated device auth/i));
+
+    expect(screen.getByRole('link', { name: /open agents/i })).toHaveAttribute('href', '/dashboard/agents');
+    expect(screen.queryByRole('link', { name: /instances/i })).not.toBeInTheDocument();
+  });
+
   it('shows a clear success confirmation after saving a key', async () => {
     render(<VaultPage />);
 
@@ -474,10 +569,10 @@ describe('Vault Page', () => {
     fireEvent.change(screen.getByPlaceholderText(/sk-\.\.\./i), {
       target: { value: 'sk-test-123' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save to vault/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save key$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/primary anthropic saved to vault/i)).toBeInTheDocument();
+      expect(screen.getByText(/primary anthropic saved securely/i)).toBeInTheDocument();
     });
   });
 
@@ -495,10 +590,10 @@ describe('Vault Page', () => {
       fireEvent.change(screen.getByPlaceholderText(/sk-\.\.\./i), {
         target: { value: 'sk-test-123' },
       });
-      fireEvent.click(screen.getByRole('button', { name: /save to vault/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^save key$/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/primary anthropic saved to vault/i)).toBeInTheDocument();
+        expect(screen.getByText(/primary anthropic saved securely/i)).toBeInTheDocument();
       });
 
       const successTimeoutCallIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 5000);

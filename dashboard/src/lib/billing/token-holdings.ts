@@ -1,6 +1,13 @@
 import { requireDb } from "@/lib/billing/db-utils";
 import { supabaseAdmin } from "@/lib/supabase";
-import { tokenVerificationContent } from "@/lib/token-verification-content";
+import {
+  BASE_CHAIN_ID,
+  HERMESOS_TOKEN,
+  livePlatformTokens,
+  platformTokenByAddress,
+  type PlatformToken,
+  type PlatformTokenKey,
+} from "@/lib/billing/token-registry";
 import {
   normalizeRpcRetryConfig,
   RpcHttpError,
@@ -130,12 +137,13 @@ export interface HermesTokenBalanceCheck {
   blockNumber: number | null;
 }
 
-export const BASE_CHAIN_ID = 8453;
-export const HERMESOS_TOKEN_SYMBOL = "Hivra";
-export const HERMESOS_TOKEN_DECIMALS = 18;
-export const HERMESOS_TOKEN_ADDRESS = normalizeEvmAddress(
-  tokenVerificationContent.tokenDetails.contractAddress ?? ""
-);
+export { BASE_CHAIN_ID };
+// The legacy $HermesOS token, from the platform token registry. The stored
+// symbol is "HermesOS": rows written before the registry say "Hivra", which
+// displayTokenUnit still maps to $HermesOS.
+export const HERMESOS_TOKEN_SYMBOL = HERMESOS_TOKEN.symbol;
+export const HERMESOS_TOKEN_DECIMALS = HERMESOS_TOKEN.decimals;
+export const HERMESOS_TOKEN_ADDRESS = HERMESOS_TOKEN.address;
 export const HERMESOS_BASE_TIER_MIN_RAW = parseTokenAmountToRaw(
   "1",
   HERMESOS_TOKEN_DECIMALS
@@ -163,13 +171,18 @@ export interface TokenBalanceConfig {
   baseTierMinimumRaw?: string;
 }
 
-const HERMESOS_TOKEN_BALANCE_CONFIG: TokenBalanceConfig = {
-  chainId: BASE_CHAIN_ID,
-  tokenAddress: HERMESOS_TOKEN_ADDRESS,
-  tokenSymbol: HERMESOS_TOKEN_SYMBOL,
-  tokenDecimals: HERMESOS_TOKEN_DECIMALS,
-  baseTierMinimumRaw: HERMESOS_BASE_TIER_MIN_RAW,
-};
+/** Balance-read config for a platform token; one whole token unlocks the base tier. */
+export function platformTokenBalanceConfig(token: PlatformToken): TokenBalanceConfig {
+  return {
+    chainId: token.chainId,
+    tokenAddress: token.address,
+    tokenSymbol: token.symbol,
+    tokenDecimals: token.decimals,
+    baseTierMinimumRaw: parseTokenAmountToRaw("1", token.decimals).toString(),
+  };
+}
+
+const HERMESOS_TOKEN_BALANCE_CONFIG: TokenBalanceConfig = platformTokenBalanceConfig(HERMESOS_TOKEN);
 
 const VVV_TOKEN_BALANCE_CONFIG: TokenBalanceConfig = {
   chainId: BASE_CHAIN_ID,
@@ -178,10 +191,13 @@ const VVV_TOKEN_BALANCE_CONFIG: TokenBalanceConfig = {
   tokenDecimals: VVV_TOKEN_DECIMALS,
 };
 
-const VERIFIED_TOKEN_BALANCE_CONFIGS = [
-  HERMESOS_TOKEN_BALANCE_CONFIG,
-  VVV_TOKEN_BALANCE_CONFIG,
-] as const;
+/**
+ * Tokens read for every verified wallet: each live platform token ($HermesOS,
+ * plus $HIVRA once active) and VVV for the Venice boost.
+ */
+function verifiedTokenBalanceConfigs(now: Date = new Date()): TokenBalanceConfig[] {
+  return [...livePlatformTokens(now).map(platformTokenBalanceConfig), VVV_TOKEN_BALANCE_CONFIG];
+}
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
@@ -585,18 +601,27 @@ export async function getLatestHermesTokenHoldingSnapshot(
   userId: string,
   db: SupabaseLike | null | undefined = supabaseAdmin
 ): Promise<HermesTokenHoldingSnapshot | null> {
+  return getLatestTokenHoldingSnapshot(userId, HERMESOS_TOKEN_ADDRESS, db);
+}
+
+/** Latest snapshot of one token (by contract address) for a user. */
+export async function getLatestTokenHoldingSnapshot(
+  userId: string,
+  tokenAddress: string,
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<HermesTokenHoldingSnapshot | null> {
   const admin = requireDb(db);
   const { data, error } = await table(admin, "token_holding_snapshots")
     .select("*")
     .eq("user_id", userId)
     .eq("chain_id", BASE_CHAIN_ID)
-    .eq("token_address", HERMESOS_TOKEN_ADDRESS)
+    .eq("token_address", tokenAddress)
     .order("checked_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error) {
-    throw new Error("Failed to load Hivra token holding snapshot");
+    throw new Error("Failed to load token holding snapshot");
   }
 
   return data ? asSnapshot(data as TokenHoldingSnapshotRow) : null;
@@ -775,15 +800,31 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   rpcOptions?: RpcCallOptions;
+  /**
+   * Read this wallet (one of the user's own user_wallets rows) instead of the
+   * token verification wallet. Used after a lock-wallet move to record both
+   * wallets' real post-move balances.
+   */
+  wallet?: { id: string; address: string; normalizedAddress: string };
 }) {
   const admin = requireDb(params.db ?? supabaseAdmin);
-  const wallet = await getTokenVerificationWallet(params.userId, admin);
+  const wallet = params.wallet
+    ? {
+        id: params.wallet.id,
+        userId: params.userId,
+        address: params.wallet.address,
+        normalizedAddress: params.wallet.normalizedAddress,
+        chainId: BASE_CHAIN_ID,
+        verifiedAt: null,
+        verificationMethod: null,
+      }
+    : await getTokenVerificationWallet(params.userId, admin);
   if (!wallet) {
     return { status: "no_verified_wallet" as const, snapshot: null, snapshots: [] };
   }
 
   const snapshots: HermesTokenHoldingSnapshot[] = [];
-  for (const token of VERIFIED_TOKEN_BALANCE_CONFIGS) {
+  for (const token of verifiedTokenBalanceConfigs()) {
     const balance = await withStakedVvv(
       await fetchTokenBalance({
         token,
@@ -813,7 +854,22 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
     status: "refreshed" as const,
     snapshot: hermesSnapshot,
     snapshots,
+    balances: platformTokenBalancesFromSnapshots(snapshots),
   };
+}
+
+/** Raw balance per platform token among `snapshots` (VVV and others ignored). */
+export function platformTokenBalancesFromSnapshots(
+  snapshots: ReadonlyArray<Pick<HermesTokenHoldingSnapshot, "tokenAddress" | "balanceRaw">>
+): Partial<Record<PlatformTokenKey, bigint>> {
+  const balances: Partial<Record<PlatformTokenKey, bigint>> = {};
+  for (const snapshot of snapshots) {
+    const token = platformTokenByAddress(snapshot.tokenAddress);
+    if (token && balances[token.key] === undefined) {
+      balances[token.key] = BigInt(normalizeNumericToBigIntString(snapshot.balanceRaw));
+    }
+  }
+  return balances;
 }
 
 export async function refreshPrimaryHermesTokenHolding(params: {
