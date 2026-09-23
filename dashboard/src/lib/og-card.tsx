@@ -3,19 +3,35 @@
 // opengraph-image.tsx segments for the apex, /changelog and /status pages.
 //
 // Pure presentational image generation for PUBLIC pages only — no auth, no
-// tenant/per-instance data ever reaches a card. Mirrors the ImageResponse
-// brand language already used by app/apple-icon.tsx + app/pwa-icon-512
-// (lime #ccff00 mark on near-black #111111).
+// tenant/per-instance data ever reaches a card. The brand row shows the approved
+// Hivra mark (docs/brand/hivra-logo.jpg) exactly as exported to the app icons by
+// docs/brand/export-brand-assets.py; it is never redrawn here.
+//
+// The segments use the Node.js runtime because the mark is read from public/.
+// They call no dynamic APIs, so Next.js prerenders each card at build time.
+
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { ImageResponse } from "next/og";
 
 import { OG_SIZE } from "@/lib/og-meta";
 
-// Brand tokens (kept literal so the edge ImageResponse runtime needs no CSS vars).
+// Brand tokens (kept literal so the ImageResponse renderer needs no CSS vars).
+// ACCENT is the dark-theme --hivra-red from app/globals.css.
 const BG = "#111111";
-const ACCENT = "#ccff00";
+const ACCENT = "#ff3a3b";
 const INK = "#fdfcf9";
 const MUTED = "#a3a3a3";
+
+// The 192px app icon, drawn at 96px so the downscale stays an exact 2x.
+const MARK_PATH = join(process.cwd(), "public/brand/hivra-icon-192.png");
+const MARK_SIZE = 96;
+
+async function readMarkDataUri(): Promise<string> {
+  const bytes = await readFile(MARK_PATH);
+  return `data:image/png;base64,${bytes.toString("base64")}`;
+}
 
 export interface OgCardInput {
   // Small uppercase label above the title (e.g. "Changelog", "Status"); omit on the apex card.
@@ -26,7 +42,8 @@ export interface OgCardInput {
 
 // Builds the branded OG card as a Next.js ImageResponse. Returned from each
 // opengraph-image.tsx default export.
-export function renderOgCard({ eyebrow, title, subtitle }: OgCardInput): ImageResponse {
+export async function renderOgCard({ eyebrow, title, subtitle }: OgCardInput): Promise<ImageResponse> {
+  const mark = await readMarkDataUri();
   return new ImageResponse(
     (
       <div
@@ -41,25 +58,15 @@ export function renderOgCard({ eyebrow, title, subtitle }: OgCardInput): ImageRe
           fontFamily: "system-ui, sans-serif",
         }}
       >
-        {/* Brand row: lime "H" mark + wordmark */}
+        {/* Brand row: approved Hivra mark + wordmark */}
         <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 96,
-              height: 96,
-              borderRadius: 24,
-              background: ACCENT,
-              color: "#111111",
-              fontSize: 72,
-              fontWeight: 900,
-              letterSpacing: "-0.08em",
-            }}
-          >
-            H
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element -- ImageResponse renders plain <img>, not next/image */}
+          <img
+            src={mark}
+            width={MARK_SIZE}
+            height={MARK_SIZE}
+            alt=""
+          />
           <span
             style={{
               color: INK,
