@@ -7,9 +7,9 @@ import { ArrowRight, Command, Monitor, Terminal, Apple, Layers } from "lucide-re
 import styles from "./product.module.css";
 
 export const COMPUTER_OPTIONS = [
-  { id: "ubuntu-desktop", name: "Ubuntu", label: "A familiar Linux workspace", icon: Terminal, detail: "Write code, run services and install the tools you use every day. Keep a project workspace ready without setting up another machine on your desk.", uses: ["Development tools", "Browsers & apps", "Long-running services"] },
-  { id: "windows", name: "Windows", label: "Room for your Windows apps", icon: Monitor, detail: "Need Windows for one application? Give it a computer of its own. Set up your apps and files, use the desktop yourself, and bring an agent in when you want help.", uses: ["Windows applications", "A separate desktop", "Your own files & setup"] },
-  { id: "omarchy", name: "Omarchy", label: "A Linux desktop for your flow", icon: Command, detail: "Make a workspace around your editor, terminal and browser. Use Omarchy yourself or give an agent somewhere to work beside the tools you've already set up.", uses: ["A keyboard-first desktop", "Editor & terminal", "Your project workspace"] },
+  { id: "ubuntu-desktop", name: "Ubuntu", label: "A familiar Linux workspace", availability: "Available now", icon: Terminal, detail: "Write code, run services and install the tools you use every day. Keep a project workspace ready without setting up another machine on your desk.", uses: ["Development tools", "Browsers & apps", "Long-running services"] },
+  { id: "windows", name: "Windows", label: "Room for your Windows apps", availability: "Private preview", icon: Monitor, detail: "Need Windows for one application? Give it a computer of its own and use the desktop yourself. In the private preview, Windows runs on your own Proxmox host from your own licensed Windows ISO.", uses: ["Windows applications", "A separate desktop", "Your own files & setup"] },
+  { id: "omarchy", name: "Omarchy", label: "A Linux desktop for your flow", availability: "Private preview", icon: Command, detail: "Make a workspace around your editor, terminal and browser, and use Omarchy yourself. Omarchy is in private preview.", uses: ["A keyboard-first desktop", "Editor & terminal", "Your project workspace"] },
 ] as const;
 
 export function computerLaunchHref(profile: string) {
@@ -24,13 +24,13 @@ export default function ComputersSection({ embedded = false }: { embedded?: bool
     {!embedded && <div className={styles.heading}>
       <span className={styles.eyebrow}>Launch a computer</span>
       <h2 id="computers-heading">Sometimes you just need<br /><em>another computer.</em></h2>
-      <p>Ubuntu, Windows or Omarchy. Install apps, browse, write code, run services. You don&apos;t have to attach an agent at all. It&apos;s a computer.</p>
+      <p>Ubuntu is available now. Windows and Omarchy are in private preview. Install apps, browse, write code, run services. You don&apos;t have to attach an agent at all. It&apos;s a computer.</p>
     </div>}
-    {embedded && <p className={styles.embeddedIntro}>Ubuntu, Windows or Omarchy. Install apps, browse, write code or run services. You don&apos;t have to attach an agent.</p>}
+    {embedded && <p className={styles.embeddedIntro}>Ubuntu is available now. Windows and Omarchy are in private preview. Install apps, browse, write code or run services. You don&apos;t have to attach an agent.</p>}
     <div className={styles.computerChoices} aria-label="Choose an operating system">
       {COMPUTER_OPTIONS.map(option => { const Icon = option.icon; return <article key={option.id} data-selected={selected === option.id}>
         <button type="button" aria-pressed={selected === option.id} aria-controls="computer-description" onClick={() => setSelected(option.id)}>
-          <Icon size={26} strokeWidth={1.5} aria-hidden="true" /><span><strong>{option.name}</strong><small>{option.label}</small></span><span className={styles.inspect}>Explore <ArrowRight size={14} /></span>
+          <Icon size={26} strokeWidth={1.5} aria-hidden="true" /><span><strong>{option.name}</strong><small>{option.label}</small><small>{option.availability}</small></span><span className={styles.inspect}>Explore <ArrowRight size={14} /></span>
         </button>
         <Link href={computerLaunchHref(option.id)}>Launch {option.name}<ArrowRight size={15} aria-hidden="true" /></Link>
       </article>; })}
@@ -50,7 +50,7 @@ export default function ComputersSection({ embedded = false }: { embedded?: bool
         </div>
       </div>
     </div>
-    <div className={styles.computerEnding}><p>Bring an agent into the workspace when you want one. Take the screen back whenever you&apos;d rather do it yourself.</p></div>
+    <div className={styles.computerEnding}><p>Bringing an agent into a computer you already have is coming soon. Take the screen back whenever you&apos;d rather do it yourself.</p></div>
     <div className={styles.comingComputers} aria-label="More computer options coming soon">
       <span>More ways to make it yours.</span>
       <div><Apple size={21} aria-hidden="true" /><strong>macOS</strong><small>Coming soon</small></div>

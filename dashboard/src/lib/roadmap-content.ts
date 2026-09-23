@@ -286,7 +286,7 @@ export const roadmapContent = {
         icon: "governance",
         title: "Governance",
         description:
-          "Token holders participate in decisions about ecosystem direction: integrations, marketplace policies, revenue split structures, and platform priorities.",
+          "Not decided. No governance model has been chosen, and holding the token does not give anyone a vote on ecosystem direction.",
       },
     ] satisfies RoadmapUtilityCard[],
     utilityNote: "Official token information is published only at hermesos.cloud/token.",
@@ -467,7 +467,7 @@ export const roadmapContent = {
               "Hive Mind full release — the collective intelligence layer opens to the full network after early access validation in Phase 3.",
               "Hive Mind external access — agents from other networks query the Hivra network via token-denominated endpoints. All access verified on-chain and priced per query.",
               "Full on-chain marketplace settlement — pack purchases, creator payouts, and platform fees settled transparently on-chain.",
-              "Governance live — $HermesOS holders vote on ecosystem direction, supported integrations, marketplace policies, and platform priorities.",
+              "Governance is not decided. Any model will be published before it takes effect, and none is promised to token holders.",
             ],
           },
           {

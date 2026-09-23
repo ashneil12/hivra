@@ -37,4 +37,22 @@ describe("Static copy safety", () => {
       expect(source).not.toContain('hermesOs: "No — from $9.99/mo"');
     }
   });
+
+  it("gives the site a current default title with no dashes and a Hivra contact address", () => {
+    const layout = fs.readFileSync(path.join(__dirname, "..", "layout.tsx"), "utf8");
+    const defaultTitle = layout.match(/default:\s*"([^"]+)"/)?.[1];
+    expect(defaultTitle).toBe("Hivra | A computer for you and your agents");
+    const metadataBlock = layout.slice(layout.indexOf("export const metadata"), layout.indexOf("async function getRootLocale"));
+    // Visible default titles, descriptions and image alt text (search keywords are not shown to people).
+    const visibleCopy = [...metadataBlock.matchAll(/(?:title|default|description|alt):\s*"([^"]+)"/g)].map(match => match[1]);
+    expect(visibleCopy.length).toBeGreaterThanOrEqual(6);
+    for (const copy of visibleCopy) {
+      expect(copy).not.toMatch(/[\u2013\u2014]/);
+      expect(copy).not.toMatch(/one click|24\/7 uptime|formerly HermesOS/i);
+    }
+
+    const footer = fs.readFileSync(path.join(__dirname, "..", "..", "components", "landing", "Footer.tsx"), "utf8");
+    expect(footer).toContain("mailto:info@hivra.cloud");
+    expect(footer).not.toContain("info@hermesos.cloud");
+  });
 });
