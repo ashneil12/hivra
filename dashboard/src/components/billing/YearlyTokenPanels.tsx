@@ -1,23 +1,27 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle, Coins, Copy, CreditCard, Loader2, RefreshCw, ShieldCheck, Wallet, X } from 'lucide-react';
-import { LocalAddressQr } from '@/components/billing/LocalAddressQr';
-import { ManagedVeniceTokenQuotePanel } from '@/components/billing/ManagedVeniceTokenQuotePanel';
-import { ManagedVeniceTopUpCalculator } from '@/components/billing/ManagedVeniceTopUpCalculator';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { copyTextToClipboard } from '@/lib/client/clipboard';
-import { clientLog } from '@/lib/client/logger';
-import type { ManagedVeniceTokenQuotePayload } from '@/lib/billing/managed-venice-client';
+import { AlertTriangle, ArrowRight, CheckCircle, Coins, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { BillingDialog, billingDialogStyles as dialog } from '@/components/billing/BillingDialog';
+import { ManagedVeniceDepositView } from '@/components/billing/ManagedVeniceDepositView';
 import {
-  formatManagedVeniceUsd,
-  getManagedVeniceTopUpQuote,
-  type ManagedVeniceWalletType,
-} from '@/lib/venice/managed-credit-topup';
+  DepositAddressField,
+  OpenInWalletLink,
+  TOKEN_PAYMENT_FINALITY,
+  TransferAmountField,
+  wholeTokenQuoteRawAmount,
+} from '@/components/billing/TransferDetails';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { clientLog } from '@/lib/client/logger';
+import { hermesosTransferUri } from '@/lib/billing/eip681';
+import type { ManagedVeniceTokenQuotePayload } from '@/lib/billing/managed-venice-client';
+import { YEARLY_TOKEN_USD, displayTokenUnit } from '@/lib/billing/token-plan-prices';
+import type { ManagedVeniceWalletType } from '@/lib/venice/managed-credit-topup';
 import {
   type YearlyTokenQuotePayload,
   type YearlyTokenSubscriptionPayload,
 } from '@/lib/billing/format';
+import styles from './YearlyTokenPanels.module.css';
 
 /**
  * Yearly-token billing modals and their progress stepper for the billing
@@ -116,7 +120,7 @@ export function YearlyPaymentProgress({
     {
       key: "quote",
       label: "Quote locked",
-      sub: quote ? `Send ${formatted} ${quote.tokenSymbol}` : "Sent",
+      sub: quote ? `Send ${formatted} ${displayTokenUnit(quote.tokenSymbol)}` : "Sent",
       status: quote && !subActive ? "active" : "done",
     },
     {
@@ -142,50 +146,21 @@ export function YearlyPaymentProgress({
   ];
 
   const allDone = stages.every((s) => s.status === "done");
-  const anyFailed = stages.some((s) => s.status === "failed");
-
-  let bannerColor: string;
-  let bannerBg: string;
-  if (allDone) {
-    bannerColor = "rgba(22,163,74,0.5)";
-    bannerBg = "rgba(22,163,74,0.06)";
-  } else if (anyFailed) {
-    bannerColor = "rgba(179,38,30,0.5)";
-    bannerBg = "rgba(179,38,30,0.05)";
-  } else {
-    bannerColor = "var(--gold-leaf)";
-    bannerBg = "rgba(255, 44, 45,0.08)";
-  }
+  const tone = allDone ? "success" : underReview ? "warning" : undefined;
+  // Screen readers get the expiry as a fixed clock time; the ticking MM:SS
+  // is visual only, so the live region isn't re-announced every second.
+  const expiresAtLabel = quote
+    ? new Date(quote.expiresAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : null;
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        border: `1px solid ${bannerColor}`,
-        background: bannerBg,
-        padding: "1.25rem 1.5rem",
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span
-            className="mono"
-            style={{
-              fontSize: 9,
-              textTransform: "uppercase",
-              letterSpacing: "0.18em",
-              fontWeight: 700,
-              color: "var(--gold-leaf)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <Coins size={11} />
+    <div className={styles.banner} data-tone={tone}>
+      <div className={styles.head}>
+        {/* The live region holds only the stage title and message, which
+            change when the payment moves on, never on the 1s tick. */}
+        <div className={styles.headText} role="status" aria-live="polite" aria-atomic="true">
+          <span className={styles.eyebrow}>
+            <Coins size={13} aria-hidden="true" />
             {allDone
               ? `${tierName} tier active`
               : underReview
@@ -196,7 +171,7 @@ export function YearlyPaymentProgress({
                   ? `Activating ${tierName}`
                   : `Yearly $HermesOS · ${tierName}`}
           </span>
-          <span style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.45 }}>
+          <span className={styles.message}>
             {allDone
               ? `Done. Your ${tierName} subscription is live until ${
                   subscription
@@ -213,27 +188,18 @@ export function YearlyPaymentProgress({
                   ? `We received a payment for this quote that needs a quick manual check (a different amount, or it arrived after the quote expired). Please don't send another payment — we'll sort it out and email you.`
                   : quoteExpired
                     ? `If you already sent the tokens, don't send them again: payments that arrive up to 2 hours late are still found and reviewed. Otherwise, start a fresh quote.`
-                    : `Send tokens to your deposit address. Cron checks every 5 min, or hit "Check now" once your tx confirms.`}
+                    : `Send tokens to your deposit address. We check every 5 minutes, or select "Check now" once your transfer confirms.`}
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div className={styles.actions}>
           {quote && !subActive && !quoteExpired && (
-            <span
-              className="mono"
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#16a34a",
-                fontVariantNumeric: "tabular-nums",
-                padding: "5px 10px",
-                border: "1px solid rgba(22,163,74,0.3)",
-                background: "rgba(22,163,74,0.05)",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {countdown}
-            </span>
+            <>
+              <span className={`notranslate ${styles.countdown}`} translate="no" aria-hidden="true" data-testid="yearly-countdown">
+                {countdown}
+              </span>
+              <span className={styles.srOnly}>{`Quote expires at ${expiresAtLabel}`}</span>
+            </>
           )}
           {quote && !subActive && !underReview && (
             <>
@@ -241,52 +207,20 @@ export function YearlyPaymentProgress({
                 type="button"
                 onClick={onCheckNow}
                 disabled={checkingNow}
-                style={{
-                  padding: "9px 16px",
-                  background: "transparent",
-                  color: "var(--ink-black)",
-                  border: "1px solid var(--gold-leaf)",
-                  cursor: checkingNow ? "wait" : "pointer",
-                  fontFamily: "var(--font-mono), monospace",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.12em",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  opacity: checkingNow ? 0.6 : 1,
-                }}
-                title="Skip the 5-min cron wait — check the deposit wallet right now"
+                aria-busy={checkingNow || undefined}
+                className={styles.action}
+                title="Skip the 5-minute wait and check the deposit address now"
               >
                 {checkingNow ? (
-                  <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
+                  <Loader2 size={13} className={styles.spin} aria-hidden="true" />
                 ) : (
-                  <RefreshCw size={11} />
+                  <RefreshCw size={13} aria-hidden="true" />
                 )}
                 Check now
               </button>
               {!quoteExpired && (
-                <button
-                  type="button"
-                  onClick={onResume}
-                  style={{
-                    padding: "10px 16px",
-                    background: "var(--ink-black)",
-                    color: "var(--bg-surface)",
-                    border: "none",
-                    cursor: "pointer",
-                    fontFamily: "var(--font-mono), monospace",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.12em",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                >
-                  Open quote <ArrowRight size={11} />
+                <button type="button" onClick={onResume} className={`${styles.action} ${styles.actionPrimary}`}>
+                  Open quote <ArrowRight size={13} aria-hidden="true" />
                 </button>
               )}
             </>
@@ -294,17 +228,11 @@ export function YearlyPaymentProgress({
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-          gap: 8,
-        }}
-      >
+      <ol className={styles.stages}>
         {stages.map((stage, idx) => (
           <ProgressStage key={stage.key} index={idx} stage={stage} />
         ))}
-      </div>
+      </ol>
 
       <BankrTrustFooter />
     </div>
@@ -317,90 +245,34 @@ export function ProgressStage({
   index: number;
   stage: { key: string; label: string; sub: string; status: "pending" | "active" | "done" | "failed" };
 }) {
-  let bgColor: string;
-  let borderColor: string;
-  let icon: React.ReactNode;
-  let labelColor: string = "var(--ink-black)";
-
+  let icon: ReactNode;
   switch (stage.status) {
     case "done":
-      bgColor = "rgba(22,163,74,0.06)";
-      borderColor = "rgba(22,163,74,0.45)";
-      icon = <CheckCircle size={14} style={{ color: "#16a34a" }} />;
+      icon = <CheckCircle size={14} aria-hidden="true" />;
       break;
     case "active":
-      bgColor = "rgba(255, 44, 45,0.10)";
-      borderColor = "var(--gold-leaf)";
-      icon = <Loader2 size={14} style={{ color: "var(--gold-leaf)", animation: "spin 1s linear infinite" }} />;
+      icon = <Loader2 size={14} className={styles.spin} aria-hidden="true" />;
       break;
     case "failed":
-      bgColor = "rgba(179,38,30,0.06)";
-      borderColor = "rgba(179,38,30,0.45)";
-      icon = <AlertTriangle size={14} style={{ color: "#b3261e" }} />;
-      labelColor = "#b3261e";
+      icon = <AlertTriangle size={14} aria-hidden="true" />;
       break;
     default: // pending
-      bgColor = "transparent";
-      borderColor = "var(--etched-border)";
       icon = (
-        <span
-          className="mono"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 14,
-            height: 14,
-            border: "1px solid currentColor",
-            fontSize: 8,
-            opacity: 0.5,
-          }}
-        >
+        <span className={styles.stageIndex} aria-hidden="true">
           {index + 1}
         </span>
       );
-      labelColor = "rgba(0,0,0,0.55)";
       break;
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        padding: "10px 12px",
-        border: `1px solid ${borderColor}`,
-        background: bgColor,
-        transition: "background 200ms ease, border 200ms ease",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <li className={styles.stage} data-status={stage.status}>
+      <span className={styles.stageHead}>
         {icon}
-        <span
-          className="mono"
-          style={{
-            fontSize: 10,
-            textTransform: "uppercase",
-            letterSpacing: "0.12em",
-            fontWeight: 700,
-            color: labelColor,
-          }}
-        >
-          {stage.label}
-        </span>
-      </div>
-      <span
-        style={{
-          fontSize: 11,
-          color: "var(--text-secondary)",
-          lineHeight: 1.4,
-          opacity: stage.status === "pending" ? 0.55 : 1,
-        }}
-      >
-        {stage.sub}
+        {stage.label}
       </span>
-    </div>
+      <span className={styles.stageSub}>{stage.sub}</span>
+    </li>
   );
 }
 export function ManagedVeniceDepositModal({
@@ -445,8 +317,6 @@ export function ManagedVeniceDepositModal({
 
   if (!isOpen) return null;
 
-  const topUpQuote = getManagedVeniceTopUpQuote(amountUsd, walletType);
-
   async function refreshWalletSummary() {
     if (refreshingWallet) return;
     setRefreshingWallet(true);
@@ -471,239 +341,36 @@ export function ManagedVeniceDepositModal({
     }
   }
 
-  const walletButton = (
-    value: ManagedVeniceWalletType,
-    label: string,
-    description: string,
-    icon: ReactNode
-  ) => {
-    const active = walletType === value;
-    return (
-      <button
-        type="button"
-        onClick={() => onWalletTypeChange(value)}
-        style={{
-          padding: "13px 14px",
-          textAlign: "left",
-          border: `1px solid ${active ? (value === "hermesos" ? "var(--gold-leaf)" : "var(--ink-black)") : "var(--etched-border)"}`,
-          background: active
-            ? value === "hermesos"
-              ? "rgba(255, 44, 45,0.13)"
-              : "var(--bg-elevated)"
-            : "transparent",
-          cursor: "pointer",
-          minHeight: 104,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          {icon}
-          <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800 }}>
-            {label}
-          </span>
-        </div>
-        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)" }}>
-          {description}
-        </p>
-      </button>
-    );
-  };
-
   const quoteActive = Boolean(quote && walletType === "hermesos" && quote.status === "active");
   const quoteSettled = Boolean(quote && walletType === "hermesos" && quote.status === "settled");
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Top up managed Venice credits"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.62)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-        padding: "1rem",
+    <ManagedVeniceDepositView
+      title="Top up managed Venice credits"
+      description="Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay."
+      // $HermesOS stays reachable only for a flow that already chose it
+      // (a deep link into a token top-up) and only while token payments are on.
+      walletOptions={tokenPaymentsEnabled && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
+      walletType={walletType}
+      onWalletTypeChange={onWalletTypeChange}
+      calculatorId="managed-venice-billing-top-up"
+      amountUsd={amountUsd}
+      onAmountChange={onAmountChange}
+      error={error}
+      quote={quote}
+      onQuoteUpdate={onQuoteUpdate}
+      onQuoteSettled={() => {
+        void onRefreshSummary();
       }}
-    >
-      <div
-        onClick={(event) => event.stopPropagation()}
-        style={{
-          background: "var(--bg-surface)",
-          border: "1px solid var(--etched-border)",
-          padding: "clamp(1.25rem, 4vw, 2rem)",
-          maxWidth: 680,
-          width: "100%",
-          maxHeight: "92vh",
-          overflow: "auto",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-          boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-          <div>
-            <div className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.55, fontWeight: 700 }}>
-              Managed Venice LLM credits
-            </div>
-            <h2 className="serif" style={{ fontSize: "1.7rem", fontWeight: 700, margin: "4px 0 0" }}>
-              Top up before launch
-            </h2>
-            <p style={{ margin: "8px 0 0", color: "var(--text-secondary)", fontSize: 12.5, lineHeight: 1.6, maxWidth: 540 }}>
-              Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{ padding: 7, border: "1px solid var(--etched-border)", background: "transparent", cursor: "pointer" }}
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-          {tokenPaymentsEnabled && walletType === "hermesos" && walletButton(
-            "hermesos",
-            "Pay with $HermesOS",
-            "Up to 20% more credits during the launch wave, then the 10% standard bonus.",
-            <Wallet size={15} style={{ color: "var(--gold-leaf)" }} />
-          )}
-          {walletButton(
-            "card",
-            "Pay by card",
-            "Stripe checkout. No Venice markup; card credits stay at straight provider-rate value.",
-            <CreditCard size={15} />
-          )}
-        </div>
-
-        <ManagedVeniceTopUpCalculator
-          id="managed-venice-billing-top-up"
-          amountUsd={amountUsd}
-          walletType={walletType}
-          onAmountChange={onAmountChange}
-        />
-
-        <div style={{ border: "1px dashed var(--etched-border)", padding: "12px 14px", background: "rgba(255,255,255,0.03)", fontSize: 12, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-          {walletType === "hermesos" ? (
-            <>
-              <strong style={{ color: "var(--ink-black)" }}>$250 lifetime launch bonus cap.</strong>{" "}
-              That is about $1,250 of $HermesOS top-ups at the full 20% launch bonus. After that, $HermesOS top-ups continue at the 10% standard bonus.
-            </>
-          ) : (
-            <>
-              <strong style={{ color: "var(--ink-black)" }}>Card terms: zero markup.</strong>{" "}
-              {formatManagedVeniceUsd(topUpQuote.paidUsd)} adds {formatManagedVeniceUsd(topUpQuote.totalCreditsUsd)} of managed Venice credits.
-            </>
-          )}
-        </div>
-
-        {error && (
-          <ErrorBanner
-            error={error}
-            context={{
-              source: "client.diagnostic",
-              route:
-                walletType === "hermesos"
-                  ? "/api/billing/managed-venice/hermesos/quote"
-                  : "/api/billing/managed-venice/card/top-up",
-              metadata: { surface: "ManagedVeniceDepositModal" },
-            }}
-          />
-        )}
-
-        {quote && walletType === "hermesos" && (
-          <ManagedVeniceTokenQuotePanel
-            quote={quote}
-            onQuoteUpdate={onQuoteUpdate}
-            onSettled={() => {
-              void onRefreshSummary();
-            }}
-          />
-        )}
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={() => void refreshWalletSummary()}
-              disabled={refreshingWallet}
-              aria-busy={refreshingWallet}
-              style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid var(--etched-border)", background: "transparent", padding: "10px 12px", cursor: refreshingWallet ? "wait" : "pointer", opacity: refreshingWallet ? 0.62 : 1, fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}
-            >
-              {refreshingWallet && <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />}
-              {refreshingWallet ? "Refreshing..." : "Refresh wallet"}
-            </button>
-            {!refreshingWallet && walletRefreshStatus !== "idle" && (
-              <span
-                role="status"
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.1em",
-                  color: walletRefreshStatus === "refreshed" ? "#16a34a" : "#dc2626",
-                }}
-              >
-                {walletRefreshStatus === "refreshed" ? "Wallet refreshed" : "Refresh failed. Try again."}
-              </span>
-            )}
-          </div>
-          {walletType === "hermesos" && (quoteActive || quoteSettled) ? (
-            <span
-              className="mono"
-              style={{
-                border: "1px solid var(--etched-border)",
-                color: quoteSettled ? "#16a34a" : "var(--text-secondary)",
-                padding: "10px 12px",
-                fontSize: 10,
-                fontWeight: 900,
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-              }}
-            >
-              {quoteSettled ? "Credits confirmed" : "Use verify payment above"}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={walletType === "hermesos" ? onStartHermesTopUp : onStartCardTopUp}
-              disabled={loading}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                border: "none",
-                background: "var(--btn-bg)",
-                color: "var(--btn-text)",
-                padding: "12px 18px",
-                cursor: loading ? "wait" : "pointer",
-                opacity: loading ? 0.62 : 1,
-                fontFamily: "var(--font-mono), monospace",
-                fontSize: 10,
-                fontWeight: 900,
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-              }}
-            >
-              {loading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : walletType === "hermesos" ? <Wallet size={13} /> : <CreditCard size={13} />}
-              {loading
-                ? "Starting..."
-                : walletType === "hermesos"
-                  ? "Start $HermesOS top-up"
-                  : "Start card checkout"}
-              {!loading && walletType === "card" && <ArrowRight size={13} />}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
+      quoteInFlight={quoteActive}
+      quoteSettled={quoteSettled}
+      loading={loading}
+      onStart={walletType === "hermesos" ? onStartHermesTopUp : onStartCardTopUp}
+      refreshingWallet={refreshingWallet}
+      walletRefreshStatus={walletRefreshStatus}
+      onRefreshWallet={() => void refreshWalletSummary()}
+      onClose={onClose}
+    />
   );
 }
 /**
@@ -739,11 +406,12 @@ export function YearlyTokenPaymentModal({
     depositAddress: string;
     expiresAt: string;
     status: string;
+    /** Exact amount in base units, as sent by /api/billing/yearly-token-quote. */
+    tokensRequiredRaw?: string;
+    tokenDecimals?: number;
   } | null;
   onClose: () => void;
 }) {
-  const [copiedAmount, setCopiedAmount] = useState(false);
-  const [copiedAddress, setCopiedAddress] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -766,260 +434,130 @@ export function YearlyTokenPaymentModal({
   const formatted = quote
     ? quote.tokensRequiredDisplay.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
     : "—";
+  const payable = Boolean(quote && !loading && !expired);
+  // While a payment for this tier is under review the user is told not to pay
+  // again, so there is no one-tap wallet link (the copy fields stay).
+  const walletHref =
+    quote && payable && !reviewPending
+      ? hermesosTransferUri({
+          tokenSymbol: quote.tokenSymbol,
+          tokenDecimals: quote.tokenDecimals,
+          depositAddress: quote.depositAddress,
+          amountRaw: wholeTokenQuoteRawAmount(quote),
+        })
+      : null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Pay ${tierName} yearly with $HermesOS`}
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-        padding: "1rem",
-      }}
+    <BillingDialog
+      ariaLabel={`Pay ${tierName} yearly with $HermesOS`}
+      eyebrow="Pay 1 year with $HermesOS"
+      title={tier ? `${tierName} · $${YEARLY_TOKEN_USD[tier]}/yr` : tierName}
+      onClose={onClose}
+      footer={
+        payable ? (
+          <div className={styles.quoteMeta}>
+            <span className={`notranslate ${styles.expires}`} translate="no">
+              {`Expires in ${countdown}`}
+            </span>
+            <span className={styles.locked}>Quote locked</span>
+          </div>
+        ) : undefined
+      }
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg-surface)",
-          border: "1px solid var(--etched-border)",
-          padding: "clamp(1.5rem, 4vw, 2.5rem)",
-          maxWidth: 540,
-          width: "100%",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-          <div>
-            <div className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.55, fontWeight: 700 }}>
-              Pay 1 year with $HermesOS
-            </div>
-            <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 700, marginTop: 4, marginBottom: 0 }}>
-              {tierName} · ${tier === "power" ? "99" : "49"}/yr
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              padding: 6,
-              border: "1px solid var(--etched-border)",
-              background: "transparent",
-              cursor: "pointer",
-            }}
-          >
-            <X size={14} />
-          </button>
+      {loading && (
+        <div className={dialog.callout} role="status">
+          <Loader2 size={14} className={dialog.spin} aria-hidden="true" />
+          <span className="mono">Locking today&apos;s price…</span>
         </div>
+      )}
 
-        {loading && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "1rem", border: "1px solid var(--etched-border)" }}>
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
-            <span className="mono" style={{ fontSize: 11 }}>Locking today&apos;s price…</span>
-          </div>
-        )}
+      {error && (
+        <ErrorBanner
+          error={error}
+          context={{
+            source: "client.diagnostic",
+            route: "/api/billing/wallet/quote",
+            metadata: { surface: "BillingCryptoTopUpQuote" },
+          }}
+        />
+      )}
 
-        {error && (
-          <ErrorBanner
-            error={error}
-            context={{
-              source: "client.diagnostic",
-              route: "/api/billing/wallet/quote",
-              metadata: { surface: "BillingCryptoTopUpQuote" },
-            }}
-          />
-        )}
-
-        {reviewPending && (
-          <div
-            role="note"
-            style={{ border: "1px solid var(--gold-leaf)", padding: "0.65rem 0.85rem", fontSize: 12.5, lineHeight: 1.5 }}
-          >
+      {reviewPending && (
+        <div role="note" className={dialog.callout} data-tone="warning">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <p style={{ margin: 0 }}>
             A payment for {tierName} is already under review. You don&apos;t need to pay again unless we ask you to —
             we&apos;ll sort it out and email you.
-          </div>
-        )}
+          </p>
+        </div>
+      )}
 
-        {quote && !loading && expired && (
-          <>
-            <div
-              role="status"
-              style={{ border: "1px solid rgba(179,38,30,0.5)", padding: "0.75rem 0.9rem", fontSize: 13, lineHeight: 1.5 }}
-            >
+      {quote && !loading && expired && (
+        <>
+          <div role="status" className={dialog.callout} data-tone="danger">
+            <AlertTriangle size={15} aria-hidden="true" />
+            <p style={{ margin: 0 }}>
               <strong>This quote expired.</strong> If you already sent the tokens, don&apos;t send them again: payments
               that arrive up to 2 hours late are still found and reviewed. Otherwise, close this and start a fresh quote.
-            </div>
-            <BankrTrustFooter />
-          </>
-        )}
-
-        {quote && !loading && !expired && (
-          <>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.55, fontWeight: 700 }}>
-                Step 1 · Send exactly
-              </span>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                <span className="serif" style={{ fontSize: "1.65rem", fontWeight: 700, lineHeight: 1.1 }}>
-                  {formatted} <span style={{ fontSize: "0.95rem", opacity: 0.7 }}>{quote.tokenSymbol}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const ok = await copyTextToClipboard(quote.tokensRequiredDisplay);
-                    if (!ok) return;
-                    setCopiedAmount(true);
-                    window.setTimeout(() => setCopiedAmount(false), 1600);
-                  }}
-                  style={{
-                    padding: "5px 9px",
-                    border: "1px solid var(--etched-border)",
-                    background: "transparent",
-                    fontFamily: "var(--font-mono), monospace",
-                    fontSize: 9,
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  {copiedAmount ? <CheckCircle size={11} /> : <Copy size={11} />}
-                  {copiedAmount ? "Copied" : "Copy"}
-                </button>
-              </div>
-              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                ${(quote.usdTargetCents / 100).toFixed(2)} worth at{" "}
-                <code className="mono">${quote.priceUsdAtQuote}</code> per token. Send the full amount in a single transfer.
-              </span>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid var(--etched-border)",
-                padding: "0.65rem 0.85rem",
-                background: "var(--bg-elevated, transparent)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-              }}
-            >
-              <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.55, fontWeight: 700 }}>
-                Step 2 · To this address (Base network)
-              </span>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <LocalAddressQr address={quote.depositAddress} size={128} label="Yearly payment address QR code" />
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: "1 1 220px", minWidth: 0 }}>
-                  <code className="mono" style={{ fontSize: 12.5, wordBreak: "break-all", flex: 1, minWidth: 0 }}>
-                    {quote.depositAddress}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const ok = await copyTextToClipboard(quote.depositAddress);
-                      if (!ok) return;
-                      setCopiedAddress(true);
-                      window.setTimeout(() => setCopiedAddress(false), 1600);
-                    }}
-                    style={{
-                      padding: "5px 9px",
-                      border: "1px solid var(--etched-border)",
-                      background: "transparent",
-                      fontFamily: "var(--font-mono), monospace",
-                      fontSize: 9,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.1em",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
-                  >
-                    {copiedAddress ? <CheckCircle size={11} /> : <Copy size={11} />}
-                    {copiedAddress ? "Copied" : "Copy"}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <span className="mono" style={{ fontSize: 11, color: "#16a34a" }}>
-                {`Expires in ${countdown}`}
-              </span>
-              <span className="mono" style={{ fontSize: 9, opacity: 0.55, letterSpacing: "0.12em", textTransform: "uppercase" }}>
-                Quote locked
-              </span>
-            </div>
-
-            <p style={{ fontSize: 11, color: "var(--text-muted, var(--text-secondary))", margin: 0, lineHeight: 1.55 }}>
-              Once your transfer lands, your {tierName} tier activates within ~5 minutes for 365 days. No auto-renewal — paying again before it ends adds another year after your current end date.
             </p>
+          </div>
+          <BankrTrustFooter />
+        </>
+      )}
 
-            <BankrTrustFooter />
-          </>
-        )}
-      </div>
-    </div>
+      {quote && payable && (
+        <>
+          <TransferAmountField
+            label="Step 1 · Send exactly"
+            amount={formatted}
+            unit={displayTokenUnit(quote.tokenSymbol)}
+            copyValue={quote.tokensRequiredDisplay}
+            copyTitle="Copies the amount without separators, ready to paste into a wallet"
+          >
+            ${(quote.usdTargetCents / 100).toFixed(2)} worth at{" "}
+            <code className="mono">${quote.priceUsdAtQuote}</code> per token. Send the full amount in a single transfer.
+          </TransferAmountField>
+
+          <DepositAddressField
+            label="Step 2 · To this address (Base network)"
+            address={quote.depositAddress}
+            qrLabel="Yearly payment address QR code"
+            qrSize={128}
+          />
+
+          <OpenInWalletLink href={walletHref} />
+
+          <p className={dialog.fineprint}>
+            Once your transfer lands, your {tierName} tier activates within ~5 minutes for 365 days. No auto-renewal — paying again before it ends adds another year after your current end date.{" "}
+            <strong>{TOKEN_PAYMENT_FINALITY}</strong>
+          </p>
+
+          <BankrTrustFooter />
+        </>
+      )}
+    </BillingDialog>
   );
 }
 /**
- * Compact "Powered by Bankr" trust signal. Renders at the bottom of
- * crypto-payment surfaces (yearly modal, durable progress banner) so
- * users sending real money to a deposit address see a familiar
- * partner name + a one-line reassurance about wallet custody.
+ * Compact "Powered by Bankr" line at the bottom of the yearly payment
+ * surfaces (yearly modal, durable progress banner): it names the partner
+ * that issues the deposit address and the network to pay on.
  *
- * Bankr is the wallet-as-a-service partner backing the deposit
- * addresses; the user's $HermesOS-lock wallet is fully withdrawable
- * by them at any time. The yearly_subscription wallet is sweep-only
- * (operator-side); we don't claim withdrawability there.
+ * It makes no custody claim. The yearly deposit wallet is created by Hivra
+ * through Bankr, Hivra holds a sweep-only key for it, and yearly-sweep moves
+ * each confirmed payment to Hivra's treasury. The user cannot withdraw from
+ * it, so it must never be described as non-custodial or withdrawable.
  */
 export function BankrTrustFooter() {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        marginTop: 8,
-        paddingTop: 10,
-        borderTop: "1px solid var(--etched-border)",
-      }}
-    >
-      <ShieldCheck size={11} style={{ opacity: 0.55, color: "var(--ink-black)" }} />
-      <span
-        className="mono"
-        style={{
-          fontSize: 9,
-          textTransform: "uppercase",
-          letterSpacing: "0.16em",
-          fontWeight: 700,
-          opacity: 0.55,
-          color: "var(--ink-black)",
-        }}
-      >
+    <div className={styles.trust}>
+      <ShieldCheck size={12} aria-hidden="true" />
+      <span>
         Powered by{" "}
-        <a
-          href="https://bankr.bot"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "var(--gold-leaf)", textDecoration: "none", letterSpacing: "0.16em" }}
-        >
+        <a href="https://bankr.bot" target="_blank" rel="noopener noreferrer">
           Bankr
         </a>
-        {" "}· non-custodial deposits on Base
+        {" "}· payment address on Base
       </span>
     </div>
   );

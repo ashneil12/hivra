@@ -362,7 +362,7 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
 
   const fingerprints = read('.gitleaksignore').split(/\r?\n/)
     .filter((line) => line && !line.startsWith('#'));
-  assert.equal(fingerprints.length, 68);
+  assert.equal(fingerprints.length, 60);
   assert.equal(new Set(fingerprints).size, fingerprints.length);
   for (const fingerprint of fingerprints) {
     assert.match(fingerprint, /^[^:\r\n]+:(?:curl-auth-header|discord-client-id|generic-api-key|private-key|stripe-access-token):\d+$/);

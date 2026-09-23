@@ -240,4 +240,28 @@ describe("ManagedVeniceDepositModal", () => {
     expect(screen.queryByText(/wallet refreshed/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /refresh wallet/i })).toBeEnabled();
   });
+
+  it("renders in a body portal with a 44px 'Close' and pressed-state payment choices", () => {
+    const onClose = jest.fn();
+    const { container } = render(
+      <ManagedVeniceDepositModal isOpen initialWalletType="card" initialAmountUsd={50} onClose={onClose} />
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Top up managed Venice credits" });
+    expect(container).not.toContainElement(dialog);
+    expect(screen.getByRole("button", { name: /pay by card/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /pay with \$HermesOS/i })).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: /pay with \$HermesOS/i }));
+    expect(screen.getByRole("button", { name: /pay with \$HermesOS/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /start \$HermesOS top-up/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders nothing while closed", () => {
+    render(<ManagedVeniceDepositModal isOpen={false} initialWalletType="card" onClose={jest.fn()} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

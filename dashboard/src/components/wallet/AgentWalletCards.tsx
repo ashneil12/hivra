@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useId, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ArrowUpFromLine, CheckCircle2, Copy, Info, ShieldCheck } from 'lucide-react';
-import { LocalAddressQr } from '@/components/billing/LocalAddressQr';
+import { AlertTriangle, ArrowUpFromLine, Info, ShieldCheck } from 'lucide-react';
+import { BillingDialog, billingDialogStyles as dlg } from '@/components/billing/BillingDialog';
+import { CopyButton, DepositAddressField, touchStyles } from '@/components/billing/TransferDetails';
 import { useLocale } from '@/components/i18n/LocaleProvider';
-import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { clientLog } from '@/lib/client/logger';
 import {
   agentBaseEthBalance,
@@ -20,7 +20,9 @@ import {
 } from '@/lib/wallet/format';
 import {
   AGENT_WITHDRAWAL_GAS_NOTICE,
+  formatWalletAmountCompact,
   formatWalletAmountDisplay,
+  isWalletAmountShortened,
 } from '@/app/dashboard/wallet/agent-wallet-ui';
 import {
   agentWalletApiBase,
@@ -36,15 +38,14 @@ import {
  * wallet dashboard. Extracted verbatim from wallet/page.tsx.
  */
 /**
- * Compact "Powered by Bankr" trust signal. Renders at the bottom of
- * crypto-payment surfaces (deposit modal, hold-to-qualify quote panel)
- * so users sending real money to a deposit address see a familiar
- * partner name + a one-line reassurance about wallet custody.
+ * Compact "Powered by Bankr" line at the bottom of wallet surfaces (agent
+ * wallets, hold-to-qualify quote panel).
  *
  * On the holding-based path the user can withdraw their tokens any
- * time — pass `withdrawable` to surface that. The yearly_subscription
- * deposit address is sweep-only (operator-side) so we don't claim
- * withdrawability there.
+ * time — pass `withdrawable` to surface that. Without it the line only names
+ * the Base payment address and makes no custody claim: a deposit address
+ * Hivra sweeps is not the user's wallet and must never be called
+ * non-custodial.
  */
 export function BankrTrustFooter({ withdrawable = false }: { withdrawable?: boolean }) {
   return (
@@ -76,92 +77,62 @@ export function BankrTrustFooter({ withdrawable = false }: { withdrawable?: bool
           href="https://bankr.bot"
           target="_blank"
           rel="noopener noreferrer"
-          style={{ color: 'var(--gold-leaf)', textDecoration: 'none', letterSpacing: '0.16em' }}
+          // Vertical padding on an inline link grows its hit area to 44px
+          // without changing the line's layout.
+          style={{ color: 'var(--gold-leaf)', textDecoration: 'none', letterSpacing: '0.16em', padding: '16px 0.35rem' }}
         >
           Bankr
         </a>
         {' · '}
-        {withdrawable ? 'your wallet · withdraw any time' : 'non-custodial deposits on Base'}
+        {withdrawable ? 'your wallet · withdraw any time' : 'payment address on Base'}
       </span>
     </div>
   );
 }
 export function AgentWalletCopyButton({ text, label = 'Copy' }: { text: string | null; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(async () => {
-    if (!text) return;
-    const ok = await copyTextToClipboard(text);
-    if (!ok) return;
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  }, [text]);
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      disabled={!text}
-      style={{
-        border: '1px solid var(--etched-border)',
-        background: 'transparent',
-        color: copied ? 'var(--gold-leaf)' : 'var(--ink-black)',
-        padding: '6px 9px',
-        cursor: text ? 'pointer' : 'not-allowed',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        fontFamily: 'var(--font-mono), monospace',
-        fontSize: 9,
-        fontWeight: 800,
-        letterSpacing: '0.1em',
-        textTransform: 'uppercase',
-        opacity: text ? 1 : 0.45,
-      }}
-    >
-      {copied ? <CheckCircle2 size={12} /> : <Copy size={12} />}
-      {copied ? 'Copied' : label}
-    </button>
-  );
+  // Shared 44px-on-touch copy control (billing TransferDetails).
+  return <CopyButton value={text} label={label} />;
 }
+/**
+ * Shell for the agent-wallet modals, built on the billing dialog so it:
+ * renders through SafePortal above the dashboard header and phone bottom bar;
+ * fits the visible viewport (minus safe areas) with a scrolling body and the
+ * action row pinned in `footer`, so "Yes, withdraw" is always reachable, even
+ * with the keyboard up; and has Escape, a focus trap and a 44px Close.
+ *
+ * Pass `dismissOnBackdrop={false}` while a form holds typed input, and
+ * `closeDisabled` while a request is in flight.
+ */
 export function AgentWalletModalFrame({
+  title,
+  description,
   children,
+  footer,
   onClose,
+  dismissOnBackdrop = true,
+  closeDisabled = false,
 }: {
+  title: React.ReactNode;
+  description?: React.ReactNode;
   children: React.ReactNode;
+  /** Pinned action row. */
+  footer?: React.ReactNode;
   onClose: () => void;
+  dismissOnBackdrop?: boolean;
+  closeDisabled?: boolean;
 }) {
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'color-mix(in srgb, var(--ink-black) 38%, transparent)',
-        zIndex: 80,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1rem',
-      }}
-      onClick={onClose}
+    <BillingDialog
+      eyebrow="Agent wallet"
+      title={title}
+      description={description}
+      footer={footer}
+      onClose={onClose}
+      dismissOnBackdrop={dismissOnBackdrop}
+      closeDisabled={closeDisabled}
     >
-      <div
-        style={{
-          width: 'min(520px, 100%)',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--etched-border)',
-          padding: '1.25rem',
-          color: 'var(--ink-black)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 14,
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
+      {children}
+    </BillingDialog>
   );
 }
 export function AgentDepositModal({
@@ -174,11 +145,16 @@ export function AgentDepositModal({
   const address = card.wallet?.evmAddress ?? '';
 
   return (
-    <AgentWalletModalFrame onClose={onClose}>
-      <h3 className="serif" style={{ fontSize: '1.35rem', fontWeight: 400, margin: 0 }}>
-        Deposit to {card.instance.name} on Base.
-      </h3>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-muted)' }}>
+    <AgentWalletModalFrame
+      title={<>Deposit to {card.instance.name} on Base.</>}
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose} className={`${dlg.button} ${dlg.primary}`}>
+          Done
+        </button>
+      }
+    >
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
         Send supported tokens on Base only. The agent will see the new balance within ~30 seconds.
       </p>
       <div
@@ -202,41 +178,15 @@ export function AgentDepositModal({
           </span>
         </div>
       </div>
-      <LocalAddressQr address={address} />
-      <div
-        style={{
-          border: '1px solid var(--etched-border)',
-          background: 'var(--bg-surface)',
-          padding: '0.85rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-        }}
-      >
-        <code className="mono" style={{ fontSize: 12, wordBreak: 'break-all', color: 'var(--ink-black)' }}>
-          {address}
-        </code>
-        <AgentWalletCopyButton text={address} label="Copy Base address" />
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        style={{
-          alignSelf: 'flex-end',
-          border: '1px solid var(--ink-black)',
-          background: 'var(--ink-black)',
-          color: 'var(--bg-surface)',
-          padding: '8px 14px',
-          cursor: 'pointer',
-          fontFamily: 'var(--font-mono), monospace',
-          fontSize: 10,
-          fontWeight: 800,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-        }}
-      >
-        Done
-      </button>
+      {/* Address first with its copy button; the QR sits beside it on
+          desktop and behind "Show QR code" after it on phones. */}
+      <DepositAddressField
+        label="Base deposit address"
+        address={address}
+        qrLabel="Deposit address QR code"
+        qrSize={148}
+        copyLabel="Copy Base address"
+      />
     </AgentWalletModalFrame>
   );
 }
@@ -294,12 +244,38 @@ export function WithdrawalDestinationModal({
     }
   }, [card.instance.id, destination, onClose, onSaved]);
 
+  // A backdrop tap must not throw away an address the user has typed.
+  const destinationEdited = destination.trim() !== (card.wallet?.withdrawalDestinationEvm ?? '').trim();
+
   return (
-    <AgentWalletModalFrame onClose={onClose}>
-      <h3 className="serif" style={{ fontSize: '1.35rem', fontWeight: 400, margin: 0 }}>
-        Set primary recipient.
-      </h3>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-muted)' }}>
+    <AgentWalletModalFrame
+      title="Set primary recipient."
+      onClose={onClose}
+      dismissOnBackdrop={!destinationEdited}
+      closeDisabled={saving}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className={`${dlg.button} ${dlg.secondary}`}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !isEvmAddressInput(destination)}
+            aria-busy={saving || undefined}
+            className={`${dlg.button} ${dlg.primary}`}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
         This address appears first in recent recipients and is prefilled for Base withdrawals. You can still choose a different recipient at withdrawal time. {AGENT_WITHDRAWAL_GAS_NOTICE}
       </p>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -327,47 +303,11 @@ export function WithdrawalDestinationModal({
           Enter a valid 0x-prefixed 40-character EVM address.
         </span>
       )}
-      {error && <span style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>{error}</span>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            border: '1px solid var(--etched-border)',
-            background: 'transparent',
-            color: 'var(--ink-black)',
-            padding: '8px 14px',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-mono), monospace',
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-          }}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving || !isEvmAddressInput(destination)}
-          style={{
-            border: '1px solid var(--ink-black)',
-            background: 'var(--ink-black)',
-            color: 'var(--bg-surface)',
-            padding: '8px 14px',
-            cursor: saving ? 'wait' : 'pointer',
-            opacity: saving || !isEvmAddressInput(destination) ? 0.65 : 1,
-            fontFamily: 'var(--font-mono), monospace',
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-          }}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+      {error && (
+        <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+          {error}
+        </span>
+      )}
     </AgentWalletModalFrame>
   );
 }
@@ -493,11 +433,16 @@ export function AgentWalletWithdrawModal({
 
   if (success) {
     return (
-      <AgentWalletModalFrame onClose={onClose}>
-        <h3 className="serif" style={{ fontSize: '1.35rem', fontWeight: 400, margin: 0 }}>
-          Withdraw submitted.
-        </h3>
-        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-muted)' }}>
+      <AgentWalletModalFrame
+        title="Withdraw submitted."
+        onClose={onClose}
+        footer={
+          <button type="button" onClick={onClose} className={`${dlg.button} ${dlg.primary}`}>
+            Done
+          </button>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
           {success.amountDisplay ?? 'Your'} {success.asset} withdrawal was submitted to{' '}
           <code className="mono" style={{ fontSize: 12, color: 'var(--ink-black)', wordBreak: 'break-all' }}>
             {success.recipientAddress ?? normalizedRecipient}
@@ -515,35 +460,46 @@ export function AgentWalletWithdrawModal({
             View transaction →
           </a>
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            alignSelf: 'flex-end',
-            border: '1px solid var(--ink-black)',
-            background: 'var(--ink-black)',
-            color: 'var(--bg-surface)',
-            padding: '8px 14px',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-mono), monospace',
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-          }}
-        >
-          Done
-        </button>
       </AgentWalletModalFrame>
     );
   }
 
   return (
-    <AgentWalletModalFrame onClose={onClose}>
-      <h3 className="serif" style={{ fontSize: '1.35rem', fontWeight: 400, margin: 0 }}>
-        Withdraw on Base.
-      </h3>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-muted)' }}>
+    <AgentWalletModalFrame
+      title="Withdraw on Base."
+      onClose={onClose}
+      // The amount is always prefilled, so a stray backdrop tap would throw
+      // the form away; only Cancel, Close and Escape dismiss it.
+      dismissOnBackdrop={false}
+      closeDisabled={submitting}
+      footer={
+        <>
+          {error && (
+            <span role="alert" style={{ flex: '1 1 100%', fontSize: 12, lineHeight: 1.5, color: 'var(--gold-leaf)' }}>
+              {error}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className={`${dlg.button} ${dlg.secondary}`}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleWithdraw}
+            disabled={submitting || !canSubmit}
+            aria-busy={submitting || undefined}
+            className={`${dlg.button} ${dlg.primary}`}
+          >
+            {submitting ? 'Withdrawing…' : 'Yes, withdraw'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
         Base network only for now. Choose the token, amount, and recipient address for {card.instance.name}&apos;s agent wallet; the server re-reads the live Base balance before submitting.
       </p>
       <div
@@ -695,48 +651,6 @@ export function AgentWalletWithdrawModal({
           {AGENT_WITHDRAWAL_GAS_NOTICE} This wallet is Base-only right now; do not send to another network.
         </span>
       </div>
-      {error && <span style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>{error}</span>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={submitting}
-          style={{
-            border: '1px solid var(--etched-border)',
-            background: 'transparent',
-            color: 'var(--ink-black)',
-            padding: '8px 14px',
-            cursor: submitting ? 'wait' : 'pointer',
-            fontFamily: 'var(--font-mono), monospace',
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-          }}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleWithdraw}
-          disabled={submitting || !canSubmit}
-          style={{
-            border: '1px solid var(--ink-black)',
-            background: 'var(--ink-black)',
-            color: 'var(--bg-surface)',
-            padding: '8px 14px',
-            cursor: submitting ? 'wait' : canSubmit ? 'pointer' : 'not-allowed',
-            opacity: submitting || !canSubmit ? 0.65 : 1,
-            fontFamily: 'var(--font-mono), monospace',
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-          }}
-        >
-          {submitting ? 'Withdrawing…' : 'Yes, withdraw'}
-        </button>
-      </div>
     </AgentWalletModalFrame>
   );
 }
@@ -748,11 +662,16 @@ export function AgentWalletManagementModal({
   onClose: () => void;
 }) {
   return (
-    <AgentWalletModalFrame onClose={onClose}>
-      <h3 className="serif" style={{ fontSize: '1.35rem', fontWeight: 400, margin: 0 }}>
-        How this wallet is managed.
-      </h3>
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-muted)' }}>
+    <AgentWalletModalFrame
+      title="How this wallet is managed."
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose} className={`${dlg.button} ${dlg.primary}`}>
+          Done
+        </button>
+      }
+    >
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
         {card.instance.name}&apos;s wallet is created through Bankr for this one agent. Bankr custodies the private keys; Hivra stores only this agent wallet&apos;s API key and sends it to the agent runtime.
       </p>
       <div
@@ -787,25 +706,6 @@ export function AgentWalletManagementModal({
           This V1 wallet is Base-only. Multi-chain deposits are not supported yet.
         </span>
       </div>
-      <button
-        type="button"
-        onClick={onClose}
-        style={{
-          alignSelf: 'flex-end',
-          border: '1px solid var(--ink-black)',
-          background: 'var(--ink-black)',
-          color: 'var(--bg-surface)',
-          padding: '8px 14px',
-          cursor: 'pointer',
-          fontFamily: 'var(--font-mono), monospace',
-          fontSize: 10,
-          fontWeight: 800,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-        }}
-      >
-        Done
-      </button>
     </AgentWalletModalFrame>
   );
 }
@@ -842,6 +742,7 @@ export function AgentWalletCard({
   // every agent that has a wallet.
   const payoutsSupported = true;
   const canWithdraw = Boolean(address && agentWalletWithdrawableBalances(card).length > 0);
+  const withdrawReasonId = useId();
   const headlineBalances = [
     ethBalance ? { key: 'ETH', label: 'Base ETH', balance: ethBalance } : null,
     hermesOsBalance ? { key: 'HERMESOS', label: 'Base HERMESOS', balance: hermesOsBalance } : null,
@@ -929,20 +830,53 @@ export function AgentWalletCard({
             translate="no"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
               gap: 12,
             }}
           >
-            {headlineBalances.map((entry) => (
-              <div key={entry.key} style={{ minWidth: 0 }}>
-                <span className="serif" style={{ display: 'block', fontSize: '2rem', lineHeight: 1.05, fontWeight: 400, color: 'var(--ink-black)' }}>
-                  {formatWalletAmountDisplay(entry.balance.balanceDisplay)}
-                </span>
-                <span className="mono" style={{ display: 'block', marginTop: 4, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)', fontWeight: 800 }}>
-                  {entry.label}
-                </span>
-              </div>
-            ))}
+            {headlineBalances.map((entry) => {
+              // 18-decimal token balances are one unbreakable digit run, so
+              // the headline shows at most 6 fraction digits (cut, never
+              // rounded up); the exact value stays in the title and on copy.
+              const exact = formatWalletAmountDisplay(entry.balance.balanceDisplay);
+              const shortened = isWalletAmountShortened(entry.balance.balanceDisplay);
+              const compact = formatWalletAmountCompact(entry.balance.balanceDisplay);
+              return (
+                // A long balance takes the whole row instead of wrapping
+                // mid-number in a half-width cell.
+                <div key={entry.key} style={{ minWidth: 0, gridColumn: compact.length > 11 ? '1 / -1' : undefined }}>
+                  <span
+                    className="serif"
+                    title={shortened ? exact : undefined}
+                    data-testid={`agent-wallet-headline-${entry.key}`}
+                    style={{
+                      display: 'block',
+                      fontSize: 'clamp(1.4rem, 7vw, 2rem)',
+                      lineHeight: 1.05,
+                      fontWeight: 400,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: 'var(--ink-black)',
+                      overflowWrap: 'anywhere',
+                    }}
+                  >
+                    {compact}
+                  </span>
+                  <span className="mono" style={{ display: 'block', marginTop: 4, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)', fontWeight: 800 }}>
+                    {entry.label}
+                  </span>
+                  {shortened && (
+                    <div className={touchStyles.copyRow} style={{ marginTop: 8 }}>
+                      <CopyButton
+                        value={entry.balance.balanceDisplay.replace(/,/g, '')}
+                        label="Copy exact"
+                        ariaLabel={`Copy exact ${entry.label} balance`}
+                        title={exact}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div>
@@ -959,6 +893,7 @@ export function AgentWalletCard({
             <button
               type="button"
               onClick={onRefresh}
+              className={touchStyles.touchTarget}
               style={{
                 border: 0,
                 background: 'transparent',
@@ -986,7 +921,7 @@ export function AgentWalletCard({
             style={{
               marginTop: 8,
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 120px), 1fr))',
               gap: 8,
             }}
           >
@@ -1000,13 +935,18 @@ export function AgentWalletCard({
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 3,
+                  minWidth: 0,
                 }}
               >
                 <span className="mono" style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800 }}>
                   Base {balance.tokenSymbol}
                 </span>
-                <span className="mono" style={{ fontSize: 12, color: 'var(--ink-black)' }}>
-                  {formatWalletAmountDisplay(balance.balanceDisplay)}
+                <span
+                  className="mono"
+                  title={isWalletAmountShortened(balance.balanceDisplay) ? formatWalletAmountDisplay(balance.balanceDisplay) : undefined}
+                  style={{ fontSize: 12, color: 'var(--ink-black)', overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {formatWalletAmountCompact(balance.balanceDisplay)}
                 </span>
               </div>
             ))}
@@ -1052,6 +992,7 @@ export function AgentWalletCard({
           type="button"
           onClick={() => onSetDestination(card)}
           disabled={!address}
+          className={touchStyles.touchTarget}
           style={{
             border: '1px solid var(--etched-border)',
             background: 'transparent',
@@ -1076,6 +1017,7 @@ export function AgentWalletCard({
           <button
             type="button"
             onClick={() => onDeposit(card)}
+            className={touchStyles.touchTarget}
             style={{
               border: '1px solid var(--ink-black)',
               background: 'var(--ink-black)',
@@ -1096,6 +1038,7 @@ export function AgentWalletCard({
             type="button"
             onClick={() => onCreateWallet(card)}
             disabled={creatingWallet}
+            className={touchStyles.touchTarget}
             style={{
               border: '1px solid var(--ink-black)',
               background: 'var(--ink-black)',
@@ -1118,11 +1061,8 @@ export function AgentWalletCard({
             type="button"
             onClick={() => onWithdraw(card)}
             disabled={!canWithdraw}
-            title={
-              !canWithdraw
-                ? 'No Base token balance to withdraw'
-                : undefined
-            }
+            aria-describedby={!canWithdraw ? withdrawReasonId : undefined}
+            className={touchStyles.touchTarget}
             style={{
               border: '1px solid var(--etched-border)',
               background: 'transparent',
@@ -1147,6 +1087,7 @@ export function AgentWalletCard({
         <button
           type="button"
           onClick={() => onManage(card)}
+          className={touchStyles.touchTarget}
           style={{
             border: '1px solid var(--etched-border)',
             background: 'transparent',
@@ -1166,6 +1107,16 @@ export function AgentWalletCard({
           How management works
           <Info size={12} />
         </button>
+        {address && payoutsSupported && !canWithdraw && (
+          // The reason Withdraw is disabled, as text (a title tooltip never
+          // shows on touch screens).
+          <span
+            id={withdrawReasonId}
+            style={{ flexBasis: '100%', fontSize: 11, lineHeight: 1.45, color: 'var(--text-secondary)' }}
+          >
+            No Base token balance to withdraw
+          </span>
+        )}
       </div>
 
     </article>
@@ -1274,7 +1225,7 @@ export function AgentWalletsSection({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
             gap: '1rem',
           }}
         >

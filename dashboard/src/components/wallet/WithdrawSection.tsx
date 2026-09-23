@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from 'react';
 import { ArrowUpFromLine, Loader2, ShieldCheck, X, Zap } from 'lucide-react';
+import { BillingDialog, billingDialogStyles as dlg } from '@/components/billing/BillingDialog';
+import { CopyButton, touchStyles } from '@/components/billing/TransferDetails';
 import { shorten } from '@/lib/wallet/format';
 
 /**
@@ -84,9 +86,20 @@ export function WithdrawDestinationCard({
         {loading ? (
           <span style={{ fontSize: 12, opacity: 0.6 }}>Loading…</span>
         ) : address ? (
-          <code className="mono" style={{ fontSize: 13, wordBreak: 'break-all', flex: 1, minWidth: 0 }} title={address}>
-            <span style={{ display: 'inline' }}>{shorten(address)}</span>
-          </code>
+          // The full destination, as text: the whole balance goes here, and
+          // a title tooltip never shows on touch screens.
+          <>
+            <code
+              className="mono notranslate"
+              translate="no"
+              style={{ fontSize: 12, lineHeight: 1.6, wordBreak: 'break-all', flex: '1 1 100%', minWidth: 0 }}
+            >
+              {address}
+            </code>
+            <div className={touchStyles.copyRow}>
+              <CopyButton value={address} label="Copy address" ariaLabel="Copy withdraw destination" />
+            </div>
+          </>
         ) : (
           <span style={{ fontSize: 13, color: 'var(--text-secondary)', flex: 1 }}>
             Not set yet. You must set a withdraw destination before you can withdraw.
@@ -95,6 +108,7 @@ export function WithdrawDestinationCard({
         <button
           type="button"
           onClick={onEdit}
+          className={touchStyles.touchTarget}
           style={{
             padding: '6px 10px',
             border: '1px solid var(--etched-border)',
@@ -235,6 +249,9 @@ export function WithdrawAddressForm({
         if (submitting) return;
         onCancel();
       }}
+      // A backdrop tap must not throw away an address the user typed.
+      dismissOnBackdrop={address.trim() === (initialAddress ?? '').trim()}
+      closeDisabled={submitting}
     />
   );
 }
@@ -345,6 +362,7 @@ export function WithdrawSection({
                 setConfirmOpen(true);
               }}
               disabled={buttonDisabled}
+              className={touchStyles.touchTarget}
               style={{
                 padding: '8px 14px',
                 border: '1px solid var(--etched-border)',
@@ -364,6 +382,7 @@ export function WithdrawSection({
             <button
               type="button"
               onClick={onRequestSetAddress}
+              className={touchStyles.touchTarget}
               style={{
                 padding: '8px 14px',
                 border: '1px solid var(--etched-border)',
@@ -452,11 +471,20 @@ export function WithdrawSection({
             setConfirmOpen(false);
             setError(null);
           }}
+          closeDisabled={submitting}
         />
       )}
     </>
   );
 }
+/**
+ * Confirmation dialog for the legacy $HERMESOS withdraw lane (set withdraw
+ * address, withdraw all). Built on the billing dialog so it renders through
+ * SafePortal above the dashboard header and phone bottom bar, fits the visible
+ * viewport with a scrolling body, and keeps Cancel / Confirm pinned in a 44px
+ * footer that stacks full-width on narrow screens. Props are unchanged, plus
+ * `dismissOnBackdrop` (keep typed input) and `closeDisabled` (in flight).
+ */
 export function ConfirmDialog({
   title,
   body,
@@ -466,6 +494,8 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   children,
+  dismissOnBackdrop = true,
+  closeDisabled = false,
 }: {
   title: string;
   body: React.ReactNode;
@@ -475,57 +505,26 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
   children?: React.ReactNode;
+  /** A backdrop click cancels (default true). Pass false while a form holds typed input. */
+  dismissOnBackdrop?: boolean;
+  /** Locks Close, Escape, the backdrop and Cancel while a request is in flight. */
+  closeDisabled?: boolean;
 }) {
+  const destructive = confirmTone === 'destructive';
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0, 0, 0, 0.55)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 60,
-        padding: '1rem',
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-    >
-      <div
-        style={{
-          background: 'var(--bg-elevated, var(--bg-surface))',
-          border: '1px solid var(--etched-border)',
-          padding: '1.5rem',
-          maxWidth: 460,
-          width: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
-        }}
-      >
-        <h3 className="serif" style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>{title}</h3>
-        <div>{body}</div>
-        {children}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+    <BillingDialog
+      title={title}
+      size="sm"
+      onClose={onCancel}
+      dismissOnBackdrop={dismissOnBackdrop}
+      closeDisabled={closeDisabled}
+      footer={
+        <>
           <button
             type="button"
             onClick={onCancel}
-            style={{
-              padding: '8px 14px',
-              border: '1px solid var(--etched-border)',
-              background: 'transparent',
-              cursor: 'pointer',
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-            }}
+            disabled={closeDisabled}
+            className={`${dlg.button} ${dlg.secondary}`}
           >
             Cancel
           </button>
@@ -533,25 +532,17 @@ export function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={confirmDisabled}
-            style={{
-              padding: '8px 14px',
-              border: confirmTone === 'destructive' ? '1px solid #b3261e' : '1px solid var(--ink-black)',
-              background: confirmTone === 'destructive' ? '#b3261e' : 'var(--ink-black)',
-              color: confirmTone === 'destructive' ? '#fff' : 'var(--bg-surface)',
-              cursor: confirmDisabled ? 'wait' : 'pointer',
-              opacity: confirmDisabled ? 0.7 : 1,
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10,
-              fontWeight: 800,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-            }}
+            className={`${dlg.button} ${destructive ? dlg.destructive : dlg.primary}`}
+            data-tone={destructive ? 'destructive' : undefined}
           >
             {confirmLabel}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {body}
+      {children}
+    </BillingDialog>
   );
 }
 export function UnlockPromptCard({
@@ -605,13 +596,15 @@ export function UnlockPromptCard({
       <button
         type="button"
         onClick={onDismiss}
-        aria-label="Dismiss"
+        aria-label="Close"
         style={{
-          position: 'absolute', top: 10, right: 10, background: 'transparent',
-          border: 'none', cursor: 'pointer', opacity: 0.5, padding: 4, lineHeight: 0, zIndex: 1,
+          position: 'absolute', top: 0, right: 0, width: 44, height: 44,
+          display: 'grid', placeItems: 'center', padding: 0,
+          background: 'transparent', border: 'none', cursor: 'pointer',
+          color: 'var(--text-secondary)', lineHeight: 0, zIndex: 1,
         }}
       >
-        <X size={14} />
+        <X size={16} aria-hidden="true" />
       </button>
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', position: 'relative' }}>
         <div
@@ -649,6 +642,7 @@ export function UnlockPromptCard({
             type="button"
             onClick={onUnlock}
             disabled={unlocking}
+            className={touchStyles.touchTarget}
             style={{
               position: 'relative', overflow: 'hidden',
               display: 'inline-flex', alignItems: 'center', gap: 8,

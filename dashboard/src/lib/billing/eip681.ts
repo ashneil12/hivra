@@ -1,0 +1,110 @@
+/**
+ * EIP-681 "Open in wallet" links for ERC-20 transfers on Base.
+ *
+ * A phone that shows a deposit QR code cannot scan itself, so crypto payment
+ * surfaces also offer an `ethereum:` link that opens the user's wallet app
+ * with the token, recipient and amount already filled in:
+ *
+ *   ethereum:<token>@8453/transfer?address=<recipient>&uint256=<raw amount>
+ *
+ * The link is money-moving, so it is built only when every part is known
+ * exactly. Anything missing, malformed or ambiguous returns null and the
+ * caller shows no link (the copy buttons and QR code still work):
+ *
+ *   - the chain is Base (8453), the only chain our deposit watchers read;
+ *   - token and recipient are 20-byte hex addresses (checksummed or
+ *     lowercase), never the zero address;
+ *   - the amount is the exact raw integer in the token's smallest unit, as a
+ *     base-10 string or bigint. Numbers are refused outright: a JS number
+ *     cannot hold an 18-decimal token amount without rounding, and a
+ *     rounded amount would not match the quote.
+ *
+ * Client-safe: no server imports.
+ */
+import { tokenVerificationContent } from "@/lib/token-verification-content";
+
+export const BASE_CHAIN_ID = 8453;
+
+/**
+ * The $HermesOS ERC-20 on Base. Every $HermesOS quote (yearly plan payments
+ * and managed Venice top-ups) settles only in this token on this chain; the
+ * server reads the same contract address from the same content module.
+ */
+export const HERMESOS_BASE_TOKEN = {
+  chainId: BASE_CHAIN_ID,
+  address: tokenVerificationContent.tokenDetails.contractAddress,
+  symbol: "Hivra",
+  decimals: 18,
+} as const;
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const ZERO_ADDRESS = /^0x0{40}$/;
+const RAW_INTEGER = /^[0-9]+$/;
+const UINT256_LIMIT = 1n << 256n;
+
+export interface Erc20TransferRequest {
+  /** ERC-20 contract address. */
+  tokenAddress: string | null | undefined;
+  /** EIP-155 chain id. Only Base (8453) produces a link. */
+  chainId: number | null | undefined;
+  /** Address that receives the tokens (the user's deposit address). */
+  recipient: string | null | undefined;
+  /** Exact amount in the token's smallest unit, as a base-10 integer string or bigint. */
+  amountRaw: string | bigint | null | undefined;
+}
+
+function knownAddress(value: unknown): string | null {
+  if (typeof value !== "string" || !EVM_ADDRESS.test(value) || ZERO_ADDRESS.test(value)) {
+    return null;
+  }
+  return value;
+}
+
+/** The canonical base-10 form of a positive uint256, or null. */
+export function exactRawAmount(value: unknown): string | null {
+  let amount: bigint;
+  if (typeof value === "bigint") {
+    amount = value;
+  } else if (typeof value === "string" && RAW_INTEGER.test(value)) {
+    amount = BigInt(value);
+  } else {
+    // Numbers (floats or not), decimals, exponents, signs, hex and blanks.
+    return null;
+  }
+  if (amount <= 0n || amount >= UINT256_LIMIT) return null;
+  return amount.toString(10);
+}
+
+/**
+ * `ethereum:` URI for an ERC-20 transfer on Base, or null unless every input
+ * is known exactly.
+ */
+export function buildBaseErc20TransferUri(request: Erc20TransferRequest): string | null {
+  if (request.chainId !== BASE_CHAIN_ID) return null;
+  const token = knownAddress(request.tokenAddress);
+  const recipient = knownAddress(request.recipient);
+  const amount = exactRawAmount(request.amountRaw);
+  if (!token || !recipient || !amount) return null;
+  return `ethereum:${token}@${BASE_CHAIN_ID}/transfer?address=${recipient}&uint256=${amount}`;
+}
+
+/**
+ * Link for paying a $HermesOS quote. The token is only treated as known when
+ * the quote says it is denominated in $HermesOS with its real decimals, so a
+ * quote in any other asset never gets a link pointing at the wrong contract.
+ */
+export function hermesosTransferUri(quote: {
+  tokenSymbol: string | null | undefined;
+  tokenDecimals: number | null | undefined;
+  depositAddress: string | null | undefined;
+  amountRaw: string | bigint | null | undefined;
+}): string | null {
+  if (quote.tokenSymbol !== HERMESOS_BASE_TOKEN.symbol) return null;
+  if (quote.tokenDecimals !== HERMESOS_BASE_TOKEN.decimals) return null;
+  return buildBaseErc20TransferUri({
+    tokenAddress: HERMESOS_BASE_TOKEN.address,
+    chainId: HERMESOS_BASE_TOKEN.chainId,
+    recipient: quote.depositAddress,
+    amountRaw: quote.amountRaw,
+  });
+}

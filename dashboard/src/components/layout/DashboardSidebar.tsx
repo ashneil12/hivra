@@ -138,6 +138,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     const labels: Partial<Record<DashboardNavigationItem['id'], string>> = {
       home: dashboard.nav.home, chat: dashboard.nav.chat, computers: dashboard.nav.computers, agents: dashboard.nav.agents,
       infrastructure: dashboard.nav.infrastructure, settings: dashboard.nav.settings, launch: dashboard.nav.launch,
+      billing: dashboard.nav.billing,
     };
     return labels[item.id] ?? item.label;
   };

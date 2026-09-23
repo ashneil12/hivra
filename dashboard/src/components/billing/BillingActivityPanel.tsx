@@ -5,6 +5,7 @@ import { motion, type Variants } from "framer-motion";
 import { ArrowRight, Bot, ChevronDown, Coins, Cpu, Loader2, ReceiptText } from "lucide-react";
 
 import { useLocale } from "@/components/i18n/LocaleProvider";
+import styles from "./BillingPanels.module.css";
 
 export interface BillingActivityData {
   creditLedgerEntries: Array<{
@@ -132,22 +133,24 @@ function ActivitySection({
   const hasRows = Children.count(children) > 0;
 
   return (
-    <div style={{ border: "1px solid var(--etched-border)", padding: "14px 16px", minHeight: 160 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+    <div className={styles.activitySection}>
+      <div className={styles.activitySectionHead}>
         {icon}
-        <span className="mono" style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
-          {title}
-        </span>
+        <span>{title}</span>
       </div>
       {hasRows ? (
-        <div style={{ display: "grid", gap: 10 }}>
+        <div className={styles.activityRows}>
           {children}
         </div>
       ) : (
-        <p style={{ fontSize: 12, opacity: 0.45, margin: 0 }}>{empty}</p>
+        <p className={styles.activityEmpty}>{empty}</p>
       )}
     </div>
   );
+}
+
+function toneClass(tone: "positive" | "negative" | "neutral") {
+  return tone === "positive" ? styles.tonePositive : tone === "negative" ? styles.toneNegative : "";
 }
 
 function ActivityRow({
@@ -161,19 +164,17 @@ function ActivityRow({
   amount?: string;
   tone?: "positive" | "negative" | "neutral";
 }) {
-  const color = tone === "positive" ? "#16a34a" : tone === "negative" ? "#dc2626" : "var(--ink-black)";
-
   return (
-    <div style={{ display: "grid", gap: 4 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-        <span style={{ fontSize: 12, fontWeight: 700 }}>{primary}</span>
+    <div className={styles.activityRow}>
+      <div className={styles.activityRowTop}>
+        <span className={styles.activityPrimary}>{primary}</span>
         {amount && (
-          <span className="mono" style={{ fontSize: 10, fontWeight: 700, color, whiteSpace: "nowrap" }}>
+          <span className={[styles.activityAmount, toneClass(tone)].filter(Boolean).join(" ")}>
             {amount}
           </span>
         )}
       </div>
-      <span className="mono" style={{ fontSize: 9, opacity: 0.45 }}>
+      <span className={styles.activitySecondary}>
         {secondary}
       </span>
     </div>
@@ -194,59 +195,32 @@ function ExpandableActivityRow({
   details: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const color = tone === "positive" ? "#16a34a" : tone === "negative" ? "#dc2626" : "var(--ink-black)";
 
   return (
-    <div style={{ borderBottom: "1px dotted var(--etched-border)", paddingBottom: 8 }}>
+    <div className={styles.expandable}>
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
-        style={{
-          appearance: "none",
-          background: "transparent",
-          border: "none",
-          padding: 0,
-          width: "100%",
-          textAlign: "left",
-          cursor: "pointer",
-          display: "grid",
-          gap: 4,
-          color: "inherit",
-          font: "inherit",
-        }}
+        className={styles.expandButton}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700 }}>
-            <ChevronDown
-              size={11}
-              style={{ transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 120ms" }}
-            />
+        <span className={styles.activityRowTop}>
+          <span className={styles.activityPrimary}>
+            <ChevronDown size={12} className={styles.chevron} aria-hidden="true" />
             {primary}
           </span>
           {amount && (
-            <span className="mono" style={{ fontSize: 10, fontWeight: 700, color, whiteSpace: "nowrap" }}>
+            <span className={[styles.activityAmount, toneClass(tone)].filter(Boolean).join(" ")}>
               {amount}
             </span>
           )}
-        </div>
-        <span className="mono" style={{ fontSize: 9, opacity: 0.45, paddingLeft: 17 }}>
+        </span>
+        <span className={styles.activitySecondary}>
           {secondary}
         </span>
       </button>
       {expanded && (
-        <div
-          style={{
-            marginTop: 10,
-            marginLeft: 17,
-            padding: "10px 12px",
-            border: "1px dotted var(--etched-border)",
-            background: "rgba(0,0,0,0.02)",
-            fontSize: 11,
-            display: "grid",
-            gap: 6,
-          }}
-        >
+        <div className={styles.details}>
           {details}
         </div>
       )}
@@ -256,14 +230,11 @@ function ExpandableActivityRow({
 
 function DetailRow({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-      <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", opacity: 0.55 }}>
+    <div className={styles.detailRow}>
+      <span className={styles.detailLabel}>
         {label}
       </span>
-      <span
-        className={mono ? "mono" : undefined}
-        style={{ fontSize: 11, fontWeight: 600, textAlign: "right", wordBreak: "break-all" }}
-      >
+      <span className={[styles.detailValue, mono ? "mono" : ""].filter(Boolean).join(" ")}>
         {value}
       </span>
     </div>
@@ -317,32 +288,25 @@ export function BillingActivityPanel({
     Math.max(0, allManagedVeniceFinancialEvents.length - managedVeniceFinancialEvents.length);
 
   return (
-    <motion.div variants={variants} style={{
-      border: "1px solid var(--etched-border)", background: "var(--bg-surface)",
-      padding: "clamp(1.5rem, 4vw, 2rem)", marginBottom: "2rem",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1.5rem", flexWrap: "wrap", marginBottom: "1.25rem" }}>
+    <motion.section variants={variants} className={styles.panel} aria-labelledby="billing-activity-title">
+      <div className={styles.head} style={{ marginBottom: "1.1rem" }}>
         <div>
-          <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", opacity: 0.5, fontWeight: 700 }}>
-            {activityCopy.eyebrow}
-          </span>
-          <h3 className="serif" style={{ fontSize: "1.5rem", fontWeight: 700, marginTop: 4 }}>
-            {activityCopy.title}
-          </h3>
+          <p className={styles.eyebrow}>{activityCopy.eyebrow}</p>
+          <h3 className={styles.title} id="billing-activity-title">{activityCopy.title}</h3>
         </div>
         {loading && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
-            <span className="mono" style={{ fontSize: 10, opacity: 0.5, fontWeight: 700 }}>{activityCopy.loading}</span>
-          </div>
+          <span className={styles.loadingTag}>
+            <Loader2 size={13} className={styles.spin} aria-hidden="true" />
+            {activityCopy.loading}
+          </span>
         )}
       </div>
 
       {error ? (
-        <p style={{ fontSize: 12, color: "#dc2626", margin: 0 }}>{error}</p>
+        <p className={styles.errorText}>{error}</p>
       ) : (
-        <div style={{ display: "grid", gap: "0.75rem" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "0.75rem" }}>
+        <div>
+          <div className={styles.activityGrid}>
             <ActivitySection
               title={activityCopy.ledger}
               icon={<Coins size={14} />}
@@ -408,29 +372,20 @@ export function BillingActivityPanel({
             </ActivitySection>
           </div>
 
-          <div
-            id="managed-venice"
-            style={{
-              scrollMarginTop: 80,
-              border: "1px solid var(--etched-border)",
-              padding: "16px 18px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <Bot size={14} />
-              <span className="mono" style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
-                Managed Venice
+          <div className={styles.veniceBlock}>
+            <div className={styles.veniceHead}>
+              <span className={styles.activitySectionHead} style={{ marginBottom: 0 }}>
+                <Bot size={14} aria-hidden="true" />
+                <span>Managed Venice</span>
               </span>
-              <span className="mono" style={{ fontSize: 9, opacity: 0.45, fontWeight: 600 }}>
-                · click any row for the full breakdown
-              </span>
+              <span className={styles.hint}>Select any row for the full breakdown</span>
             </div>
             {allManagedVeniceUsageEvents.length === 0 && allManagedVeniceFinancialEvents.length === 0 ? (
-              <p style={{ fontSize: 12, opacity: 0.45, margin: 0 }}>
+              <p className={styles.activityEmpty}>
                 {loading ? "Loading managed Venice..." : "No managed Venice usage yet."}
               </p>
             ) : (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div className={styles.activityRows}>
                 {managedVeniceUsageEvents.map((event) => {
                   const undercharged = event.chargedMicroUsd < event.actualCostMicroUsd;
                   const settledTone: "positive" | "negative" | "neutral" = undercharged ? "neutral" : "negative";
@@ -507,24 +462,9 @@ export function BillingActivityPanel({
                   />
                 ))}
                 {managedVeniceOverflowCount > 0 && (
-                  <a
-                    href="/dashboard/billing/activity"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      marginTop: 8,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      color: "var(--gold-leaf)",
-                      textDecoration: "none",
-                      fontFamily: "var(--font-mono), monospace",
-                    }}
-                  >
+                  <a href="/dashboard/billing/activity" className={styles.moreLink}>
                     View all activity ({managedVeniceOverflowCount} more)
-                    <ArrowRight size={12} />
+                    <ArrowRight size={12} aria-hidden="true" />
                   </a>
                 )}
               </div>
@@ -532,6 +472,6 @@ export function BillingActivityPanel({
           </div>
         </div>
       )}
-    </motion.div>
+    </motion.section>
   );
 }
