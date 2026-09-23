@@ -59,10 +59,8 @@ describe("Static copy safety", () => {
 
   it("keeps refund and contact copy on the current policy: 7-day money-back and info@hivra.cloud", () => {
     // Card refunds are a 7-day money-back guarantee (owner decision 2026-09-24),
-    // and the public contact is info@hivra.cloud. SUPPORT_EMAIL is the one pending
-    // exception: billing tests owned by the token workstream still pin the old address.
+    // and the public contact is info@hivra.cloud.
     const srcRoot = path.join(__dirname, "..", "..");
-    const pendingContact = new Set([path.join("lib", "support-channels.ts")]);
     const staleRefund: string[] = [];
     const staleContact: string[] = [];
     const walk = (dir: string) => {
@@ -74,7 +72,7 @@ describe("Static copy safety", () => {
           const source = fs.readFileSync(full, "utf8");
           const relative = path.relative(srcRoot, full);
           if (/48[- ]?(?:hour|hr)s?\.? refund|refund[^"'`\n]{0,20}48[- ]?(?:hour|hr)/i.test(source)) staleRefund.push(relative);
-          if (source.includes("info@hermesos.cloud") && !pendingContact.has(relative)) staleContact.push(relative);
+          if (source.includes("info@hermesos.cloud")) staleContact.push(relative);
         }
       }
     };
