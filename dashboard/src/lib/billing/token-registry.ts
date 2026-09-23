@@ -42,6 +42,9 @@ export interface PlatformToken {
   minPriceLiquidityUsd: number;
 }
 
+/** Canonical Uniswap v4 pool id that prices $HermesOS. */
+export const HERMESOS_POOL_ID = "0x336ad40640593281d9c519fa0994986817fce079a0c493ea08f7ed9cac55ff19";
+
 /** The legacy $HermesOS contract on Base, as published on /token. */
 export const HERMESOS_PUBLISHED_ADDRESS = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 
@@ -72,7 +75,10 @@ export const HERMESOS_TOKEN: PlatformToken = Object.freeze({
   address: HERMESOS_PUBLISHED_ADDRESS.toLowerCase(),
   publishedAddress: HERMESOS_PUBLISHED_ADDRESS,
   decimals: 18,
-  poolId: null,
+  // The Uniswap v4 HermesOS/WETH pool on Base: the highest-liquidity pair,
+  // which the price feed already used. Naming it stops a satellite pool from
+  // ever pricing $HermesOS.
+  poolId: HERMESOS_POOL_ID,
   activatesAt: null,
   minPriceLiquidityUsd: HERMESOS_MIN_PRICE_LIQUIDITY_USD,
 });

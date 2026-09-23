@@ -19,6 +19,7 @@ import {
   type ManagedVeniceTopUpQuoteMicroUsd,
 } from "@/lib/venice/managed-credit-topup";
 import {
+  PlatformTokenPriceGateError,
   fetchHermesPriceCrossCheck,
   fetchPlatformTokenPriceUsd,
   isHermesPriceFresh,
@@ -1081,6 +1082,20 @@ async function resolveDepositToken(params: {
   return requirePlatformToken(tokenKey);
 }
 
+/** Live price for a deposit quote; a failed price gate disables deposits for now. */
+async function gatedDepositPrice(token: PlatformToken) {
+  try {
+    return await fetchPlatformTokenPriceUsd(token);
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) {
+      throw new ManagedVeniceTokenQuotePriceError(
+        `Managed Venice token deposits are temporarily disabled: ${error.message}`
+      );
+    }
+    throw error;
+  }
+}
+
 export async function createManagedVeniceTokenQuote(
   params: {
     userId: string;
@@ -1103,23 +1118,27 @@ export async function createManagedVeniceTokenQuote(
   const now = params.now ?? new Date();
   const token = await resolveDepositToken({ userId: params.userId, token: params.token, access: params.access, now });
 
-  const priceQuote = params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
+  const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   if (!isHermesPriceFresh(priceQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the Hivra price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token price is stale"
     );
   }
 
   const crossCheckQuote =
     params.crossCheckQuote === undefined
-      ? await fetchHermesPriceCrossCheck()
+      ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {
+          throw new ManagedVeniceTokenQuotePriceError(
+            `Managed Venice token deposits are temporarily disabled: ${error instanceof Error ? error.message : String(error)}`
+          );
+        })
       : params.crossCheckQuote;
   if (
     crossCheckQuote &&
     !isHermesPriceFresh(crossCheckQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the Hivra cross-check price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token cross-check price is stale"
     );
   }
   if (
@@ -1131,7 +1150,7 @@ export async function createManagedVeniceTokenQuote(
     )
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because Hivra price sources disagree"
+      "Managed Venice token deposits are temporarily disabled because token price sources disagree"
     );
   }
 
@@ -1194,7 +1213,7 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
   const now = params.now ?? new Date();
   const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now }));
   const token = await resolveDepositToken({ userId: params.userId, token: params.token, access, now });
-  const priceQuote = params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
+  const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   const client = requireDb(db);
   const subsidyState = await loadManagedVeniceTopUpSubsidyState(
     client,
