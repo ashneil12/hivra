@@ -599,9 +599,6 @@ export async function reconcileYearlyTokenQuote(params: {
       case "already_settled": {
         const subscriptionId = settlement.subscription_id ?? null;
         if (settlement.status !== "already_settled") await stampTokenConversion(db, quote.userId, now);
-        // Idempotent, so an already_settled pass also finishes the work a pass
-        // that died between the settlement and this call left undone.
-        await (params.applyYearlyPayment ?? applyYearlyPaymentToInstances)(quote.userId, settlement.status);
         if (ownership.isContested(candidate)) {
           // The pre-attribution managed-Venice flow put this transfer in one of
           // its reviews; make sure nobody credits it a second time there.
@@ -611,6 +608,10 @@ export async function reconcileYearlyTokenQuote(params: {
         for (const extra of confirmed) {
           if (extra !== candidate) await surfaceTransfer(db, quote, extra, "extra_transfer", subscriptionId);
         }
+        // Last, so a slow live resize can never keep the double-credit guards
+        // above from running. Idempotent: an already_settled pass also finishes
+        // work a pass that died before this call left undone.
+        await (params.applyYearlyPayment ?? applyYearlyPaymentToInstances)(quote.userId, settlement.status);
         return { ...settledResult, status: settlement.status };
       }
       case "transaction_already_claimed":

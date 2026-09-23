@@ -192,6 +192,23 @@ describe("instances follow a settled payment", () => {
     expect(applyYearlyPayment).toHaveBeenCalledWith("user_1", "activated");
   });
 
+  it("runs the hook only after the double-credit guards have surfaced extra transfers", async () => {
+    const world = createYearlyTokenWorld();
+    let itemsWhenHookRan: unknown[] = [];
+    const applyYearlyPayment = jest.fn<Promise<void>, Parameters<ApplyYearlyPayment>>(async () => {
+      itemsWhenHookRan = [...world.items()];
+    });
+    openQuote(world);
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -6 * MINUTE_MS });
+    world.pay({ tx: txHash(2), amountRaw: REQUIRED, offsetMs: -4 * MINUTE_MS });
+
+    await reconcile(world, "yq_1", { applyYearlyPayment });
+
+    expect(itemsWhenHookRan).toEqual([
+      expect.objectContaining({ reason: "extra_transfer", transaction_hash: txHash(2) }),
+    ]);
+  });
+
   it("does not call the hook for an under-payment that stays open", async () => {
     const world = createYearlyTokenWorld();
     const applyYearlyPayment = jest.fn<Promise<void>, Parameters<ApplyYearlyPayment>>().mockResolvedValue(undefined);
