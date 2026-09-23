@@ -31,7 +31,7 @@ export default function PricingSection() {
           <div><dt>vCPU</dt><dd>{plan.cpu}</dd></div>
           <div><dt>Storage</dt><dd>{plan.storage}</dd></div>
           <div><dt>Computers</dt><dd>{plan.computers}</dd></div>
-          <div><dt>Windows</dt><dd>{plan.windows ? "Yes" : "Not included"}</dd></div>
+          <div><dt>Windows</dt><dd>{plan.windows ? "Planned" : "Not included"}</dd></div>
           <div><dt>Support</dt><dd>{plan.support}</dd></div>
         </dl>
         <p className={styles.description}>{plan.body}</p>
