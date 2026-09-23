@@ -335,24 +335,48 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const [sessions, setSessions] = useState<Session[]>([emptySession()]);
  const [activeId, setActiveId] = useState<string>("");
  const [input, setInput] = useState("");
- const [busy, setBusy] = useState(false);
+ // Conversations run independently: each session owns its in-flight turn, so
+ // several chats can be working on the box at once. `busy` is the open one.
+ const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
+ const busy = busyIds.has(activeId);
+ const anyBusy = busyIds.size > 0;
+ const setSessionBusy = useCallback((sessionId: string, on: boolean) => {
+ setBusyIds((prev) => {
+ if (prev.has(sessionId) === on) return prev;
+ const next = new Set(prev);
+ if (on) next.add(sessionId); else next.delete(sessionId);
+ return next;
+ });
+ }, []);
  const [boxHistoryChecked, setBoxHistoryChecked] = useState(false);
  const [hasBoxHistory, setHasBoxHistory] = useState(false);
  const activeIdRef = useRef<string>("");
  const scrollRef = useRef<HTMLDivElement>(null);
  const autoWelcomeAttemptedRef = useRef(false);
- // Per-turn scratch state for the active agent's parser (e.g. codex's id→text
- // segment map). Reset at the start of each send().
- const turnStateRef = useRef<Record<string, unknown>>({});
- // Aborts the in-flight turn. The box kills the CLI when the client disconnects,
- // so aborting the fetch genuinely stops the agent (not just the UI).
-  const abortRef = useRef<AbortController | null>(null);
+ // Per-turn scratch state for each session's parser (e.g. codex's id→text
+ // segment map). Reset at the start of each send() for that session.
+ const turnStateRef = useRef(new Map<string, Record<string, unknown>>());
+ // Aborts a session's in-flight turn. The box kills the CLI when the client
+ // disconnects, so aborting the fetch genuinely stops that agent run.
+ const abortRef = useRef(new Map<string, AbortController>());
  // Every async turn captures the current generation. Changing the backing box
  // or stable storage identity invalidates that generation before aborting so a
  // late fetch result or reader callback cannot target the replacement chat.
  const requestGenerationRef = useRef(0);
- // Last user message of the active turn, so a failed turn can offer a one-tap retry.
- const [lastFailed, setLastFailed] = useState<string | null>(null);
+ // Last user message of each session's failed turn, for a one-tap retry.
+ const [failedBySession, setFailedBySession] = useState<Record<string, string>>({});
+ const lastFailed = failedBySession[activeId] ?? null;
+ const setLastFailed = useCallback((sessionId: string, text: string | null) => {
+ setFailedBySession((prev) => {
+ if (text === null) {
+ if (!(sessionId in prev)) return prev;
+ const next = { ...prev };
+ delete next[sessionId];
+ return next;
+ }
+ return { ...prev, [sessionId]: text };
+ });
+ }, []);
  // Thumbs up/down selection per assistant message, keyed by `${sessionId}:${index}`
  // so a rating sticks to its message and survives session switches. UI-only state
  // (the event itself goes to PostHog) — not persisted across reloads.
@@ -378,21 +402,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }, []);
 
  useEffect(() => {
+ const abortAll = () => {
  requestGenerationRef.current += 1;
- const controller = abortRef.current;
- abortRef.current = null;
- controller?.abort();
- turnStateRef.current = {};
- autoWelcomeAttemptedRef.current = false;
- setBusy(false);
- setLastFailed(null);
-
- return () => {
- requestGenerationRef.current += 1;
- const activeController = abortRef.current;
- abortRef.current = null;
- activeController?.abort();
+ const controllers = [...abortRef.current.values()];
+ abortRef.current.clear();
+ for (const controller of controllers) controller.abort();
+ turnStateRef.current.clear();
  };
+ abortAll();
+ autoWelcomeAttemptedRef.current = false;
+ setBusyIds(new Set());
+ setFailedBySession({});
+
+ return abortAll;
  }, [boxUrl, skey]);
 
  const uploadAttachment = useCallback(async (file: File) => {
@@ -479,10 +501,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (activeId) saveActiveId(skey, activeId); // persist the open chat per box
  }, [activeId, skey]);
 
- // Persist when idle (avoid thrashing localStorage on every token).
+ // Persist on a short debounce (avoid thrashing localStorage on every token).
+ // With parallel chats some session is often streaming, so waiting for idle
+ // could postpone saving indefinitely; loadSessions clears stale streaming.
  useEffect(() => {
- if (!busy) saveSessions(skey, sessions);
- }, [sessions, busy, skey]);
+ const timer = window.setTimeout(() => saveSessions(skey, sessions), anyBusy ? 1000 : 0);
+ return () => window.clearTimeout(timer);
+ }, [sessions, anyBusy, skey]);
 
  const active = useMemo(() => sessions.find((s) => s.id === activeId) || sessions[0], [sessions, activeId]);
 
@@ -535,13 +560,16 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  };
  }, [activeId, scrollDown]);
 
- const updateActive = useCallback((fn: (s: Session) => Session) => {
- setSessions((prev) => prev.map((s) => (s.id === activeIdRef.current ? fn(s) : s)));
+ // Stream updates target the session that started the turn, never whichever
+ // chat happens to be open when the event arrives.
+ const updateSession = useCallback((sessionId: string, fn: (s: Session) => Session) => {
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? fn(s) : s)));
  }, []);
 
  useEffect(() => {
- if (!boxHistoryChecked || hasBoxHistory || busy || autoWelcomeAttemptedRef.current) return;
+ if (!boxHistoryChecked || hasBoxHistory || anyBusy || autoWelcomeAttemptedRef.current) return;
  if (!active || active.messages.length > 0) return;
+ const welcomeSessionId = active.id;
  const flagKey = `hivra:first-welcome:${skey}`;
  try {
  if (window.localStorage.getItem(flagKey) === "1") return;
@@ -552,9 +580,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  autoWelcomeAttemptedRef.current = true;
  const welcomeGeneration = requestGenerationRef.current;
  const isCurrentWelcome = () => requestGenerationRef.current === welcomeGeneration;
- setBusy(true);
+ setSessionBusy(welcomeSessionId, true);
  const hasFirstTask = Boolean((firstTask || "").trim());
- updateActive((s) => ({
+ updateSession(welcomeSessionId, (s) => ({
  ...s,
  title: s.title === "New chat" ? "Welcome" : s.title,
  messages: [{ role: "assistant", text: "", tools: [], streaming: true }],
@@ -588,7 +616,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  })
  .then((text) => {
  if (!isCurrentWelcome()) return;
- updateActive((s) => ({
+ updateSession(welcomeSessionId, (s) => ({
  ...s,
  title: s.title === "New chat" ? "Welcome" : s.title,
  messages: [{ role: "assistant", text, tools: [], streaming: false }],
@@ -607,30 +635,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  agentKind,
  agentName,
  }, err);
- updateActive((s) => ({ ...s, messages: [] }));
+ updateSession(welcomeSessionId, (s) => ({ ...s, messages: [] }));
  })
  .finally(() => {
  if (!isCurrentWelcome()) return;
- setBusy(false);
+ setSessionBusy(welcomeSessionId, false);
  scrollDown();
  });
- }, [agentKind, agentName, active, boxHistoryChecked, boxUrl, busy, context, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateActive]);
+ }, [agentKind, agentName, active, anyBusy, boxHistoryChecked, boxUrl, context, firstTask, goal, hasBoxHistory, scrollDown, setSessionBusy, skey, token, updateSession]);
 
  const updateAssistant = useCallback(
- (fn: (msg: ChatMessage) => ChatMessage) => {
- updateActive((s) => {
+ (sessionId: string, fn: (msg: ChatMessage) => ChatMessage) => {
+ updateSession(sessionId, (s) => {
  const messages = s.messages.slice();
  const last = messages.length - 1;
  if (last >= 0 && messages[last].role === "assistant") messages[last] = fn(messages[last]);
  return { ...s, messages };
  });
  },
- [updateActive],
+ [updateSession],
  );
 
  const upsertTool = useCallback(
- (id: string | undefined, patch: Partial<ToolChip>) => {
- updateAssistant((m) => {
+ (sessionId: string, id: string | undefined, patch: Partial<ToolChip>) => {
+ updateAssistant(sessionId, (m) => {
  const tools = m.tools.slice();
  const idx = id ? tools.findIndex((t) => t.id === id) : -1;
  if (idx >= 0) tools[idx] = { ...tools[idx], ...patch };
@@ -646,40 +674,48 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // diverge. This component only provides the sink that maps parser intents onto
  // React state, plus the per-turn scratch state in turnStateRef.
  const handleEvent = useCallback(
- (ev: Record<string, unknown>) => {
+ (sessionId: string, ev: Record<string, unknown>) => {
  const sink: ChatSink = {
- setSessionId: (id) => updateActive((s) => ({ ...s, claudeSessionId: id })),
- appendText: (t) => updateAssistant((m) => ({ ...m, text: m.text + t })),
- setText: (t) => updateAssistant((m) => ({ ...m, text: t })),
- upsertTool: (id, patch) => upsertTool(id, patch),
- appendWarning: (t) => updateAssistant((m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
+ setSessionId: (id) => updateSession(sessionId, (s) => ({ ...s, claudeSessionId: id })),
+ appendText: (t) => updateAssistant(sessionId, (m) => ({ ...m, text: m.text + t })),
+ setText: (t) => updateAssistant(sessionId, (m) => ({ ...m, text: t })),
+ upsertTool: (id, patch) => upsertTool(sessionId, id, patch),
+ appendWarning: (t) => updateAssistant(sessionId, (m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
  };
- getAdapter(agentKind).parseEvent(ev, sink, turnStateRef.current);
+ let turnState = turnStateRef.current.get(sessionId);
+ if (!turnState) { turnState = {}; turnStateRef.current.set(sessionId, turnState); }
+ getAdapter(agentKind).parseEvent(ev, sink, turnState);
  },
- [agentKind, updateActive, updateAssistant, upsertTool],
+ [agentKind, updateSession, updateAssistant, upsertTool],
  );
 
  const send = useCallback(
  async (raw: string) => {
- if (busy) return;
+ const sessionId = activeIdRef.current;
+ if (!sessionId || abortRef.current.has(sessionId)) return;
  const text = raw.trim();
  if (!text) return;
- const session = sessions.find((s) => s.id === activeIdRef.current);
+ const session = sessions.find((s) => s.id === sessionId);
  const resumeId = session?.claudeSessionId || null;
  const images = attachmentsRef.current.map((a) => a.path);
  setInput("");
  setAttachments([]);
- try { window.localStorage.removeItem(draftKey(skey, activeIdRef.current)); } catch { /* ignore */ }
-    setBusy(true);
-    setLastFailed(null);
+ try { window.localStorage.removeItem(draftKey(skey, sessionId)); } catch { /* ignore */ }
+ setSessionBusy(sessionId, true);
+ setLastFailed(sessionId, null);
  const controller = new AbortController();
- const requestGeneration = ++requestGenerationRef.current;
+ const requestGeneration = requestGenerationRef.current;
  const isCurrentRequest = () =>
- requestGenerationRef.current === requestGeneration && abortRef.current === controller;
- abortRef.current = controller;
- turnStateRef.current = getAdapter(agentKind).createTurnState(); // fresh per-turn parser state
+ requestGenerationRef.current === requestGeneration && abortRef.current.get(sessionId) === controller;
+ abortRef.current.set(sessionId, controller);
+ turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState()); // fresh per-turn parser state
+ const finishTurn = () => {
+ if (abortRef.current.get(sessionId) === controller) abortRef.current.delete(sessionId);
+ turnStateRef.current.delete(sessionId);
+ setSessionBusy(sessionId, false);
+ };
  const shownText = images.length ? text + "\n\n📎 " + images.map((p) => p.split("/").pop()).join(", ") : text;
- updateActive((s) => ({
+ updateSession(sessionId, (s) => ({
  ...s,
  title: s.messages.length === 0 ? text.slice(0, 42) : s.title,
  messages: [
@@ -688,8 +724,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  { role: "assistant", text: "", tools: [], streaming: true },
  ],
  }));
+ const followIfOpen = (force?: boolean) => {
+ if (activeIdRef.current === sessionId) scrollDown(force);
+ };
  stickToBottomRef.current = true; // a fresh send re-engages following
- scrollDown(true);
+ followIfOpen(true);
 
  let resp: Response;
  try {
@@ -710,24 +749,22 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  });
  } catch (e) {
  if (!isCurrentRequest()) return;
- abortRef.current = null;
  // User stops invalidate this request before aborting. Any current failure
  // here is an unexpected transport error.
  if ((e as Error).name === "AbortError") {
-      updateAssistant((m) => ({ ...m, streaming: false, outcome: "error" }));
-    } else {
-      updateAssistant((m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
- setLastFailed(text);
+ updateAssistant(sessionId, (m) => ({ ...m, streaming: false, outcome: "error" }));
+ } else {
+ updateAssistant(sessionId, (m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
+ setLastFailed(sessionId, text);
  }
- setBusy(false);
+ finishTurn();
  return;
  }
  if (!isCurrentRequest()) return;
  if (!resp.ok || !resp.body) {
- abortRef.current = null;
-    updateAssistant((m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
- setLastFailed(text);
- setBusy(false);
+ updateAssistant(sessionId, (m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
+ setLastFailed(sessionId, text);
+ finishTurn();
  return;
  }
 
@@ -759,11 +796,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const event = parseNdjsonLine(line);
  if (!event) return true;
  try {
- handleEvent(event);
+ handleEvent(sessionId, event);
  } catch {
  /* skip malformed or unsupported event */
  }
- scrollDown();
+ followIfOpen();
  return true;
  };
  try {
@@ -786,37 +823,36 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  buf = "";
  break;
  }
-  } catch {
-    if (!isCurrentRequest()) return;
-    abortRef.current = null;
-    updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "error" } : m)) }));
-    setBusy(false);
-    return;
-  }
-  if (!isCurrentRequest()) return;
-  abortRef.current = null;
-  updateAssistant((m) => ({ ...m, streaming: false, outcome: m.outcome || "complete" }));
-  updateActive((s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: m.outcome || "complete" } : m)) }));
- setBusy(false);
- scrollDown();
+ } catch {
+ if (!isCurrentRequest()) return;
+ updateSession(sessionId, (s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "error" } : m)) }));
+ finishTurn();
+ return;
+ }
+ if (!isCurrentRequest()) return;
+ updateSession(sessionId, (s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: m.outcome || "complete" } : m)) }));
+ finishTurn();
+ followIfOpen();
  },
- [agentKind, boxUrl, busy, handleEvent, scrollDown, sessions, updateActive, updateAssistant, token, skey],
+ [agentKind, boxUrl, handleEvent, scrollDown, sessions, setLastFailed, setSessionBusy, updateSession, updateAssistant, token, skey],
  );
 
- // Stop the in-flight turn. Aborting the fetch disconnects from the box, which
- // kills the underlying CLI process — a real interrupt, not just a UI reset.
-  const stop = useCallback(() => {
-    const controller = abortRef.current;
-    if (!controller) return;
-    requestGenerationRef.current += 1;
-    abortRef.current = null;
-    controller.abort();
-    updateActive((s) => ({
-      ...s,
-      messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
-    }));
-    setBusy(false);
-  }, [updateActive]);
+ // Stop a session's in-flight turn. Aborting the fetch disconnects from the
+ // box, which kills that CLI process — a real interrupt, not just a UI reset.
+ // Other sessions keep running.
+ const stopSession = useCallback((sessionId: string) => {
+ const controller = abortRef.current.get(sessionId);
+ if (!controller) return;
+ abortRef.current.delete(sessionId);
+ turnStateRef.current.delete(sessionId);
+ controller.abort();
+ updateSession(sessionId, (s) => ({
+ ...s,
+ messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
+ }));
+ setSessionBusy(sessionId, false);
+ }, [setSessionBusy, updateSession]);
+ const stop = useCallback(() => stopSession(activeIdRef.current), [stopSession]);
 
  // Record a thumbs up/down on an assistant message and fire the funnel event.
  // Toggling the same thumb clears it (and emits rating "none"); the capture goes
@@ -844,15 +880,26 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  );
 
  const newChat = useCallback(() => {
- if (busy) return;
  const s = emptySession();
- setSessions((prev) => [s, ...prev].slice(0, MAX_SESSIONS));
+ // Never trim a conversation that is still working off the end of the list.
+ setSessions((prev) => {
+ const next = [s, ...prev];
+ while (next.length > MAX_SESSIONS) {
+ let idle = next.length - 1;
+ while (idle > 0 && abortRef.current.has(next[idle].id)) idle -= 1;
+ if (idle <= 0) break;
+ next.splice(idle, 1);
+ }
+ return next;
+ });
  setActiveId(s.id);
  setInput("");
- }, [busy]);
+ }, []);
 
  const deleteChat = useCallback(
  (id: string) => {
+ stopSession(id);
+ setLastFailed(id, null);
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
  const final = next.length ? next : [emptySession()];
@@ -860,7 +907,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return final;
  });
  },
- [],
+ [setLastFailed, stopSession],
  );
 
  useEffect(() => {
@@ -882,7 +929,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <button
  type="button"
  onClick={newChat}
- disabled={busy}
  className="mx-3 mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] disabled:opacity-50"
  >
  <Plus size={15} /> New chat
@@ -890,26 +936,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div className="flex-1 overflow-y-auto p-2">
  {sessions.map((s) => {
  const isActive = s.id === activeId;
+ const running = busyIds.has(s.id);
  return (
  <div
  key={s.id}
- onClick={() => !busy && selectSession(s)}
+ onClick={() => selectSession(s)}
  className={[
- "group mb-0.5 flex items-center gap-2 px-2.5 py-2",
- busy ? "cursor-default" : "cursor-pointer",
+ "group mb-0.5 flex cursor-pointer items-center gap-2 px-2.5 py-2",
  isActive
  ? "bg-[var(--hivra-red-soft)]"
  : "hover:bg-[var(--bg-elevated)]",
  ].join(" ")}
  >
+ {running ? (
+ <Loader2 size={13} className="hivra-chat-spinner shrink-0 text-[var(--gold-leaf)]" aria-label="Working" />
+ ) : (
  <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" />
+ )}
  <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink-black)]">
  {s.title || "New chat"}
  </span>
  {sessions.length > 1 ? (
  <button
  type="button"
- aria-label="Delete chat"
+ aria-label={running ? "Stop and delete chat" : "Delete chat"}
  onClick={(e) => {
  e.stopPropagation();
  deleteChat(s.id);
@@ -943,12 +993,20 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <button
  type="button"
  aria-label="New chat"
- title="New chat"
+ title="New chat — runs alongside the others"
  onClick={newChat}
- disabled={busy}
- className="inline-flex border border-[var(--etched-border)] bg-[var(--bg-surface)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] disabled:opacity-40"
+ className="inline-flex border border-[var(--etched-border)] bg-[var(--bg-surface)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]"
  >
  <Plus size={13} />
+ </button>
+ ) : null}
+ {!showRail && busyIds.size > (busy ? 1 : 0) ? (
+ <button
+ type="button"
+ onClick={() => setShowRail(true)}
+ className="mono inline-flex items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)] hover:text-[var(--ink-black)]"
+ >
+ <Loader2 size={11} className="hivra-chat-spinner" aria-hidden /> {busyIds.size - (busy ? 1 : 0)} other{busyIds.size - (busy ? 1 : 0) === 1 ? "" : "s"} working
  </button>
  ) : null}
  </div>
@@ -1046,7 +1104,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="button"
  onClick={() => {
  const t = lastFailed;
- setLastFailed(null);
+ setLastFailed(activeId, null);
  void send(t);
  }}
  className="inline-flex items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)]"
