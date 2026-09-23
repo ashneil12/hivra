@@ -5,6 +5,7 @@ import { ArrowUpFromLine, Loader2, ShieldCheck, X, Zap } from 'lucide-react';
 import { BillingDialog, billingDialogStyles as dlg } from '@/components/billing/BillingDialog';
 import { CopyButton, touchStyles } from '@/components/billing/TransferDetails';
 import { shorten } from '@/lib/wallet/format';
+import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
 
 /**
  * The wallet dashboard's withdraw lane: the destination card, the address form,
@@ -320,7 +321,7 @@ export function WithdrawSection({
           Withdraw submitted
         </span>
         <p style={{ fontSize: 13, lineHeight: 1.55, margin: 0 }}>
-          {success.amountDisplay} {tokenSymbol} sent to{' '}
+          {success.amountDisplay} {displayTokenUnit(tokenSymbol)} sent to{' '}
           <code className="mono" style={{ fontSize: 12 }}>{shorten(success.recipientAddress)}</code>.
           Your tier eligibility stays active for 24 hours from the breach detection. After that, the tier ends and re-qualifying requires depositing at the current standard rate.
         </p>
@@ -406,7 +407,7 @@ export function WithdrawSection({
           body={
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ margin: 0, lineHeight: 1.55, fontSize: 14 }}>
-                This will send <strong>{balanceDisplay} {tokenSymbol}</strong> from your platform deposit
+                This will send <strong>{balanceDisplay} {displayTokenUnit(tokenSymbol)}</strong> from your platform deposit
                 address to:
               </p>
               <code

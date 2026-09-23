@@ -12,10 +12,10 @@ import { buildWebsiteMetadata } from "@/lib/metadata";
 import { renderOgCard } from "@/lib/og-card";
 import { OG_IMAGE, OG_SIZE, OG_CONTENT_TYPE } from "@/lib/og-meta";
 
+import * as rootSegment from "../opengraph-image";
 import RootOg, {
   size as rootSize,
   contentType as rootContentType,
-  runtime as rootRuntime,
   alt as rootAlt,
 } from "../opengraph-image";
 import ChangelogOg, {
@@ -28,12 +28,12 @@ import StatusOg, {
 } from "../status/opengraph-image";
 
 describe("public OG image cards", () => {
-  it("returns a 200 image/png response from the shared renderer", () => {
+  it("returns a 200 image/png response from the shared renderer", async () => {
     // The shared renderer hands back a real ImageResponse with image/png headers.
-    // (The PNG bytes are rasterised lazily via @vercel/og's WASM at request time,
+    // (The PNG bytes are rasterised lazily via @vercel/og's WASM at render time,
     // which Jest's CJS runtime can't drive — the actual pixels are verified in CI's
-    // build + by QA on the live edge route; here we assert the synchronous contract.)
-    const res = renderOgCard({ title: "Test card", subtitle: "A subtitle" });
+    // build + by QA on the served route; here we assert the response contract.)
+    const res = await renderOgCard({ title: "Test card", subtitle: "A subtitle" });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
   });
@@ -51,15 +51,15 @@ describe("public OG image cards", () => {
       expect(contentType).toBe("image/png");
     }
 
-    // Cards run on the edge runtime like the existing pwa-icon routes, and the
-    // apex card advertises descriptive alt text.
-    expect(rootRuntime).toBe("edge");
+    // Cards read the brand mark from public/, so they stay on the Node.js
+    // runtime (prerendered at build); the apex card advertises descriptive alt text.
+    expect(rootSegment).not.toHaveProperty("runtime");
     expect(rootAlt).toBe(OG_IMAGE.home.alt);
   });
 
-  it("each segment default export returns an image/png response", () => {
+  it("each segment default export returns an image/png response", async () => {
     for (const handler of [RootOg, ChangelogOg, StatusOg]) {
-      const res = handler();
+      const res = await handler();
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("image/png");
     }
