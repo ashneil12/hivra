@@ -10,10 +10,14 @@ import { useLocale } from '@/components/i18n/LocaleProvider';
 import {
   DASHBOARD_LAUNCH_NAVIGATION,
   DASHBOARD_PRIMARY_NAVIGATION,
+  DASHBOARD_RAIL_SHORT_LABELS,
+  DASHBOARD_RUNTIME_LIST_HREF,
   DASHBOARD_SECONDARY_NAVIGATION,
   DASHBOARD_UTILITY_NAVIGATION,
   filterDashboardNavigation,
   isDashboardNavigationItemActive,
+  isRuntimeDetailPath,
+  labelForNavigationItem,
   type DashboardNavigationItem,
 } from '@/lib/dashboard-navigation';
 import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
@@ -26,9 +30,12 @@ interface DashboardSidebarProps {
   userName: string;
   userEmail: string;
   resourceOwnerKey?: string;
-  isMobileOpen?: boolean;
-  onMobileClose?: () => void;
   onActiveResourceKindChange?: (kind: DashboardResource['kind'] | null) => void;
+  /** The phone bar has no sidebar, so it badges More with this count. */
+  onAttentionCountChange?: (count: number) => void;
+  /** Controlled by the shell so the phone header and More sheet can open it. */
+  switcherOpen?: boolean;
+  onSwitcherOpenChange?: (open: boolean) => void;
   showOpsLink?: boolean;
 }
 
@@ -52,7 +59,8 @@ function compactRailSnapshot() { return window.matchMedia(COMPACT_RAIL_QUERY).ma
 function serverCompactRailSnapshot() { return false; }
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
-  userName, userEmail, resourceOwnerKey, isMobileOpen = false, onMobileClose, onActiveResourceKindChange,
+  userName, userEmail, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
+  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
   const pathname = usePathname();
@@ -64,18 +72,26 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const [compactExpanded, setCompactExpanded] = useState(false);
   const toggleButton = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [ownSwitcherOpen, setOwnSwitcherOpen] = useState(false);
+  const switcherOpen = controlledSwitcherOpen ?? ownSwitcherOpen;
+  const setSwitcherOpen = useCallback((open: boolean) => {
+    setOwnSwitcherOpen(open);
+    onSwitcherOpenChange?.(open);
+  }, [onSwitcherOpenChange]);
   const aside = useRef<HTMLElement>(null);
-  const searchButton = useRef<HTMLButtonElement>(null);
   const { resources, loading, errors, refresh } = useDashboardResources(owner, pathname);
   const attentionCount = resources.filter(item => !loading && !errors[item.source] && (item.attention || item.status === "error")).length;
   const currentResource = resources.find((item) => resourceMatchesPath(item, pathname));
-  const effectivelyExpanded = isMobileOpen || (compactRail ? compactExpanded : isExpanded);
+  const effectivelyExpanded = compactRail ? compactExpanded : isExpanded;
   const currentResourceKind = currentResource?.kind ?? null;
 
   useEffect(() => {
     onActiveResourceKindChange?.(currentResourceKind);
   }, [currentResourceKind, onActiveResourceKindChange]);
+
+  useEffect(() => {
+    onAttentionCountChange?.(attentionCount);
+  }, [attentionCount, onAttentionCountChange]);
 
   useEffect(() => {
     // Browser preferences hydrate after the server/client initial render agrees.
@@ -87,37 +103,36 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     } catch { /* A display preference cannot block navigation. */ }
   }, []);
 
+  const previousOwner = useRef(owner);
   useEffect(() => {
     // The switcher closes when the authenticated owner changes.
+    if (previousOwner.current === owner) return;
+    previousOwner.current = owner;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSwitcherOpen(false);
-  }, [owner]);
+  }, [owner, setSwitcherOpen]);
 
-  const closeSwitcher = useCallback(() => setSwitcherOpen(false), []);
+  // Every open refreshes the inventory once, whichever control opened it.
+  const wasSwitcherOpen = useRef(false);
+  useEffect(() => {
+    if (switcherOpen && !wasSwitcherOpen.current) refresh();
+    wasSwitcherOpen.current = switcherOpen;
+  }, [switcherOpen, refresh]);
+
+  const closeSwitcher = useCallback(() => setSwitcherOpen(false), [setSwitcherOpen]);
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
       // Do not interrupt an unrelated modal or a runtime-owned native dialog.
       if (!switcherOpen && document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
       event.preventDefault();
-      if (!switcherOpen) refresh();
       setSwitcherOpen(!switcherOpen);
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [switcherOpen, refresh]);
+  }, [switcherOpen, setSwitcherOpen]);
 
-  useEffect(() => {
-    if (!isMobileOpen) return;
-    const previous = document.activeElement;
-    searchButton.current?.focus();
-    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
-  }, [isMobileOpen]);
-
-  const closeNavigation = () => {
-    setCompactExpanded(false);
-    onMobileClose?.();
-  };
+  const closeNavigation = () => setCompactExpanded(false);
   useEffect(() => {
     if (!compactRail || !compactExpanded || switcherOpen) return;
     const closeOutside = (event: PointerEvent) => {
@@ -134,14 +149,15 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     try { window.localStorage.setItem(SIDEBAR_EXPANDED_STORAGE_KEY, String(next)); } catch { /* Keep the current view usable. */ }
   };
 
-  const localizedLabel = (item: DashboardNavigationItem): string => {
-    const labels: Partial<Record<DashboardNavigationItem['id'], string>> = {
-      home: dashboard.nav.home, chat: dashboard.nav.chat, computers: dashboard.nav.computers, agents: dashboard.nav.agents,
-      infrastructure: dashboard.nav.infrastructure, settings: dashboard.nav.settings, launch: dashboard.nav.launch,
-    };
-    return labels[item.id] ?? item.label;
-  };
+  const localizedLabel = (item: DashboardNavigationItem): string => labelForNavigationItem(item, copy);
+  // Touch tablets cannot see title tooltips, so the collapsed rail shows a label.
+  const railLabel = (item: DashboardNavigationItem, label: string) =>
+    effectivelyExpanded ? null : <span className={styles.railLabel} aria-hidden>{label === item.label ? DASHBOARD_RAIL_SHORT_LABELS[item.id] ?? label : label}</span>;
   const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
+  // /dashboard can resume the last runtime (server shell flag, which self-host
+  // builds hide from the client); from inside a runtime that reopens the one you
+  // are leaving, so Home goes to the list. The legacy page ignores ?runtimes=1.
+  const homeHref = pathname && isRuntimeDetailPath(pathname) ? DASHBOARD_RUNTIME_LIST_HREF : '/dashboard';
   const primaryNavigation = filterDashboardNavigation(
     DASHBOARD_PRIMARY_NAVIGATION,
     workspaceShellEnabled,
@@ -155,9 +171,9 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     );
     const label = localizedLabel(item);
     const Icon = item.icon;
-    return <Link key={item.id} href={item.href} className={`${styles.navItem} ${active ? styles.active : ''}`}
+    return <Link key={item.id} href={item.id === 'home' ? homeHref : item.href} className={`${styles.navItem} ${active ? styles.active : ''}`}
       aria-current={active ? 'page' : undefined} aria-label={label} title={!effectivelyExpanded ? label : undefined}
-      onClick={closeNavigation}><Icon size={17} aria-hidden />{effectivelyExpanded && <span>{label}</span>}</Link>;
+      onClick={closeNavigation}><Icon size={17} aria-hidden />{effectivelyExpanded ? <span>{label}</span> : railLabel(item, label)}</Link>;
   };
   const openResource = (item: DashboardResource) => {
     closeSwitcher();
@@ -165,26 +181,18 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     router.push(item.href);
   };
   const LaunchIcon = DASHBOARD_LAUNCH_NAVIGATION.icon;
+  const launchLabel = localizedLabel(DASHBOARD_LAUNCH_NAVIGATION);
 
   return <>
     <div className={styles.spacer} style={{ width: !compactRail && isExpanded ? 248 : 72, minWidth: !compactRail && isExpanded ? 248 : 72 }} />
-    <aside ref={aside} id="dashboard-navigation" aria-label="Workspace navigation" className={`${styles.sidebar} ${effectivelyExpanded ? styles.expanded : styles.collapsed} ${isMobileOpen ? styles.mobileOpen : ''} ${compactRail && compactExpanded ? styles.compactOpen : ''}`}
+    <aside ref={aside} id="dashboard-navigation" aria-label="Workspace navigation" className={`${styles.sidebar} ${effectivelyExpanded ? styles.expanded : styles.collapsed} ${compactRail && compactExpanded ? styles.compactOpen : ''}`}
       onKeyDown={(event) => {
         if (compactRail && compactExpanded && event.key === 'Escape' && !switcherOpen) {
-          event.preventDefault(); setCompactExpanded(false); toggleButton.current?.focus(); return;
+          event.preventDefault(); setCompactExpanded(false); toggleButton.current?.focus();
         }
-        if (!isMobileOpen || switcherOpen) return;
-        if (event.key === 'Escape') { event.preventDefault(); onMobileClose?.(); }
-        if (event.key !== 'Tab') return;
-        const controls = [...(aside.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex="0"]') ?? [])]
-          .filter((element) => element.getClientRects().length > 0);
-        const first = controls[0];
-        const last = controls[controls.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }}>
       <div className={styles.header}>
-        <Link href="/dashboard" aria-label="Hivra home" className={styles.brand} onClick={closeNavigation}>
+        <Link href={homeHref} aria-label="Hivra home" className={styles.brand} onClick={closeNavigation}>
           <span className={styles.brandMark}>H.</span>{effectivelyExpanded && <span className={styles.brandName}>Hivra</span>}
         </Link>
         <button ref={toggleButton} type="button" className={styles.collapseButton} onClick={toggleExpanded}
@@ -194,25 +202,29 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
           {effectivelyExpanded ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
         </button>
       </div>
-      <button ref={searchButton} type="button" className={styles.searchButton} onClick={() => { refresh(); setSwitcherOpen(true); }}
-        aria-label="Switch agent or computer" title={!effectivelyExpanded ? 'Switch agent or computer (⌘/Ctrl K)' : undefined}
-        aria-haspopup="dialog" aria-expanded={switcherOpen}>
-        <Search size={16} aria-hidden />{effectivelyExpanded && <><span>Switch or search</span><kbd>⌘ K</kbd></>}
-      </button>
-      <Link href={DASHBOARD_LAUNCH_NAVIGATION.href} className={styles.launch} aria-label={localizedLabel(DASHBOARD_LAUNCH_NAVIGATION)} onClick={closeNavigation}>
-        <LaunchIcon size={17} aria-hidden />{effectivelyExpanded && <span>{localizedLabel(DASHBOARD_LAUNCH_NAVIGATION)}</span>}
-      </Link>
-      <nav aria-label="Primary" data-navigation-group="primary" className={styles.navigation}>{primaryNavigation.map(renderNavigationItem)}</nav>
-      {attentionCount > 0 && <Link href="/dashboard?runtimes=1&attention=1" className={`${styles.navItem} ${styles.attention}`} onClick={closeNavigation} aria-label={`${attentionCount} agents or computers need attention`}>
-        <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <span>Needs attention</span>}<span className={styles.attentionCount}>{attentionCount}</span>
-      </Link>}
-      <div className={styles.footer}>
-        <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, isWorkspaceShellNavigationEnabled()).map(renderNavigationItem)}</nav>
-        <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
-        <div className={styles.account}>
-          {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}
-          {effectivelyExpanded && <span className={styles.accountName}><strong>{userName}</strong><small>{userEmail}</small></span>}
-          <ThemeToggle />
+      {/* Only this part scrolls, so the collapse toggle that overhangs the rail
+          is never clipped and the footer is reachable at any height. */}
+      <div className={styles.body}>
+        <button type="button" className={styles.searchButton} onClick={() => setSwitcherOpen(true)}
+          aria-label="Switch agent or computer" title={!effectivelyExpanded ? 'Switch agent or computer (⌘/Ctrl K)' : undefined}
+          aria-haspopup="dialog" aria-expanded={switcherOpen}>
+          <Search size={16} aria-hidden />{effectivelyExpanded ? <><span>Switch or search</span><kbd>⌘ K</kbd></> : <span className={styles.railLabel} aria-hidden>Search</span>}
+        </button>
+        <Link href={DASHBOARD_LAUNCH_NAVIGATION.href} className={styles.launch} aria-label={launchLabel} onClick={closeNavigation}>
+          <LaunchIcon size={17} aria-hidden />{effectivelyExpanded ? <span>{launchLabel}</span> : railLabel(DASHBOARD_LAUNCH_NAVIGATION, launchLabel)}
+        </Link>
+        <nav aria-label="Primary" data-navigation-group="primary" className={styles.navigation}>{primaryNavigation.map(renderNavigationItem)}</nav>
+        {attentionCount > 0 && <Link href="/dashboard?runtimes=1&attention=1" className={`${styles.navItem} ${styles.attention}`} onClick={closeNavigation} aria-label={`${attentionCount} agents or computers need attention`}>
+          <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <span>Needs attention</span>}<span className={styles.attentionCount}>{attentionCount}</span>
+        </Link>}
+        <div className={styles.footer}>
+          <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, isWorkspaceShellNavigationEnabled()).map(renderNavigationItem)}</nav>
+          <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
+          <div className={styles.account}>
+            {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}
+            {effectivelyExpanded && <span className={styles.accountName}><strong>{userName}</strong><small>{userEmail}</small></span>}
+            <ThemeToggle />
+          </div>
         </div>
       </div>
     </aside>

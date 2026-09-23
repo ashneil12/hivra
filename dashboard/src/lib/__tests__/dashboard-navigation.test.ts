@@ -1,19 +1,25 @@
 import {
   DASHBOARD_LAUNCH_NAVIGATION,
+  DASHBOARD_MOBILE_MORE_GROUPS,
+  DASHBOARD_MOBILE_MORE_NAVIGATION,
   DASHBOARD_MOBILE_NAVIGATION,
   DASHBOARD_PRIMARY_NAVIGATION,
   DASHBOARD_SECONDARY_NAVIGATION,
   DASHBOARD_UTILITY_NAVIGATION,
   filterDashboardNavigation,
   isDashboardNavigationItemActive,
+  isRuntimeDetailPath,
+  labelForNavigationItem,
+  mobileNavigationCopy,
 } from "@/lib/dashboard-navigation";
+import { MARKETING_COPY } from "@/lib/i18n";
 
 describe("dashboard navigation", () => {
   it("hides hosted billing from the mobile and desktop manage navigation in local auth mode", () => {
     const previous = process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
     process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "local";
     try {
-      expect(filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
+      expect(filterDashboardNavigation(DASHBOARD_MOBILE_MORE_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
       expect(filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
@@ -61,18 +67,67 @@ describe("dashboard navigation", () => {
     ).toEqual(["home", "computers", "agents", "activity"]);
   });
 
-  it("builds the mobile rail from the shared configuration with Launch centered", () => {
+  it("builds the phone bar from the shared configuration with Launch centered between the inventories", () => {
     expect(DASHBOARD_MOBILE_NAVIGATION.map((item) => item.id)).toEqual([
       "home",
-      "launch",
       "agents",
+      "launch",
       "computers",
-      "billing",
     ]);
-    expect(DASHBOARD_MOBILE_NAVIGATION[1]).toBe(DASHBOARD_LAUNCH_NAVIGATION);
+    expect(DASHBOARD_MOBILE_NAVIGATION[2]).toBe(DASHBOARD_LAUNCH_NAVIGATION);
     expect(
       filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION, false).map((item) => item.id),
-    ).toEqual(["home", "launch", "agents", "computers", "billing"]);
+    ).toEqual(["home", "agents", "launch", "computers"]);
+  });
+
+  it("puts every destination that is not on the phone bar in exactly one More group", () => {
+    expect(DASHBOARD_MOBILE_MORE_GROUPS.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([
+      ["manage", ["activity", "infrastructure", "settings", "billing"]],
+      ["help", ["applications", "help"]],
+    ]);
+    expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => item.id)).toEqual([
+      "activity", "infrastructure", "settings", "billing", "applications", "help",
+    ]);
+    // The same item objects as the sidebar, so a destination cannot drift.
+    expect(DASHBOARD_MOBILE_MORE_NAVIGATION).toContain(DASHBOARD_SECONDARY_NAVIGATION[0]);
+    const everyDestination = [
+      ...DASHBOARD_PRIMARY_NAVIGATION, ...DASHBOARD_SECONDARY_NAVIGATION, DASHBOARD_LAUNCH_NAVIGATION, ...DASHBOARD_UTILITY_NAVIGATION,
+    ].map((item) => item.id).sort();
+    const phone = [...DASHBOARD_MOBILE_NAVIGATION, ...DASHBOARD_MOBILE_MORE_NAVIGATION].map((item) => item.id);
+    expect([...phone].sort()).toEqual(everyDestination);
+    expect(new Set(phone).size).toBe(phone.length);
+  });
+
+  it("localizes labels in one place", () => {
+    const billing = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!;
+    expect(labelForNavigationItem(billing, MARKETING_COPY.en)).toBe("Billing & Access");
+    expect(labelForNavigationItem(DASHBOARD_PRIMARY_NAVIGATION[0], MARKETING_COPY["zh-CN"])).toBe("首页");
+  });
+
+  it("localizes the More-sheet destinations and phone strings once a locale provides them", () => {
+    const zh = MARKETING_COPY["zh-CN"];
+    // Keys the locale does not carry yet keep their English labels.
+    expect(labelForNavigationItem(DASHBOARD_UTILITY_NAVIGATION[1], zh)).toBe("Help");
+    expect(mobileNavigationCopy(zh)).toMatchObject({ more: "More", signOut: "Sign out", close: "关闭菜单" });
+
+    const localized = {
+      ...zh,
+      dashboard: {
+        ...zh.dashboard,
+        nav: { ...zh.dashboard.nav, activity: "动态", billingAccess: "账单与访问", applications: "应用", help: "帮助", more: "更多" },
+        mobileNav: { signOut: "退出登录", manage: "管理" },
+      },
+    };
+    expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => labelForNavigationItem(item, localized)))
+      .toEqual(["动态", "基础设施", "设置", "账单与访问", "应用", "帮助"]);
+    expect(mobileNavigationCopy(localized)).toMatchObject({ more: "更多", signOut: "退出登录", manage: "管理", account: "Account" });
+  });
+
+  it("recognises runtime detail routes only", () => {
+    expect(isRuntimeDetailPath("/dashboard/agent/abc")).toBe(true);
+    expect(isRuntimeDetailPath("/dashboard/instances/inst_1/console")).toBe(true);
+    expect(isRuntimeDetailPath("/dashboard/agents")).toBe(false);
+    expect(isRuntimeDetailPath("/dashboard")).toBe(false);
   });
 
   it("preserves applications and help under their own secondary destinations", () => {

@@ -136,13 +136,85 @@ const PRIMARY_NAVIGATION_BY_ID = Object.fromEntries(
   DASHBOARD_PRIMARY_NAVIGATION.map((item) => [item.id, item]),
 ) as Record<string, DashboardNavigationItem>;
 
+/** Labels for the 72px touch rail, where the full label cannot fit. */
+export const DASHBOARD_RAIL_SHORT_LABELS: Partial<Record<DashboardNavigationId, string>> = {
+  infrastructure: "Infra",
+  billing: "Billing",
+  applications: "Apps",
+};
+
+/** Phone bottom bar: the two inventories flank Launch; everything else lives in More. */
 export const DASHBOARD_MOBILE_NAVIGATION: readonly DashboardNavigationItem[] = [
   PRIMARY_NAVIGATION_BY_ID.home,
-  DASHBOARD_LAUNCH_NAVIGATION,
   PRIMARY_NAVIGATION_BY_ID.agents,
+  DASHBOARD_LAUNCH_NAVIGATION,
   PRIMARY_NAVIGATION_BY_ID.computers,
-  DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!,
 ];
+
+/** Group headings come from mobileNavigationCopy under the same id. */
+export type DashboardNavigationGroup = {
+  id: "manage" | "help";
+  items: readonly DashboardNavigationItem[];
+};
+
+/** Phone More sheet, in display order. Every destination not on the bar. */
+export const DASHBOARD_MOBILE_MORE_GROUPS: readonly DashboardNavigationGroup[] = [
+  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
+  { id: "help", items: DASHBOARD_UTILITY_NAVIGATION },
+];
+
+export const DASHBOARD_MOBILE_MORE_NAVIGATION: readonly DashboardNavigationItem[] =
+  DASHBOARD_MOBILE_MORE_GROUPS.flatMap((group) => group.items);
+
+/** Runtime list. Home under the workspace shell otherwise resumes the last runtime. */
+export const DASHBOARD_RUNTIME_LIST_HREF = "/dashboard?runtimes=1";
+
+type MobileNavigationCopyKey =
+  | "switchOrSearch" | "needsAttention" | "manage" | "help" | "account" | "manageAccount"
+  | "signOut" | "signingOut" | "themeDark" | "themeLight" | "switchToDark" | "switchToLight";
+
+/**
+ * The optional keys are not in src/lib/i18n.ts yet; each surface falls back to
+ * English until a locale provides them.
+ */
+type DashboardNavigationCopy = {
+  nav?: { closeMobileMenu?: string };
+  dashboard: {
+    nav: Record<"home" | "chat" | "computers" | "agents" | "infrastructure" | "settings" | "launch", string>
+      & Partial<Record<"activity" | "billingAccess" | "applications" | "help" | "more", string>>;
+    mobileNav?: Partial<Record<MobileNavigationCopyKey, string>>;
+  };
+};
+
+/** One localization for every navigation surface (sidebar, bottom bar, More sheet). */
+export function labelForNavigationItem(
+  item: DashboardNavigationItem,
+  copy: DashboardNavigationCopy,
+): string {
+  const nav = copy.dashboard.nav;
+  const labels: Partial<Record<DashboardNavigationId, string>> = {
+    home: nav.home, chat: nav.chat, computers: nav.computers, agents: nav.agents,
+    infrastructure: nav.infrastructure, settings: nav.settings, launch: nav.launch,
+    activity: nav.activity, billing: nav.billingAccess, applications: nav.applications, help: nav.help,
+  };
+  return labels[item.id] ?? item.label;
+}
+
+const MOBILE_NAVIGATION_COPY: Record<MobileNavigationCopyKey, string> = {
+  switchOrSearch: "Switch or search", needsAttention: "Needs attention", manage: "Manage", help: "Help",
+  account: "Account", manageAccount: "Manage account", signOut: "Sign out", signingOut: "Signing out…",
+  themeDark: "Theme: Dark", themeLight: "Theme: Light", switchToDark: "Switch to dark", switchToLight: "Switch to light",
+};
+
+/** Strings the phone bar and More sheet add on top of the item labels. */
+export function mobileNavigationCopy(copy: DashboardNavigationCopy) {
+  return {
+    ...MOBILE_NAVIGATION_COPY,
+    ...copy.dashboard.mobileNav,
+    more: copy.dashboard.nav.more ?? "More",
+    close: copy.nav?.closeMobileMenu ?? "Close menu",
+  };
+}
 
 /**
  * Hides navigation that depends on a rollout flag that is off for this
@@ -170,7 +242,7 @@ function matchesRoutePrefix(pathname: string, prefix: string): boolean {
  * so a pathname alone cannot say which family a runtime belongs to. Every
  * runtime detail page is one surface to the nav.
  */
-function isRuntimeDetailPath(pathname: string): boolean {
+export function isRuntimeDetailPath(pathname: string): boolean {
   return (
     pathname.startsWith("/dashboard/agent/") ||
     pathname.startsWith("/dashboard/instances/")
