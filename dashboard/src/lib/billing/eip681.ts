@@ -21,21 +21,22 @@
  *
  * Client-safe: no server imports.
  */
-import { tokenVerificationContent } from "@/lib/token-verification-content";
+import { BASE_CHAIN_ID, HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 
-export const BASE_CHAIN_ID = 8453;
+export { BASE_CHAIN_ID };
 
 /**
- * The $HermesOS ERC-20 on Base. Every $HermesOS quote (yearly plan payments
- * and managed Venice top-ups) settles only in this token on this chain; the
- * server reads the same contract address from the same content module.
+ * The $HermesOS ERC-20 on Base, from the platform token registry the server
+ * reads too. A $HermesOS quote settles only in this token on this chain.
  */
 export const HERMESOS_BASE_TOKEN = {
   chainId: BASE_CHAIN_ID,
-  address: tokenVerificationContent.tokenDetails.contractAddress,
-  symbol: "Hivra",
-  decimals: 18,
+  address: HERMESOS_TOKEN.publishedAddress,
+  symbol: HERMESOS_TOKEN.symbol,
+  decimals: HERMESOS_TOKEN.decimals,
 } as const;
+
+const LEGACY_HERMESOS_SYMBOL = "Hivra";
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/;
@@ -99,7 +100,9 @@ export function hermesosTransferUri(quote: {
   depositAddress: string | null | undefined;
   amountRaw: string | bigint | null | undefined;
 }): string | null {
-  if (quote.tokenSymbol !== HERMESOS_BASE_TOKEN.symbol) return null;
+  // "Hivra" is the symbol quotes carried before the token registry named the
+  // legacy token "HermesOS"; both mean the $HermesOS contract.
+  if (quote.tokenSymbol !== HERMESOS_BASE_TOKEN.symbol && quote.tokenSymbol !== LEGACY_HERMESOS_SYMBOL) return null;
   if (quote.tokenDecimals !== HERMESOS_BASE_TOKEN.decimals) return null;
   return buildBaseErc20TransferUri({
     tokenAddress: HERMESOS_BASE_TOKEN.address,
