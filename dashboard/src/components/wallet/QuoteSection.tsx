@@ -80,8 +80,9 @@ export function InlineCopyAddress({ label, address }: { label: string; address: 
 export function BuyTokenCard() {
   const { copy } = useLocale();
   const buyCopy = copy.dashboard.wallet.buyToken;
-  // $HermesOS until $HIVRA is live; then new buyers are pointed at $HIVRA,
-  // and the card's label names the token its link and address are for.
+  // $HermesOS until $HIVRA is live; then every buyer, grandfathered or not,
+  // is pointed at $HIVRA (the token any new purchase should be), and the
+  // card's label names the token its link and address are for.
   const buyToken = primaryPlatformToken();
   const contract = buyToken.publishedAddress;
   const forToken = (text: string) => text.replaceAll("$HermesOS", buyToken.displayUnit);

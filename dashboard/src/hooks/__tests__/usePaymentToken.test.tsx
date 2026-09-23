@@ -13,6 +13,9 @@ jest.mock("@/lib/billing/hivra-token-launch", () => ({
   },
 }));
 
+let mockUserId: string | null = "user_1";
+jest.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: mockUserId }) }));
+
 import { _resetPaymentTokenForTests, usePaymentTokenUnit } from "../usePaymentToken";
 
 const ACTIVE = {
@@ -27,6 +30,7 @@ function answer(paymentToken: string, ok = true) {
 }
 
 beforeEach(() => {
+  mockUserId = "user_1";
   _resetPaymentTokenForTests();
   Object.assign(mockLaunch, { contractAddress: "", poolId: "", activatesAt: "" });
 });
@@ -50,6 +54,33 @@ it("shows $HermesOS to a grandfathered user once $HIVRA is live", async () => {
 it("keeps $HIVRA for a new user, and when the server cannot answer", async () => {
   Object.assign(mockLaunch, ACTIVE);
   const fetchMock = answer("hivra", false);
+  global.fetch = fetchMock as never;
+  const { result } = renderHook(() => usePaymentTokenUnit());
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  expect(result.current).toBe("$HIVRA");
+});
+
+it("retries after a failed answer instead of keeping it", async () => {
+  Object.assign(mockLaunch, ACTIVE);
+  const failing = answer("hermesos", false);
+  global.fetch = failing as never;
+  const first = renderHook(() => usePaymentTokenUnit());
+  await waitFor(() => expect(failing).toHaveBeenCalledTimes(1));
+  first.unmount();
+  const ok = answer("hermesos");
+  global.fetch = ok as never;
+  const { result } = renderHook(() => usePaymentTokenUnit());
+  await waitFor(() => expect(result.current).toBe("$HermesOS"));
+});
+
+it("never shares one user's answer with another user", async () => {
+  Object.assign(mockLaunch, ACTIVE);
+  global.fetch = answer("hermesos") as never;
+  const first = renderHook(() => usePaymentTokenUnit());
+  await waitFor(() => expect(first.result.current).toBe("$HermesOS"));
+  first.unmount();
+  mockUserId = "user_2";
+  const fetchMock = answer("hivra");
   global.fetch = fetchMock as never;
   const { result } = renderHook(() => usePaymentTokenUnit());
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
