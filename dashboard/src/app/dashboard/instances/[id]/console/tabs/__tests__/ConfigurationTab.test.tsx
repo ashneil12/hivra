@@ -209,7 +209,7 @@ describe('ConfigurationTab Component', () => {
 
     expect(screen.getByLabelText(/machine name override/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/tags/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /enable tailscale ssh/i })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /enable tailscale ssh/i })).toBeInTheDocument();
   });
 
   it('shows connected status details and action buttons when tailscale is already enabled', async () => {
@@ -246,6 +246,46 @@ describe('ConfigurationTab Component', () => {
     expect(screen.getByDisplayValue('atlas-agent.tail.ts.net')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /refresh status/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /disconnect tailscale/i })).toBeInTheDocument();
+  });
+
+  it('keeps keyboard focus through the inline disconnect confirm', async () => {
+    const connected = {
+      enabled: true,
+      hostScoped: true,
+      state: 'connected',
+      machineName: 'atlas-agent',
+      magicDnsName: 'atlas-agent.tail.ts.net',
+      tailnetName: 'acme.tailnet',
+    };
+    mockFetch({
+      instanceData: { config: { privateAccess: { tailscale: connected } } },
+      tailscaleData: connected,
+    });
+
+    await act(async () => {
+      render(<ConfigurationTab instanceId="test-inst-123" />);
+    });
+
+    const trigger = await screen.findByRole('button', { name: /disconnect tailscale/i });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const strip = screen.getByRole('alertdialog', { name: /disconnect this host from your tailnet/i });
+    expect(trigger).toBeEnabled();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(within(strip).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      '/api/instances/test-inst-123/private-access/tailscale',
+      expect.objectContaining({ method: 'DELETE' })
+    );
   });
 
   it('opens update settings without clearing the current values or asking for a new auth key', async () => {
@@ -288,7 +328,8 @@ describe('ConfigurationTab Component', () => {
     expect(screen.getByLabelText(/machine name override/i)).toHaveValue('atlas-agent');
     expect(screen.getByLabelText(/tags/i)).toHaveValue('tag:prod');
     expect(screen.getByLabelText(/tags/i)).toBeDisabled();
-    expect(screen.getByRole('button', { name: /enabled/i })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /enable tailscale ssh/i })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: /enable tailscale ssh/i })).toHaveTextContent('SSH: On');
     expect(screen.getByRole('button', { name: /save settings/i })).toBeInTheDocument();
   });
 
@@ -440,7 +481,7 @@ describe('ConfigurationTab Component', () => {
     fireEvent.change(screen.getByLabelText(/machine name override/i), {
       target: { value: 'atlas-agent-updated' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /enable tailscale ssh/i }));
+    fireEvent.click(screen.getByRole('switch', { name: /enable tailscale ssh/i }));
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
@@ -523,8 +564,17 @@ describe('ConfigurationTab Component', () => {
       render(<ConfigurationTab instanceId="test-inst-123" />);
     });
 
+    fireEvent.click(await screen.findByRole('button', { name: /disconnect tailscale/i }));
+
+    // The first tap only asks; nothing is sent until the inline confirm.
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/disconnect this host from your tailnet/i);
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      '/api/instances/test-inst-123/private-access/tailscale',
+      expect.objectContaining({ method: 'DELETE' })
+    );
+
     await act(async () => {
-      fireEvent.click(await screen.findByRole('button', { name: /disconnect tailscale/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
     });
 
     await waitFor(() => {
@@ -837,5 +887,35 @@ describe('ConfigurationTab Component', () => {
     expect(openedTab.close).toHaveBeenCalled();
 
     openSpy.mockRestore();
+  });
+
+  it('deletes after a phone keyboard capitalises the typed id, sending the exact id to the server', async () => {
+    const alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
+    const baseFetch = global.fetch as jest.Mock;
+    global.fetch = jest.fn((url, init) => {
+      if (url === '/api/instances/test-inst-123' && init?.method === 'DELETE') {
+        return Promise.resolve({ ok: false, json: () => Promise.resolve({ success: false, error: 'kept for test' }) });
+      }
+      return baseFetch(url, init);
+    }) as jest.Mock;
+
+    await act(async () => {
+      render(<ConfigurationTab instanceId="test-inst-123" />);
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /delete instance/i }));
+    const dialog = screen.getByRole('dialog', { name: /delete instance/i });
+    const input = within(dialog).getByLabelText(/type the instance id to confirm/i);
+    expect(input).toHaveAttribute('autocapitalize', 'none');
+    fireEvent.change(input, { target: { value: 'Test-inst-123' } });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /confirm delete/i }));
+    });
+
+    const deleteCall = (global.fetch as jest.Mock).mock.calls.find(([, init]) => init?.method === 'DELETE');
+    expect(deleteCall).toBeDefined();
+    expect(JSON.parse(deleteCall![1].body)).toMatchObject({ confirmation: 'test-inst-123' });
+    alertSpy.mockRestore();
   });
 });

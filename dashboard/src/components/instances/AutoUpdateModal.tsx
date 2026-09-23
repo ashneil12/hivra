@@ -73,6 +73,9 @@ export function AutoUpdateModal({
     message: string;
   } | null>(null);
   const wasOpenRef = useRef(false);
+  // A backdrop press closes only when it also started on the backdrop, so a
+  // text selection dragged out of the panel does not.
+  const backdropPressRef = useRef(false);
   const reduceMotion = useReducedMotion();
   const overlayVariants = buildHermesOverlayVariants(Boolean(reduceMotion));
   const modalVariants = buildHermesSurfaceVariants(Boolean(reduceMotion), {
@@ -150,8 +153,13 @@ export function AutoUpdateModal({
             role="dialog"
             aria-modal="true"
             aria-labelledby="auto-update-title"
-            onClick={() => {
-              if (!saving) onClose();
+            onPointerDown={(event) => {
+              backdropPressRef.current = event.target === event.currentTarget;
+            }}
+            onClick={(event) => {
+              const pressedBackdrop = backdropPressRef.current;
+              backdropPressRef.current = false;
+              if (pressedBackdrop && event.target === event.currentTarget && !saving) onClose();
             }}
             initial="hidden"
             animate="visible"
@@ -160,14 +168,15 @@ export function AutoUpdateModal({
             style={{
               position: 'fixed',
               inset: 0,
-              zIndex: 300,
+              zIndex: 1000,
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '24px',
+              overflowY: 'auto',
+              padding: 'max(24px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))',
               background: 'rgba(7, 10, 20, 0.58)',
             }}
           >
+            {/* The panel scrolls inside the viewport so Save stays reachable on
+                short phones; auto margins centre it without clipping. */}
             <motion.div
               onClick={(event) => event.stopPropagation()}
               initial="hidden"
@@ -176,10 +185,14 @@ export function AutoUpdateModal({
               variants={modalVariants}
               style={{
                 width: 'min(100%, 540px)',
+                maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                margin: 'auto',
                 background: 'var(--vellum-bg)',
                 border: '1px solid var(--ink-black)',
                 boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
-                padding: '24px',
+                padding: 'clamp(16px, 4.2vw, 24px)',
                 display: 'grid',
                 gap: '1rem',
               }}
@@ -189,6 +202,7 @@ export function AutoUpdateModal({
                   style={{
                     width: 40,
                     height: 40,
+                    flexShrink: 0,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -203,7 +217,7 @@ export function AutoUpdateModal({
                   <h2
                     id="auto-update-title"
                     className="serif"
-                    style={{ margin: 0, fontSize: '2rem', fontWeight: 400, color: 'var(--ink-black)' }}
+                    style={{ margin: 0, fontSize: 'clamp(1.5rem, 7vw, 2rem)', fontWeight: 400, color: 'var(--ink-black)' }}
                   >
                     Daily auto-update
                   </h2>
@@ -217,7 +231,7 @@ export function AutoUpdateModal({
               <div
                 className="mono"
                 style={{
-                  fontSize: 10,
+                  fontSize: 11,
                   textTransform: 'uppercase',
                   letterSpacing: '0.08em',
                   color: 'var(--text-muted)',
@@ -271,7 +285,7 @@ export function AutoUpdateModal({
                 <span
                   className="mono"
                   style={{
-                    fontSize: 10,
+                    fontSize: 11,
                     textTransform: 'uppercase',
                     letterSpacing: '0.08em',
                     color: 'var(--text-muted)',
@@ -313,11 +327,25 @@ export function AutoUpdateModal({
                 </div>
               ) : null}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <div
+                style={{
+                  position: 'sticky',
+                  bottom: 0,
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                  background: 'var(--vellum-bg)',
+                  // Also cover the panel's bottom padding, where scrolled
+                  // content would otherwise show below the stuck buttons.
+                  boxShadow: '0 -8px 0 var(--vellum-bg), 0 24px 0 var(--vellum-bg)',
+                }}
+              >
                 <motion.button
                   type="button"
                   onClick={onClose}
                   disabled={saving}
+                  className="pointer-coarse:min-h-[44px]"
                   style={{
                     border: '1px solid var(--etched-border)',
                     background: 'transparent',
@@ -339,6 +367,7 @@ export function AutoUpdateModal({
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={saving}
+                  className="pointer-coarse:min-h-[44px]"
                   style={{
                     display: 'flex',
                     alignItems: 'center',
