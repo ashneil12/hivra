@@ -27,6 +27,7 @@ jest.mock("@/lib/billing/billing-v2-availability", () => ({
 }));
 
 jest.mock("@/lib/billing/yearly-token-quotes", () => ({
+  ActiveYearlyQuoteTokenMismatchError: class ActiveYearlyQuoteTokenMismatchError extends Error {},
   createYearlyTokenQuote: (...args: unknown[]) => mockCreateYearlyQuote(...args),
   getActiveYearlyTokenQuote: (...args: unknown[]) => mockGetActiveYearlyQuote(...args),
   getActiveYearlyTokenQuotes: (...args: unknown[]) => mockGetActiveYearlyQuotes(...args),

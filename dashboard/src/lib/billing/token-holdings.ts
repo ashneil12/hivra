@@ -800,9 +800,25 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   rpcOptions?: RpcCallOptions;
+  /**
+   * Read this wallet (one of the user's own user_wallets rows) instead of the
+   * token verification wallet. Used after a lock-wallet move to record both
+   * wallets' real post-move balances.
+   */
+  wallet?: { id: string; address: string; normalizedAddress: string };
 }) {
   const admin = requireDb(params.db ?? supabaseAdmin);
-  const wallet = await getTokenVerificationWallet(params.userId, admin);
+  const wallet = params.wallet
+    ? {
+        id: params.wallet.id,
+        userId: params.userId,
+        address: params.wallet.address,
+        normalizedAddress: params.wallet.normalizedAddress,
+        chainId: BASE_CHAIN_ID,
+        verifiedAt: null,
+        verificationMethod: null,
+      }
+    : await getTokenVerificationWallet(params.userId, admin);
   if (!wallet) {
     return { status: "no_verified_wallet" as const, snapshot: null, snapshots: [] };
   }

@@ -21,7 +21,7 @@
  *
  * Client-safe: no server imports.
  */
-import { BASE_CHAIN_ID, HERMESOS_TOKEN } from "@/lib/billing/token-registry";
+import { BASE_CHAIN_ID, HERMESOS_TOKEN, platformTokenByAddress } from "@/lib/billing/token-registry";
 
 export { BASE_CHAIN_ID };
 
@@ -90,24 +90,38 @@ export function buildBaseErc20TransferUri(request: Erc20TransferRequest): string
 }
 
 /**
- * Link for paying a $HermesOS quote. The token is only treated as known when
- * the quote says it is denominated in $HermesOS with its real decimals, so a
- * quote in any other asset never gets a link pointing at the wrong contract.
+ * Link for paying a platform-token quote ($HermesOS or $HIVRA). The token is
+ * only treated as known when the quote's contract (or, for older payloads
+ * without one, its symbol) names a registered platform token with the same
+ * decimals, so a quote in any other asset never gets a link pointing at the
+ * wrong contract.
  */
 export function hermesosTransferUri(quote: {
   tokenSymbol: string | null | undefined;
   tokenDecimals: number | null | undefined;
+  tokenAddress?: string | null;
   depositAddress: string | null | undefined;
   amountRaw: string | bigint | null | undefined;
 }): string | null {
-  // "Hivra" is the symbol quotes carried before the token registry named the
-  // legacy token "HermesOS"; both mean the $HermesOS contract.
-  if (quote.tokenSymbol !== HERMESOS_BASE_TOKEN.symbol && quote.tokenSymbol !== LEGACY_HERMESOS_SYMBOL) return null;
-  if (quote.tokenDecimals !== HERMESOS_BASE_TOKEN.decimals) return null;
+  let token: { publishedAddress: string; decimals: number; chainId: number } | null;
+  if (quote.tokenAddress) {
+    token = platformTokenByAddress(quote.tokenAddress);
+  } else {
+    // "Hivra" is the symbol $HermesOS quotes carried before the token
+    // registry named the legacy token "HermesOS".
+    token =
+      quote.tokenSymbol === HERMESOS_BASE_TOKEN.symbol || quote.tokenSymbol === LEGACY_HERMESOS_SYMBOL
+        ? HERMESOS_TOKEN
+        : null;
+  }
+  if (!token || quote.tokenDecimals !== token.decimals) return null;
   return buildBaseErc20TransferUri({
-    tokenAddress: HERMESOS_BASE_TOKEN.address,
-    chainId: HERMESOS_BASE_TOKEN.chainId,
+    tokenAddress: token.publishedAddress,
+    chainId: token.chainId,
     recipient: quote.depositAddress,
     amountRaw: quote.amountRaw,
   });
 }
+
+/** The same link, named for what it does now. */
+export const platformTokenTransferUri = hermesosTransferUri;
