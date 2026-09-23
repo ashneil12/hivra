@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -21,9 +21,10 @@ import {
   DeploymentDestinationControl,
   measuredTargetCapacity,
   useLaunchDestination,
+  type LaunchDestinationState,
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
-import { isProxmoxDeploymentTarget } from "@/lib/infrastructure/contracts";
+import { isProxmoxDeploymentTarget, type DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
 import {
   fetchPlanStrict,
@@ -81,6 +82,68 @@ function planFitsCodexBrowser(plan: PlanInfo | null): boolean {
   const floor = CODEX_BROWSER_FLOOR;
   return paidPlan(plan)
     && planCanFit(plan, { ...floor, maximumCpu: floor.cpu, maximumRam: floor.ram, source: "recommended" });
+}
+
+function isWholeProviderComputer(target: DeploymentTargetDto | null): boolean {
+  return target !== null && (target.capabilities as unknown as { kind?: string }).kind === "provider-vm";
+}
+
+/** Codex's browser default for the chosen destination. Hivra Cloud follows the
+ * plan; the owner's own capacity mirrors the welcome form's host check, so the
+ * browser starts on whenever the selected host's measured capacity holds its
+ * floor. Null while the plan or the selected host is not known yet. */
+function recommendedCodexBrowser(
+  mode: LaunchDestinationState["mode"],
+  selectedTarget: DeploymentTargetDto | null,
+  plan: PlanInfo | null,
+): boolean | null {
+  if (mode === "hivra-managed") return plan ? planFitsCodexBrowser(plan) : null;
+  if (!selectedTarget) return null;
+  const capacity = measuredTargetCapacity(selectedTarget);
+  return capacity.cpu >= CODEX_BROWSER_FLOOR.cpu && capacity.ramGb >= CODEX_BROWSER_FLOOR.ram;
+}
+
+/** Whether the chosen destination can hold this size. Unknown capacity counts
+ * as holding it, so missing evidence never forces a smaller size. */
+function destinationHolds(
+  mode: LaunchDestinationState["mode"],
+  selectedTarget: DeploymentTargetDto | null,
+  plan: PlanInfo | null,
+  resources: LaunchDraft["resources"],
+): boolean {
+  if (mode === "hivra-managed") return !plan?.usage || planCanFit(plan, resources);
+  // A provider computer is used whole; the requested size is not a slice of it.
+  if (!selectedTarget || isWholeProviderComputer(selectedTarget)) return true;
+  const capacity = measuredTargetCapacity(selectedTarget);
+  return capacity.cpu >= resources.cpu && capacity.ramGb >= resources.ram;
+}
+
+/** Codex resources for a browser choice. Turning the browser off never shrinks
+ * a size that meets the base floor and still fits, and turning it on raises
+ * only what is below the browser floor. A recommended size the destination can
+ * no longer hold falls back to the recommendation for that choice. */
+function codexResourcesFor(
+  resources: LaunchDraft["resources"],
+  browser: boolean,
+  plan: PlanInfo | null,
+  holds: (resources: LaunchDraft["resources"]) => boolean,
+): LaunchDraft["resources"] {
+  const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
+  const meetsFloor = resources.cpu >= floor.cpu && resources.ram >= floor.ram;
+  if (resources.source === "custom") {
+    if (meetsFloor) return resources;
+    const cpu = Math.max(resources.cpu, floor.cpu);
+    const ram = Math.max(resources.ram, floor.ram);
+    return {
+      ...resources,
+      cpu,
+      ram,
+      maximumCpu: Math.max(resources.maximumCpu ?? cpu, cpu),
+      maximumRam: Math.max(resources.maximumRam ?? ram, ram),
+    };
+  }
+  if (meetsFloor && (browser || holds(resources))) return resources;
+  return recommendedForPlan("codex", plan, browser);
 }
 
 function formatSize(cpu: number, ram: number): string {
@@ -428,19 +491,14 @@ export function LaunchJourney() {
         setDraft(current => {
           if (
             !current?.profileId
+            // Codex also depends on the destination; the effect below owns it.
+            || current.profileId === "codex"
             || current.resources.source !== "recommended"
             || current.submittedDeployment
           ) return current;
-          const browser = current.profileId === "codex" && current.browserSource === "recommended"
-            ? planFitsCodexBrowser(nextPlan)
-            : current.browser;
-          const resources = recommendedForPlan(current.profileId, nextPlan, browser);
-          if (
-            browser === current.browser
-            && resources.cpu === current.resources.cpu
-            && resources.ram === current.resources.ram
-          ) return current;
-          return { ...current, browser, resources };
+          const resources = recommendedForPlan(current.profileId, nextPlan, current.browser);
+          if (resources.cpu === current.resources.cpu && resources.ram === current.resources.ram) return current;
+          return { ...current, resources };
         });
       })
       .catch(() => {
@@ -450,6 +508,36 @@ export function LaunchJourney() {
       });
     return () => { active = false; };
   }, [planCheckRevision]);
+
+  // Until the owner chooses, Codex's browser follows the plan on Hivra Cloud
+  // and the selected host's measured capacity on their own infrastructure,
+  // re-evaluated whenever either changes. A submitted launch never changes.
+  // Applied before paint so a stale default is never shown or submitted.
+  const destinationMode = destination.mode;
+  const selectedTarget = destination.selectedTarget;
+  const codexBrowserDefault = recommendedCodexBrowser(destinationMode, selectedTarget, plan);
+  const draftProfileId = draft?.profileId ?? null;
+  const draftSubmitted = Boolean(draft?.submittedDeployment);
+  useLayoutEffect(() => {
+    setDraft(current => {
+      if (current?.profileId !== "codex" || current.submittedDeployment) return current;
+      const browser = current.browserSource === "recommended" && codexBrowserDefault !== null
+        ? codexBrowserDefault
+        : current.browser;
+      const resources = codexResourcesFor(
+        current.resources,
+        browser,
+        plan,
+        next => destinationHolds(destinationMode, selectedTarget, plan, next),
+      );
+      if (
+        browser === current.browser
+        && resources.cpu === current.resources.cpu
+        && resources.ram === current.resources.ram
+      ) return current;
+      return { ...current, browser, resources };
+    });
+  }, [codexBrowserDefault, destinationMode, draftProfileId, draftSubmitted, plan, selectedTarget]);
 
   useEffect(() => {
     if (draft) writeLaunchDraft(draft);
@@ -488,9 +576,7 @@ export function LaunchJourney() {
   const codexBrowser = draft.profileId === "codex" && draft.browser;
   const resourceFloor = draft.profileId ? launchResourcePolicy(draft.profileId, { browser: draft.browser }).floor : null;
   const targetCapacity = measuredTargetCapacity(destination.selectedTarget);
-  const wholeProviderComputer = destination.mode === "self-managed"
-    && destination.selectedTarget !== null
-    && (destination.selectedTarget.capabilities as unknown as { kind?: string }).kind === "provider-vm";
+  const wholeProviderComputer = destination.mode === "self-managed" && isWholeProviderComputer(destination.selectedTarget);
   // A provider VM is exclusive, not a requested slice of its free memory.
   // Match the runtime headroom check; the server still re-inspects at launch.
   const requiredCapacity = wholeProviderComputer && currentProfile
@@ -505,14 +591,13 @@ export function LaunchJourney() {
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
   const managedFits = planCanFit(plan, draft.resources);
   const managedPlanAllowed = !managedPaidRequired || paidPlan(plan);
-  // Codex resources after a browser change: an explicit size that still meets
-  // the new floor is kept; otherwise the recommendation for that choice applies.
-  const resourcesWithBrowser = (browser: boolean): LaunchDraft["resources"] => {
-    const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
-    return draft.resources.source === "custom" && draft.resources.cpu >= floor.cpu && draft.resources.ram >= floor.ram
-      ? draft.resources
-      : recommendedForPlan("codex", plan, browser);
-  };
+  // Codex resources after a browser change, sized against the chosen destination.
+  const resourcesWithBrowser = (browser: boolean): LaunchDraft["resources"] => codexResourcesFor(
+    draft.resources,
+    browser,
+    plan,
+    resources => destinationHolds(destination.mode, destination.selectedTarget, plan, resources),
+  );
   const sizeWithoutBrowser = wholeProviderComputer && currentProfile
     ? providerComputerResourceFloor(currentProfile.runtimeId, false)
     : resourcesWithBrowser(false);
@@ -605,7 +690,8 @@ export function LaunchJourney() {
     if (draft.profileId === profileId) return;
     const details = PROFILE_DETAILS[profileId];
     const fresh = createLaunchDraft();
-    const browser = profileId === "codex" && planFitsCodexBrowser(plan);
+    const browser = profileId === "codex"
+      && (recommendedCodexBrowser(destination.mode, destination.selectedTarget, plan) ?? false);
     setDraft({
       ...fresh,
       stage: "profile",
