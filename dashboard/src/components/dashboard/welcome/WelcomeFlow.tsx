@@ -95,7 +95,6 @@ import {
 } from '@/lib/billing/client';
 import { BILLING_SUBSCRIBE_REASON } from '@/lib/billing/subscribe-errors';
 import type { PlanKey } from '@/lib/subscription';
-import InteractiveBackground from '@/components/InteractiveBackground';
 import { FreeTierCardVerification } from '@/components/billing/FreeTierCardVerification';
 import { UpgradePaywallModal } from '@/components/billing/UpgradePaywallModal';
 import { isSecondAgentUpgradeEnabled } from '@/lib/flags/upgrade-prompts';
@@ -108,7 +107,7 @@ import {
   measuredTargetCapacity,
   useLaunchDestination,
 } from '@/components/dashboard/welcome/DeploymentDestinationControl';
-import { DeployForm, type DashboardVaultKey } from '@/components/dashboard/welcome/DeployForm';
+import { DeployForm, focusOnFinePointer, type DashboardVaultKey } from '@/components/dashboard/welcome/DeployForm';
 import { parseLaunchTargetHandoff, type LaunchTargetHandoff } from '@/components/dashboard/welcome/launch-target-handoff';
 import { DeployingState } from '@/components/dashboard/welcome/DeployingState';
 import { DeployedCelebration } from '@/components/dashboard/welcome/DeployedCelebration';
@@ -133,6 +132,7 @@ import {
 import {
   createAgent,
   fetchPlanStrict,
+  type CreateAgentInput,
   type PlanInfo,
 } from '@/lib/hivra/agent-api';
 import {
@@ -236,6 +236,10 @@ const WELCOME_ERROR_ACTION_PRIMARY_STYLE: React.CSSProperties = {
   letterSpacing: '0.1em',
   fontWeight: 800,
   padding: '7px 11px',
+  minHeight: 44,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
 };
 const WELCOME_ERROR_ACTION_SECONDARY_STYLE: React.CSSProperties = {
   border: '1px solid var(--etched-border)',
@@ -247,9 +251,91 @@ const WELCOME_ERROR_ACTION_SECONDARY_STYLE: React.CSSProperties = {
   letterSpacing: '0.1em',
   fontWeight: 800,
   padding: '7px 11px',
+  minHeight: 44,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
 };
 
+// Bordered mono "Back to agent choices" control shared by the launch forms.
+const WELCOME_BACK_BUTTON_STYLE: React.CSSProperties = {
+  border: '1px solid var(--etched-border)',
+  background: 'transparent',
+  color: 'var(--text-secondary)',
+  cursor: 'pointer',
+  fontSize: 10,
+  textTransform: 'uppercase',
+  letterSpacing: '0.12em',
+  fontWeight: 800,
+  minHeight: 44,
+  padding: '8px 11px',
+  marginBottom: 18,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+};
+
+// Phones, plus touch tablets up to the compact rail width.
+const WELCOME_TOUCH_COMPACT_QUERY = '(max-width: 767px), (max-width: 1023px) and (pointer: coarse)';
+
 type FlowState = 'loading' | 'agent-type' | 'plan' | 'deploy' | 'deploying' | 'sync-pending';
+type UrlFlowStep = 'agent-type' | 'plan' | 'deploy';
+
+// Only these steps live in ?step=; transient states would dead-end a bookmark.
+function isUrlFlowStep(value: unknown): value is UrlFlowStep {
+  return value === 'agent-type' || value === 'plan' || value === 'deploy';
+}
+
+const URL_FLOW_STEP_ORDER: Record<UrlFlowStep, number> = { 'agent-type': 0, plan: 1, deploy: 2 };
+const HISTORY_STEP_KEY = 'hivraWelcomeStep';
+const HISTORY_FROM_KEY = 'hivraWelcomeFrom';
+
+// Writes ?step= through the native History API, which Next keeps in sync with
+// useSearchParams without a server round trip. A move forward pushes an entry
+// that remembers the step it came from, so the system back gesture steps back.
+// A move back to that step pops the entry instead of stacking another one;
+// every other change rewrites the current entry. Returns true when it started
+// a pop, which completes on the next popstate.
+function writeWelcomeStepHistory(step: UrlFlowStep, userMove: boolean): boolean {
+  const url = new URL(window.location.href);
+  const urlStep = url.searchParams.get('step');
+  if (urlStep === step) return false;
+  const state = window.history.state as Record<string, unknown> | null;
+  const entryStep = state?.[HISTORY_STEP_KEY];
+  const rawEntryFrom = state?.[HISTORY_FROM_KEY];
+  const entryFrom = isUrlFlowStep(rawEntryFrom) ? rawEntryFrom : null;
+  url.searchParams.set('step', step);
+  const href = `${url.pathname}${url.search}${url.hash}`;
+  if (userMove && isUrlFlowStep(urlStep)) {
+    if (URL_FLOW_STEP_ORDER[step] > URL_FLOW_STEP_ORDER[urlStep]) {
+      window.history.pushState({ [HISTORY_STEP_KEY]: step, [HISTORY_FROM_KEY]: urlStep }, '', href);
+      return false;
+    }
+    if (entryStep === urlStep && entryFrom === step) {
+      window.history.back();
+      return true;
+    }
+  }
+  window.history.replaceState({ [HISTORY_STEP_KEY]: step, [HISTORY_FROM_KEY]: entryFrom }, '', href);
+  return false;
+}
+
+// Portable identity of a saved template, read from the owner list or the
+// shared-link endpoint. The launch route re-resolves it by id server-side.
+type WelcomeLaunchTemplate = {
+  id: string;
+  name: string | null;
+  type: string;
+  emoji: string | null;
+};
+
+// The agents route forks templateId server-side; CreateAgentInput does not
+// declare the field yet, so it is added here without widening every caller.
+function withLaunchTemplate(input: CreateAgentInput, templateId: string | null | undefined): CreateAgentInput {
+  if (!templateId) return input;
+  const request: CreateAgentInput & { templateId: string } = { ...input, templateId };
+  return request;
+}
 
 // Carries the HTTP status + the server's machine-readable failureType (e.g.
 // 'provision_host_failure' from the placement-failover work) from the deploy
@@ -585,6 +671,11 @@ export function WelcomeFlow() {
   const subscriptionSuccess = searchParams?.get('subscription') === 'success';
   const agentTypeParam = searchParams?.get('agentType');
   const hasExplicitAgentTypeParam = resolveWelcomeAgentTypeKey(agentTypeParam) !== null;
+  // "Browse every agent" on /dashboard/launch opens this catalog; keep a way
+  // back to the Launch journey that sent the user here.
+  const fromLaunch = searchParams?.get('from') === 'launch';
+  const templateIdParam = searchParams?.get('templateId') ?? null;
+  const templateTokenParam = searchParams?.get('templateToken') ?? null;
 
   // ── Flow state ───────────────────────────────────────────────────────────
   const [flowState, setFlowStateInternal] = useState<FlowState>('loading');
@@ -634,14 +725,26 @@ export function WelcomeFlow() {
   // Structured context for deploy failures (category, raw detail, plan CTAs).
   // Always set/cleared alongside `error` so the banner can't show stale CTAs.
   const [errorInsight, setErrorInsight] = useState<WelcomeErrorInsight | null>(null);
+  // Bumped on every surfaced error, including a repeat of the same message, so
+  // each blocked tap brings the notice back into view.
+  const [errorRevision, setErrorRevision] = useState(0);
+  const errorNoticeRef = useRef<HTMLDivElement>(null);
   const setError = useCallback((message: string | null) => {
     setErrorMessage(message);
     setErrorInsight(null);
+    if (message) setErrorRevision((revision) => revision + 1);
   }, []);
   const setDeployError = useCallback((insight: WelcomeErrorInsight) => {
     setErrorMessage(insight.headline);
     setErrorInsight(insight);
+    setErrorRevision((revision) => revision + 1);
   }, []);
+  useEffect(() => {
+    if (errorRevision === 0) return;
+    errorNoticeRef.current?.scrollIntoView?.({ block: 'center' });
+  }, [errorRevision]);
+  const [launchTemplate, setLaunchTemplate] = useState<WelcomeLaunchTemplate | null>(null);
+  const [launchTemplateError, setLaunchTemplateError] = useState<string | null>(null);
   const [cardGateMessage, setCardGateMessage] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   // Moment #4: the second-agent upgrade paywall. Opened from the one-base-agent
@@ -822,14 +925,50 @@ export function WelcomeFlow() {
   // Keep ?step= in sync with the flow so refresh/back land where the user
   // actually was instead of replaying the probe from scratch. Transient
   // states (loading/deploying/sync-pending) stay off the URL — re-entering
-  // them from a bookmark would dead-end.
+  // them from a bookmark would dead-end. Moves between visible steps go
+  // through the history stack (writeWelcomeStepHistory); probe-driven
+  // arrivals rewrite the current entry. Browser back/forward is applied by
+  // the popstate listener below.
+  const pageTopRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const previousFlowStateRef = useRef<FlowState>('loading');
+  const stepPopPendingRef = useRef(false);
   useEffect(() => {
-    if (flowState !== 'agent-type' && flowState !== 'plan' && flowState !== 'deploy') return;
-    const params = new URLSearchParams(searchParams?.toString() ?? '');
-    if (params.get('step') === flowState) return;
-    params.set('step', flowState);
-    router.replace(`/dashboard/welcome?${params.toString()}`, { scroll: false });
-  }, [flowState, router, searchParams]);
+    const previous = previousFlowStateRef.current;
+    previousFlowStateRef.current = flowState;
+    if (previous === flowState || !isUrlFlowStep(flowState)) return;
+    const userStepChange = isUrlFlowStep(previous);
+    // Each step opens at its heading, not at the scroll offset of the last.
+    // The page top also keeps the "← Launch" link above the heading in view.
+    const header = headerRef.current;
+    if (userStepChange && header) {
+      const viewportTop = header.closest('main')?.getBoundingClientRect().top ?? 0;
+      if (header.getBoundingClientRect().top < viewportTop) {
+        (pageTopRef.current ?? header).scrollIntoView?.({ block: 'start' });
+      }
+    }
+    // A pop this flow started is still landing; its popstate syncs the URL.
+    if (stepPopPendingRef.current) return;
+    stepPopPendingRef.current = writeWelcomeStepHistory(flowState, userStepChange);
+  }, [flowState]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const current = flowStateRef.current;
+      if (stepPopPendingRef.current) {
+        stepPopPendingRef.current = false;
+        // The flow may have moved again while its own pop was landing.
+        if (isUrlFlowStep(current)) stepPopPendingRef.current = writeWelcomeStepHistory(current, true);
+        return;
+      }
+      const urlStep = new URLSearchParams(window.location.search).get('step');
+      if (!isUrlFlowStep(urlStep) || !isUrlFlowStep(current) || urlStep === current) return;
+      if (urlStep !== 'agent-type' && !selectedAgentType) return;
+      setFlowState(urlStep);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [selectedAgentType, setFlowState]);
 
   useEffect(() => {
     setPersonalizationDraft((draft) => ({
@@ -970,6 +1109,10 @@ export function WelcomeFlow() {
     setFlowState('agent-type');
   }, [selectedAgentType, setFlowState]);
 
+  // Set by the user's own agent or specialist pick. A saved template that
+  // finishes loading after that must not switch their choice.
+  const userPickedAgentRef = useRef(false);
+
   // Configure all deploy-form state for an agent type WITHOUT advancing the
   // flow. Extracted so the persona step can pre-select an agent type, let the
   // user fill the personalization panel, and only then advance on Continue.
@@ -1027,6 +1170,7 @@ export function WelcomeFlow() {
       // A preselected default is not a user choice — never persist it (a real
       // click must stay the only thing that makes a persona sticky).
       if (!opts?.preselected) {
+        userPickedAgentRef.current = true;
         try {
           window.localStorage.setItem(WELCOME_PERSONA_STORAGE_KEY, persona.id);
         } catch {
@@ -1091,12 +1235,73 @@ export function WelcomeFlow() {
     advanceFromAgentType,
   ]);
 
+  // ── Launch from a saved template (/dashboard/templates, shared links) ──
+  // Load the template's portable identity, preselect its agent type and name,
+  // and send templateId with the launch so the agents route forks it.
+  useEffect(() => {
+    if (!templateIdParam && !templateTokenParam) return;
+    let cancelled = false;
+    const load = async (): Promise<WelcomeLaunchTemplate | null> => {
+      if (templateTokenParam) {
+        const res = await fetch(`/api/hivra/templates/shared/${encodeURIComponent(templateTokenParam)}`);
+        const body = await res.json().catch(() => null);
+        return body?.success ? (body.data.template as WelcomeLaunchTemplate) : null;
+      }
+      const res = await fetch('/api/hivra/templates');
+      const body = await res.json().catch(() => null);
+      const templates = body?.success ? (body.data.templates as WelcomeLaunchTemplate[]) : [];
+      return templates.find((template) => template.id === templateIdParam) ?? null;
+    };
+    load()
+      .then((template) => {
+        if (cancelled) return;
+        if (template) setLaunchTemplate(template);
+        else setLaunchTemplateError('This template is no longer available. Choose an agent to launch instead.');
+      })
+      .catch((templateError: unknown) => {
+        if (cancelled) return;
+        setLaunchTemplateError("Couldn't load that template. Choose an agent to launch instead.");
+        clientLog.warn('Welcome launch template load failed', {
+          source: 'welcome-flow',
+          failureType: 'welcome_launch_template_load_failed',
+          message: templateError instanceof Error ? templateError.message : String(templateError),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [templateIdParam, templateTokenParam]);
+
+  const launchTemplateAgentType = useMemo(() => {
+    const key = resolveWelcomeAgentTypeKey(launchTemplate?.type);
+    // Templates are saved from Hivra agents; the plain Hermes lane cannot fork one.
+    return key && key !== DEFAULT_AGENT_TYPE_KEY ? getAgentTypeDefinition(key) : null;
+  }, [launchTemplate?.type]);
+  const launchTemplateActive = Boolean(
+    launchTemplate && launchTemplateAgentType && selectedAgentType?.key === launchTemplateAgentType.key,
+  );
+  const launchTemplateName = launchTemplate?.name?.trim() || launchTemplateAgentType?.defaultName || 'Untitled template';
+
+  // Preselect the template only while the user is still choosing. Once they
+  // have picked for themselves, the banner's "Use this template" is the way in.
+  const launchTemplateAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!launchTemplate || !launchTemplateAgentType || launchTemplateAppliedRef.current) return;
+    launchTemplateAppliedRef.current = true;
+    const stillChoosing = flowStateRef.current === 'loading' || flowStateRef.current === 'agent-type';
+    if (!stillChoosing || userPickedAgentRef.current) return;
+    setSelectedPersonaId(null);
+    configureAgentType(launchTemplateAgentType, { keepAgentName: true });
+    setAgentName(launchTemplateName);
+  }, [configureAgentType, launchTemplate, launchTemplateAgentType, launchTemplateName]);
+
   // Advanced path: the user opened the "pick a specific agent" disclosure and
   // chose a technical agent type directly (general / claude-code / codex / aeon).
   // This bypasses the persona presets and routes straight into the SAME deploy
   // flow the technical cards always used — preserving both deploy lanes.
   const handleSelectAdvancedAgent = useCallback(
     (agentType: AgentTypeDefinition) => {
+      userPickedAgentRef.current = true;
       // Clear any persona selection so the persona personalization panel hides
       // and we behave like the original technical-card pick.
       setSelectedPersonaId(null);
@@ -1105,15 +1310,24 @@ export function WelcomeFlow() {
       } catch {
         // best-effort only
       }
-      configureAgentType(agentType);
+      // Picking the template's own agent keeps the template's name.
+      const keepTemplateName = Boolean(launchTemplate && launchTemplateAgentType?.key === agentType.key);
+      configureAgentType(agentType, { keepAgentName: keepTemplateName });
       captureWelcomeEvent('welcome_advanced_agent_selected', {
         agentType: agentType.key,
         recommendedTier: agentType.recommendedTier,
       });
       advanceFromAgentType(agentType);
     },
-    [configureAgentType, advanceFromAgentType],
+    [configureAgentType, advanceFromAgentType, launchTemplate, launchTemplateAgentType],
   );
+
+  // The banner's explicit opt-in: the template's agent under the template's name.
+  const handleUseLaunchTemplate = useCallback(() => {
+    if (!launchTemplateAgentType) return;
+    handleSelectAdvancedAgent(launchTemplateAgentType);
+    setAgentName(launchTemplateName);
+  }, [handleSelectAdvancedAgent, launchTemplateAgentType, launchTemplateName]);
 
   // ── Initial entitlement probe ────────────────────────────────────────────
   // If the URL says ?step=deploy (came back from /dashboard/wallet after
@@ -2134,6 +2348,7 @@ export function WelcomeFlow() {
     managed,
     deployCpu,
     deployRamGb,
+    selectedPersonaId,
   ]);
 
   // ── Render: terminal states ──────────────────────────────────────────────
@@ -2221,10 +2436,95 @@ export function WelcomeFlow() {
   }
 
   // ── Render: plan + deploy share the wrapped page chrome ──────────────────
+  // The general deploy card shows notices directly above its Deploy button;
+  // the other lanes render their own launch errors inline.
+  const deployFormActive =
+    flowState === 'deploy' &&
+    selectedAgentType?.key !== 'aeon' &&
+    selectedAgentType?.key !== 'openclaw' &&
+    selectedAgentType?.key !== 'agent-zero' &&
+    !isHivraBoxAgentType(selectedAgentType?.key) &&
+    !blocksLegacyHandoff;
+  const errorNotice = error ? (
+    <div ref={errorNoticeRef} role="alert" style={STYLES.errorBanner}>
+      <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0, marginTop: 1 }} />
+      <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+        <span style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>{error}</span>
+        {errorInsight && shouldRenderWelcomeErrorDetail(errorInsight, 'managed') && (
+          <span className="mono" style={{ fontSize: 10.5, lineHeight: 1.5, opacity: 0.55 }}>
+            {errorInsight.detail}
+          </span>
+        )}
+        {errorInsight?.showPlanActions && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {/* One-base-agent limit: the user already HAS an agent —
+                lead with opening (or restoring) it. The instance page
+                owns the actual restore control; we just route there.
+                Upgrade drops to the secondary slot. */}
+            {errorInsight.existingInstance ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="welcome-open-existing-agent"
+                  onClick={() =>
+                    router.push(`/dashboard/instances/${errorInsight.existingInstance!.id}`)
+                  }
+                  className="mono"
+                  style={WELCOME_ERROR_ACTION_PRIMARY_STYLE}
+                >
+                  {errorInsight.existingInstance.restorable
+                    ? 'Restore your agent'
+                    : 'Open your agent'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="welcome-second-agent-upgrade"
+                  onClick={() => {
+                    // Moment #4: when the flag is ON, open the shared
+                    // upgrade paywall (second-agent pitch) instead of a bare
+                    // billing redirect. Flag OFF keeps the existing route so
+                    // the #520 Open/Restore primary CTA is never regressed.
+                    if (isSecondAgentUpgradeEnabled()) {
+                      setSecondAgentPaywallOpen(true);
+                      return;
+                    }
+                    router.push('/dashboard/billing?from=welcome');
+                  }}
+                  className="mono"
+                  style={WELCOME_ERROR_ACTION_SECONDARY_STYLE}
+                >
+                  Upgrade plan
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => router.push('/dashboard/billing?from=welcome')}
+                  className="mono"
+                  style={WELCOME_ERROR_ACTION_PRIMARY_STYLE}
+                >
+                  Upgrade plan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push('/dashboard')}
+                  className="mono"
+                  style={WELCOME_ERROR_ACTION_SECONDARY_STYLE}
+                >
+                  Manage agents
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <>
-      <InteractiveBackground />
-      <div style={STYLES.pageContainer}>
+      <div ref={pageTopRef} style={STYLES.pageContainer}>
         <style>{`
           .glass-card {
             backdrop-filter: blur(24px);
@@ -2236,10 +2536,12 @@ export function WelcomeFlow() {
             transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
             border-radius: 0;
           }
-          .premium-btn:not(:disabled):hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
-            background: color-mix(in srgb, var(--ink-black) 85%, transparent);
+          @media (hover: hover) and (pointer: fine) {
+            .premium-btn:not(:disabled):hover {
+              transform: translateY(-2px);
+              box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+              background: color-mix(in srgb, var(--ink-black) 85%, transparent);
+            }
           }
           .premium-btn:not(:disabled):active {
             transform: translateY(0);
@@ -2280,10 +2582,12 @@ export function WelcomeFlow() {
             -webkit-backdrop-filter: blur(30px);
             transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease;
           }
-          .heavy-glass-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 24px 48px rgba(0,0,0,0.08);
-            border-color: color-mix(in srgb, var(--ink-black) 18%, transparent);
+          @media (hover: hover) and (pointer: fine) {
+            .heavy-glass-card:hover {
+              transform: translateY(-2px);
+              box-shadow: 0 24px 48px rgba(0,0,0,0.08);
+              border-color: color-mix(in srgb, var(--ink-black) 18%, transparent);
+            }
           }
           .sub-glass-card {
             border: 1px solid color-mix(in srgb, var(--ink-black) 6%, transparent);
@@ -2295,21 +2599,81 @@ export function WelcomeFlow() {
             box-shadow: 0 8px 24px rgba(0,0,0,0.02);
             cursor: pointer;
           }
-          .sub-glass-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 16px 32px rgba(0,0,0,0.06);
-            border-color: color-mix(in srgb, var(--ink-black) 14%, transparent);
+          @media (hover: hover) and (pointer: fine) {
+            .sub-glass-card:hover {
+              transform: translateY(-4px);
+              box-shadow: 0 16px 32px rgba(0,0,0,0.06);
+              border-color: color-mix(in srgb, var(--ink-black) 14%, transparent);
+            }
           }
           .provider-button {
             border-radius: 0;
           }
-          .provider-button:hover {
-            background: color-mix(in srgb, var(--ink-black) 4%, transparent) !important;
+          @media (hover: hover) and (pointer: fine) {
+            .provider-button:hover {
+              background: color-mix(in srgb, var(--ink-black) 4%, transparent) !important;
+            }
+          }
+          /* CPU/RAM pickers: below 768px the options share the row beside
+             their label (40px floor) so five fit at 360px; under 360px the
+             label takes its own line. */
+          .welcome-size-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+          .welcome-size-label { width: 54px; display: inline-flex; align-items: center; gap: 5px; }
+          .welcome-size-option { min-width: 44px; padding: 8px 12px; }
+          @media (max-width: 767px) {
+            .welcome-size-row { flex-wrap: nowrap; gap: 4px; }
+            .welcome-size-label { flex: 0 0 54px; }
+            .welcome-size-option { flex: 1 1 0; min-width: 40px; max-width: 64px; padding: 8px 0; }
+          }
+          @media (max-width: 359px) {
+            .welcome-size-row { flex-wrap: wrap; }
+            .welcome-size-label { flex-basis: 100%; }
+          }
+          /* Specialists: the only Continue sits below every card, so phones
+             and touch tablets get a sticky copy of it at the bottom of the step. */
+          .welcome-persona-sticky { display: none; }
+          @media ${WELCOME_TOUCH_COMPACT_QUERY} {
+            .welcome-persona-sticky {
+              display: block;
+              position: sticky;
+              bottom: 0;
+              z-index: 5;
+              padding: 8px 0;
+              background: var(--vellum-bg);
+            }
+          }
+          /* From 768px there is no bottom bar reserving the home-indicator inset. */
+          @media (min-width: 768px) and (max-width: 1023px) and (pointer: coarse) {
+            .welcome-persona-sticky { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
           }
         `}</style>
 
+        {fromLaunch && (
+          <Link
+            href="/dashboard/launch"
+            className="mono"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              minHeight: 44,
+              padding: '0 12px',
+              marginBottom: '1rem',
+              border: '1px solid var(--etched-border)',
+              color: 'var(--text-secondary)',
+              textDecoration: 'none',
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+            }}
+          >
+            <ArrowLeft size={13} aria-hidden="true" /> Launch
+          </Link>
+        )}
+
         <AnimateIn>
-          <header style={STYLES.header}>
+          <header ref={headerRef} style={STYLES.header}>
             <div style={STYLES.headerBadge}>
               <span style={STYLES.headerBadgeDot} />
               <span className="mono" style={STYLES.headerBadgeText}>
@@ -2343,7 +2707,7 @@ export function WelcomeFlow() {
             </h1>
             <p style={STYLES.headerSubtitle}>
               {flowState === 'agent-type'
-                ? 'Choose the agent you want to run, or start with a pre-shaped specialist. Hivra sends either path to its real setup and deploy flow.'
+                ? 'Pick the agent software to run — Claude Code, Codex, OpenClaw, Agent Zero or a plain Hermes agent — or a specialist that starts pre-shaped and can still be renamed and retuned.'
                 : flowState === 'plan'
                   ? 'Choose Card or $HermesOS, then finish the deploy.'
                   : `${selectedAgentType?.tagline ?? "Name your agent, connect your AI provider, and you're live."}`}
@@ -2360,80 +2724,49 @@ export function WelcomeFlow() {
           </div>
         )}
 
-        {error && (
-          <div role="alert" style={STYLES.errorBanner}>
-            <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0, marginTop: 1 }} />
-            <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
-              <span style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>{error}</span>
-              {errorInsight && shouldRenderWelcomeErrorDetail(errorInsight, 'managed') && (
-                <span className="mono" style={{ fontSize: 10.5, lineHeight: 1.5, opacity: 0.55 }}>
-                  {errorInsight.detail}
-                </span>
-              )}
-              {errorInsight?.showPlanActions && (
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {/* One-base-agent limit: the user already HAS an agent —
-                      lead with opening (or restoring) it. The instance page
-                      owns the actual restore control; we just route there.
-                      Upgrade drops to the secondary slot. */}
-                  {errorInsight.existingInstance ? (
-                    <>
-                      <button
-                        type="button"
-                        data-testid="welcome-open-existing-agent"
-                        onClick={() =>
-                          router.push(`/dashboard/instances/${errorInsight.existingInstance!.id}`)
-                        }
-                        className="mono"
-                        style={WELCOME_ERROR_ACTION_PRIMARY_STYLE}
-                      >
-                        {errorInsight.existingInstance.restorable
-                          ? 'Restore your agent'
-                          : 'Open your agent'}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="welcome-second-agent-upgrade"
-                        onClick={() => {
-                          // Moment #4: when the flag is ON, open the shared
-                          // upgrade paywall (second-agent pitch) instead of a bare
-                          // billing redirect. Flag OFF keeps the existing route so
-                          // the #520 Open/Restore primary CTA is never regressed.
-                          if (isSecondAgentUpgradeEnabled()) {
-                            setSecondAgentPaywallOpen(true);
-                            return;
-                          }
-                          router.push('/dashboard/billing?from=welcome');
-                        }}
-                        className="mono"
-                        style={WELCOME_ERROR_ACTION_SECONDARY_STYLE}
-                      >
-                        Upgrade plan
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => router.push('/dashboard/billing?from=welcome')}
-                        className="mono"
-                        style={WELCOME_ERROR_ACTION_PRIMARY_STYLE}
-                      >
-                        Upgrade plan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => router.push('/dashboard')}
-                        className="mono"
-                        style={WELCOME_ERROR_ACTION_SECONDARY_STYLE}
-                      >
-                        Manage agents
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
+        {!deployFormActive && errorNotice}
+
+        {(launchTemplate || launchTemplateError) && (flowState === 'agent-type' || launchTemplateActive) && (
+          <div
+            data-testid="welcome-launch-template"
+            role={launchTemplateError ? 'alert' : 'status'}
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              border: '1px solid var(--etched-border)',
+              background: 'var(--bg-surface)',
+              padding: '12px 14px',
+              marginBottom: '1.5rem',
+            }}
+          >
+            <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+              <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800, opacity: 0.6 }}>
+                {launchTemplateError ? 'Template unavailable' : 'Launching from template'}
+              </span>
+              <span style={{ fontSize: 14, lineHeight: 1.45, color: 'var(--ink-black)', overflowWrap: 'anywhere' }}>
+                {launchTemplateError ?? (
+                  <>
+                    {launchTemplate?.emoji ? `${launchTemplate.emoji} ` : ''}<strong>{launchTemplateName}</strong>
+                    {launchTemplateAgentType
+                      ? ` · ${launchTemplateAgentType.name}`
+                      : '. This template’s agent can’t be launched from this flow yet.'}
+                  </>
+                )}
+              </span>
             </div>
+            {flowState === 'agent-type' && launchTemplateAgentType && (
+              <button
+                type="button"
+                onClick={handleUseLaunchTemplate}
+                className="mono"
+                style={WELCOME_ERROR_ACTION_PRIMARY_STYLE}
+              >
+                Use this template
+              </button>
+            )}
           </div>
         )}
 
@@ -2510,6 +2843,7 @@ export function WelcomeFlow() {
                 setSuccessMsg(null);
                 setFlowState('agent-type');
               }}
+              templateId={launchTemplateActive ? launchTemplate?.id ?? null : null}
             />
           ) : isHivraBoxAgentType(selectedAgentType?.key) ? (
             <HivraBoxWelcomeLaunchForm
@@ -2526,6 +2860,7 @@ export function WelcomeFlow() {
               }}
               personaId={selectedPersonaId}
               soulPromptId={personalizationDraft.soulPromptId ?? null}
+              templateId={launchTemplateActive ? launchTemplate?.id ?? null : null}
             />
           ) : blocksLegacyHandoff ? (
             <section style={STYLES.deployCard} aria-label="Selected computer compatibility">
@@ -2604,6 +2939,7 @@ export function WelcomeFlow() {
                 setSuccessMsg(null);
                 setFlowState('agent-type');
               }}
+              deployAlert={errorNotice}
             />
           )
         )}
@@ -2662,6 +2998,8 @@ type HivraBoxLaunchProps = {
   // Telemetry context only — which welcome persona (if any) led to this launch.
   personaId?: string | null;
   soulPromptId?: string | null;
+  /** Saved template to fork; the agents route applies its identity. */
+  templateId?: string | null;
 };
 
 function HivraBoxWelcomeLaunchForm(props: HivraBoxLaunchProps) {
@@ -2672,7 +3010,7 @@ function HivraBoxWelcomeLaunchForm(props: HivraBoxLaunchProps) {
 
 function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentCreated,
   managedLaunchEntitled, onChooseManagedPlan, onBackToAgentChoices,
-  personaId = null, soulPromptId = null, ownerId, targetHandoff,
+  personaId = null, soulPromptId = null, ownerId, targetHandoff, templateId = null,
 }: HivraBoxLaunchProps & { ownerId: string | null }) {
   const router = useRouter();
   const selfHosted = isLocalAuthMode();
@@ -2902,12 +3240,13 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
         ram: resolvedRam,
         browser: effectiveBrowser,
         deployment,
+        ...(templateId ? { templateId } : {}),
       });
       const nativeOwnerScope = ownerId ?? 'local-operator';
       const nativeRequestId = agent.id === 'codex'
         ? nativeLaunchRequestId(nativeOwnerScope, nativeIntentKey)
         : null;
-      const created = await createAgent({
+      const created = await createAgent(withLaunchTemplate({
         type: agent.id,
         name: agentName.trim(),
         cpu: resolvedCpu,
@@ -2915,7 +3254,7 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
         browser: effectiveBrowser,
         deployment,
         ...(nativeRequestId ? { launchRequestId: nativeRequestId } : {}),
-      });
+      }, templateId));
       if (nativeRequestId) clearNativeLaunchRequestId(nativeOwnerScope, nativeRequestId);
       // The create response is the acceptance boundary. Record it immediately;
       // optional personalization must never make a successfully-created box
@@ -2928,9 +3267,13 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
         deploymentMode: deployment.mode,
         acceptedStatus: created.status,
       });
-      const personalizationOutcome = await waitForWelcomeBestEffort(
-        Promise.resolve().then(() => onAgentCreated(created.id)),
-      );
+      // A forked template already carries its goal, context and personality;
+      // the onboarding save would overwrite them with this draft's defaults.
+      const personalizationOutcome = templateId
+        ? ({ status: 'completed' } as const)
+        : await waitForWelcomeBestEffort(
+          Promise.resolve().then(() => onAgentCreated(created.id)),
+        );
       if (personalizationOutcome.status === 'failed') {
         clientLog.warn('Welcome Claude Code personalization save failed', {
           source: 'welcome-flow',
@@ -3004,9 +3347,7 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
     color: active ? 'var(--bg-surface)' : disabled ? 'var(--text-muted)' : 'var(--text-secondary)',
     opacity: disabled ? 0.35 : 1,
     fontSize: 12,
-    minWidth: 44,
     minHeight: 44,
-    padding: '8px 12px',
     cursor: disabled ? 'not-allowed' : 'pointer',
     fontFamily: 'var(--font-mono), monospace',
   });
@@ -3026,21 +3367,7 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
           onClick={onBackToAgentChoices}
           disabled={launching}
           className="mono"
-          style={{
-            border: '1px solid var(--etched-border)',
-            background: 'transparent',
-            color: 'var(--text-secondary)',
-            cursor: 'pointer',
-            fontSize: 10,
-            textTransform: 'uppercase',
-            letterSpacing: '0.12em',
-            fontWeight: 800,
-            padding: '8px 11px',
-            marginBottom: 18,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-          }}
+          style={WELCOME_BACK_BUTTON_STYLE}
         >
           <ArrowLeft size={13} /> Back to agent choices
         </button>
@@ -3063,7 +3390,7 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
 
         <div style={{ display: 'grid', gap: 18 }}>
           <div>
-            <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800, opacity: 0.5 }}>
+            <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800, opacity: 0.5 }}>
               {modelSelected ? 'Your model, your computer' : `${signInLabel} after launch`}
             </span>
             <h3 className="serif" style={{ margin: '6px 0 7px', fontSize: 24, lineHeight: 1.1, fontWeight: 650 }}>
@@ -3096,7 +3423,9 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
             </label>
             <input
               id="welcome-box-agent-name"
-              autoFocus
+              ref={focusOnFinePointer}
+              autoComplete="off"
+              enterKeyHint="done"
               disabled={launching}
               value={agentName}
               onChange={(event) => setAgentName(event.target.value)}
@@ -3127,7 +3456,7 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
                 Resources
               </span>
               <span style={{ flex: 1 }} />
-              <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.5 }}>
+              <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.5 }}>
                 {selfManaged
                   ? `${formatPoolValue(targetCapacity.cpu)} CPU / ${formatPoolValue(targetCapacity.ramGb)} GB measured`
                   : !planLoaded
@@ -3137,17 +3466,17 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
             </div>
 
             {hasBrowser ? (
-              <div style={{ border: '1px solid var(--etched-border)', padding: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, color: 'var(--ink-black)' }}>Browser automation</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 2 }}>
+              <label style={{ border: '1px solid var(--etched-border)', padding: 14, display: 'flex', alignItems: 'center', gap: 12, cursor: launching || !browserAllowed ? 'not-allowed' : 'pointer' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, color: 'var(--ink-black)' }}>Browser automation</span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 2 }}>
                     {browserAllowed
                       ? `Optional live browser support. Reserves +${BROWSER_ADD.cpu} CPU / +${BROWSER_ADD.ram} GB.`
                       : selfManaged
                         ? 'This host does not have enough measured capacity for browser automation.'
                         : 'Upgrade to add browser automation.'}
-                  </div>
-                </div>
+                  </span>
+                </span>
                 <button
                   type="button"
                   role="switch"
@@ -3159,26 +3488,28 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
                     setBrowser((enabled) => !enabled);
                   }}
                   style={{
-                    width: 46,
-                    height: 26,
-                    borderRadius: 13,
-                    border: '1px solid var(--etched-border)',
-                    background: effectiveBrowser ? 'var(--gold-leaf)' : 'rgba(255,255,255,0.05)',
-                    position: 'relative',
+                    width: 52,
+                    height: 44,
+                    border: 'none',
+                    background: 'transparent',
+                    display: 'grid',
+                    placeItems: 'center',
                     cursor: browserAllowed ? 'pointer' : 'not-allowed',
                     opacity: browserAllowed ? 1 : 0.55,
                     flexShrink: 0,
                     padding: 0,
                   }}
                 >
-                  <span style={{ position: 'absolute', top: 3, left: effectiveBrowser ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: effectiveBrowser ? 'var(--ink-black)' : 'var(--text-muted)', transition: 'left .15s ease' }} />
+                  <span aria-hidden="true" style={{ position: 'relative', width: 46, height: 26, border: '1px solid var(--etched-border)', background: effectiveBrowser ? 'var(--gold-leaf)' : 'rgba(255,255,255,0.05)' }}>
+                    <span style={{ position: 'absolute', top: 3, left: effectiveBrowser ? 23 : 3, width: 18, height: 18, background: effectiveBrowser ? 'var(--ink-black)' : 'var(--text-muted)', transition: 'left .15s ease' }} />
+                  </span>
                 </button>
-              </div>
+              </label>
             ) : null}
 
             {!providerComputer && <div style={{ display: 'grid', gap: 9 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62, width: 54, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <div className="welcome-size-row">
+                <span className="mono welcome-size-label" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62 }}>
                   <Cpu size={12} /> CPU
                 </span>
                 {WELCOME_CPU_OPTIONS.map((option) => {
@@ -3187,6 +3518,7 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
                     <button
                       key={`welcome-claude-cpu-${option}`}
                       type="button"
+                      className="welcome-size-option"
                       disabled={disabled}
                       onClick={() => selfManaged ? setSelfManagedCpu(option) : setCpu(option)}
                       aria-label={`Use ${option} CPU`}
@@ -3197,8 +3529,8 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
                   );
                 })}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62, width: 54, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <div className="welcome-size-row">
+                <span className="mono welcome-size-label" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62 }}>
                   <MemoryStick size={12} /> RAM
                 </span>
                 {WELCOME_RAM_OPTIONS.map((option) => {
@@ -3207,12 +3539,13 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
                     <button
                       key={`welcome-claude-ram-${option}`}
                       type="button"
+                      className="welcome-size-option"
                       disabled={disabled}
                       onClick={() => selfManaged ? setSelfManagedRam(option) : setRam(option)}
                       aria-label={`Use ${option} GB RAM`}
                       style={sizeButtonStyle(resolvedRam === option, disabled)}
                     >
-                      {option}<span style={{ fontSize: 9, opacity: 0.6 }}>G</span>
+                      {option}<span style={{ fontSize: 11, opacity: 0.6 }}>G</span>
                     </button>
                   );
                 })}
@@ -3375,6 +3708,7 @@ function DashboardAgentLaunchForm({
   managedLaunchEntitled,
   onChooseManagedPlan,
   onBackToAgentChoices,
+  templateId = null,
 }: {
   targetHandoff: LaunchTargetHandoff | null;
   welcomeType: AgentTypeDefinition;
@@ -3383,6 +3717,8 @@ function DashboardAgentLaunchForm({
   managedLaunchEntitled: boolean;
   onChooseManagedPlan: () => void;
   onBackToAgentChoices: () => void;
+  /** Saved template to fork; the agents route applies its identity. */
+  templateId?: string | null;
 }) {
   const router = useRouter();
   const selfHosted = isLocalAuthMode();
@@ -3565,7 +3901,7 @@ function DashboardAgentLaunchForm({
       // Agent Zero's managed launch uses the visibly selected size. Other
       // dashboard agents keep their catalog floor. Self-managed launches use
       // measured target capacity; all requests are validated again server-side.
-      const created = await createAgent({
+      const created = await createAgent(withLaunchTemplate({
         type: agent.id,
         name: agentName.trim(),
         cpu: resolvedCpu,
@@ -3574,7 +3910,7 @@ function DashboardAgentLaunchForm({
         managedVenice: wantManaged,
         llm: llmForLaunch,
         deployment,
-      });
+      }, templateId));
       captureWelcomeEvent('launch_request_accepted', {
         agentType: agent.id,
         agentId: created.id,
@@ -3636,7 +3972,7 @@ function DashboardAgentLaunchForm({
           type="button"
           onClick={onBackToAgentChoices}
           className="mono"
-          style={{ border: '1px solid var(--etched-border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 800, padding: '8px 11px', marginBottom: 18, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          style={WELCOME_BACK_BUTTON_STYLE}
         >
           <ArrowLeft size={13} /> Back to agent choices
         </button>
@@ -3659,7 +3995,7 @@ function DashboardAgentLaunchForm({
 
         <div style={{ display: 'grid', gap: 18 }}>
           <div>
-            <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800, opacity: 0.5 }}>
+            <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800, opacity: 0.5 }}>
               {agent.connect === 'github' ? 'GitHub connect after launch' : 'Configure inside the dashboard'}
             </span>
             <h3 className="serif" style={{ margin: '6px 0 7px', fontSize: 24, lineHeight: 1.1, fontWeight: 650 }}>
@@ -3678,7 +4014,9 @@ function DashboardAgentLaunchForm({
             </label>
             <input
               id="welcome-dashboard-agent-name"
-              autoFocus
+              ref={focusOnFinePointer}
+              autoComplete="off"
+              enterKeyHint="done"
               value={agentName}
               onChange={(event) => setAgentName(event.target.value)}
               placeholder={welcomeType.defaultName}
@@ -3755,12 +4093,12 @@ function DashboardAgentLaunchForm({
                   Resources on this host
                 </span>
                 <span style={{ flex: 1 }} />
-                <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5 }}>
+                <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5 }}>
                   {formatPoolValue(targetCapacity.cpu)} CPU / {formatPoolValue(targetCapacity.ramGb)} GB measured
                 </span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span className="mono" style={{ width: 54, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62 }}>
+              <div className="welcome-size-row">
+                <span className="mono welcome-size-label" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62 }}>
                   <Cpu size={12} /> CPU
                 </span>
                 {WELCOME_CPU_OPTIONS.map((option) => {
@@ -3769,6 +4107,7 @@ function DashboardAgentLaunchForm({
                     <button
                       key={`welcome-dashboard-cpu-${option}`}
                       type="button"
+                      className="welcome-size-option"
                       disabled={unavailable}
                       onClick={() => setSelfManagedCpu(option)}
                       aria-label={`Use ${option} CPU`}
@@ -3778,9 +4117,7 @@ function DashboardAgentLaunchForm({
                         color: resolvedCpu === option ? 'var(--bg-surface)' : unavailable ? 'var(--text-muted)' : 'var(--text-secondary)',
                         opacity: unavailable ? 0.35 : 1,
                         fontSize: 12,
-                        minWidth: 44,
                         minHeight: 44,
-                        padding: '8px 12px',
                         cursor: unavailable ? 'not-allowed' : 'pointer',
                         fontFamily: 'var(--font-mono), monospace',
                       }}
@@ -3790,8 +4127,8 @@ function DashboardAgentLaunchForm({
                   );
                 })}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span className="mono" style={{ width: 54, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62 }}>
+              <div className="welcome-size-row">
+                <span className="mono welcome-size-label" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', opacity: 0.62 }}>
                   <MemoryStick size={12} /> RAM
                 </span>
                 {WELCOME_RAM_OPTIONS.map((option) => {
@@ -3800,6 +4137,7 @@ function DashboardAgentLaunchForm({
                     <button
                       key={`welcome-dashboard-ram-${option}`}
                       type="button"
+                      className="welcome-size-option"
                       disabled={unavailable}
                       onClick={() => setSelfManagedRam(option)}
                       aria-label={`Use ${option} GB RAM`}
@@ -3809,14 +4147,12 @@ function DashboardAgentLaunchForm({
                         color: resolvedRam === option ? 'var(--bg-surface)' : unavailable ? 'var(--text-muted)' : 'var(--text-secondary)',
                         opacity: unavailable ? 0.35 : 1,
                         fontSize: 12,
-                        minWidth: 44,
                         minHeight: 44,
-                        padding: '8px 12px',
                         cursor: unavailable ? 'not-allowed' : 'pointer',
                         fontFamily: 'var(--font-mono), monospace',
                       }}
                     >
-                      {option}<span style={{ fontSize: 9, opacity: 0.6 }}>G</span>
+                      {option}<span style={{ fontSize: 11, opacity: 0.6 }}>G</span>
                     </button>
                   );
                 })}
@@ -4085,6 +4421,21 @@ function PersonaPicker({
   // default Agents view does not mutate selection. Each lane keeps its existing
   // deploy handler (onSelectPersona / onSelectAdvancedAgent).
   const [mode, setMode] = useState<'specialists' | 'agents'>('agents');
+  // A card tap on a phone or touch tablet brings the personalization panel
+  // (and its Continue) into view; it renders below every card, so otherwise
+  // the tap only seems to flip the card's label.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelScrollRequest, setPanelScrollRequest] = useState(0);
+  useEffect(() => {
+    if (panelScrollRequest === 0) return;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    panelRef.current?.scrollIntoView?.({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+  }, [panelScrollRequest]);
+  const handlePersonaTap = (persona: WelcomePersonaDefinition) => {
+    onSelectPersona(persona);
+    if (window.matchMedia?.(WELCOME_TOUCH_COMPACT_QUERY).matches) setPanelScrollRequest((request) => request + 1);
+  };
+  const continueBlocked = isCustom && !customPersonaName.trim();
 
   const handleModeChange = (value: string) => {
     const nextMode = value as 'specialists' | 'agents';
@@ -4110,8 +4461,9 @@ function PersonaPicker({
     color: 'var(--text-secondary)',
     fontSize: 12,
     fontWeight: 600,
-    padding: '7px 13px',
-    borderRadius: 999,
+    minHeight: 40,
+    padding: '9px 13px',
+    borderRadius: 0,
     lineHeight: 1.2,
   };
   const chipActive: React.CSSProperties = {
@@ -4140,39 +4492,6 @@ function PersonaPicker({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      <AnimateIn>
-        <div style={{ textAlign: 'center', marginBottom: '0.25rem' }}>
-          <span
-            className="mono"
-            style={{
-              fontSize: 10,
-              textTransform: 'uppercase',
-              letterSpacing: '0.18em',
-              fontWeight: 700,
-              opacity: 0.55,
-            }}
-          >
-            {mode === 'agents' ? 'Pick an agent' : 'Pick a specialist'}
-          </span>
-          <h2
-            className="serif"
-            style={{
-              marginTop: 8,
-              fontSize: 'clamp(1.5rem, 3vw, 2rem)',
-              fontWeight: 600,
-              letterSpacing: '-0.01em',
-            }}
-          >
-            {mode === 'agents' ? 'Which agent do you want to run?' : 'Who do you want on your side?'}
-          </h2>
-          <p style={{ margin: '0.75rem auto 0', maxWidth: 620, fontSize: 13, lineHeight: 1.65, color: 'var(--text-secondary)' }}>
-            {mode === 'agents'
-              ? 'Different agent software Hivra can launch — Claude Code, Codex, OpenClaw, Agent Zero, or a plain Hermes agent. Each opens its own setup.'
-              : 'Each specialist starts pre-shaped for the work. You can still rename it, retune it, and edit the model and key before it launches.'}
-          </p>
-        </div>
-      </AnimateIn>
-
       <AnimateIn delay={0.05}>
         <div style={{ display: 'flex', justifyContent: 'center' }}>
           <SubOptionToggle
@@ -4203,7 +4522,7 @@ function PersonaPicker({
                 data-persona-id={persona.id}
                 aria-label={`${persona.name} — ${persona.role}: ${persona.pitch}`}
                 aria-pressed={selected}
-                onClick={() => onSelectPersona(persona)}
+                onClick={() => handlePersonaTap(persona)}
                 className="sub-glass-card"
                 style={{
                   textAlign: 'left',
@@ -4235,7 +4554,7 @@ function PersonaPicker({
                     <h3 className="serif" style={{ margin: 0, fontSize: 22, fontWeight: 650, letterSpacing: '-0.02em' }}>
                       {persona.name}
                     </h3>
-                    <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', opacity: 0.5, fontWeight: 800 }}>
+                    <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.16em', opacity: 0.5, fontWeight: 800 }}>
                       {persona.role}
                     </span>
                   </div>
@@ -4251,7 +4570,7 @@ function PersonaPicker({
                 <span
                   className="mono"
                   style={{
-                    fontSize: 9,
+                    fontSize: 11,
                     textTransform: 'uppercase',
                     letterSpacing: '0.14em',
                     fontWeight: 800,
@@ -4349,7 +4668,7 @@ function PersonaPicker({
                       <h3 className="serif" style={{ margin: 0, fontSize: 16, fontWeight: 650, letterSpacing: '-0.01em' }}>
                         {agentType.name}
                       </h3>
-                      <span className="mono" style={{ fontSize: 8.5, textTransform: 'uppercase', letterSpacing: '0.14em', opacity: 0.5, fontWeight: 800 }}>
+                      <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', opacity: 0.5, fontWeight: 800 }}>
                         {agentType.eyebrow}
                       </span>
                     </div>
@@ -4367,7 +4686,7 @@ function PersonaPicker({
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
-                      fontSize: 9,
+                      fontSize: 11,
                       textTransform: 'uppercase',
                       letterSpacing: '0.12em',
                       fontWeight: 900,
@@ -4389,9 +4708,11 @@ function PersonaPicker({
       {mode === 'specialists' && selectedPersona && (
         <AnimateIn delay={0.05}>
           <div
+            ref={panelRef}
             className="sub-glass-card"
             style={{
-              padding: '24px 26px',
+              scrollMarginTop: 16,
+              padding: 'clamp(16px, 5vw, 24px) clamp(16px, 5vw, 26px)',
               border: '1px solid color-mix(in srgb, var(--ink-black) 12%, transparent)',
               background: 'color-mix(in srgb, var(--bg-surface) 80%, transparent)',
               display: 'flex',
@@ -4412,9 +4733,12 @@ function PersonaPicker({
               <div style={{ display: 'grid', gap: 16 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 96px', gap: 12 }}>
                   <div>
-                    <label style={labelStyle}>Agent name</label>
+                    <label htmlFor="welcome-persona-name" style={labelStyle}>Agent name</label>
                     <input
+                      id="welcome-persona-name"
                       type="text"
+                      autoComplete="off"
+                      enterKeyHint="next"
                       value={customPersonaName}
                       onChange={(e) => {
                         setCustomPersonaName(e.target.value);
@@ -4427,9 +4751,11 @@ function PersonaPicker({
                     />
                   </div>
                   <div>
-                    <label style={labelStyle}>Face</label>
+                    <label htmlFor="welcome-persona-face" style={labelStyle}>Face</label>
                     <input
+                      id="welcome-persona-face"
                       type="text"
+                      autoComplete="off"
                       value={customPersonaEmoji}
                       onChange={(e) => {
                         setCustomPersonaEmoji(e.target.value);
@@ -4442,9 +4768,12 @@ function PersonaPicker({
                   </div>
                 </div>
                 <div>
-                  <label style={labelStyle}>Expertise</label>
+                  <label htmlFor="welcome-persona-expertise" style={labelStyle}>Expertise</label>
                   <input
+                    id="welcome-persona-expertise"
                     type="text"
+                    autoComplete="off"
+                    enterKeyHint="next"
                     value={customPersonaExpertise}
                     onChange={(e) => setCustomPersonaExpertise(e.target.value)}
                     placeholder="What is this agent an expert at?"
@@ -4455,9 +4784,12 @@ function PersonaPicker({
               </div>
             ) : (
               <div>
-                <label style={labelStyle}>Agent name</label>
+                <label htmlFor="welcome-persona-agent-name" style={labelStyle}>Agent name</label>
                 <input
+                  id="welcome-persona-agent-name"
                   type="text"
+                  autoComplete="off"
+                  enterKeyHint="next"
                   value={agentName}
                   onChange={(e) => {
                     setAgentName(e.target.value);
@@ -4470,8 +4802,8 @@ function PersonaPicker({
               </div>
             )}
 
-            <div>
-              <label style={labelStyle}>Who are you?</label>
+            <div role="group" aria-labelledby="welcome-persona-who">
+              <span id="welcome-persona-who" style={labelStyle}>Who are you?</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {WELCOME_WHO_OPTIONS.map((who) => {
                   const active = (personalizationDraft.who || '') === who;
@@ -4493,9 +4825,12 @@ function PersonaPicker({
             </div>
 
             <div>
-              <label style={labelStyle}>What are you working on?</label>
+              <label htmlFor="welcome-persona-business" style={labelStyle}>What are you working on?</label>
               <input
+                id="welcome-persona-business"
                 type="text"
+                autoComplete="off"
+                enterKeyHint="done"
                 value={personalizationDraft.business || ''}
                 onChange={(e) =>
                   setPersonalizationDraft((d) => ({ ...d, business: e.target.value }))
@@ -4506,8 +4841,8 @@ function PersonaPicker({
               />
             </div>
 
-            <div>
-              <label style={labelStyle}>What do you want help with?</label>
+            <div role="group" aria-labelledby="welcome-persona-goals">
+              <span id="welcome-persona-goals" style={labelStyle}>What do you want help with?</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {IDENTITY_GOALS.map((goal) => {
                   const active = draftGoals.includes(goal.label);
@@ -4529,7 +4864,7 @@ function PersonaPicker({
             <button
               type="button"
               onClick={onContinue}
-              disabled={isCustom && !customPersonaName.trim()}
+              disabled={continueBlocked}
               className="mono"
               style={{
                 alignSelf: 'flex-start',
@@ -4539,12 +4874,13 @@ function PersonaPicker({
                 border: '1px solid var(--ink-black)',
                 background: 'var(--ink-black)',
                 color: 'var(--bg-surface)',
-                cursor: isCustom && !customPersonaName.trim() ? 'not-allowed' : 'pointer',
-                opacity: isCustom && !customPersonaName.trim() ? 0.5 : 1,
+                cursor: continueBlocked ? 'not-allowed' : 'pointer',
+                opacity: continueBlocked ? 0.5 : 1,
                 fontSize: 11,
                 textTransform: 'uppercase',
                 letterSpacing: '0.1em',
                 fontWeight: 800,
+                minHeight: 44,
                 padding: '11px 18px',
               }}
             >
@@ -4552,6 +4888,37 @@ function PersonaPicker({
             </button>
           </div>
         </AnimateIn>
+      )}
+
+      {mode === 'specialists' && selectedPersona && (
+        <div className="welcome-persona-sticky" data-testid="welcome-persona-sticky-continue">
+          <button
+            type="button"
+            onClick={onContinue}
+            disabled={continueBlocked}
+            className="mono"
+            style={{
+              width: '100%',
+              minHeight: 48,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              border: '1px solid var(--ink-black)',
+              background: 'var(--ink-black)',
+              color: 'var(--bg-surface)',
+              cursor: continueBlocked ? 'not-allowed' : 'pointer',
+              opacity: continueBlocked ? 0.5 : 1,
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              fontWeight: 800,
+              padding: '0 16px',
+            }}
+          >
+            Continue with {isCustom ? customPersonaName.trim() || 'your agent' : selectedPersona.name} <ArrowRight size={14} />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -4616,6 +4983,33 @@ export function TierPickerCards({
 
   return (
     <>
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        border: '1px solid var(--etched-border)',
+        background: 'var(--bg-surface)',
+        padding: '8px 8px 8px 14px',
+        marginBottom: 20,
+      }}
+    >
+      <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 700, color: 'var(--text-secondary)' }}>
+        Free · 0.5 vCPU / 1 GB
+      </span>
+      <button
+        type="button"
+        onClick={onSelectFree}
+        disabled={freeActivationLoading}
+        className="mono"
+        style={{ ...WELCOME_ERROR_ACTION_SECONDARY_STYLE, color: 'var(--ink-black)', gap: 8, cursor: freeActivationLoading ? 'wait' : 'pointer', opacity: freeActivationLoading ? 0.7 : 1 }}
+      >
+        {freeActivationLoading ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : null}
+        Start with Free
+      </button>
+    </div>
     <PlanGrid
       tiers={paidTiers}
       paidPathChoice={isCryptoBillingUiEnabled() && paidPathChoice === 'crypto' ? 'crypto' : 'card'}
@@ -4629,7 +5023,6 @@ export function TierPickerCards({
       onDeposit={onDeposit}
       cardCheckoutLoadingTier={cardCheckoutLoadingTier}
     />
-    <button type="button" onClick={onSelectFree} disabled={freeActivationLoading} style={{ marginTop: 20, background: 'transparent', color: 'var(--ink-black)', border: '1px solid var(--etched-border)', padding: '10px 16px', cursor: 'pointer' }}>Start with Free</button>
     </>
   );
 }
@@ -4723,6 +5116,7 @@ function PaymentMethodIntro({
             onClick={onSelectFree}
             disabled={freeActivationLoading}
             style={{
+              minHeight: 44,
               padding: '10px 18px',
               border: '1px solid rgba(22,163,106,0.24)',
               background: 'rgba(22,163,106,0.06)',
@@ -4902,6 +5296,7 @@ function PlanGrid({
             type="button"
             onClick={onBack}
             style={{
+              minHeight: 44,
               padding: '6px 12px',
               border: '1px solid var(--etched-border)',
               background: 'transparent',
@@ -5038,7 +5433,7 @@ function SubOptionToggle({
       {opt.highlight && (
         <span
           style={{
-            fontSize: 8,
+            fontSize: 11,
             padding: '2px 6px',
             background: isActive ? 'var(--gold-leaf)' : 'transparent',
             color: isActive ? 'var(--ink-black)' : 'var(--gold-leaf)',
@@ -5052,7 +5447,7 @@ function SubOptionToggle({
     </button>
   );
   return (
-    <div role="tablist" style={{ display: 'inline-flex', border: '1px solid var(--etched-border)', background: 'var(--bg-surface)', padding: 4 }}>
+    <div role="tablist" style={{ display: 'inline-flex', flexWrap: 'wrap', maxWidth: '100%', border: '1px solid var(--etched-border)', background: 'var(--bg-surface)', padding: 4 }}>
       {segment(left, active === left.value)}
       {segment(right, active === right.value)}
     </div>
@@ -5097,7 +5492,7 @@ function CryptoHoldingExplainer({ mode }: { mode: 'yearly' | 'permanent' }) {
           <span
             className="mono"
             style={{
-              fontSize: 9,
+              fontSize: 11,
               textTransform: 'uppercase',
               letterSpacing: '0.18em',
               fontWeight: 800,
@@ -5144,7 +5539,7 @@ function CryptoHoldingExplainer({ mode }: { mode: 'yearly' | 'permanent' }) {
                   alignItems: 'center',
                   justifyContent: 'center',
                   border: '1px solid color-mix(in srgb, var(--gold-leaf) 50%, transparent)',
-                  fontSize: 9,
+                  fontSize: 11,
                   fontWeight: 800,
                   color: 'var(--gold-leaf)',
                   marginTop: 1,
@@ -5253,7 +5648,7 @@ function PlanGridCard({
       <span
         className="mono"
         style={{
-          fontSize: 9,
+          fontSize: 11,
           textTransform: 'uppercase',
           letterSpacing: '0.2em',
           opacity: 0.55,

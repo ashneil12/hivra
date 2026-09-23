@@ -1,18 +1,18 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, RotateCw } from "lucide-react";
+import { RotateCw } from "lucide-react";
 
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import LandingHeader from "@/components/layout/LandingHeader";
+import LandingHeader, { HomeOrDashboardLink } from "@/components/layout/LandingHeader";
 import Footer from "@/components/landing/Footer";
 
 // Branded runtime-error boundary for the dashboard app root. Next.js requires the
 // error boundary to be a client component taking { error, reset }. Mirrors the
 // public-page scaffold used by /status and /stats so an unhandled render error
 // shows the Hivra shell with a recovery action instead of the bare Next.js error
-// screen. Pure presentational: no auth/Clerk, no DB/schema, no tenant data. The
+// screen. Pure presentational: no server auth/Clerk, no DB/schema, no tenant data;
+// the header and recovery link read Clerk's client session hint. The
 // error itself is already captured globally by OpsTelemetryProvider / PostHog in
 // the root layout, so this boundary only renders friendly recovery UI.
 export default function RootError({
@@ -106,13 +106,13 @@ export default function RootError({
             >
               <RotateCw size={14} aria-hidden="true" /> Try again
             </button>
-            <Link
-              href="/"
+            <HomeOrDashboardLink
               className="mono"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
+                minHeight: 44,
                 fontSize: 11,
                 textTransform: "uppercase",
                 letterSpacing: "0.12em",
@@ -120,9 +120,7 @@ export default function RootError({
                 textDecoration: "none",
                 color: "var(--text-secondary)",
               }}
-            >
-              <ArrowLeft size={14} aria-hidden="true" /> Back to Hivra
-            </Link>
+            />
           </div>
         </main>
 

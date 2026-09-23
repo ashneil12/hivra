@@ -32,7 +32,7 @@ describe("InstanceChannelConnect — bounded saves (regression: silent hang)", (
   });
 
   async function fillTokenAndConnect() {
-    fireEvent.change(await screen.findByRole("textbox"), { target: { value: "ghp_secret" } });
+    fireEvent.change(await screen.findByLabelText(/^GitHub Personal Access Token/i), { target: { value: "ghp_secret" } });
     fireEvent.click(screen.getByRole("button", { name: /connect github/i }));
   }
 
@@ -66,5 +66,79 @@ describe("InstanceChannelConnect — bounded saves (regression: silent hang)", (
     await fillTokenAndConnect();
 
     expect(await screen.findByText(/taking longer than expected/i)).toBeInTheDocument();
+  });
+});
+
+describe("InstanceChannelConnect — mobile keyboards and destructive actions", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.clearAllMocks();
+  });
+
+  it("masks secrets behind a Show toggle and gives email/host fields the right keyboard", async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ ok: true, json: async () => ({ data: { statuses: {} } }) } as Response),
+    ) as unknown as typeof fetch;
+
+    render(<InstanceChannelConnect instanceId="inst-1" platform="Email" />);
+
+    const address = await screen.findByLabelText(/^Email address/i);
+    expect(address).toHaveAttribute("type", "email");
+    expect(address).toHaveAttribute("inputmode", "email");
+    expect(address).toHaveAttribute("autocapitalize", "none");
+    expect(address).toHaveAttribute("autocorrect", "off");
+
+    expect(screen.getByLabelText(/^IMAP host/i)).toHaveAttribute("inputmode", "url");
+
+    const password = screen.getByLabelText(/^App password/i);
+    expect(password).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: /Show App password/i }));
+    expect(password).toHaveAttribute("type", "text");
+  });
+
+  it("keeps password managers from filling the dashboard login into channel credentials", async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ ok: true, json: async () => ({ data: { statuses: {} } }) } as Response),
+    ) as unknown as typeof fetch;
+
+    render(<InstanceChannelConnect instanceId="inst-1" platform="Email" />);
+
+    const address = await screen.findByLabelText(/^Email address/i);
+    const password = screen.getByLabelText(/^App password/i);
+    // Browsers ignore autocomplete="off" on password inputs; new-password opts out of saved logins.
+    expect(password).toHaveAttribute("autocomplete", "new-password");
+    expect(address).toHaveAttribute("autocomplete", "off");
+    for (const field of [address, password]) {
+      expect(field).toHaveAttribute("data-1p-ignore");
+      expect(field).toHaveAttribute("data-lpignore", "true");
+      expect(field).toHaveAttribute("data-bwignore");
+    }
+  });
+
+  it("asks for confirmation before disconnecting a channel", async () => {
+    const fetchMock = jest.fn((_url: string, opts?: RequestInit) =>
+      opts?.method === "POST"
+        ? Promise.resolve({ ok: true, json: async () => ({ success: true }) } as Response)
+        : Promise.resolve({ ok: true, json: async () => ({ data: { statuses: { GitHub: { configured: true } } } }) } as Response),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<InstanceChannelConnect instanceId="inst-1" platform="GitHub" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Disconnect$/i }));
+    expect(fetchMock.mock.calls.some(([, opts]) => (opts as RequestInit | undefined)?.method === "POST")).toBe(false);
+    expect(screen.getByText(/Disconnect GitHub\? This removes its token\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+    expect(screen.queryByTestId("channel-disconnect-confirm")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Disconnect$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm disconnect/i }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, opts]) => (opts as RequestInit | undefined)?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ platform: "GitHub", disconnect: true });
+    });
   });
 });

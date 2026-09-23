@@ -19,6 +19,8 @@
 .page p { line-height: 1.6; }
 .page code { overflow-wrap: anywhere; }
 .link { color: var(--text-secondary); text-decoration: underline; font-size: 14px; }
+/* Standalone links (not the one inside hint copy) get a full touch target. */
+.page > .link { display: inline-flex; align-items: center; justify-self: start; min-height: 44px; }
 .secondary { color: var(--text-secondary); }
 .hint { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 

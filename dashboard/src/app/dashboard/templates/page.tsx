@@ -8,7 +8,7 @@
 // routes (the dashboard layout already enforces Clerk auth). No sidebar changes
 // — this page is reached from a link on /dashboard/library.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Save, Trash2, Rocket, Link2, Lock, Globe, Copy, Check } from "lucide-react";
 
@@ -41,6 +41,22 @@ interface LaunchableAgent {
 
 const MONO = "var(--font-mono), monospace";
 
+// Row controls share one boxy 44px control shape.
+const ROW_CONTROL: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 5,
+  minHeight: 44,
+  minWidth: 44,
+  padding: "0 12px",
+  fontFamily: MONO,
+  fontSize: 11,
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  fontWeight: 600,
+};
+
 export default function TemplatesPage() {
   const router = useRouter();
   const [agents, setAgents] = useState<LaunchableAgent[]>([]);
@@ -50,6 +66,24 @@ export default function TemplatesPage() {
   const [busyTemplateId, setBusyTemplateId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Deleting and publishing are one tap away from each other on a phone, so
+  // both ask inline before they act.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmPublicId, setConfirmPublicId] = useState<string | null>(null);
+  // The confirm pair replaces the trash button, so focus follows it there and
+  // back: Cancel on open (the safe default), the trash button after Cancel.
+  const confirmDeleteCancelRef = useRef<HTMLButtonElement | null>(null);
+  const deleteTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const refocusDeleteTriggerIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (confirmDeleteId) {
+      confirmDeleteCancelRef.current?.focus();
+      return;
+    }
+    const id = refocusDeleteTriggerIdRef.current;
+    refocusDeleteTriggerIdRef.current = null;
+    if (id) deleteTriggerRefs.current.get(id)?.focus();
+  }, [confirmDeleteId]);
 
   const loadAll = useCallback(async () => {
     setError(null);
@@ -101,6 +135,7 @@ export default function TemplatesPage() {
   }, []);
 
   const changeVisibility = useCallback(async (id: string, visibility: Visibility) => {
+    setConfirmPublicId(null);
     setBusyTemplateId(id);
     setError(null);
     try {
@@ -125,6 +160,7 @@ export default function TemplatesPage() {
   }, []);
 
   const deleteTemplate = useCallback(async (id: string) => {
+    setConfirmDeleteId(null);
     setBusyTemplateId(id);
     setError(null);
     try {
@@ -164,7 +200,7 @@ export default function TemplatesPage() {
       <header style={{ marginBottom: "2.5rem" }}>
         <button
           onClick={() => router.push("/dashboard/library")}
-          style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", marginBottom: "1.5rem", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5 }}
+          style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 2px", background: "none", border: "none", cursor: "pointer", marginBottom: "0.75rem", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5 }}
         >
           <ArrowLeft size={12} /> Library
         </button>
@@ -207,13 +243,13 @@ export default function TemplatesPage() {
                       <span style={{ fontSize: 20 }}>{agent.emoji || "🤖"}</span>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{agent.name || "Agent"}</div>
-                        <div className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5 }}>{agent.type}</div>
+                        <div className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5 }}>{agent.type}</div>
                       </div>
                     </div>
                     <button
                       onClick={() => saveAsTemplate(agent.id)}
                       disabled={savingId === agent.id}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "9px", background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: savingId === agent.id ? "default" : "pointer", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600, opacity: savingId === agent.id ? 0.6 : 1 }}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44, padding: "9px", background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: savingId === agent.id ? "default" : "pointer", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600, opacity: savingId === agent.id ? 0.6 : 1 }}
                     >
                       {savingId === agent.id ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
                       Save as template
@@ -237,13 +273,15 @@ export default function TemplatesPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                 {templates.map((t) => {
                   const busy = busyTemplateId === t.id;
+                  const confirmingDelete = confirmDeleteId === t.id;
+                  const confirmingPublic = confirmPublicId === t.id;
                   return (
                     <div key={t.id} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", padding: "1.25rem", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1rem", justifyContent: "space-between" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", minWidth: 0 }}>
                         <span style={{ fontSize: 22 }}>{t.emoji || "🤖"}</span>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.name || "Untitled"}</div>
-                          <div className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5 }}>
+                          <div className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, overflowWrap: "anywhere" }}>
                             {t.type}{t.goal ? ` · ${t.goal}` : ""}
                           </div>
                         </div>
@@ -251,64 +289,120 @@ export default function TemplatesPage() {
 
                       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                         {/* Visibility selector */}
-                        <div style={{ display: "inline-flex", border: "1px solid var(--etched-border)" }}>
+                        <div role="group" aria-label="Template visibility" style={{ display: "inline-flex", border: "1px solid var(--etched-border)" }}>
                           {(["private", "link", "public"] as Visibility[]).map((v) => {
                             const active = t.visibility === v;
                             const Icon = v === "private" ? Lock : v === "link" ? Link2 : Globe;
                             return (
                               <button
                                 key={v}
-                                onClick={() => !active && changeVisibility(t.id, v)}
+                                type="button"
+                                aria-pressed={active}
+                                onClick={() => {
+                                  if (active) return;
+                                  // Public lists the template for everyone; ask first.
+                                  if (v === "public") setConfirmPublicId(t.id);
+                                  else void changeVisibility(t.id, v);
+                                }}
                                 disabled={busy || active}
                                 title={v}
-                                style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", background: active ? "var(--btn-bg)" : "transparent", color: active ? "var(--btn-text)" : "var(--ink-black)", border: "none", borderRight: v !== "public" ? "1px solid var(--etched-border)" : "none", cursor: active || busy ? "default" : "pointer", fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}
+                                style={{ ...ROW_CONTROL, background: active ? "var(--btn-bg)" : "transparent", color: active ? "var(--btn-text)" : "var(--ink-black)", border: "none", borderRight: v !== "public" ? "1px solid var(--etched-border)" : "none", cursor: active || busy ? "default" : "pointer" }}
                               >
-                                <Icon size={11} /> {v}
+                                <Icon size={12} aria-hidden="true" /> {v}
                               </button>
                             );
                           })}
                         </div>
 
-                        {/* Copy share link (only when shareable). A 'private'
-                            template has no share_token yet, so instead of an
-                            unexplained absence we show a quiet hint telling the
-                            user to switch to Link/Public to mint one. */}
                         {t.share_token ? (
                           <button
+                            type="button"
                             onClick={() => copyShareLink(t)}
                             title="Copy share link"
-                            style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", background: "transparent", border: "1px solid var(--etched-border)", cursor: "pointer", fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}
+                            style={{ ...ROW_CONTROL, background: "transparent", border: "1px solid var(--etched-border)", cursor: "pointer" }}
                           >
-                            {copiedId === t.id ? <Check size={11} /> : <Copy size={11} />}
+                            {copiedId === t.id ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
                             {copiedId === t.id ? "Copied" : "Link"}
                           </button>
-                        ) : (
-                          <span
-                            title="Switch to Link or Public to generate a shareable link"
-                            style={{ display: "flex", alignItems: "center", padding: "7px 10px", fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, opacity: 0.45 }}
-                          >
-                            Private
-                          </span>
-                        )}
+                        ) : null}
 
                         <button
+                          type="button"
                           onClick={() => launchFromTemplate(t)}
                           title="Launch from this template"
-                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}
+                          style={{ ...ROW_CONTROL, background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: "pointer" }}
                         >
-                          <Rocket size={11} /> Launch
+                          <Rocket size={12} aria-hidden="true" /> Launch
                         </button>
 
-                        <button
-                          onClick={() => deleteTemplate(t.id)}
-                          disabled={busy}
-                          title="Delete template"
-                          aria-label="Delete template"
-                          style={{ display: "flex", alignItems: "center", padding: "7px 9px", background: "transparent", border: "1px solid var(--etched-border)", cursor: busy ? "default" : "pointer", color: "var(--ink-black)", opacity: busy ? 0.5 : 1 }}
-                        >
-                          {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
-                        </button>
+                        {confirmingDelete ? (
+                          <div role="group" aria-label="Confirm delete" style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
+                            <button
+                              type="button"
+                              onClick={() => deleteTemplate(t.id)}
+                              disabled={busy}
+                              style={{ ...ROW_CONTROL, background: "transparent", border: "1px solid var(--hivra-red)", color: "var(--hivra-red)", cursor: busy ? "default" : "pointer" }}
+                            >
+                              {busy ? <Loader2 size={12} aria-hidden="true" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} aria-hidden="true" />}
+                              Delete?
+                            </button>
+                            <button
+                              ref={confirmDeleteCancelRef}
+                              type="button"
+                              onClick={() => {
+                                refocusDeleteTriggerIdRef.current = t.id;
+                                setConfirmDeleteId(null);
+                              }}
+                              disabled={busy}
+                              style={{ ...ROW_CONTROL, background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", cursor: busy ? "default" : "pointer" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            ref={(node) => {
+                              if (node) deleteTriggerRefs.current.set(t.id, node);
+                              else deleteTriggerRefs.current.delete(t.id);
+                            }}
+                            type="button"
+                            onClick={() => setConfirmDeleteId(t.id)}
+                            disabled={busy}
+                            title="Delete template"
+                            aria-label="Delete template"
+                            style={{ ...ROW_CONTROL, padding: 0, marginLeft: "auto", background: "transparent", border: "1px solid var(--etched-border)", cursor: busy ? "default" : "pointer", color: "var(--ink-black)", opacity: busy ? 0.5 : 1 }}
+                          >
+                            {busy ? <Loader2 size={14} aria-hidden="true" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={14} aria-hidden="true" />}
+                          </button>
+                        )}
                       </div>
+
+                      {confirmingPublic ? (
+                        <div role="group" aria-label="Confirm public template" style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", borderTop: "1px solid var(--etched-border)", paddingTop: "0.75rem" }}>
+                          <span style={{ flex: "1 1 220px", fontSize: 13, lineHeight: 1.5 }}>
+                            Public templates can be found and launched by anyone. Your private notes and API keys stay out.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => changeVisibility(t.id, "public")}
+                            disabled={busy}
+                            style={{ ...ROW_CONTROL, background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: busy ? "default" : "pointer" }}
+                          >
+                            <Globe size={12} aria-hidden="true" /> Make public
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmPublicId(null)}
+                            style={{ ...ROW_CONTROL, background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", cursor: "pointer" }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : !t.share_token ? (
+                        <p className="mono" style={{ flexBasis: "100%", margin: 0, fontSize: 11, letterSpacing: "0.04em", opacity: 0.6 }}>
+                          Private · switch to Link or Public to create a share link.
+                        </p>
+                      ) : null}
                     </div>
                   );
                 })}
