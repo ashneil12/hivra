@@ -67,11 +67,12 @@ export function SlotMeter({ label, used, total }: { label: string; used: number;
           {valueText}
         </span>
       </div>
-      <div
+      {/* An unlimited pool has nothing to fill: the count above says it all. */}
+      {!unlimited && <div
         role="meter"
         aria-labelledby="billing-meter-slots"
         aria-valuemin={0}
-        aria-valuemax={unlimited ? undefined : total}
+        aria-valuemax={total}
         aria-valuenow={used}
         aria-valuetext={valueText}
       >
@@ -93,11 +94,11 @@ export function SlotMeter({ label, used, total }: { label: string; used: number;
           <div className={styles.bar} aria-hidden="true">
             <div
               className={styles.barFill}
-              style={{ width: `${unlimited || total <= 0 ? 0 : Math.min(100, (used / total) * 100)}%` }}
+              style={{ width: `${total <= 0 ? 0 : Math.min(100, (used / total) * 100)}%` }}
             />
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
