@@ -233,21 +233,39 @@ function meetsRequiredBalance(balance: bigint, required: bigint): boolean {
   return balance >= required || required - balance <= tolerance;
 }
 
-const BREACH_HOLD_KEY = "breach_hold_until";
-const BREACH_HOLD_MOVING_KEY = "breach_hold_moving_raw";
-const BREACH_HOLD_KEYS = [BREACH_HOLD_KEY, BREACH_HOLD_MOVING_KEY, "breach_hold_reason"];
+/**
+ * metadata.breach_holds: one entry per in-flight lock-wallet move, keyed by
+ * its withdrawal claim id, so overlapping attempts neither overwrite nor
+ * clear each other's hold.
+ */
+const BREACH_HOLDS_KEY = "breach_holds";
 
-/** An in-flight lock-wallet move: until when, and how many $HermesOS are between wallets. */
-function breachHoldOf(row: TierQualificationRow): { until: Date; movingRaw: bigint } | null {
-  const until = row.metadata?.[BREACH_HOLD_KEY];
-  const moving = row.metadata?.[BREACH_HOLD_MOVING_KEY];
-  if (typeof until !== "string" || typeof moving !== "string" || !/^\d+$/.test(moving)) return null;
-  const at = Date.parse(until);
-  return Number.isFinite(at) ? { until: new Date(at), movingRaw: BigInt(moving) } : null;
+interface BreachHoldEntry {
+  until: string;
+  moving_raw: string;
+  reason: string;
 }
 
-function hasBreachHold(row: TierQualificationRow): boolean {
-  return BREACH_HOLD_KEYS.some((key) => row.metadata?.[key] !== undefined);
+function breachHoldEntries(row: TierQualificationRow): Record<string, BreachHoldEntry> {
+  const raw = row.metadata?.[BREACH_HOLDS_KEY];
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, BreachHoldEntry>) : {};
+}
+
+/**
+ * The live holds on a row at `now`: the latest expiry and the total
+ * $HermesOS between wallets. Null when none is live.
+ */
+function breachHoldOf(row: TierQualificationRow, now: Date): { until: Date; movingRaw: bigint } | null {
+  let until: Date | null = null;
+  let movingRaw = 0n;
+  for (const entry of Object.values(breachHoldEntries(row))) {
+    const at = typeof entry?.until === "string" ? Date.parse(entry.until) : Number.NaN;
+    if (!Number.isFinite(at) || at <= now.getTime()) continue;
+    if (typeof entry.moving_raw !== "string" || !/^\d+$/.test(entry.moving_raw)) continue;
+    movingRaw += BigInt(entry.moving_raw);
+    if (!until || at > until.getTime()) until = new Date(at);
+  }
+  return until ? { until, movingRaw } : null;
 }
 
 /**
@@ -282,44 +300,60 @@ async function patchTierMetadata(
 /**
  * Hold off new breaches on every tier row of a user until `until`, while a
  * legacy lock-wallet balance moves to the user's own verified wallet: the
- * moment the tokens are between wallets never starts a breach. The hold only
- * covers `movingRaw`: a breach still starts when the balance read plus the
- * tokens in flight is below the qualifying quantity, so moving dust never
- * shields an emptied wallet, and the hold lapses at `until`.
+ * moment the tokens are between wallets never starts a breach. Each move
+ * holds only its own `movingRaw` under its own `holdId` (the withdrawal claim
+ * id): a breach still starts when the balance read plus the tokens in flight
+ * is below the qualifying quantity, so moving dust never shields an emptied
+ * wallet. Expired entries are pruned on the next hold write.
  */
 export async function holdTierBreachesUntil(params: {
   userId: string;
+  holdId: string;
   until: Date;
   movingRaw: bigint;
   reason: string;
+  now?: Date;
   db?: SupabaseLike | null;
 }) {
   const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
   if (!db) throw new Error("Database not configured");
+  const now = params.now ?? new Date();
   await patchTierMetadata(
     db,
     params.userId,
-    (row) => ({
-      ...(row.metadata ?? {}),
-      [BREACH_HOLD_KEY]: params.until.toISOString(),
-      [BREACH_HOLD_MOVING_KEY]: params.movingRaw.toString(),
-      breach_hold_reason: params.reason,
-    }),
+    (row) => {
+      const live = Object.fromEntries(
+        Object.entries(breachHoldEntries(row)).filter(([, entry]) => Date.parse(entry?.until) > now.getTime())
+      );
+      live[params.holdId] = {
+        until: params.until.toISOString(),
+        moving_raw: params.movingRaw.toString(),
+        reason: params.reason,
+      };
+      return { ...(row.metadata ?? {}), [BREACH_HOLDS_KEY]: live };
+    },
     "Failed to hold tier breaches"
   );
 }
 
-/** Drop a user's breach hold: the move it was written for was not sent. */
-export async function clearTierBreachHold(params: { userId: string; db?: SupabaseLike | null }) {
+/**
+ * Drop one move's breach hold: the move was not sent, or it reverted. Holds
+ * written by other attempts stay.
+ */
+export async function clearTierBreachHold(params: { userId: string; holdId: string; db?: SupabaseLike | null }) {
   const db = (params.db ?? (supabaseAdmin as unknown)) as SupabaseLike | null;
   if (!db) throw new Error("Database not configured");
   await patchTierMetadata(
     db,
     params.userId,
     (row) => {
-      if (!hasBreachHold(row)) return null;
+      const entries = breachHoldEntries(row);
+      if (!(params.holdId in entries)) return null;
+      const rest = { ...entries };
+      delete rest[params.holdId];
       const metadata = { ...(row.metadata ?? {}) };
-      for (const key of BREACH_HOLD_KEYS) delete metadata[key];
+      if (Object.keys(rest).length > 0) metadata[BREACH_HOLDS_KEY] = rest;
+      else delete metadata[BREACH_HOLDS_KEY];
       return metadata;
     },
     "Failed to clear the tier breach hold"
@@ -887,12 +921,11 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   // ──────────────────────────────────────────────────────────────────
   // Case (b) — fresh breach: was strictly eligible, now below qualifying.
   // ──────────────────────────────────────────────────────────────────
-  const breachHold = breachHoldOf(row);
+  const breachHold = breachHoldOf(row, now);
   if (
     wasStrictlyEligible &&
     !meetsWithEither(qualifyingQuantity) &&
     breachHold &&
-    now < breachHold.until &&
     tokenKey === "hermesos" &&
     meetsRequiredBalance(rowBalance + breachHold.movingRaw, qualifyingQuantity)
   ) {

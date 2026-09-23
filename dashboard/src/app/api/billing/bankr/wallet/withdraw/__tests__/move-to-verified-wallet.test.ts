@@ -63,7 +63,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_1" });
   (withdrawAllHermesTokensForUser as jest.Mock).mockImplementation(async (params) => {
-    await params.beforeTransfer?.(HELD);
+    await params.beforeTransfer?.(HELD, "claim_1");
     return {
     status: "submitted",
     txHash: "0xmove",
@@ -104,7 +104,7 @@ it("holds new breaches for the moved amount while the move is in flight, and eva
   (waitForTransferReceipt as jest.Mock).mockResolvedValue("pending");
   const body = await (await POST(post({ destination: "verified_wallet" }))).json();
   expect(holdTierBreachesUntil).toHaveBeenCalledWith(
-    expect.objectContaining({ userId: "user_1", movingRaw: HELD, reason: "lock_wallet_move_to_verified_wallet" })
+    expect.objectContaining({ userId: "user_1", holdId: "claim_1", movingRaw: HELD, reason: "lock_wallet_move_to_verified_wallet" })
   );
   expect(clearTierBreachHold).not.toHaveBeenCalled();
   const until = (holdTierBreachesUntil as jest.Mock).mock.calls[0][0].until as Date;
@@ -133,13 +133,20 @@ it("does not evaluate on a lagging RPC read that does not show the moved tokens 
 
 it("drops the hold when the move is not sent", async () => {
   (withdrawAllHermesTokensForUser as jest.Mock).mockImplementation(async (params) => {
-    await params.beforeTransfer?.(HELD);
+    await params.beforeTransfer?.(HELD, "claim_1");
     return { status: "transfer_failed", errorMessage: "bankr down" };
   });
   expect((await POST(post({ destination: "verified_wallet" }))).status).toBe(502);
   expect(holdTierBreachesUntil).toHaveBeenCalledTimes(1);
-  expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1" });
+  expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1", holdId: "claim_1" });
   expect(evaluateAndRecordTokenTierEligibility).not.toHaveBeenCalled();
+});
+
+it("drops its own hold when the move reverts", async () => {
+  (waitForTransferReceipt as jest.Mock).mockResolvedValue("failed");
+  const body = await (await POST(post({ destination: "verified_wallet" }))).json();
+  expect(body.data.postWithdrawEligibility).toEqual({ evaluated: false, reason: "move_failed" });
+  expect(clearTierBreachHold).toHaveBeenCalledWith({ userId: "user_1", holdId: "claim_1" });
 });
 
 it("leaves another attempt's hold alone when this one never wrote one", async () => {

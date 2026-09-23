@@ -76,12 +76,12 @@ it("runs the hook with the live amount before the transfer is submitted", async 
     userId: "user_1",
     destination: "verified_wallet",
     fetchImpl: fetchImpl as never,
-    beforeTransfer: async (amountRaw) => {
-      order.push(`hold:${amountRaw}`);
+    beforeTransfer: async (amountRaw, claimId) => {
+      order.push(`hold:${amountRaw}:${claimId}`);
     },
   });
   expect(result.status).toBe("submitted");
-  expect(order).toEqual(["mint", "hold:5000000000000000000000000", "transfer"]);
+  expect(order).toEqual(["mint", "hold:5000000000000000000000000:claim_1", "transfer"]);
 });
 
 it("sends nothing and cancels the claim when the hook throws", async () => {

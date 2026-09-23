@@ -244,9 +244,10 @@ interface WithdrawParams {
   destination?: "withdraw_address" | "verified_wallet";
   /**
    * Runs once the amount is known and the claim row is held, just before the
-   * transfer is submitted. A throw cancels the withdraw: nothing is sent.
+   * transfer is submitted, with the claim id. A throw cancels the withdraw:
+   * nothing is sent.
    */
-  beforeTransfer?: (amountRaw: bigint) => Promise<void>;
+  beforeTransfer?: (amountRaw: bigint, claimId: string) => Promise<void>;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   env?: Record<string, string | undefined>;
@@ -483,7 +484,8 @@ export async function withdrawAllHermesTokensForUser(
 
   if (params.beforeTransfer) {
     try {
-      await params.beforeTransfer(BigInt(balance.balanceRaw));
+      if (!claimId) throw new Error("Withdrawal claim was not recorded");
+      await params.beforeTransfer(BigInt(balance.balanceRaw), claimId);
     } catch (prepareErr) {
       const prepareErrorMessage =
         prepareErr instanceof Error ? prepareErr.message : String(prepareErr);

@@ -130,6 +130,8 @@ export async function POST(req: NextRequest) {
 
     let result;
     let destination: "withdraw_address" | "verified_wallet" = "withdraw_address";
+    // The breach hold this attempt wrote (keyed by its withdrawal claim), if any.
+    let holdId: string | null = null;
     try {
       let body: WithdrawRequestBody = {};
       try {
@@ -144,7 +146,6 @@ export async function POST(req: NextRequest) {
         });
       }
       destination = body.destination ?? "withdraw_address";
-      let holdWritten = false;
       result = await withdrawAllHermesTokensForUser({
         userId,
         expectedRecipient: body.expectedRecipient,
@@ -155,11 +156,12 @@ export async function POST(req: NextRequest) {
         // wallet. If the hold cannot be written, nothing is sent.
         beforeTransfer:
           destination === "verified_wallet"
-            ? async (amountRaw) => {
+            ? async (amountRaw, claimId) => {
                 // Set first: a hold that fails half-way still gets cleared.
-                holdWritten = true;
+                holdId = claimId;
                 await holdTierBreachesUntil({
                   userId,
+                  holdId: claimId,
                   until: new Date(Date.now() + LOCK_MOVE_BREACH_HOLD_MS),
                   movingRaw: amountRaw,
                   reason: "lock_wallet_move_to_verified_wallet",
@@ -167,10 +169,10 @@ export async function POST(req: NextRequest) {
               }
             : undefined,
       });
-      if (holdWritten && result.status !== "submitted") {
-        // This attempt wrote a hold and then sent nothing: drop it. (A hold
-        // written by another, in-flight attempt is left alone.)
-        await clearTierBreachHold({ userId }).catch((clearErr) =>
+      if (holdId && result.status !== "submitted") {
+        // This attempt wrote a hold and then sent nothing: drop it. Holds
+        // written by other, in-flight attempts are left alone.
+        await clearTierBreachHold({ userId, holdId }).catch((clearErr) =>
           log.warn("failed to clear the breach hold after an unsent move", {
             ...LOG_CONTEXT,
             userId,
@@ -301,6 +303,11 @@ export async function POST(req: NextRequest) {
             }
           }
         } else {
+          if (receipt === "failed" && holdId) {
+            // Reverted: the tokens never left the lock wallet, so holding
+            // would only count them twice.
+            await clearTierBreachHold({ userId, holdId });
+          }
           postWithdrawEligibility = { evaluated: false, reason: `move_${receipt}` };
         }
       } catch (moveErr) {
