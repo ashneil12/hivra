@@ -615,7 +615,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
   },
   deployingStep: {
     display: "grid",
-    gridTemplateColumns: "42px minmax(0, 1fr) 20px",
+    gridTemplateColumns: "42px minmax(0, 1fr)",
     alignItems: "center",
     gap: "0.85rem",
     padding: "1rem 0",
@@ -653,14 +653,6 @@ export const STYLES: Record<string, React.CSSProperties> = {
     fontSize: 12,
     lineHeight: 1.45,
     color: "var(--text-secondary)",
-  },
-  deployingStepIndex: {
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: "0.1em",
-    color: "var(--gold-leaf)",
-    opacity: 0.7,
-    textAlign: "right" as const,
   },
   deployingSecurityPanel: {
     paddingTop: "0.35rem",

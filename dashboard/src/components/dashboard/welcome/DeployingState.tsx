@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import {
-  Check,
   Cpu,
   KeyRound,
   Loader2,
-  RadioTower,
+  MessageCircle,
   Server,
   ShieldCheck,
   type LucideIcon,
@@ -16,9 +15,13 @@ import { STYLES } from "@/components/dashboard/welcome/styles";
 
 // Track W (web dejargonization): all copy on this screen is consumer
 // language — a non-technical person watching the wait must never see infra
-// vocabulary (compute/credentials/gateway/runtime/VM/Caddy). The step
-// structure and timer logic are unchanged; only the words moved.
-function buildDeploymentSteps(name: string): Array<{
+// vocabulary (compute/credentials/gateway/runtime/VM/Caddy).
+//
+// This screen covers one opaque provision request: nothing reports progress
+// until it answers, so the list below describes what the request sets up and
+// never marks any part active or done. The celebration screen that replaces
+// this one shows the observed result.
+function buildIncludedItems(name: string): Array<{
   label: string;
   title: string;
   detail: string;
@@ -27,27 +30,27 @@ function buildDeploymentSteps(name: string): Array<{
   return [
     {
       label: "Computer",
-      title: `Setting up ${name}'s computer`,
-      detail: `A private computer, reserved just for ${name}.`,
+      title: `A private computer for ${name}`,
+      detail: `Reserved just for ${name}.`,
       Icon: Cpu,
     },
     {
       label: "Workspace",
-      title: "Creating a private, secure workspace",
-      detail: "Locking everything down so only you have access.",
+      title: `A workspace for ${name}`,
+      detail: `Where ${name}'s files, tools and settings live.`,
       Icon: KeyRound,
     },
     {
       label: "Skills",
-      title: `Installing ${name}'s skills`,
-      detail: `Adding everything ${name} needs to browse, write, and get work done.`,
+      title: `${name}'s skills`,
+      detail: `Everything ${name} needs to get work done.`,
       Icon: Server,
     },
     {
-      label: "Wake up",
-      title: `Waking ${name} up…`,
-      detail: `Final checks — ${name} will say hello in a moment.`,
-      Icon: RadioTower,
+      label: "Hello",
+      title: `A first hello from ${name}`,
+      detail: "You can start chatting once its computer is running.",
+      Icon: MessageCircle,
     },
   ];
 }
@@ -56,7 +59,6 @@ function buildSecurityFacts(name: string): Array<{ label: string; detail: string
   return [
     { label: "Private", detail: `A private computer just for ${name} — nothing is shared.` },
     { label: "Protected", detail: `Your data stays locked inside ${name}'s workspace.` },
-    { label: "Encrypted", detail: "Encrypted end to end, from your browser onward." },
   ];
 }
 
@@ -67,30 +69,19 @@ function formatElapsed(ms: number): string {
   return `${mm}:${ss}`;
 }
 
-// Cosmetic pacing for the timeline. The provision POST is one opaque call,
-// so steps advance on a timer to make the wait read as progress; the final
-// step stays active (spinning) until the celebration replaces this screen.
-const STEP_ADVANCE_MS = [13000, 31000, 49000];
-
 export function DeployingState({ agentName }: { agentName?: string | null } = {}) {
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [activeStep, setActiveStep] = useState(0);
   const name = (agentName ?? "").trim() || "your agent";
   const displayName = (agentName ?? "").trim() || "Your agent";
-  const steps = buildDeploymentSteps(name);
+  const items = buildIncludedItems(name);
   const securityFacts = buildSecurityFacts(name);
 
+  // Elapsed time is the only thing on this screen that changes: it is real
+  // (wall clock since the request started), unlike a timed step list.
   useEffect(() => {
     const start = Date.now();
     const id = window.setInterval(() => setElapsedMs(Date.now() - start), 1000);
     return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    const timers = STEP_ADVANCE_MS.map((ms, i) =>
-      window.setTimeout(() => setActiveStep((s) => Math.max(s, i + 1)), ms),
-    );
-    return () => timers.forEach((t) => window.clearTimeout(t));
   }, []);
 
   return (
@@ -111,15 +102,16 @@ export function DeployingState({ agentName }: { agentName?: string | null } = {}
               />
             </div>
             <span className="mono" style={STYLES.deployingKicker}>
-              Setting up
+              Request pending
             </span>
           </div>
           <h2 className="serif" style={STYLES.deployingTitle}>
             Getting {name} ready…
           </h2>
           <p style={STYLES.deployingSubtitle}>
-            {displayName} is getting a private computer, a secure workspace, and everything
-            needed to start working. This typically takes 2-4 minutes.
+            Hivra is creating {name}&apos;s computer. This is a pending request, not installation
+            progress. Keep this page open; it changes as soon as Hivra answers. This typically
+            takes 2-4 minutes.
           </p>
 
           <div style={STYLES.deployingStatsGrid} aria-label="Setup summary">
@@ -147,72 +139,34 @@ export function DeployingState({ agentName }: { agentName?: string | null } = {}
           <div style={STYLES.deployingSectionHeader}>
             <div>
               <span className="mono" style={STYLES.deployingSectionLabel}>
-                What&apos;s happening
+                What&apos;s included
               </span>
-              <p style={STYLES.deployingSectionCopy}>Each step happens live while you wait.</p>
+              <p style={STYLES.deployingSectionCopy}>
+                This request sets up everything below. Nothing is shown as done until Hivra
+                confirms it.
+              </p>
             </div>
             <span className="mono" style={STYLES.deployingEtaPill}>
               2-4 min
             </span>
           </div>
 
-          <div style={STYLES.deployingSteps}>
-            {steps.map(({ label, title, detail, Icon }, i) => {
-              const status = i < activeStep ? "done" : i === activeStep ? "active" : "pending";
-              return (
-                <div
-                  key={label}
-                  data-testid="deploying-step"
-                  data-step-status={status}
-                  style={{
-                    ...STYLES.deployingStep,
-                    opacity: status === "pending" ? 0.45 : 1,
-                    transition: "opacity 0.4s ease",
-                  }}
-                >
-                  <div
-                    style={{
-                      ...STYLES.deployingStepIcon,
-                      ...(status === "done"
-                        ? { background: "var(--gold-leaf)", color: "var(--vellum-bg)" }
-                        : null),
-                    }}
-                  >
-                    <Icon size={18} aria-hidden="true" />
-                  </div>
-                  <div style={STYLES.deployingStepBody}>
-                    <span className="mono" style={STYLES.deployingStepLabel}>
-                      {label}
-                    </span>
-                    <span style={STYLES.deployingStepTitle}>{title}</span>
-                    <span style={STYLES.deployingStepDetail}>{detail}</span>
-                  </div>
-                  <span
-                    className="mono"
-                    aria-hidden="true"
-                    style={{
-                      ...STYLES.deployingStepIndex,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "flex-end",
-                    }}
-                  >
-                    {status === "done" ? (
-                      <Check size={15} aria-hidden="true" style={{ color: "var(--gold-leaf)" }} />
-                    ) : status === "active" ? (
-                      <Loader2
-                        size={15}
-                        aria-hidden="true"
-                        style={{ color: "var(--gold-leaf)", animation: "spin 1s linear infinite" }}
-                      />
-                    ) : (
-                      String(i + 1).padStart(2, "0")
-                    )}
-                  </span>
+          <ul style={{ ...STYLES.deployingSteps, listStyle: "none", margin: 0, padding: 0 }}>
+            {items.map(({ label, title, detail, Icon }) => (
+              <li key={label} data-testid="deploying-included-item" style={STYLES.deployingStep}>
+                <div style={STYLES.deployingStepIcon}>
+                  <Icon size={18} aria-hidden="true" />
                 </div>
-              );
-            })}
-          </div>
+                <div style={STYLES.deployingStepBody}>
+                  <span className="mono" style={STYLES.deployingStepLabel}>
+                    {label}
+                  </span>
+                  <span style={STYLES.deployingStepTitle}>{title}</span>
+                  <span style={STYLES.deployingStepDetail}>{detail}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
 
           <div style={STYLES.deployingSecurityPanel}>
             <div style={STYLES.deployingSecurityHeader}>
