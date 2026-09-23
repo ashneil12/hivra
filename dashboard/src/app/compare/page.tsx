@@ -9,12 +9,12 @@ import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 
 export const metadata: Metadata = {
-  title: "Hivra vs Alternatives — AI Agent Hosting Comparison",
+  title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
   description:
     "Compare Hivra to self-hosting, Railway, Render, and OpenClaw. Find the right managed Hermes agent hosting approach for your needs.",
   ...buildWebsiteMetadata({
     path: "/compare",
-    title: "Hivra vs Alternatives — AI Agent Hosting Comparison",
+    title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
     description:
       "Compare Hivra to self-hosting, Railway, Render, and OpenClaw for running persistent AI agents.",
   }),

@@ -29,7 +29,7 @@ type FeatureData = {
 
 const FEATURES: Record<string, FeatureData> = {
   "persistent-memory": {
-    title: "Persistent Memory for AI Agents — Hivra",
+    title: "Persistent Memory for AI Agents",
     h1: "Your agent remembers everything.",
     metaDescription:
       "Host a Hermes AI agent with true persistent memory across every session. No resets, no re-explaining. Your agent compounds knowledge daily on Hivra cloud hosting.",
@@ -129,7 +129,7 @@ const FEATURES: Record<string, FeatureData> = {
   },
 
   "browser-automation": {
-    title: "AI Agent Browser Automation — Hivra Cloud Hosting",
+    title: "AI Agent Browser Automation on Hivra Cloud",
     h1: "Your agent can actually use the internet.",
     metaDescription:
       "Deploy a Hermes AI agent with full browser automation to the cloud. Scrape, research, fill forms, and interact with any website — autonomously, 24/7. No setup required.",
@@ -223,7 +223,7 @@ const FEATURES: Record<string, FeatureData> = {
   },
 
   "multi-agent": {
-    title: "Run Multiple AI Agents on One Server — Hivra",
+    title: "Run Multiple AI Agents on One Server",
     h1: "One server. Multiple active agents.",
     metaDescription:
       "Run multiple Hermes AI agent profiles on a single Hivra compute instance. No extra cost per agent. Coordinated multi-agent workflows built in. From $19.99/mo.",
@@ -293,7 +293,7 @@ const FEATURES: Record<string, FeatureData> = {
   },
 
   "no-docker-hosting": {
-    title: "Host Hermes Agent Without Docker — Hivra",
+    title: "Host Hermes Agent Without Docker",
     h1: "Deploy without touching a terminal.",
     metaDescription:
       "Host a Hermes AI agent without Docker, VPS, or Linux config. Hivra handles the full infrastructure stack. Deploy in under 5 minutes. From $9.99/mo.",
@@ -381,7 +381,7 @@ const FEATURES: Record<string, FeatureData> = {
   },
 
   "openclaw-alternative": {
-    title: "OpenClaw Alternative — Managed Hermes Agent Hosting",
+    title: "OpenClaw Alternative: Managed Hermes Agent Hosting",
     h1: "Everything OpenClaw gives you. None of the maintenance.",
     metaDescription:
       "Hivra is the easiest OpenClaw alternative for teams who want persistent AI agents without self-hosting. Migrate your OpenClaw setup in minutes. From $9.99/mo.",
@@ -464,7 +464,7 @@ const FEATURES: Record<string, FeatureData> = {
   },
 
   "scheduled-tasks": {
-    title: "AI Agent Scheduled Tasks & Cron Jobs — Hivra",
+    title: "AI Agent Scheduled Tasks & Cron Jobs",
     h1: "Your agent works while you sleep.",
     metaDescription:
       "Run AI agent cron jobs and scheduled tasks in the cloud with Hivra. Email triage, competitive research, data sync — automated and persistent. No infra required.",
