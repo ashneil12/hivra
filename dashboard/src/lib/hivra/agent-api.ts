@@ -38,7 +38,7 @@ export interface HivraAgent {
   /** Provider authority for this box. Surface authentication is negotiated
    * separately from the running gateway's public capability metadata. */
   deployment_mode?: "hivra-managed" | "self-managed";
-  computer_substrate?: "proxmox-kvm" | "provider-vm" | "gvisor";
+  computer_substrate?: "proxmox-kvm" | "provider-vm" | "gvisor" | "do-managed-session";
   /** Last observed provider-readiness stage, not a percentage or launch grant. */
   readiness_stage?: ProviderAgentReadinessStage;
   power_stage?: ProviderAgentPowerStage;

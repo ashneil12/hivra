@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Cloud, ExternalLink, Server, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Cloud, ExternalLink, Server, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { HivraCloudCapacityDto } from "@/lib/infrastructure/hivra-cloud-client";
@@ -9,13 +9,14 @@ import styles from "./Infrastructure.module.css";
 type Path = "choose" | "cloud" | "machine" | "remote" | "local";
 
 export function InfrastructureEntryChooser({
-  firstConnection, hivraCloud, selfHosted, onChooseHivraCloud, onConnectHetzner, onConnectExisting,
+  firstConnection, hivraCloud, selfHosted, onChooseHivraCloud, onConnectHetzner, onConnectDigitalOcean, onConnectExisting,
 }: {
   firstConnection: boolean;
   hivraCloud: HivraCloudCapacityDto | null;
   selfHosted: boolean;
   onChooseHivraCloud: () => void;
   onConnectHetzner: () => void;
+  onConnectDigitalOcean?: () => void;
   onConnectExisting: () => void;
 }) {
   const [path, setPath] = useState<Path>("choose");
@@ -71,7 +72,7 @@ export function InfrastructureEntryChooser({
           </article>
         </div>
       ) : path === "cloud" ? (
-        <div className={styles.guidedChoicesTwo}>
+        <div className={onConnectDigitalOcean ? styles.guidedChoices : styles.guidedChoicesTwo}>
           <article className={styles.guidedChoice}>
             <span className={styles.sectionLabel}>Direct provider connection</span><h3>Hetzner Cloud</h3>
             <p>Connect a project token, see your servers, and review live prices before creating capacity.</p>
@@ -79,6 +80,15 @@ export function InfrastructureEntryChooser({
             <small>Requires a Read &amp; Write project token. Purchases need a separate confirmation.</small>
             <a href="https://docs.hetzner.com/cloud/api/getting-started/generating-api-token/" target="_blank" rel="noreferrer">API token guide <ExternalLink size={12} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span></a>
           </article>
+          {onConnectDigitalOcean ? (
+            <article className={styles.guidedChoice}>
+              <Bot size={22} aria-hidden="true" />
+              <span className={styles.sectionLabel}>Managed agent sessions</span><h3>DigitalOcean Managed Agents</h3>
+              <p>Run Claude Code, Codex, or Hermes in DigitalOcean’s managed sandboxes and chat with them here. No server to set up and no terminal.</p>
+              <button type="button" className={styles.primaryButton} onClick={onConnectDigitalOcean}>Start with DigitalOcean <ArrowRight size={14} aria-hidden="true" /></button>
+              <small>Requires a write-scope API token and a team in the Managed Agents preview. Launches are separate, confirmed steps.</small>
+            </article>
+          ) : null}
           <article className={styles.guidedChoice}>
             <span className={styles.sectionLabel}>Connect over SSH</span><h3>Another provider or existing server</h3>
             <p>AWS, Google Cloud, Azure, DigitalOcean, OVHcloud, and other providers: create a Linux server with your provider, then connect it here.</p>

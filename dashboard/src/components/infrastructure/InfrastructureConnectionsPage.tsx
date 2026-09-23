@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
 import {
   deleteInfrastructureConnection,
@@ -29,13 +30,21 @@ import {
   refreshHetznerCloudInventory,
   type InfrastructurePreparation,
 } from "@/lib/infrastructure/client";
+import {
+  listManagedSessions,
+  refreshDigitalOceanAccount,
+} from "@/lib/hivra/managed-session-client";
+import type { ManagedSessionDto } from "@/lib/hivra/managed-session-contracts";
 import type {
   DeploymentTargetDto,
+  DigitalOceanConnectionDto,
+  DigitalOceanDeploymentTargetDto,
   HetznerCloudConnectionDto,
   HetznerCloudConnectionErrorCode,
   HetznerCloudServerInventoryDto,
   InfrastructureConnectionDto,
   ProxmoxPreflightResult,
+  SshInfrastructureConnectionDto,
 } from "@/lib/infrastructure/contracts";
 import {
   HETZNER_CLOUD_CONNECTION_ERROR_CODES,
@@ -73,15 +82,14 @@ import { ProviderComputerSetupDialog } from "./ProviderComputerSetupDialog";
 import { HetznerCloudCleanupDialog } from "./HetznerCloudCleanupDialog";
 import { HetznerCloudConnectionCard } from "./HetznerCloudConnectionCard";
 import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
+import { DigitalOceanConnectionCard } from "./DigitalOceanConnectionCard";
+import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
+import { DigitalOceanLaunchDialog } from "./DigitalOceanLaunchDialog";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
 const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
 
-type SshInfrastructureConnectionDto = Exclude<
-  InfrastructureConnectionDto,
-  { provider: "hetzner-cloud" }
->;
 
 type CheckDialogState = {
   connection: SshInfrastructureConnectionDto;
@@ -100,7 +108,7 @@ type HetznerInventoryState = {
 function isSshConnection(
   connection: InfrastructureConnectionDto,
 ): connection is SshInfrastructureConnectionDto {
-  return connection.provider !== "hetzner-cloud";
+  return connection.provider === "proxmox" || connection.provider === "host";
 }
 
 function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | null {
@@ -113,6 +121,12 @@ function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | nul
 }
 
 export function InfrastructureConnectionsPage() {
+  // DigitalOcean sessions are Hivra agents; offer them only where those are on.
+  const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the hostname flag after hydration, as the agent page does.
+    setHivraAgentsEnabled(isHivraEnabled());
+  }, []);
   const searchParams = useSearchParams();
   const requestedLaunchResource = parsePortableLaunchResourceId(searchParams?.get("launch"));
   const unifiedLaunchReturn = searchParams?.get("returnTo") === "unified-launch";
@@ -130,6 +144,12 @@ export function InfrastructureConnectionsPage() {
   const [entryChooserOpen, setEntryChooserOpen] = useState(false);
   const [hivraCloudDialogOpen, setHivraCloudDialogOpen] = useState(false);
   const [hetznerDialogOpen, setHetznerDialogOpen] = useState(false);
+  const [digitalOceanDialogOpen, setDigitalOceanDialogOpen] = useState(false);
+  const [digitalOceanLaunch, setDigitalOceanLaunch] = useState<{ connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto } | null>(null);
+  const [digitalOceanTargets, setDigitalOceanTargets] = useState<DigitalOceanDeploymentTargetDto[]>([]);
+  const [managedSessions, setManagedSessions] = useState<ManagedSessionDto[]>([]);
+  const [digitalOceanRefreshing, setDigitalOceanRefreshing] = useState<Set<string>>(() => new Set());
+  const [digitalOceanErrors, setDigitalOceanErrors] = useState<Record<string, string>>({});
   const [capacityConnection, setCapacityConnection] = useState<HetznerCloudConnectionDto | null>(null);
   const [cleanupConnection, setCleanupConnection] = useState<HetznerCloudConnectionDto | null>(null);
   const [setupConnection, setSetupConnection] = useState<HetznerCloudConnectionDto | null>(null);
@@ -216,12 +236,17 @@ export function InfrastructureConnectionsPage() {
 
   const loadConnections = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [connectionResult, targetResult, hivraCloudResult] = await Promise.allSettled([
+      const [connectionResult, targetResult, hivraCloudResult, managedResult] = await Promise.allSettled([
         listInfrastructureConnections(signal),
         listInfrastructureTargets(undefined, signal),
         selfHosted ? Promise.resolve(null) : getHivraCloudCapacity(signal),
+        listManagedSessions(signal),
       ]);
       if (signal?.aborted) return;
+      if (managedResult.status === "fulfilled") {
+        setDigitalOceanTargets(managedResult.value.targets);
+        setManagedSessions(managedResult.value.sessions);
+      }
       if (hivraCloudResult.status === "fulfilled" && hivraCloudResult.value) {
         setHivraCloud(hivraCloudResult.value);
         setHivraCloudError(null);
@@ -333,6 +358,38 @@ export function InfrastructureConnectionsPage() {
     setHivraCloudDialogOpen(true);
     setActionError(null);
     setActionNotice(null);
+  }
+
+  function openDigitalOceanDialog() {
+    setEntryChooserOpen(true);
+    setDigitalOceanDialogOpen(true);
+    setActionError(null);
+    setActionNotice(null);
+  }
+
+  async function refreshDigitalOcean(connectionId: string) {
+    setDigitalOceanRefreshing((current) => new Set(current).add(connectionId));
+    try {
+      const result = await refreshDigitalOceanAccount(connectionId);
+      upsertConnection(result.connection);
+      setDigitalOceanTargets((current) => [result.target, ...current.filter((target) => target.id !== result.target.id)]);
+      setDigitalOceanErrors((current) => {
+        const next = { ...current };
+        delete next[connectionId];
+        return next;
+      });
+    } catch (error) {
+      setDigitalOceanErrors((current) => ({
+        ...current,
+        [connectionId]: error instanceof Error ? error.message : "DigitalOcean could not be checked.",
+      }));
+    } finally {
+      setDigitalOceanRefreshing((current) => {
+        const next = new Set(current);
+        next.delete(connectionId);
+        return next;
+      });
+    }
   }
 
   function openHetznerDialog() {
@@ -611,6 +668,7 @@ export function InfrastructureConnectionsPage() {
             selfHosted={selfHosted}
             onChooseHivraCloud={openHivraCloudDialog}
             onConnectHetzner={openHetznerDialog}
+            onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
             onConnectExisting={openCreateWizard}
           />
         ) : null}
@@ -682,6 +740,22 @@ export function InfrastructureConnectionsPage() {
                       />
                     );
                   }
+                  if (connection.provider === "digitalocean") {
+                    const target = digitalOceanTargets.find((candidate) => candidate.connectionId === connection.id) ?? null;
+                    return (
+                      <DigitalOceanConnectionCard
+                        key={connection.id}
+                        connection={connection}
+                        target={target}
+                        sessions={managedSessions.filter((session) => session.connectionId === connection.id)}
+                        refreshing={digitalOceanRefreshing.has(connection.id)}
+                        error={digitalOceanErrors[connection.id] ?? null}
+                        onLaunch={() => { if (target) setDigitalOceanLaunch({ connection, target }); }}
+                        onRefresh={() => void refreshDigitalOcean(connection.id)}
+                        onDelete={() => setDeletingConnection(connection)}
+                      />
+                    );
+                  }
                   return (
                     <InfrastructureConnectionCard
                       key={connection.id}
@@ -719,6 +793,31 @@ export function InfrastructureConnectionsPage() {
                 }));
                 setHetznerDialogOpen(false);
                 setCapacityConnection(connection);
+              }}
+            />
+          ) : null}
+
+          {digitalOceanDialogOpen ? (
+            <DigitalOceanConnectionDialog
+              onClose={() => setDigitalOceanDialogOpen(false)}
+              returnFocusRef={addCapacityButtonRef}
+              onConnected={(connection, target) => {
+                upsertConnection(connection);
+                setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
+                setDigitalOceanDialogOpen(false);
+                setDigitalOceanLaunch({ connection, target });
+              }}
+            />
+          ) : null}
+
+          {digitalOceanLaunch ? (
+            <DigitalOceanLaunchDialog
+              connection={digitalOceanLaunch.connection}
+              target={digitalOceanLaunch.target}
+              onClose={() => setDigitalOceanLaunch(null)}
+              returnFocusRef={addCapacityButtonRef}
+              onLaunched={(session) => {
+                setManagedSessions((current) => [session, ...current.filter((candidate) => candidate.agentId !== session.agentId)]);
               }}
             />
           ) : null}
@@ -901,7 +1000,13 @@ function DeleteConnectionDialog({
         <span className={styles.eyebrow}>Remove connection</span>
         <h2 id="delete-connection-title">Disconnect {connection.name}?</h2>
         <p id="delete-connection-description">
-          {connection.provider === "hetzner-cloud" ? (
+          {connection.provider === "digitalocean" ? (
+            <>
+              This removes Hivra’s stored DigitalOcean token. Delete every agent on this connection first;
+              Hivra will not disconnect while it still owns a DigitalOcean session, so nothing keeps billing
+              without a way to stop it here.
+            </>
+          ) : connection.provider === "hetzner-cloud" ? (
             <>
               This permanently removes Hivra’s stored project token and its only saved
               generated SSH private key for any retained created or ambiguous server.
