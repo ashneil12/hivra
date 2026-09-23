@@ -12,28 +12,27 @@ import {
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  BASE_CHAIN_ID,
-  HERMESOS_BASE_TIER_MIN_RAW,
-  HERMESOS_TOKEN_ADDRESS,
-  HERMESOS_TOKEN_DECIMALS,
-  HERMESOS_TOKEN_SYMBOL,
   formatRawTokenBalance,
-  getLatestHermesTokenHoldingSnapshot,
   getTokenVerificationWallet,
+  platformTokenBalanceConfig,
   refreshPrimaryHermesTokenHolding,
 } from "@/lib/billing/token-holdings";
+import {
+  getLatestAccessTokenHoldingSnapshot,
+  resolveUserTokenAccess,
+} from "@/lib/billing/token-access";
+import { platformTokenByAddress, requirePlatformToken, type PlatformToken } from "@/lib/billing/token-registry";
 
-function tokenConfigPayload() {
+function tokenConfigPayload(token: PlatformToken) {
+  const config = platformTokenBalanceConfig(token);
   return {
-    chainId: BASE_CHAIN_ID,
-    tokenAddress: HERMESOS_TOKEN_ADDRESS,
-    tokenSymbol: HERMESOS_TOKEN_SYMBOL,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
-    minimumBalanceRaw: HERMESOS_BASE_TIER_MIN_RAW,
-    minimumBalanceDisplay: formatRawTokenBalance(
-      HERMESOS_BASE_TIER_MIN_RAW,
-      HERMESOS_TOKEN_DECIMALS
-    ),
+    chainId: config.chainId,
+    tokenKey: token.key,
+    tokenAddress: config.tokenAddress,
+    tokenSymbol: config.tokenSymbol,
+    tokenDecimals: config.tokenDecimals,
+    minimumBalanceRaw: config.baseTierMinimumRaw!,
+    minimumBalanceDisplay: formatRawTokenBalance(config.baseTierMinimumRaw!, config.tokenDecimals),
   };
 }
 
@@ -57,13 +56,16 @@ export async function GET() {
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
-    const [wallet, snapshot] = await Promise.all([
+    const [wallet, snapshot, access] = await Promise.all([
       getTokenVerificationWallet(userId),
-      getLatestHermesTokenHoldingSnapshot(userId),
+      getLatestAccessTokenHoldingSnapshot(userId),
+      resolveUserTokenAccess(userId, { recordMembership: false }),
     ]);
+    const token =
+      platformTokenByAddress(snapshot?.tokenAddress) ?? requirePlatformToken(access.paymentToken);
 
     return apiSuccess({
-      token: tokenConfigPayload(),
+      token: tokenConfigPayload(token),
       wallet,
       snapshot,
       entitlement: {
@@ -99,13 +101,35 @@ export async function POST(req: NextRequest) {
     if (rateLimited) return rateLimited;
 
     const result = await refreshPrimaryHermesTokenHolding({ userId });
+    const access = await resolveUserTokenAccess(userId, { recordMembership: false });
+    const isAllowedPlatformSnapshot = (tokenAddress: string | undefined) => {
+      // A snapshot without an address predates the token dimension: $HermesOS.
+      const key = tokenAddress ? platformTokenByAddress(tokenAddress)?.key : "hermesos";
+      return !!key && access.allowedTokens.includes(key);
+    };
+    // The token base tier counts any platform token this user may hold.
+    const qualifyingSnapshot =
+      result.status === "refreshed"
+        ? [...(result.snapshots ?? []), ...(result.snapshot ? [result.snapshot] : [])].find(
+            (snapshot) =>
+              snapshot.qualifiesBaseTier &&
+              // The refresh result's snapshots also include VVV: only platform tokens count.
+              isAllowedPlatformSnapshot(snapshot.tokenAddress)
+          ) ?? null
+        : null;
+    const token =
+      platformTokenByAddress(qualifyingSnapshot?.tokenAddress) ?? requirePlatformToken(access.paymentToken);
 
     return apiSuccess({
-      token: tokenConfigPayload(),
-      refresh: result,
+      token: tokenConfigPayload(token),
+      // Balances are bigints (not JSON); the snapshots carry the same numbers.
+      refresh:
+        result.status === "refreshed"
+          ? { status: result.status, snapshot: result.snapshot, snapshots: result.snapshots ?? [] }
+          : { status: result.status, snapshot: result.snapshot },
       entitlement: {
         verified: Boolean(result.snapshot),
-        qualifiesBaseTier: result.snapshot?.qualifiesBaseTier ?? false,
+        qualifiesBaseTier: qualifyingSnapshot !== null,
       },
     });
   } catch (error) {

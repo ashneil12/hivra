@@ -780,6 +780,38 @@ describe("DashboardPage", () => {
     expect(pushMock).toHaveBeenCalledWith("/dashboard/billing?managedVenice=deposit&wallet=hermesos");
   });
 
+  it("offers a Deploy an agent action when the Command Center v2 pilot has no agents", async () => {
+    global.fetch = jest.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/features/command-center-v2") return commandCenterV2FlagResponse(true);
+      if (url === "/api/instances?summary=true" || url === "/api/hosts") {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({ success: false, error: "not found" }) } as Response);
+    }) as jest.Mock;
+
+    render(<DashboardPage />);
+
+    expect(await screen.findByText("No agents are deployed yet.")).toBeInTheDocument();
+    const cta = screen.getByRole("link", { name: /deploy an agent/i });
+    expect(cta).toHaveAttribute("href", "/dashboard/welcome");
+    fireEvent.click(cta);
+    expect(pushMock).toHaveBeenCalledWith("/dashboard/welcome");
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("labels instance card actions for touch users without relying on hover", async () => {
+    render(<DashboardPage />);
+
+    const rename = await screen.findByRole("button", { name: "Rename agent" });
+    expect(rename).toHaveClass("hermes-card-action");
+    expect(within(rename).getByText("Rename")).toHaveClass("hermes-card-action-label");
+    const consoleAction = screen.getAllByRole("button", { name: "Advanced Console" }).find((button) => button.classList.contains("hermes-card-action"));
+    // The touch label comes from the same locale copy as the accessible name.
+    expect(consoleAction).toBeDefined();
+    expect(within(consoleAction as HTMLElement).getByText("Advanced Console")).toHaveClass("hermes-card-action-label");
+  });
+
   it("uses the manual-update copy when the latest failed run was manual", async () => {
     global.fetch = jest.fn((input: RequestInfo | URL) => {
       const url = String(input);

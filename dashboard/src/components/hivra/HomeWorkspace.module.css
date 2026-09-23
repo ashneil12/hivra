@@ -15,3 +15,6 @@
 .opening { display: flex; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: 16px; padding: 24px; color: var(--text-secondary); font-size: 14px; }
 .opening a { color: var(--text-secondary); font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
 .opening a:focus-visible { outline: 2px solid var(--hivra-red); outline-offset: 4px; }
+/* The only way out before auto-resume fires, so it gets a full tap target. */
+@media (max-width: 767px), (pointer: coarse) { .opening a { display: inline-flex; align-items: center; min-height: 44px; padding-inline: 12px; } }
+@media (max-width: 767px) { .opening a { font-size: 13px; } }

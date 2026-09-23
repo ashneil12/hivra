@@ -290,7 +290,7 @@ describe("LaunchPage", () => {
     expectCurrentStep("Choose");
     expect(screen.getByRole("link", { name: /Browse every agent/i })).toHaveAttribute(
       "href",
-      "/dashboard/welcome?step=agent-type",
+      "/dashboard/welcome?step=agent-type&from=launch",
     );
     chooseProfile("Codex");
 

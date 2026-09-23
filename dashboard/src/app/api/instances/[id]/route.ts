@@ -102,6 +102,7 @@ import { isRealVeniceByokKey } from "@/lib/venice/byok-classification";
 import { normalizeWelcomeLaunchCapture } from "@/lib/welcome-personalization";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { scheduleSoulSeedReconcileAfterResponse } from "@/lib/recovery/soul-seed-reconcile";
+import { backupsIncludedWithInstance } from "@/lib/billing/backup-coverage";
 // Gateway-restart shell builders live in ./gateway-restart-command so this
 // route file stays focused on request handling. Re-exported/imported below;
 // GATEWAY_RESTART_SSH_TIMEOUT_MS is also used by the restart_gateway action.
@@ -1491,11 +1492,7 @@ export async function GET(
     // to re-derive this boolean — a blocking external round-trip on a
     // user-facing hot path. Reading the already-fetched column removes it.
     const backupsEnabled =
-      Boolean(
-        instance!.proxmox_node &&
-        instance!.proxmox_vmid &&
-        ["operator", "fleet", "command", "ws_cloud_pro", "ws_cloud_power", "credit_pro", "credit_power", "paid", "pro", "power"].includes(String(instance!.resource_tier ?? ""))
-      ) || Boolean(instance!.backups_enabled);
+      backupsIncludedWithInstance(instance!) || Boolean(instance!.backups_enabled);
     const [updateAlerts, rawFailureAlerts] = await Promise.all([
       getLatestFailedInstanceUpdateAlerts([id]),
       getLatestInstanceFailureAlerts([id]),

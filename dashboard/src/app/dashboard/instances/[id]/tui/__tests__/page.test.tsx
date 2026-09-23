@@ -177,4 +177,35 @@ describe("DedicatedHermesTuiPage", () => {
     expect(screen.queryByText(/legacy webui runtime/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/fast embedded hermes tui is disabled/i)).not.toBeInTheDocument();
   });
+
+  it("offers Make default in the utility rail for narrow screens", async () => {
+    await act(async () => {
+      render(<DedicatedHermesTuiPage params={Promise.resolve({ id: "inst_123" })} />);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /open workspace details/i }));
+    const sidebar = document.querySelector('[data-tui-rail="sidebar"]') as HTMLElement;
+    const makeDefault = within(sidebar).getByRole("button", { name: /make default/i });
+    expect(makeDefault).toHaveClass("tui-rail-default");
+    fireEvent.click(makeDefault);
+    expect(within(sidebar).getByRole("button", { name: /default workspace/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Set as default workspace" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("marks the header chrome that phones collapse and the soft keyboard hides", async () => {
+    await act(async () => {
+      render(<DedicatedHermesTuiPage params={Promise.resolve({ id: "inst_123" })} />);
+    });
+
+    const header = screen.getByTestId("dedicated-tui-header");
+    expect(header).toHaveClass("tui-header");
+    expect(screen.getByTestId("dedicated-tui-workspace")).toHaveClass("tui-workspace");
+    expect(screen.getByTestId("dedicated-tui-shell")).toHaveClass("tui-shell");
+    // Runtime details repeat the utility rail, so phones drop them from the one-row header.
+    expect(within(header).getByText("gpt-5.4").parentElement).toHaveClass("tui-header-meta");
+    expect(within(header).getByText("Hermes TUI")).toHaveClass("tui-header-subtitle");
+    const css = document.querySelector('[data-testid="dedicated-tui-shell"] style')?.textContent ?? "";
+    expect(css).toContain('[data-keyboard-open="true"] .tui-header { display: none !important; }');
+    expect(css).toContain('[data-keyboard-open="true"] .tui-workspace { grid-template-rows: minmax(0, 1fr) !important;');
+  });
 });

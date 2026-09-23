@@ -10,7 +10,7 @@
 // connect flows — we send it as the `code` field; the box's aeon handler treats
 // it as the token to authenticate `gh`.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import posthog from "posthog-js";
 import { ExternalLink, Loader2, Check, Wallet } from "lucide-react";
 
@@ -91,6 +91,19 @@ export function HivraGitHubConnect({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [useManagedCredits, setUseManagedCredits] = useState(defaultManagedCredits);
+  const patRef = useRef<HTMLInputElement>(null);
+
+  // Focus the token field for keyboard users only: on touch the raised
+  // keyboard would cover step 1, which is where the token gets created.
+  useEffect(() => {
+    let coarse = false;
+    try {
+      coarse = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+    } catch {
+      /* treat as a fine pointer */
+    }
+    if (!coarse) patRef.current?.focus();
+  }, []);
 
   // Mint a managed-Venice proxy key for this box and shape the wiring payload.
   // Wallet pick mirrors the chat proxy's defaultWalletType semantics: bill the
@@ -207,15 +220,21 @@ export function HivraGitHubConnect({
 
       <div style={{ display: "flex", gap: 8 }}>
         <input
+          ref={patRef}
           type="password"
           value={pat}
           onChange={(e) => setPat(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") void connect();
           }}
-          autoFocus
+          aria-label="GitHub personal access token"
           placeholder="github_pat_…"
-          style={{ flex: 1, padding: "11px 12px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 13, fontFamily: "var(--font-mono), monospace", outline: "none" }}
+          autoComplete="off"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="go"
+          style={{ flex: 1, minWidth: 0, padding: "11px 12px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 13, fontFamily: "var(--font-mono), monospace", outline: "none" }}
         />
         <button type="button" onClick={() => void connect()} disabled={busy || !pat.trim()} style={{ ...primaryBtn, padding: "0 16px", opacity: busy || !pat.trim() ? 0.5 : 1, cursor: busy || !pat.trim() ? "default" : "pointer" }}>
           {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />} Connect

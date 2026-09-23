@@ -14,7 +14,7 @@ import { useLocale } from '@/components/i18n/LocaleProvider';
 import { BankrTrustFooter } from '@/components/wallet/AgentWalletCards';
 import { hermesosTransferUri } from '@/lib/billing/eip681';
 import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
-import { tokenVerificationContent } from '@/lib/token-verification-content';
+import { HERMESOS_TOKEN } from '@/lib/billing/token-registry';
 import {
   LAUNCH_PROMO_END,
   STANDARD_USD_CENTS,
@@ -34,12 +34,10 @@ import {
  * the deposit-quote card/panel, plus their shared copy-address helpers.
  * Extracted verbatim from wallet/page.tsx.
  */
-// Single source of truth for the official $HermesOS contract address —
-// the same constant used by balance reads, price feeds, and deposit
-// destinations. If this matches what's on hivra.cloud/token, you're
-// looking at the real token.
-export const HERMESOS_TOKEN_ADDRESS =
-  tokenVerificationContent.tokenDetails.contractAddress ?? '';
+// The official $HermesOS contract address, from the platform token registry
+// that balance reads, price feeds and deposit destinations use too. If this
+// matches what's on hivra.cloud/token, you're looking at the real token.
+export const HERMESOS_TOKEN_ADDRESS = HERMESOS_TOKEN.publishedAddress;
 /**
  * Returns a wall-clock timestamp that ticks every `intervalMs` so
  * countdown copy refreshes without making render impure (React's

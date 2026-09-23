@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import posthog from "posthog-js";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 
@@ -91,6 +91,54 @@ describe("GetStartedPage", () => {
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith("/get-started/activate?plan=fleet");
     });
+  });
+
+  it("sends a signed-in visitor with Free intent to the dashboard instead of re-activating Free", async () => {
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "free" : null));
+
+    render(<GetStartedPage />);
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/dashboard"));
+    expect(mockReplace).not.toHaveBeenCalledWith(expect.stringContaining("/get-started/activate"));
+  });
+
+  it("carries the Hivra home bar and puts the account form ahead of the plan column", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+
+    render(<GetStartedPage />);
+
+    expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+    const form = screen.getByTestId("mock-sign-up").closest(".get-started-form");
+    expect(form).not.toBeNull();
+    expect(form).toHaveTextContent(/Pro · \$9\.99\/mo/);
+    // DOM order, not CSS order: screen readers and Tab reach the form before the plan controls.
+    const planColumn = document.querySelector(".get-started-sticky")!;
+    expect(form!.compareDocumentPosition(planColumn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(planColumn).toContainElement(screen.getByRole("group", { name: "Billing cadence" }));
+    expect(planColumn).toContainElement(screen.getByRole("button", { name: /Pro \$9\.99/, pressed: true }));
+    // The summary line only shows in the single-column layout (media query).
+    const switchPlan = within(form as HTMLElement).getByRole("button", { name: "Switch Plan", hidden: true });
+    const scrollIntoView = jest.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    fireEvent.click(switchPlan);
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Pro \$9\.99/, pressed: true })).toHaveFocus();
+  });
+
+  it("keeps the step indicator ahead of the form once the form moves first", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+
+    const { container } = render(<GetStartedPage />);
+
+    // Wide layout: in the plan column. Single column (media query): above the summary and form.
+    expect(container.querySelector(".get-started-sticky .get-started-steps")).toHaveTextContent(/Choose plan.*Create account.*Payment/i);
+    const form = container.querySelector(".get-started-form") as HTMLElement;
+    const compactSteps = form.querySelector(".get-started-steps-compact")!;
+    expect(compactSteps).toHaveTextContent(/Choose plan.*Create account.*Payment/i);
+    expect(compactSteps.compareDocumentPosition(form.querySelector(".get-started-summary")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(compactSteps.compareDocumentPosition(screen.getByTestId("mock-sign-up")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not render a back link on the signed-out get-started flow", () => {

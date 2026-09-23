@@ -4,7 +4,9 @@
   width: min(880px, calc(100% - clamp(1.5rem, 4vw, 3rem)));
   min-width: 0;
   margin: 0 auto;
-  padding: calc(env(safe-area-inset-top, 0px) + 1rem) 0 calc(2rem + env(safe-area-inset-bottom, 0px));
+  /* The shell sets --dashboard-page-safe-top to 0 under its mobile header,
+     which already clears the notch; routes without that header keep it. */
+  padding: calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + 1rem) 0 calc(2rem + env(safe-area-inset-bottom, 0px));
   color: var(--ink-black);
 }
 
@@ -670,6 +672,7 @@
 
 .outcome {
   min-height: 58vh;
+  min-height: 58dvh;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -711,6 +714,7 @@
 
 .loading {
   min-height: 60vh;
+  min-height: 60dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -736,6 +740,32 @@
   .nameField { grid-template-columns: 1fr; }
   .nameField small { grid-column: 1; }
   .advancedBody { grid-template-columns: 1fr; }
+  /* Keep the step's primary action reachable while its options scroll. The
+     scroller's bottom padding already clears the phone bottom bar. */
+  .footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: var(--vellum-bg);
+    padding-bottom: calc(0.75rem + var(--launch-sticky-safe-bottom, 0px));
+  }
+}
+
+/* Touch tablets get the same reachable action as phones. */
+@media (max-width: 1023px) and (pointer: coarse) {
+  .footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: var(--vellum-bg);
+    padding-bottom: calc(0.75rem + var(--launch-sticky-safe-bottom, 0px));
+  }
+}
+
+/* Below 768px the bottom bar reserves the home-indicator inset; wider shells
+   have no bottom bar, so a sticky footer clears it itself. */
+@media (min-width: 768px) {
+  .page { --launch-sticky-safe-bottom: env(safe-area-inset-bottom, 0px); }
 }
 
 @container launch (max-width: 420px) {
@@ -743,14 +773,14 @@
   .progress li { gap: 0.3rem; }
   .stepNumber { width: 20px; height: 20px; }
   .profileChoice { grid-template-columns: auto minmax(0, 1fr); }
-  .profileChoice em { grid-column: 2; justify-self: start; }
+  .profileChoice em { grid-column: 2; justify-self: start; font-size: 0.68rem; }
   .review div { grid-template-columns: 1fr; gap: 0.3rem; }
   .footer { align-items: stretch; }
   .footer .primaryAction { flex: 1 1 160px; }
 }
 
 @media (max-height: 820px) and (min-width: 721px) {
-  .page { padding-top: calc(env(safe-area-inset-top, 0px) + 0.45rem); }
+  .page { padding-top: calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + 0.45rem); }
   .header { min-height: 48px; }
   .stage { padding-top: 1rem; }
 
@@ -765,6 +795,17 @@
   .page[data-stage="capacity"] .advanced { margin-top: 0.5rem; }
   .page[data-stage="capacity"] .advanced summary { min-height: 38px; padding: 0.55rem 0.75rem; }
   .page[data-stage="capacity"] .footer { margin-top: 0.65rem; padding-top: 0.55rem; }
+}
+
+@media (max-width: 767px) {
+  /* The bottom navigation already reserves the home-indicator inset. */
+  .page { padding-bottom: 2rem; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .windowsMediaHeading button,
+  .windowsDownloadAction { min-height: 44px; }
+  .windowsOfficialLinks a { display: inline-flex; align-items: center; min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

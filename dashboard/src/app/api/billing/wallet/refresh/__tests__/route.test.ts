@@ -71,6 +71,7 @@ describe("POST /api/billing/wallet/refresh", () => {
         balanceRaw: "39022814000000000000000000",
         qualifiesBaseTier: true,
       },
+      balances: { hermesos: 39022814000000000000000000n },
     });
     mockEvaluate.mockResolvedValueOnce({ configured: true });
 
@@ -82,7 +83,7 @@ describe("POST /api/billing/wallet/refresh", () => {
     expect(body.data.snapshotId).toBe("snap_x");
     expect(mockEvaluate).toHaveBeenCalledWith({
       userId: "user_a",
-      currentBalance: 39022814000000000000000000n,
+      balances: { hermesos: 39022814000000000000000000n },
     });
   });
 

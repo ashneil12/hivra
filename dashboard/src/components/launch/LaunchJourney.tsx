@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -145,6 +145,60 @@ function stepBack(stage: LaunchStage): LaunchStage {
   return stage;
 }
 
+type HistoryStage = Exclude<LaunchStage, "launch">;
+const HISTORY_STAGES: readonly HistoryStage[] = ["type", "profile", "capacity", "review"];
+const HISTORY_STAGE_KEY = "hivraLaunchStage";
+const HISTORY_PUSHED_KEY = "hivraLaunchPushed";
+
+function parseHistoryStage(value: unknown): HistoryStage | null {
+  return HISTORY_STAGES.find(stage => stage === value) ?? null;
+}
+
+function currentHistoryEntry(): { stage: HistoryStage | null; pushed: boolean } {
+  const state = window.history.state as Record<string, unknown> | null;
+  return {
+    stage: parseHistoryStage(state?.[HISTORY_STAGE_KEY] ?? new URLSearchParams(window.location.search).get("stage")),
+    pushed: state?.[HISTORY_PUSHED_KEY] === true,
+  };
+}
+
+// Each forward step gets its own history entry so the Android back gesture
+// and iOS edge swipe step back through the journey instead of leaving it.
+// Next's patched pushState/replaceState keep its router state in sync.
+function writeStageHistory(stage: LaunchStage, mode: "push" | "replace") {
+  if (typeof window === "undefined" || stage === "launch") return;
+  const entry = currentHistoryEntry();
+  if (mode === "replace" && entry.stage === stage) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("stage", stage);
+  const href = `${url.pathname}${url.search}${url.hash}`;
+  const data = { [HISTORY_STAGE_KEY]: stage, [HISTORY_PUSHED_KEY]: mode === "push" || entry.pushed };
+  if (mode === "push") window.history.pushState(data, "", href);
+  else window.history.replaceState(data, "", href);
+}
+
+// A stage restored from history must still have the choices it depends on.
+function reachableStage(stage: HistoryStage, draft: LaunchDraft): HistoryStage {
+  if (stage === "type" || !draft.resourceKind) return "type";
+  if (stage === "profile" || !draft.profileId || PROFILE_DETAILS[draft.profileId].resourceKind !== draft.resourceKind) return "profile";
+  if (stage === "review" && !draft.name.trim()) return "capacity";
+  return stage;
+}
+
+// Phones, plus touch tablets up to the compact rail width.
+const NARROW_LAUNCH_QUERY = "(max-width: 640px), (max-width: 1023px) and (pointer: coarse)";
+
+function subscribeNarrowLaunch(onChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => undefined;
+  const query = window.matchMedia(NARROW_LAUNCH_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function readNarrowLaunch() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NARROW_LAUNCH_QUERY).matches;
+}
+
 const JOURNEY_STEPS = ["Choose", "Configure", "Review"] as const;
 
 function visibleStep(stage: LaunchStage): number {
@@ -181,6 +235,10 @@ export function LaunchJourney() {
   const [windowsDownloadStarting, setWindowsDownloadStarting] = useState(false);
   const restoredDestinationRef = useRef<string | null>(null);
   const journeyRef = useRef<HTMLElement | null>(null);
+  // Phones and touch tablets start with Resources collapsed: the recommended
+  // size is already selected, and four open pickers pushed "Review launch"
+  // two screens down.
+  const narrowLayout = useSyncExternalStore(subscribeNarrowLaunch, readNarrowLaunch, () => false);
   const activeStage = draft?.stage;
   const activeOutcome = activeStage === "launch" ? draft?.launchState : null;
 
@@ -195,6 +253,9 @@ export function LaunchJourney() {
   }, [activeStage, activeOutcome]);
   const targetValues = searchParams?.getAll("targetId") ?? [];
   const targetValuesKey = targetValues.join("\u0000");
+  const requestedKindParam = searchParams?.get("kind") ?? null;
+  const requestedProfileParam = searchParams?.get("profile") ?? null;
+  const startParam = searchParams?.get("start") ?? null;
   const handoff = useMemo(
     () => parseLaunchTargetHandoff(targetValues),
     // The key represents the complete ordered query input.
@@ -309,31 +370,53 @@ export function LaunchJourney() {
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [destination.deployment, draft?.windowsIsoDownload, windowsDownloadTask]);
 
+  // Keyed on the launch-intent params only: the stage param written into the
+  // URL for back/forward must not re-run this and replace the draft.
   useEffect(() => {
     const stored = readLaunchDraft();
-    const requestedKind = searchParams?.get("kind");
-    const startFresh = searchParams?.get("start") === "1"
+    const startFresh = startParam === "1"
       && stored?.launchState !== "uncertain"
       && stored?.launchState !== "submitting";
+    let initial: LaunchDraft;
     if (stored && !startFresh) {
-      setDraft(stored);
-      return;
+      initial = stored;
+    } else {
+      const next = createLaunchDraft();
+      if (requestedKindParam === "agent" || requestedKindParam === "computer") {
+        next.resourceKind = requestedKindParam;
+        next.stage = "profile";
+      }
+      const requestedProfile = requestedProfileParam;
+      if (requestedKindParam === "computer" && (requestedProfile === "ubuntu-desktop" || requestedProfile === "linux-terminal" || requestedProfile === "omarchy" || requestedProfile === "windows")) {
+        next.profileId = requestedProfile;
+        next.name = PROFILE_DETAILS[requestedProfile].defaultName;
+        next.resources = { ...PROFILE_DETAILS[requestedProfile].recommended };
+        next.stage = "capacity";
+      }
+      writeLaunchDraft(next);
+      initial = next;
     }
-    const next = createLaunchDraft();
-    if (requestedKind === "agent" || requestedKind === "computer") {
-      next.resourceKind = requestedKind;
-      next.stage = "profile";
-    }
-    const requestedProfile = searchParams?.get("profile");
-    if (requestedKind === "computer" && (requestedProfile === "ubuntu-desktop" || requestedProfile === "linux-terminal" || requestedProfile === "omarchy" || requestedProfile === "windows")) {
-      next.profileId = requestedProfile;
-      next.name = PROFILE_DETAILS[requestedProfile].defaultName;
-      next.resources = { ...PROFILE_DETAILS[requestedProfile].recommended };
-      next.stage = "capacity";
-    }
-    writeLaunchDraft(next);
-    setDraft(next);
-  }, [searchParams]);
+    setDraft(initial);
+    // One task later so that on a hard load Next has patched history first;
+    // an unpatched replaceState would drop the router's own entry state.
+    const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
+    return () => window.clearTimeout(timer);
+  }, [requestedKindParam, requestedProfileParam, startParam, targetValuesKey]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const requested = currentHistoryEntry().stage;
+      if (!requested) return;
+      setDraft(current => {
+        if (!current || current.stage === "launch") return current;
+        const next = reachableStage(requested, current);
+        if (next === current.stage) return current;
+        return { ...current, stage: next, launchState: "idle", result: null, error: null };
+      });
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -604,7 +687,19 @@ export function LaunchJourney() {
       setWindowsDownloadStarting(false);
     }
   };
-  const goBack = () => updateDraft({ stage: stepBack(draft.stage), launchState: "idle", result: null, error: null });
+  const advanceTo = (stage: HistoryStage, change: Partial<LaunchDraft> = {}) => {
+    writeStageHistory(stage, "push");
+    updateDraft({ ...change, stage });
+  };
+  const goBack = () => {
+    const previous = stepBack(draft.stage);
+    updateDraft({ stage: previous, launchState: "idle", result: null, error: null });
+    // Pop the entry this step pushed so the next system back keeps stepping
+    // back; entries the journey did not push are rewritten in place.
+    const entry = currentHistoryEntry();
+    if (entry.pushed && entry.stage === draft.stage) window.history.back();
+    else writeStageHistory(previous, "replace");
+  };
   const startNew = () => {
     const next = createLaunchDraft();
     clearLaunchDraft();
@@ -612,6 +707,7 @@ export function LaunchJourney() {
     restoredDestinationRef.current = null;
     destination.setMode("hivra-managed");
     setDraft(next);
+    writeStageHistory(next.stage, "replace");
   };
   const reviewFailedLaunch = () => {
     const nextIdentity = createLaunchDraft();
@@ -753,7 +849,7 @@ export function LaunchJourney() {
               {draft.resourceKind === "computer" ? <Check size={16} aria-hidden /> : null}
             </button>
           </div>
-          {footer(primary("Continue", () => updateDraft({ stage: "profile" }), !draft.resourceKind), false)}
+          {footer(primary("Continue", () => advanceTo("profile"), !draft.resourceKind), false)}
         </section>
       ) : null}
 
@@ -769,10 +865,10 @@ export function LaunchJourney() {
             <span><strong>Codex</strong><small>OpenAI coding agent · native ChatGPT sign-in after launch</small></span>
             <em>Recommended</em>
           </button>
-          <Link className={styles.catalogLink} href="/dashboard/welcome?step=agent-type">
+          <Link className={styles.catalogLink} href="/dashboard/welcome?step=agent-type&from=launch">
             Browse every agent <ArrowRight size={14} aria-hidden />
           </Link>
-          {footer(primary("Continue", () => updateDraft({ stage: "capacity" }), draft.profileId !== "codex"))}
+          {footer(primary("Continue", () => advanceTo("capacity"), draft.profileId !== "codex"))}
         </section>
       ) : null}
 
@@ -804,7 +900,7 @@ export function LaunchJourney() {
               <span><strong>Windows</strong><small>Start Windows installation from your ISO on compatible capacity you own</small></span>
             </button>
           </div>
-          {footer(primary("Continue", () => updateDraft({ stage: "capacity" }), !draft.profileId || PROFILE_DETAILS[draft.profileId].resourceKind !== "computer"))}
+          {footer(primary("Continue", () => advanceTo("capacity"), !draft.profileId || PROFILE_DETAILS[draft.profileId].resourceKind !== "computer"))}
         </section>
       ) : null}
 
@@ -823,6 +919,12 @@ export function LaunchJourney() {
               aria-label={draft.resourceKind === "computer" ? "Computer name" : "Agent name"}
               value={draft.name}
               maxLength={64}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="done"
+              onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
               onChange={event => updateDraft({ name: event.target.value })}
             />
             <small>This is how it will appear in Hivra.</small>
@@ -907,7 +1009,8 @@ export function LaunchJourney() {
                     </label>
                     <label className={styles.windowsDownloadUrl}>
                       Final Microsoft ISO link
-                      <input aria-label="Final Microsoft ISO link" type="url" value={windowsDownloadUrl} onChange={event => {
+                      <input aria-label="Final Microsoft ISO link" type="url" inputMode="url" autoCapitalize="none" autoCorrect="off"
+                        spellCheck={false} enterKeyHint="done" value={windowsDownloadUrl} onChange={event => {
                         setWindowsDownloadUrl(event.target.value);
                         updateDraft({ windowsRightsAttested: false });
                       }} placeholder="https://software.download.prss.microsoft.com/…iso?…" />
@@ -982,11 +1085,11 @@ export function LaunchJourney() {
               <small>{gvisorComputer
                 ? "This sandbox reserves its full enforced CPU and memory limits. Admission checks serialized host reservations and live memory headroom."
                 : draft.resources.source === "recommended"
-                ? "Reserved CPU counts against your pool, but shared scheduling does not provide dedicated cores or guaranteed performance. Reserved memory is the VM balloon floor. Maximums are hard ceilings available only while the host has room."
-                : "Reserved CPU and memory count against capacity. Maximums are hard ceilings for opportunistic headroom and do not reserve that extra capacity."}</small>
+                ? "Reserved CPU counts against your pool, but cores are shared, so speed is not guaranteed. Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."
+                : "Reserved CPU and memory count against capacity. It can use more, up to the maximum, only while the host has spare room; that extra is not reserved."}</small>
             </span>
           </div>
-          <details className={styles.advanced} open>
+          <details className={styles.advanced} open={!narrowLayout}>
             <summary>Resources</summary>
             <div className={styles.advancedBody}>
               <fieldset aria-label="Reserved CPU">
@@ -1021,8 +1124,7 @@ export function LaunchJourney() {
               <span><strong>{capacityBlocker}</strong>{blockerActions}</span>
             </div>
           ) : null}
-          {footer(primary("Review launch", () => updateDraft({
-            stage: "review",
+          {footer(primary("Review launch", () => advanceTo("review", {
             capacity: destination.mode === "hivra-managed"
               ? { mode: "hivra-managed", targetId: null }
               : { mode: "self-managed", targetId: destination.selectedTarget?.id ?? null },

@@ -46,6 +46,27 @@ const STYLES: Record<WarnLevel, { bg: string; border: string; fg: string }> = {
   critical: { bg: "rgba(220,38,38,0.08)", border: "rgba(220,38,38,0.4)", fg: "#dc2626" },
 };
 
+function dismissedRankKey(instanceId: string): string {
+  return `hivra_memory_banner_dismissed_${instanceId}`;
+}
+
+function readDismissedRank(instanceId: string): number {
+  try {
+    const stored = Number(window.localStorage.getItem(dismissedRankKey(instanceId)));
+    return Number.isFinite(stored) && stored > 0 ? stored : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function clearDismissedRank(instanceId: string): void {
+  try {
+    window.localStorage.removeItem(dismissedRankKey(instanceId));
+  } catch {
+    // Storage unavailable; nothing was persisted.
+  }
+}
+
 /**
  * Dismissible memory-pressure banner for the agent chat. Shows an amber warning
  * as the agent's recent peak RAM approaches its plan's guaranteed baseline (>=80%)
@@ -58,8 +79,19 @@ const STYLES: Record<WarnLevel, { bg: string; border: string; fg: string }> = {
 export function MemoryUsageBanner({ instanceId, upgradeHref = "/dashboard/billing" }: MemoryUsageBannerProps) {
   const [usage, setUsage] = useState<MemoryUsageState | null>(null);
   // Track the highest severity dismissed so an escalation from warn to critical
-  // surfaces again, but the same level stays dismissed.
+  // surfaces again, but the same level stays dismissed. Persisted per instance
+  // so the banner does not return on every visit, and cleared once pressure
+  // is back to ok.
   const [dismissedRank, setDismissedRank] = useState(0);
+
+  const dismiss = (rank: number) => {
+    setDismissedRank(rank);
+    try {
+      window.localStorage.setItem(dismissedRankKey(instanceId), String(rank));
+    } catch {
+      // Storage unavailable; the dismissal lasts for this visit only.
+    }
+  };
 
   useEffect(() => {
     if (!instanceId) return;
@@ -72,6 +104,13 @@ export function MemoryUsageBanner({ instanceId, upgradeHref = "/dashboard/billin
         const json = await res.json();
         const data = json?.data;
         if (!cancelled && data && typeof data.level === "string") {
+          if (data.level === "ok") {
+            // Pressure recovered: forget the dismissal so the next episode shows.
+            clearDismissedRank(instanceId);
+            setDismissedRank(0);
+          } else {
+            setDismissedRank(readDismissedRank(instanceId));
+          }
           setUsage({
             level: data.level as MemoryLevel,
             percent: typeof data.percent === "number" ? data.percent : 0,
@@ -116,7 +155,7 @@ export function MemoryUsageBanner({ instanceId, upgradeHref = "/dashboard/billin
         <div
           className="mono"
           style={{
-            fontSize: 10,
+            fontSize: 11,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             fontWeight: 700,
@@ -126,7 +165,7 @@ export function MemoryUsageBanner({ instanceId, upgradeHref = "/dashboard/billin
         >
           {copy.title}
         </div>
-        <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+        <div className="line-clamp-1 md:line-clamp-none" style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
           {copy.body}
         </div>
         <a
@@ -149,14 +188,18 @@ export function MemoryUsageBanner({ instanceId, upgradeHref = "/dashboard/billin
       <button
         type="button"
         aria-label="Dismiss memory warning"
-        onClick={() => setDismissedRank(memoryLevelRank(level))}
+        onClick={() => dismiss(memoryLevelRank(level))}
         style={{
           border: 0,
           background: "transparent",
           color: "var(--text-muted)",
           cursor: "pointer",
-          padding: 2,
+          width: 40,
+          height: 40,
+          margin: "-10px -12px -10px 0",
           display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
           flexShrink: 0,
         }}
       >

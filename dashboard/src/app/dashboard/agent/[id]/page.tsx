@@ -503,7 +503,7 @@ function ProvisioningPersonalizationPanel({ agent }: { agent: HivraAgent }) {
         <select
           value={draft.goal || "assist"}
           onChange={(event) => updateDraft((current) => ({ ...current, goal: event.target.value }))}
-          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "9px 10px", fontSize: 13 }}
+          className={styles.personalizationField}
         >
           {GOALS.map((goal) => (
             <option key={goal.id} value={goal.id}>{goal.label}</option>
@@ -517,7 +517,7 @@ function ProvisioningPersonalizationPanel({ agent }: { agent: HivraAgent }) {
           onChange={(event) => updateDraft((current) => ({ ...current, context: event.target.value }))}
           placeholder="What should it know about you, your work, or this project?"
           rows={3}
-          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: 10, fontSize: 13, resize: "vertical" }}
+          className={styles.personalizationField}
         />
       </label>
       <label style={{ display: "grid", gap: 6 }}>
@@ -526,7 +526,8 @@ function ProvisioningPersonalizationPanel({ agent }: { agent: HivraAgent }) {
           value={draft.firstTask || ""}
           onChange={(event) => updateDraft((current) => ({ ...current, firstTask: event.target.value }))}
           placeholder="What should it help you do first?"
-          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "9px 10px", fontSize: 13 }}
+          enterKeyHint="done"
+          className={styles.personalizationField}
         />
       </label>
     </div>
