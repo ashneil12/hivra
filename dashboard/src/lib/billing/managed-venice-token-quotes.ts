@@ -19,6 +19,7 @@ import {
   type ManagedVeniceTopUpQuoteMicroUsd,
 } from "@/lib/venice/managed-credit-topup";
 import {
+  PlatformTokenPriceGateError,
   fetchHermesPriceCrossCheck,
   fetchPlatformTokenPriceUsd,
   isHermesPriceFresh,
@@ -314,7 +315,7 @@ function decimalToScale(parsed: { integer: bigint; scale: number }, scale: numbe
   return parsed.integer * 10n ** BigInt(scale - parsed.scale);
 }
 
-function pricesDisagreeAboveBps(
+function priceExceedsCrossCheckAboveBps(
   primaryPriceUsd: string,
   crossCheckPriceUsd: string,
   maxDisagreementBps: number
@@ -324,12 +325,11 @@ function pricesDisagreeAboveBps(
   const scale = Math.max(primary.scale, crossCheck.scale);
   const primaryScaled = decimalToScale(primary, scale);
   const crossCheckScaled = decimalToScale(crossCheck, scale);
-  const diff =
-    primaryScaled > crossCheckScaled
-      ? primaryScaled - crossCheckScaled
-      : crossCheckScaled - primaryScaled;
-
-  return diff * 10_000n > primaryScaled * BigInt(maxDisagreementBps);
+  // One-sided: only a primary price ABOVE the cross-check is refused. A
+  // higher price credits more per token (the user's gain); a lower one is the
+  // conservative side, so a real drop keeps deposits open.
+  if (primaryScaled <= crossCheckScaled) return false;
+  return (primaryScaled - crossCheckScaled) * 10_000n > primaryScaled * BigInt(maxDisagreementBps);
 }
 
 function isoFromUnixSeconds(value: number | null | undefined) {
@@ -1081,6 +1081,20 @@ async function resolveDepositToken(params: {
   return requirePlatformToken(tokenKey);
 }
 
+/** Live price for a deposit quote; a failed price gate disables deposits for now. */
+async function gatedDepositPrice(token: PlatformToken) {
+  try {
+    return await fetchPlatformTokenPriceUsd(token);
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) {
+      throw new ManagedVeniceTokenQuotePriceError(
+        `Managed Venice token deposits are temporarily disabled: ${error.message}`
+      );
+    }
+    throw error;
+  }
+}
+
 export async function createManagedVeniceTokenQuote(
   params: {
     userId: string;
@@ -1103,35 +1117,44 @@ export async function createManagedVeniceTokenQuote(
   const now = params.now ?? new Date();
   const token = await resolveDepositToken({ userId: params.userId, token: params.token, access: params.access, now });
 
-  const priceQuote = params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
+  const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   if (!isHermesPriceFresh(priceQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the Hivra price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token price is stale"
     );
   }
 
+  // The cross-check is the pool's recent median (the reference the gated
+  // price was already checked against), not an independent source. The gated
+  // price is already min(spot, median), so this only bites for an injected
+  // price quote that sits more than MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
+  // above the median.
   const crossCheckQuote =
     params.crossCheckQuote === undefined
-      ? await fetchHermesPriceCrossCheck()
+      ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {
+          throw new ManagedVeniceTokenQuotePriceError(
+            `Managed Venice token deposits are temporarily disabled: ${error instanceof Error ? error.message : String(error)}`
+          );
+        })
       : params.crossCheckQuote;
   if (
     crossCheckQuote &&
     !isHermesPriceFresh(crossCheckQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the Hivra cross-check price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token cross-check price is stale"
     );
   }
   if (
     crossCheckQuote &&
-    pricesDisagreeAboveBps(
+    priceExceedsCrossCheckAboveBps(
       priceQuote.priceUsd,
       crossCheckQuote.priceUsd,
       MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
     )
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because Hivra price sources disagree"
+      "Managed Venice token deposits are temporarily disabled because the token price is above its recent median"
     );
   }
 
@@ -1194,7 +1217,7 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
   const now = params.now ?? new Date();
   const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now }));
   const token = await resolveDepositToken({ userId: params.userId, token: params.token, access, now });
-  const priceQuote = params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
+  const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   const client = requireDb(db);
   const subsidyState = await loadManagedVeniceTopUpSubsidyState(
     client,

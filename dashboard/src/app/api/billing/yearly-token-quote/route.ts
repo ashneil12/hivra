@@ -38,6 +38,7 @@ import {
 } from "@/lib/billing/bankr-deposit-wallets";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 import { LivePriceUnavailableError } from "@/lib/billing/live-thresholds";
+import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -309,7 +310,7 @@ export async function POST(req: NextRequest) {
           allowedTokens: error.allowedTokens,
         });
       }
-      if (error instanceof LivePriceUnavailableError) {
+      if (error instanceof LivePriceUnavailableError || error instanceof PlatformTokenPriceGateError) {
         return apiError(
           "Token price unavailable — please try again later.",
           503,
