@@ -1,19 +1,20 @@
 # Main website integration
 
-The approved litepaper is recorded in `LITEPAPER.md` and
-`review/20-user-final-litepaper.md`. They are byte-for-byte identical at
-SHA-256 `b01f8d7a7699c6831de3a1305892f5a2b776fb3117b593bcd4e2c6aa39644ecd`.
-The founder section, all 15 product stories and all 14 token utilities are intact.
-The linked `THOUGHTS.md` publishes the founder section and its references as a
-standalone document.
+The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
+`dashboard/scripts/stage-litepaper.mjs` at SHA-256
+`8ccc34344b3a00884e6f37295ebefa9208a43c0826632508ea9a68d185dddca7`
+(v2.1, approved 23 September 2026). `test_content.py` checks the source against
+that pin. The founder section, all 15 product stories and all 12 token utilities
+are intact. The linked `THOUGHTS.md` publishes the founder section and its
+references as a standalone document.
 
 ## Build and public files
 
-`dashboard/scripts/stage-litepaper.mjs` copies 20 explicitly named HTML, CSS,
+`dashboard/scripts/stage-litepaper.mjs` copies 19 explicitly named HTML, CSS,
 JavaScript, font, image, library and Markdown files into `dashboard/public`.
 It runs before the existing `predev` and `prebuild` hooks. Generated copies are
 ignored by Git; source files remain under this directory and the repository root.
-The script does not copy the review directory, source scripts, ZIPs, environment
+The script does not copy source scripts, ZIPs, environment
 files or other repository content. It rejects symlinks, unexpected files in the
 generated litepaper directory, missing inputs and source wording that differs
 from the approved SHA-256 pinned in the staging script.
@@ -57,7 +58,7 @@ pinned approved hash, so it does not depend on the private review snapshot.
 The staging suite now includes a package regression using the installed `ignore`
 implementation with directory pruning, matching Vercel's filtering semantics.
 It filters the real required source files plus private-document sentinels,
-executes the staging script from that filtered package, verifies all 20 public
+executes the staging script from that filtered package, verifies all 19 public
 artifacts byte for byte, and checks that private files are absent. All five
 staging tests pass locally. Vercel also built the exact Canary release source
 successfully on 9 September 2026.
