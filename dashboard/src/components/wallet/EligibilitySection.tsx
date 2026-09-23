@@ -1,6 +1,8 @@
 'use client';
 
 import { Info, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
+import { touchStyles } from "@/components/billing/TransferDetails";
 import { useLocale } from "@/components/i18n/LocaleProvider";
 import {
   interpolateCopy,
@@ -41,7 +43,7 @@ export function EligibilityPanel({
 }) {
   const { copy } = useLocale();
   const eligibilityCopy = copy.dashboard.wallet.eligibility;
-  const sym = eligibility.tokenSymbol;
+  const sym = displayTokenUnit(eligibility.tokenSymbol);
   const balanceDisplay = eligibility.balance?.balanceDisplay ?? '—';
 
   return (
@@ -63,7 +65,7 @@ export function EligibilityPanel({
             {eligibilityCopy.eyebrow}
           </span>
           <h2 className="serif" style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: 4, marginBottom: 0 }}>
-            {eligibilityCopy.currentBalancePrefix} <code className="mono notranslate" translate="no" style={{ fontSize: '1.05rem' }}>{balanceDisplay} {sym}</code>
+            {eligibilityCopy.currentBalancePrefix} <code className="mono notranslate" translate="no" style={{ fontSize: '1.05rem', overflowWrap: 'anywhere' }}>{balanceDisplay} {sym}</code>
           </h2>
           <TokenPriceLine thresholds={eligibility.thresholds} />
         </div>
@@ -79,6 +81,7 @@ export function EligibilityPanel({
             onClick={onRefresh}
             disabled={refreshing}
             aria-label={eligibilityCopy.refreshBalanceLabel}
+            className={touchStyles.touchTarget}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -103,6 +106,7 @@ export function EligibilityPanel({
             onClick={onUnlock}
             disabled={unlocking}
             aria-label="Re-check holdings and unlock compute now"
+            className={touchStyles.touchTarget}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -258,6 +262,7 @@ export function VeniceBoostRow({
           type="button"
           onClick={onUnlock}
           disabled={unlocking}
+          className={touchStyles.touchTarget}
           style={{
             alignSelf: 'flex-start',
             marginTop: 2,

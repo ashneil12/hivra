@@ -1,0 +1,598 @@
+/*
+ * Shared shell for billing dialogs (BillingDialog.tsx).
+ *
+ * Rendered through <SafePortal> at the end of <body>, so the fixed overlay
+ * stacks above the dashboard header and the phone bottom bar instead of
+ * competing inside <main>. The panel never uses vh: its height follows the
+ * visible viewport (the workspace var the shell sets from visualViewport,
+ * falling back to dvh), minus the safe areas, and its body scrolls inside.
+ */
+
+.overlay {
+  /* Small danger text needs AA contrast on light surfaces: the plain token
+     (#ef4444 in light) is only ~3.8:1 on white, so text gets a darker mix.
+     Borders and icons keep the token. */
+  --billing-danger-ink: color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black));
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  padding-block: calc(1rem + env(safe-area-inset-top, 0px)) calc(1rem + env(safe-area-inset-bottom, 0px));
+  padding-inline: max(1rem, env(safe-area-inset-left, 0px)) max(1rem, env(safe-area-inset-right, 0px));
+  background: rgb(10 10 10 / 0.56);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: overlayIn 160ms ease-out both;
+}
+
+.panel {
+  --dialog-gutter: clamp(1rem, 4.5cqi, 1.75rem);
+  container: billing-dialog / inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 540px;
+  max-height: calc(100vh - 2rem);
+  max-height: calc(var(--workspace-viewport-height, 100dvh) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  margin: auto;
+  color: var(--ink-black);
+  background: var(--bg-surface);
+  border: 1px solid color-mix(in srgb, var(--ink-black) 16%, transparent);
+  border-top: 2px solid var(--hivra-red);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 0.4);
+  animation: panelIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.panel[data-size='sm'] { max-width: 460px; }
+.panel[data-size='lg'] { max-width: 680px; }
+
+.header {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 1.1rem var(--dialog-gutter) 1rem;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.headerMain {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.headerIcon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  margin-top: 0.15rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-elevated);
+  color: var(--ink-black);
+}
+
+.headerText {
+  min-width: 0;
+}
+
+.eyebrow {
+  display: block;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.title {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-size: clamp(1.25rem, 1.05rem + 1.2cqi, 1.6rem);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+  color: var(--ink-black);
+  overflow-wrap: anywhere;
+}
+
+.description {
+  margin: 0.45rem 0 0;
+  max-width: 34rem;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: -0.3rem -0.4rem 0 0;
+  padding: 0;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--ink-black);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.close:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ink-black) 40%, transparent);
+  background: var(--bg-elevated);
+}
+
+.close:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.15rem var(--dialog-gutter) 1.35rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.85rem var(--dialog-gutter);
+  border-top: 1px solid var(--etched-border);
+  background: var(--bg-elevated);
+}
+
+.footerSpread {
+  justify-content: space-between;
+}
+
+/* ─── Shared dialog content primitives ─────────────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0.65rem 1.05rem;
+  border: 1px solid var(--ink-black);
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, opacity 150ms ease;
+}
+
+.button:disabled,
+.button[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.button[aria-busy='true'] {
+  cursor: wait;
+}
+
+.primary {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: var(--hivra-red);
+}
+
+.secondary {
+  background: transparent;
+  color: var(--ink-black);
+  border-color: color-mix(in srgb, var(--ink-black) 24%, transparent);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--ink-black);
+  background: var(--bg-surface);
+}
+
+/* An irreversible confirm (e.g. "Yes, withdraw everything"): danger tint with
+   AA-contrast danger ink in both themes. */
+.destructive {
+  background: var(--skills-danger-bg);
+  border-color: var(--billing-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
+  color: var(--billing-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
+}
+
+.destructive:hover:not(:disabled) {
+  border-color: var(--ink-black);
+}
+
+.quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+.quiet:hover:not(:disabled) {
+  color: var(--ink-black);
+}
+
+.block {
+  width: 100%;
+}
+
+.label {
+  display: block;
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.fineprint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--etched-border);
+  border-left: 2px solid var(--ink-black);
+  background: var(--bg-elevated);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-black);
+}
+
+.callout > svg {
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+
+.callout strong {
+  font-weight: 600;
+}
+
+.callout[data-tone='warning'] {
+  border-color: var(--skills-warning-border);
+  border-left-color: var(--skills-warning-text);
+  background: var(--skills-warning-bg);
+}
+
+.callout[data-tone='danger'] {
+  border-color: var(--skills-danger-border);
+  border-left-color: var(--skills-danger-text);
+  background: var(--skills-danger-bg);
+}
+
+.callout[data-tone='success'] {
+  border-color: var(--skills-success-border);
+  border-left-color: var(--skills-success-text);
+  background: var(--skills-success-bg);
+}
+
+.callout[data-tone='warning'] > svg { color: var(--skills-warning-text); }
+.callout[data-tone='danger'] > svg { color: var(--skills-danger-text); }
+.callout[data-tone='success'] > svg { color: var(--skills-success-text); }
+
+.statusText {
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.statusText[data-tone='success'] { color: var(--skills-success-text); }
+.statusText[data-tone='danger'] {
+  color: var(--billing-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
+}
+.statusText[data-tone='muted'] { color: var(--text-secondary); }
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+.overlay :is(a, button, summary, input, textarea, select, [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+@container billing-dialog (max-width: 440px) {
+  .footer > * {
+    flex: 1 1 100%;
+  }
+
+  .footerSpread > * {
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+/* Phones: footer actions always stack full width, whatever the panel size. */
+@media (max-width: 480px) {
+  .footer > * {
+    flex: 1 1 100%;
+  }
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .panel {
+    animation: none;
+  }
+
+  .close,
+  .button {
+    transition: none;
+  }
+}
+
+/* ─── CancelSaveFlow ───────────────────────────────────────────────── */
+
+.choices {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 44px;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink-black);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.choice:hover {
+  border-color: color-mix(in srgb, var(--ink-black) 28%, transparent);
+}
+
+.choice[data-selected='true'] {
+  border-color: var(--ink-black);
+  background: var(--bg-elevated);
+}
+
+.choice input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ink-black);
+}
+
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 88px;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--ink-black) 20%, transparent);
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.textarea:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.offer {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.95rem 1rem 1rem;
+  border: 1px solid var(--etched-border);
+  border-left: 2px solid var(--ink-black);
+  background: var(--bg-elevated);
+}
+
+.offerTitle {
+  margin: 0;
+  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-size: 1.1rem;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  color: var(--ink-black);
+}
+
+.offer .button {
+  justify-self: start;
+  margin-top: 0.2rem;
+}
+
+.supportAddress {
+  font-size: 12px;
+  color: var(--ink-black);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+@container billing-dialog (max-width: 440px) {
+  .offer .button {
+    justify-self: stretch;
+  }
+}
+
+/* ─── Plan comparison rows (paywall, change plan) ──────────────────── */
+
+.ledger {
+  display: grid;
+  margin: 0;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-elevated);
+}
+
+.ledgerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding: 0.7rem 0.9rem;
+}
+
+.ledgerRow + .ledgerRow {
+  border-top: 1px solid var(--etched-border);
+}
+
+.ledgerRow dt {
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.ledgerRow dd {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-black);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.price {
+  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-size: 1.15rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.priceUnit {
+  margin-left: 0.2rem;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.lossList {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lossList li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-black);
+}
+
+.lossList li::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 8px;
+  height: 1px;
+  margin-bottom: 0.3em;
+  background: var(--ink-black);
+}
+
+.example {
+  margin: 0;
+  padding-left: 0.8rem;
+  border-left: 1px solid var(--etched-border);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}

@@ -28,6 +28,7 @@ import {
   type HermesPriceQuote,
 } from "./price-feed";
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
+import { YEARLY_TOKEN_USD } from "./token-plan-prices";
 
 const YEARLY_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
 // At most one active quote per (user, tier); see the yearly_token_subscriptions migration.
@@ -43,11 +44,12 @@ export type YearlyQuoteStatus = "active" | "consumed" | "expired" | "cancelled" 
 
 /**
  * USD targets per BUILD_PLAN.md (yearly token-pay). Locked as integer
- * cents — float math out of the financial path.
+ * cents — float math out of the financial path. The whole-dollar prices
+ * live in token-plan-prices.ts so the billing UI shows the same numbers.
  */
 const YEARLY_USD_TARGET_CENTS: Record<TierKey, number> = {
-  pro: 4900, // $49/yr
-  power: 9900, // $99/yr
+  pro: YEARLY_TOKEN_USD.pro * 100, // $49/yr
+  power: YEARLY_TOKEN_USD.power * 100, // $99/yr
 };
 
 export interface YearlyQuoteRow {

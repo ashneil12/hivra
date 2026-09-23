@@ -1,5 +1,5 @@
 import { GET } from "../route";
-import { calculateUsage } from "../helpers";
+import { backupsIncludedWithInstance, calculateUsage, resolveBackupAddon } from "../helpers";
 import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getCreditSummary, getPlanMonthlyCreditGrant } from "@/lib/billing/credits";
@@ -41,6 +41,52 @@ describe("calculateUsage helper", () => {
     expect(result.instances).toHaveLength(2);
     expect(result.instances[0].backups_enabled).toBe(false); // default
     expect(result.instances[1].backups_enabled).toBe(true);
+  });
+});
+
+describe("resolveBackupAddon helper", () => {
+  const liveCard = { source: "stripe", plan: "operator", canChangePlanInPlace: true };
+  const hetzner = { id: "h1", name: "Hetzner box", status: "running", hetzner_server_id: "12345", backups_enabled: false };
+  const proxmoxPaid = {
+    id: "p1",
+    name: "Proxmox box",
+    status: "running",
+    proxmox_node: "node-c",
+    proxmox_vmid: 210,
+    resource_tier: "operator",
+  };
+
+  it("offers the add-on only for a live card subscription and a Hetzner box that isn't backed up", () => {
+    expect(resolveBackupAddon(liveCard, [hetzner, { ...hetzner, id: "h2" }])).toEqual({
+      purchasable: true,
+      instanceIds: ["h1", "h2"],
+      includedWithPlan: false,
+    });
+    expect(resolveBackupAddon(liveCard, [{ ...hetzner, backups_enabled: true }]).purchasable).toBe(false);
+  });
+
+  it("never offers it to token, Free, Apple or manual plans (the backup route rejects them)", () => {
+    for (const sub of [
+      { source: "token_yearly", plan: "operator", canChangePlanInPlace: false },
+      { source: "token_holding", plan: "fleet", canChangePlanInPlace: false },
+      { source: "free", plan: "free", canChangePlanInPlace: false },
+      { source: "apple_iap", plan: "operator", canChangePlanInPlace: false },
+      { source: "stripe", plan: "operator", canChangePlanInPlace: false },
+    ]) {
+      expect(resolveBackupAddon(sub, [hetzner])).toEqual({ purchasable: false, instanceIds: [], includedWithPlan: false });
+    }
+  });
+
+  it("reports Proxmox machines on paid tiers as backed up with the plan, never as an add-on to buy", () => {
+    expect(backupsIncludedWithInstance(proxmoxPaid)).toBe(true);
+    expect(backupsIncludedWithInstance({ ...proxmoxPaid, resource_tier: "free" })).toBe(false);
+    expect(resolveBackupAddon(liveCard, [proxmoxPaid])).toEqual({
+      purchasable: false,
+      instanceIds: [],
+      includedWithPlan: true,
+    });
+    // A machine without a Hetzner server can't take the add-on.
+    expect(resolveBackupAddon(liveCard, [{ id: "p2", name: "New box", status: "running" }]).purchasable).toBe(false);
   });
 });
 
@@ -437,6 +483,68 @@ describe("GET /api/billing/usage", () => {
     expect(body.data.plan.key).toBe("operator");
     expect(body.data.plan.canChangePlanInPlace).toBe(false);
     expect(body.data.plan.currentPeriodEnd).toBe("2026-08-16T00:00:00.000Z");
+  });
+
+  it("tells the page when the backup add-on can be bought, and for which machine", async () => {
+    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+      data: {
+        plan: "operator",
+        status: "active",
+        instance_limit: 3,
+        total_cpu_budget: 2,
+        total_ram_budget: 4096,
+        current_period_end: null,
+        stripe_subscription_id: "sub_live_123",
+      },
+      error: null,
+    });
+    mockSupabaseQuery.not.mockReturnValueOnce(mockSupabaseQuery).mockResolvedValueOnce({
+      data: [
+        { id: "proxmox-1", name: "Proxmox", status: "running", cpu_limit: 1, ram_limit: 2048, proxmox_node: "node-b", proxmox_vmid: 201, resource_tier: "free" },
+        { id: "hetzner-1", name: "Hetzner", status: "running", cpu_limit: 1, ram_limit: 2048, hetzner_server_id: "987", backups_enabled: false },
+      ],
+      error: null,
+    });
+    mockSupabaseQuery.or.mockResolvedValueOnce({ data: [], error: null });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockSupabaseQuery.select).toHaveBeenCalledWith(expect.stringContaining("hetzner_server_id"));
+    expect(body.data.usage.backupAddon).toEqual({
+      purchasable: true,
+      instanceIds: ["hetzner-1"],
+      includedWithPlan: false,
+    });
+    // Existing fields are unchanged.
+    expect(body.data.usage.instances.map((i: { id: string }) => i.id)).toEqual(["proxmox-1", "hetzner-1"]);
+    expect(body.data.usage.instances[1].backups_enabled).toBe(false);
+  });
+
+  it("does not offer the backup add-on to a yearly $HermesOS plan", async () => {
+    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    // yearly_token_subscriptions is read with .in(): the first two .in() calls
+    // (apple statuses, yearly statuses) chain; the yearly one resolves a row.
+    mockSupabaseQuery.in
+      .mockReturnValueOnce(mockSupabaseQuery)
+      .mockResolvedValueOnce({
+        data: [{ tier: "pro", status: "active", expires_at: "2027-05-01T00:00:00.000Z", paid_at: "2026-05-01T00:00:00.000Z" }],
+        error: null,
+      });
+    mockSupabaseQuery.not.mockReturnValueOnce(mockSupabaseQuery).mockResolvedValueOnce({
+      data: [{ id: "hetzner-1", name: "Hetzner", status: "running", cpu_limit: 1, ram_limit: 2048, hetzner_server_id: "987" }],
+      error: null,
+    });
+    mockSupabaseQuery.or.mockResolvedValueOnce({ data: [], error: null });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.plan.source).toBe("token_yearly");
+    expect(body.data.usage.backupAddon).toEqual({ purchasable: false, instanceIds: [], includedWithPlan: false });
   });
 
   it("hides unexpected usage errors from the client and logs", async () => {
