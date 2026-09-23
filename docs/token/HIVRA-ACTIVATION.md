@@ -35,8 +35,8 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
      `HIVRA_MIN_PRICE_LIQUIDITY_USD` of liquidity (default $25,000; see
      `dashboard/src/lib/billing/token-registry.ts`).
    - GeckoTerminal has indexed the pool (it has at least one five-minute
-     candle), and the price has held within 10% for the last two hours. Until
-     then the median check refuses quotes (section 5).
+     candle), and the price has not risen more than 10% in the last two
+     hours. Until then the median check refuses quotes (section 5).
 4. **Token surfaces are switched on.** The wallet, token-holding, token-access
    and token quote routes answer 404 unless crypto billing is enabled on the
    target (`CRYPTO_BILLING_ENABLED=true` or
@@ -49,12 +49,14 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    live on each target (the Canary build; for production, the Promote).
    Otherwise a user who arrives between the instant and the deploy sees a
    $HermesOS-only site but is not grandfathered.
-6. **Conversion links** (only if the convert page ships, PR #68): set
-   `termsUrl` (on hivra.cloud) and `conversionUrl` (exact host `bankr.bot`,
-   or widen its allowlist in a reviewed change) in
-   `dashboard/src/lib/claim/conversion-links-config.ts`. The convert page
-   stays closed until both are set. That page also needs the legal review
-   named on PR #68 before any Promote.
+6. **Conversion links (separate from activation):** the /dashboard/convert
+   page (PR #68) reads the $HIVRA contract from the same registry, so it needs
+   no address of its own. It stays closed until `termsUrl` (on hivra.cloud)
+   and `conversionUrl` (exact host `bankr.bot`, or widen its allowlist in a
+   reviewed change) are set in
+   `dashboard/src/lib/claim/conversion-links-config.ts`, in its own reviewed
+   PR. That page also needs the legal review named on PR #68 before any
+   Promote. Activation does not depend on it.
 
 ## 2. The one file to edit
 
@@ -69,7 +71,8 @@ export const HIVRA_TOKEN_LAUNCH: HivraTokenLaunchConfig = {
 };
 ```
 
-Nothing else changes. No environment variable, no migration, no other file.
+Nothing else changes for activation. No environment variable, no migration,
+no other file (the conversion links in precondition 6 are a separate PR).
 Everything else (balances, tiers, quotes, settlement, sweeps, the price feed,
 the /token page, emails and wallet links) reads this block through
 `token-registry.ts`.
@@ -207,18 +210,25 @@ quote fails closed with a 503 "try again later":
 
 1. **Liquidity floor:** the canonical pool holds at least the token's
    `minPriceLiquidityUsd` ($HermesOS $10,000, $HIVRA $25,000).
-2. **Median cross-check:** the DEXScreener spot is within
-   `PLATFORM_PRICE_MAX_DEVIATION_BPS` (10%) of the median price over the last
+2. **Median cross-check:** the reference is the median price over the last
    `PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES` (4 hours) of five-minute buckets
-   from GeckoTerminal. A bucket with no trades carries the last close
-   forward, so a quiet pool is still quotable at its last price, and a pumped
-   price is refused until it has held for about two hours. The check fails
-   closed only when the pool has no candle at all or a source is down.
-   Managed-Venice deposits apply the stricter 5%.
+   from GeckoTerminal, compared with the DEXScreener spot in the pool's
+   paired token (WETH), so an ETH move is not read as a token move. A bucket
+   with no trades carries the last close forward, so a quiet pool is still
+   quotable at its last price. The check fails closed only when the pool has
+   no candle at all or a source is down.
+3. **Pricing:** a quote is priced at the lower of spot and the median, so a
+   pump never buys a cheaper quote. A spot more than
+   `PLATFORM_PRICE_MAX_DEVIATION_BPS` (10%) above the median is refused
+   outright until the median catches up (about two hours); a spot below it
+   is used as is. Managed-Venice deposits also refuse a spot more than 5%
+   from the median, in either direction.
 
-A real move of more than 10% also pauses quotes, for up to about two hours
-until the median catches up. For a young, volatile $HIVRA pool that may be
-frequent; the band is one constant in `price-feed.ts` if Ash wants it wider.
+Live tier thresholds reuse the last good price through a price-source
+outage (up to an hour), but fail closed at once when a liquidity, pool or
+deviation gate trips. A real rally of more than 10% pauses new quotes for up
+to about two hours; for a young $HIVRA pool that may be frequent, and the
+band is one constant in `price-feed.ts` if Ash wants it wider.
 
 Breach, grace, recovery and suspension never need a live price. They compare
 balances with each row's fixed qualifying quantity.

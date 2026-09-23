@@ -80,13 +80,16 @@ export function InlineCopyAddress({ label, address }: { label: string; address: 
 export function BuyTokenCard() {
   const { copy } = useLocale();
   const buyCopy = copy.dashboard.wallet.buyToken;
-  // $HermesOS until $HIVRA is live; then new buyers are pointed at $HIVRA.
-  const contract = primaryPlatformToken().publishedAddress;
+  // $HermesOS until $HIVRA is live; then new buyers are pointed at $HIVRA,
+  // and the card's label names the token its link and address are for.
+  const buyToken = primaryPlatformToken();
+  const contract = buyToken.publishedAddress;
+  const forToken = (text: string) => text.replaceAll("$HermesOS", buyToken.displayUnit);
   const uniswapUrl = `https://app.uniswap.org/swap?chain=base&outputCurrency=${contract}`;
 
   return (
     <section
-      aria-label={buyCopy.ariaLabel}
+      aria-label={forToken(buyCopy.ariaLabel)}
       style={{
         border: '1px solid var(--etched-border)',
         background: 'var(--bg-surface)',
@@ -100,7 +103,7 @@ export function BuyTokenCard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.18em', opacity: 0.55, fontWeight: 700 }}>
-            {buyCopy.eyebrow}
+            {forToken(buyCopy.eyebrow)}
           </span>
           <h2 className="serif" style={{ fontSize: '1.15rem', fontWeight: 700, marginTop: 4, marginBottom: 0 }}>
             {buyCopy.title}

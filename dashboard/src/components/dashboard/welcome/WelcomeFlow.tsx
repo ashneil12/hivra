@@ -175,16 +175,8 @@ import {
   requestManagedVeniceSummary,
   type ManagedVeniceWalletSummaryPayload,
 } from '@/lib/billing/managed-venice-client';
-import { primaryPlatformToken } from '@/lib/billing/token-registry';
+import { usePaymentTokenUnit } from '@/hooks/usePaymentToken';
 
-/**
- * The token new payments are made in: $HermesOS until $HIVRA is live, then
- * $HIVRA. Read at each render, never at module load, so a long-lived page or
- * server process does not keep the unit it started with.
- */
-function paymentTokenUnit() {
-  return primaryPlatformToken().displayUnit;
-}
 
 const WELCOME_ROUTE = '/dashboard/welcome';
 const WELCOME_PERSONALIZATION_BEST_EFFORT_MS = 750;
@@ -670,6 +662,7 @@ async function readExistingInstanceRestorable(instanceId: string): Promise<boole
 }
 
 export function WelcomeFlow() {
+  const paymentUnit = usePaymentTokenUnit();
   const router = useRouter();
   const searchParams = useSearchParams();
   const selfHosted = isLocalAuthMode();
@@ -1780,7 +1773,7 @@ export function WelcomeFlow() {
     async ({ walletType, amountUsd }: { walletType: ManagedVeniceWalletType; amountUsd: number }) => {
       setError(null);
       if (walletType === 'hermesos') {
-        setError(`Create the ${paymentTokenUnit()} quote from the managed Venice credit step.`);
+        setError(`Create the ${paymentUnit} quote from the managed Venice credit step.`);
         return;
       }
 
@@ -1813,7 +1806,7 @@ export function WelcomeFlow() {
         setManagedVeniceCardCheckoutLoading(false);
       }
     },
-    [setError],
+    [paymentUnit, setError],
   );
 
   /**
@@ -2720,7 +2713,7 @@ export function WelcomeFlow() {
               {flowState === 'agent-type'
                 ? 'Pick the agent software to run — Claude Code, Codex, OpenClaw, Agent Zero or a plain Hermes agent — or a specialist that starts pre-shaped and can still be renamed and retuned.'
                 : flowState === 'plan'
-                  ? `Choose Card or ${paymentTokenUnit()}, then finish the deploy.`
+                  ? `Choose Card or ${paymentUnit}, then finish the deploy.`
                   : `${selectedAgentType?.tagline ?? "Name your agent, connect your AI provider, and you're live."}`}
             </p>
           </header>
@@ -5058,6 +5051,7 @@ function PaymentMethodIntro({
   onPickCrypto: () => void;
   freeActivationLoading: boolean;
 }) {
+  const paymentUnit = usePaymentTokenUnit();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
       <AnimateIn>
@@ -5105,7 +5099,7 @@ function PaymentMethodIntro({
           />
           <PaymentMethodOptionCard
             icon={<Coins size={20} />}
-            label={paymentTokenUnit()}
+            label={paymentUnit}
             tagline="Pay with the token · save up to ~59%"
             description="Pay one year up front, or hold tokens to keep your tier as long as you hold."
             onClick={onPickCrypto}
@@ -5299,6 +5293,7 @@ function PlanGrid({
   onDeposit: (tier: 'pro' | 'power') => void;
   cardCheckoutLoadingTier: 'pro' | 'power' | null;
 }) {
+  const paymentUnit = usePaymentTokenUnit();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       <AnimateIn>
@@ -5337,7 +5332,7 @@ function PlanGrid({
             }}
           >
             {paidPathChoice === 'card' ? <CreditCard size={11} /> : <Coins size={11} style={{ color: 'var(--gold-leaf)' }} />}
-            Paying with {paidPathChoice === 'card' ? 'Card' : paymentTokenUnit()}
+            Paying with {paidPathChoice === 'card' ? 'Card' : paymentUnit}
           </span>
         </div>
       </AnimateIn>
@@ -5470,19 +5465,20 @@ function SubOptionToggle({
  * payment path. Heads off the most common pre-click confusion ("How do I
  * connect my wallet?") by stating up front that no external wallet connect
  * is required — we provision a Hivra deposit wallet server-side and
- * the next screen shows the address + exact $HERMESOS amount to send.
+ * the next screen shows the address + exact token amount to send.
  */
 function CryptoHoldingExplainer({ mode }: { mode: 'yearly' | 'permanent' }) {
+  const paymentUnit = usePaymentTokenUnit();
   const steps =
     mode === 'permanent'
       ? [
-          'Click a tier — we show your deposit address and the exact $HERMESOS to send.',
-          'Buy $HERMESOS on Uniswap (Base) or send from any wallet you already use.',
+          `Click a tier — we show your deposit address and the exact ${paymentUnit} to send.`,
+          `Buy ${paymentUnit} on Uniswap (Base) or send from any wallet you already use.`,
           'Send to the address. Tier activates within minutes. Withdraw any time.',
         ]
       : [
-          'Click a tier — we show your deposit address and the exact $HERMESOS to send.',
-          'Buy $HERMESOS on Uniswap (Base) or send from any wallet you already use.',
+          `Click a tier — we show your deposit address and the exact ${paymentUnit} to send.`,
+          `Buy ${paymentUnit} on Uniswap (Base) or send from any wallet you already use.`,
           'Send the quoted amount once. Tier stays active for 365 days.',
         ];
 
@@ -5510,7 +5506,7 @@ function CryptoHoldingExplainer({ mode }: { mode: 'yearly' | 'permanent' }) {
               color: 'var(--gold-leaf)',
             }}
           >
-            How paying in {paymentTokenUnit()} works
+            How paying in {paymentUnit} works
           </span>
         </div>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
