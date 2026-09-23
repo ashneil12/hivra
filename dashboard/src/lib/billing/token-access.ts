@@ -237,7 +237,19 @@ export async function getLatestAccessTokenHoldingSnapshot(
   now: Date = new Date()
 ): Promise<HermesTokenHoldingSnapshot | null> {
   if (getHivraTokenPhase(now) !== "active") return getLatestHermesTokenHoldingSnapshot(userId, db);
-  const access = await resolveUserTokenAccess(userId, { db: db as TokenAccessDb | null | undefined, now });
+  let access: UserTokenAccess;
+  try {
+    access = await resolveUserTokenAccess(userId, {
+      db: db as TokenAccessDb | null | undefined,
+      now,
+      recordMembership: false,
+    });
+  } catch (error) {
+    // A $HIVRA activation conflict (already alerted) must not take the base
+    // tier away from $HermesOS holders on this read path.
+    if (!(error instanceof HivraActivationConflictError)) throw error;
+    return getLatestHermesTokenHoldingSnapshot(userId, db);
+  }
   const snapshots: HermesTokenHoldingSnapshot[] = [];
   for (const key of access.allowedTokens) {
     const token = platformTokenByKey(key);
@@ -272,6 +284,28 @@ export async function ensureHivraActivationRecorded(params: {
 
   const db = (params.db ?? (supabaseAdmin as unknown)) as TokenAccessDb | null;
   if (!db) throw new Error("Database not configured");
+
+  // Cheap path for every process after the first: the activation (and its
+  // cohort pass) is already recorded with this exact address and instant.
+  const { data: recorded, error: recordedError } = await table(db, "platform_token_activations")
+    .select("token_address, activated_at, cohort_recorded_at")
+    .eq("token_key", "hivra")
+    .maybeSingle();
+  if (recordedError) {
+    throw new Error(`Failed to read the $HIVRA activation: ${recordedError.message ?? "unknown"}`);
+  }
+  const recordedRow = recorded as { token_address?: string; activated_at?: string; cohort_recorded_at?: string | null } | null;
+  if (
+    recordedRow &&
+    recordedRow.token_address === hivra.address &&
+    recordedRow.cohort_recorded_at &&
+    typeof recordedRow.activated_at === "string" &&
+    Date.parse(recordedRow.activated_at) === hivra.activatesAt.getTime()
+  ) {
+    recordedActivationAddress = hivra.address;
+    return "recorded";
+  }
+
   const { data, error } = await requireRpc(db)("record_platform_token_activation", {
     p_token_key: "hivra",
     p_chain_id: hivra.chainId,
@@ -308,7 +342,16 @@ export async function ensureHivraActivationRecorded(params: {
 /** The user's token access at `now`. No database reads while $HIVRA is not active. */
 export async function resolveUserTokenAccess(
   userId: string,
-  params: { db?: TokenAccessDb | null; now?: Date } = {}
+  params: {
+    db?: TokenAccessDb | null;
+    now?: Date;
+    /**
+     * Record a member the activation pass missed (a write). Money paths and
+     * the evaluator do; read-only hot paths pass false and rely on the cohort
+     * recorded at activation.
+     */
+    recordMembership?: boolean;
+  } = {}
 ): Promise<UserTokenAccess> {
   const now = params.now ?? new Date();
   const phase = getHivraTokenPhase(now);
@@ -317,15 +360,19 @@ export async function resolveUserTokenAccess(
   const db = (params.db ?? (supabaseAdmin as unknown)) as TokenAccessDb | null;
   if (!db) throw new Error("Database not configured");
   await ensureHivraActivationRecorded({ db, now });
-  const { data: member, error: memberError } = await requireRpc(db)("ensure_token_grandfather_membership", {
-    p_user_id: userId,
-    p_now: now.toISOString(),
-  });
-  if (memberError) {
-    throw new Error(`Failed to check the $HermesOS cohort: ${memberError.message ?? "unknown"}`);
+  let member = true; // read the cohort row below either way
+  if (params.recordMembership !== false) {
+    const { data, error: memberError } = await requireRpc(db)("ensure_token_grandfather_membership", {
+      p_user_id: userId,
+      p_now: now.toISOString(),
+    });
+    if (memberError) {
+      throw new Error(`Failed to check the $HermesOS cohort: ${memberError.message ?? "unknown"}`);
+    }
+    member = data === true;
   }
   let cohort: CohortRow | null = null;
-  if (member === true) {
+  if (member) {
     const { data, error } = await table(db, "token_grandfather_cohort")
       .select(COHORT_SELECT)
       .eq("user_id", userId)

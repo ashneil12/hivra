@@ -4,7 +4,7 @@
  *   - a grandfathered user keeps a $HermesOS tier;
  *   - a grandfathered user who converts gets no access gap: either token
  *     counts during the grace, then the row moves to $HIVRA at the
- *     then-current threshold with a fresh breach grace if short.
+ *     then-current threshold capped at the amount locked at conversion.
  * The launch block, live thresholds and deposit quotes are mocked.
  */
 jest.mock("@/lib/billing/hivra-token-launch", () => ({
@@ -43,15 +43,23 @@ type Row = Record<string, unknown> & { id: string; user_id: string; tier: string
 
 class FakeDb {
   rows: Row[] = [];
+  /** Runs after each row read: lets a test change the row under the evaluator. */
+  afterLoad: ((row: Row) => void) | null = null;
   from() {
     return {
       select: () => ({
         eq: (_c1: string, userId: string) => ({
           eq: (_c2: string, tier: string) => ({
-            maybeSingle: async () => ({
-              data: this.rows.find((row) => row.user_id === userId && row.tier === tier) ?? null,
-              error: null,
-            }),
+            maybeSingle: async () => {
+              const row = this.rows.find((r) => r.user_id === userId && r.tier === tier) ?? null;
+              const copy = row ? { ...row } : null;
+              if (row && this.afterLoad) {
+                const hook = this.afterLoad;
+                this.afterLoad = null;
+                hook(row);
+              }
+              return { data: copy, error: null };
+            },
           }),
         }),
       }),
@@ -69,11 +77,23 @@ class FakeDb {
         return { error: null };
       },
       update: (payload: Record<string, unknown>) => ({
-        eq: async (_col: string, id: string) => {
-          const row = this.rows.find((r) => r.id === id);
-          if (!row) return { error: { message: "missing" } };
-          Object.assign(row, payload);
-          return { error: null };
+        eq: (_col: string, id: string) => {
+          const row = () => this.rows.find((r) => r.id === id);
+          return {
+            then: (resolve: (value: { error: unknown }) => unknown) => {
+              const target = row();
+              if (target) Object.assign(target, payload);
+              return Promise.resolve({ error: target ? null : { message: "missing" } }).then(resolve);
+            },
+            eq: (column: string, value: unknown) => ({
+              select: async () => {
+                const target = row();
+                if (!target || target[column] !== value) return { data: [], error: null };
+                Object.assign(target, payload);
+                return { data: [{ id }], error: null };
+              },
+            }),
+          };
         },
       }),
     };
@@ -298,7 +318,7 @@ describe("a grandfathered user who converts", () => {
     expect(db.rows[0].last_breach_at).toBeNull();
   });
 
-  it("moves to $HIVRA at the then-current threshold after the grace, with no gap when holding enough", async () => {
+  it("moves to $HIVRA after the grace, with no gap when holding enough", async () => {
     const db = new FakeDb();
     db.rows.push(hermesosProRow());
     const after = new Date(convertedAt.getTime() + 73 * HOUR_MS);
@@ -309,10 +329,11 @@ describe("a grandfathered user who converts", () => {
       db: db as unknown as DbCast,
       now: after,
     });
-    expect(result.pro).toMatchObject({ tokenKey: "hivra", currentlyEligible: true, movedToHivra: true });
+    expect(result.pro).toMatchObject({ tokenKey: "hivra", transition: "unchanged", currentlyEligible: true, movedToHivra: true });
     expect(db.rows[0]).toMatchObject({
       token_key: "hivra",
-      qualifying_quantity: HIVRA_PRO_NOW.toString(),
+      // min(locked 1,000, current 1,200)
+      qualifying_quantity: HIVRA_PRO_AT_CONVERSION.toString(),
       currently_eligible: true,
       last_breach_at: null,
     });
@@ -321,7 +342,9 @@ describe("a grandfathered user who converts", () => {
     });
   });
 
-  it("gets the normal breach grace (not an immediate loss) when short of the new threshold", async () => {
+  it("keeps the tier after the grace holding the amount locked at conversion, even if $HIVRA got pricier to hold", async () => {
+    // $HIVRA's price fell during the grace, so today's threshold (1,200) is
+    // above the locked one (1,000). The move caps at the locked amount.
     const db = new FakeDb();
     db.rows.push(hermesosProRow());
     const after = new Date(convertedAt.getTime() + 73 * HOUR_MS);
@@ -332,8 +355,74 @@ describe("a grandfathered user who converts", () => {
       db: db as unknown as DbCast,
       now: after,
     });
+    expect(result.pro).toMatchObject({
+      tokenKey: "hivra",
+      transition: "unchanged",
+      currentlyEligible: true,
+      movedToHivra: true,
+      qualifyingQuantity: HIVRA_PRO_AT_CONVERSION,
+    });
+    expect(db.rows[0]).toMatchObject({
+      token_key: "hivra",
+      currently_eligible: true,
+      qualifying_quantity: HIVRA_PRO_AT_CONVERSION.toString(),
+    });
+  });
+
+  it("takes today's lower threshold when $HIVRA got cheaper to hold during the grace", async () => {
+    liveMock.mockImplementation(async ({ token }: { token: { key: string } }) => {
+      const t = thresholdsFor(token);
+      return token.key === "hivra" ? { ...t, pro: { ...t.pro, amount: 800n * ONE } } : t;
+    });
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow());
+    const after = new Date(convertedAt.getTime() + 73 * HOUR_MS);
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "old",
+      balances: { hermesos: 0n, hivra: 800n * ONE },
+      access: converted(convertedAt, after),
+      db: db as unknown as DbCast,
+      now: after,
+    });
+    expect(result.pro).toMatchObject({ tokenKey: "hivra", currentlyEligible: true, qualifyingQuantity: 800n * ONE });
+  });
+
+  it("is breached (normal grace) only when holding less than both the locked and current amounts", async () => {
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow());
+    const after = new Date(convertedAt.getTime() + 73 * HOUR_MS);
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "old",
+      balances: { hermesos: 0n, hivra: HIVRA_PRO_AT_CONVERSION - ONE },
+      access: converted(convertedAt, after),
+      db: db as unknown as DbCast,
+      now: after,
+    });
     expect(result.pro).toMatchObject({ tokenKey: "hivra", transition: "breached", inGrace: true });
     expect(db.rows[0]).toMatchObject({ token_key: "hivra", last_suspend_at: null });
+  });
+
+  it("does not overwrite a row a concurrent evaluation already moved", async () => {
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow());
+    const after = new Date(convertedAt.getTime() + 73 * HOUR_MS);
+    const breachedAt = new Date(after.getTime() - 60_000).toISOString();
+    // Another evaluation moves the row and records a breach right after we read it.
+    db.afterLoad = (row) =>
+      Object.assign(row, {
+        token_key: "hivra",
+        qualifying_quantity: HIVRA_PRO_NOW.toString(),
+        currently_eligible: false,
+        last_breach_at: breachedAt,
+      });
+    await evaluateAndRecordTokenTierEligibility({
+      userId: "old",
+      balances: { hermesos: 0n, hivra: 0n },
+      access: converted(convertedAt, after),
+      db: db as unknown as DbCast,
+      now: after,
+    });
+    expect(db.rows[0]).toMatchObject({ token_key: "hivra", last_breach_at: breachedAt, currently_eligible: false });
   });
 
   it("stays on either-token rules past the grace while no $HIVRA price is available", async () => {

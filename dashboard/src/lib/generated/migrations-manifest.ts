@@ -350,4 +350,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260923001301", name: "revoke_api_execute_on_definer_functions" },
   { version: "20260923120000", name: "digitalocean_managed_agent_sessions" },
   { version: "20260923150000", name: "dual_platform_token_foundation" },
+  { version: "20260923160000", name: "reconcile_token_base_any_allowed_token" },
 ];

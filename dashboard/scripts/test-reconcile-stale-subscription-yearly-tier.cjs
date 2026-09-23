@@ -20,11 +20,15 @@ const PREREQUISITES = [
 const RPC_MIGRATIONS = fs
   .readdirSync(MIGRATIONS)
   .filter((name) => name.endsWith(".sql"))
-  // The dual platform token foundation needs the real token tables this
-  // script stubs out; its own test (test-dual-platform-token-foundation.cjs)
-  // applies it on top of them and checks these functions and their grants.
+  // The dual platform token migrations need the real token tables this
+  // script stubs out; their own test (test-dual-platform-token-foundation.cjs)
+  // applies them on top of them and checks these functions and their grants.
   // Later migrations stay covered here.
-  .filter((name) => name !== "20260923150000_dual_platform_token_foundation.sql")
+  .filter(
+    (name) =>
+      name !== "20260923150000_dual_platform_token_foundation.sql" &&
+      name !== "20260923160000_reconcile_token_base_any_allowed_token.sql"
+  )
   .sort()
   .filter((name) =>
     /create or replace function public\.reconcile_stale_subscription_state_to_free\s*\(/i.test(

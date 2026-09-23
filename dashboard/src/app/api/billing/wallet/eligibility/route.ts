@@ -151,7 +151,7 @@ export async function GET() {
 
     // The readout token: the token a held tier is in (Power first), else the
     // first token this user may newly qualify in.
-    const access = await resolveUserTokenAccess(userId);
+    const access = await resolveUserTokenAccess(userId, { recordMembership: false });
     const heldTokenKey = (powerQual ?? proQual)?.token_key;
     const tokenKey: PlatformTokenKey = heldTokenKey
       ? heldTokenKey === "hivra" ? "hivra" : "hermesos"

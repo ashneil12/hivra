@@ -59,7 +59,7 @@ export async function GET() {
     const [wallet, snapshot, access] = await Promise.all([
       getTokenVerificationWallet(userId),
       getLatestAccessTokenHoldingSnapshot(userId),
-      resolveUserTokenAccess(userId),
+      resolveUserTokenAccess(userId, { recordMembership: false }),
     ]);
     const token =
       platformTokenByAddress(snapshot?.tokenAddress) ?? requirePlatformToken(access.paymentToken);
@@ -101,15 +101,20 @@ export async function POST(req: NextRequest) {
     if (rateLimited) return rateLimited;
 
     const result = await refreshPrimaryHermesTokenHolding({ userId });
-    const access = await resolveUserTokenAccess(userId);
+    const access = await resolveUserTokenAccess(userId, { recordMembership: false });
+    const isAllowedPlatformSnapshot = (tokenAddress: string | undefined) => {
+      // A snapshot without an address predates the token dimension: $HermesOS.
+      const key = tokenAddress ? platformTokenByAddress(tokenAddress)?.key : "hermesos";
+      return !!key && access.allowedTokens.includes(key);
+    };
     // The token base tier counts any platform token this user may hold.
     const qualifyingSnapshot =
       result.status === "refreshed"
         ? [...(result.snapshots ?? []), ...(result.snapshot ? [result.snapshot] : [])].find(
             (snapshot) =>
               snapshot.qualifiesBaseTier &&
-              // (the refresh result's snapshots also include VVV)
-              access.allowedTokens.includes(platformTokenByAddress(snapshot.tokenAddress)?.key ?? "hermesos")
+              // The refresh result's snapshots also include VVV: only platform tokens count.
+              isAllowedPlatformSnapshot(snapshot.tokenAddress)
           ) ?? null
         : null;
     const token =

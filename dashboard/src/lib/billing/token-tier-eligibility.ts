@@ -184,7 +184,13 @@ type SupabaseLike = {
       eq: (
         col: string,
         val: string
-      ) => Promise<{ error: unknown }>;
+      ) => PromiseLike<{ error: unknown }> & {
+        // A second filter plus select() turns the update into a
+        // compare-and-set whose affected rows are returned.
+        eq?: (col: string, val: string) => {
+          select: (columns: string) => PromiseLike<{ data: unknown; error: unknown }>;
+        };
+      };
     };
   };
 };
@@ -463,24 +469,33 @@ async function evaluateFirstQualification(
 }
 
 /**
- * Move a $HermesOS row to $HIVRA at the current $HIVRA threshold: after a
- * converted member's grace, or for a $HermesOS row that no longer counts. A
- * row that was eligible or in grace becomes eligible in $HIVRA, so the normal
- * flow either keeps it (enough $HIVRA) or opens a fresh breach grace: never an
- * immediate loss. A suspended row stays suspended and re-qualifies in $HIVRA.
+ * Move a $HermesOS row to $HIVRA: after a converted member's grace, or for a
+ * $HermesOS row that no longer counts. The new qualifying quantity is the
+ * current $HIVRA threshold, capped at the $HIVRA amount locked when the member
+ * converted: a user who converted holding the locked amount keeps the tier
+ * even if $HIVRA's price fell during the grace (no access gap), and gets the
+ * lower number if it rose. A row that was eligible or in grace becomes
+ * eligible in $HIVRA, so the normal flow either keeps it or opens a fresh
+ * breach. A suspended row stays suspended and re-qualifies in $HIVRA.
+ *
+ * Compare-and-set on token_key: if a concurrent evaluation (the cron racing
+ * an unlock) already moved the row, this returns that row untouched rather
+ * than overwriting whatever that evaluation recorded since.
  */
 async function moveRowToHivra(
   ctx: EvaluateTierContext,
   row: TierQualificationRow,
-  threshold: ResolvedThreshold
+  current: ResolvedThreshold
 ): Promise<TierQualificationRow> {
   const nowStamp = nowIso(ctx.now);
   const suspended = !!row.last_suspend_at;
+  const locked = ctx.access.conversionThresholds[ctx.tier];
+  const target = locked && locked.amount < current.amount ? locked : current;
   const payload: Record<string, unknown> = {
     token_key: "hivra",
-    qualifying_quantity: threshold.amount.toString(),
-    threshold_at_qualification: threshold.amount.toString(),
-    qualifying_threshold_tier: threshold.code,
+    qualifying_quantity: target.amount.toString(),
+    threshold_at_qualification: target.amount.toString(),
+    qualifying_threshold_tier: target.code,
     qualified_at: nowStamp,
     metadata: {
       ...(row.metadata ?? {}),
@@ -489,17 +504,25 @@ async function moveRowToHivra(
         qualifying_quantity: row.qualifying_quantity,
         qualifying_threshold_tier: row.qualifying_threshold_tier,
         qualified_at: row.qualified_at,
+        hivra_current_threshold: current.amount.toString(),
+        hivra_locked_threshold: locked?.amount.toString() ?? null,
       },
     },
     ...(suspended ? {} : { currently_eligible: true, last_breach_at: null }),
   };
-  await updateRow(ctx.db, row, payload, "Failed to move the tier to $HIVRA");
+  const filtered = ctx.db.from("token_tier_qualifications").update(payload).eq("id", row.id);
+  if (!filtered.eq) throw new Error("Database client cannot compare-and-set a tier move");
+  const { data, error } = await filtered.eq("token_key", "hermesos").select("id");
+  if (error) throw new Error(`Failed to move the tier to $HIVRA for ${row.user_id}/${row.tier}`);
+  if (!Array.isArray(data) || data.length === 0) {
+    const reloaded = await loadRow(ctx.db, row.user_id, row.tier);
+    if (!reloaded) throw new Error(`Tier row vanished while moving ${row.user_id}/${row.tier} to $HIVRA`);
+    return reloaded;
+  }
   return {
     ...row,
     ...(payload as Partial<TierQualificationRow>),
     token_key: "hivra",
-    qualifying_quantity: threshold.amount.toString(),
-    threshold_at_qualification: threshold.amount.toString(),
   };
 }
 
@@ -523,8 +546,8 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
     const hivraThreshold = await ctx.thresholdFor("hivra");
     if (hivraThreshold) {
       row = await moveRowToHivra(ctx, row, hivraThreshold);
-      tokenKey = "hivra";
-      movedToHivra = true;
+      tokenKey = rowTokenKey(row);
+      movedToHivra = tokenKey === "hivra";
     } else {
       warnings.push(
         `User ${userId} (${tier}) is due to move to $HIVRA but no live $HIVRA price is available; retrying next tick.`
@@ -686,7 +709,10 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
   // The current threshold is informational for a held row (the UI and emails
   // quote it as "re-qualify at"); the state machine below never needs it, so
   // a price outage only blanks it.
-  const current = await ctx.thresholdFor(tokenKey);
+  const quoteInRowToken = activeQuote && quoteTokenKey(activeQuote) === tokenKey ? activeQuote : null;
+  const current = quoteInRowToken
+    ? { amount: quoteInRowToken.tokensRequiredRaw, code: quoteInRowToken.thresholdTierCode }
+    : await ctx.thresholdFor(tokenKey);
   const heldResult = {
     ...base,
     threshold: current?.amount ?? null,
@@ -823,7 +849,8 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
     currentlyEligible: wasStrictlyEligible,
     inGrace: false,
     cooldownEndsAt: null,
-    transition: movedToHivra ? "re_qualified" : "unchanged",
+    // A move keeps the tier; movedToHivra reports it (not a re-qualification).
+    transition: "unchanged",
   };
 }
 

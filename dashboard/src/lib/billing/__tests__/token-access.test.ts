@@ -86,6 +86,24 @@ class FakeAccessDb {
   }
 
   from(name: string) {
+    if (name === "platform_token_activations") {
+      const activation = this.activation;
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: async () => ({
+          data: activation
+            ? {
+                token_address: activation.address,
+                activated_at: activation.activatedAt,
+                cohort_recorded_at: activation.activatedAt,
+              }
+            : null,
+          error: null,
+        }),
+      };
+      return builder;
+    }
     if (name !== "token_grandfather_cohort") throw new Error(`unexpected table ${name}`);
     const filters: Array<(row: CohortRow) => boolean> = [];
     let update: Partial<CohortRow> | null = null;
@@ -214,6 +232,22 @@ describe("activation record and cohort", () => {
       p_token_decimals: 18,
       p_activated_at: new Date(ACTIVATES_AT).toISOString(),
     });
+  });
+
+  it("skips the activation RPC when the activation is already recorded (cold starts stay cheap)", async () => {
+    const db = new FakeAccessDb();
+    db.activation = { address: TEST_HIVRA_ADDRESS, activatedAt: new Date(ACTIVATES_AT).toISOString() };
+    expect(await ensureHivraActivationRecorded({ db, now: NOW })).toBe("recorded");
+    expect(db.rpcCalls.filter((call) => call.name === "record_platform_token_activation")).toHaveLength(0);
+  });
+
+  it("read-only lookups do not record cohort members", async () => {
+    const db = new FakeAccessDb();
+    db.activation = { address: TEST_HIVRA_ADDRESS, activatedAt: new Date(ACTIVATES_AT).toISOString() };
+    db.addMember("old_holder");
+    const access = await resolveUserTokenAccess("old_holder", { db, now: NOW, recordMembership: false });
+    expect(access.grandfathered).toBe(true);
+    expect(db.rpcCalls).toEqual([]);
   });
 
   it("fails closed and alerts when the recorded activation names a different address", async () => {

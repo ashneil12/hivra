@@ -24,6 +24,8 @@ const PREREQUISITES = [
   "20260922224500_managed_venice_token_transfer_dedupe.sql",
 ];
 const MIGRATION = "20260923150000_dual_platform_token_foundation.sql";
+// Follow-up: the stale-state reset's base tier counts every allowed token.
+const FOLLOW_UP = "20260923160000_reconcile_token_base_any_allowed_token.sql";
 const HERMESOS = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
 const HIVRA = "0x1111111111111111111111111111111111111111";
 const ACTIVATED_AT = "2026-10-01T00:00:00.000Z";
@@ -90,6 +92,8 @@ async function main() {
 
     await db.exec(read(MIGRATION));
     await db.exec(read(MIGRATION)); // rerun-safe
+    await db.exec(read(FOLLOW_UP));
+    await db.exec(read(FOLLOW_UP)); // rerun-safe
 
     // ── backfills and shapes ───────────────────────────────────────────
     assert.equal((await one(`select token_key from token_tier_qualifications where user_id = 'user_qual'`)).token_key, "hermesos");
@@ -319,6 +323,11 @@ async function main() {
     assert.equal(await reset("user_hivra_only", AFTER), "credit_base");
     await snapshot("user_hivra_only", HIVRA, true, at(AFTER, 60_000));
     assert.equal(await reset("user_hivra_only", at(AFTER, 120_000)), "token_base");
+
+    // A grandfathered member holding only $HermesOS keeps the base tier even
+    // though the refresh wrote a newer (empty) $HIVRA snapshot after it.
+    await snapshot("user_base", HIVRA, false, at(AFTER, 180_000));
+    assert.equal(await reset("user_base", at(AFTER, 240_000)), "token_base");
 
     // ── grants ─────────────────────────────────────────────────────────
     for (const signature of [
