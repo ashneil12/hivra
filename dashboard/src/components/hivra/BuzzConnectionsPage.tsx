@@ -389,12 +389,12 @@ export function BuzzConnectionsPage() {
                                       : event.target.value === "venice" ? "deepseek-v4-flash-0731-fast" : "gpt-5",
                                   })}>
                                   <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
-                                  <option value="venice">Venice · saved Vault key</option>
+                                  <option value="venice">Venice · saved API key</option>
                                 </select></label>
                                 <label><span>Model</span><input aria-label={`Buzz runtime model for ${binding.agentName}`} value={draft.model}
                                   onChange={(event) => updateRuntimeDraft(binding.id, { model: event.target.value })} /></label>
                                 {draft.provider === "venice" ? (
-                                  <div className={styles.vaultCredential}><span>Credential</span><strong>Venice key from Vault</strong>
+                                  <div className={styles.vaultCredential}><span>Credential</span><strong>Venice key from your API keys</strong>
                                     <Link href="/dashboard/vault">Manage key <ArrowUpRight size={12} /></Link></div>
                                 ) : (
                                   <label><span>Provider API key</span><input aria-label={`Buzz runtime API key for ${binding.agentName}`} type="password"

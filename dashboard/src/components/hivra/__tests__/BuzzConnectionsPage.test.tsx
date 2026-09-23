@@ -210,7 +210,9 @@ describe("BuzzConnectionsPage", () => {
     await screen.findByText("Runtime not installed");
     fireEvent.change(screen.getByLabelText("Buzz runtime provider for Research"), { target: { value: "venice" } });
     expect(screen.queryByLabelText("Buzz runtime API key for Research")).not.toBeInTheDocument();
-    expect(screen.getByText("Venice key from Vault")).toBeInTheDocument();
+    expect(screen.getByText("Venice key from your API keys")).toBeInTheDocument();
+    // The key page is called API keys, so this surface must not say Vault.
+    expect(screen.queryByText(/Vault/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Buzz owner public key for Research"), { target: { value: "c".repeat(64) } });
     fireEvent.click(screen.getByRole("button", { name: "Activate runtime" }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
