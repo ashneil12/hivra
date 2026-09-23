@@ -53,7 +53,7 @@ const agent = {
   type: "codex",
   status: "running",
   ip: "10.250.20.42",
-  proxmox_host: "pve1",
+  proxmox_host: "test-proxmox-host",
   infrastructure_connection_id: null,
   deployment_target_id: null,
   infrastructure_connection_revision: null,
@@ -97,7 +97,7 @@ describe("/api/hivra/agents/[id]/bankr-wallet/connect", () => {
   const mockedContext = resolveHivraAgentExecutionContext as jest.MockedFunction<typeof resolveHivraAgentExecutionContext>;
   const mockedConnect = connectUserBankrWalletForOwner as jest.MockedFunction<typeof connectUserBankrWalletForOwner>;
   const mockedDisconnect = disconnectUserBankrWalletForOwner as jest.MockedFunction<typeof disconnectUserBankrWalletForOwner>;
-  const executionContext = { env: { PROXMOX_HOST: "pve1" } } as unknown as Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>>;
+  const executionContext = { env: { PROXMOX_HOST: "test-proxmox-host" } } as unknown as Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>>;
 
   beforeEach(() => {
     jest.clearAllMocks();
