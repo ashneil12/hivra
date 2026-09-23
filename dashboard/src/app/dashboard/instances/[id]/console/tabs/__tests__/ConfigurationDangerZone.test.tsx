@@ -14,7 +14,7 @@ import { copyTextToClipboard } from '@/lib/client/clipboard';
 
 jest.mock('@/lib/client/clipboard', () => ({ copyTextToClipboard: jest.fn() }));
 
-const INSTANCE_ID = 'b8c7f1e0-6f4c-4b43-9d2e-5c1f0a7a9d11';
+const INSTANCE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function Harness({ onDelete }: { onDelete: () => void }) {
   const [deleteConfirm, setDeleteConfirm] = useState(true);
@@ -45,7 +45,7 @@ describe('ConfigurationDangerZone', () => {
 
   it('matches the typed id trimmed and case-insensitively', () => {
     expect(isDeleteConfirmationMatch(` ${INSTANCE_ID.toUpperCase()} `, INSTANCE_ID)).toBe(true);
-    expect(isDeleteConfirmationMatch('b8c7f1e0', INSTANCE_ID)).toBe(false);
+    expect(isDeleteConfirmationMatch('bbbbbbbb', INSTANCE_ID)).toBe(false);
   });
 
   it('enables Confirm when a phone keyboard capitalises the first letter', () => {
