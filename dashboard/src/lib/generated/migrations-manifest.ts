@@ -352,4 +352,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260923150000", name: "dual_platform_token_foundation" },
   { version: "20260923190000", name: "hivra_activity_retention" },
   { version: "20260923203000", name: "reconcile_token_base_any_allowed_token" },
+  { version: "20260924090000", name: "drop_user_bankr_key_on_agent_delete" },
 ];
