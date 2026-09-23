@@ -16,6 +16,9 @@ const mockListAgentSnapshots = jest.fn();
 const mockSnapshotAgent = jest.fn();
 const mockRestoreAgentSnapshot = jest.fn();
 const mockGetProviderResizeState = jest.fn();
+const mockListBoxMcp = jest.fn();
+const mockRemoveBoxMcp = jest.fn();
+const mockAddBoxMcp = jest.fn();
 jest.mock("@/lib/hivra/agent-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-api"),
   browserToggle: (...args: unknown[]) => mockBrowserToggle(...args),
@@ -31,7 +34,9 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   getProviderResizeState: (...args: unknown[]) => mockGetProviderResizeState(...args),
   getBoxModel: async () => ({ model: null }),
   getBoxRestrict: async () => ({ restrict: "" }),
-  listBoxMcp: async () => ({ servers: [] }),
+  listBoxMcp: (...args: unknown[]) => mockListBoxMcp(...args),
+  removeBoxMcp: (...args: unknown[]) => mockRemoveBoxMcp(...args),
+  addBoxMcp: (...args: unknown[]) => mockAddBoxMcp(...args),
 }));
 jest.mock("@/lib/hivra/agent-model-settings-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-model-settings-api"),
@@ -58,6 +63,8 @@ describe("HivraManage lifecycle guidance", () => {
     mockRestoreAgentSnapshot.mockResolvedValue(undefined);
     mockListAgentSnapshots.mockResolvedValue({ snapshots: [], supported: true, maximum: 5 });
     mockGetProviderResizeState.mockImplementation(() => new Promise(() => undefined));
+    mockListBoxMcp.mockResolvedValue({ servers: [] });
+    mockRemoveBoxMcp.mockResolvedValue({ ok: true });
   });
   const agent: HivraAgent = { id: "test-agent", name: "TEST", type: "codex", status: "running", cpu: 2, ram: 4, deployment_mode: "hivra-managed" };
   const plan: PlanInfo = { key: "command", name: "Command", subscribed: true, maxAgents: 8, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128, usage: { agentCount: 3, usedCpu: 22, usedRam: 124 } };
@@ -412,5 +419,133 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.queryByText(/no compute charges/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
+  });
+
+  describe("touch safety", () => {
+    const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
+
+    it("asks before removing a raw MCP server, and Cancel keeps it", async () => {
+      mockListBoxMcp.mockResolvedValue({ servers: [{ name: "github", command: "npx", args: ["-y", "server-github"] }], error: null });
+      render(<HivraManage agent={chatAgent} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Remove github" }));
+      expect(mockRemoveBoxMcp).not.toHaveBeenCalled();
+      expect(screen.getByText("Remove?")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel removing github" }));
+      expect(screen.queryByRole("button", { name: "Confirm remove github" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Remove github" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm remove github" }));
+      await waitFor(() => expect(mockRemoveBoxMcp).toHaveBeenCalledWith("https://box.example.com", "github", "test-token"));
+      await waitFor(() => expect(screen.queryByText("github")).not.toBeInTheDocument());
+    });
+
+    it("turns the focused MCP trash button into Cancel in place, so focus stays on the safe choice", async () => {
+      mockListBoxMcp.mockResolvedValue({ servers: [{ name: "sequential-thinking", command: "npx", args: ["-y", "server-sequential-thinking"] }], error: null });
+      render(<HivraManage agent={chatAgent} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      const trash = await screen.findByRole("button", { name: "Remove sequential-thinking" });
+      trash.focus();
+      fireEvent.click(trash);
+      const cancel = screen.getByRole("button", { name: "Cancel removing sequential-thinking" });
+      expect(cancel).toBe(trash);
+      expect(cancel).toHaveFocus();
+      expect(cancel).toHaveTextContent("Cancel");
+      const confirm = screen.getByRole("button", { name: "Confirm remove sequential-thinking" });
+      expect(confirm.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByText("sequential-thinking")).toHaveStyle({ minWidth: "0", textOverflow: "ellipsis" });
+    });
+
+    it("keeps typed ids lowercase on touch keyboards", async () => {
+      render(<HivraManage agent={chatAgent} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      const inputs = [
+        await screen.findByRole("textbox", { name: "Custom model id" }),
+        screen.getByRole("textbox", { name: "MCP server name" }),
+        screen.getByRole("textbox", { name: "MCP server command" }),
+      ];
+      fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
+      inputs.push(screen.getByRole("textbox", { name: "Type TEST to confirm" }));
+      for (const input of inputs) {
+        expect(input).toHaveAttribute("autocapitalize", "none");
+        expect(input).toHaveAttribute("autocorrect", "off");
+        expect(input).toHaveAttribute("spellcheck", "false");
+      }
+      expect(screen.getByRole("textbox", { name: "Custom model id" })).toHaveAttribute("enterkeyhint", "done");
+      expect(screen.getByRole("textbox", { name: "MCP server command" })).toHaveAttribute("enterkeyhint", "done");
+      expect(screen.getByRole("textbox", { name: "Type TEST to confirm" })).not.toHaveFocus();
+    });
+
+    it("links each permission preset to its visible hint before it is applied", async () => {
+      render(<HivraManage agent={chatAgent} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      const readOnly = await screen.findByRole("button", { name: "Read-only" });
+      expect(readOnly).toHaveAccessibleDescription("Look but don't touch — research and answers only.");
+      expect(screen.getByRole("button", { name: "Full access" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("shows a failed resize beneath the Resources controls instead of only at the top", async () => {
+      mockResizeAgent.mockRejectedValue(new Error("The host has no spare capacity."));
+      render(<HivraManage agent={agent} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+      fireEvent.click(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "4 CPU" }));
+      fireEvent.click(screen.getByRole("button", { name: /Apply · 4 CPU/ }));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("The host has no spare capacity.");
+      expect(document.getElementById("resources")).toContainElement(alert);
+    });
+
+    it("labels the destroy target and VM id in product terms", () => {
+      render(<HivraManage agent={{ ...agent, vmid: 1104 }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+      expect(screen.getByText("Destroy this agent")).toBeInTheDocument();
+      expect(screen.getByText("VM ID")).toBeInTheDocument();
+      expect(screen.queryByText(/Destroy this box/)).not.toBeInTheDocument();
+    });
+
+    it("offers a section jump strip that scrolls to the chosen section", async () => {
+      const scrollIntoView = jest.fn();
+      const original = HTMLElement.prototype.scrollIntoView;
+      HTMLElement.prototype.scrollIntoView = scrollIntoView;
+      try {
+        render(<HivraManage agent={chatAgent} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+        // The strip is display:none outside the phone media query, which jsdom does not match.
+        const strip = screen.getByRole("navigation", { hidden: true });
+        expect(strip).toHaveAttribute("aria-label", "Manage sections");
+        // Private access is Ubuntu-computer only, so an agent gets no chip for it; Permissions gets its own.
+        expect(within(strip).getAllByRole("button", { hidden: true }).map((button) => button.textContent))
+          .toEqual(["Overview", "Power", "Model", "Permissions", "Tools", "Resources", "Danger"]);
+        fireEvent.click(within(strip).getByText("Danger"));
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+        expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById("manage-danger"));
+        fireEvent.click(within(strip).getByText("Permissions"));
+        expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById("manage-permissions"));
+        await waitFor(() => expect(screen.getByRole("button", { name: "Default" })).toBeInTheDocument());
+      } finally {
+        HTMLElement.prototype.scrollIntoView = original;
+      }
+    });
+
+    it("offers the Private access chip only on an Ubuntu computer that can use it", () => {
+      const scrollIntoView = jest.fn();
+      const original = HTMLElement.prototype.scrollIntoView;
+      HTMLElement.prototype.scrollIntoView = scrollIntoView;
+      try {
+        render(<HivraManage
+          agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm" }}
+          def={getAgent("linux-desktop")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+        const strip = screen.getByRole("navigation", { hidden: true });
+        expect(within(strip).getAllByRole("button", { hidden: true }).map((button) => button.textContent))
+          .toEqual(["Overview", "Power", "Private access", "Resources", "Danger"]);
+        fireEvent.click(within(strip).getByText("Private access"));
+        expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById("manage-access"));
+      } finally {
+        HTMLElement.prototype.scrollIntoView = original;
+      }
+    });
+
+    it("moves from the MCP name to the command on Enter instead of doing nothing", async () => {
+      render(<HivraManage agent={chatAgent} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      const name = await screen.findByRole("textbox", { name: "MCP server name" });
+      expect(name).toHaveAttribute("enterkeyhint", "next");
+      name.focus();
+      fireEvent.change(name, { target: { value: "github" } });
+      fireEvent.keyDown(name, { key: "Enter" });
+      expect(screen.getByRole("textbox", { name: "MCP server command" })).toHaveFocus();
+      expect(mockAddBoxMcp).not.toHaveBeenCalled();
+    });
   });
 });

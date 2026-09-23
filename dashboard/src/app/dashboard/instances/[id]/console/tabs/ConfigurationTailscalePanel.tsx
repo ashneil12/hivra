@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ChevronDown,
@@ -14,6 +14,16 @@ import {
 } from 'lucide-react';
 
 import type { TailscaleConfig } from '@/lib/private-access/tailscale';
+import styles from '../console.module.css';
+
+// Typed secrets and hostnames must reach the API exactly as entered.
+const RAW_TEXT_INPUT_PROPS = {
+  autoCapitalize: 'none',
+  autoCorrect: 'off',
+  spellCheck: false,
+  autoComplete: 'off',
+  enterKeyHint: 'done',
+} as const;
 
 interface ConfigurationTailscalePanelProps {
   instanceId: string;
@@ -119,7 +129,7 @@ function DetailField({
   return (
     <div>
       <label
-        className="mono"
+        className={`mono ${styles.microLabel}`}
         style={{ fontSize: 9, display: 'block', marginBottom: 8, opacity: 0.5, fontWeight: 700 }}
       >
         {label}
@@ -158,6 +168,19 @@ export function ConfigurationTailscalePanel({
   const [feedback, setFeedback] = useState<{ tone: FeedbackTone; message: string } | null>(null);
   const [activeAction, setActiveAction] = useState<ActionState>(null);
   const [forceClearAvailable, setForceClearAvailable] = useState(false);
+  // Disconnect removes this host from the tailnet, so it asks once inline.
+  // Focus moves to the strip's Cancel on open and back to the trigger on cancel.
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const disconnectTriggerRef = useRef<HTMLButtonElement>(null);
+  const disconnectCancelRef = useRef<HTMLButtonElement>(null);
+  const disconnectQuestionId = useId();
+  useEffect(() => {
+    if (confirmDisconnect) disconnectCancelRef.current?.focus();
+  }, [confirmDisconnect]);
+  const cancelDisconnect = () => {
+    setConfirmDisconnect(false);
+    disconnectTriggerRef.current?.focus();
+  };
 
   const currentState = tailscale?.state || 'disconnected';
   const statusPalette = getStatusPalette(currentState);
@@ -316,6 +339,7 @@ export function ConfigurationTailscalePanel({
   }
 
   async function handleDisconnect(force = false) {
+    setConfirmDisconnect(false);
     setActiveAction('disconnect');
     setFeedback(null);
 
@@ -367,17 +391,18 @@ export function ConfigurationTailscalePanel({
   }
 
   return (
-    <div className="interrogation-box" style={{ padding: '2rem' }}>
+    <div className="interrogation-box" style={{ padding: 'clamp(16px, 5vw, 2rem)' }}>
       <div
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
           alignItems: 'flex-start',
           justifyContent: 'space-between',
           gap: '1rem',
           marginBottom: '1.5rem',
         }}
       >
-        <div>
+        <div style={{ flex: '1 1 220px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Shield size={18} />
             <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>
@@ -391,7 +416,7 @@ export function ConfigurationTailscalePanel({
         </div>
 
         <div
-          className="mono"
+          className={`mono ${styles.microLabel}`}
           style={{
             ...statusPalette,
             padding: '8px 10px',
@@ -452,7 +477,7 @@ export function ConfigurationTailscalePanel({
                   background: 'var(--bg-surface)',
                 }}
               >
-                <div className="mono" style={{ fontSize: 9, opacity: 0.5, fontWeight: 700 }}>
+                <div className={`mono ${styles.microLabel}`} style={{ fontSize: 9, opacity: 0.5, fontWeight: 700 }}>
                   WHAT THIS DOES
                 </div>
                 <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
@@ -468,7 +493,7 @@ export function ConfigurationTailscalePanel({
                   background: 'var(--bg-surface)',
                 }}
               >
-                <div className="mono" style={{ fontSize: 9, opacity: 0.5, fontWeight: 700 }}>
+                <div className={`mono ${styles.microLabel}`} style={{ fontSize: 9, opacity: 0.5, fontWeight: 700 }}>
                   WHAT STAYS THE SAME
                 </div>
                 <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
@@ -525,7 +550,7 @@ export function ConfigurationTailscalePanel({
                 <div>
                   <label
                     htmlFor="tailscale-auth-key"
-                    className="mono"
+                    className={`mono ${styles.microLabel}`}
                     style={{
                       fontSize: 9,
                       display: 'block',
@@ -539,6 +564,7 @@ export function ConfigurationTailscalePanel({
                   <input
                     id="tailscale-auth-key"
                     type="text"
+                    {...RAW_TEXT_INPUT_PROPS}
                     value={authKey}
                     onChange={(event) => setAuthKey(event.target.value)}
                     placeholder="tskey-auth-..."
@@ -591,7 +617,7 @@ export function ConfigurationTailscalePanel({
                 <div>
                   <label
                     htmlFor="tailscale-machine-name"
-                    className="mono"
+                    className={`mono ${styles.microLabel}`}
                     style={{
                       fontSize: 9,
                       display: 'block',
@@ -605,6 +631,7 @@ export function ConfigurationTailscalePanel({
                   <input
                     id="tailscale-machine-name"
                     type="text"
+                    {...RAW_TEXT_INPUT_PROPS}
                     value={machineName}
                     onChange={(event) => setMachineName(event.target.value)}
                     placeholder={
@@ -627,7 +654,7 @@ export function ConfigurationTailscalePanel({
                 <div>
                   <label
                     htmlFor="tailscale-tags"
-                    className="mono"
+                    className={`mono ${styles.microLabel}`}
                     style={{
                       fontSize: 9,
                       display: 'block',
@@ -641,6 +668,7 @@ export function ConfigurationTailscalePanel({
                   <input
                     id="tailscale-tags"
                     type="text"
+                    {...RAW_TEXT_INPUT_PROPS}
                     value={tags}
                     onChange={(event) => setTags(event.target.value)}
                     placeholder="tag:prod, tag:ops"
@@ -668,14 +696,16 @@ export function ConfigurationTailscalePanel({
                   <div
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       justifyContent: 'space-between',
                       alignItems: 'center',
                       gap: '1rem',
                     }}
                   >
-                    <div>
-                      <label
-                        className="mono"
+                    <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                      <span
+                        id="tailscale-ssh-label"
+                        className={`mono ${styles.microLabel}`}
                         style={{
                           fontSize: 9,
                           display: 'block',
@@ -684,7 +714,7 @@ export function ConfigurationTailscalePanel({
                         }}
                       >
                         ENABLE TAILSCALE SSH
-                      </label>
+                      </span>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
                         Lets approved Tailscale users open SSH sessions without exposing another
                         public path.
@@ -693,7 +723,11 @@ export function ConfigurationTailscalePanel({
 
                     <button
                       type="button"
+                      role="switch"
+                      aria-checked={enableSsh}
+                      aria-labelledby="tailscale-ssh-label"
                       onClick={() => setEnableSsh((value) => !value)}
+                      className={`${styles.touchTarget} ${styles.microLabel}`}
                       style={{
                         border: '1px solid var(--etched-border)',
                         background: enableSsh ? 'var(--ink-black)' : 'var(--bg-surface)',
@@ -706,7 +740,7 @@ export function ConfigurationTailscalePanel({
                         flexShrink: 0,
                       }}
                     >
-                      {enableSsh ? 'Enabled' : 'Enable Tailscale SSH'}
+                      {enableSsh ? 'SSH: On' : 'SSH: Off'}
                     </button>
                   </div>
                 </div>
@@ -774,6 +808,7 @@ export function ConfigurationTailscalePanel({
             <div
               style={{
                 display: 'flex',
+                flexWrap: 'wrap',
                 alignItems: 'flex-start',
                 justifyContent: 'space-between',
                 gap: '1rem',
@@ -782,7 +817,7 @@ export function ConfigurationTailscalePanel({
                 border: '1px solid var(--etched-border)',
               }}
             >
-              <div>
+              <div style={{ flex: '1 1 220px', minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>
                   {currentState === 'error' ? 'Tailscale needs attention.' : 'Connected to your tailnet.'}
                 </div>
@@ -798,7 +833,7 @@ export function ConfigurationTailscalePanel({
               </div>
 
               <div
-                className="mono"
+                className={`mono ${styles.microLabel}`}
                 style={{
                   ...statusPalette,
                   padding: '8px 10px',
@@ -881,9 +916,11 @@ export function ConfigurationTailscalePanel({
               </button>
 
               <button
+                ref={disconnectTriggerRef}
                 type="button"
-                onClick={() => handleDisconnect(false)}
+                onClick={() => setConfirmDisconnect(true)}
                 disabled={activeAction === 'disconnect'}
+                aria-expanded={confirmDisconnect}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -895,6 +932,7 @@ export function ConfigurationTailscalePanel({
                   fontSize: 11,
                   fontWeight: 700,
                   cursor: activeAction === 'disconnect' ? 'wait' : 'pointer',
+                  opacity: confirmDisconnect ? 0.5 : 1,
                   fontFamily: 'var(--font-mono)',
                   textTransform: 'uppercase',
                 }}
@@ -933,6 +971,72 @@ export function ConfigurationTailscalePanel({
                 </button>
               )}
             </div>
+
+            {confirmDisconnect && (
+              <div
+                role="alertdialog"
+                aria-labelledby={disconnectQuestionId}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') cancelDisconnect();
+                }}
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  padding: '14px',
+                  border: '1px solid rgba(163, 62, 41, 0.4)',
+                  background: 'rgba(163, 62, 41, 0.05)',
+                }}
+              >
+                <p id={disconnectQuestionId} className={`mono ${styles.dangerText}`} style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Disconnect this host from your tailnet?
+                </p>
+                <div className={styles.stackLast} style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  <button
+                    ref={disconnectCancelRef}
+                    type="button"
+                    onClick={cancelDisconnect}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      minHeight: 44,
+                      background: 'transparent',
+                      color: 'var(--ink-black)',
+                      border: '1px solid var(--ink-black)',
+                      padding: '0 20px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-mono)',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDisconnect(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      minHeight: 44,
+                      background: '#8a3c2e',
+                      color: '#fff',
+                      border: '1px solid #8a3c2e',
+                      padding: '0 20px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-mono)',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    <Unplug size={15} />
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

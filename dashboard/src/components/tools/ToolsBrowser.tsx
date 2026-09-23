@@ -7,8 +7,11 @@
 // filter over the full catalog, and a per-tool agent picker so one action can fan
 // out to many agents.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Check, Plus, Search, Wrench, Trash2, X, Zap, Layers, ExternalLink } from "lucide-react";
+import touch from "@/components/tools/touch.module.css";
+import { SafePortal } from "@/components/ui/SafePortal";
+import { useInfrastructureDialog } from "@/components/infrastructure/useInfrastructureDialog";
 import { ComposioKeyPanel } from "@/components/instances/ComposioKeyPanel";
 import { ComposioAppPicker } from "@/components/instances/ComposioAppPicker";
 import {
@@ -37,6 +40,10 @@ interface Target {
   blockedMessage?: string; installedTools?: string[];
 }
 interface FanResult { uid: string; ok: boolean; error?: string }
+
+const REMOVE_CONFIRM_MS = 4000;
+// A second tap sooner than this after arming is the same double tap, not a confirmation.
+const REMOVE_CONFIRM_DELAY_MS = 600;
 
 async function readJson(r: Response): Promise<Record<string, unknown> | null> {
   try { return (await r.json()) as Record<string, unknown>; } catch { return null; }
@@ -118,7 +125,8 @@ export function ToolsBrowser() {
   const installableTargets = targets.filter((t) => t.installable);
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    // minmax(0, 1fr): the scrolling chip strip must not widen the column past the page.
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 20 }}>
       {/* Subtle & Compact Composio Automation Router Panel */}
       <div
         style={{
@@ -150,6 +158,7 @@ export function ToolsBrowser() {
             <button
               type="button"
               onClick={() => setShowComposioAppPicker(true)}
+              className={touch.touchTarget}
               style={{
                 border: "1px solid var(--gold-leaf)",
                 background: "rgba(197,160,89,0.10)",
@@ -197,7 +206,7 @@ export function ToolsBrowser() {
         <button
           type="button"
           onClick={() => setViewTab("all")}
-          className="mono"
+          className={`mono ${touch.touchTarget}`}
           style={{
             ...mono, opacity: 1,
             border: "none", background: "transparent",
@@ -211,7 +220,7 @@ export function ToolsBrowser() {
         <button
           type="button"
           onClick={() => setViewTab("installed")}
-          className="mono"
+          className={`mono ${touch.touchTarget}`}
           style={{
             ...mono, opacity: 1,
             border: "none", background: "transparent",
@@ -233,16 +242,21 @@ export function ToolsBrowser() {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search tools…"
             aria-label="Search tools"
+            type="search"
+            className="hivra-search-input"
+            enterKeyHint="search"
+            autoCapitalize="off"
+            autoCorrect="off"
             style={{ ...input, paddingLeft: 32 }}
           />
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div className={touch.chipStrip} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {categories.map((c) => (
             <button
               key={c}
               type="button"
               onClick={() => setCat(c)}
-              className="mono"
+              className={`mono ${touch.touchTarget}`}
               style={{
                 ...mono, opacity: 1,
                 border: `1px solid ${cat === c ? "var(--gold-leaf)" : "var(--etched-border)"}`,
@@ -270,7 +284,7 @@ export function ToolsBrowser() {
         <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "#e06c5a", fontSize: 13.5 }}>
           {loadError}
           <div style={{ marginTop: 12 }}>
-            <button type="button" onClick={() => void load()} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", cursor: "pointer", fontSize: 12.5 }}>Retry</button>
+            <button type="button" onClick={() => void load()} className={touch.touchTarget} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", cursor: "pointer", fontSize: 12.5 }}>Retry</button>
           </div>
         </div>
       ) : shown.length === 0 ? (
@@ -305,8 +319,8 @@ export function ToolsBrowser() {
                 </div>
 
                 {activeTargets.length > 0 ? (
-                  <div className="mono" style={{ ...mono, fontSize: 9, color: "var(--gold-leaf)", display: "flex", alignItems: "center", gap: 4 }}>
-                    <Check size={11} /> Installed on {activeTargets.map((tg) => tg.name).join(", ")}
+                  <div className="mono" style={{ ...mono, fontSize: 9, color: "var(--gold-leaf)", display: "flex", alignItems: "center", gap: 4, overflowWrap: "anywhere" }}>
+                    <Check size={11} style={{ flexShrink: 0 }} /> Installed on {activeTargets.map((tg) => tg.name).join(", ")}
                   </div>
                 ) : null}
 
@@ -314,6 +328,7 @@ export function ToolsBrowser() {
                   <button
                     type="button"
                     onClick={() => setOpenTool(t)}
+                    className={touch.touchTarget}
                     style={{
                       border: "1px solid var(--gold-leaf)", background: activeTargets.length > 0 ? "rgba(197,160,89,0.10)" : "transparent",
                       color: "var(--ink-black)", padding: "7px 14px", cursor: "pointer",
@@ -329,7 +344,7 @@ export function ToolsBrowser() {
                       href={t.repoUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mono"
+                      className={`mono ${touch.touchTarget}`}
                       style={{
                         ...mono,
                         fontSize: 9,
@@ -363,9 +378,19 @@ export function ToolsBrowser() {
   );
 }
 
-function InstallDialog({
-  tool, targets, onClose, onDone,
-}: { tool: ToolMeta; targets: Target[]; onClose: () => void; onDone: () => void }) {
+interface InstallDialogProps { tool: ToolMeta; targets: Target[]; onClose: () => void; onDone: () => void }
+
+// SafePortal mounts its node after the first commit; rendering the panel inside
+// it lets the focus/Escape hook find the dialog when it mounts.
+function InstallDialog(props: InstallDialogProps) {
+  return (
+    <SafePortal>
+      <InstallDialogPanel {...props} />
+    </SafePortal>
+  );
+}
+
+function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogProps) {
   // Pre-select targets that already have this tool installed
   const [picked, setPicked] = useState<Set<string>>(() => {
     const initial = new Set<string>();
@@ -380,15 +405,32 @@ function InstallDialog({
   const [busy, setBusy] = useState<"install" | "uninstall" | null>(null);
   const [results, setResults] = useState<FanResult[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Installed agents are preselected, so Remove needs a second, separate press to run.
+  const [removeStep, setRemoveStep] = useState<"idle" | "arming" | "armed">("idle");
+  const removeArmed = removeStep !== "idle";
+  const removeTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => () => {
+    removeTimersRef.current.forEach((t) => clearTimeout(t));
+  }, []);
 
   const missingRequired = tool.env.some((f) => f.required && !(env[f.key] || "").trim());
 
-  const toggle = (uid: string) =>
+  const disarmRemove = () => {
+    removeTimersRef.current.forEach((t) => clearTimeout(t));
+    removeTimersRef.current = [];
+    setRemoveStep("idle");
+  };
+
+  // A changed selection changes what Remove would hit, so it must be confirmed again.
+  const toggle = (uid: string) => {
+    disarmRemove();
     setPicked((prev) => {
       const n = new Set(prev);
       if (n.has(uid)) n.delete(uid); else n.add(uid);
       return n;
     });
+  };
 
   const run = useCallback(async (op: "install" | "uninstall") => {
     if (busy || picked.size === 0) return;
@@ -416,27 +458,50 @@ function InstallDialog({
     }
   }, [busy, picked, tool.id, env, onDone]);
 
+  // Focus moves in, Tab stays inside, Escape closes (not mid-request), and focus returns to the trigger.
+  const dialogRef = useInfrastructureDialog({ onClose, closeOnEscape: busy === null });
+
+  const handleRemove = () => {
+    if (busy !== null || picked.size === 0 || removeStep === "arming") return;
+    if (removeStep === "armed") {
+      disarmRemove();
+      void run("uninstall");
+      return;
+    }
+    setRemoveStep("arming");
+    removeTimersRef.current = [
+      setTimeout(() => setRemoveStep("armed"), REMOVE_CONFIRM_DELAY_MS),
+      setTimeout(() => {
+        removeTimersRef.current = [];
+        setRemoveStep("idle");
+      }, REMOVE_CONFIRM_MS),
+    ];
+  };
+
   return (
     <div
+      ref={dialogRef as React.RefObject<HTMLDivElement | null>}
       role="dialog" aria-modal="true" aria-label={`Manage ${tool.name}`}
       onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      className={touch.sheetOverlay}
+      style={{ position: "fixed", top: 0, left: 0, right: 0, height: "var(--workspace-viewport-height, 100dvh)", zIndex: 1000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(640px, 100%)", maxHeight: "min(84vh, 780px)", display: "flex", flexDirection: "column", background: "var(--bg-surface, #fff)", border: "1px solid var(--etched-border)", boxShadow: "0 24px 80px rgba(0,0,0,0.35)" }}
+        className={touch.sheetPanel}
+        style={{ width: "min(640px, 100%)", maxHeight: "min(calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)), 780px)", display: "flex", flexDirection: "column", background: "var(--bg-surface, #fff)", border: "1px solid var(--etched-border)", boxShadow: "0 24px 80px rgba(0,0,0,0.35)" }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "18px 20px 12px", borderBottom: "1px solid var(--etched-border)" }}>
           <div>
             <div className="mono" style={{ ...mono, marginBottom: 5 }}>Manage tool</div>
             <h3 className="serif" style={{ fontSize: "clamp(1.1rem, 3vw, 1.45rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>{tool.name}</h3>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "5px 7px", cursor: "pointer", height: 28 }}>
+          <button type="button" onClick={onClose} aria-label="Close" className={touch.dismissButton} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "5px 7px", cursor: "pointer", height: 28 }}>
             <X size={14} />
           </button>
         </div>
 
-        <div style={{ overflowY: "auto", padding: "16px 20px", flex: 1, minHeight: 0, display: "grid", gap: 16 }}>
+        <div style={{ overflowY: "auto", overscrollBehavior: "contain", padding: "16px 20px", flex: 1, minHeight: 0, display: "grid", gap: 16 }}>
           {tool.env.length > 0 ? (
             <div style={{ display: "grid", gap: 8 }}>
               <div className="mono" style={{ ...mono }}>Credentials</div>
@@ -448,6 +513,9 @@ function InstallDialog({
                   <input
                     type={f.secret ? "password" : "text"}
                     autoComplete={f.secret ? "new-password" : "off"}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={env[f.key] || ""}
                     onChange={(e) => setEnv((p) => ({ ...p, [f.key]: e.target.value }))}
                     placeholder={f.placeholder || f.key}
@@ -476,6 +544,7 @@ function InstallDialog({
                     disabled={!tg.installable}
                     onClick={() => toggle(tg.uid)}
                     aria-pressed={on}
+                    className={touch.touchTarget}
                     style={{
                       textAlign: "left",
                       border: `1px solid ${on ? "var(--gold-leaf)" : "var(--etched-border)"}`,
@@ -487,8 +556,8 @@ function InstallDialog({
                   >
                     <span style={{ width: 14, flexShrink: 0, color: "var(--gold-leaf)" }}>{on ? <Check size={13} /> : null}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 13.5, color: "var(--ink-black)" }}>{tg.name}</span>
-                      <span className="mono" style={{ ...mono, fontSize: 9, marginLeft: 8 }}>
+                      <span style={{ fontSize: 13.5, color: "var(--ink-black)", overflowWrap: "anywhere" }}>{tg.name}</span>
+                      <span className="mono" style={{ ...mono, fontSize: 9, marginLeft: 8, display: "inline-block", whiteSpace: "nowrap" }}>
                         {tg.lane === "hermes" ? "hermes" : tg.type}
                       </span>
                       {note ? (
@@ -498,7 +567,7 @@ function InstallDialog({
                       ) : null}
                     </span>
                     {isCurrentlyInstalled ? (
-                      <span className="mono" style={{ ...mono, fontSize: 9, color: "var(--gold-leaf)", marginRight: 8 }}>
+                      <span className="mono" style={{ ...mono, fontSize: 9, color: "var(--gold-leaf)", marginRight: 8, flexShrink: 0, whiteSpace: "nowrap" }}>
                         ✓ Installed
                       </span>
                     ) : null}
@@ -512,24 +581,37 @@ function InstallDialog({
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 20px", borderTop: "1px solid var(--etched-border)", flexWrap: "wrap" }}>
+        <div className={touch.sheetFooter} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 20px", borderTop: "1px solid var(--etched-border)", flexWrap: "wrap" }}>
           <span style={{ fontSize: 11.5, color: err ? "#e06c5a" : "var(--text-muted)" }}>
             {err || `${picked.size} selected`}
           </span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              disabled={busy !== null || picked.size === 0}
-              onClick={() => void run("uninstall")}
-              style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "8px 14px", cursor: busy || picked.size === 0 ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              {busy === "uninstall" ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
-              Remove
-            </button>
+          {/* The two actions wrap as a pair; at 480px and below the pair dissolves so Remove (ownRow) gets its own row. */}
+          <div className="flex max-[481px]:contents" style={{ gap: 8 }}>
+            <div className={touch.ownRow} style={{ display: "flex" }}>
+              <button
+                type="button"
+                disabled={busy !== null || picked.size === 0}
+                onClick={handleRemove}
+                aria-live="polite"
+                aria-disabled={removeStep === "arming" || undefined}
+                className={touch.touchTarget}
+                style={{
+                  border: `1px solid ${removeArmed ? "#e06c5a" : "var(--etched-border)"}`,
+                  background: removeArmed ? "color-mix(in srgb, #e06c5a 14%, transparent)" : "transparent",
+                  color: "#e06c5a", fontWeight: removeArmed ? 600 : undefined,
+                  opacity: removeStep === "arming" ? 0.6 : undefined,
+                  padding: "8px 14px", cursor: busy || picked.size === 0 || removeStep === "arming" ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {busy === "uninstall" ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+                {removeArmed ? `Confirm remove from ${picked.size} agent${picked.size === 1 ? "" : "s"}` : "Remove"}
+              </button>
+            </div>
             <button
               type="button"
               disabled={busy !== null || picked.size === 0 || missingRequired}
-              onClick={() => void run("install")}
+              onClick={() => { disarmRemove(); void run("install"); }}
+              className={touch.touchTarget}
               style={{
                 border: "1px solid var(--gold-leaf)",
                 background: busy || picked.size === 0 || missingRequired ? "transparent" : "var(--gold-leaf)",

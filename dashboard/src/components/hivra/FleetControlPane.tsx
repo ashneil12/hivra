@@ -108,6 +108,10 @@ export function FleetControlPane({ requested = false, attentionRequested = false
             onChange={(event) => setQuery(event.target.value)}
             aria-label="Search agents and computers"
             placeholder="Find an agent or computer"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="search"
             className="mono w-full bg-transparent py-1 text-[12px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
           />
         </label>}
@@ -132,7 +136,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
           {resume ? (
             <Link
               href={resume.href}
-              className="flex min-h-[32px] min-w-0 items-center gap-2 border border-[var(--etched-border)] px-2.5 text-[12px] text-[var(--text-secondary)] outline-none transition-colors hover:border-[var(--hivra-red-line)] hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+              className="flex min-h-[32px] pointer-coarse:min-h-[44px] min-w-0 items-center gap-2 border border-[var(--etched-border)] px-2.5 text-[12px] text-[var(--text-secondary)] outline-none transition-colors hover:border-[var(--hivra-red-line)] hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
             >
               <Clock aria-hidden="true" size={13} className="shrink-0 text-[var(--text-muted)]" />
               <span className="shrink-0 text-[var(--text-muted)]">Continue</span>
@@ -150,7 +154,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
                 // count alone would just be a statistic.
                 setAttentionOnly(true);
               }}
-              className="flex min-h-[32px] items-center gap-1.5 border border-[color:var(--yellow)]/40 px-2.5 text-[12px] font-medium text-[var(--yellow)] outline-none transition-colors hover:border-[color:var(--yellow)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+              className="flex min-h-[32px] pointer-coarse:min-h-[44px] items-center gap-1.5 border border-[color:var(--yellow)]/40 px-2.5 text-[12px] font-medium text-[var(--yellow)] outline-none transition-colors hover:border-[color:var(--yellow)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
             >
               <AlertTriangle aria-hidden="true" size={13} />
               {attention.length} needs attention
@@ -172,7 +176,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
         <button
           type="button"
           onClick={() => setAttentionOnly(false)}
-          className="mono inline-flex min-h-[28px] w-fit items-center gap-1.5 text-[11px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+          className="mono inline-flex min-h-[28px] pointer-coarse:min-h-[44px] w-fit items-center gap-1.5 pointer-coarse:-ml-2 pointer-coarse:px-2 text-[11px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
         >
           <X aria-hidden="true" size={12} />
           Show all agents and computers
@@ -196,9 +200,9 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               <h2 className="mono mb-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
                 {section.label}
               </h2>
-              <ul className="grid gap-3 sm:grid-cols-2">
+              <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {section.items.map((agent) => (
-                  <li key={agent.uid}>
+                  <li key={agent.uid} className="min-w-0">
                     <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(agent.kind === "hermes" ? hermesError : hivraError)} />
                   </li>
                 ))}
@@ -211,7 +215,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
       {!empty && <footer className="shrink-0 border-t border-[var(--etched-border)] pt-3">
         <Link
           href="/dashboard/launch"
-          className="mono inline-flex min-h-[32px] items-center gap-2 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+          className="mono inline-flex min-h-[32px] pointer-coarse:min-h-[44px] items-center gap-2 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
         >
           <Plus aria-hidden="true" size={13} />
           Launch an agent or computer
@@ -272,7 +276,7 @@ function SourceFailure({
       <button
         type="button"
         onClick={onRetry}
-        className="mono inline-flex min-h-[28px] items-center gap-1.5 text-[11px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+        className="mono inline-flex min-h-[28px] pointer-coarse:min-h-[44px] items-center gap-1.5 pointer-coarse:px-2 text-[11px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
       >
         <RotateCcw aria-hidden="true" size={12} />
         Retry {source}

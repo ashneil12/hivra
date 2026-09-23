@@ -54,3 +54,34 @@ it("shows unsupported lifecycle state without an enrollment control", async () =
   expect(await screen.findByText(/running, owner-bound Ubuntu computer on Proxmox/)).toBeInTheDocument();
   expect(screen.queryByLabelText("One-time enrollment key")).not.toBeInTheDocument();
 });
+
+it("asks before disconnecting, because reconnecting needs a new enrollment key", async () => {
+  const connection = { state: "connected", loginServer: "https://controlplane.tailscale.com", magicDnsName: "ubuntu.tail1234.ts.net", ipv4: "100.64.0.7", observedAt: "2026-09-15T12:00:00Z" };
+  mockFetch
+    .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection } }))
+    .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: { ...connection, state: "disconnected" } } }));
+  render(<HivraPrivateAccessPanel agentId="agent-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+  expect(mockFetch).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(/Disconnect this computer\? Reconnecting needs a new one-time enrollment key/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("button", { name: "Disconnect computer" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect computer" }));
+  await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ action: "disconnect" });
+  await waitFor(() => expect(screen.getByText("Status:").parentElement).toHaveTextContent("Status: disconnected"));
+});
+
+it("keeps enrollment inputs free of touch-keyboard capitalization", async () => {
+  mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: null } }));
+  render(<HivraPrivateAccessPanel agentId="agent-1" />);
+  const key = await screen.findByLabelText("One-time enrollment key");
+  fireEvent.click(screen.getByLabelText("Use a Headscale coordination server"));
+  for (const input of [key, screen.getByLabelText("HTTPS coordination URL")]) {
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("spellcheck", "false");
+  }
+  expect(screen.getByLabelText("HTTPS coordination URL")).toHaveAttribute("inputmode", "url");
+});

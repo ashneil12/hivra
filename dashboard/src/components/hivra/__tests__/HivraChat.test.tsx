@@ -9,12 +9,12 @@ Object.assign(globalThis, {
 });
 
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import posthog from "posthog-js";
 
-import { HivraChat } from "../HivraChat";
-import { listBoxSessions, readBoxSession, stampAgentFirstUsage } from "@/lib/hivra/agent-api";
+import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
+import { listBoxSessions, readBoxSession, stampAgentFirstUsage, uploadBoxFile } from "@/lib/hivra/agent-api";
 import { requestAgentWelcomeMessage } from "@/lib/hivra/agent-welcome";
 
 jest.mock("posthog-js", () => ({
@@ -44,6 +44,7 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   listBoxSessions: jest.fn(),
   readBoxSession: jest.fn(),
   stampAgentFirstUsage: jest.fn(),
+  uploadBoxFile: jest.fn(),
 }));
 
 jest.mock("@/lib/hivra/agent-welcome", () => ({
@@ -55,6 +56,27 @@ jest.mock("@/lib/client/logger", () => ({
     warn: jest.fn(),
   },
 }));
+
+const COARSE_POINTER = "(hover: none) and (pointer: coarse)";
+const PHONE_WIDTH = "(max-width: 767px)";
+
+// jsdom has no matchMedia; install one that matches the given queries.
+function mockMatchMedia(matching: string[]) {
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: matching.includes(query),
+    media: query,
+    onchange: null,
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })) as unknown as typeof window.matchMedia;
+  return () => {
+    window.matchMedia = original;
+  };
+}
 
 function eventChunk(...events: unknown[]) {
   return { done: false, value: new TextEncoder().encode(events.map((event) => JSON.stringify(event)).join("\n") + "\n") };
@@ -770,6 +792,35 @@ describe("HivraChat", () => {
     }
   });
 
+  it("keeps an empty chat at the top instead of pinning its greeting out of view", async () => {
+    window.localStorage.setItem("hivra:first-welcome:empty-scroll", "1");
+    const frames: FrameRequestCallback[] = [];
+    const request = jest.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const cancel = jest.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="empty-scroll" agentName="Atlas" />);
+      await waitFor(() => expect(listBoxSessions).toHaveBeenCalled());
+      const pane = screen.getByRole("region", { name: "Conversation" });
+      expect(pane).toHaveAttribute("data-empty", "true");
+      Object.defineProperties(pane, {
+        scrollHeight: { configurable: true, value: 900 },
+        clientHeight: { configurable: true, value: 300 },
+        scrollTop: { configurable: true, writable: true, value: 400 },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+      act(() => frames.splice(0).forEach((frame) => frame(0)));
+      expect(pane.scrollTop).toBe(0);
+      fireEvent.scroll(pane);
+      expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+    } finally {
+      request.mockRestore();
+      cancel.mockRestore();
+    }
+  });
+
   it("cancels a pending scroll frame when the conversation unmounts", async () => {
     const request = jest.spyOn(window, "requestAnimationFrame").mockReturnValue(42);
     const cancel = jest.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
@@ -782,6 +833,175 @@ describe("HivraChat", () => {
       request.mockRestore();
       cancel.mockRestore();
     }
+  });
+
+  it("sends on Enter with a fine pointer and labels the key as send", async () => {
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="fine-composer" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+    expect(textarea).toHaveAttribute("enterkeyhint", "send");
+    fireEvent.change(textarea, { target: { value: "ship it" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("lets Return insert a newline on touch keyboards and sends only from the Send button", async () => {
+    const restore = mockMatchMedia([COARSE_POINTER, PHONE_WIDTH]);
+    try {
+      const fetchMock = mockChatFetchOk();
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="touch-composer" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const textarea = screen.getByRole("textbox", { name: "Message Atlas" });
+      expect(textarea).toHaveAttribute("enterkeyhint", "enter");
+      expect(textarea).toHaveAttribute("autocapitalize", "sentences");
+      fireEvent.change(textarea, { target: { value: "first line" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      expect(fetchMock).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    } finally {
+      restore();
+    }
+  });
+
+  it("closes the chats drawer after picking a session on a phone", async () => {
+    const restore = mockMatchMedia([PHONE_WIDTH]);
+    (listBoxSessions as jest.Mock).mockResolvedValue([
+      { id: "remote-1", title: "Deploy notes", updatedAt: Date.now() + 1000 },
+    ]);
+    try {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-phone" token="box-token" agentName="Atlas" />);
+      await waitFor(() => expect(listBoxSessions).toHaveBeenCalled());
+      fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+      expect(screen.getByRole("button", { name: "Hide chats" })).toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("button", { name: /Deploy notes/ }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("button", { name: "Show chats" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Deploy notes/ })).not.toBeInTheDocument();
+      await waitFor(() => expect(readBoxSession).toHaveBeenCalledWith("https://box.example.com", "remote-1", "box-token"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close chats" }));
+      expect(screen.queryByRole("button", { name: /Deploy notes/ })).not.toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it("treats the phone chats drawer as a modal dialog for focus", async () => {
+    const restore = mockMatchMedia([PHONE_WIDTH]);
+    try {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-focus" token="box-token" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const toggle = screen.getByRole("button", { name: "Show chats" });
+      const column = screen.getByRole("region", { name: "Conversation" }).parentElement!;
+
+      fireEvent.click(toggle);
+      const drawer = screen.getByRole("dialog", { name: "Chats" });
+      expect(drawer).toHaveAttribute("aria-modal", "true");
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(column).toHaveAttribute("inert");
+      const newChat = within(drawer).getByRole("button", { name: /New chat/ });
+      const close = within(drawer).getByRole("button", { name: "Close chats" });
+      expect(newChat).toHaveFocus();
+
+      // Tab wraps inside the drawer instead of reaching the chat behind it.
+      fireEvent.keyDown(newChat, { key: "Tab", shiftKey: true });
+      expect(within(drawer).getAllByRole("button").at(-1)).toHaveFocus();
+      close.focus();
+      fireEvent.keyDown(close, { key: "Escape" });
+      expect(screen.queryByRole("dialog", { name: "Chats" })).not.toBeInTheDocument();
+      expect(column).not.toHaveAttribute("inert");
+      expect(toggle).toHaveFocus();
+
+      fireEvent.click(toggle);
+      fireEvent.click(screen.getByRole("button", { name: "Close chats" }));
+      expect(toggle).toHaveFocus();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the inline chats column non-modal on wider screens", async () => {
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-wide-focus" token="box-token" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    const toggle = screen.getByRole("button", { name: "Show chats" });
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("dialog", { name: "Chats" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Conversation" }).parentElement).not.toHaveAttribute("inert");
+    expect(toggle).toHaveFocus();
+  });
+
+  it("keeps the chats column open after picking a session on wider screens", async () => {
+    (listBoxSessions as jest.Mock).mockResolvedValue([
+      { id: "remote-1", title: "Deploy notes", updatedAt: Date.now() + 1000 },
+    ]);
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-desktop" token="box-token" agentName="Atlas" />);
+    await waitFor(() => expect(listBoxSessions).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Deploy notes/ }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Hide chats" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Deploy notes/ })).toBeInTheDocument();
+  });
+
+  it("needs a second tap to delete a chat", async () => {
+    (listBoxSessions as jest.Mock).mockResolvedValue([
+      { id: "remote-1", title: "Deploy notes", updatedAt: Date.now() + 1000 },
+    ]);
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="rail-delete" token="box-token" agentName="Atlas" />);
+    await waitFor(() => expect(listBoxSessions).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    const row = (await screen.findByRole("button", { name: /Deploy notes/ })).parentElement!;
+    fireEvent.click(within(row).getByRole("button", { name: "Delete chat" }));
+    expect(screen.getByRole("button", { name: /Deploy notes/ })).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete chat" }));
+    expect(screen.queryByRole("button", { name: /Deploy notes/ })).not.toBeInTheDocument();
+  });
+
+  it("explains an oversize attachment instead of dropping it", async () => {
+    const { container } = render(<HivraChat boxUrl="https://box.example.com" storageKey="attach-big" token="box-token" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    const big = new File(["x"], "notes.txt", { type: "text/plain" });
+    Object.defineProperty(big, "size", { value: 11.2 * 1024 * 1024 });
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [big] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("This file is 11.2 MB — the limit is 8 MB");
+    expect(uploadBoxFile).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed upload inline", async () => {
+    (uploadBoxFile as jest.Mock).mockResolvedValue({ ok: false, error: "HTTP 500" });
+    const { container } = render(<HivraChat boxUrl="https://box.example.com" storageKey="attach-fail" token="box-token" agentName="Atlas" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Upload failed — try again");
+    expect(uploadBoxFile).toHaveBeenCalledWith("https://box.example.com", "notes.txt", expect.any(String), "box-token");
+    expect(screen.queryByRole("button", { name: "Remove notes.txt" })).not.toBeInTheDocument();
+  });
+
+  it("renders every fenced block as a code block, wraps tables, and opens links in a new tab", () => {
+    const { pre, table, a } = CHAT_MARKDOWN_COMPONENTS;
+    render(
+      <div>
+        {pre({ children: <code className="language-sh">{"npm test -- --runInBand\n"}</code> })}
+        {pre({ children: <code>{"one-line command"}</code> })}
+        {table({ children: <tbody><tr><td>cell</td></tr></tbody> })}
+        {a({ href: "https://example.com/docs", children: "docs" })}
+      </div>,
+    );
+    expect(screen.getByText("npm test -- --runInBand").tagName).toBe("PRE");
+    expect(screen.getByText("one-line command").tagName).toBe("PRE");
+    expect(screen.getByRole("table").parentElement).toHaveClass("chat-md-table-wrapper");
+    const link = screen.getByRole("link", { name: "docs" });
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
   });
 
   it("runs several chats at once and routes each stream to the chat that started it", async () => {

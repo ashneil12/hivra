@@ -5,8 +5,10 @@ export const STYLES: Record<string, React.CSSProperties> = {
   pageContainer: {
     maxWidth: 720,
     margin: "1rem auto 5rem",
-    padding: "clamp(1.5rem, 5vw, 3rem)",
-    paddingTop: "calc(env(safe-area-inset-top, 0px) + clamp(1.5rem, 5vw, 3rem))",
+    padding: "clamp(1rem, 4vw, 3rem)",
+    // The shell zeroes --dashboard-page-safe-top under its mobile header, which
+    // already clears the notch; routes without that header keep the inset.
+    paddingTop: "calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + clamp(1rem, 4vw, 3rem))",
   },
   loadingContainer: {
     display: "flex",
@@ -19,7 +21,8 @@ export const STYLES: Record<string, React.CSSProperties> = {
   // Header
   header: {
     textAlign: "center" as const,
-    marginBottom: "4rem",
+    marginBottom: "clamp(1.5rem, 6vw, 4rem)",
+    scrollMarginTop: "1rem",
   },
   headerBadge: {
     display: "inline-flex",
@@ -40,7 +43,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
     borderRadius: 0,
   },
   headerBadgeText: {
-    fontSize: 9,
+    fontSize: 11,
     textTransform: "uppercase" as const,
     letterSpacing: "0.25em",
     color: "var(--gold-leaf)",
@@ -337,7 +340,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
 
   // Deploy Card
   deployCard: {
-    padding: "2.5rem",
+    padding: "clamp(1rem, 4vw, 2.5rem)",
     position: "relative" as const,
     marginBottom: "2rem",
     zIndex: 10,
@@ -354,12 +357,16 @@ export const STYLES: Record<string, React.CSSProperties> = {
   },
 
   // Step indicator
+  // Wraps whole steps onto a second line on narrow phones instead of
+  // breaking each label across two lines.
   deployStepIndicator: {
     display: "flex",
+    flexWrap: "wrap" as const,
     alignItems: "center",
-    gap: "1rem",
+    gap: "clamp(0.5rem, 2vw, 1rem)",
+    rowGap: 8,
     marginBottom: "2rem",
-    padding: "1rem",
+    padding: "clamp(0.75rem, 3vw, 1rem)",
     background: "color-mix(in srgb, var(--ink-black) 4%, transparent)",
     borderRadius: 0,
   },
@@ -465,7 +472,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
     padding: "1.5rem",
   },
   nextStepsLabel: {
-    fontSize: 9,
+    fontSize: 11,
     textTransform: "uppercase" as const,
     letterSpacing: "0.2em",
     opacity: 0.5,
@@ -492,25 +499,28 @@ export const STYLES: Record<string, React.CSSProperties> = {
     padding: "clamp(1.5rem, 4vw, 3rem)",
     margin: "clamp(1rem, 4vh, 2.5rem) auto",
     width: "min(1120px, calc(100% - clamp(2rem, 7vw, 5rem)))",
-    minHeight: "min(680px, calc(100vh - 7rem))",
+    minHeight: "min(680px, calc(100dvh - 7rem))",
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
     gap: "clamp(1.5rem, 4vw, 3rem)",
     alignItems: "stretch",
     boxShadow: "0 18px 42px rgba(0,0,0,0.18)",
   },
+  // No pane min-height: side by side the card's min-height stretches both
+  // panes; stacked on a phone a fixed floor pushed the live timeline below
+  // the fold.
   deployingHeroPane: {
     display: "flex",
     flexDirection: "column" as const,
     justifyContent: "center",
-    minHeight: 420,
+    minWidth: 0,
   },
   deployingOperationsPane: {
     display: "flex",
     flexDirection: "column" as const,
     justifyContent: "center",
     gap: "1.35rem",
-    minHeight: 420,
+    minWidth: 0,
   },
   deployingStatusRow: {
     display: "flex",
@@ -543,6 +553,8 @@ export const STYLES: Record<string, React.CSSProperties> = {
     marginBottom: "1rem",
     color: "var(--ink-black)",
     maxWidth: 500,
+    // Long agent names have no spaces to break at.
+    overflowWrap: "anywhere" as const,
   },
   deployingSubtitle: {
     fontSize: "1rem",
@@ -550,22 +562,26 @@ export const STYLES: Record<string, React.CSSProperties> = {
     color: "var(--text-secondary)",
     maxWidth: 520,
     margin: "0 0 2rem",
+    overflowWrap: "anywhere" as const,
   },
+  // Cells draw their own 1px outlines across a 1px gap, so the dividers stay
+  // correct however auto-fit wraps the cells.
   deployingStatsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    border: "1px solid var(--etched-border)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 120px), 1fr))",
+    gap: 1,
+    padding: 1,
   },
   deployingStatCell: {
     minWidth: 0,
     padding: "1rem",
-    borderRight: "1px solid var(--etched-border)",
+    outline: "1px solid var(--etched-border)",
     display: "flex",
     flexDirection: "column" as const,
     gap: 8,
   },
   deployingStatLabel: {
-    fontSize: 9,
+    fontSize: 11,
     textTransform: "uppercase" as const,
     letterSpacing: "0.16em",
     opacity: 0.5,
@@ -576,6 +592,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
     lineHeight: 1.25,
     fontWeight: 700,
     color: "var(--ink-black)",
+    overflowWrap: "anywhere" as const,
   },
   deployingSectionHeader: {
     display: "flex",
@@ -638,7 +655,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
     gap: 4,
   },
   deployingStepLabel: {
-    fontSize: 9,
+    fontSize: 11,
     textTransform: "uppercase" as const,
     letterSpacing: "0.16em",
     opacity: 0.52,
@@ -648,11 +665,13 @@ export const STYLES: Record<string, React.CSSProperties> = {
     fontSize: 15,
     fontWeight: 700,
     color: "var(--ink-black)",
+    overflowWrap: "anywhere" as const,
   },
   deployingStepDetail: {
     fontSize: 12,
     lineHeight: 1.45,
     color: "var(--text-secondary)",
+    overflowWrap: "anywhere" as const,
   },
   deployingStepIndex: {
     fontSize: 11,
@@ -687,7 +706,7 @@ export const STYLES: Record<string, React.CSSProperties> = {
     gap: "0.85rem",
   },
   deployingSecurityItemLabel: {
-    fontSize: 9,
+    fontSize: 11,
     textTransform: "uppercase" as const,
     letterSpacing: "0.16em",
     fontWeight: 700,
@@ -698,5 +717,6 @@ export const STYLES: Record<string, React.CSSProperties> = {
     fontSize: 12,
     lineHeight: 1.5,
     color: "var(--text-secondary)",
+    overflowWrap: "anywhere" as const,
   },
 };

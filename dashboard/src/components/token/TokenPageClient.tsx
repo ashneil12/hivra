@@ -1,7 +1,31 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Check, Copy } from "lucide-react";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
+import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { tokenVerificationContent } from "@/lib/token-verification-content";
+
+type CopyState = "idle" | "copied" | "failed";
+
+function CopyAddressButton({ value }: { value: string }) {
+  const [state, setState] = useState<CopyState>("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = window.setTimeout(() => setState("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return <>
+    <button type="button" className="mono" onClick={async () => setState(await copyTextToClipboard(value) ? "copied" : "failed")}
+      style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, margin: "12px 0 16px", padding: "0 16px", border: "1px solid var(--public-line)", background: "transparent", color: "var(--public-text)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
+      {state === "copied" ? <Check size={14} aria-hidden="true" style={{ color: "var(--public-accent)" }} /> : <Copy size={14} aria-hidden="true" />}
+      {state === "copied" ? "Address copied" : "Copy address"}
+    </button>
+    <span role="status" className="sr-only">{state === "copied" ? "Contract address copied" : state === "failed" ? "Copy failed. Select the address to copy it." : ""}</span>
+  </>;
+}
 
 export default function TokenPageClient() {
   const contract = tokenVerificationContent.tokenDetails.contractAddress;
@@ -17,6 +41,7 @@ export default function TokenPageClient() {
         <h2 id="verify-title">Verify the existing token</h2>
         <p>The existing token is $HermesOS on Base. Compare the full contract address before using it.</p>
         <code style={{ display: "block", overflowWrap: "anywhere", padding: "1rem", border: "1px solid var(--public-line)" }}>{contract}</code>
+        <CopyAddressButton value={contract} />
         <p><a href={`https://basescan.org/token/${contract}`} target="_blank" rel="noopener noreferrer">View the contract on BaseScan</a></p>
         <p style={{ color: "var(--public-muted)" }}>This is the existing $HermesOS contract, not a new $HIVRA contract. Hivra does not confirm token details through private messages.</p>
       </section>

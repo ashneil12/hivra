@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import {
+  unifiedStateLabel,
   unifyAll,
   type UnifiedAgent,
   type HermesInstanceLite,
@@ -28,7 +29,26 @@ import styles from "../../agents/AgentsPage.module.css";
 export type { HermesInstanceLite };
 
 const TOOL_CAPABLE_TYPES = new Set(["claude-code", "codex"]);
-type InventoryFilter = "all" | "running" | "error" | "stopped";
+
+/** Shared by the Agents and Computers inventories so their filters cannot drift. */
+export type InventoryFilter = "all" | "running" | "starting" | "error" | "stopped";
+export const INVENTORY_FILTERS: ReadonlyArray<readonly [InventoryFilter, string]> = [
+  ["all", "All"],
+  ["running", "Running"],
+  ["starting", "Starting"],
+  ["error", "Needs attention"],
+  ["stopped", "Stopped"],
+];
+
+export function matchesInventoryFilter(
+  state: UnifiedAgent["state"],
+  filter: InventoryFilter,
+): boolean {
+  if (filter === "all") return true;
+  if (filter === "starting")
+    return state === "provisioning" || state === "updating";
+  return state === filter;
+}
 
 function appendHivraQuery(path: string, hivraQuery: string) {
   if (!hivraQuery) return path;
@@ -61,6 +81,14 @@ export function HivraAgentsPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<InventoryFilter>("all");
+  const [openActions, setOpenActions] = useState<string | null>(null);
+  const setRowActionsOpen = useCallback(
+    (uid: string, open: boolean) =>
+      setOpenActions((current) =>
+        open ? uid : current === uid ? null : current,
+      ),
+    [],
+  );
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -104,7 +132,7 @@ export function HivraAgentsPanel({
     () =>
       inventory.filter(
         (agent) =>
-          (filter === "all" || agent.state === filter) &&
+          matchesInventoryFilter(agent.state, filter) &&
           `${agent.name} ${agent.typeLabel} ${agent.model || ""}`
             .toLowerCase()
             .includes(query.trim().toLowerCase()),
@@ -150,19 +178,16 @@ export function HivraAgentsPanel({
             type="search"
             aria-label="Search agents"
             placeholder="Find an agent…"
+            enterKeyHint="search"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
         <div className={styles.filters} aria-label="Filter agents">
-          {(
-            [
-              ["all", "All"],
-              ["running", "Running"],
-              ["error", "Needs attention"],
-              ["stopped", "Stopped"],
-            ] as const
-          ).map(([value, label]) => (
+          {INVENTORY_FILTERS.map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -209,6 +234,8 @@ export function HivraAgentsPanel({
           <AgentRow
             key={agent.uid}
             agent={agent}
+            actionsOpen={openActions === agent.uid}
+            onActionsOpenChange={setRowActionsOpen}
             onOpen={() =>
               agent.kind === "hermes"
                 ? onOpenInstance
@@ -263,11 +290,15 @@ export function HivraAgentsPanel({
 
 function AgentRow({
   agent,
+  actionsOpen,
+  onActionsOpenChange,
   onOpen,
   onConsole,
   onTools,
 }: {
   agent: UnifiedAgent;
+  actionsOpen: boolean;
+  onActionsOpenChange: (uid: string, open: boolean) => void;
   onOpen: () => void;
   onConsole?: () => void;
   onTools?: () => void;
@@ -275,13 +306,55 @@ function AgentRow({
   const browserReady = useHermesBrowserReady(
     agent.kind === "hermes" ? agent.id : undefined,
   );
+  const actionsRef = useRef<HTMLDetailsElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const statusLabel = unifiedStateLabel(agent.state);
+  const { uid } = agent;
+  const setActionsOpen = useCallback(
+    (open: boolean) => onActionsOpenChange(uid, open),
+    [onActionsOpenChange, uid],
+  );
+
+  // One menu at a time; an outside click or Escape closes it so menus never
+  // stack over later rows. A click, not pointerdown: a touch scroll that
+  // starts outside the menu keeps it open.
+  useEffect(() => {
+    if (!actionsOpen) return;
+    // A menu opened near the fixed bottom navigation would sit under it.
+    menuRef.current?.scrollIntoView?.({ block: "nearest" });
+    const onClick = (event: MouseEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node))
+        setActionsOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const menu = actionsRef.current;
+      // Return focus to the menu's summary only when focus was in the menu;
+      // Escape from the search field or a dialog leaves focus where it is.
+      const focusInMenu = Boolean(menu?.contains(document.activeElement));
+      setActionsOpen(false);
+      if (focusInMenu) menu?.querySelector("summary")?.focus();
+    };
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [actionsOpen, setActionsOpen]);
+
+  const runAction = (action: () => void) => () => {
+    setActionsOpen(false);
+    action();
+  };
+
   return (
     <article className={styles.agentRow}>
       <button
         type="button"
         className={styles.agentPrimary}
         onClick={onOpen}
-        aria-label={`Open ${agent.name}, ${agent.typeLabel}, ${agent.statusRaw}`}
+        aria-label={`Open ${agent.name}, ${agent.typeLabel}, ${statusLabel}`}
       >
         <span className={styles.agentIcon} aria-hidden>
           <Bot size={17} />
@@ -300,28 +373,37 @@ function AgentRow({
         </span>
         <span className={styles.agentStatus} data-state={agent.state}>
           <span aria-hidden />
-          {agent.statusRaw.replaceAll("_", " ")}
+          {statusLabel}
         </span>
         <ArrowUpRight size={16} className={styles.rowArrow} aria-hidden />
       </button>
       {browserReady || onTools || onConsole ? (
-        <details className={styles.rowActions}>
-          <summary aria-label={`More actions for ${agent.name}`}>
+        <details ref={actionsRef} className={styles.rowActions} open={actionsOpen}>
+          <summary
+            aria-label={`More actions for ${agent.name}`}
+            onClick={(event) => {
+              event.preventDefault();
+              setActionsOpen(!actionsOpen);
+            }}
+          >
             Actions
             <ChevronDown size={13} aria-hidden />
           </summary>
-          <div>
+          <div ref={menuRef}>
             {browserReady ? (
-              <HermesBrowserButton instanceId={agent.id} />
+              <HermesBrowserButton
+                instanceId={agent.id}
+                onOpened={() => setActionsOpen(false)}
+              />
             ) : null}
             {onTools ? (
-              <button type="button" onClick={onTools}>
+              <button type="button" onClick={runAction(onTools)}>
                 <Wrench size={13} aria-hidden />
                 Tools
               </button>
             ) : null}
             {onConsole ? (
-              <button type="button" onClick={onConsole}>
+              <button type="button" onClick={runAction(onConsole)}>
                 <ServerCog size={13} aria-hidden />
                 Console
               </button>
@@ -354,17 +436,24 @@ function useHermesBrowserReady(instanceId?: string): boolean {
   return ready;
 }
 
-function HermesBrowserButton({ instanceId }: { instanceId: string }) {
+function HermesBrowserButton({
+  instanceId,
+  onOpened,
+}: {
+  instanceId: string;
+  onOpened: () => void;
+}) {
   return (
     <button
       type="button"
-      onClick={() =>
+      onClick={() => {
+        onOpened();
         window.open(
           `/api/instances/${instanceId}/browser-stream`,
           "_blank",
           "noopener,noreferrer",
-        )
-      }
+        );
+      }}
     >
       <Monitor size={13} aria-hidden />
       Browser

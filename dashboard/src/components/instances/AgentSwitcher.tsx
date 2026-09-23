@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, ChevronUp, KeyRound, Monitor, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, KeyRound, Monitor, ServerCog, X } from 'lucide-react';
 import { clientLog } from '@/lib/client/logger';
 import { listAgents } from '@/lib/hivra/agent-api';
 import { CookieImportModal } from '@/components/instances/CookieImportModal';
@@ -26,8 +28,13 @@ interface InstanceSummary {
 interface AgentSwitcherProps {
   activeKind: UnifiedKind;
   activeId: string;
-  /** Distance from the top of the nearest positioned ancestor, in px. */
-  top?: number;
+  /** Distance from the top of the nearest positioned ancestor (px or a CSS length). */
+  top?: number | string;
+  /** Show the Console link in the expanded row (off where the host already shows one). */
+  showConsole?: boolean;
+  /** Toolbar slot for the collapsed handle. The expanded switcher still renders
+   *  in place, so it opens below the host's banners. `null` while the slot mounts. */
+  handleHost?: HTMLElement | null;
 }
 
 /** Native navigation owns resource switching. Keep these actual browser actions
@@ -52,7 +59,7 @@ function NativeAgentBrowserTools({ activeKind, activeId }: AgentSwitcherProps) {
         <Monitor size={14} aria-hidden />Browser
       </button>
       <button ref={importTrigger} className={styles.tool} type="button" aria-label="Import cookies" title="Log the agent's browser into your accounts" onClick={() => setImportOpen(true)}>
-        <KeyRound size={14} aria-hidden />Log in
+        <KeyRound size={14} aria-hidden /><span className={styles.fineOnly}>Log in</span><span className={styles.coarseOnly}>Log in (desktop)</span>
       </button>
     </div>
     {importOpen && <CookieImportModal instanceId={activeId} onClose={() => { setImportOpen(false); importTrigger.current?.focus(); }} onOpenBrowser={openBrowser} />}
@@ -119,6 +126,8 @@ function WebAgentSwitcher({
   activeKind,
   activeId,
   top = 10,
+  showConsole = true,
+  handleHost,
 }: AgentSwitcherProps) {
   const router = useRouter();
   const [hermes, setHermes] = useState<HermesInstanceLite[]>([]);
@@ -241,109 +250,45 @@ function WebAgentSwitcher({
 
   // Collapsed: a small overlay pull-tab (active-agent dot + chevron). It floats
   // over the content WITHOUT reserving a band, so nothing is pushed down and it
-  // doesn't cover the embedded chat's corner controls. Click to expand.
+  // doesn't cover the embedded chat's corner controls. Click to expand. Touch
+  // pointers get a 44px handle with a visible AGENTS label (see the CSS module).
   if (!expanded) {
-    return (
-      <div
-        style={{
-          position: 'absolute',
-          top,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 30,
-          display: 'flex',
-          pointerEvents: 'none',
-        }}
+    const handle = (
+      <button
+        type="button"
+        aria-label="Agents: show agent switcher"
+        aria-expanded={false}
+        onClick={() => setExpanded(true)}
+        className={styles.handle}
       >
-        <button
-          type="button"
-          aria-label="Show agent switcher"
-          aria-expanded={false}
-          onClick={() => setExpanded(true)}
-          style={{
-            pointerEvents: 'auto',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 5,
-            padding: '3px 8px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--etched-border)',
-            color: 'var(--ink-black)',
-            lineHeight: 1,
-            cursor: 'pointer',
-            opacity: 0.82,
-            boxShadow: '0 4px 14px rgba(0,0,0,0.10)',
-            transition: 'opacity 0.15s ease, border-color 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.opacity = '1';
-            e.currentTarget.style.borderColor = 'var(--text-muted)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.opacity = '0.82';
-            e.currentTarget.style.borderColor = 'var(--etched-border)';
-          }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              width: 6,
-              height: 6,
-              flexShrink: 0,
-              backgroundColor: active?.dot ?? 'var(--text-muted)',
-            }}
-          />
-          <ChevronDown size={13} style={{ flexShrink: 0, opacity: 0.7 }} />
-        </button>
-      </div>
+        <span
+          aria-hidden="true"
+          className={styles.handleDot}
+          style={{ backgroundColor: active?.dot ?? 'var(--text-muted)' }}
+        />
+        <span aria-hidden="true" className={styles.handleLabel}>Agents</span>
+        <ChevronDown size={13} className={styles.handleChevron} />
+      </button>
     );
+    if (handleHost !== undefined) {
+      return handleHost ? createPortal(<div className={styles.hostedHandle}>{handle}</div>, handleHost) : null;
+    }
+    return <div className={styles.anchor} style={{ top }}>{handle}</div>;
   }
 
+  const openBrowserStream = () =>
+    window.open(`/api/instances/${activeId}/browser-stream`, '_blank', 'noopener,noreferrer');
+
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 30,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        width: 'min(360px, calc(100vw - 24px))',
-        pointerEvents: 'none',
-      }}
-    >
-      {/* Collapse chevron + pill + (optional) live-browser button on one row. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
+    <div className={`${styles.anchor} ${styles.anchorExpanded}`} style={{ top }}>
+      {/* Collapse chevron + pill + console + (optional) live-browser tools. */}
+      <div className={styles.row}>
       {/* Collapse back to the small handle. */}
       <button
         type="button"
         aria-label="Hide agent switcher"
         onClick={() => setExpanded(false)}
-        style={{
-          pointerEvents: 'auto',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          width: 26,
-          height: 26,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--etched-border)',
-          color: 'var(--text-muted)',
-          cursor: 'pointer',
-          boxShadow: '0 6px 20px rgba(0,0,0,0.10)',
-          transition: 'border-color 0.15s ease, color 0.15s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = 'var(--text-muted)';
-          e.currentTarget.style.color = 'var(--ink-black)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = 'var(--etched-border)';
-          e.currentTarget.style.color = 'var(--text-muted)';
-        }}
+        className={styles.collapse}
       >
         <ChevronUp size={14} />
       </button>
@@ -354,60 +299,32 @@ function WebAgentSwitcher({
         aria-expanded={open}
         aria-label="Switch agent"
         onClick={toggleOpen}
-        style={{
-          pointerEvents: 'auto',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          maxWidth: '100%',
-          padding: '5px 10px 5px 11px',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--etched-border)',
-          color: 'var(--ink-black)',
-          fontFamily: 'var(--font-mono), monospace',
-          fontSize: 12,
-          fontWeight: 600,
-          lineHeight: 1,
-          cursor: 'pointer',
-          boxShadow: '0 6px 20px rgba(0,0,0,0.10)',
-          transition: 'border-color 0.15s ease, background 0.15s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = 'var(--text-muted)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = 'var(--etched-border)';
-        }}
+        className={styles.pill}
       >
         <span
           aria-hidden="true"
-          style={{
-            width: 7,
-            height: 7,
-            flexShrink: 0,
-            backgroundColor: active?.dot ?? 'var(--text-muted)',
-          }}
+          className={styles.pillDot}
+          style={{ backgroundColor: active?.dot ?? 'var(--text-muted)' }}
         />
-        <span
-          style={{
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {active?.name ?? 'Select agent'}
-        </span>
+        <span className={styles.pillName}>{active?.name ?? 'Select agent'}</span>
         <ChevronDown
           size={13}
-          style={{
-            flexShrink: 0,
-            opacity: 0.6,
-            transform: open ? 'rotate(180deg)' : 'none',
-            transition: 'transform 0.18s ease',
-          }}
+          className={`${styles.pillChevron} ${open ? styles.pillChevronOpen : ''}`}
         />
       </button>
+
+        {/* Console for this Hermes agent — the page header is hidden on this
+            route, so the switcher carries the way there. */}
+        {activeKind === 'hermes' && showConsole && (
+          <Link
+            href={`/dashboard/instances/${activeId}/console`}
+            aria-label="Open console"
+            className={styles.chip}
+          >
+            <ServerCog size={13} aria-hidden="true" />
+            Console
+          </Link>
+        )}
 
         {/* Live-browser button — only when a noVNC stream is detected (Hermes). */}
         {browserReady && (
@@ -416,35 +333,8 @@ function WebAgentSwitcher({
             type="button"
             aria-label="View live browser"
             title="Watch the agent's live browser"
-            onClick={() =>
-              window.open(`/api/instances/${activeId}/browser-stream`, '_blank', 'noopener,noreferrer')
-            }
-            style={{
-              pointerEvents: 'auto',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              flexShrink: 0,
-              padding: '5px 10px',
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--etched-border)',
-              color: 'var(--ink-black)',
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10.5,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              lineHeight: 1,
-              cursor: 'pointer',
-              boxShadow: '0 6px 20px rgba(0,0,0,0.10)',
-              transition: 'border-color 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--text-muted)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--etched-border)';
-            }}
+            onClick={openBrowserStream}
+            className={styles.chip}
           >
             <Monitor size={13} />
             Browser
@@ -454,35 +344,11 @@ function WebAgentSwitcher({
             aria-label="Import cookies"
             title="Log the agent's browser into your accounts"
             onClick={() => setCookieImportOpen(true)}
-            style={{
-              pointerEvents: 'auto',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              flexShrink: 0,
-              padding: '5px 10px',
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--etched-border)',
-              color: 'var(--ink-black)',
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10.5,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              lineHeight: 1,
-              cursor: 'pointer',
-              boxShadow: '0 6px 20px rgba(0,0,0,0.10)',
-              transition: 'border-color 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--text-muted)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--etched-border)';
-            }}
+            className={styles.chip}
           >
             <KeyRound size={13} />
-            Log in
+            <span className={styles.fineOnly}>Log in</span>
+            <span className={styles.coarseOnly}>Log in (desktop)</span>
           </button>
           </>
         )}
@@ -491,78 +357,27 @@ function WebAgentSwitcher({
         <CookieImportModal
           instanceId={activeId}
           onClose={() => setCookieImportOpen(false)}
-          onOpenBrowser={() =>
-            window.open(`/api/instances/${activeId}/browser-stream`, '_blank', 'noopener,noreferrer')
-          }
+          onOpenBrowser={openBrowserStream}
         />
       )}
 
       {/* The drop-down panel. Floats; never resizes the chat beneath it. */}
       {open && (
-        <div
-          role="menu"
-          aria-label="Your agents"
-          style={{
-            pointerEvents: 'auto',
-            marginTop: 6,
-            width: '100%',
-            maxHeight: 'min(60vh, 420px)',
-            display: 'flex',
-            flexDirection: 'column',
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--etched-border)',
-            boxShadow: '0 24px 60px rgba(0,0,0,0.18)',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '8px 6px 8px 12px',
-              borderBottom: '1px solid var(--etched-border)',
-            }}
-          >
-            <span
-              className="mono"
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-                color: 'var(--text-muted)',
-              }}
-            >
-              Your agents
-            </span>
+        <div role="menu" aria-label="Your agents" className={styles.menu}>
+          <div className={styles.menuHeader}>
+            <span className={`mono ${styles.menuTitle}`}>Your agents</span>
             {/* Flush close — sits inside the panel header, doesn't protrude. */}
             <button
               type="button"
               aria-label="Close agent switcher"
               onClick={closePanel}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 24,
-                height: 24,
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = 'var(--ink-black)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
+              className={styles.menuClose}
             >
               <X size={14} />
             </button>
           </div>
 
-          <div style={{ overflowY: 'auto', padding: 4 }}>
+          <div className={styles.menuList}>
             {agents.map((agent) => {
               const isActive = agent.uid === activeUid;
               return (
@@ -572,67 +387,15 @@ function WebAgentSwitcher({
                   role="menuitemradio"
                   aria-checked={isActive}
                   onClick={() => switchTo(agent)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 9,
-                    width: '100%',
-                    padding: '8px 10px',
-                    background: isActive ? 'var(--bg-elevated)' : 'transparent',
-                    border: 'none',
-                    borderLeft: isActive
-                      ? '2px solid var(--ink-black)'
-                      : '2px solid transparent',
-                    color: isActive ? 'var(--ink-black)' : 'var(--text-secondary)',
-                    fontFamily: 'var(--font-mono), monospace',
-                    fontSize: 12.5,
-                    fontWeight: isActive ? 600 : 500,
-                    textAlign: 'left',
-                    cursor: isActive ? 'default' : 'pointer',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) {
-                      e.currentTarget.style.background = 'var(--bg-elevated)';
-                      e.currentTarget.style.color = 'var(--ink-black)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = 'var(--text-secondary)';
-                    }
-                  }}
+                  className={`${styles.menuItem} ${isActive ? styles.menuItemActive : ''}`}
                 >
                   <span
                     aria-hidden="true"
-                    style={{
-                      width: 8,
-                      height: 8,
-                      flexShrink: 0,
-                      backgroundColor: agent.dot,
-                    }}
+                    className={styles.menuItemDot}
+                    style={{ backgroundColor: agent.dot }}
                   />
-                  <span
-                    style={{
-                      minWidth: 0,
-                      flex: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {agent.name}
-                  </span>
-                  <span
-                    style={{
-                      flexShrink: 0,
-                      fontSize: 9,
-                      fontWeight: 700,
-                      letterSpacing: '0.1em',
-                      textTransform: 'uppercase',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
+                  <span className={styles.menuItemName}>{agent.name}</span>
+                  <span className={styles.menuItemVendor}>
                     {/* Vendor, not typeLabel: a Hivra box named "Claude Code"
                         would otherwise read "Claude Code · CLAUDE CODE". Vendor
                         ("Anthropic"/"OpenAI") disambiguates; Hermes is unchanged
@@ -647,28 +410,7 @@ function WebAgentSwitcher({
           <button
             type="button"
             onClick={() => router.push('/dashboard')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '9px 12px',
-              background: 'transparent',
-              border: 'none',
-              borderTop: '1px solid var(--etched-border)',
-              color: 'var(--text-muted)',
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10.5,
-              fontWeight: 700,
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--ink-black)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--text-muted)';
-            }}
+            className={styles.deploy}
           >
             + Deploy another agent
           </button>

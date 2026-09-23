@@ -7,6 +7,7 @@ import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { TokenHoldingData } from "@/lib/billing/format";
 
 const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 
 jest.mock("@/lib/client/clipboard", () => ({
   copyTextToClipboard: jest.fn(),
@@ -70,6 +71,24 @@ describe("CryptoTopUpPanel", () => {
     expect(details).not.toBeNull();
     expect(details.open).toBe(false);
     expect(within(details).getByText("Show QR code")).toBeInTheDocument();
+  });
+
+  it("offers an Open in wallet link with the exact USDC amount the reconciler matches", () => {
+    mockViewport(false);
+    const exact = { ...intent, amountRaw: "10000000", asset: { ...intent.asset, tokenAddress: USDC_CONTRACT, chainId: 8453 } };
+    render(<CryptoTopUpPanel intent={exact} error={null} toppingUp={null} onTopUp={jest.fn()} />);
+
+    expect(screen.getByRole("link", { name: /open in wallet/i })).toHaveAttribute(
+      "href",
+      `ethereum:${USDC_CONTRACT}@8453/transfer?address=${DEPOSIT}&uint256=10000000`
+    );
+  });
+
+  it("shows no wallet link unless the amount, token and chain are all known", () => {
+    mockViewport(false);
+    render(<CryptoTopUpPanel intent={intent} error={null} toppingUp={null} onTopUp={jest.fn()} />);
+
+    expect(screen.queryByRole("link", { name: /open in wallet/i })).not.toBeInTheDocument();
   });
 
   it("shows the QR code beside the address on a desktop", () => {

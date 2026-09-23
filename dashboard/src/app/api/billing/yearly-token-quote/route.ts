@@ -38,6 +38,8 @@ import {
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 import { LivePriceUnavailableError } from "@/lib/billing/live-thresholds";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { log } from "@/lib/logger";
 
 function isValidTier(value: unknown): value is TierKey {
   return value === "pro" || value === "power";
@@ -208,6 +210,34 @@ export async function POST(req: NextRequest) {
     if (!isValidTier(body.tier)) {
       return apiError("Missing or invalid tier — must be 'pro' or 'power'.", 400, {
         failureType: "yearly_token_quote_bad_tier",
+      });
+    }
+
+    // Never sell a year that a live $HermesOS entitlement already outranks:
+    // entitlement resolves by the highest live tier, so a Pro year bought
+    // while Power is active would buy nothing. Same-tier years still extend.
+    // The billing UI is the primary guard, so a failed lookup is logged and
+    // the quote proceeds rather than blocking every $HermesOS payment.
+    let tokenEntitlement: Awaited<ReturnType<typeof resolveEffectiveSubscription>> = null;
+    try {
+      tokenEntitlement = await resolveEffectiveSubscription(userId, { excludeStripe: true });
+    } catch (error) {
+      log.warn("Yearly quote tier guard could not read the token entitlement", {
+        source: "billing/yearly-token-quote",
+        route: "/api/billing/yearly-token-quote",
+        method: "POST",
+        userId,
+        failureType: "yearly_token_quote_tier_guard_lookup_failed",
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+    if (
+      (tokenEntitlement?.source === "token_yearly" || tokenEntitlement?.source === "token_holding") &&
+      tokenEntitlement.tokenTier === "power" &&
+      body.tier === "pro"
+    ) {
+      return apiError("Your $HermesOS access already covers Pro.", 409, {
+        failureType: "yearly_token_quote_tier_already_covered",
       });
     }
 

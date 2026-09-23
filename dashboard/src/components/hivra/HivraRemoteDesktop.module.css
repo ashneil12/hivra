@@ -149,6 +149,11 @@
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
   color: var(--text-secondary);
   font-size: 12px;
+  /* First-frame cap; while open the component measures the room left above
+     the bottom bar and sets the exact value. */
+  max-height: calc(var(--workspace-viewport-height, 100dvh) - 180px - var(--hivra-bottom-chrome, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .stripToggle {
@@ -225,4 +230,69 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+/* Browsers without element fullscreen (iPhone Safari) get an in-page
+   immersive layer instead; the shell hides its own chrome meanwhile. */
+.immersive {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  height: var(--workspace-viewport-height, 100dvh);
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  box-sizing: border-box;
+}
+
+/* Touch at any width: 44px controls and readable labels. A failure reason
+   wraps inside its own slot, so a short one keeps a wide tablet strip on one
+   row. Declared before the narrow-pane block, which moves it to a full row. */
+@media (pointer: coarse) {
+  .strip { min-height: 44px; position: relative; }
+  .strip:not([data-state="connected"]) { flex-wrap: wrap; }
+  .stripIcon { width: 44px; min-height: 44px; }
+  .stripAction { min-height: 44px; font-size: 11px; padding-inline: 12px; }
+  .stripSelect { min-height: 40px; font-size: 11px; }
+  .stripFieldLabel { display: none; }
+  .stripLabel { font-size: 11px; }
+  .strip:not([data-state="connected"]) .stripMessage { flex: 1 1 160px; min-width: 0; white-space: normal; }
+  .strip[data-state="connected"] .stripField { flex-shrink: 1; min-width: 88px; }
+  .strip[data-state="connected"] .stripSelect { min-width: 0; max-width: 100%; }
+  .stripDetails { position: static; }
+  .stripMenu { right: 8px; }
+  .stripMenuAction { min-height: 44px; }
+  .consoleIcon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; }
+}
+
+/* Narrow panes: 44px controls, readable labels, and a failure reason on its
+   own full row instead of clipping to one line. A connected strip stays one
+   row (its message ellipsizes and the quality select gives up spare width
+   first), and the settings menu hangs from the strip's edge rather than the
+   gear. */
+@container resource-workspace (max-width: 600px) {
+  .strip { min-height: 44px; position: relative; }
+  .strip:not([data-state="connected"]) { flex-wrap: wrap; }
+  .stripIcon { width: 44px; min-height: 44px; }
+  .stripAction { min-height: 44px; font-size: 11px; padding-inline: 12px; }
+  .stripSelect { min-height: 40px; font-size: 11px; }
+  .stripFieldLabel { display: none; }
+  .stripLabel { font-size: 11px; }
+  .strip:not([data-state="connected"]) .stripMessage { order: 10; flex-basis: 100%; white-space: normal; padding-bottom: 6px; }
+  .strip[data-state="connected"] .stripField { flex-shrink: 1; min-width: 88px; }
+  .strip[data-state="connected"] .stripSelect { min-width: 0; max-width: 100%; }
+  .stripDetails { position: static; }
+  .stripMenu { right: 8px; }
+  .stripEvidence span, .stripEvidence strong, .stripToggle small, .stripMenuNote { font-size: 11px; }
+  .stripMenuAction { min-height: 44px; }
+  /* Omarchy console header: in immersive mode its Full screen button is the
+     only way out. */
+  .consoleIcon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; }
+}
+
+/* Too narrow for the connected message to show more than a few letters; it
+   stays in the accessibility tree as the strip's status. A strip that also
+   carries Reconnect (Windows) drops its one-word state the same way, so the
+   quality select keeps room for its value. */
+@container resource-workspace (max-width: 480px) {
+  .strip[data-state="connected"] .stripMessage,
+  .strip[data-state="connected"]:has(.stripAction) .stripLabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }

@@ -1214,6 +1214,162 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(resultHeading).toHaveFocus();
   });
 
+  it("brings each new capacity step into view when the dashboard page scrolls the dialog", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    render(<InfrastructureConnectionsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create cloud server" }));
+    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    await within(dialog).findByLabelText("Server size");
+    // Phone CSS makes the dialog overflow visible so the dashboard main scrolls it.
+    dialog.style.overflowY = "visible";
+    const scrollIntoView = jest.fn();
+    dialog.scrollIntoView = scrollIntoView;
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
+    const reviewHeading = await within(dialog).findByRole("heading", { name: "Review price and creation" });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(reviewHeading).toHaveFocus();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change configuration" }));
+    await within(dialog).findByRole("heading", { name: "Choose a Hetzner server" });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["phone", "visible", true],
+    ["desktop", "auto", false],
+  ])("on %s layouts, scrolls an opened dialog's top into view only when the page scrolls it", async (_layout, overflowY, scrolls) => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    // Phone CSS makes in-flow dialogs overflow visible so the dashboard main
+    // scrolls them; desktop dialogs scroll themselves.
+    const layout = document.createElement("style");
+    layout.textContent = `[role="dialog"], [role="alertdialog"] { overflow-y: ${overflowY}; }`;
+    document.head.appendChild(layout);
+    try {
+      const { container } = render(<InfrastructureConnectionsPage />);
+      const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+      const anchor = container.querySelector("[data-infrastructure-modal-anchor]") as HTMLElement;
+      const scrollIntoView = jest.fn();
+      anchor.scrollIntoView = scrollIntoView;
+
+      fireEvent.click(within(card).getByRole("button", { name: "Disconnect project Personal cloud" }));
+      await screen.findByRole("alertdialog", { name: "Disconnect Personal cloud?" });
+      expect(scrollIntoView).toHaveBeenCalledTimes(scrolls ? 1 : 0);
+      if (scrolls) expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "start" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Keep connection" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+      expect(scrollIntoView).toHaveBeenCalledTimes(scrolls ? 1 : 0);
+
+      fireEvent.click(within(card).getByRole("button", { name: "Create cloud server" }));
+      await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+      expect(scrollIntoView).toHaveBeenCalledTimes(scrolls ? 2 : 0);
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it("scrolls a phone dialog to its top before moving focus into it", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([PENDING_HOST_CONNECTION]);
+    const layout = document.createElement("style");
+    layout.textContent = '[role="alertdialog"] { overflow-y: visible; }';
+    document.head.appendChild(layout);
+    try {
+      const { container } = render(<InfrastructureConnectionsPage />);
+      const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+      const anchor = container.querySelector("[data-infrastructure-modal-anchor]") as HTMLElement;
+      const focusedAtScroll: Array<Element | null> = [];
+      anchor.scrollIntoView = jest.fn(() => {
+        focusedAtScroll.push(document.activeElement);
+      });
+      const opener = within(card).getByRole("button", { name: "Disconnect host Linux host" });
+      opener.focus();
+
+      fireEvent.click(opener);
+      const dialog = await screen.findByRole("alertdialog", { name: "Disconnect Linux host?" });
+
+      // Focusing the initial control afterwards only scrolls when it is out of
+      // view, so the dialog does not open at the scroll offset of its last action.
+      expect(focusedAtScroll).toEqual([opener]);
+      expect(within(dialog).getByRole("button", { name: "Keep connection" })).toHaveFocus();
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it("shows saved recovery identifiers in full and copies each exact value", async () => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const record = {
+      version: 2,
+      connectionId: HETZNER_CONNECTION.id,
+      quoteId: "11111111-1111-4111-8111-111111111111",
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      prepare: false,
+    };
+    window.localStorage.setItem(
+      `hivra:hetzner-capacity-recovery:${HETZNER_CONNECTION.id}`,
+      JSON.stringify(record),
+    );
+    try {
+      render(<HetznerCloudCapacityDialog connection={HETZNER_CONNECTION} onClose={jest.fn()} onInventoryChanged={jest.fn()} />);
+      const dialog = await screen.findByRole("dialog", { name: "Recover pending request" });
+      const facts = within(dialog).getByLabelText("Saved recovery identifiers");
+      expect(within(facts).getByText(record.connectionId)).toBeInTheDocument();
+      expect(within(facts).getByText(record.quoteId)).toBeInTheDocument();
+
+      fireEvent.click(within(facts).getByRole("button", { name: "Copy request key" }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(record.idempotencyKey));
+      expect(await within(facts).findByRole("button", { name: "Copied request key" })).toBeInTheDocument();
+      expect(within(facts).getByText("Copied request key")).toHaveAttribute("role", "status");
+
+      fireEvent.click(within(facts).getByRole("button", { name: "Copy quote id" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(record.quoteId));
+      expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it.each([
+    ["denied", () => ({ writeText: jest.fn().mockRejectedValue(new Error("NotAllowedError")) })],
+    ["missing", () => undefined],
+  ])("selects a recovery id and says so when clipboard access is %s", async (_case, makeClipboard) => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: makeClipboard() });
+    const record = {
+      version: 2,
+      connectionId: HETZNER_CONNECTION.id,
+      quoteId: "11111111-1111-4111-8111-111111111111",
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      prepare: false,
+    };
+    window.localStorage.setItem(
+      `hivra:hetzner-capacity-recovery:${HETZNER_CONNECTION.id}`,
+      JSON.stringify(record),
+    );
+    try {
+      render(<HetznerCloudCapacityDialog connection={HETZNER_CONNECTION} onClose={jest.fn()} onInventoryChanged={jest.fn()} />);
+      const dialog = await screen.findByRole("dialog", { name: "Recover pending request" });
+      const facts = within(dialog).getByLabelText("Saved recovery identifiers");
+
+      fireEvent.click(within(facts).getByRole("button", { name: "Copy request key" }));
+
+      expect(await within(facts).findByText("Selected — use Copy")).toHaveAttribute("role", "status");
+      expect(window.getSelection()?.toString()).toBe(record.idempotencyKey);
+      // Nothing claims a copy that did not happen.
+      expect(within(facts).queryByRole("button", { name: /^Copied/ })).not.toBeInTheDocument();
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
   it("explains the selected guided firewall sequence without claiming it has run", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
@@ -1943,6 +2099,41 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(dialog).getByRole("button", { name: "Remove connection" })).toBeEnabled();
   });
 
+  it("offers a labelled project disconnect that opens the same confirmation", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Remove created server" })).toBeInTheDocument();
+    // The accessible name keeps the visible label and names the connection it removes.
+    const labelled = within(card).getByRole("button", { name: "Disconnect project Personal cloud" });
+    expect(labelled).toHaveTextContent("Disconnect project");
+    fireEvent.click(labelled);
+    expect(screen.getByRole("alertdialog", { name: "Disconnect Personal cloud?" })).toBeInTheDocument();
+    expect(deleteInfrastructureConnection).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Disconnect host Linux host", "alertdialog", "Keep connection"],
+    ["Edit", "dialog", "Close infrastructure setup"],
+  ])("returns focus to the card's %s control when its dialog closes", async (trigger, role, closeName) => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([PENDING_HOST_CONNECTION]);
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    const opener = within(card).getByRole("button", { name: trigger });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const dialog = await screen.findByRole(role as "dialog" | "alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: closeName }));
+
+    await waitFor(() => expect(screen.queryByRole(role as "dialog" | "alertdialog")).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add infrastructure" })).not.toHaveFocus();
+  });
+
   it("requires typed confirmation before force-forgetting an idle ambiguous Hetzner connection", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
@@ -1973,13 +2164,19 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       name: "Forget Hivra access only",
     });
     const confirmation = within(dialog).getByLabelText("Type the exact confirmation");
+    expect(confirmation).toHaveAttribute("autocapitalize", "characters");
+    expect(confirmation).toHaveAttribute("autocorrect", "off");
+    expect(confirmation).toHaveAttribute("spellcheck", "false");
     expect(forceButton).toBeDisabled();
+    expect(within(dialog).queryByText("Doesn't match yet")).not.toBeInTheDocument();
     fireEvent.change(confirmation, { target: { value: "FORGET" } });
     expect(forceButton).toBeDisabled();
+    expect(confirmation).toHaveAccessibleDescription(/Doesn't match yet/);
     fireEvent.change(confirmation, {
       target: { value: HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION },
     });
     expect(forceButton).toBeEnabled();
+    expect(within(dialog).queryByText("Doesn't match yet")).not.toBeInTheDocument();
     fireEvent.click(forceButton);
 
     await waitFor(() => expect(forceForgetHetznerCloudConnection).toHaveBeenCalledWith(
