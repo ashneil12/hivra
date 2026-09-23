@@ -6,7 +6,6 @@ from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 
-NIBBII_URL = "https://nibbii.pet/"
 VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
     "meta", "param", "source", "track", "wbr",
@@ -68,41 +67,21 @@ class _LinkEnhancer(HTMLParser):
         self.line_starts = [0] + [match.end() for match in re.finditer("\n", markup)]
         self.stack = []
         self.edits = []
-        self.linked_nibbii_slots = set()
         self.feed(markup)
 
     def _offset(self):
         line, column = self.getpos()
         return self.line_starts[line - 1] + column
 
-    def _nibbii_slot(self):
-        if any(tag in NON_READER_TAGS or "hidden" in attrs or attrs.get("aria-hidden") == "true"
-               for tag, attrs in self.stack):
-            return None
-        if not any(tag == "p" for tag, attrs in self.stack):
-            return None
-        ids = {attrs.get("id") for tag, attrs in self.stack}
-        if "utility-access-to-nibbii" in ids:
-            return "access"
-        if "economy-what-it-s-for" in ids and not any(
-                "token-utility" in (attrs.get("class") or "").split() for tag, attrs in self.stack):
-            return "intro"
-        return None
-
     def handle_starttag(self, tag, attrs):
         raw = self.get_starttag_text()
-        attributes = dict(attrs)
         if tag == "a":
             replacement = _anchor_tag(raw, attrs)
             if replacement != raw:
                 start = self._offset()
                 self.edits.append((start, start + len(raw), replacement))
-            hostname = urlsplit(attributes.get("href") or "").hostname
-            slot = self._nibbii_slot()
-            if slot and hostname in {"nibbii.pet", "www.nibbii.pet"}:
-                self.linked_nibbii_slots.add(slot)
         if tag not in VOID_TAGS:
-            self.stack.append((tag, attributes))
+            self.stack.append((tag, dict(attrs)))
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -115,22 +94,9 @@ class _LinkEnhancer(HTMLParser):
                 del self.stack[index:]
                 return
 
-    def handle_data(self, data):
-        slot = self._nibbii_slot()
-        if not slot or slot in self.linked_nibbii_slots or any(tag == "a" for tag, attrs in self.stack):
-            return
-        mention = re.search(r"\bNibbii\b", data)
-        if mention:
-            start = self._offset() + mention.start()
-            replacement = '<a href="{}" target="_blank" rel="noopener noreferrer">{}</a>'.format(
-                NIBBII_URL, mention.group()
-            )
-            self.edits.append((start, start + len(mention.group()), replacement))
-            self.linked_nibbii_slots.add(slot)
-
     def result(self):
-        # Edit only changed opening anchors and the chosen brand mentions. Every
-        # other byte—including approved text, entities and whitespace—survives.
+        # Edit only changed opening anchors. Every other byte, including
+        # approved text, entities and whitespace, survives.
         result = self.markup
         for start, end, replacement in sorted(self.edits, reverse=True):
             result = result[:start] + replacement + result[end:]
@@ -138,7 +104,7 @@ class _LinkEnhancer(HTMLParser):
 
 
 def enhance_links(markup):
-    """Set link targets and link Nibbii in the economy intro/access explanation.
+    """Set link targets for documents, other websites and same-page fragments.
 
     This is idempotent and changes markup only. Same-page fragments keep their
     navigation, and no existing anchor is wrapped in another anchor.
