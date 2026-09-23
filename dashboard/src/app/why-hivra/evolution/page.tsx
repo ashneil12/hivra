@@ -70,7 +70,7 @@ const availableNow = agentLineup.filter((agent) => agent.available).map((agent) 
 const inPreview = agentLineup.filter((agent) => !agent.available).map((agent) => agent.label);
 
 const CORE = { x: 50, y: 46 };
-const ORIGIN = { x: 14, y: 70 };
+const ORIGIN = { x: 16, y: 70 };
 
 const networkNodes = [
   { label: "HermesOS", detail: "origin", x: ORIGIN.x, y: ORIGIN.y, variant: "origin" },
