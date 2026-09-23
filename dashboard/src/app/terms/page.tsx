@@ -69,13 +69,13 @@ export default function TermsPage() {
           <h2 className="serif">10. Token Access Tiers</h2>
           <p>Holding the existing $HermesOS token in a qualifying amount can give you access to a compute tier instead of paying by card. The billing page shows the current requirements.</p>
           <p>If your qualifying balance drops below the requirement, your access continues for a grace period, currently 24 hours, and is then suspended. Limits apply to how often you can qualify again, currently a 7-day wait and twice in any 12 months.</p>
-          <p><strong>Existing holders are grandfathered.</strong> If you already qualify with $HermesOS, you keep that access and can keep using $HermesOS.</p>
+          <p><strong>Existing holders are grandfathered.</strong> If you already qualify with $HermesOS, you keep that access while you hold your qualifying balance, and you can keep using $HermesOS.</p>
           <ReviewNote>Ash to set the carry-over rule: how long grandfathered $HermesOS access lasts, and what a holder who converts must hold to keep their tier. Until then, this promise has no end date.</ReviewNote>
           <p>Holding the token gives you access to the service described here and nothing else. It is not a share in Hivra and gives no right to profits, revenue, payouts or a vote.</p>
 
           <h2 className="serif">11. Paying in the Token</h2>
           <p>You can pay for some plans and credits in $HermesOS. Prices paid in the token can be lower than the card price. The price shown when you pay is the price that applies.</p>
-          <p>Payments in $HermesOS are final, except where section 9 gives you a legal right to cancel or where we fail to provide what you paid for. When a refund of a token payment is due, we return the same amount of $HermesOS to the address it came from, unless you agree otherwise.</p>
+          <p>Payments in $HermesOS are final, except where section 9 gives you a legal right to cancel or where we fail to provide what you paid for. When a refund of a token payment is due, we return the same amount of $HermesOS to a Base address you give us, unless you agree otherwise.</p>
           <ReviewNote>Counsel to review the token-payment discount and any bonus credits under the UK financial-promotion rules (FCA COBS 4.12A.7R bans incentives to invest in promotions of qualifying cryptoassets).</ReviewNote>
 
           <h2 className="serif">12. Deposit Wallets</h2>
@@ -91,16 +91,16 @@ export default function TermsPage() {
 
           <h2 className="serif">15. Suspension and Ending the Service</h2>
           <p>We may suspend your access straight away if your use puts the service, other users or third parties at risk, or breaks the law or section 6. For other breaches, and for unpaid charges, we will tell you first and give you a reasonable time to fix the problem.</p>
-          <p>If a computer is suspended because a plan ended or payment stopped, we email you before deleting it: at least 14 days&apos; notice for a former paid plan and at least 5 days&apos; notice on the free plan. Computers on an active paid plan are never deleted automatically.</p>
+          <p>If a computer is suspended because a plan ended, payment stopped or a free computer was left idle, we email you before deleting it: at least 14 days&apos; notice for a former paid plan and at least 5 days&apos; notice on the free plan. Computers on an active paid plan are never deleted automatically.</p>
           <p>We may end the service, or a plan, for reasons not covered above by giving you at least 30 days&apos; notice, and we refund any unused part of a period you have paid for.</p>
 
           <h2 className="serif">16. Changes to the Service and These Terms</h2>
-          <p>We only change these Terms, or a paid feature you use, for a valid reason: a change in the law, a security need, a change in what our providers offer or charge, or a change to the product. We will tell you by email or in the app at least 30 days before a change that makes things worse for you, unless it is needed sooner for legal or security reasons. If you do not accept the change, you can cancel before it takes effect and we will refund any unused part of a period you have paid for.</p>
+          <p>We only change these Terms, or a paid feature you use, for a valid reason: a change in the law, a security need, a change in what our providers offer or charge, or changes to the features we offer. We will tell you by email or in the app at least 30 days before a change that makes things worse for you, unless it is needed sooner for legal or security reasons. If you do not accept the change, you can cancel before it takes effect and we will refund any unused part of a period you have paid for.</p>
 
           <h2 className="serif">17. Our Responsibility to You</h2>
           <p>We provide the service with reasonable care and skill. If we fail to do so, we are responsible for loss you suffer that is a foreseeable result of that failure. We are not responsible for loss that was not foreseeable.</p>
           <p><strong>If you are a consumer,</strong> nothing in these Terms affects your legal rights. If we do not provide the service with reasonable care and skill, you can ask us to put it right or, where that is not possible, to reduce the price or refund you.</p>
-          <p><strong>If you are a business customer,</strong> we are not liable for indirect or consequential loss, or for loss of profits, revenue or goodwill, and our total liability in any 12 months is limited to the amount you paid us in that period.</p>
+          <p><strong>If you are a business customer,</strong> we are not liable for indirect or consequential loss, or for loss of profits, revenue or goodwill, and our total liability for all claims is limited to the amount you paid us in the 12 months before the event that caused the claim.</p>
           <p>Nothing in these Terms limits liability for death or personal injury caused by negligence, for fraud, or for anything else that cannot be limited by law.</p>
 
           <h2 className="serif">18. Other Services</h2>
