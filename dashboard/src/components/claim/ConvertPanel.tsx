@@ -3,11 +3,25 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { HERMESOS_CONTRACT_ADDRESS, type ConversionState } from "@/lib/claim/conversion-state";
 
+import { SwitchAccessStep } from "./SwitchAccessStep";
 import { TokenAddressChecker } from "./TokenAddressChecker";
 
 export const DORMANT_MESSAGE = "Conversion opens after $HIVRA launches; terms are published first.";
 export const ANNOUNCED_MESSAGE = "Conversion is not open yet. Terms are published before it opens.";
 export const PROPOSED_LABEL = "Proposed. Terms are published before conversion opens.";
+export const LIVE_LABEL = "Optional. Read the published terms before you convert.";
+
+function formatUtc(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  });
+}
 
 const section: CSSProperties = {
   borderTop: "1px solid var(--etched-border)",
@@ -57,6 +71,7 @@ function ContractAddress({ label, address }: { label: string; address: string })
  * in lib/claim/conversion-links-config.ts. $HIVRA comes from the token registry.
  */
 export function ConvertPanel({ state }: { state: ConversionState }) {
+  const live = state.status === "open" || state.status === "switch-access";
   return (
     <article style={{ maxWidth: 720 }}>
       <header style={{ marginBottom: "1.5rem" }}>
@@ -64,12 +79,13 @@ export function ConvertPanel({ state }: { state: ConversionState }) {
           data-testid="convert-proposed-label"
           style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-secondary)", margin: 0 }}
         >
-          {PROPOSED_LABEL}
+          {live ? LIVE_LABEL : PROPOSED_LABEL}
         </p>
         <h1 style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", margin: "0.5rem 0 0.75rem" }}>Convert $HermesOS to $HIVRA</h1>
         <p style={muted}>
-          As proposed, converting is optional: nothing converts automatically, there is no deadline, and you choose
-          whether to convert.
+          {live
+            ? "Converting is optional and nothing converts automatically. You choose whether to convert."
+            : "As proposed, converting is optional: nothing converts automatically, there is no deadline, and you choose whether to convert."}
         </p>
       </header>
 
@@ -92,6 +108,15 @@ export function ConvertPanel({ state }: { state: ConversionState }) {
               </a>
             </p>
           </>
+        ) : state.status === "switch-access" ? (
+          <>
+            <SwitchAccessStep />
+            <p style={{ ...body, marginTop: "0.75rem" }}>
+              <a href={state.termsUrl} target="_blank" rel="noopener noreferrer">
+                Read the conversion terms
+              </a>
+            </p>
+          </>
         ) : (
           <p data-testid="convert-closed" style={body}>
             {state.status === "announced" ? ANNOUNCED_MESSAGE : DORMANT_MESSAGE}
@@ -99,13 +124,34 @@ export function ConvertPanel({ state }: { state: ConversionState }) {
         )}
       </Section>
 
-      <Section id="convert-access" title="Your access">
-        <p style={body}>
-          Today, platform access counts the $HermesOS in your verified wallet. Converting it, or moving it out of that
-          wallet, lowers that balance. The proposal is that existing holders keep their access and that keeping access
-          and converting stay separate decisions. The final terms will say how this works before conversion opens.
-        </p>
-      </Section>
+      {state.status === "dormant" ? (
+        <Section id="convert-access" title="Your access">
+          <p style={body}>
+            Today, platform access counts the $HermesOS in your verified wallet. Converting it, or moving it out of that
+            wallet, lowers that balance. The proposal is that existing holders keep their access and that keeping access
+            and converting stay separate decisions. The final terms will say how this works before conversion opens.
+          </p>
+        </Section>
+      ) : state.status === "announced" ? (
+        <Section id="convert-access" title="Your access">
+          <p style={body}>
+            Keeping access and converting tokens are separate decisions. Billing shows which token your tier counts.
+          </p>
+        </Section>
+      ) : state.status === "open" ? (
+        <Section id="convert-access" title="Your access">
+          {state.graceEndsAt ? (
+            <p style={body}>
+              You switched your access to $HIVRA. Until {formatUtc(state.graceEndsAt)}, holding either token keeps your
+              tier. After that, only $HIVRA counts.
+            </p>
+          ) : null}
+          <p style={body}>
+            Your tier counts $HIVRA. The $HIVRA you receive has to meet your tier&apos;s amount, so check what you will
+            receive before you convert. Billing shows your tier.
+          </p>
+        </Section>
+      ) : null}
 
       <Section id="convert-platform-wallet" title="Tokens in a Hivra wallet">
         <p style={body}>

@@ -34,7 +34,7 @@ function inputs(overrides: Partial<ConversionInputs> = {}): ConversionInputs {
     hivra: testHivraToken(),
     phase: "active",
     links: { termsUrl: TERMS, conversionUrl: CONVERT },
-    access: { canConvert: true },
+    access: { grandfathered: false, convertedAt: null, conversionGraceEndsAt: null },
     ...overrides,
   };
 }
@@ -43,7 +43,7 @@ describe("committed configuration", () => {
   it("ships with no conversion link, so the committed state can never be open", () => {
     expect(CONVERSION_LINKS).toEqual({ termsUrl: null, conversionUrl: null });
     // Holds before and after the registry's $HIVRA launch block is filled in.
-    expect(resolveConversionState(readConversionInputs({ canConvert: true })).status).not.toBe("open");
+    expect(resolveConversionState(readConversionInputs({ grandfathered: false, convertedAt: null, conversionGraceEndsAt: null })).status).not.toBe("open");
   });
 
   it("pins the exact hosts conversion and terms links may use", () => {
@@ -57,13 +57,14 @@ describe("resolveConversionState", () => {
     expect(resolveConversionState(inputs({ hivra: null, phase: "dormant" })).status).toBe("dormant");
   });
 
-  it("opens only when $HIVRA is live, both links are valid and the user's access counts $HIVRA", () => {
+  it("opens when $HIVRA is live, both links are valid and the user's tier counts $HIVRA", () => {
     expect(resolveConversionState(inputs())).toEqual({
       status: "open",
       hivraAddress: TEST_HIVRA,
       hivraPublishedAddress: TEST_HIVRA,
       termsUrl: TERMS,
       conversionUrl: CONVERT,
+      graceEndsAt: null,
     });
   });
 
@@ -71,12 +72,42 @@ describe("resolveConversionState", () => {
     ["$HIVRA is scheduled but not live", { phase: "scheduled" }],
     ["the terms are not published", { links: { termsUrl: null, conversionUrl: CONVERT } }],
     ["there is no conversion link", { links: { termsUrl: TERMS, conversionUrl: null } }],
-    ["the access engine is not wired", { access: null }],
-    ["the user's access does not count $HIVRA yet", { access: { canConvert: false } }],
+    ["the user's access can't be read", { access: null }],
   ])("stays closed (announced) when %s", (_label, overrides) => {
     const state = resolveConversionState(inputs(overrides));
     expect(state.status).toBe("announced");
     expect(state.status === "announced" && state.hivraPublishedAddress).toBe(TEST_HIVRA);
+  });
+
+  it("asks a grandfathered holder who hasn't switched to switch their access first, with no swap link", () => {
+    expect(resolveConversionState(inputs({ access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } }))).toEqual({
+      status: "switch-access",
+      hivraAddress: TEST_HIVRA,
+      hivraPublishedAddress: TEST_HIVRA,
+      termsUrl: TERMS,
+    });
+  });
+
+  it("opens for a grandfathered holder who has switched their access, carrying their grace end", () => {
+    expect(
+      resolveConversionState(
+        inputs({
+          access: {
+            grandfathered: true,
+            convertedAt: "2026-10-02T00:00:00.000Z",
+            conversionGraceEndsAt: "2026-10-05T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "open", graceEndsAt: "2026-10-05T00:00:00.000Z" });
+  });
+
+  it("never asks for the switch while links are missing", () => {
+    expect(
+      resolveConversionState(
+        inputs({ links: { termsUrl: TERMS, conversionUrl: null }, access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } }),
+      ).status,
+    ).toBe("announced");
   });
 
   it("keeps conversion closed and reports a conversion link on an unapproved host", () => {
