@@ -736,9 +736,9 @@ const BASE_MARKETING_COPY = {
         agentWallets: {
           ariaLabel: "Agent wallets",
           title: "Agent wallets.",
-          subtitle: "One wallet per agent · Bankr-managed · Base only",
+          subtitle: "One wallet per agent · Bankr · Base only",
           emptyNoAgents:
-            "Spin up your first agent and we'll provision a Bankr wallet for it automatically.",
+            "Launch an agent, then connect your own Bankr account to give it a wallet.",
           deployAgent: "Deploy an agent",
           runningEmpty: "Running agents will appear here.",
         },
@@ -1592,8 +1592,8 @@ const BASE_MARKETING_COPY = {
         agentWallets: {
           ariaLabel: "Agent 钱包",
           title: "Agent 钱包。",
-          subtitle: "每个 Agent 一个钱包 · Bankr 管理 · 仅限 Base",
-          emptyNoAgents: "启动第一个 Agent 后，我们会自动为它配置 Bankr 钱包。",
+          subtitle: "每个 Agent 一个钱包 · Bankr · 仅限 Base",
+          emptyNoAgents: "启动一个 Agent，然后连接你自己的 Bankr 账户，为它配置钱包。",
           deployAgent: "部署 Agent",
           runningEmpty: "运行中的 Agent 会显示在这里。",
         },
@@ -2491,8 +2491,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Billeteras de agentes",
           "title": "Billeteras de agentes.",
-          "subtitle": "Una billetera por agente · Gestionada por Bankr · Solo Base",
-          "emptyNoAgents": "Inicia tu primer agente y le aprovisionaremos una billetera Bankr automáticamente.",
+          "subtitle": "Una billetera por agente · Bankr · Solo Base",
+          "emptyNoAgents": "Inicia un agente y conecta tu propia cuenta de Bankr para darle una billetera.",
           "deployAgent": "Desplegar agente",
           "runningEmpty": "Los agentes en ejecución aparecerán aquí."
         }
@@ -3343,8 +3343,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Carteiras dos agentes",
           "title": "Carteiras dos agentes.",
-          "subtitle": "Uma carteira por agente · Gerenciada pela Bankr · Apenas Base",
-          "emptyNoAgents": "Crie seu primeiro agente e provisionaremos automaticamente uma carteira Bankr para ele.",
+          "subtitle": "Uma carteira por agente · Bankr · Apenas Base",
+          "emptyNoAgents": "Crie um agente e conecte sua própria conta Bankr para dar uma carteira a ele.",
           "deployAgent": "Criar um agente",
           "runningEmpty": "Agentes em execução aparecerão aqui."
         }
@@ -4195,8 +4195,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Portefeuilles des agents",
           "title": "Portefeuilles d’agents.",
-          "subtitle": "Un portefeuille par agent · Géré par Bankr · Base uniquement",
-          "emptyNoAgents": "Lancez votre premier agent et nous lui provisionnerons automatiquement un portefeuille Bankr.",
+          "subtitle": "Un portefeuille par agent · Bankr · Base uniquement",
+          "emptyNoAgents": "Lancez un agent, puis connectez votre propre compte Bankr pour lui donner un portefeuille.",
           "deployAgent": "Déployer un agent",
           "runningEmpty": "Les agents en cours d'exécution apparaîtront ici."
         }
@@ -5047,8 +5047,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Agent-Wallets",
           "title": "Agent-Wallets.",
-          "subtitle": "Eine Wallet pro Agent · Von Bankr verwaltet · Nur Base",
-          "emptyNoAgents": "Ersten Agenten starten und wir richten automatisch eine Bankr-Wallet dafür ein.",
+          "subtitle": "Eine Wallet pro Agent · Bankr · Nur Base",
+          "emptyNoAgents": "Starte einen Agenten und verbinde dann dein eigenes Bankr-Konto, um ihm eine Wallet zu geben.",
           "deployAgent": "Agent deployen",
           "runningEmpty": "Laufende Agenten erscheinen hier."
         }
@@ -5899,8 +5899,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "エージェントウォレット",
           "title": "エージェントウォレット。",
-          "subtitle": "エージェントごとに 1 つ · Bankr 管理 · Base のみ",
-          "emptyNoAgents": "最初のエージェントを起動すると、Bankr ウォレットが自動的にプロビジョニングされます。",
+          "subtitle": "エージェントごとに 1 つ · Bankr · Base のみ",
+          "emptyNoAgents": "エージェントを起動し、ご自身の Bankr アカウントを接続してウォレットを使えるようにします。",
           "deployAgent": "エージェントをデプロイ",
           "runningEmpty": "実行中のエージェントがここに表示されます。"
         }
@@ -6751,8 +6751,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "에이전트 지갑",
           "title": "에이전트 지갑.",
-          "subtitle": "에이전트당 하나 · Bankr 관리 · Base 전용",
-          "emptyNoAgents": "첫 번째 에이전트를 실행하면 Bankr 지갑이 자동으로 프로비저닝됩니다.",
+          "subtitle": "에이전트당 하나 · Bankr · Base 전용",
+          "emptyNoAgents": "에이전트를 실행한 뒤 내 Bankr 계정을 연결해 지갑을 설정하세요.",
           "deployAgent": "에이전트 배포",
           "runningEmpty": "실행 중인 에이전트가 여기에 표시됩니다."
         }

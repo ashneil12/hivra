@@ -28,6 +28,7 @@ import {
 } from "@/lib/billing/crypto-payment-sessions";
 import { getTokenVerificationWallet } from "@/lib/billing/token-holdings";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 
@@ -155,6 +156,12 @@ export async function POST(req: NextRequest) {
 
     return apiSuccess(serializeQuote(quote));
   } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) {
+      return apiError("Token price unavailable — please try again later.", 503, {
+        failureType: "deposit_quote_price_unavailable",
+        gate: error.gate,
+      });
+    }
     if (error instanceof TokenNotAllowedError) {
       return apiError(error.message, 403, {
         failureType: "token_not_allowed",

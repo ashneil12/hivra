@@ -30,6 +30,11 @@ jobs:
       - name: Reject tracked secrets, generated output, and scan bypasses
         run: node --test scripts/release/asset-provenance-evidence.test.mjs scripts/release/check-dashboard-public-artifact.test.mjs scripts/release/credential-reconciliation-evidence.test.mjs scripts/release/notice-source-offer-evidence.test.mjs scripts/release/public-release-metadata.test.mjs scripts/release/public-source-approval.test.mjs scripts/release/public-source-candidate.test.mjs scripts/release/public-tree-hygiene.test.mjs scripts/release/runtime-distribution-boundary.test.mjs scripts/release/source-third-party-provenance.test.mjs dashboard/scripts/test-public-source-bootstrap-e2e.test.mjs dashboard/scripts/test-self-host-recovery-e2e.test.mjs && python3 -I -B dashboard/scripts/test-runtime-receipt.py && node scripts/release/public-tree-hygiene.mjs
 
+      # Litepaper sources live outside dashboard/**, so Dashboard CI never sees
+      # them. The renderer imports link_policy from its own directory: no -I.
+      - name: Guard the litepaper render, approved wording and link policy
+        run: python3 -B docs/litepaper/build.py --check && python3 -B docs/litepaper/test_content.py && python3 -B docs/litepaper/test_link_policy.py
+
       - name: Guard standalone database bindings and recovery helpers
         run: node --test dashboard/scripts/hivra-self-host.test.mjs dashboard/scripts/hivra-self-host-docker.test.mjs dashboard/scripts/hivra-self-host-backup.test.mjs dashboard/scripts/hivra-self-host-storage.test.mjs
 

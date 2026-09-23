@@ -1739,13 +1739,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   color:var(--muted);
   min-width:0
 }
-#utility-access-to-nibbii {
-  border-left:2px solid var(--accent);
-  background:linear-gradient(115deg,#fb51480a,var(--surface) 65%)
-}
-#utility-access-to-nibbii h4 {
-  color:var(--accent)
-}
 #utility-containment-bounties {
   padding-block:55px
 }
@@ -2963,9 +2956,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     font-size:15px;
     line-height:1.85;
     padding-left:29px
-  }
-  #utility-access-to-nibbii {
-    padding-left:20px
   }
   #utility-containment-bounties {
     padding-block:35px
