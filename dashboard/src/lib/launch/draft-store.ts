@@ -42,6 +42,8 @@ export function createLaunchDraft(): LaunchDraft {
     windowsIsoSource: "unknown",
     windowsIsoDownload: null,
     windowsRightsAttested: false,
+    browser: false,
+    browserSource: "recommended",
     capacity: { mode: "hivra-managed", targetId: null },
     submittedDeployment: null,
     launchState: "idle",
@@ -178,6 +180,10 @@ function safeDraft(value: unknown): LaunchDraft | null {
       ? input.windowsIsoSource : "unknown",
     windowsIsoDownload,
     windowsRightsAttested: input.windowsRightsAttested === true,
+    // Drafts saved before this choice existed launched Codex with its browser
+    // sidecar. Restore that intent so an uncertain replay repeats it exactly.
+    browser: profileId === "codex" ? (typeof input.browser === "boolean" ? input.browser : true) : false,
+    browserSource: input.browserSource === "custom" ? "custom" : "recommended",
     capacity,
     submittedDeployment: safeSubmittedDeployment(input.submittedDeployment),
     launchState,

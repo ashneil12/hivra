@@ -71,21 +71,25 @@ function Harness({
   runtimeId = "codex",
   hints = [],
   preferSelfManaged = false,
+  managedAvailable = true,
   capacitySetupHref,
 }: {
   runtimeId?: string;
   hints?: string[];
   preferSelfManaged?: boolean;
+  managedAvailable?: boolean;
   capacitySetupHref?: string;
 }) {
   const state = useLaunchDestination(runtimeId, {
     handoff: parseLaunchTargetHandoff(hints),
     preferSelfManaged,
+    managedAvailable,
   });
   return (
     <>
       <DeploymentDestinationControl
         state={state}
+        managedAvailable={managedAvailable}
         runtimeName="Codex"
         capacitySetupHref={capacitySetupHref}
       />
@@ -150,6 +154,25 @@ describe("DeploymentDestinationControl", () => {
     await waitFor(() => expect(selfManaged).toBeEnabled());
     expect(selfManaged).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("deployment")).toHaveTextContent(`"targetId":"${TARGET.id}"`);
+  });
+
+  it("places a runtime Hivra Cloud cannot run on self-managed capacity even with no ready host", async () => {
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([]);
+    const view = render(<Harness managedAvailable={false} />);
+
+    const cloud = screen.getByRole("button", { name: /Hivra Cloud/i });
+    expect(cloud).toBeDisabled();
+    expect(cloud).toHaveAttribute("aria-pressed", "false");
+    expect(cloud).toHaveTextContent("Not available for Codex.");
+    expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ready hosts" })).toBeEnabled());
+    expect(screen.getByTestId("deployment")).toHaveTextContent("null");
+
+    // The forced placement is derived, so a managed-capable runtime keeps the
+    // owner's own (default) Hivra Cloud choice.
+    view.rerender(<Harness managedAvailable />);
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("deployment")).toHaveTextContent('{"mode":"hivra-managed"}');
   });
 
   it("defaults a standalone installation to its connected host and removes Hivra Cloud", async () => {

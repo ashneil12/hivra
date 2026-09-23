@@ -270,6 +270,39 @@
   background: rgba(255, 255, 255, 0.02);
 }
 
+.browserToggle {
+  margin-top: 0.7rem;
+  border: 1px solid var(--etched-border);
+  padding: 0.8rem 1rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+
+.browserToggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0.1rem 0 0;
+  accent-color: var(--launch-accent);
+}
+
+.browserToggle input:focus-visible {
+  outline: 2px solid var(--launch-accent);
+  outline-offset: 3px;
+}
+
+.browserToggle span { min-width: 0; display: grid; gap: 0.3rem; }
+.browserToggle strong { font-size: 0.86rem; }
+
+.browserToggle small {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 .recommendation > svg { color: #22c55e; }
 .recommendation strong { font-size: 0.82rem; }
 
@@ -518,6 +551,30 @@
 .blocker a { color: inherit; margin-top: 0.25rem; }
 .blocker strong, .blocker span { overflow-wrap: anywhere; }
 .blocker a { display: inline-flex; align-items: center; min-height: 44px; }
+
+.blocker .blockerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.1rem;
+}
+
+.blockerActions button {
+  min-height: 44px;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-top: 0.25rem;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.blockerActions button:focus-visible {
+  outline: 2px solid var(--launch-accent);
+  outline-offset: 3px;
+}
 
 .review {
   margin: 1.4rem 0 0;

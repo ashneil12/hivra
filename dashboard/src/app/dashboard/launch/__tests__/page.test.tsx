@@ -91,6 +91,18 @@ const PAID_PLAN = {
   usage: { agentCount: 0, usedCpu: 0, usedRam: 0 },
 };
 
+const FREE_PLAN = {
+  subscribed: false,
+  name: "Free",
+  key: "free",
+  maxAgents: 1,
+  maxCpuPerAgent: 0.5,
+  maxRamPerAgent: 1,
+  poolCpu: 0.5,
+  poolRam: 1,
+  usage: { agentCount: 0, usedCpu: 0, usedRam: 0 },
+};
+
 const PROVIDER_TARGET: DeploymentTargetDto = {
   ...PROXMOX_TARGET,
   lastErrorCode: null,
@@ -287,6 +299,7 @@ describe("LaunchPage", () => {
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Recommended · 1.5 CPU / 3 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
     expect(screen.getByText("Use Hivra Cloud, or choose a compatible host you have connected.")).toBeInTheDocument();
     expect(screen.getByText(/Reserved CPU counts against your pool/)).toBeInTheDocument();
     expect(screen.getByText("Resources")).toBeInTheDocument();
@@ -305,6 +318,7 @@ describe("LaunchPage", () => {
     expect(within(review).getByText("Uses the included Operator plan allowance.")).toBeInTheDocument();
     expect(within(review).getByText("Creates one isolated VM and installs the Codex runtime.")).toBeInTheDocument();
     expect(within(review).getByText(/ChatGPT sign-in happens inside Codex/i)).toBeInTheDocument();
+    expect(within(review).getByText("On · Codex can use a web browser on its computer")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
 
@@ -713,18 +727,167 @@ describe("LaunchPage", () => {
     expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
   });
 
-  it("ends plan preflight with an actionable blocker when managed capacity cannot be verified", async () => {
-    fetchPlanStrictMock.mockRejectedValue(new Error("Plan service unavailable"));
+  it("ends plan preflight with a Check again action that re-runs the managed plan check", async () => {
+    fetchPlanStrictMock.mockRejectedValueOnce(new Error("Plan service unavailable"));
     render(<LaunchPage />);
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseResource("Agent");
     chooseProfile("Codex");
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Managed capacity could not be verified. Refresh before launching.",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Managed capacity could not be verified.");
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "Review plans" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expect(screen.queryByText("Managed capacity could not be verified.")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
+    expect(screen.getByText("Recommended · 1.5 CPU / 3 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+  });
+
+  it("launches Codex without a browser at the base floor on a Free plan", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseResource("Agent");
+    chooseProfile("Codex");
+
+    const browser = screen.getByRole("checkbox", { name: /Browser for Codex/ });
+    expect(browser).not.toBeChecked();
+    expect(browser).toHaveAccessibleName(expect.stringContaining("1.5 CPU / 3 GB with the browser, or 0.5 CPU / 1 GB without it"));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expect(screen.getByText("Recommended · 0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+
+    const review = screen.getByLabelText("Launch review");
+    expect(within(review).getByText("Off · Codex runs without a browser")).toBeInTheDocument();
+    expect(within(review).getByText("0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
+    expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex", cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1, browser: false,
+      deployment: { mode: "hivra-managed" },
+    }));
+  });
+
+  it("states the browser shortfall with real choices and lets the owner turn the browser off", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    const blocker = screen.getByRole("alert");
+    expect(blocker).toHaveTextContent("Codex with a browser needs 1.5 CPU / 3 GB. Your Free plan includes 0.5 CPU / 1 GB.");
+    expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+    expect(within(blocker).getByRole("link", { name: "Review plans" })).toHaveAttribute("href", "/dashboard/billing?from=launch");
+    expect(within(blocker).getByRole("link", { name: "Set up your own capacity" })).toHaveAttribute(
+      "href",
+      "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
+    );
+    expect(screen.queryByText(/does not have enough remaining capacity/)).not.toBeInTheDocument();
+
+    fireEvent.click(within(blocker).getByRole("button", { name: "Turn off the browser" }));
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Recommended · 0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB")).toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
+  });
+
+  it("keeps the browser on for paid plans and lowers the recommendation when it is turned off", async () => {
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    const browser = screen.getByRole("checkbox", { name: /Browser for Codex/ });
+    await waitFor(() => expect(browser).toBeChecked());
+    expect(within(screen.getByLabelText("Reserved CPU")).queryByRole("button", { name: "0.5 CPU" })).not.toBeInTheDocument();
+
+    fireEvent.click(browser);
+    expect(browser).not.toBeChecked();
+    expect(screen.getByText("Recommended · 0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toBeEnabled();
+    fireEvent.click(browser);
+    expect(screen.getByText("Recommended · 1.5 CPU / 3 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    fireEvent.click(browser);
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "codex", cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1, browser: false,
+    })));
+  });
+
+  it("applies the plan-derived browser default when the plan resolves after Codex is chosen", async () => {
+    let resolvePlan: (plan: typeof PAID_PLAN) => void = () => undefined;
+    fetchPlanStrictMock.mockReturnValue(new Promise(resolve => { resolvePlan = resolve; }));
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseResource("Agent");
+    chooseProfile("Codex");
+    expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).not.toBeChecked();
+    expect(await screen.findByText("Checking your managed plan…")).toBeInTheDocument();
+
+    resolvePlan(PAID_PLAN);
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked());
+    expect(screen.getByText("Recommended · 1.5 CPU / 3 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
+  });
+
+  it("opens Linux Sandbox on the owner's infrastructure and offers host setup instead of plans", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseResource("Computer");
+    chooseProfile("Linux Sandbox");
+
+    const cloud = screen.getByRole("button", { name: /Hivra Cloud/i });
+    expect(cloud).toBeDisabled();
+    expect(cloud).toHaveAttribute("aria-pressed", "false");
+    expect(cloud).toHaveTextContent("Not available for Linux Sandbox.");
+    expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true");
+    const blocker = await screen.findByRole("alert");
+    expect(blocker).toHaveTextContent("Linux Sandbox requires a compatible gVisor host you connected.");
+    expect(within(blocker).getByRole("link", { name: "Set up capacity" })).toHaveAttribute(
+      "href",
+      "/dashboard/infrastructure?launch=linux-terminal&returnTo=unified-launch",
+    );
+    expect(screen.queryByRole("link", { name: "Review plans" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+  });
+
+  it("selects a ready gVisor host for Linux Sandbox without a destination click", async () => {
+    infrastructureTargets = [GVISOR_TARGET];
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseResource("Computer");
+    chooseProfile("Linux Sandbox");
+
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    expect(within(screen.getByLabelText("Launch review")).getByText(GVISOR_TARGET.displayName)).toBeInTheDocument();
+  });
+
+  it("describes computers honestly without implying an agent can be attached later", async () => {
+    render(<LaunchPage />);
+    expect(await screen.findByText("An agent gets its own computer. A computer runs on its own, without an agent.")).toBeInTheDocument();
+    expect(screen.queryByText(/attach/i)).not.toBeInTheDocument();
+    chooseResource("Computer");
+    expect(screen.getByText(
+      "The operating system defines this computer. A computer runs without an agent. To use an agent, launch an Agent — it gets its own computer.",
+    )).toBeInTheDocument();
+    expect(screen.queryByText(/attach/i)).not.toBeInTheDocument();
   });
 
   it("blocks missing capacity and safely resumes an uncertain submission with the same receipt", async () => {

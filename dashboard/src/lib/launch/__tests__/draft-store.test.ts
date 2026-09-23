@@ -57,6 +57,31 @@ describe("launch draft storage", () => {
     });
   });
 
+  it("round-trips the Codex browser choice and restores older Codex drafts with the browser on", () => {
+    const draft = {
+      ...createLaunchDraft(),
+      resourceKind: "agent" as const,
+      profileId: "codex" as const,
+      browser: false,
+      browserSource: "custom" as const,
+    };
+    writeLaunchDraft(draft);
+    expect(readLaunchDraft()).toMatchObject({ browser: false, browserSource: "custom" });
+
+    // Drafts written before the choice existed were launched with the browser.
+    const legacy: Record<string, unknown> = { ...draft, launchState: "uncertain" };
+    delete legacy.browser;
+    delete legacy.browserSource;
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy));
+    expect(readLaunchDraft()).toMatchObject({ browser: true, browserSource: "recommended", launchState: "uncertain" });
+
+    // Only Codex has a browser sidecar.
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify({
+      ...legacy, resourceKind: "computer", profileId: "ubuntu-desktop", browser: true,
+    }));
+    expect(readLaunchDraft()?.browser).toBe(false);
+  });
+
   it("persists resumable ISO task metadata without persisting a signed URL", () => {
     const draft = {
       ...createLaunchDraft(),

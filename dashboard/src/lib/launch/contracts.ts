@@ -68,6 +68,10 @@ export type LaunchDraft = {
   windowsIsoSource: WindowsIsoSource;
   windowsIsoDownload: WindowsIsoDownloadDraft | null;
   windowsRightsAttested: boolean;
+  /** Codex's browser sidecar. Always false for profiles without one. */
+  browser: boolean;
+  /** "recommended" follows the plan-derived default until the owner chooses. */
+  browserSource: "recommended" | "custom";
   capacity: LaunchCapacityChoice;
   submittedDeployment: LaunchDeploymentSnapshot | null;
   launchState: LaunchState;
@@ -94,6 +98,7 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
   managedCapacity: "plan" | "entitlement-required" | "self-managed-only";
   defaultName: string;
   recommended: LaunchResources;
+  /** Selectable sizes; the journey hides those below the active floor. */
   cpuOptions: readonly number[];
   ramOptions: readonly number[];
 }> = {
@@ -105,8 +110,9 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     managedCapacity: "plan",
     defaultName: "MY_CODEX_AGENT",
     recommended: { ...recommendedResourceEnvelope("codex"), source: "recommended" },
-    cpuOptions: [1.5, 2, 4, 8],
-    ramOptions: [3, 4, 8, 16],
+    // The lower sizes are reachable only with the browser sidecar off.
+    cpuOptions: [0.5, 1, 1.5, 2, 4, 8],
+    ramOptions: [1, 2, 3, 4, 8, 16],
   },
   "ubuntu-desktop": {
     resourceKind: "computer",
