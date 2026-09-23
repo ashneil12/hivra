@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 
 import {
+  getConfiguredHivraToken,
   isHivraActive,
   isPlatformTokenKey,
   platformTokenByKey,
@@ -34,7 +35,7 @@ function fetchPaymentToken(userId: string): Promise<PlatformToken | null> {
     })
     .catch(() => null)
     .then((resolved) => {
-      if (!resolved) answers.delete(userId);
+      if (!resolved && answers.get(userId)?.token === token) answers.delete(userId);
       return resolved;
     });
   answers.set(userId, { at: Date.now(), token });
@@ -49,8 +50,20 @@ export function _resetPaymentTokenForTests() {
 export function usePaymentToken(): PlatformToken {
   const { userId } = useAuth();
   const [answer, setAnswer] = useState<{ userId: string; token: PlatformToken } | null>(null);
+  // A page opened before the activation instant re-renders (and asks) at it.
+  const [activeNow, setActiveNow] = useState(() => isHivraActive());
   useEffect(() => {
-    if (!userId || !isHivraActive()) return;
+    if (activeNow) return;
+    const at = getConfiguredHivraToken()?.activatesAt?.getTime();
+    if (!at) return;
+    // setTimeout caps at ~24.8 days; a later instant is picked up on reload.
+    const delay = at - Date.now();
+    if (delay > 2_147_000_000) return;
+    const timer = window.setTimeout(() => setActiveNow(true), Math.max(0, delay) + 1_000);
+    return () => window.clearTimeout(timer);
+  }, [activeNow]);
+  useEffect(() => {
+    if (!userId || !activeNow || !isHivraActive()) return;
     let cancelled = false;
     void fetchPaymentToken(userId).then((resolved) => {
       if (!cancelled && resolved) setAnswer({ userId, token: resolved });
@@ -58,7 +71,7 @@ export function usePaymentToken(): PlatformToken {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, activeNow]);
   // Read at render: the fallback follows the activation instant, and an
   // answer only ever applies to the user it was fetched for.
   return answer && answer.userId === userId ? answer.token : primaryPlatformToken();

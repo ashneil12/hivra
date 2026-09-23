@@ -4,7 +4,7 @@
  * this user (a grandfathered user keeps $HermesOS). While dormant, nothing is
  * requested and the label is $HermesOS.
  */
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 
 const mockLaunch = { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" };
 jest.mock("@/lib/billing/hivra-token-launch", () => ({
@@ -85,4 +85,24 @@ it("never shares one user's answer with another user", async () => {
   const { result } = renderHook(() => usePaymentTokenUnit());
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   expect(result.current).toBe("$HIVRA");
+});
+
+it("asks at the activation instant when the page was opened before it", async () => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+  try {
+    const activatesAt = new Date(Date.now() + 60_000);
+    Object.assign(mockLaunch, { ...ACTIVE, activatesAt: activatesAt.toISOString().slice(0, 19) + "Z" });
+    const fetchMock = answer("hermesos");
+    global.fetch = fetchMock as never;
+    const { result } = renderHook(() => usePaymentTokenUnit());
+    expect(result.current).toBe("$HermesOS");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => {
+      jest.advanceTimersByTime(62_000);
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current).toBe("$HermesOS"));
+  } finally {
+    jest.useRealTimers();
+  }
 });

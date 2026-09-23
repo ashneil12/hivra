@@ -1207,7 +1207,7 @@ describe("BillingPage", () => {
       "Base network only.",
       "Send the exact amount in one transfer.",
       "Prices lock for 20 minutes.",
-      "Token payments are final.",
+      "Token payments are final, except where the law gives you a right to cancel.",
       "Yearly access doesn't renew automatically.",
     ]) {
       expect(screen.getByText(rule)).toBeInTheDocument();
