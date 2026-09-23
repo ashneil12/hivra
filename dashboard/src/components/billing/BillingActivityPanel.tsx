@@ -261,12 +261,15 @@ export function BillingActivityPanel({
   error,
   variants,
   managedVeniceBriefLimit = null,
+  showOverflowLink = true,
 }: {
   activity: BillingActivityData | null;
   loading: boolean;
   error: string | null;
   variants: Variants;
   managedVeniceBriefLimit?: number | null;
+  /** Set false when the surrounding page already links to the full activity view. */
+  showOverflowLink?: boolean;
 }) {
   const { copy } = useLocale();
   const activityCopy = copy.dashboard.billing.activity;
@@ -461,7 +464,7 @@ export function BillingActivityPanel({
                     }
                   />
                 ))}
-                {managedVeniceOverflowCount > 0 && (
+                {showOverflowLink && managedVeniceOverflowCount > 0 && (
                   <a href="/dashboard/billing/activity" className={styles.moreLink}>
                     View all activity ({managedVeniceOverflowCount} more)
                     <ArrowRight size={12} aria-hidden="true" />

@@ -16,6 +16,7 @@ export function HistoryTab({ c, variants }: { c: BillingController; variants: Va
         error={c.activityError}
         variants={variants}
         managedVeniceBriefLimit={5}
+        showOverflowLink={false}
       />
       <div>
         <Link href="/dashboard/billing/activity" className={`${styles.button} ${styles.secondary}`}>
