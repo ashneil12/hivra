@@ -6,9 +6,10 @@ import {
   refreshVerifiedHermesTokenHoldings,
 } from "@/lib/billing/token-holdings";
 import {
-  fetchLatestHermesSnapshotsByUser,
+  fetchLatestPlatformTokenBalancesByUser,
   fetchLatestVvvSnapshotsByUser,
 } from "@/lib/billing/token-holding-snapshots";
+import { resolveTokenAccessForUsers } from "@/lib/billing/token-access";
 import {
   evaluateAndRecordTokenTierEligibility,
   type EligibilityResult,
@@ -75,7 +76,8 @@ export async function GET(req: NextRequest) {
       .filter((r) => r.status === "refreshed")
       .map((r) => r.userId);
 
-    const balanceByUser = await fetchLatestHermesSnapshotsByUser(refreshedUserIds);
+    const balancesByUser = await fetchLatestPlatformTokenBalancesByUser(refreshedUserIds);
+    const accessByUser = await resolveTokenAccessForUsers(refreshedUserIds);
 
     const transitions: EligibilitySummary[] = [];
     const eligibilityWarnings: string[] = [];
@@ -93,13 +95,14 @@ export async function GET(req: NextRequest) {
       const batch = refreshedUserIds.slice(i, i + BATCH_SIZE);
       const evalResults = await Promise.allSettled(
         batch.map(async (userId) => {
-          const balance = balanceByUser.get(userId);
-          if (balance === undefined) return null;
+          const balances = balancesByUser.get(userId);
+          if (!balances) return null;
           const evaluation = await evaluateAndRecordTokenTierEligibility({
             userId,
-            currentBalance: balance,
+            balances,
+            access: accessByUser.get(userId),
           });
-          return { userId, balance, evaluation };
+          return { userId, balances, evaluation };
         })
       );
 
@@ -118,15 +121,14 @@ export async function GET(req: NextRequest) {
           continue;
         }
         if (!r.value) continue;
-        const { evaluation, balance } = r.value;
+        const { evaluation } = r.value;
         evaluated += 1;
-        if (!evaluation.configured) {
-          // Surface the missing-thresholds warning once per cron tick rather
-          // than per user — same warning text repeats N times otherwise.
-          if (eligibilityWarnings.length === 0) {
-            eligibilityWarnings.push(...evaluation.warnings);
+        // Surface each distinct warning (e.g. a price outage that skipped new
+        // thresholds) once per cron tick rather than once per user.
+        for (const warning of evaluation.warnings) {
+          if (warning.startsWith("Live ") && !eligibilityWarnings.includes(warning)) {
+            eligibilityWarnings.push(warning);
           }
-          continue;
         }
         const userTransitions = summariseEligibility(userId, evaluation);
         transitions.push(...userTransitions);
@@ -140,7 +142,8 @@ export async function GET(req: NextRequest) {
               userId: t.userId,
               tier: t.tier,
               transition: t.transition,
-              currentBalance: balance,
+              // The balance of the token this tier is held in.
+              currentBalance: (t.tier === "pro" ? evaluation.pro : evaluation.power)?.balance ?? 0n,
               evaluation,
             }).catch((err) => {
               log.warn("token holding eligibility email dispatch failed", {
