@@ -5,8 +5,11 @@
  *   1. Loops over every verified wallet via refreshVerifiedHermesTokenHoldings()
  *      (existing helper — pulls live balance from Base RPC, writes
  *      token_holding_snapshots).
- *   2. For each user, derives the new tier from the strongest entitlement:
+ *   2. For each user, derives the new tier from the strongest entitlement,
+ *      in resolveEffectiveSubscription's order:
  *        - active Stripe sub → skip (handleSubscriptionChange owns this)
+ *        - Apple IAP sub in an access status (active/trialing/grace_period) → its plan
+ *        - live yearly $HermesOS Power / Pro subscription → "fleet" / "operator"
  *        - currently_eligible token Power qualification → "fleet"
  *        - currently_eligible token Pro qualification   → "operator"
  *        - balance >= 1 Hivra token                  → "token_base"
@@ -47,6 +50,13 @@ import {
   type TierKey,
 } from "@/lib/services/tier-specs";
 import { fetchVeniceBoostEligibleUsers } from "@/lib/billing/venice-compute-boost";
+import { APPLE_ACCESS_STATUSES } from "@/lib/billing/apple-products";
+import {
+  YEARLY_LIVE_STATUSES,
+  pickEntitledYearlySubscription,
+  yearlyTierPlanKey,
+  type YearlyEntitlementRow,
+} from "@/lib/billing/yearly-entitlement";
 
 // SCRIPTURE_ANCHOR: cron-season | Ecclesiastes 3:1 | Verse: For everything there is a season, and a time for every purpose under heaven.
 // Grace period: a user whose balance dropped below the threshold doesn't get
@@ -210,7 +220,56 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     }
   }
 
-  // (e) Venice compute-boost eligibility (holds ≥ $199 VVV). Drives the
+  // (e) Apple IAP subscriptions. The App Store lane keeps its own table and
+  //     never writes hermes_subscriptions, so without this read an Apple-only
+  //     subscriber looked like a lapsed holder here and was live-resized down
+  //     to credit_base every tick, undoing the tier the Apple webhook applied.
+  //     Only access-granting statuses count, as in resolveEffectiveSubscription;
+  //     'past_due' (retry with no grace), 'expired' and 'revoked' fall through.
+  const applePlanByUser = new Map<string, string>();
+  if (userIds.length > 0) {
+    const { data: appleRows, error: appleErr } = await db
+      .from("apple_iap_subscriptions")
+      .select("user_id, plan")
+      .in("user_id", userIds)
+      .in("status", [...APPLE_ACCESS_STATUSES]);
+    if (appleErr) {
+      return apiError(`Apple subscription scan failed: ${appleErr.message}`, 500);
+    }
+    for (const row of (appleRows ?? []) as Array<{ user_id: string; plan: string }>) {
+      if (isPaidTier(row.plan)) applePlanByUser.set(row.user_id, row.plan);
+    }
+  }
+
+  // (f) Live yearly $HermesOS subscriptions. A yearly payment is swept out of
+  //     the wallet, so a yearly-only subscriber usually has no qualification
+  //     and a below-threshold snapshot. Without this read the loop below
+  //     treated them as a lapsed holder and live-resized their paid instances
+  //     down to credit_base on every tick, while createInstance (via
+  //     resolveEffectiveSubscription) kept provisioning them at the paid tier.
+  const yearlyByUser = new Map<string, YearlyEntitlementRow>();
+  if (userIds.length > 0) {
+    const { data: yearlyRows, error: yearlyErr } = await db
+      .from("yearly_token_subscriptions")
+      .select("user_id, tier, expires_at, paid_at")
+      .in("user_id", userIds)
+      .in("status", [...YEARLY_LIVE_STATUSES]);
+    if (yearlyErr) {
+      return apiError(`Yearly subscription scan failed: ${yearlyErr.message}`, 500);
+    }
+    const rowsByUser = new Map<string, YearlyEntitlementRow[]>();
+    for (const row of (yearlyRows ?? []) as Array<YearlyEntitlementRow & { user_id: string }>) {
+      const rows = rowsByUser.get(row.user_id) ?? [];
+      rows.push(row);
+      rowsByUser.set(row.user_id, rows);
+    }
+    for (const [userId, rows] of rowsByUser) {
+      const entitled = pickEntitledYearlySubscription(rows);
+      if (entitled) yearlyByUser.set(userId, entitled);
+    }
+  }
+
+  // (g) Venice compute-boost eligibility (holds ≥ $199 VVV). Drives the
   //     +1 vCPU / +2 GB effective-spec bump, but ONLY on paid tiers
   //     (resolveEffectiveTierSpec enforces that). Read as a batch so the
   //     per-user loop below stays round-trip-free.
@@ -228,6 +287,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     const currentTier = tierByUser.get(userId) ?? "credit_base";
     const currentSpec = specByUser.get(userId);
     const qual = qualByUser.get(userId);
+    const applePlan = applePlanByUser.get(userId);
+    const yearly = yearlyByUser.get(userId);
     const boost = boostByUser.has(userId);
 
     // Stripe-paid users are managed by handleSubscriptionChange, which owns
@@ -257,6 +318,15 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     if (paidStripe) {
       desiredTier = tierFromPlanKey(sub!.plan);
       reason = `cron: stripe plan ${sub!.plan} (boost re-apply)`;
+    } else if (applePlan) {
+      desiredTier = tierFromPlanKey(applePlan);
+      reason = `cron: apple iap plan ${applePlan}`;
+    } else if (yearly) {
+      // Yearly sits after paid Stripe and Apple and before token holdings,
+      // exactly as in resolveEffectiveSubscription. Its own 'grace' status
+      // covers the days after expires_at, so no snapshot grace applies here.
+      desiredTier = tierFromPlanKey(yearlyTierPlanKey(yearly.tier));
+      reason = `cron: yearly $HermesOS ${yearly.tier} subscription`;
     } else if (qual) {
       desiredTier = qual;
       reason = `cron: token-tier qualification ${qual === "fleet" ? "power" : "pro"}`;
