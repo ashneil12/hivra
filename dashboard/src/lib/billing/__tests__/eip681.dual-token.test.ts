@@ -11,6 +11,8 @@ import { hermesosTransferUri } from "@/lib/billing/eip681";
 import { HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 
 const DEPOSIT = "0x000000000000000000000000000000000000fEeD";
+// The test $HIVRA contract from the mocked launch block, lower-cased.
+const HIVRA_CONTRACT = "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf";
 
 describe("wallet links name the quote's own token", () => {
   it("links a $HIVRA quote to the $HIVRA contract", () => {
@@ -18,7 +20,7 @@ describe("wallet links name the quote's own token", () => {
       hermesosTransferUri({
         tokenSymbol: "HIVRA",
         tokenDecimals: 18,
-        tokenAddress: "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf",
+        tokenAddress: HIVRA_CONTRACT,
         depositAddress: DEPOSIT,
         amountRaw: "5",
       })
@@ -40,7 +42,7 @@ describe("wallet links name the quote's own token", () => {
   it("gives no link for an unregistered token or mismatched decimals", () => {
     const base = { tokenSymbol: "HIVRA", depositAddress: DEPOSIT, amountRaw: "5" };
     expect(hermesosTransferUri({ ...base, tokenDecimals: 18, tokenAddress: "0x3333333333333333333333333333333333333333" })).toBeNull();
-    expect(hermesosTransferUri({ ...base, tokenDecimals: 6, tokenAddress: "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" })).toBeNull();
+    expect(hermesosTransferUri({ ...base, tokenDecimals: 6, tokenAddress: HIVRA_CONTRACT })).toBeNull();
     // A $HIVRA symbol with no address is never guessed.
     expect(hermesosTransferUri({ ...base, tokenDecimals: 18 })).toBeNull();
   });
