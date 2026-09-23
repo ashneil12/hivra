@@ -28,10 +28,10 @@ import {
 import {
   refreshPrimaryHermesTokenHolding,
   getLatestHermesTokenHoldingSnapshot,
-  qualifiesForHermesBaseTier,
   VVV_TOKEN_ADDRESS,
 } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { qualifiesForTokenBaseTier, resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { evaluateAndRecordVeniceComputeBoost } from "@/lib/billing/venice-compute-boost";
 import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -93,12 +93,13 @@ export async function POST() {
         { failureType: "wallet_unlock_no_wallet" }
       );
     }
-    const hermesBalanceRaw = BigInt(refresh.snapshot.balanceRaw);
+    const balances = refresh.balances;
+    const access = await resolveUserTokenAccess(userId);
 
     // ── 2. $HERMESOS tier eligibility ──────────────────────────────────
     let hermesEvaluated = false;
     try {
-      await evaluateAndRecordTokenTierEligibility({ userId, currentBalance: hermesBalanceRaw });
+      await evaluateAndRecordTokenTierEligibility({ userId, balances, access });
       hermesEvaluated = true;
     } catch (err) {
       log.warn("unlock: hermes eligibility eval failed", {
@@ -140,7 +141,7 @@ export async function POST() {
     let desiredTier: TierKey;
     if (sub && isPaidTier(sub.plan)) {
       desiredTier = tierFromPlanKey(sub.plan);
-    } else if (qualifiesForHermesBaseTier(refresh.snapshot.balanceRaw)) {
+    } else if (qualifiesForTokenBaseTier(access, balances)) {
       desiredTier = "token_base";
     } else {
       desiredTier = "credit_base";

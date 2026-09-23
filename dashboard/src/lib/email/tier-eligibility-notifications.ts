@@ -75,7 +75,7 @@ function buildEmailContent(params: SendParams): EmailContent | null {
   const qualifyingStr = tierEval.qualifyingQuantity
     ? formatTokenAmount(tierEval.qualifyingQuantity)
     : "—";
-  const thresholdStr = formatTokenAmount(tierEval.threshold);
+  const thresholdStr = tierEval.threshold !== null ? formatTokenAmount(tierEval.threshold) : "the current threshold";
 
   if (params.transition === "qualified") {
     return {

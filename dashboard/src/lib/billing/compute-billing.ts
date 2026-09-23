@@ -8,7 +8,7 @@ import {
 } from "@/lib/billing/credits";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { powerOnServer, shutdownServer } from "@/lib/hetzner/client";
-import { getLatestHermesTokenHoldingSnapshot } from "@/lib/billing/token-holdings";
+import { getLatestAccessTokenHoldingSnapshot } from "@/lib/billing/token-access";
 import {
   getProxmoxInfrastructure,
   getProxmoxHostRoutingConfigFromInfrastructure,
@@ -76,7 +76,7 @@ type ComputeStartExecutor = (instance: BillableCreditInstanceRow) => Promise<{
   ok: boolean;
   error?: string;
 }>;
-type TokenSnapshotReader = typeof getLatestHermesTokenHoldingSnapshot;
+type TokenSnapshotReader = typeof getLatestAccessTokenHoldingSnapshot;
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_HOURLY_CREDITS = 100;
@@ -923,7 +923,7 @@ export async function billHourlyComputeUsage(params: {
         instance,
         now,
         gracePeriodHours,
-        readTokenSnapshot: params.readTokenSnapshot ?? getLatestHermesTokenHoldingSnapshot,
+        readTokenSnapshot: params.readTokenSnapshot ?? getLatestAccessTokenHoldingSnapshot,
         pauseCompute: params.pauseCompute ?? pauseComputeForCreditInstance,
       });
       results.push(result);
@@ -954,7 +954,7 @@ export async function billHourlyComputeUsage(params: {
         db: admin,
         instance,
         now,
-        readTokenSnapshot: params.readTokenSnapshot ?? getLatestHermesTokenHoldingSnapshot,
+        readTokenSnapshot: params.readTokenSnapshot ?? getLatestAccessTokenHoldingSnapshot,
         startCompute: params.startCompute ?? startComputeForCreditInstance,
       });
       results.push(result);
