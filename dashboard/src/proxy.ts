@@ -2,14 +2,14 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { isProtectedPath, PROTECTED_ROUTE_MATCHERS } from "@/lib/protected-routes";
 import { isHostedBillingPath } from "@/lib/self-host/hosted-surface-guard";
-import { isCanaryHost } from "@/lib/seo-host";
+import { isNoIndexHost } from "@/lib/seo-host";
 
 const requiresAuth = createRouteMatcher(PROTECTED_ROUTE_MATCHERS);
 
 export default clerkMiddleware(async (auth, request) => {
-  const canaryHost = isCanaryHost(request.headers.get("host"));
+  const noIndexHost = isNoIndexHost(request.headers.get("host"));
   const response = NextResponse.next();
-  if (canaryHost) {
+  if (noIndexHost) {
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
   }
 
@@ -23,7 +23,7 @@ export default clerkMiddleware(async (auth, request) => {
           { status: 404 },
         )
       : NextResponse.redirect(new URL("/dashboard", request.url));
-    if (canaryHost) {
+    if (noIndexHost) {
       blockedResponse.headers.set("X-Robots-Tag", "noindex, nofollow");
     }
     return blockedResponse;
