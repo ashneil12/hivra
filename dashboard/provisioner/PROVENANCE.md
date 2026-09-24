@@ -513,6 +513,31 @@ existing guest, and a reducing resize remains available on an already
 overcommitted host. Inventory and per-guest status errors fail closed, and an
 uncapped QEMU guest's CPU maximum counts every configured socket.
 
+Release `2026.09.24.2` builds on `2026.09.24.1` and keeps agent work running
+and visible across refreshes, closed tabs, gateway restarts and updates.
+Every terminal tab (the agent terminal on every runtime and the Box Terminal)
+runs in its own private tmux session slot, and both ttyd units use
+`KillMode=process`, so a closed tab or a ttyd restart detaches instead of
+ending the shell; the gateway lists and closes those sessions for the dashboard.
+The agent terminal runs the exact Claude Code / Codex binary the chat gateway
+runs and never another vendor's CLI. The vetted CLI versions ship as
+`agent-cli-versions.json`; vendor self-updaters are off (`DISABLE_AUTOUPDATER=1`
+and Codex's `check_for_update_on_startup = false` via
+`hivra-codex-config-pin.py`, only when unset), and `hivra-agent-cli-update.sh`
+moves the CLI to the vetted version in the background once no chat run is in
+flight, verifying it and restoring the previous package on failure. Surface
+sign-ins are saved as digests bound to the box token, so a gateway restart
+keeps them, and `/api/meta` advertises the store's epoch as `bootId`. The
+runtime updater now updates in place (only `bux-hivra-chat` restarts) and also
+refreshes both terminal units, the CLI pins and helpers, and `hivra-tg-apply`,
+which restarts the Telegram bot when a new token or pairing is applied. The
+computer's own chat page uses detached runs; the Aeon fork sync never discards
+the owner's git work; Agent Zero gets a stop grace that fits the host's
+shutdown budget; the DeepSeek native broker renews its upstream session without
+a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. This source release does
+not deploy, install, or establish Canary acceptance.
+
 Release `2026.09.24.1` builds on `2026.09.22.2` and makes agent chat turns
 survive the browser going away. `hivra-chat/chat-runs.cjs` runs each turn under
 a detached runner that owns the Claude Code/Codex CLI and records its stream and
