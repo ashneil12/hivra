@@ -254,7 +254,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("203.0.113.10")).toBeInTheDocument();
   });
 
-  it("sends an empty legacy dashboard to the current welcome flow", async () => {
+  it("sends an empty legacy dashboard to Launch", async () => {
     global.fetch = jest.fn((input: RequestInfo | URL) => {
       const url = String(input);
 
@@ -322,7 +322,7 @@ describe("DashboardPage", () => {
     render(<DashboardPage />);
 
     await waitFor(() => {
-      expect(replaceMock).toHaveBeenCalledWith("/dashboard/welcome");
+      expect(replaceMock).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1");
     });
     expect(global.fetch).not.toHaveBeenCalledWith("/api/hivra/agents");
   });
@@ -780,7 +780,7 @@ describe("DashboardPage", () => {
     expect(pushMock).toHaveBeenCalledWith("/dashboard/billing?managedVenice=deposit&wallet=hermesos");
   });
 
-  it("offers a Deploy an agent action when the Command Center v2 pilot has no agents", async () => {
+  it("offers Launch when the Command Center v2 pilot has no agents", async () => {
     global.fetch = jest.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/features/command-center-v2") return commandCenterV2FlagResponse(true);
@@ -792,11 +792,11 @@ describe("DashboardPage", () => {
 
     render(<DashboardPage />);
 
-    expect(await screen.findByText("No agents are deployed yet.")).toBeInTheDocument();
-    const cta = screen.getByRole("link", { name: /deploy an agent/i });
-    expect(cta).toHaveAttribute("href", "/dashboard/welcome");
+    expect(await screen.findByText("No agents yet.")).toBeInTheDocument();
+    const cta = screen.getByRole("link", { name: /launch an agent/i });
+    expect(cta).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
     fireEvent.click(cta);
-    expect(pushMock).toHaveBeenCalledWith("/dashboard/welcome");
+    expect(pushMock).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1");
     expect(replaceMock).not.toHaveBeenCalled();
   });
 

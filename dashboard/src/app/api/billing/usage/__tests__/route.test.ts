@@ -213,6 +213,99 @@ describe("GET /api/billing/usage", () => {
     });
   });
 
+  describe("an account without a plan", () => {
+    // resolveEffectiveSubscription reads hermes_subscriptions, then
+    // apple_iap_subscriptions (both .maybeSingle()); the plan-on-hold read is
+    // the third .maybeSingle(). The Hermes lane ends at the second .not(),
+    // the Hivra lane at .or().
+    function noEffectivePlan(row: Record<string, unknown> | null) {
+      mockSupabaseQuery.maybeSingle
+        .mockResolvedValueOnce({ data: row, error: null })
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: row, error: null });
+    }
+
+    it("names a paid plan that holds the account after its payment failed, so Free isn't offered over it", async () => {
+      noEffectivePlan({
+        plan: "operator",
+        status: "past_due",
+        instance_limit: 3,
+        total_cpu_budget: 2,
+        total_ram_budget: 4096,
+        current_period_end: null,
+        stripe_subscription_id: "sub_live_123",
+        grace_period_ends_at: "2026-01-01T00:00:00.000Z",
+      });
+      const res = await GET();
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.subscribed).toBe(false);
+      expect(body.data.plan).toBeNull();
+      expect(body.data.usage).toBeNull();
+      expect(body.data.planOnHold).toEqual({
+        key: "operator",
+        name: "Pro",
+        status: "past_due",
+        reason: "payment_overdue",
+        billingPortal: true,
+      });
+    });
+
+    it("names a paid plan whose slots dunning took, even in good standing", async () => {
+      noEffectivePlan({
+        plan: "fleet",
+        status: "active",
+        instance_limit: 0,
+        total_cpu_budget: 0,
+        total_ram_budget: 0,
+        current_period_end: null,
+        stripe_subscription_id: null,
+        grace_period_ends_at: null,
+      });
+      const body = await (await GET()).json();
+      expect(body.data.planOnHold).toMatchObject({ key: "fleet", reason: "no_slots", billingPortal: false });
+    });
+
+    it("reports no hold for a new account, or for a paid plan that ended", async () => {
+      noEffectivePlan(null);
+      expect((await (await GET()).json()).data.planOnHold).toBeNull();
+      noEffectivePlan({ plan: "operator", status: "canceled", instance_limit: 3, total_cpu_budget: 2, total_ram_budget: 4096, current_period_end: null, stripe_subscription_id: "sub_1", grace_period_ends_at: null });
+      expect((await (await GET()).json()).data.planOnHold).toBeNull();
+    });
+
+    it("reports what the account already runs on Hivra Cloud, counted like a plan's meters", async () => {
+      noEffectivePlan(null);
+      mockSupabaseQuery.not.mockReturnValueOnce(mockSupabaseQuery).mockResolvedValueOnce({
+        data: [
+          { id: "h-run", name: "Hermes", status: "running", cpu_limit: 1, ram_limit: 2048 },
+          { id: "h-dead", name: "Old", status: "error", cpu_limit: 2, ram_limit: 4096 },
+        ],
+        error: null,
+      });
+      mockSupabaseQuery.or.mockResolvedValueOnce({
+        data: [{ id: "a-stop", name: "Codex", status: "stopped", cpu: 0.5, ram: 1, type: "codex" }],
+        error: null,
+      });
+      const body = await (await GET()).json();
+
+      expect(body.data.usage).toBeNull();
+      expect(body.data.managedUsage).toEqual({ agentCount: 2, usedCpu: 1.5, usedRam: 3072 });
+    });
+
+    it("leaves out what the account runs when it can't be read, instead of reporting nothing", async () => {
+      noEffectivePlan(null);
+      mockSupabaseQuery.or.mockResolvedValueOnce({ data: null, error: { code: "08006", message: "private database detail" } });
+      const res = await GET();
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.subscribed).toBe(false);
+      expect(body.data).not.toHaveProperty("managedUsage");
+      expect(JSON.stringify(body)).not.toContain("private database detail");
+    });
+  });
+
   it("uses the resolved database entitlement limits in the usage payload", async () => {
     (getCreditSummary as jest.Mock).mockResolvedValueOnce({
       balance: 1250,

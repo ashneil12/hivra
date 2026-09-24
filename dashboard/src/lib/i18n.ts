@@ -471,7 +471,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "Best Fit",
       planGuidance: {
         free:
-          "Free is best for trying Hermes with one guarded starter agent. It sleeps after 4 idle days to keep costs down — a tap brings it back. Most users can launch without a card; higher-risk free-tier deploys may need card verification first.",
+          "Free is best for trying one small agent on Hivra Cloud. It sleeps after 4 idle days to keep costs down — a tap brings it back. Most users can launch without a card; some free launches need a card check first.",
         operator:
           "Pro is best for solo builders and daily drivers — your agent stays always-on (never paused for inactivity) with room for three running at once.",
         fleet:
@@ -1337,7 +1337,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "最佳适合",
       planGuidance: {
         free:
-          "Free 适合用一个受保护的 Agent 先试用 Hermes。大多数用户无需银行卡即可启动；风险较高的免费部署可能需要先完成银行卡验证。",
+          "Free 适合先在 Hivra Cloud 上试用一个小型 Agent。大多数用户无需银行卡即可启动；部分免费启动需要先完成银行卡验证。",
         operator:
           "Pro 适合独立开发者、黑客松项目，以及想快速上线一个 Agent 的用户。",
         fleet:

@@ -112,6 +112,30 @@ export type LaunchFitEvidence = {
 const PLAN_UNCHECKED: LaunchFit = { label: "Couldn't check your plan", tone: "neutral" };
 const SERVERS_UNCHECKED: LaunchFit = { label: "Couldn't check your servers", tone: "neutral" };
 
+/** Why Hivra Cloud is closed to an account whose paid plan holds it without
+ * granting anything, and what settles it. "unconfirmed": turning Free on
+ * found a paid plan billing didn't describe. `subject` names what the owner
+ * wants to run, when there is one. */
+export type PlanHold =
+  | { reason: "payment_overdue" | "no_slots"; planName: string }
+  | { reason: "unconfirmed" };
+
+export function planHoldMessage(hold: PlanHold, subject: string | null = null): string {
+  const run = subject ? `to run ${subject} on Hivra Cloud` : "to launch on Hivra Cloud";
+  if (hold.reason === "payment_overdue") {
+    return `Your ${hold.planName} plan is on hold because a payment didn't go through. Update your payment in Billing ${run}.`;
+  }
+  if (hold.reason === "no_slots") {
+    return `Your ${hold.planName} plan has no agent slots right now. Check it in Billing ${run}.`;
+  }
+  return `Your account has a paid plan that isn't active right now, so Free can't be turned on. Check your plan in Billing ${run}.`;
+}
+
+/** The Billing link a plan hold offers. */
+export function planHoldAction(hold: PlanHold): string {
+  return hold.reason === "payment_overdue" ? "Update payment" : "Open Billing";
+}
+
 export function isPaidPlan(plan: PlanInfo | null): boolean {
   return Boolean(plan?.subscribed && plan.key !== "free");
 }
@@ -218,9 +242,17 @@ export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence
   }
   if (subject.hivraCloud === "plan") {
     if (!evidence.planChecked) return null;
+    // A paid plan on hold runs nothing on Hivra Cloud until it is settled.
+    const hold = evidence.plan?.onHold;
+    if (hold) {
+      if (subject.ownServer && evidence.targetsLoading) return null;
+      if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
+      return { label: `${hold.name} plan on hold`, tone: "needs" };
+    }
     const cloud = hivraCloudFit(subject, evidence.plan);
     const planName = evidence.plan?.name ?? "";
-    if (cloud === "full") return { label: `Fits your ${planName} plan`, tone: "fits" };
+    // A plan not turned on yet isn't the owner's plan: "Fits Free".
+    if (cloud === "full") return { label: evidence.plan?.needsActivation ? `Fits ${planName}` : `Fits your ${planName} plan`, tone: "fits" };
     if (cloud === "without-browser") return { label: `Fits ${planName} without a browser`, tone: "fits" };
     if (subject.ownServer && evidence.targetsLoading) return null;
     if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
@@ -509,15 +541,27 @@ export function costSummary({
   substrate,
   planName,
   modelNote = null,
+  planPending = false,
+  planOnHold = null,
 }: {
   profileId: LaunchProfileId;
   substrate: LaunchSubstrate;
   planName: string | null;
   /** How model usage is paid, when it isn't set up inside the agent. */
   modelNote?: string | null;
+  /** The account has no plan yet; the Free plan is turned on before launch. */
+  planPending?: boolean;
+  /** A paid plan holds the account but is on hold until it is settled. */
+  planOnHold?: string | null;
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
   if (profileId === "omarchy") return "Nothing is bought. It uses a prepared preview computer.";
+  if (substrate === "hivra-cloud" && planOnHold) {
+    return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
+  }
+  if (substrate === "hivra-cloud" && planPending) {
+    return withModel("No charge. It runs on the Free plan, which you turn on before launching.");
+  }
   if (substrate === "hivra-cloud" && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);
   }

@@ -49,6 +49,8 @@ import {
   type PlanInfo,
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
+import { requestSubscriptionCheckout } from "@/lib/billing/client";
+import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
@@ -115,6 +117,8 @@ import {
   matchingSizePreset,
   ownCapacityLabel,
   parseLaunchArrival,
+  planHoldAction,
+  planHoldMessage,
   recommendedLaunchSize,
   sameLaunchSize,
   sizeLabel,
@@ -126,10 +130,25 @@ import {
   type LaunchArrival,
   type LaunchFit,
   type LaunchFitEvidence,
+  type PlanHold,
   type SizeLimits,
   type SizePreset,
 } from "@/lib/launch/launch-plan";
 import { launchResourcePolicy } from "@/lib/launch/resource-envelope";
+import {
+  captureLaunchEvent,
+  captureLaunchEventOnce,
+  launchErrorMessage,
+  launchEventContext,
+  launchFailureStage,
+  type LaunchFunnelEvent,
+} from "@/lib/launch/launch-telemetry";
+import {
+  loadLaunchTemplate,
+  safeTemplateRef,
+  type LaunchTemplate,
+  type LaunchTemplateLookup,
+} from "@/lib/launch/launch-template";
 import { PLANS } from "@/lib/subscription/plans";
 
 import styles from "./LaunchJourney.module.css";
@@ -517,6 +536,20 @@ function elapsedSince(at: number, now: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/** Records a funnel moment once it is on screen, once per key: later
+ * renders with the same key describe the same moment. */
+function FunnelMoment({ momentKey, event, properties }: {
+  momentKey: string;
+  event: LaunchFunnelEvent;
+  properties: Record<string, unknown>;
+}) {
+  useEffect(() => {
+    captureLaunchEventOnce(momentKey, event, properties);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the moment, not on each render's copy of its properties
+  }, [momentKey]);
+  return null;
+}
+
 function FitBadge({ fit }: { fit: LaunchFit | null }) {
   if (!fit) return <em className={styles.fitBadge} data-tone="checking">Checking fit…</em>;
   return <em className={styles.fitBadge} data-tone={fit.tone}>{fit.label}</em>;
@@ -613,6 +646,15 @@ export function LaunchJourney() {
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [planChecked, setPlanChecked] = useState(false);
   const [planCheckRevision, setPlanCheckRevision] = useState(0);
+  // Turning the Free plan on from the launch: its own button, never implied.
+  // "paid-plan-found": billing refused Free because a paid plan holds the
+  // account; the plan is read again to show which, and how to settle it.
+  const [freeActivation, setFreeActivation] = useState<
+    { state: "idle" | "activating" | "activated" | "paid-plan-found" } | { state: "failed"; message: string }
+  >({ state: "idle" });
+  // The first-run funnel's "activation page" is Launch for an account with
+  // no plan; recorded once per visit.
+  const activationViewRecordedRef = useRef(false);
   const [existingNames, setExistingNames] = useState<string[] | null>(null);
   const [whereExpanded, setWhereExpanded] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -681,6 +723,27 @@ export function LaunchJourney() {
   const startParam = searchParams?.get("start") ?? null;
   const draftParam = searchParams?.get("draft") ?? null;
   const upgradedParam = searchParams?.get("upgraded") ?? null;
+  // "Start from a template": the template's own agent, under its name.
+  const templateParam = safeTemplateRef(searchParams?.get("template"));
+  const templateTokenParam = safeTemplateRef(searchParams?.get("templateToken"));
+  const [templateLookup, setTemplateLookup] = useState<{ ref: string; result: LaunchTemplateLookup | null } | null>(null);
+  const [templateLookupRevision, setTemplateLookupRevision] = useState(0);
+  useEffect(() => {
+    if (!templateParam) {
+      setTemplateLookup(null);
+      return;
+    }
+    let active = true;
+    setTemplateLookup({ ref: templateParam, result: null });
+    void loadLaunchTemplate(templateParam, templateTokenParam).then(result => {
+      if (active) setTemplateLookup({ ref: templateParam, result });
+    });
+    return () => { active = false; };
+  }, [templateParam, templateTokenParam, templateLookupRevision]);
+  // Settled for the template this link names; null while it loads.
+  const templateResult = templateParam && templateLookup?.ref === templateParam ? templateLookup.result : null;
+  const linkedTemplate: LaunchTemplate | null = templateResult?.status === "found" ? templateResult.template : null;
+  const templateProblem = templateResult && templateResult.status !== "found" ? templateResult : null;
   // Read on arrival and kept: the journey's own history writes drop these
   // params, and the draft and notice they describe must not change with them.
   const [arrival, setArrival] = useState<LaunchArrival | null>(() => parseLaunchArrival(draftParam, upgradedParam));
@@ -815,14 +878,17 @@ export function LaunchJourney() {
   // for the signed-in owner, whose drafts are the only ones it may read.
   useEffect(() => {
     if (ownerId === undefined) return;
+    // A template link decides once the template has been read.
+    if (templateParam && !templateResult) return;
     const stored = readLaunchDraft(ownerId);
-    const requestedProfile = isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null;
+    const requestedProfile = linkedTemplate?.profileId
+      ?? (isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null);
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
       const details = PROFILE_DETAILS[requestedProfile];
-      const name = defaultLaunchName(requestedProfile, []);
-      autoNameRef.current = { launchRequestId: next.launchRequestId, name };
+      const name = linkedTemplate?.name ?? defaultLaunchName(requestedProfile, []);
+      if (!linkedTemplate?.name) autoNameRef.current = { launchRequestId: next.launchRequestId, name };
       return {
         ...next,
         stage: "plan",
@@ -830,6 +896,7 @@ export function LaunchJourney() {
         profileId: requestedProfile,
         name,
         resources: { ...details.recommended },
+        template: linkedTemplate ? { id: linkedTemplate.id, name: linkedTemplate.name } : null,
       };
     };
     let initial: LaunchDraft;
@@ -840,7 +907,8 @@ export function LaunchJourney() {
       // Back from an upgrade this draft started.
       initial = stored;
     } else if (startParam === "1" || requestedProfile) {
-      if (isUnfinishedLaunchDraft(stored) && startParam !== "1" && stored.profileId === requestedProfile) {
+      if (isUnfinishedLaunchDraft(stored) && startParam !== "1" && stored.profileId === requestedProfile
+        && (stored.template?.id ?? null) === (linkedTemplate?.id ?? null)) {
         initial = stored;
       } else if (isUnfinishedLaunchDraft(stored)) {
         setDraft(null);
@@ -859,7 +927,7 @@ export function LaunchJourney() {
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [ownerId, requestedProfileParam, returningDraftId, startParam, targetValuesKey]);
+  }, [linkedTemplate, ownerId, requestedProfileParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
 
   useEffect(() => {
     let active = true;
@@ -929,6 +997,12 @@ export function LaunchJourney() {
       });
     return () => { active = false; };
   }, [planCheckRevision]);
+
+  useEffect(() => {
+    if (selfHosted || !planChecked || !plan?.needsActivation || activationViewRecordedRef.current) return;
+    activationViewRecordedRef.current = true;
+    captureLaunchEvent("activation_page_viewed", { plan: "free", authState: "signed_in" });
+  }, [plan, planChecked, selfHosted]);
 
   // Hivra credits pay for models; the balance decides whether Hermes starts on
   // them and whether the credits choice can be picked at all.
@@ -1071,6 +1145,59 @@ export function LaunchJourney() {
     setPlanChecked(false);
     setPlanCheckRevision(value => value + 1);
   };
+
+  // A new account turns the Free plan on here, with its own button. Nothing
+  // is bought; the plan is read again afterwards and only then counts.
+  const activateFree = async () => {
+    if (freeActivation.state === "activating") return;
+    setFreeActivation({ state: "activating" });
+    captureLaunchEvent("activation_started", { plan: "free", authState: "signed_in" });
+    const result = await requestSubscriptionCheckout("free");
+    if (result.ok) {
+      captureLaunchEvent("activation_dashboard_reached", { plan: "free", destination: "/dashboard/launch", outcome: "free_plan_activated" });
+      setFreeActivation({ state: "activated" });
+      recheckPlan();
+      return;
+    }
+    if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
+      // A paid plan holds the account, so Free isn't turned on over it. Read
+      // the plan again: it shows as active, or as on hold with the way to
+      // settle it. Nothing here says Free is on.
+      captureLaunchEvent("activation_dashboard_reached", { plan: "free", destination: "/dashboard/launch", outcome: "active_subscription" });
+      setFreeActivation({ state: "paid-plan-found" });
+      recheckPlan();
+      return;
+    }
+    captureLaunchEvent("activation_failed", {
+      plan: "free",
+      stage: "free_plan_activation",
+      failureType: result.reason ?? "subscribe_request_failed",
+      errorCategory: result.status >= 500 || result.status === 0 ? "server" : "request",
+      status: result.status,
+      recoverable: true,
+    });
+    // Launch's own words: this step takes no payment, whatever the billing
+    // client calls a request it couldn't complete.
+    setFreeActivation({ state: "failed", message: "Couldn't turn on the Free plan. Nothing was charged. Try again in a moment." });
+  };
+  // Said once the plan read back shows it, never from the click alone.
+  const planActiveAfterActivation = (freeActivation.state === "activated" || freeActivation.state === "paid-plan-found")
+    && planChecked && plan && !plan.needsActivation && !plan.onHold;
+  const freeActiveNotice = planActiveAfterActivation ? (
+    <div className={styles.notice} role="status">
+      <Check size={16} aria-hidden />
+      <span>{`${plan.name} is active.`}</span>
+    </div>
+  ) : null;
+  // A paid plan holds the account without granting anything: billing said
+  // so, or turning Free on found one billing didn't describe. Hivra Cloud
+  // waits until it is settled in Billing; the owner's servers don't.
+  const planHold: PlanHold | null = selfHosted || !planChecked || !plan ? null
+    : plan.onHold ? { reason: plan.onHold.reason, planName: plan.onHold.name }
+      : plan.needsActivation && freeActivation.state === "paid-plan-found" ? { reason: "unconfirmed" }
+        : null;
+  const billingSettleHref = (launchRequestId: string) =>
+    `/dashboard/billing?tab=overview&returnTo=${encodeURIComponent(launchReturnPath(launchRequestId))}`;
 
   // Back from an upgrade: say what the plan is now, from the plan itself,
   // never from the URL that brought the owner here. The URL only names the
@@ -1238,7 +1365,9 @@ export function LaunchJourney() {
 
   let capacityBlocker: string | null = null;
   // The real next steps a managed blocker can offer.
-  let blockerRemedy: "check-plan" | "managed-plan" | null = null;
+  let blockerRemedy: "check-plan" | "managed-plan" | "activate-free" | "settle-plan" | null = null;
+  // Which paywall a managed-plan blocker is, for the upgrade funnel.
+  let paywall: "paid_profile" | "agent_limit" | "capacity" | "browser" | null = null;
   let offerBrowserOff = false;
   // A size blocker can offer the preset that runs here instead.
   let offerFittingPreset = false;
@@ -1271,15 +1400,27 @@ export function LaunchJourney() {
   else if (draft.profileId === "windows" && (!draft.windowsIsoEvidence || !selectedWindowsImage)) capacityBlocker = "Refresh and choose the exact host-observed Windows ISO again.";
   else if (draft.profileId === "windows" && !draft.windowsRightsAttested) capacityBlocker = "Confirm your Windows installation and use rights before review.";
   else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !planChecked) capacityBlocker = "Checking your managed plan…";
+  else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && planHold) {
+    // Nothing else can open Hivra Cloud until the plan is settled: not Free,
+    // not a smaller size, not turning the browser off.
+    capacityBlocker = planHoldMessage(planHold, currentProfile?.name ?? null);
+    blockerRemedy = "settle-plan";
+  }
   else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !plan?.usage) {
     capacityBlocker = "Managed capacity could not be verified.";
     blockerRemedy = "check-plan";
   } else if (destination.mode === "hivra-managed" && !managedPlanAllowed) {
     capacityBlocker = `${currentProfile?.name ?? "This launch"} needs a paid plan on Hivra Cloud, or a server you connected.`;
     blockerRemedy = "managed-plan";
+    paywall = "paid_profile";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && atSlotLimit) {
-    capacityBlocker = "Your current plan has no open agent slots.";
+    // An account without a plan yet is told what Free would hold, from what
+    // it already runs there, instead of about a plan it doesn't have.
+    capacityBlocker = plan?.needsActivation && plan.usage
+      ? `The Free plan runs ${plan.maxAgents === 1 ? "one agent or computer" : `${plan.maxAgents} agents or computers`} on Hivra Cloud, and your account already has ${plan.usage.agentCount} there.`
+      : "Your current plan has no open agent slots.";
     blockerRemedy = "managed-plan";
+    paywall = "agent_limit";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !managedFits && plan?.usage) {
     capacityBlocker = managedCapacityShortfall(
       browserOn ? `${currentProfile?.name ?? "This launch"} with a browser` : currentProfile?.name ?? "This launch",
@@ -1288,13 +1429,47 @@ export function LaunchJourney() {
       { ...plan, usage: plan.usage },
     );
     blockerRemedy = "managed-plan";
+    paywall = "capacity";
     offerBrowserOff = browserOn && planCanFit(plan, resourcesWithBrowser(false), poolExempt);
     offerFittingPreset = true;
   } else if (destination.mode === "hivra-managed" && browserOn && !isPaidPlan(plan)) {
     capacityBlocker = `${currentProfile?.name ?? "This agent"} with a browser needs a paid plan on Hivra Cloud.`;
     blockerRemedy = "managed-plan";
+    paywall = "browser";
     offerBrowserOff = true;
+  } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && plan?.needsActivation) {
+    // It fits Free. Free is turned on by the owner, with its own button.
+    capacityBlocker = `Turn on the Free plan to run ${currentProfile?.name ?? "it"} on Hivra Cloud. Free includes ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for one ${draft.resourceKind ?? "agent"} and costs nothing.`;
+    blockerRemedy = "activate-free";
   }
+  const recordUpgradeClick = (via: "plan_blocker" | "free_activation") => {
+    captureLaunchEvent("upgrade_clicked", {
+      ...launchEventContext(draft),
+      via,
+      paywall,
+      from_plan: plan?.needsActivation ? null : plan?.key ?? null,
+      to_plan: upgrade?.key ?? null,
+    });
+  };
+  // The upgrade funnel's paywall moments, recorded once per launch when the
+  // blocker is first on screen. A Free account out of agent slots is also
+  // the free-limit moment the welcome flow reported.
+  const paywallMoments = paywall && draft.stage === "plan" && !destination.loading ? (
+    <>
+      <FunnelMoment
+        momentKey={`paywall:${draft.launchRequestId}:${paywall}`}
+        event="paywall_viewed"
+        properties={{ ...launchEventContext(draft), paywall, from_plan: plan?.needsActivation ? null : plan?.key ?? null, to_plan: upgrade?.key ?? null }}
+      />
+      {paywall === "agent_limit" && !isPaidPlan(plan) ? (
+        <FunnelMoment
+          momentKey={`free_limit:${draft.launchRequestId}`}
+          event="free_limit_hit"
+          properties={{ ...launchEventContext(draft), limit_type: "agents", from_plan: "free", to_plan: upgrade?.key ?? null }}
+        />
+      ) : null}
+    </>
+  ) : null;
 
   // ── Model access ──
   // Codex on the owner's server takes a model key only when that server said
@@ -1507,7 +1682,26 @@ export function LaunchJourney() {
     });
   };
 
-  const accept = (submitted: LaunchDraft, created: { id: string; name: string; status: string }) => {
+  const accept = (
+    submitted: LaunchDraft,
+    created: { id: string; name: string; status: string },
+    outcome: "accepted" | "found_on_check",
+  ) => {
+    const context = {
+      ...launchEventContext(submitted),
+      deploymentMode: submitted.submittedDeployment?.mode ?? null,
+    };
+    captureLaunchEvent("launch_request_accepted", { ...context, agentId: created.id, acceptedStatus: created.status, outcome });
+    // Hivra agents and computers report readiness from the server once they
+    // answer. Hermes' instance lane has no such report, so its funnel step is
+    // recorded here, when Hivra accepts the launch, as the welcome flow did.
+    if (submitted.profileId === "hermes") {
+      captureLaunchEvent("activation_instance_ready", {
+        ...context,
+        hasInstanceId: true,
+        outcome: outcome === "accepted" ? "created_instance" : "recovered_existing_instance",
+      });
+    }
     const accepted = {
       ...submitted,
       stage: "launch" as const,
@@ -1520,6 +1714,60 @@ export function LaunchJourney() {
     setDraft(accepted);
     // The launch has the key now; the page lets go of it.
     setPastedKey(null);
+  };
+
+  // What a launch that didn't go ahead tells the first-run funnel, in the
+  // fields the welcome flow sent (stage, failureType, errorCategory,
+  // errorMessage, recoverable). A lost answer is not a failure: nothing is
+  // known yet, so it is reported as uncertain.
+  const recordLaunchFailure = (submitting: LaunchDraft, context: Record<string, unknown>, error: unknown) => {
+    const stage = launchFailureStage(submitting);
+    if (error instanceof LaunchCorrectableError && error.action?.kind === "verify-card") {
+      captureLaunchEvent("activation_card_required", context);
+      captureLaunchEvent("paywall_viewed", { ...context, paywall: "card_required" });
+      return;
+    }
+    if (error instanceof HivraLaunchCorrectableError) {
+      if (error.code === "FREE_INSTANCE_LIMIT_REACHED") {
+        const existing = error instanceof LaunchCorrectableError && error.action?.kind === "open" ? error.action.href : null;
+        captureLaunchEvent("free_limit_hit", {
+          ...context,
+          limit_type: "agents",
+          from_plan: "free",
+          to_plan: "operator",
+          has_existing_instance: Boolean(existing),
+        });
+      }
+      captureLaunchEvent("activation_failed", {
+        ...context,
+        stage,
+        failureType: error.code ?? "launch_needs_change",
+        errorCategory: "needs_change",
+        errorMessage: launchErrorMessage(error, [submitting.name]),
+        status: error.status,
+        recoverable: true,
+      });
+      return;
+    }
+    if (error instanceof HivraLaunchRejectedError) {
+      captureLaunchEvent("activation_failed", {
+        ...context,
+        stage,
+        failureType: "launch_rejected",
+        errorCategory: "rejected",
+        errorMessage: launchErrorMessage(error, [submitting.name]),
+        status: error.status,
+        serverFailureType: error.code ?? null,
+        recoverable: true,
+      });
+      return;
+    }
+    captureLaunchEvent("launch_outcome_uncertain", {
+      ...context,
+      stage,
+      errorMessage: launchErrorMessage(error, [submitting.name]),
+      resumeMode: submitting.profileId ? launchResumeMode(submitting.profileId) : null,
+    });
   };
 
   const submit = async () => {
@@ -1548,6 +1796,8 @@ export function LaunchJourney() {
     setDraft(submitting);
     setObservation(null);
     setReconcileNote(null);
+    const eventContext = { ...launchEventContext(submitting), deploymentMode: submissionDeployment.mode };
+    captureLaunchEvent("activation_instance_requested", { ...eventContext, resumed: resumingUncertain });
     // A pasted key the owner saved is referred to from then on, so a resumed
     // or corrected launch never needs it typed again.
     let savedKeyId: string | null = null;
@@ -1565,8 +1815,9 @@ export function LaunchJourney() {
           setSavedKeys(keys => [...keys.filter(key => key.provider !== saved.provider), saved]);
         },
       });
-      accept(withSavedKey(submitting), created);
+      accept(withSavedKey(submitting), created, "accepted");
     } catch (error) {
+      recordLaunchFailure(submitting, eventContext, error);
       if (error instanceof HivraLaunchRejectedError) {
         const failed = withSavedKey({ ...submitting, launchState: "failed" as const, error: error.message });
         writeLaunchDraft(failed, storageOwner);
@@ -1605,7 +1856,7 @@ export function LaunchJourney() {
     setReconcileNote(null);
     try {
       const found = await reconcileLaunchDraft(draft);
-      if (found) accept(draft, found);
+      if (found) accept(draft, found, "found_on_check");
       else setReconcileNote(`Hivra can't see ${draft.name.trim()} yet. If you launched it a while ago and it still isn't here, start a new launch.`);
     } catch (error) {
       if (error instanceof HivraLaunchCorrectableError) {
@@ -1641,7 +1892,16 @@ export function LaunchJourney() {
       {destination.mode === "self-managed" ? <Link href={capacitySetupHref}>Set up capacity</Link>
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
-          <Link href={upgradeHref}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
+          <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
+          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+        </> : blockerRemedy === "activate-free" ? <>
+          <button type="button" onClick={() => void activateFree()} disabled={freeActivation.state === "activating"}>
+            {freeActivation.state === "activating" ? "Turning on Free…" : "Turn on Free"}
+          </button>
+          <Link href={upgradeHref} onClick={() => recordUpgradeClick("free_activation")}>See paid plans</Link>
+          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+        </> : blockerRemedy === "settle-plan" && planHold ? <>
+          <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
           <Link href={capacitySetupHref}>Set up your own capacity</Link>
         </> : null}
     </span>
@@ -1730,7 +1990,9 @@ export function LaunchJourney() {
     : destination.selectedTarget?.displayName
       ?? (destination.loading ? "Checking your servers…" : "No server selected");
   const whereDetail = destination.mode === "hivra-managed" && !selfHosted
-    ? plan ? `${plan.name} plan` : null
+    ? planHold?.reason === "unconfirmed" ? "Paid plan · not active"
+      : plan?.onHold ? `${plan.onHold.name} plan · on hold`
+        : plan ? plan.needsActivation ? `${plan.name} plan · not turned on yet` : `${plan.name} plan` : null
     : destination.selectedTarget ? (selfHosted ? selfHostedTargetLabel : ownCapacityLabel(substrate)) : null;
   const sizeSummary = currentProfile?.sizing === "fixed"
     ? `${draft.resources.cpu} CPU / ${draft.resources.ram} GB · fixed size`
@@ -1750,6 +2012,8 @@ export function LaunchJourney() {
     substrate,
     planName: plan?.name ?? null,
     modelNote: modelCostNote(draft.profileId, draft.modelAccess),
+    planPending: Boolean(plan?.needsActivation) && !planHold,
+    planOnHold: planHold ? planHold.reason === "unconfirmed" ? "paid" : planHold.planName : null,
   }) : "";
   const whatItCanUse = draft.profileId ? capabilitySummary(draft.profileId, { browser: browserOn }) : "";
   const launchLabel = draft.profileId === "windows" ? "Start Windows setup" : `Launch ${currentProfile?.name ?? ""}`.trim();
@@ -1894,6 +2158,34 @@ export function LaunchJourney() {
             <p>Pick an agent or a computer. Hivra suggests where it runs and how big it is, and you review everything before anything starts.</p>
           </div>
           {upgradeNotice}
+          {freeActiveNotice}
+          {templateProblem ? (
+            <div className={styles.blocker} role="alert">
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{templateProblem.message}</strong>
+                {templateProblem.status === "failed" ? (
+                  <span className={styles.blockerActions}>
+                    <button type="button" onClick={() => setTemplateLookupRevision(value => value + 1)}>Try again</button>
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
+          {planHold ? (
+            <div className={styles.blocker} role="alert">
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{planHoldMessage(planHold)}</strong>
+                <span className={styles.blockerActions}>
+                  <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
+                </span>
+              </span>
+            </div>
+          ) : planChecked && plan?.needsActivation && !selfHosted ? (
+            <div className={styles.notice} role="status">
+              <Cloud size={16} aria-hidden />
+              <span>{`The Free plan runs one agent or computer with ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} on Hivra Cloud at no cost. You turn it on before you launch.`}</span>
+            </div>
+          ) : null}
           {planChecked && !plan?.usage && !selfHosted ? (
             <div className={styles.blocker} role="alert">
               <AlertTriangle size={16} aria-hidden />
@@ -1903,6 +2195,9 @@ export function LaunchJourney() {
             </div>
           ) : null}
           {requestedKindParam === "computer" ? [computerSection, agentSection] : [agentSection, computerSection]}
+          <p className={styles.chooseAside}>
+            Saved an agent as a template? <Link href="/dashboard/templates">Start from a template</Link>
+          </p>
           {footer(null, false)}
         </section>
       ) : null}
@@ -1919,6 +2214,13 @@ export function LaunchJourney() {
                 : "Hivra picked where it runs and how big it is. Change anything, then review before anything starts."}</p>
           </div>
           {upgradeNotice}
+          {freeActiveNotice}
+          {draft.template ? (
+            <div className={styles.notice} role="status">
+              <Check size={16} aria-hidden />
+              <span>{`Starting from the template “${draft.template.name ?? currentProfile.name}”. Its focus, personality and skills come with it.`}</span>
+            </div>
+          ) : null}
           <div className={styles.planCard} role="group" aria-label="Launch plan">
             <label className={`${styles.planRow} ${styles.nameField}`}>
               <span className={styles.planLabel}>{draft.resourceKind === "computer" ? "Computer name" : "Agent name"}</span>
@@ -2137,6 +2439,13 @@ export function LaunchJourney() {
             <div className={styles.blocker} role={destination.loading || !planChecked ? "status" : "alert"}>
               <AlertTriangle size={16} aria-hidden />
               <span><strong>{capacityBlocker}</strong>{blockerActions}</span>
+              {paywallMoments}
+            </div>
+          ) : null}
+          {freeActivation.state === "failed" && plan?.needsActivation ? (
+            <div className={styles.blocker} role="alert">
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{freeActivation.message}</strong></span>
             </div>
           ) : null}
           {footer(primary("Review launch", () => advanceTo("review", {
@@ -2177,6 +2486,7 @@ export function LaunchJourney() {
             {hermesMemoryKey && draft.sendMemoryKey
               ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>
               : null}
+            {draft.template ? <div><dt>Template</dt><dd>{draft.template.name ?? "Saved template"}<small>Its focus, personality and skills are applied when it launches.</small></dd></div> : null}
             <div><dt>Cost</dt><dd>{cost}</dd></div>
             <div><dt>Changes</dt><dd>{launchChangesSummary({
               profileId: draft.profileId,

@@ -70,19 +70,16 @@ const TARGET: DeploymentTargetDto = {
 function Harness({
   runtimeId = "codex",
   hints = [],
-  preferSelfManaged = false,
   managedAvailable = true,
   capacitySetupHref,
 }: {
   runtimeId?: string;
   hints?: string[];
-  preferSelfManaged?: boolean;
   managedAvailable?: boolean;
   capacitySetupHref?: string;
 }) {
   const state = useLaunchDestination(runtimeId, {
     handoff: parseLaunchTargetHandoff(hints),
-    preferSelfManaged,
     managedAvailable,
   });
   return (
@@ -121,10 +118,14 @@ describe("DeploymentDestinationControl", () => {
     const target=providerVmTarget();target.status="ready";target.lastErrorCode=null;
     target.capabilities.launchReady=true;target.capabilities.provisioner.ready=true;target.capabilities.provisioner.version=version;
     (listInfrastructureTargets as jest.Mock).mockResolvedValue([target]);
-    render(<Harness runtimeId="linux-desktop" preferSelfManaged />);
-    await waitFor(()=>expect(listInfrastructureTargets).toHaveBeenCalled());
-    if(version===PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION)await waitFor(()=>expect(screen.getByTestId("deployment")).toHaveTextContent(target.id));
-    else await waitFor(()=>expect(screen.getByRole("button",{name:/My infrastructure/i})).toBeDisabled());
+    render(<Harness runtimeId="linux-desktop" />);
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Refresh ready hosts"})).toBeEnabled());
+    const mine=screen.getByRole("button",{name:/My infrastructure/i});
+    if(version===PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION){
+      fireEvent.click(mine);
+      await waitFor(()=>expect(screen.getByTestId("deployment")).toHaveTextContent(target.id));
+    }
+    else expect(mine).toBeDisabled();
   });
 
   it("defaults to Hivra Cloud and builds an exact revision-bound target payload", async () => {
@@ -149,13 +150,14 @@ describe("DeploymentDestinationControl", () => {
     );
   });
 
-  it("can default hosted launch to ready self-managed capacity", async () => {
-    render(<Harness preferSelfManaged />);
+  it("never picks the owner's own server for them when one is ready", async () => {
+    render(<Harness />);
 
     const selfManaged = await screen.findByRole("button", { name: /My infrastructure/i });
     await waitFor(() => expect(selfManaged).toBeEnabled());
-    expect(selfManaged).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("deployment")).toHaveTextContent(`"targetId":"${TARGET.id}"`);
+    expect(selfManaged).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("deployment")).toHaveTextContent('{"mode":"hivra-managed"}');
   });
 
   it("places a runtime Hivra Cloud cannot run on self-managed capacity even with no ready host", async () => {

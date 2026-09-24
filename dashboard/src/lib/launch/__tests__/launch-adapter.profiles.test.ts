@@ -9,7 +9,6 @@ import {
   listAgentsResult,
   type HivraAgent,
 } from "@/lib/hivra/agent-api";
-import { createAgentModelLaunch } from "@/lib/hivra/agent-launch-api";
 import { PROFILE_DETAILS, type LaunchDraft, type LaunchModelAccess, type LaunchProfileId } from "../contracts";
 import { createLaunchDraft } from "../draft-store";
 import {
@@ -20,7 +19,7 @@ import {
   reconcileLaunchDraft,
   submitLaunchDraft,
 } from "../launch-adapter";
-import { legacyDashboardAgentBody, legacyHermesDeployBody, legacyNativeCliBody } from "./legacy-welcome-requests";
+import { legacyCodexModelBody, legacyDashboardAgentBody, legacyHermesDeployBody, legacyNativeCliBody } from "./legacy-welcome-requests";
 
 jest.mock("@/lib/hivra/agent-api", () => {
   const actual = jest.requireActual("@/lib/hivra/agent-api");
@@ -207,25 +206,17 @@ describe("a launch without a receipt is only ever looked for again, never resent
 describe("Codex with a model key or Hivra credits", () => {
   const shared = { resources: { cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1, source: "recommended" as const }, browser: false };
 
-  async function legacyWelcomeBody(llm: { mode: "byok"; model: string } | { mode: "managed"; model: string; walletType: "card" | "hermesos" }, apiKey: string) {
-    // The welcome form's Codex model launch, through its own client, which is
-    // still the Welcome door's until the forms retire.
-    route(url => url === "/api/hivra/agents", () => json(201, { success: true, data: {
-      launchRequestId: "66666666-6666-4666-8666-666666666666",
-      agent: { id: AGENT_ID, type: "codex", name: "Codex 1", status: "provisioning", cpu: 0.5, ram: 1 },
-    } }));
-    await createAgentModelLaunch({
+  function legacyWelcomeBody(llm: { mode: "byok"; model: string } | { mode: "managed"; model: string; walletType: "card" | "hermesos" }, apiKey: string) {
+    // The body the retired welcome form's Codex model launch sent.
+    return legacyCodexModelBody({
+      agentName: "Codex 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED,
+      llm: llm.mode === "byok" ? { ...llm, apiKey } : llm,
       requestId: "66666666-6666-4666-8666-666666666666",
-      intent: { type: "codex", name: "Codex 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED, llm: { provider: "venice", ...llm } },
-    }, apiKey);
-    const body = bodyOf(fetchCalls.find(call => call.url === "/api/hivra/agents"));
-    fetchRoutes = [];
-    fetchCalls = [];
-    return body;
+    });
   }
 
   it("sends Hivra credits with the model exactly as the welcome form, plus the journey's receipt and size", async () => {
-    const legacy = await legacyWelcomeBody({ mode: "managed", model: "deepseek-v4-pro", walletType: "hermesos" }, "");
+    const legacy = legacyWelcomeBody({ mode: "managed", model: "deepseek-v4-pro", walletType: "hermesos" }, "");
     jest.mocked(createAgent).mockResolvedValue(created("codex"));
     const draft = draftFor("codex", shared, { mode: "credits", source: "custom", model: "deepseek-v4-pro" });
 
@@ -236,7 +227,7 @@ describe("Codex with a model key or Hivra credits", () => {
   });
 
   it("sends a pasted key exactly as the welcome form when the owner doesn't save it", async () => {
-    const legacy = await legacyWelcomeBody({ mode: "byok", model: "deepseek-v4-pro" }, "  synthetic-venice-key  ");
+    const legacy = legacyWelcomeBody({ mode: "byok", model: "deepseek-v4-pro" }, "  synthetic-venice-key  ");
     jest.mocked(createAgent).mockResolvedValue(created("codex"));
     const draft = draftFor("codex", shared, { mode: "api-key", source: "custom", keySource: "paste", saveKey: false });
 
@@ -380,6 +371,34 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
   it("never sends Hermes to a server the owner connected", async () => {
     await expect(submitLaunchDraft(draftFor("hermes", hermesResources), SELF_MANAGED)).rejects.toMatchObject({ code: "hermes_managed_only" });
     expect(fetchCalls).toHaveLength(0);
+  });
+});
+
+describe("a launch started from a saved template", () => {
+  const TEMPLATE = { id: "77777777-7777-4777-8777-777777777777", name: "Research Bot" };
+
+  it.each(["claude-code", "codex", "openclaw", "agent-zero", "aeon"] as const)(
+    "names the template in the %s launch so the server forks it", async (profileId) => {
+      jest.mocked(createAgent).mockResolvedValue(created(PROFILE_DETAILS[profileId].runtimeId));
+      await submitLaunchDraft(draftFor(profileId, { template: TEMPLATE }), MANAGED);
+      expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({ templateId: TEMPLATE.id });
+    },
+  );
+
+  it("names the template in a Codex launch on Hivra credits too", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("codex"));
+    await submitLaunchDraft(
+      draftFor("codex", { template: TEMPLATE }, { mode: "credits", source: "custom" }),
+      MANAGED,
+      { balance: { state: "known", cardMicroUsd: 5_000_000, hermesosMicroUsd: 0 } },
+    );
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({ templateId: TEMPLATE.id, llm: { mode: "managed" } });
+  });
+
+  it("sends no template field at all for a launch that isn't from one", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("claude-code"));
+    await submitLaunchDraft(draftFor("claude-code"), MANAGED);
+    expect(jest.mocked(createAgent).mock.calls[0][0]).not.toHaveProperty("templateId");
   });
 });
 

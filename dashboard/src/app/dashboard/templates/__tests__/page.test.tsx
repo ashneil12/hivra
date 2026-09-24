@@ -117,6 +117,6 @@ describe("TemplatesPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /launch/i }));
 
-    expect(pushMock).toHaveBeenCalledWith(`/dashboard/welcome?step=agent-type&templateId=${TEMPLATE.id}`);
+    expect(pushMock).toHaveBeenCalledWith(`/dashboard/launch?start=1&template=${TEMPLATE.id}`);
   });
 });

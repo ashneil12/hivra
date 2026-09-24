@@ -32,6 +32,7 @@ import {
   type PlanInfo,
 } from "@/lib/hivra/agent-api";
 import { UpgradePaywallModal, type PaywallFeature } from "@/components/billing/UpgradePaywallModal";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 
 const ONBOARDING_CHECKLIST_DISMISSED_KEY = "hermes:onboarding_checklist_dismissed";
 const FIRST_MESSAGE_KEY_PREFIX = "hermes:first_message_sent:";
@@ -254,7 +255,7 @@ export function OnboardingChecklist({
       onActivate: () => {
         if (targetBox) router.push(`/dashboard/agent/${targetBox.id}`);
         else if (targetInstance) router.push(`/dashboard/instances/${targetInstance.id}`);
-        else router.push("/dashboard/welcome");
+        else router.push(buildAgentLaunchHref());
       },
     },
     {

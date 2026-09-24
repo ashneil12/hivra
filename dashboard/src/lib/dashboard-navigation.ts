@@ -137,7 +137,7 @@ export const DASHBOARD_LAUNCH_NAVIGATION: DashboardNavigationItem = {
   label: "Launch",
   href: "/dashboard/launch",
   icon: Plus,
-  routePrefixes: ["/dashboard/launch", "/dashboard/welcome"],
+  routePrefixes: ["/dashboard/launch"],
 };
 
 /** Infrequent access/help destinations stay reachable without competing with work. */
@@ -190,7 +190,8 @@ export const DASHBOARD_MOBILE_MORE_GROUPS: readonly DashboardNavigationGroup[] =
 export const DASHBOARD_MOBILE_MORE_NAVIGATION: readonly DashboardNavigationItem[] =
   DASHBOARD_MOBILE_MORE_GROUPS.flatMap((group) => group.items);
 
-/** Runtime list. Home under the workspace shell otherwise resumes the last runtime. */
+/** The agent and computer list, asked for explicitly. Home shows it too,
+ * except when the app is opened at Home and resumes the last one. */
 export const DASHBOARD_RUNTIME_LIST_HREF = "/dashboard?runtimes=1";
 
 type MobileNavigationCopyKey =

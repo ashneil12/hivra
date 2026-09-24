@@ -99,7 +99,12 @@ function BillingPageContent() {
 
   const visibleTabs = visibleBillingTabs(c.flags);
   const hasPlan = Boolean(c.data?.subscribed && c.data.plan);
-  const activeTab = resolveBillingTab({ requested: linkedTab, visible: visibleTabs, subscribed: hasPlan });
+  // A plan on hold is settled from Overview, so that is where it opens.
+  const activeTab = resolveBillingTab({
+    requested: linkedTab,
+    visible: visibleTabs,
+    subscribed: hasPlan || Boolean(c.data?.planOnHold),
+  });
 
   const selectTab = useCallback((tab: BillingTabId) => {
     setRequestedTab(tab);

@@ -154,7 +154,7 @@ describe("launch on server", () => {
   it("continues an agent launch on a ready Hivra-created cloud server", () => {
     expect(launchOnProviderServer(TARGET_ID, { source: "handoff", resourceId: "codex", unified: false })).toEqual({
       label: "Continue launch",
-      href: `/dashboard/welcome?step=deploy&agentType=codex&targetId=${TARGET_ID}`,
+      href: `/dashboard/launch?kind=agent&start=1&profile=codex&targetId=${TARGET_ID}`,
     });
     expect(launchOnProviderServer(TARGET_ID, { source: "journey", profileId: "linux-terminal" })).toEqual({
       label: "Launch on this server",

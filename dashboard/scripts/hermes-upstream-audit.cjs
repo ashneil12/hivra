@@ -42,7 +42,7 @@ const SUPPORT_FILES = [
   "dashboard/src/app/api/instances/[id]/oauth/providers/[provider]/poll/[sessionId]/route.ts",
   "dashboard/src/app/api/instances/[id]/oauth/providers/nous/status/route.ts",
   "dashboard/src/app/api/instances/[id]/skills/route.ts",
-  "dashboard/src/app/dashboard/welcome/page.tsx",
+  "dashboard/src/lib/launch/runtime-requests.ts",
   "dashboard/src/app/dashboard/instances/[id]/console/tabs/AgentConfigurationTab.tsx",
   "dashboard/src/app/dashboard/instances/[id]/console/tabs/config-sections/NousToolGatewayBlock.tsx",
   "dashboard/src/components/chat/AgentProfileSettingsPanel.tsx",

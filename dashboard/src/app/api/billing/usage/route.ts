@@ -9,13 +9,18 @@ import {
   getPlanMonthlyCreditGrant,
 } from "@/lib/billing/credits";
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
-import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { isPaidTier, VENICE_BOOST_CPU, VENICE_BOOST_RAM_MB } from "@/lib/services/tier-boost";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { isActiveComputeStatus } from "@/lib/hivra/resource-gate";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 
-import { calculateUsage, resolveBackupAddon } from "./helpers";
+import {
+  calculateUsage,
+  resolveBackupAddon,
+  type HivraAgentUsage,
+  type InstanceUsage,
+} from "./helpers";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,6 +29,57 @@ function usageSuccess<T>(data: T) {
   const response = apiSuccess(data);
   response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
   return response;
+}
+
+type ManagedCompute =
+  | { ok: true; instances: InstanceUsage[]; hivraAgents: HivraAgentUsage[] }
+  | { ok: false; failureType: "billing_usage_hermes_instances_query_failed" | "billing_usage_hivra_agents_query_failed" };
+
+/**
+ * What the account runs on Hivra Cloud: the rows the launch gate counts
+ * (provisioning|running|stopped) in both lanes. A lane that can't be read
+ * makes the whole answer unknown, never a smaller number.
+ */
+async function readManagedCompute(userId: string): Promise<ManagedCompute> {
+  const { data: instances, error: instancesError } = await supabaseAdmin!
+    .from("hermes_instances")
+    .select(
+      "id, name, status, cpu_limit, ram_limit, disk_size_gb, disk_upgraded, backups_enabled, hetzner_server_id, proxmox_node, proxmox_vmid, resource_tier"
+    )
+    .eq("user_id", userId)
+    .not("status", "in", '("deleted")')
+    // Exclude gone/cold-archived instances: they're routinely left at
+    // status='stopped', so a status-only filter would inflate the agent count
+    // and CPU/RAM meters shown here — telling a user they're maxed out when a
+    // slot is actually free. Mirrors the provisioning gate's exclusion.
+    .not("lifecycle_state", "in", SLOT_FREEING_LIFECYCLE_IN_LIST);
+  if (instancesError) return { ok: false, failureType: "billing_usage_hermes_instances_query_failed" };
+
+  const { data: hivraAgents, error: hivraAgentsError } = await supabaseAdmin!
+    .from("hivra_agents")
+    .select("id, name, status, cpu, ram, type")
+    .eq("user_id", userId)
+    .neq("status", "deleted")
+    // This endpoint describes the Hivra-managed compute pool. Portable
+    // agents consume their owner's infrastructure and must never appear as
+    // managed usage. Null preserves pre-portability rows, which were always
+    // Hivra-managed before deployment_mode existed.
+    .or("deployment_mode.eq.hivra-managed,deployment_mode.is.null");
+  if (hivraAgentsError) return { ok: false, failureType: "billing_usage_hivra_agents_query_failed" };
+
+  // Only rows the launch gate counts (provisioning|running|stopped) may feed
+  // the budget meters — same predicate as resource-gate so the bars shown
+  // here can never drift from what provisioning actually enforces. Terminal
+  // `error` rows (failed provisions nothing sweeps) hold no compute, and the
+  // agents list already hides them; counting them here showed users maxed-out
+  // meters for boxes that don't exist. They're dropped from the instances
+  // list too: it drives the backup-addon panel, which must not offer backups
+  // on a dead row.
+  return {
+    ok: true,
+    instances: ((instances || []) as InstanceUsage[]).filter((i) => isActiveComputeStatus(i.status)),
+    hivraAgents: ((hivraAgents || []) as HivraAgentUsage[]).filter((a) => isActiveComputeStatus(a.status)),
+  };
 }
 
 /**
@@ -56,11 +112,41 @@ export async function GET() {
         };
 
     if (!sub) {
+      // No plan. Launch still needs two facts to be honest with this account:
+      // a paid plan that holds it (Free can't be turned on over it; Billing
+      // settles it), and what it already runs on Hivra Cloud, which counts
+      // against Free once Free is on. `usage` stays null: its shape is a
+      // plan's meters, and every caller reads null as "no plan".
+      const [planOnHold, managed] = await Promise.all([
+        readPlanOnHold(userId),
+        readManagedCompute(userId),
+      ]);
+      if (!managed.ok) {
+        // Unknown, not zero: the field is left out and Launch says it
+        // couldn't check.
+        log.warn("billing usage could not read what an account without a plan runs", {
+          source: "billing.usage",
+          route: "/api/billing/usage",
+          userId,
+          failureType: managed.failureType,
+        });
+      }
+      const running = managed.ok ? calculateUsage(managed.instances, managed.hivraAgents) : null;
       return usageSuccess({
         subscribed: false,
         plan: null,
         usage: null,
         credits,
+        planOnHold,
+        ...(managed.ok && running
+          ? {
+              managedUsage: {
+                agentCount: managed.instances.length + managed.hivraAgents.length,
+                usedCpu: running.usedCpu,
+                usedRam: running.usedRam,
+              },
+            }
+          : {}),
       });
     }
 
@@ -88,61 +174,25 @@ export async function GET() {
       }
     }
 
-    const { data: instances, error: instancesError } = await supabaseAdmin
-      .from("hermes_instances")
-      .select(
-        "id, name, status, cpu_limit, ram_limit, disk_size_gb, disk_upgraded, backups_enabled, hetzner_server_id, proxmox_node, proxmox_vmid, resource_tier"
-      )
-      .eq("user_id", userId)
-      .not("status", "in", '("deleted")')
-      // Exclude gone/cold-archived instances: they're routinely left at
-      // status='stopped', so a status-only filter would inflate the agent count
-      // and CPU/RAM meters shown here — telling a user they're maxed out when a
-      // slot is actually free. Mirrors the provisioning gate's exclusion.
-      .not("lifecycle_state", "in", SLOT_FREEING_LIFECYCLE_IN_LIST);
-    if (instancesError) {
-      log.warn("billing usage could not verify Hermes capacity", {
-        source: "billing.usage", route: "/api/billing/usage", userId,
-        failureType: "billing_usage_hermes_instances_query_failed",
-      });
+    const managed = await readManagedCompute(userId);
+    if (!managed.ok) {
+      log.warn(
+        managed.failureType === "billing_usage_hermes_instances_query_failed"
+          ? "billing usage could not verify Hermes capacity"
+          : "billing usage could not verify Hivra capacity",
+        {
+          source: "billing.usage",
+          route: "/api/billing/usage",
+          userId,
+          failureType: managed.failureType,
+        },
+      );
       const response = apiError("Current compute usage is unavailable. Refresh before choosing a size.", 503);
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
-
-    // Only rows the launch gate counts (provisioning|running|stopped) may feed
-    // the budget meters — same predicate as resource-gate so the bars shown
-    // here can never drift from what provisioning actually enforces. Terminal
-    // `error` rows (failed provisions nothing sweeps) hold no compute, and the
-    // agents list already hides them; counting them here showed users maxed-out
-    // meters for boxes that don't exist. They're dropped from the instances
-    // list too: it drives the backup-addon panel, which must not offer backups
-    // on a dead row.
-    const activeInstances = (instances || []).filter((i) => isActiveComputeStatus(i.status));
-    const { data: hivraAgents, error: hivraAgentsError } = await supabaseAdmin
-      .from("hivra_agents")
-      .select("id, name, status, cpu, ram, type")
-      .eq("user_id", userId)
-      .neq("status", "deleted")
-      // This endpoint describes the Hivra-managed compute pool. Portable
-      // agents consume their owner's infrastructure and must never appear as
-      // managed usage. Null preserves pre-portability rows, which were always
-      // Hivra-managed before deployment_mode existed.
-      .or("deployment_mode.eq.hivra-managed,deployment_mode.is.null");
-    if (hivraAgentsError) {
-      log.warn("billing usage could not verify Hivra capacity", {
-        source: "billing.usage",
-        route: "/api/billing/usage",
-        userId,
-        failureType: "billing_usage_hivra_agents_query_failed",
-      });
-      const response = apiError("Current compute usage is unavailable. Refresh before choosing a size.", 503);
-      response.headers.set("Cache-Control", "no-store");
-      return response;
-    }
-    const activeHivraAgents = (hivraAgents || []).filter((a) =>
-      isActiveComputeStatus(a.status)
-    );
+    const activeInstances = managed.instances;
+    const activeHivraAgents = managed.hivraAgents;
     const { usedCpu, usedRam, instances: mappedInstances } = calculateUsage(activeInstances, activeHivraAgents);
     const maxAgents = sub.instance_limit;
     const totalCpu = sub.total_cpu_budget;

@@ -20,8 +20,6 @@ import type { WelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import type { GoalId } from "@/lib/hivra/agent-identity";
 import type { PersonaSoulId } from "@/lib/persona-souls-accessor";
 
-export const WELCOME_PERSONA_STORAGE_KEY = "hermes:welcome_persona";
-
 export type WelcomePersonaIconKey = "compass" | "code" | "megaphone" | "search" | "pen-tool" | "plus";
 
 export interface WelcomePersonaDefinition {

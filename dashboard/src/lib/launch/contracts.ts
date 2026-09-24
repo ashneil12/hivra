@@ -88,6 +88,9 @@ export type LaunchModelAccess = {
   baseUrl: string;
 };
 
+/** A saved template a draft starts from. */
+export type LaunchDraftTemplate = { id: string; name: string | null };
+
 /** A next step a correctable launch error can offer beside its message. */
 export type LaunchErrorAction =
   | { kind: "verify-card" }
@@ -119,6 +122,9 @@ export type LaunchDraft = {
   /** Hermes: the owner ticked "Send my saved Honcho key to <name>'s
    * computer" for this launch. Never pre-ticked. */
   sendMemoryKey: boolean;
+  /** The saved template this launch starts from, for the draft's profile.
+   * Only its id and name: the server applies the rest at launch. */
+  template: LaunchDraftTemplate | null;
   submittedDeployment: LaunchDeploymentSnapshot | null;
   /** When the first launch request was sent. Receipt-free lanes use it to
    * recognise the computer that request created. */
