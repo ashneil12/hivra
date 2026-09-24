@@ -26,6 +26,7 @@ import { plannedHostedMachines } from "@/lib/subscription/hosted-ladder";
 import type { BillingController } from "../useBillingController";
 import { ChoiceGroup } from "./ChoiceGroup";
 import styles from "../Billing.module.css";
+import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
 
 export const PLANS_INTRO =
   "Every plan runs your agents and computers on Hivra's servers. Bring your own model key and we add nothing to what you spend.";
@@ -398,7 +399,7 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
         {path === "token" && (
           <li>
             <Coins size={13} aria-hidden="true" />
-            $HermesOS payments are final and can&apos;t be refunded.
+            {TOKEN_PAYMENT_FINALITY}
           </li>
         )}
       </ul>

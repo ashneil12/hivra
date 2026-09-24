@@ -10,6 +10,7 @@ import {
   OpenInWalletLink,
   TOKEN_PAYMENT_FINALITY,
   TransferAmountField,
+  TokenContractLine,
 } from "@/components/billing/TransferDetails";
 import { hermesosTransferUri } from "@/lib/billing/eip681";
 import { displayTokenUnit } from "@/lib/billing/token-plan-prices";
@@ -241,6 +242,7 @@ export function ManagedVeniceTokenQuotePanel({
       ? hermesosTransferUri({
           tokenSymbol: quote.tokenSymbol,
           tokenDecimals: quote.tokenDecimals,
+          tokenAddress: quote.tokenAddress,
           depositAddress: quote.depositAddress,
           amountRaw: quote.tokenAmountRaw,
         })
@@ -276,6 +278,8 @@ export function ManagedVeniceTokenQuotePanel({
         {quote.bonusValueMicroUsd > 0 ? ` including ${formatMicroUsd(quote.bonusValueMicroUsd, 2)} bonus` : ""}. Send one Base transfer.{" "}
         <strong>{TOKEN_PAYMENT_FINALITY}</strong>
       </TransferAmountField>
+
+      <TokenContractLine tokenAddress={quote.tokenAddress} tokenSymbol={quote.tokenSymbol} />
 
       <DepositAddressField
         label="Deposit address · Base network"

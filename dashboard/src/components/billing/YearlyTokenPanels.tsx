@@ -10,6 +10,7 @@ import {
   TOKEN_PAYMENT_FINALITY,
   TransferAmountField,
   wholeTokenQuoteRawAmount,
+  TokenContractLine,
 } from '@/components/billing/TransferDetails';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { clientLog } from '@/lib/client/logger';
@@ -403,6 +404,7 @@ export function YearlyTokenPaymentModal({
     priceUsdAtQuote: string;
     tokensRequiredDisplay: string;
     tokenSymbol: string;
+    tokenAddress?: string;
     depositAddress: string;
     expiresAt: string;
     status: string;
@@ -442,6 +444,7 @@ export function YearlyTokenPaymentModal({
       ? hermesosTransferUri({
           tokenSymbol: quote.tokenSymbol,
           tokenDecimals: quote.tokenDecimals,
+          tokenAddress: quote.tokenAddress,
           depositAddress: quote.depositAddress,
           amountRaw: wholeTokenQuoteRawAmount(quote),
         })
@@ -517,6 +520,8 @@ export function YearlyTokenPaymentModal({
             ${(quote.usdTargetCents / 100).toFixed(2)} worth at{" "}
             <code className="mono">${quote.priceUsdAtQuote}</code> per token. Send the full amount in a single transfer.
           </TransferAmountField>
+
+          <TokenContractLine tokenAddress={quote.tokenAddress} tokenSymbol={quote.tokenSymbol} />
 
           <DepositAddressField
             label="Step 2 · To this address (Base network)"

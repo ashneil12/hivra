@@ -9,12 +9,13 @@ import {
   OpenInWalletLink,
   touchStyles,
   wholeTokenQuoteRawAmount,
+  TokenContractLine,
 } from '@/components/billing/TransferDetails';
 import { useLocale } from '@/components/i18n/LocaleProvider';
 import { BankrTrustFooter } from '@/components/wallet/AgentWalletCards';
 import { hermesosTransferUri } from '@/lib/billing/eip681';
 import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
-import { HERMESOS_TOKEN } from '@/lib/billing/token-registry';
+import { HERMESOS_TOKEN, primaryPlatformToken } from '@/lib/billing/token-registry';
 import {
   LAUNCH_PROMO_END,
   STANDARD_USD_CENTS,
@@ -79,12 +80,17 @@ export function InlineCopyAddress({ label, address }: { label: string; address: 
 export function BuyTokenCard() {
   const { copy } = useLocale();
   const buyCopy = copy.dashboard.wallet.buyToken;
-  const contract = HERMESOS_TOKEN_ADDRESS;
+  // $HermesOS until $HIVRA is live; then every buyer, grandfathered or not,
+  // is pointed at $HIVRA (the token any new purchase should be), and the
+  // card's label names the token its link and address are for.
+  const buyToken = primaryPlatformToken();
+  const contract = buyToken.publishedAddress;
+  const forToken = (text: string) => text.replaceAll("$HermesOS", buyToken.displayUnit);
   const uniswapUrl = `https://app.uniswap.org/swap?chain=base&outputCurrency=${contract}`;
 
   return (
     <section
-      aria-label={buyCopy.ariaLabel}
+      aria-label={forToken(buyCopy.ariaLabel)}
       style={{
         border: '1px solid var(--etched-border)',
         background: 'var(--bg-surface)',
@@ -98,7 +104,7 @@ export function BuyTokenCard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.18em', opacity: 0.55, fontWeight: 700 }}>
-            {buyCopy.eyebrow}
+            {forToken(buyCopy.eyebrow)}
           </span>
           <h2 className="serif" style={{ fontSize: '1.15rem', fontWeight: 700, marginTop: 4, marginBottom: 0 }}>
             {buyCopy.title}
@@ -464,6 +470,7 @@ export function QuoteCard({
       ? hermesosTransferUri({
           tokenSymbol: quote.tokenSymbol,
           tokenDecimals: quote.tokenDecimals,
+          tokenAddress: quote.tokenAddress,
           depositAddress,
           amountRaw: wholeTokenQuoteRawAmount(quote),
         })
@@ -598,6 +605,8 @@ export function QuoteCard({
               full amount in a single transfer.
             </span>
           </div>
+
+          <TokenContractLine tokenAddress={quote.tokenAddress} tokenSymbol={quote.tokenSymbol} />
 
           <InlineCopyAddress
             label="Step 2 · To this address (Base network)"

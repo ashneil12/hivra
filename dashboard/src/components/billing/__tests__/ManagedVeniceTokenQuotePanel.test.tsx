@@ -159,7 +159,7 @@ describe("ManagedVeniceTokenQuotePanel", () => {
   it("says a $HermesOS top-up is final before the user sends it", () => {
     global.fetch = jest.fn(() => checkResponse("no_match", "active")) as unknown as typeof fetch;
     render(<ManagedVeniceTokenQuotePanel quote={quote()} />);
-    expect(screen.getByText("$HermesOS payments are final and can't be refunded.")).toBeInTheDocument();
+    expect(screen.getByText("Token payments are final, except where the law gives you a right to cancel.")).toBeInTheDocument();
     expect(screen.getByText(/Send one Base transfer\./)).toBeInTheDocument();
   });
 
