@@ -9,8 +9,10 @@ import { progressAttachmentWork, type AttachmentWorkProgress } from "@/lib/agent
 
 /**
  * The attach worker (design 5.5): every minute, one pass over each open attach
- * step, oldest first: claim to staging to activation to "Chat is ready", and
- * each Change access and Remove. The database's compare-and-swaps make an
+ * step, least recently tried first (so held steps never starve a newer one):
+ * claim to staging to activation to "Chat is ready", and each Change access
+ * and Remove. A step whose computer stopped, or is being deleted, lets the
+ * computer go and waits for it (T3). The database's compare-and-swaps make an
  * overlapping pass safe; a pass only observes what another already started.
  * Canary only: elsewhere it does nothing.
  *
