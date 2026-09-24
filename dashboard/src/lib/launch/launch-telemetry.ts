@@ -84,10 +84,16 @@ const KEY_LIKE_PATTERN = /\b(sk-[A-Za-z0-9_-]{8,}|key-[A-Za-z0-9_-]{8,}|[A-Za-z0
 const MAX_ERROR_MESSAGE_LENGTH = 240;
 
 /** A failure's message, safe to send: secrets and key-like strings redacted,
- * whitespace collapsed, and shortened. */
-export function launchErrorMessage(error: unknown): string {
+ * the owner's own names for this launch (which server messages can echo)
+ * replaced, whitespace collapsed, and shortened. */
+export function launchErrorMessage(error: unknown, names: readonly string[] = []): string {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  return redactSensitiveCommandOutput(raw.replace(/\s+/g, " ").trim(), 1_000)
-    .replace(KEY_LIKE_PATTERN, "[redacted]")
-    .slice(0, MAX_ERROR_MESSAGE_LENGTH);
+  let message = redactSensitiveCommandOutput(raw.replace(/\s+/g, " ").trim(), 1_000)
+    .replace(KEY_LIKE_PATTERN, "[redacted]");
+  for (const name of names) {
+    const trimmed = name.trim();
+    if (trimmed.length < 2) continue;
+    message = message.replace(new RegExp(trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "[name]");
+  }
+  return message.slice(0, MAX_ERROR_MESSAGE_LENGTH);
 }

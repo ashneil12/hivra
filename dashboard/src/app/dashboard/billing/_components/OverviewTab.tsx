@@ -190,15 +190,19 @@ export function OverviewTab({
                   )}
                   {c.portalLoading ? copy.opening : "Open billing portal"}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                className={`${styles.button} ${planOnHold.billingPortal ? styles.secondary : styles.primary}`}
-                onClick={() => onGoTo("plans")}
-              >
-                See plans
-                <ArrowRight size={14} aria-hidden="true" />
-              </button>
+              ) : (
+                // A live Stripe subscription still bills this plan, so a new
+                // plan would be refused until it is settled in the portal.
+                // Without one (a manual or token plan), Checkout still works.
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.primary}`}
+                  onClick={() => onGoTo("plans")}
+                >
+                  See plans
+                  <ArrowRight size={14} aria-hidden="true" />
+                </button>
+              )}
             </>
           }
         />

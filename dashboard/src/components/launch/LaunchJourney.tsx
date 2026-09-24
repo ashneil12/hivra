@@ -1727,7 +1727,7 @@ export function LaunchJourney() {
         stage,
         failureType: error.code ?? "launch_needs_change",
         errorCategory: "needs_change",
-        errorMessage: launchErrorMessage(error),
+        errorMessage: launchErrorMessage(error, [submitting.name]),
         status: error.status,
         recoverable: true,
       });
@@ -1739,7 +1739,7 @@ export function LaunchJourney() {
         stage,
         failureType: "launch_rejected",
         errorCategory: "rejected",
-        errorMessage: launchErrorMessage(error),
+        errorMessage: launchErrorMessage(error, [submitting.name]),
         status: error.status,
         serverFailureType: error.code ?? null,
         recoverable: true,
@@ -1749,7 +1749,7 @@ export function LaunchJourney() {
     captureLaunchEvent("launch_outcome_uncertain", {
       ...context,
       stage,
-      errorMessage: launchErrorMessage(error),
+      errorMessage: launchErrorMessage(error, [submitting.name]),
       resumeMode: submitting.profileId ? launchResumeMode(submitting.profileId) : null,
     });
   };

@@ -66,6 +66,11 @@ describe("launch telemetry", () => {
     expect(message).toContain("api_key=[REDACTED]");
     expect(message.length).toBeLessThanOrEqual(240);
     expect(launchErrorMessage("plain")).toBe("plain");
+    // Server messages can echo the owner's name for the launch; it never reaches analytics.
+    expect(launchErrorMessage(new Error("An agent named Pam's Research (v2) already exists."), ["Pam's Research (v2)"]))
+      .toBe("An agent named [name] already exists.");
+    expect(launchErrorMessage(new Error("codex 1 is taken"), ["Codex 1"])).toBe("[name] is taken");
+    expect(launchErrorMessage(new Error("A is fine"), ["A"])).toBe("A is fine");
     expect(launchErrorMessage({ unexpected: true })).toBe("");
   });
 });

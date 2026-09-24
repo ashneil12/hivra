@@ -753,11 +753,9 @@ describe("BillingPage", () => {
       )).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Open billing portal" })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Choose a plan" })).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole("button", { name: "See plans" }));
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
-      });
+      // A live card subscription still bills the plan, so a new plan would be
+      // refused (ACTIVE_SUBSCRIPTION) until it is settled in the portal.
+      expect(screen.queryByRole("button", { name: "See plans" })).not.toBeInTheDocument();
     });
 
     it("offers no billing portal for a plan on hold that no live card subscription bills", async () => {
@@ -771,6 +769,11 @@ describe("BillingPage", () => {
       expect(await screen.findByRole("heading", { name: "Power plan on hold" })).toBeInTheDocument();
       expect(screen.getByText("This plan has no agent slots right now. Contact support to check it.")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
+      // Nothing bills this plan by card, so Checkout for a plan still works.
+      fireEvent.click(screen.getByRole("button", { name: "See plans" }));
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
+      });
     });
 
     it("renders only the active panel and wires tabs to their panels", async () => {
