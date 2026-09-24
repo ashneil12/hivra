@@ -907,7 +907,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
-    expect(await screen.findByRole("heading", { name: "Linux host has Linux Sandbox set up." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Linux host already has gVisor, which Linux Sandbox runs on." })).toBeInTheDocument();
     await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(2));
 
     // Repair is a host change, so it goes through the same review dialog.

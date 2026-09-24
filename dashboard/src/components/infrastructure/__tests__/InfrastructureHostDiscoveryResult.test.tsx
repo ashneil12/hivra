@@ -135,7 +135,7 @@ describe("InfrastructureHostDiscoveryResult", () => {
     (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: TARGET_ID, ready: true });
     const handlers = renderResult(discovered(INSTALLED_GVISOR));
 
-    expect(screen.getByRole("heading", { name: "web-1 has Linux Sandbox set up." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "web-1 already has gVisor, which Linux Sandbox runs on." })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Check readiness" }));
 
     expect(await screen.findByRole("heading", { name: "web-1 is ready for Linux Sandbox." })).toBeInTheDocument();

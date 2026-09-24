@@ -130,8 +130,20 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
   });
 
   it("gives a failed run's slot back and keeps a successful one", async () => {
+    mockPrepare.mockResolvedValueOnce({
+      ok: true,
+      connectionId: CONNECTION_ID,
+      provisionerVersion: "2026.08.26.3",
+      preflight: { ok: true, connectionId: CONNECTION_ID, checkedAt: "2026-08-26T12:00:00.000Z",
+        target: { launchReady: true }, warnings: [], unmetRequirements: [] },
+    });
     await POST(request(), context());
     expect(mockSettle).toHaveBeenLastCalledWith("succeeded");
+
+    // Setup ran, but its check says the server isn't ready for agents yet. The
+    // fix text asks for setup again, so the slot must not block it.
+    await POST(request(), context());
+    expect(mockSettle).toHaveBeenLastCalledWith("failed");
 
     mockPrepare.mockResolvedValueOnce({
       ok: false,
@@ -150,7 +162,7 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
     mockPrepare.mockRejectedValueOnce(new Error("unexpected"));
     await POST(request(), context());
     expect(mockSettle).toHaveBeenLastCalledWith("failed");
-    expect(mockSettle).toHaveBeenCalledTimes(3);
+    expect(mockSettle).toHaveBeenCalledTimes(4);
   });
 
   it("returns versioned preparation plus truthful read-only preflight evidence", async () => {

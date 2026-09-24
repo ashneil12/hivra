@@ -121,8 +121,10 @@ export function hostDiscoveryOutcome(
     return installed
       ? {
           path, ready: true, blocker: null, action: "check-gvisor",
-          title: `${name} has Linux Sandbox set up.`,
-          detail: "Check that it's ready to launch. The check only reads the server.",
+          // Discovery only sees that gVisor is installed, not who installed it;
+          // the strict check decides whether it is Hivra's Linux Sandbox setup.
+          title: `${name} already has gVisor, which Linux Sandbox runs on.`,
+          detail: "Check whether it's ready for Linux Sandbox. The check only reads the server and says if the setup needs reinstalling.",
         }
       : {
           path, ready: true, blocker: null, action: "review-gvisor-setup",

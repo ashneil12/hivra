@@ -79,7 +79,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
       reservation.settle("failed");
       throw error;
     }
-    reservation.settle(preparation.ok ? "succeeded" : "failed");
+    // Setup that ran but left the server not ready for agents (a bridge or
+    // provisioner problem the check names) counts as a failure: its fix text
+    // asks the owner to set up again, which a "succeeded" slot would block.
+    reservation.settle(preparation.ok && preparation.preflight.ok && preparation.preflight.target.launchReady
+      ? "succeeded" : "failed");
     if (!preparation.ok) {
       const status = ERROR_STATUS[preparation.error.code];
       return noStore(

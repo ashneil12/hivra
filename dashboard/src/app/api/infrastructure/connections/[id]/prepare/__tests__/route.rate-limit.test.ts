@@ -36,11 +36,23 @@ const succeeded = {
   connectionId: CONNECTION_ID,
   provisionerVersion: "2026.08.26.3",
   preflight: {
+    ok: true,
+    connectionId: CONNECTION_ID,
+    checkedAt: "2026-08-26T12:00:00.000Z",
+    target: { launchReady: true },
+    warnings: [],
+    unmetRequirements: [],
+  },
+};
+// Setup ran, but its check found the server not ready for agents yet.
+const ranNotReady = {
+  ...succeeded,
+  preflight: {
     ok: false,
     connectionId: CONNECTION_ID,
     checkedAt: "2026-08-26T12:00:00.000Z",
-    error: { code: "CAPACITY_UNAVAILABLE", message: "Target capacity could not be measured safely." },
-    unmetRequirements: [{ code: "CAPACITY_UNAVAILABLE", message: "Target capacity could not be measured safely." }],
+    error: { code: "BRIDGE_UNAVAILABLE", message: "The hivra0 bridge is not available." },
+    unmetRequirements: [{ code: "BRIDGE_UNAVAILABLE", message: "The hivra0 bridge is not available." }],
   },
 };
 
@@ -53,6 +65,15 @@ describe("host preparation rate limit", () => {
     dateNow = jest.spyOn(Date, "now").mockImplementation(() => now);
   });
   afterEach(() => dateNow.mockRestore());
+
+  it("lets setup that left the server not ready run again at once, as its fix text asks", async () => {
+    mockPrepare.mockResolvedValueOnce(ranNotReady).mockResolvedValueOnce(succeeded);
+    expect((await POST(request(), context())).status).toBe(200);
+    now += 30_000;
+    expect((await POST(request(), context())).status).toBe(200);
+    expect(mockPrepare).toHaveBeenCalledTimes(2);
+    now += 16 * 60_000;
+  });
 
   it("lets a failed run be retried at once, then holds a success for the window", async () => {
     mockPrepare.mockResolvedValueOnce(failed).mockResolvedValueOnce(failed).mockResolvedValueOnce(succeeded);

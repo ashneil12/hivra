@@ -7,7 +7,9 @@ export const runtime = "nodejs";
 // Allocation may wait behind the 60-second host lock and then wait up to 60
 // seconds for the exact provider identity receipt. Keep headroom so the control
 // plane cannot terminate between durable intent and DB identity persistence.
-export const maxDuration = 180;
+// Linux Sandbox launches wait for the host's create inline, which may take up
+// to 360 seconds (gvisor-computer-service); leave room for the work around it.
+export const maxDuration = 420;
 
 import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";

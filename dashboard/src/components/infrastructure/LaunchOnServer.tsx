@@ -155,11 +155,14 @@ export function useLaunchOnServer() {
   const { pending, targets } = useContext(LaunchOnServerContext);
   return useMemo(() => ({
     pending,
-    /** The newest ready Proxmox target this connection published, if any.
-     * Proxmox readiness doesn't lapse with time; a gVisor host's does, so it
-     * goes through useTargetLaunchAction or useGvisorCheckLaunchAction. */
-    forProxmoxConnection: (connectionId: string): LaunchOnServerAction | null => {
+    /** The ready Proxmox target for the node a check just named. A
+     * connection can hold evidence for more than one node, so the check's own
+     * node is matched, never the first ready one. Proxmox readiness doesn't
+     * lapse with time; a gVisor host's does, so it goes through
+     * useTargetLaunchAction or useGvisorCheckLaunchAction. */
+    forProxmoxConnection: (connectionId: string, externalId: string): LaunchOnServerAction | null => {
       const target = targets.find((candidate) => candidate.connectionId === connectionId
+        && candidate.externalId === externalId
         && isProxmoxDeploymentTarget(candidate)
         && hasReadyEvidence(candidate));
       return target ? launchActionForReadyTarget(target, pending) : null;
