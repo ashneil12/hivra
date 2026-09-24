@@ -1818,7 +1818,7 @@ function CommandCenterV2Surface({
       {hosts.length > 0 ? (
         <section style={{ marginTop: 18, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.03)", padding: "clamp(1rem, 3vw, 1.4rem)" }}>
           <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.58, marginBottom: 12 }}>
-            Infrastructure
+            Capacity
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
             {hosts.map((host) => {
