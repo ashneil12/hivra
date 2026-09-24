@@ -1,16 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Bot, CheckCircle2, ExternalLink, KeyRound, Loader2, Play, RefreshCw, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Bot, CalendarClock, CheckCircle2, ExternalLink, KeyRound, Loader2, Play, RefreshCw, Trash2 } from "lucide-react";
 
+import { setDigitalOceanAccountTokenExpiry } from "@/lib/hivra/managed-session-client";
 import {
   DIGITALOCEAN_HARNESS_LABELS,
   type ManagedSessionDto,
 } from "@/lib/hivra/managed-session-contracts";
-import type { DigitalOceanConnectionDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import type { CredentialExpiryDto, DigitalOceanConnectionDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { formatInfrastructureDate } from "@/lib/infrastructure/formatters";
+import {
+  formatExpiryDate,
+  relativeDays,
+  tokenExpiryInputFor,
+  tokenExpiryState,
+  type TokenExpiryChoice,
+  type TokenExpiryState,
+} from "@/lib/infrastructure/token-expiry";
 
 import styles from "./Infrastructure.module.css";
+import { TokenExpiryField } from "./TokenExpiryField";
 
 const DIGITALOCEAN_CONSOLE_URL = "https://cloud.digitalocean.com/managed-agents/harness-runtime";
 
@@ -31,6 +42,69 @@ function sessionBadge(session: ManagedSessionDto): { label: string; tone: string
   }
 }
 
+function expiryValue(state: TokenExpiryState): string {
+  switch (state.kind) {
+    case "never": return "No expiry";
+    case "later":
+    case "soon": return formatExpiryDate(state.expiresOn);
+    case "expired": return `Expired ${formatExpiryDate(state.expiresOn)}`;
+    default: return "Not recorded";
+  }
+}
+
+/** One truthful badge: rejected beats expired beats expiring beats ready. */
+function cardBadge(ready: boolean, rejected: boolean, expiry: TokenExpiryState): { label: string; tone: string; ok: boolean } {
+  if (rejected) return { label: "Token rejected", tone: "status_error", ok: false };
+  if (expiry.kind === "expired") return { label: "Token past its expiry date", tone: "status_error", ok: false };
+  if (!ready) return { label: "Needs attention", tone: "status_error", ok: false };
+  if (expiry.kind === "soon") return { label: `Token expires ${relativeDays(expiry.days)}`, tone: "status_pending", ok: false };
+  return { label: "Ready for agents", tone: "status_connected", ok: true };
+}
+
+function ExpiryReminderEditor({
+  connectionId,
+  onSaved,
+  onCancel,
+}: {
+  connectionId: string;
+  onSaved: (expiry: CredentialExpiryDto) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState<{ choice: TokenExpiryChoice; date: string }>({ choice: "none", date: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function save() {
+    const input = tokenExpiryInputFor(value.choice, value.date);
+    if (!input || (value.choice === "date" && !value.date)) {
+      setError(value.choice === "date" ? "Choose the date DigitalOcean shows for this token." : "Choose No expiry or a date.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(await setDigitalOceanAccountTokenExpiry(connectionId, input));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The reminder was not saved.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className={styles.connectionEvidence}>
+      <span className={styles.connectionEvidenceIcon} aria-hidden="true"><CalendarClock size={15} /></span>
+      <div style={{ flex: 1 }}>
+        <TokenExpiryField choice={value.choice} date={value.date} disabled={saving} error={error} onChange={setValue} />
+        <div className={styles.cardActions}>
+          <button type="button" className={styles.primaryButton} onClick={() => void save()} disabled={saving}>
+            {saving ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : null} Save reminder
+          </button>
+          <button type="button" className={styles.secondaryButton} onClick={onCancel} disabled={saving}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DigitalOceanConnectionCard({
   connection,
   target,
@@ -41,6 +115,7 @@ export function DigitalOceanConnectionCard({
   onRefresh,
   onReplaceToken,
   onDelete,
+  onExpiryChanged,
 }: {
   connection: DigitalOceanConnectionDto;
   target: DigitalOceanDeploymentTargetDto | null;
@@ -51,9 +126,15 @@ export function DigitalOceanConnectionCard({
   onRefresh: () => void;
   onReplaceToken: () => void;
   onDelete: () => void;
+  onExpiryChanged?: (expiry: CredentialExpiryDto) => void;
 }) {
+  const [editingExpiry, setEditingExpiry] = useState(false);
   const ready = connection.status === "ready" && target?.status === "ready";
+  const rejected = connection.lastErrorCode === "invalid_credentials";
+  const expiry = tokenExpiryState(connection.credentialExpiry);
+  const badge = cardBadge(ready, rejected, expiry);
   const visibleError = error ?? (connection.status === "error" ? persistedError(connection.lastErrorCode) : null);
+  const replacePrimary = rejected || expiry.kind === "soon" || expiry.kind === "expired";
 
   return (
     <article className={`${styles.connectionCard} ${styles.providerConnectionCard}`}>
@@ -63,9 +144,9 @@ export function DigitalOceanConnectionCard({
           <span className={styles.eyebrow}>DigitalOcean Managed Agents</span>
           <h2>{connection.name}</h2>
         </div>
-        <span className={`${styles.statusBadge} ${styles[ready ? "status_connected" : "status_error"]}`}>
-          {ready ? <CheckCircle2 size={12} aria-hidden="true" /> : <AlertTriangle size={12} aria-hidden="true" />}
-          {ready ? "Ready for agents" : "Needs attention"}
+        <span className={`${styles.statusBadge} ${styles[badge.tone]}`}>
+          {badge.ok ? <CheckCircle2 size={12} aria-hidden="true" /> : <AlertTriangle size={12} aria-hidden="true" />}
+          {badge.label}
         </span>
       </div>
 
@@ -73,7 +154,40 @@ export function DigitalOceanConnectionCard({
         <div><span>Agent sessions</span><strong>{sessions.length}</strong></div>
         <div><span>Sandbox sizes</span><strong>{target?.capabilities.sizes.length ?? 0}</strong></div>
         <div><span>Last checked</span><strong>{formatInfrastructureDate(connection.lastCheckedAt)}</strong></div>
+        <div>
+          <span>Token expires</span>
+          <strong>
+            {expiryValue(expiry)}
+            {!editingExpiry && onExpiryChanged ? (
+              <>
+                {" "}
+                <button type="button" className={styles.tertiaryButton} onClick={() => setEditingExpiry(true)}>
+                  {expiry.kind === "unknown" ? "Set reminder" : "Change"}
+                </button>
+              </>
+            ) : null}
+          </strong>
+        </div>
       </div>
+
+      {editingExpiry && onExpiryChanged ? (
+        <ExpiryReminderEditor
+          connectionId={connection.id}
+          onCancel={() => setEditingExpiry(false)}
+          onSaved={(next) => { setEditingExpiry(false); onExpiryChanged(next); }}
+        />
+      ) : null}
+
+      {!rejected && (expiry.kind === "soon" || expiry.kind === "expired") ? (
+        <div className={styles.providerInventoryError} role="status">
+          <CalendarClock size={15} aria-hidden="true" />
+          <span>
+            {expiry.kind === "soon"
+              ? `This DigitalOcean token expires ${relativeDays(expiry.days)} (${formatExpiryDate(expiry.expiresOn)}, the date you entered). Replace it now so your agents keep working.`
+              : `This token was due to expire on ${formatExpiryDate(expiry.expiresOn)} (the date you entered). If DigitalOcean now rejects it, replace it; your agents and conversations are kept.`}
+          </span>
+        </div>
+      ) : null}
 
       <div className={styles.connectionEvidence}>
         <span className={styles.connectionEvidenceIcon} aria-hidden="true"><KeyRound size={15} /></span>
@@ -129,7 +243,7 @@ export function DigitalOceanConnectionCard({
           {refreshing ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
           {refreshing ? "Checking…" : "Re-check access"}
         </button>
-        <button type="button" className={connection.lastErrorCode === "invalid_credentials" ? styles.primaryButton : styles.secondaryButton} onClick={onReplaceToken}>
+        <button type="button" className={replacePrimary ? styles.primaryButton : styles.secondaryButton} onClick={onReplaceToken}>
           <KeyRound size={14} aria-hidden="true" /> Replace token
         </button>
         <a className={styles.tertiaryButton} href={DIGITALOCEAN_CONSOLE_URL} target="_blank" rel="noreferrer">

@@ -46,6 +46,22 @@ Hivra web UI:
    `RESOLUTION_SOURCE_OUT_OF_BAND`).
 4. **Pause / resume / delete** from the same page. Sending a message resumes a
    paused session.
+5. **Files** on the same page: a read-only view of the session's `/workspace`.
+   Listings use DigitalOcean's sandbox exec API with a fixed script (the folder
+   is passed as an argument, never spliced into it); downloads stream through
+   Hivra with DigitalOcean's `DOWSSHA1` checksum footer verified, always as an
+   attachment, capped at 250 MB. A paused session asks before resuming, since
+   resuming starts compute billing.
+6. **Token expiry and recovery.** DigitalOcean does not report a personal access
+   token's expiry, so the connect and Replace token dialogs ask for it ("No
+   expiry", a preset, a date, or "Not sure"). Hivra stores that owner-declared
+   date (`infrastructure_credential_expiry`, service role only) and shows it on
+   the card, with a reminder from seven days before. When the saved token can no
+   longer reach a session, the agent page offers **Replace token** (deep link to
+   the card's dialog) and **Forget this agent in Hivra**, which releases the row
+   with a `forgotten` receipt without deleting anything at DigitalOcean. Forget
+   is refused while Hivra can still reach the session (Delete stops billing) and
+   on transient outages.
 
 ## Architecture (one platform, not another lane)
 
@@ -98,8 +114,12 @@ Security:
   pause/idle/resume, delete, and absence in the DigitalOcean console.
 - OpenCode, Cursor, LangGraph, and custom images are not offered (no Hivra
   catalog entries yet). Action Gateway tools, GitHub repo attach, checkpoints,
-  forks, file transfer, and port forwarding (for example the Hermes dashboard on
-  9119) are available in the API but not surfaced.
+  forks, uploads into `/workspace`, and port forwarding (for example the Hermes
+  dashboard on 9119) are available in the API but not surfaced.
+- The Files view needs GNU `find` in the harness image; a sandbox without it is
+  reported, not shown as empty. Neither the exec nor the download endpoint has
+  been called against the live API.
+- The token expiry shown is what the owner entered, never provider evidence.
 - One continuous conversation per agent, matching DigitalOcean's session model.
 - History shows DigitalOcean's newest replay window (default 200 events,
   capped here at 1,000).
