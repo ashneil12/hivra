@@ -588,6 +588,23 @@ describe("Change access and Remove", () => {
     expect(store.completeOperation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["access_change", "claimed", "staged_installation_mismatch", "staged_installation_mismatch"],
+    ["detach", "claimed", "detach_mount_found", "detach_mount_found"],
+    ["detach", "dispatched", "step_refused", "remove_refused"],
+  ] as const)("ends a %s the computer refused (%s, %s) as failed with %s and frees the computer (T3)", async (kind, phase, refusal, reason) => {
+    const { store, deps } = fakes();
+    store.readOperation.mockResolvedValue(operationOf(kind, { phase }));
+    store.readState.mockResolvedValue(attachedState());
+    deps.execute.mockResolvedValue({ ok: false, code: "guest_refused", reason: refusal });
+    expect(await progressAttachmentWork({ kind, ownerId: OWNER, id: OPERATION, attachmentId: ID }, deps))
+      .toEqual({ kind, id: OPERATION, state: "failed", reason });
+    expect(store.failOperation).toHaveBeenCalledWith(OWNER, OPERATION, reason,
+      { version: 1, operationId: OPERATION, installationId: INSTALLATION, state: "refused", reason });
+    expect(store.completeOperation).not.toHaveBeenCalled();
+    expect(store.interrupt).not.toHaveBeenCalled();
+  });
+
   it("after a lost answer only looks, and finishes by what the computer shows", async () => {
     const { store, deps } = fakes();
     store.readOperation.mockResolvedValue(operationOf("access_change", { phase: "dispatched" }));

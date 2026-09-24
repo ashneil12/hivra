@@ -412,6 +412,17 @@ Promise<AttachmentWorkProgress> {
   if (!hostTarget || !ids) return held("state_unavailable");
   const token = await deps.store.readInstanceToken(ownerId, operation.attachmentId);
 
+  // The program ran in the VM and ended refused: the step fails with that
+  // reason and frees the computer. A Change access refuses before it stops
+  // Codex; a Remove may already have stopped Codex and removed part of it, and
+  // running Remove again (it converges) finishes it once the cause is gone.
+  const refusedStep = async (refusal: AttachedAgentRefusal): Promise<AttachmentWorkProgress> => {
+    const code = refusal === "step_refused" ? (kind === "detach" ? "remove_refused" : "change_refused") : refusal;
+    return await deps.store.failOperation(ownerId, id, code, { version: 1, operationId: id,
+      installationId: state.installation!.installationId, state: "refused", reason: code })
+      ? { kind, id, state: "failed", reason: code } : held("failure_unconfirmed");
+  };
+
   let fresh = false;
   if (operation.phase === "claimed") {
     if (operation.desiredState !== "running" || operation.computerStatus !== "running") {
@@ -428,7 +439,11 @@ Promise<AttachmentWorkProgress> {
     // pass that lost the previous answer runs it again to observe the end state.
     const removed = await deps.execute(ownerId, computer, "remove", hostTarget,
       attachedRemovePacket({ operationId: id, installationId: state.installation.installationId }).packet);
-    if (!removed.ok) return vmStopped(removed) ? await letGo("computer_not_running") : held("remove_" + stepCode(removed));
+    if (!removed.ok) {
+      if (vmStopped(removed)) return await letGo("computer_not_running");
+      const refusal = guestRefusal(removed);
+      return refusal ? await refusedStep(refusal) : held("remove_" + stepCode(removed));
+    }
     const receipt = removed.result as AttachedRemoveResult;
     if (receipt.state !== "removed") return held(receipt.reason ?? "remove_unresolved");
     if (!await deps.store.completeOperation(ownerId, id, receipt as unknown as Record<string, unknown>)) return held("completion_unconfirmed");
@@ -443,7 +458,11 @@ Promise<AttachmentWorkProgress> {
   if (fresh) {
     const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
     const changed = await deps.execute(ownerId, computer, "access", hostTarget, built.packet);
-    if (!changed.ok) return vmStopped(changed) ? await letGo("computer_not_running") : held("access_" + stepCode(changed));
+    if (!changed.ok) {
+      if (vmStopped(changed)) return await letGo("computer_not_running");
+      const refusal = guestRefusal(changed);
+      return refusal ? await refusedStep(refusal) : held("access_" + stepCode(changed));
+    }
     const receipt = changed.result as AttachedAccessResult;
     return await finishAccess(ownerId, id, operation.attachmentId, receipt, built.contract, revision, operation.grants, computer, state, deps);
   }

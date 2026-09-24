@@ -127,6 +127,14 @@ const FAILURES: Record<string, { why: string; next?: string }> = {
   gateway_unreachable: { why: `this computer's Hivra service couldn't reach ${ATTACH_RUNTIME_NAME}` },
 };
 
+/** A Remove the computer refused: it may have stopped Codex already, and running it again finishes it (T3). */
+function removeFailedLine(failureCode: string | null): string {
+  const why = failureCode === "detach_mount_found"
+    ? `something is mounted inside ${ATTACH_RUNTIME_NAME}'s own files on this computer. Restart the computer, then remove ${ATTACH_RUNTIME_NAME} again.`
+    : `${ATTACH_RUNTIME_NAME} may not work until it is removed. Remove it again.`;
+  return `Removing ${ATTACH_RUNTIME_NAME} didn't finish: ${why} Your files in ~/Hivra were not touched.`;
+}
+
 function endedLine(attachment: AttachGateAttachment): string | null {
   if (attachment.phase === "detached") {
     return attachment.endReason === "computer_deleted" ? null : `${ATTACH_RUNTIME_NAME} was removed. Your files in ~/Hivra were kept.`;
@@ -402,6 +410,8 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
         ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p> : null}
       {current.operation?.phase === "failed" && current.operation.kind === "access_change" ? <p className={styles.body}>
         The last change of access didn&apos;t finish, and {ATTACH_RUNTIME_NAME} was put back as it was.</p> : null}
+      {current.operation?.phase === "failed" && current.operation.kind === "detach" ? <p className={styles.body}>
+        {removeFailedLine(current.operation.failureCode)}</p> : null}
       <div className={styles.contract}>
         <h4 className={styles.title}>What {ATTACH_RUNTIME_NAME} knows about this computer</h4>
         {contract ? <div className={styles.meta}>

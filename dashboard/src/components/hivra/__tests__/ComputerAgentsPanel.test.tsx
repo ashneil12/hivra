@@ -251,6 +251,20 @@ describe("a step the computer stopped under (T3)", () => {
     expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(screen.queryByText(/can't be started, stopped or restarted/)).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["detach_mount_found", "Removing Codex didn't finish: something is mounted inside Codex's own files on this computer. "
+      + "Restart the computer, then remove Codex again. Your files in ~/Hivra were not touched."],
+    ["remove_refused", "Removing Codex didn't finish: Codex may not work until it is removed. Remove it again. Your files in ~/Hivra were not touched."],
+  ])("says a Remove the computer refused (%s) didn't finish, and offers Remove again", async (failureCode, copy) => {
+    serve(ready(gate({ available: false, reason: "agent_present", reviews: null, attachments: [attachment({ operation: {
+      id: "22222222-2222-4222-8222-222222222222", kind: "detach", phase: "failed", grants: { workspace: true },
+      createdAt: accepted, dispatchedAt: accepted, completedAt: accepted, failureCode,
+      leaseReleased: false, interruptReason: null, interruptedAt: null } })] })));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+  });
 });
 
 describe("an attached agent", () => {

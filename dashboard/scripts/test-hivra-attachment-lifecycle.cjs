@@ -279,6 +279,17 @@ async function main() {
       "a put-back must be observed in the current grant");
     assert.equal(await failOp(back, "chat_not_ready", { version: 1, operationId: back, state: "restored", viewMounted: false }), true);
     assert.deepEqual(await value("select grants as result from public.hivra_agent_attachments where id=$1", [op]), { workspace: false });
+    // A Remove the computer refused ends failed with its reason, frees the
+    // computer and leaves the agent attached, to be removed again (T3).
+    const refusedRemove = pid("e", 9);
+    assert.equal((await begin("detach", refusedRemove, { workspace: false })).status, "claimed");
+    assert.equal(await dispatchOp(refusedRemove), true);
+    assert.equal(await failOp(refusedRemove, "detach_mount_found", { version: 1, operationId: refusedRemove, installationId: installation,
+      state: "refused", reason: "detach_mount_found" }), true);
+    assert.deepEqual(await one("select phase, failure_code from public.hivra_agent_attachment_operations where id=$1", [refusedRemove]),
+      { phase: "failed", failure_code: "detach_mount_found" });
+    assert.equal(await value("select phase as result from public.hivra_agent_attachments where id=$1", [op]), "attached");
+    assert.deepEqual(await lease(desk), { operation_id: null, operation_kind: null });
     // A step on a stopped computer is refused before anything is claimed.
     await db.query("update public.hivra_agents set status='stopped',desired_state='stopped' where id=$1", [desk.id]);
     assert.deepEqual(await begin("detach", pid("e", 4), { workspace: false }), { status: "computer_not_running" });
