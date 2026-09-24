@@ -50,12 +50,12 @@ export type ProviderAgentModelLaunch = { service: LaunchModelAdmissionService; a
 export class ProviderAgentLaunchError extends Error {
   constructor(readonly code: "not_ready" | "capacity" | "model" | "template" | "access" | "conflict" | "unconfirmed") {
     super({
-      not_ready: "This cloud computer is not ready for launch. Check its original setup in Infrastructure.",
+      not_ready: "This cloud computer is not ready for launch. Check its setup in Capacity.",
       capacity: "This computer does not have enough measured free resources for that agent. Choose a larger computer or turn off browser automation.",
       model: "This model connection needs a supported runtime, a saved launch request and a model-ready computer. Prepare the computer again, or launch with native sign-in and connect your account there.",
       template: "Installing template skills on a provider computer is not supported yet. Launch a fresh agent and customize it in its native interface.",
       access: "Secure access is not configured on this Hivra installation. No agent was created.",
-      conflict: "This computer is already assigned or its connection changed. Refresh Infrastructure before launching again.",
+      conflict: "This computer is already assigned or its connection changed. Refresh Capacity before launching again.",
       unconfirmed: "The launch response could not be confirmed. Check your agents before trying again; no replacement computer was created.",
     }[code]);
     this.name = "ProviderAgentLaunchError";

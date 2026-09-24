@@ -421,7 +421,7 @@ export function ComputerCatalogPage() {
         </Link>
         <Link href="/dashboard/infrastructure">
           <Server size={13} />
-          Infrastructure
+          Capacity
         </Link>
       </section>
     </main>

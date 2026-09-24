@@ -79,6 +79,15 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     ],
   },
   {
+    // Where agents and computers run: Hivra Cloud, My cloud, My server.
+    // The route keeps its original path for existing links.
+    id: "infrastructure",
+    label: "Capacity",
+    href: "/dashboard/infrastructure",
+    icon: ServerCog,
+    routePrefixes: ["/dashboard/infrastructure"],
+  },
+  {
     id: "activity",
     label: "Activity",
     href: "/dashboard/activity",
@@ -94,13 +103,6 @@ const HELP_ROUTE = "/dashboard/settings/help";
 const WALLET_ROUTE = "/dashboard/wallet";
 
 export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] = [
-  {
-    id: "infrastructure",
-    label: "Infrastructure",
-    href: "/dashboard/infrastructure",
-    icon: ServerCog,
-    routePrefixes: ["/dashboard/infrastructure"],
-  },
   {
     id: "settings",
     label: "Settings",
@@ -162,7 +164,6 @@ const PRIMARY_NAVIGATION_BY_ID = Object.fromEntries(
 
 /** Labels for the 72px touch rail, where the full label cannot fit. */
 export const DASHBOARD_RAIL_SHORT_LABELS: Partial<Record<DashboardNavigationId, string>> = {
-  infrastructure: "Infra",
   applications: "Apps",
 };
 
@@ -182,7 +183,7 @@ export type DashboardNavigationGroup = {
 
 /** Phone More sheet, in display order. Every destination not on the bar. */
 export const DASHBOARD_MOBILE_MORE_GROUPS: readonly DashboardNavigationGroup[] = [
-  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
+  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.infrastructure, PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
   { id: "help", items: DASHBOARD_UTILITY_NAVIGATION },
 ];
 
