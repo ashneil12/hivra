@@ -39,13 +39,31 @@ import {
 } from "../src/lib/services/cloudflare-tunnel";
 import { deleteBoxTunnelVerified } from "../src/lib/services/cloudflare-tunnel-cleanup";
 
-// Fenced to the Canary origin, so pin exactly what Canary's own managed launches
-// require (managedHivraHostReadinessScript): the canary delivery directory at
-// the current portable provisioner release. A hard-coded release goes stale at
-// the next sealed bundle and the harness then refuses every current Canary host.
+// Fenced to the Canary origin, so admit the bundle the way Canary's own managed
+// launches do (managedHivraHostReadinessScript, canary provision): the canary
+// delivery directory, its VERSION at exactly the current portable provisioner
+// release, and every file still matching the BUNDLE.sha256 its delivery wrote.
+// A hard-coded release goes stale at the next sealed bundle and the harness then
+// refuses every current Canary host. The readiness script's other checks
+// (ownership-contract greps, bridge/storage presence, start-helper receipts) are
+// not repeated here: this harness checks capacity and ownership itself.
 export const DEEPSEEK_CANARY_VERSION = PORTABLE_HIVRA_PROVISIONER_VERSION;
 export const DEEPSEEK_CANARY_RUNTIME_PATHS = managedHivraProvisionerChannelConfiguration("canary").runtime;
 export const DEEPSEEK_CANARY_ORIGIN = "https://canary.hermesos.cloud";
+
+// Runs before the allocation lock, any claim, secret staging or dispatch. VERSION
+// is one text file; the manifest check refuses a hand-edited, partially replaced
+// or truncated bundle that merely carries the current release string. An empty
+// manifest is refused explicitly because not every sha256sum rejects one.
+function bundleAdmission(): string {
+  return `PROVISIONER_DIR=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory)}
+[ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \\
+  || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
+[ -f "$PROVISIONER_DIR/BUNDLE.sha256" ] && [ ! -L "$PROVISIONER_DIR/BUNDLE.sha256" ] && [ -s "$PROVISIONER_DIR/BUNDLE.sha256" ] \\
+  || { echo "HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING" >&2; exit 4; }
+(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256) \\
+  || { echo "HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH" >&2; exit 4; }`;
+}
 
 type Phase = "planned" | "tunnel_intent" | "tunnel_created" | "launched" | "tunnel_clean" | "clean";
 
@@ -204,9 +222,8 @@ VMID_END=${params.vmidEnd}
 OCTET_START=${params.ipLastOctetStart}
 SUBNET_PREFIX=${shellQuote(params.subnetPrefix)}
 [ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
-for command in qm pct pvesh pvesm flock awk sed grep; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
-[ "$(tr -d '[:space:]' < ${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/VERSION`)})" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \
-  || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
+for command in qm pct pvesh pvesm flock awk sed grep sha256sum; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
+${bundleAdmission()}
 exec 8>/run/lock/hivra-allocation.lock
 flock -s -w 60 8 || { echo "HIVRA_DEEPSEEK_INVENTORY_LOCK_TIMEOUT" >&2; exit 5; }
 cluster_json="$(pvesh get /cluster/resources --type vm --output-format json)"
@@ -297,9 +314,8 @@ CLAIM_FILE="$CLAIM_DIR/$VMID.claim"
 SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
 PIDFILE="/run/hivra-provision/$VMID.pid"
 [ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
-for command in qm pct pvesm flock; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
-[ "$(tr -d '[:space:]' < ${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/VERSION`)})" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \
-  || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
+for command in qm pct pvesm flock sha256sum; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
+${bundleAdmission()}
 install -d -m 0700 "$CLAIM_DIR"
 install -d -m 0755 /run/lock /run/hivra-provision
 exec 8>/run/lock/hivra-allocation.lock

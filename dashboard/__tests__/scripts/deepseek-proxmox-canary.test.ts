@@ -12,7 +12,8 @@ import {
 } from "../../scripts/deepseek-proxmox-canary";
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "../../src/lib/infrastructure/portable-provisioner-contract";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +46,30 @@ const ledger: DeepSeekCanaryLedger = {
 
 function executable(filename: string, content: string): void {
   writeFileSync(filename, content, { mode: 0o755 });
+}
+
+type BundleState = "sealed" | "tampered" | "missing" | "empty";
+
+// Writes BUNDLE.sha256 the way bundle delivery does (every file but the
+// manifest, relative paths), then optionally breaks it after sealing.
+function sealBundle(directory: string, state: BundleState): void {
+  const manifest = join(directory, "BUNDLE.sha256");
+  if (state === "missing") return;
+  if (state === "empty") { writeFileSync(manifest, ""); return; }
+  const lines = readdirSync(directory).filter(name => name !== "BUNDLE.sha256").sort()
+    .map(name => `${createHash("sha256").update(readFileSync(join(directory, name))).digest("hex")}  ${name}`);
+  writeFileSync(manifest, `${lines.join("\n")}\n`);
+  // A hand edit that keeps the current VERSION string must still be refused.
+  if (state === "tampered") appendFileSync(join(directory, "hivra-provision-on-host.sh"), "# hand edit\n");
+}
+
+// The integrity check needs a real sha256sum on the fixture PATH. macOS keeps
+// it in /sbin, which the fixture PATH deliberately omits.
+function linkSha256sum(fakeBin: string): void {
+  const real = ["/usr/bin/sha256sum", "/bin/sha256sum", "/sbin/sha256sum", "/usr/local/bin/sha256sum"].find(existsSync);
+  executable(join(fakeBin, "sha256sum"), real
+    ? `#!/bin/sh\nexec ${real} "$@"\n`
+    : "#!/bin/sh\nexec shasum -a 256 \"$@\"\n");
 }
 
 function runTeardownFixture(params: { claimPresent: boolean; fail?: "qm" | "pvesm"; strandSnippet?: boolean }) {
@@ -105,6 +130,7 @@ function runLaunchFixture(params: {
   stoppedQemuMemoryMb?: number;
   canaryVersion?: string;
   defaultVersion?: string;
+  bundle?: BundleState;
 }) {
   const root = mkdtempSync(join(tmpdir(), "deepseek-launch-test-"));
   const fakeBin = join(root, "bin");
@@ -131,8 +157,12 @@ function runLaunchFixture(params: {
   executable(join(paths.canaryProvisioner, "hivra-provision-on-host.sh"),
     `#!/bin/sh\nprintf '%s\\n' "$HIVRA_PROV_DIR" > ${JSON.stringify(dispatched)}\nexit 0\n`);
   executable(join(paths.defaultProvisioner, "hivra-provision-on-host.sh"), `#!/bin/sh\ntouch ${JSON.stringify(wrongLane)}\nexit 0\n`);
+  sealBundle(paths.canaryProvisioner, params.bundle ?? "sealed");
+  sealBundle(paths.defaultProvisioner, "sealed");
+  linkSha256sum(fakeBin);
+  const locked = join(root, "allocation-lock-taken");
   executable(join(fakeBin, "hostname"), "#!/bin/sh\nprintf '%s\\n' fixture-host\n");
-  executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
+  executable(join(fakeBin, "flock"), `#!/bin/sh\ntouch ${JSON.stringify(locked)}\nexit 0\n`);
   executable(join(fakeBin, "pct"), `#!/bin/sh
 if [ "$1" = list ]; then
   [ "\${HIVRA_TEST_FAIL:-}" != pct ] || exit 75
@@ -200,8 +230,46 @@ exit 74
     secretFile: join(paths.provision, `${ledger.vmid}.env`),
     dispatched,
     wrongLane,
+    locked,
     canaryProvisioner: paths.canaryProvisioner,
   };
+}
+
+function runInventoryFixture(params: { bundle?: BundleState; canaryVersion?: string }) {
+  const root = mkdtempSync(join(tmpdir(), "deepseek-inventory-test-"));
+  const fakeBin = join(root, "bin");
+  const paths = {
+    lock: join(root, "run/lock"),
+    canaryProvisioner: join(root, "canary-provisioner"),
+    meminfo: join(root, "proc/meminfo"),
+  };
+  for (const directory of [fakeBin, paths.lock, paths.canaryProvisioner, join(root, "proc")]) mkdirSync(directory, { recursive: true });
+  writeFileSync(paths.meminfo, "MemTotal:        8388608 kB\n");
+  writeFileSync(join(paths.canaryProvisioner, "VERSION"), `${params.canaryVersion ?? PORTABLE_HIVRA_PROVISIONER_VERSION}\n`);
+  executable(join(paths.canaryProvisioner, "hivra-provision-on-host.sh"), "#!/bin/sh\nexit 0\n");
+  sealBundle(paths.canaryProvisioner, params.bundle ?? "sealed");
+  linkSha256sum(fakeBin);
+  const locked = join(root, "allocation-lock-taken");
+  executable(join(fakeBin, "hostname"), "#!/bin/sh\nprintf '%s\\n' fixture-host\n");
+  executable(join(fakeBin, "flock"), `#!/bin/sh\ntouch ${JSON.stringify(locked)}\nexit 0\n`);
+  executable(join(fakeBin, "pvesh"), "#!/bin/sh\nprintf '%s\\n' '[]'\n");
+  executable(join(fakeBin, "qm"), "#!/bin/sh\n[ \"$1\" = list ] || exit 72\nprintf '%s\\n' ' VMID NAME STATUS MEM(MB) BOOTDISK(GB) PID'\n");
+  executable(join(fakeBin, "pct"), "#!/bin/sh\n[ \"$1\" = list ] || exit 76\nprintf '%s\\n' 'VMID Status Lock Name'\n");
+  executable(join(fakeBin, "pvesm"), `#!/bin/sh
+[ "$1" = status ] || exit 74
+printf '%s\\n' 'Name Type Status Total Used Available'
+printf '%s\\n' 'local-lvm lvmthin active 200000000 100000000 100000000'
+`);
+  const script = buildDeepSeekInventoryScript({
+    expectedHostname: "fixture-host", vmidStart: 1180, vmidEnd: 1189, ipLastOctetStart: 80, subnetPrefix: "10.252.20",
+  })
+    .replaceAll("/run/lock", paths.lock)
+    .replaceAll("/root/hivra-provisioner-canary", paths.canaryProvisioner)
+    .replaceAll("/proc/meminfo", paths.meminfo);
+  const scriptFile = join(root, "inventory.sh");
+  writeFileSync(scriptFile, script, { mode: 0o700 });
+  const result = spawnSync("bash", [scriptFile], { encoding: "utf8", env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` } });
+  return { root, result, locked };
 }
 
 describe("DeepSeek Proxmox Canary operator harness", () => {
@@ -237,8 +305,10 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
   it("builds an inventory script that shares the allocation lock and pins the provisioner", () => {
     const script = buildDeepSeekInventoryScript({ expectedHostname: "fixturenode11", vmidStart: 1100, vmidEnd: 1199, ipLastOctetStart: 50, subnetPrefix: "10.252.20" });
     expect(script).toContain("flock -s -w 60 8");
-    expect(script).toContain(`'/root/hivra-provisioner-canary/VERSION'`);
+    expect(script).toContain(`PROVISIONER_DIR='/root/hivra-provisioner-canary'`);
     expect(script).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
+    expect(script).toContain('(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256)');
+    expect(script).toMatch(/for command in [^;]*\bsha256sum; do/);
     expect(script).not.toContain(STALE_CANARY_PIN);
     expect(script).toContain("HIVRA_DEEPSEEK_INVENTORY");
     expect(script).toContain("capacityAdmits4Gb");
@@ -268,6 +338,8 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     expect(script).toContain("HIVRA_DEEPSEEK_STORAGE_INVENTORY_UNKNOWN");
     expect(script).toContain('pvesm list \'local-lvm\'');
     expect(script).toContain("HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY");
+    expect(script).toContain('(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256)');
+    expect(script).toMatch(/for command in [^;]*\bsha256sum; do/);
     expect(script).not.toContain("NR>1 && $3==\"running\"");
     expect(script).not.toContain("NR>1 && $2==\"running\"");
     expect(script).not.toContain("fixture-token");
@@ -320,6 +392,61 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
       expect(existsSync(fixture.wrongLane)).toBe(false);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a Canary bundle whose files no longer match its manifest before the lock or any claim", () => {
+    for (const [bundle, code] of [
+      ["tampered", "HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH"],
+      ["missing", "HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING"],
+      ["empty", "HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING"],
+    ] as const) {
+      // The production bundle is sealed and current, so only the Canary lane is under test.
+      const fixture = runLaunchFixture({ bundle, defaultVersion: PORTABLE_HIVRA_PROVISIONER_VERSION });
+      try {
+        expect({ bundle, status: fixture.result.status, stderr: fixture.result.stderr })
+          .toMatchObject({ bundle, status: 4, stderr: expect.stringContaining(code) });
+        expect(existsSync(fixture.locked)).toBe(false);
+        expect(existsSync(fixture.claimFile)).toBe(false);
+        expect(existsSync(fixture.secretFile)).toBe(false);
+        expect(existsSync(fixture.dispatched)).toBe(false);
+        expect(existsSync(fixture.wrongLane)).toBe(false);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("inventories only a Canary bundle that matches its manifest, before taking the lock", () => {
+    const sealed = runInventoryFixture({});
+    try {
+      expect({ status: sealed.result.status, stderr: sealed.result.stderr }).toEqual({ status: 0, stderr: "" });
+      expect(sealed.result.stdout).toContain(`"provisionerVersion":"${PORTABLE_HIVRA_PROVISIONER_VERSION}"`);
+      expect(sealed.result.stdout).toContain('"candidateVmid":1180');
+      expect(existsSync(sealed.locked)).toBe(true);
+    } finally {
+      rmSync(sealed.root, { recursive: true, force: true });
+    }
+    for (const [bundle, code] of [
+      ["tampered", "HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH"],
+      ["missing", "HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING"],
+    ] as const) {
+      const fixture = runInventoryFixture({ bundle });
+      try {
+        expect({ bundle, status: fixture.result.status, stdout: fixture.result.stdout, stderr: fixture.result.stderr })
+          .toMatchObject({ bundle, status: 4, stdout: "", stderr: expect.stringContaining(code) });
+        expect(existsSync(fixture.locked)).toBe(false);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    }
+    const stale = runInventoryFixture({ canaryVersion: STALE_CANARY_PIN });
+    try {
+      expect({ status: stale.result.status, stderr: stale.result.stderr })
+        .toMatchObject({ status: 4, stderr: expect.stringContaining("HIVRA_DEEPSEEK_VERSION_MISMATCH") });
+      expect(existsSync(stale.locked)).toBe(false);
+    } finally {
+      rmSync(stale.root, { recursive: true, force: true });
     }
   });
 
