@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.09.24.1.json";
+import release from "../../../../provisioner-releases/2026.09.24.2.json";
+import detachedRunsRelease from "../../../../provisioner-releases/2026.09.24.1.json";
 import desktopPlannerRelease from "../../../../provisioner-releases/2026.09.22.2.json";
 import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json";
 import omarchyCursorRelease from "../../../../provisioner-releases/2026.09.21.1.json";
@@ -79,6 +80,25 @@ it("ships the detached chat-run supervisor with the gateway, never into the seal
   expect(supportsModelSettingsProvisionerVersion("2026.09.22.2")).toBe(true);
 });
 
+it("ships the computer hardening (git routes off, ttyd on owner-only sockets) as a new release", () => {
+  // The current release's gateway answers /api/git/* with 404 on a computer,
+  // and its terminal units listen on unix sockets, not loopback ports.
+  expect(release.version).toBe("2026.09.24.2");
+  const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
+  expect(server).toContain("git_unavailable_on_computer");
+  for (const [file, socket] of [["bux-ttyd-base-path.conf", "/run/hivra-terminal/ttyd.sock"], ["bux-box-ttyd.service", "/run/hivra-box-terminal/ttyd.sock"]]) {
+    const unit = release.files.find(f => f.path === file)!;
+    const bytes = readFileSync(path.join(process.cwd(), "provisioner", file), "utf8");
+    expect(bytes).toContain(`-i ${socket}`);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(unit.sha256);
+  }
+  // The immediately prior release stays admitted and fully compatible.
+  expect(detachedRunsRelease.version).toBe("2026.09.24.1");
+  expect(isCompatibleProxmoxProvisionerVersion("2026.09.24.1")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.09.24.1")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.09.24.1")).toBe(true);
+});
+
 it("keeps the retained provider predecessor bound to its independently sealed bundle", () => {
   const rows = providerRelease.files.map(file => [file.path, file.sha256, file.bytes,
     file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -95,9 +115,10 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   // Regression: 2026.09.15.1, .15.2 and .21.1 shipped TypeScript identities but
   // SQL admission stopped at 2026.09.08.3, so their provider computers could
   // never be admitted or keep a valid identity.
-  const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql"]
+  const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
+    "20260924230000_provider_release_admission_2026_09_24_2.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])

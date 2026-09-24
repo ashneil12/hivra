@@ -8,7 +8,10 @@ Group=bux
 WorkingDirectory=/home/bux
 Environment=HOME=/home/bux
 Environment=PATH=/home/bux/.npm-global/bin:/home/bux/.bun/bin:/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/ttyd -i lo -p 7682 -b /box-terminal -W /bin/bash -l
+# A unix socket in a bux-owned 0700 runtime folder, not a loopback port.
+RuntimeDirectory=hivra-box-terminal
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/ttyd -i /run/hivra-box-terminal/ttyd.sock -b /box-terminal -W /bin/bash -l
 Restart=always
 RestartSec=5
 

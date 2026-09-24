@@ -88,6 +88,7 @@ async function main() {
         "20260908090000_desktop_handoff_latency_release.sql",
         "20260922201510_provider_release_admission_2026_09_22.sql",
         "20260924180000_provider_release_admission_2026_09_24.sql",
+        "20260924230000_provider_release_admission_2026_09_24_2.sql",
       ].includes(name)).sort()) {
       await db.exec(migration(file));
     }

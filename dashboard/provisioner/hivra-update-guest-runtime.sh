@@ -38,9 +38,11 @@ for asset in "${ASSETS[@]}"; do
   [ -f "$source" ] && [ ! -L "$source" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
 done
-[ -f "$SRC_DIR/hivra-agent-shell" ] && [ ! -L "$SRC_DIR/hivra-agent-shell" ] \
-  || { echo "runtime source asset is missing or unsafe: hivra-agent-shell" >&2; exit 1; }
-tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell
+for asset in hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service; do
+  [ -f "$SRC_DIR/$asset" ] && [ ! -L "$SRC_DIR/$asset" ] \
+    || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
+done
+tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 
 GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
@@ -67,6 +69,10 @@ AGENT_SHELL=/usr/local/bin/hivra-agent-shell
 # Chat turns run in detached runners; a gateway restart must leave them alone.
 DROPIN_DIR=/etc/systemd/system/bux-hivra-chat.service.d
 DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
+# Both terminals move to bux-owned unix sockets (no loopback port), so no other
+# local user or service can open a shell as bux.
+TTYD_DROPIN=/etc/systemd/system/bux-ttyd.service.d/base-path.conf
+BOX_UNIT=/etc/systemd/system/bux-box-ttyd.service
 ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
 WORK="$(mktemp -d /opt/bux/.hivra-runtime-update.XXXXXX)"
 ROOT_ARCHIVE="$WORK/runtime.tar.gz"
@@ -113,6 +119,13 @@ if [ -f "$AGENT_SHELL" ] && [ ! -L "$AGENT_SHELL" ]; then install -o root -g roo
 else : > "$BACKUP/hivra-agent-shell.absent"; fi
 if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
 else : > "$BACKUP/detached-runs.conf.absent"; fi
+for asset in bux-ttyd-base-path.conf bux-box-ttyd.service; do
+  [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+done
+[ -f "$TTYD_DROPIN" ] && [ ! -L "$TTYD_DROPIN" ] && [ -f "$BOX_UNIT" ] && [ ! -L "$BOX_UNIT" ] \
+  || { echo "terminal units are missing or unsafe" >&2; exit 1; }
+install -o root -g root -m 0600 "$TTYD_DROPIN" "$BACKUP/ttyd-base-path.conf"
+install -o root -g root -m 0600 "$BOX_UNIT" "$BACKUP/bux-box-ttyd.service"
 
 node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null
@@ -137,8 +150,12 @@ rollback() {
   elif [ -f "$BACKUP/hivra-agent-shell.absent" ]; then rm -f -- "$AGENT_SHELL"; fi
   if [ -f "$BACKUP/detached-runs.conf" ]; then install -o root -g root -m 0644 "$BACKUP/detached-runs.conf" "$DROPIN"
   elif [ -f "$BACKUP/detached-runs.conf.absent" ]; then rm -f -- "$DROPIN"; fi
+  rm -f -- "$TTYD_DROPIN.next" "$BOX_UNIT.next"
+  install -o root -g root -m 0644 "$BACKUP/ttyd-base-path.conf" "$TTYD_DROPIN"
+  install -o root -g root -m 0644 "$BACKUP/bux-box-ttyd.service" "$BOX_UNIT"
   systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl restart bux-hivra-chat.service >/dev/null 2>&1 || true
+  systemctl restart bux-ttyd.service bux-box-ttyd.service >/dev/null 2>&1 || true
 }
 
 for asset in "${ASSETS[@]}"; do
@@ -156,6 +173,13 @@ case "$KIND_BEFORE" in
     mv -f -- "$DROPIN.next" "$DROPIN"
     ;;
 esac
+for asset in bux-ttyd-base-path.conf bux-box-ttyd.service; do
+  target="$TTYD_DROPIN"; [ "$asset" = bux-box-ttyd.service ] && target="$BOX_UNIT"
+  install -o root -g root -m 0644 "$WORK/$asset" "$target.next"
+  # A computer's shells start in the shared Hivra folder, as the installer sets.
+  if [ "$KIND_BEFORE" = linux-desktop ]; then sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' "$target.next"; fi
+  mv -f -- "$target.next" "$target"
+done
 if ! systemctl daemon-reload; then rollback; exit 1; fi
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
@@ -179,6 +203,19 @@ case "$KIND_BEFORE" in
     fi
     ;;
 esac
+
+# Restart the terminals onto their sockets only after the new gateway can
+# proxy to them; until then it falls back to the loopback ports.
+if ! systemctl restart bux-ttyd.service bux-box-ttyd.service; then rollback; exit 1; fi
+TERMINALS=0
+for _ in $(seq 1 30); do
+  if [ "$(curl -sS --max-time 5 --unix-socket /run/hivra-terminal/ttyd.sock -o /dev/null -w '%{http_code}' http://localhost/terminal/ 2>/dev/null || true)" = 200 ] \
+    && [ "$(curl -sS --max-time 5 --unix-socket /run/hivra-box-terminal/ttyd.sock -o /dev/null -w '%{http_code}' http://localhost/box-terminal/ 2>/dev/null || true)" = 200 ]; then
+    TERMINALS=1; break
+  fi
+  sleep 1
+done
+if [ "$TERMINALS" != 1 ]; then rollback; echo "terminals did not answer on their owner-only sockets" >&2; exit 1; fi
 
 TOKEN_HASH_AFTER="$(sha256sum "$TOKEN" | awk '{print $1}')"
 TOKEN_INODE_AFTER="$(stat -c '%d:%i:%u:%g:%a' "$TOKEN")"

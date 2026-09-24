@@ -112,14 +112,20 @@ describe("portable native terminal setup", () => {
       expect(installer()).toContain(asset);
     }
   });
-  it("runs both terminal services as the agent user on loopback with working native paths", () => {
-    for (const [file, port, base] of [["bux-ttyd-base-path.conf", "7681", "/terminal"], ["bux-box-ttyd.service", "7682", "/box-terminal"]]) {
+  it("runs both terminal services as the agent user on owner-only unix sockets (no loopback port)", () => {
+    for (const [file, socket, base] of [
+      ["bux-ttyd-base-path.conf", "/run/hivra-terminal/ttyd.sock", "/terminal"],
+      ["bux-box-ttyd.service", "/run/hivra-box-terminal/ttyd.sock", "/box-terminal"],
+    ]) {
       const unit = readFileSync(path.join(bundle, file), "utf8");
       expect(unit).toContain("User=bux\nGroup=bux\n");
       expect(unit).toContain("WorkingDirectory=/home/bux\n");
       expect(unit).toContain("Environment=HOME=/home/bux\n");
       expect(unit).toContain("Environment=PATH=/home/bux/.npm-global/bin:/home/bux/.bun/bin:/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin\n");
-      expect(unit).toContain(`ExecStart=/usr/local/bin/ttyd -i lo -p ${port} -b ${base} -W `);
+      // A bux-owned 0700 runtime folder, so no other local user or service can open a shell as bux.
+      expect(unit).toMatch(/RuntimeDirectory=hivra-(box-)?terminal\nRuntimeDirectoryMode=0700\n/);
+      expect(unit).toContain(`ExecStart=/usr/local/bin/ttyd -i ${socket} -b ${base} -W `);
+      expect(unit).not.toContain("-p 768");
     }
   });
   it("moves only the Linux Desktop terminal profile into the shared Hivra workspace", () => {
@@ -180,14 +186,15 @@ install() { calls=$((calls+1)); printf 'WRITE %s\\n' "$calls"; [ "$calls" -ne ${
     expect(result.status).not.toBe(0); expect(result.stdout).not.toContain("DONE");
     if (failure === "enable") expect(result.stdout).not.toContain("restart");
   });
-  it("checks both native services and their exact loopback HTTP paths", () => {
+  it("checks both native services and their exact owner-only socket HTTP paths", () => {
     const result = executeHelper("verify_native_terminals", `
 systemctl() { printf 'SERVICE %s\\n' "$*"; }
-wait_for_exact_http_200() { printf 'HTTP %s\\n' "$*"; }
+wait_for_unix_http_200() { printf 'UNIX %s\\n' "$*"; }
 `);
     expect(result).toMatchObject({ status: 0, stderr: "", stdout: [
       "SERVICE is-active --quiet bux-ttyd.service", "SERVICE is-active --quiet bux-box-ttyd.service",
-      "HTTP http://127.0.0.1:7681/terminal/", "HTTP http://127.0.0.1:7682/box-terminal/", "DONE", "",
+      "UNIX /run/hivra-terminal/ttyd.sock http://localhost/terminal/",
+      "UNIX /run/hivra-box-terminal/ttyd.sock http://localhost/box-terminal/", "DONE", "",
     ].join("\n") });
   });
   it.each(["bux-ttyd.service", "bux-box-ttyd.service"])("requires %s even if the other service is active", unit => {
@@ -197,10 +204,13 @@ wait_for_exact_http_200() { printf 'UNEXPECTED_HTTP\\n'; }
 `);
     expect(result.status).toBe(1); expect(result.stdout).toBe(""); expect(result.stderr).toContain(unit);
   });
-  it.each(["7681/terminal/", "7682/box-terminal/"])("rejects a failed %s endpoint", endpoint => {
+  it.each([
+    ["/run/hivra-terminal/ttyd.sock", "http://localhost/terminal/"],
+    ["/run/hivra-box-terminal/ttyd.sock", "http://localhost/box-terminal/"],
+  ])("rejects a failed %s endpoint", (socket, url) => {
     const result = executeHelper("verify_native_terminals", `
 systemctl() { return 0; }
-wait_for_exact_http_200() { [ "$1" != 'http://127.0.0.1:${endpoint}' ]; }
+wait_for_unix_http_200() { [ "$1" != '${socket}' ] || [ "$2" != '${url}' ]; }
 `);
     expect(result.status).toBe(1); expect(result.stdout).toBe(""); expect(result.stderr).toContain("readiness check");
   });

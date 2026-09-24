@@ -308,7 +308,9 @@ Group=bux
 WorkingDirectory=/home/bux
 Environment=HOME=/home/bux
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/ttyd -i lo -p 7681 -W /usr/local/bin/hivra-agent-shell
+RuntimeDirectory=hivra-terminal
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/ttyd -i /run/hivra-terminal/ttyd.sock -W /usr/local/bin/hivra-agent-shell
 Restart=always
 RestartSec=5
 
@@ -1214,15 +1216,25 @@ wait_for_exact_http_200() {
   done
   return 1
 }
+wait_for_unix_http_200() {
+  local socket="$1" url="$2" code
+  for _ in $(seq 1 60); do
+    code="$(curl -sS --max-time 5 --unix-socket "$socket" -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+    [ "$code" = 200 ] && return 0
+    sleep 2
+  done
+  return 1
+}
 verify_native_terminals() {
   local unit
   for unit in bux-ttyd.service bux-box-ttyd.service; do
     systemctl is-active --quiet "$unit" || die "native terminal service is not active: $unit"
   done
-  wait_for_exact_http_200 'http://127.0.0.1:7681/terminal/' \
-    || die "agent terminal did not pass its loopback readiness check"
-  wait_for_exact_http_200 'http://127.0.0.1:7682/box-terminal/' \
-    || die "box terminal did not pass its loopback readiness check"
+  # Both terminals listen only on bux-owned unix sockets (no loopback port).
+  wait_for_unix_http_200 /run/hivra-terminal/ttyd.sock 'http://localhost/terminal/' \
+    || die "agent terminal did not pass its socket readiness check"
+  wait_for_unix_http_200 /run/hivra-box-terminal/ttyd.sock 'http://localhost/box-terminal/' \
+    || die "box terminal did not pass its socket readiness check"
 }
 wait_for_browser_ready() {
   local env_file="$1" cdp_port="$2" cdp_code novnc_code unit units_ready
