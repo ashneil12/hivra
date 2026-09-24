@@ -207,6 +207,25 @@ struct HivraBrowserActivationTests {
         #expect(fixture.systemURLs.opened == [URL(string: "mailto:help@foreign.invalid")!])
     }
 
+    @Test("a link from an agent's web UI to its own origin opens in the app, where its session is")
+    func sameOriginLinksKeepTheirSession() async throws {
+        let fixture = try BrowserFixture()
+        defer { fixture.cleanUp() }
+        let server = try await HivraLocalHTTPServer { _ in .init(contentType: "text/html", body: Data("<p>artifact</p>".utf8)) }
+        defer { server.stop() }
+        let browser = fixture.connectionBrowser()
+        defer { browser.closeOwnedPopups() }
+        fixture.host(browser)
+        try await fixture.show("""
+            <a id="file" href="\(server.origin.absoluteString)/artifact" target="_blank" style="display:block;height:40px">artifact</a>
+            """, in: browser, at: server.origin.appendingPathComponent("webchat"))
+
+        try await fixture.click("#file", in: browser)
+        try await fixture.eventually("the artifact opened in an in-app popup") { server.requests.contains("/artifact") }
+        #expect(browser.popupWindows.count == 1)
+        #expect(fixture.systemURLs.opened.isEmpty)
+    }
+
     @Test("only the user's own presses count as input")
     func inputCounting() throws {
         _ = NSApplication.shared

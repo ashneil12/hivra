@@ -101,11 +101,13 @@ Embedded pages follow browser rules for windows, links, downloads and dialogs:
   bridges. Windows opened without a user gesture are blocked, as in a browser.
 - **Links.** A link you click that opens another site in a new window (for
   example a link in agent chat) opens in your default browser; links that stay
-  in the pane load there as before. Sign-in providers stay in the app so they can
-  return to the page that asked. A dashboard route opened in a new window opens
-  its resource tab or destination in the workspace instead. Other schemes (and
-  `about:`, `blob:`, `data:` and `javascript:` addresses, which WebKit handles
-  itself) are never handed to macOS.
+  in the pane load there as before. A new window onto the connection's origin, or
+  onto the origin of the page that opened it (such as a file link in an agent's
+  web UI), stays in the app, where that page's session is. Sign-in providers stay
+  in the app so they can return to the page that asked. A dashboard route opened
+  in a new window opens its resource tab or destination in the workspace
+  instead. Other schemes (and `about:`, `blob:`, `data:` and `javascript:`
+  addresses, which WebKit handles itself) are never handed to macOS.
 - **Your presses.** WebKit reports a script's `click()` as a link click, so the
   app counts your own mouse and key presses in a page instead. Each press can be
   used by one download or one hand-off to another app, and presses from before

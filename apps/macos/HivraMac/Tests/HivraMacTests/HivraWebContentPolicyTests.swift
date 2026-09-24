@@ -20,9 +20,10 @@ struct HivraWebContentPolicyTests {
                                          opensNewWindow: newWindow, isLinkActivation: link, shouldPerformDownload: download)
     }
 
-    private func newWindow(_ value: String?, link: Bool = false, mainFrame: Bool = true) -> HivraNewWindowDecision {
-        HivraWebContentPolicy.newWindow(url: value.flatMap(URL.init(string:)), isLinkActivation: link,
-                                        sourceIsMainFrame: mainFrame, connectionURL: connection)
+    private func newWindow(_ value: String?, link: Bool = false, mainFrame: Bool = true, from source: String? = nil) -> HivraNewWindowDecision {
+        HivraWebContentPolicy.newWindow(url: value.flatMap(URL.init(string:)), isLinkActivation: link, sourceIsMainFrame: mainFrame,
+                                        sourceOrigin: source.flatMap(URL.init(string:)).flatMap(HivraTrustedWebOrigin.init),
+                                        connectionURL: connection)
     }
 
     @Test("web-content schemes stay inside WebKit from every frame")
@@ -93,6 +94,18 @@ struct HivraWebContentPolicyTests {
         // Another Hivra origin is still another origin.
         let cloud = URL(string: "https://hivra.cloud/dashboard/infrastructure")!
         #expect(newWindow(cloud.absoluteString, link: true) == .openInDefaultBrowser(cloud))
+    }
+
+    @Test("a page's link to its own origin stays in-app, where its session is")
+    func sourceOriginLinks() {
+        let agent = "https://vm-1.agents.hermesos.cloud"
+        #expect(newWindow("\(agent)/files/report.pdf", link: true, from: "\(agent)/webchat") == .inAppPopup)
+        #expect(newWindow("\(agent)/files/report.pdf", link: true, mainFrame: false, from: agent) == .inAppPopup)
+        let docs = URL(string: "https://docs.example.com/guide")!
+        #expect(newWindow(docs.absoluteString, link: true, from: agent) == .openInDefaultBrowser(docs))
+        // Same host, another scheme or port, is another origin.
+        let plain = URL(string: "http://vm-1.agents.hermesos.cloud/files")!
+        #expect(newWindow(plain.absoluteString, link: true, from: agent) == .openInDefaultBrowser(plain))
     }
 
     @Test("sign-in providers stay in-app so they can return to their opener")

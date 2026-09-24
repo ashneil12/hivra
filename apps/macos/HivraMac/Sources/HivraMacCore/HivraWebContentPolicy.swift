@@ -60,10 +60,12 @@ public enum HivraWebContentPolicy {
     /// Every call is already user-activated: WebKit's popup blocker stays on
     /// (`javaScriptCanOpenWindowsAutomatically == false`), so script without a user
     /// gesture never reaches the window request.
+    /// `sourceOrigin` is the requesting frame's origin, nil when it is not HTTP(S).
     public static func newWindow(
         url: URL?,
         isLinkActivation: Bool,
         sourceIsMainFrame: Bool,
+        sourceOrigin: HivraTrustedWebOrigin?,
         connectionURL: URL
     ) -> HivraNewWindowDecision {
         // window.open(), window.open('') and window.open('about:blank') create an
@@ -73,7 +75,10 @@ public enum HivraWebContentPolicy {
         case "about":
             return isAboutBlank(url) ? .inAppPopup : .refuse(reason: "about page in a new window")
         case "http", "https":
-            if isSameOrigin(url, connectionURL) || isAuthProvider(url, connectionURL: connectionURL) {
+            // A page's window onto its own origin keeps its session: an agent web UI signed
+            // in inside the app has no cookie in the default browser.
+            if isSameOrigin(url, connectionURL) || isAuthProvider(url, connectionURL: connectionURL)
+                || (sourceOrigin != nil && HivraTrustedWebOrigin(url) == sourceOrigin) {
                 return .inAppPopup
             }
             // A link the user followed (agent chat, help, docs) belongs in their browser.

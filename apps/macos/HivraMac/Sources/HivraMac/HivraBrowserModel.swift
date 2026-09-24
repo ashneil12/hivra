@@ -424,6 +424,15 @@ final class HivraBrowserModel: NSObject, ObservableObject {
         return HivraTrustedWebOrigin(trustedURL)?.matches(scheme: origin.protocol, host: origin.host, port: origin.port) == true
     }
 
+    private func webOrigin(of frame: WKFrameInfo) -> HivraTrustedWebOrigin? {
+        let origin = frame.securityOrigin
+        var components = URLComponents()
+        components.scheme = origin.protocol
+        components.host = origin.host
+        components.port = origin.port == 0 ? nil : origin.port
+        return components.url.flatMap(HivraTrustedWebOrigin.init)
+    }
+
     /// Answers through `decide` once `HivraPageActivation` or the user has.
     private func decideDownload(
         requester: String,
@@ -644,6 +653,7 @@ extension HivraBrowserModel: WKUIDelegate {
             url: url,
             isLinkActivation: navigationAction.navigationType == .linkActivated,
             sourceIsMainFrame: source.isMainFrame,
+            sourceOrigin: webOrigin(of: source),
             connectionURL: trustedURL
         ) {
         case .inAppPopup:
