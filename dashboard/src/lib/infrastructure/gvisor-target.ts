@@ -9,7 +9,13 @@ import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { beginInfrastructureConnectionPreflight, completeInfrastructureConnectionPreflight,
   loadInfrastructureConnectionSecret } from "./connection-store";
 import { buildUserProxmoxEnvironment, resolveValidatedSshDestination } from "./connection-runtime";
-import { HostDiscoverySnapshotSchema } from "./host-discovery-contracts";
+import type { HostDiscoverySnapshot } from "./host-discovery-contracts";
+import {
+  hasHostAdministratorAuthority,
+  hasRuntimeHostAuthority,
+  LINUX_SANDBOX_PRIVILEGE_COPY,
+  loadCurrentHostDiscoverySnapshot,
+} from "./host-authority";
 import { resolveProxmoxHostCapacityPolicy } from "./host-capacity-policy";
 import { HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_IMAGE } from "@/lib/hivra/gvisor-computer-contract";
 
@@ -72,21 +78,22 @@ export async function preflightGvisorTarget(userId: string, connectionId: string
   existingLease?: { runId: string; connectionRevision: number }) {
   if (!/^[0-9a-f]{64}$/.test(expectedBundleSha)) throw new GvisorTargetError("unsupported", "This Hivra installation has not pinned a supported gVisor release.");
   const connection = await loadInfrastructureConnectionSecret(userId, connectionId);
-  if (connection.provider !== "host" || connection.endpoint.sshUser !== "root") {
-    throw new GvisorTargetError("unsupported", "A gVisor target requires a root Linux host connection.");
+  if (!hasRuntimeHostAuthority(connection)) {
+    throw new GvisorTargetError("unsupported", LINUX_SANDBOX_PRIVILEGE_COPY);
   }
-  const { data: discovered, error: discoveryError } = await db().from("infrastructure_host_discovery_snapshots")
-    .select("snapshot,expires_at").eq("user_id", userId).eq("connection_id", connectionId)
-    .eq("connection_revision", connection.revision).order("observed_at", { ascending: false }).limit(1).maybeSingle();
-  if (discoveryError) throw new GvisorTargetError("database_failed", "Host discovery evidence could not be read.");
-  const parsed = HostDiscoverySnapshotSchema.safeParse(discovered?.snapshot);
-  if (!parsed.success || !discovered || Date.parse(discovered.expires_at) <= Date.now()) {
+  let snapshot: HostDiscoverySnapshot | null;
+  try {
+    snapshot = await loadCurrentHostDiscoverySnapshot(userId, connectionId, connection.revision);
+  } catch {
+    throw new GvisorTargetError("database_failed", "Host discovery evidence could not be read.");
+  }
+  if (!snapshot) {
     throw new GvisorTargetError("discovery_required", "Inspect this Linux host again before checking gVisor readiness.");
   }
-  const snapshot = parsed.data;
-  if (snapshot.host.os.family !== "linux" || snapshot.host.kernel.architecture !== "amd64"
-    || snapshot.host.environment.effectivePrivilege !== "root" || snapshot.host.environment.cgroupVersion !== 2) {
-    throw new GvisorTargetError("unsupported", "This host needs Linux amd64, root SSH, and cgroup v2 for the gVisor adapter.");
+  // The snapshot must have reached root the way the connection does now.
+  if (!hasHostAdministratorAuthority(connection, snapshot) || snapshot.host.os.family !== "linux"
+    || snapshot.host.kernel.architecture !== "amd64" || snapshot.host.environment.cgroupVersion !== 2) {
+    throw new GvisorTargetError("unsupported", "This host needs Linux amd64, root or passwordless sudo, and cgroup v2 for the gVisor adapter.");
   }
   if (existingLease && existingLease.connectionRevision !== connection.revision) {
     throw new GvisorTargetError("not_found", "The infrastructure connection changed during preparation.");
@@ -99,7 +106,8 @@ export async function preflightGvisorTarget(userId: string, connectionId: string
   const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost);
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
-    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey }, destination);
+    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
+    sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
   const sha = await adapterDigest();
   const result = await runProxmoxHostScript(preflightScript(sha, expectedBundleSha), env, { timeoutMs: 60_000, maxOutputBytes: 16 * 1024 });
   if (!result.ok) throw new GvisorTargetError("remote_failed", "The gVisor adapter did not pass its strict readiness check.");

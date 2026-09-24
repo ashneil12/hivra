@@ -9,16 +9,18 @@ import {
   RefreshCw,
   Server,
   ShieldCheck,
+  SquareTerminal,
   UserRound,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { checkGvisorConnection, InfrastructureApiError } from "@/lib/infrastructure/client";
-import type {
-  HostDiscoveryResult,
-  HostDiscoverySnapshot,
-  HostEngineRequirement,
-  HostIsolationEngineId,
+import {
+  snapshotPrivilegeVia,
+  type HostDiscoveryResult,
+  type HostDiscoverySnapshot,
+  type HostEngineRequirement,
+  type HostIsolationEngineId,
 } from "@/lib/infrastructure/host-discovery-contracts";
 import {
   hostArchitectureLabel,
@@ -27,10 +29,12 @@ import {
   type HostDiscoveryOutcome,
 } from "@/lib/infrastructure/host-discovery-outcome";
 import { formatInfrastructureBytes } from "@/lib/infrastructure/formatters";
+import { PROXMOX_SUDO_TRANSPORT_READY } from "@/lib/infrastructure/sudo-transport-gate";
 import type { GvisorReadinessCheck, LaunchOnServerAction } from "@/lib/infrastructure/launch-on-server";
 import { tryAgainInMinutes } from "@/lib/retry-after-copy";
 
 import styles from "./Infrastructure.module.css";
+import { CopyButton } from "./CopyButton";
 import { LaunchOnServerLink, useGvisorCheckLaunchAction } from "./LaunchOnServer";
 
 const ENGINE_LABELS: Record<HostIsolationEngineId, string> = {
@@ -46,7 +50,7 @@ const ENGINE_LABELS: Record<HostIsolationEngineId, string> = {
 };
 
 const REQUIREMENT_LABELS: Partial<Record<HostEngineRequirement, string>> = {
-  ROOT_REQUIRED: "a root login",
+  ROOT_REQUIRED: "root or passwordless sudo",
   LINUX_REQUIRED: "Linux",
   SUPPORTED_OS_REQUIRED: "Ubuntu 22.04 or 24.04",
   SUPPORTED_ARCH_REQUIRED: "an x86 (amd64) processor",
@@ -58,6 +62,8 @@ const REQUIREMENT_LABELS: Partial<Record<HostEngineRequirement, string>> = {
 
 export function supportsStrictProxmoxDiscovery(result: HostDiscoveryResult): boolean {
   if (!result.ok) return false;
+  // Release gate T43: no Proxmox check (and so no Proxmox setup) through sudo.
+  if (snapshotPrivilegeVia(result.snapshot) === "sudo" && !PROXMOX_SUDO_TRANSPORT_READY) return false;
   const engine = result.snapshot.engines.find((candidate) => candidate.id === "proxmox-kvm");
   return engine?.availability === "installed" && engine.supported;
 }
@@ -126,7 +132,9 @@ export function InfrastructureHostDiscoveryResult({
   onDone,
   onStrictPreflightRequested,
   onGvisorSetupRequested,
-  onConnectAsRootRequested,
+  onChangeSshUserRequested,
+  onUseSudoRequested,
+  onSetupCommandRequested,
   onGvisorReady,
   checkGvisorReadiness = false,
   retrying = false,
@@ -143,7 +151,12 @@ export function InfrastructureHostDiscoveryResult({
   /** Opens the shared review dialog for Linux Sandbox setup. */
   onGvisorSetupRequested?: (mode: "prepare" | "repair") => void;
   /** Opens the connection's settings to change its SSH user. */
-  onConnectAsRootRequested?: () => void;
+  onChangeSshUserRequested?: () => void;
+  /** Switches this connection to run host scripts through passwordless
+   * sudo (a revision change), then inspects again. */
+  onUseSudoRequested?: () => void;
+  /** Opens the one-line setup command for this server. */
+  onSetupCommandRequested?: () => void;
   /** Called when this dialog's own readiness check came back ready. */
   onGvisorReady?: (targetId: string) => void;
   /** The owner asked for a readiness check: run it as soon as this
@@ -161,8 +174,9 @@ export function InfrastructureHostDiscoveryResult({
   const launchAction = useGvisorCheckLaunchAction(readyCheck);
   const ready = launchAction !== null;
   const name = hostName?.trim() || "This server";
+  const outcomeContext = { hostName, sshUser, proxmoxSudoAllowed: PROXMOX_SUDO_TRANSPORT_READY };
   const autoCheck = checkGvisorReadiness && result.ok && Boolean(connectionId)
-    && hostDiscoveryOutcome(result.snapshot, { hostName, sshUser }).action === "check-gvisor";
+    && hostDiscoveryOutcome(result.snapshot, outcomeContext).action === "check-gvisor";
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -218,6 +232,7 @@ export function InfrastructureHostDiscoveryResult({
             ) : null}
           </div>
         </div>
+        {result.error.hostKey ? <HostKeyComparison hostKey={result.error.hostKey} /> : null}
         <div className={styles.resultActions}>
           <button type="button" className={styles.tertiaryButton} onClick={onDone}>Close</button>
           <button type="button" className={styles.primaryButton} onClick={onRetry} disabled={retrying}>
@@ -230,7 +245,7 @@ export function InfrastructureHostDiscoveryResult({
   }
 
   const { snapshot } = result;
-  const outcome = hostDiscoveryOutcome(snapshot, { hostName, sshUser });
+  const outcome = hostDiscoveryOutcome(snapshot, outcomeContext);
   const gvisorInstalled = outcome.action === "check-gvisor";
   const gvisorSetupAvailable = Boolean(onGvisorSetupRequested && connectionId);
 
@@ -253,7 +268,9 @@ export function InfrastructureHostDiscoveryResult({
     onRetry,
     onStrictPreflightRequested,
     onGvisorSetupRequested,
-    onConnectAsRootRequested,
+    onChangeSshUserRequested,
+    onUseSudoRequested,
+    onSetupCommandRequested,
     checkReadiness: () => void checkReadiness(),
     checkFailure,
   });
@@ -320,7 +337,9 @@ function primaryAction({
   onRetry,
   onStrictPreflightRequested,
   onGvisorSetupRequested,
-  onConnectAsRootRequested,
+  onChangeSshUserRequested,
+  onUseSudoRequested,
+  onSetupCommandRequested,
   checkReadiness,
   checkFailure,
 }: {
@@ -334,7 +353,9 @@ function primaryAction({
   onRetry: () => void;
   onStrictPreflightRequested?: () => void;
   onGvisorSetupRequested?: (mode: "prepare" | "repair") => void;
-  onConnectAsRootRequested?: () => void;
+  onChangeSshUserRequested?: () => void;
+  onUseSudoRequested?: () => void;
+  onSetupCommandRequested?: () => void;
   checkReadiness: () => void;
   checkFailure: GvisorCheckFailure | null;
 }): ReactNode {
@@ -373,10 +394,29 @@ function primaryAction({
           {checking ? "Checking…" : "Check readiness"}
         </button>
       ) : checkAgain;
-    case "connect-as-root":
-      return onConnectAsRootRequested ? (
-        <button type="button" className={styles.primaryButton} onClick={onConnectAsRootRequested}>
-          <UserRound size={14} aria-hidden="true" /> Connect as root
+    case "use-sudo":
+      return onUseSudoRequested ? (
+        <button type="button" className={styles.primaryButton} onClick={onUseSudoRequested} disabled={retrying}>
+          <ShieldCheck size={14} aria-hidden="true" /> Use sudo for setup
+        </button>
+      ) : checkAgain;
+    case "use-setup-command":
+      if (onSetupCommandRequested) {
+        return (
+          <button type="button" className={styles.primaryButton} onClick={onSetupCommandRequested}>
+            <SquareTerminal size={14} aria-hidden="true" /> Use the setup command
+          </button>
+        );
+      }
+      return onChangeSshUserRequested ? (
+        <button type="button" className={styles.primaryButton} onClick={onChangeSshUserRequested}>
+          <UserRound size={14} aria-hidden="true" /> Change SSH user
+        </button>
+      ) : checkAgain;
+    case "change-ssh-user":
+      return onChangeSshUserRequested ? (
+        <button type="button" className={styles.primaryButton} onClick={onChangeSshUserRequested}>
+          <UserRound size={14} aria-hidden="true" /> Change SSH user
         </button>
       ) : checkAgain;
     default:
@@ -403,6 +443,7 @@ function TechnicalDetails({
     .filter((label): label is string => Boolean(label));
   const installed = snapshot.engines.filter((engine) => engine.availability === "installed");
   const privilege = snapshot.host.environment.effectivePrivilege;
+  const throughSudo = snapshot.contractVersion === 2 && snapshot.host.environment.privilegeVia === "sudo";
 
   return (
     <details className={styles.technicalDetails}>
@@ -443,7 +484,9 @@ function TechnicalDetails({
             icon={<ShieldCheck size={16} />}
             label="KVM"
             value={snapshot.host.kvm.devicePresent ? "Device available" : "Not available"}
-            detail={privilege === "root" ? "Signed in as root" : privilege === "non-root" ? `Signed in as ${sshUser?.trim() || "a user"}, not root` : "Root access unknown"}
+            detail={privilege === "root"
+              ? throughSudo ? `Root through sudo as ${sshUser?.trim() || "this user"}` : "Signed in as root"
+              : privilege === "non-root" ? `Signed in as ${sshUser?.trim() || "a user"}, not root` : "Root access unknown"}
           />
         </div>
 
@@ -490,6 +533,25 @@ function DiscoveryMetric({
       <span className={styles.sectionLabel}>{label}</span>
       <strong>{value}</strong>
       <span>{detail}</span>
+    </div>
+  );
+}
+
+/** The pinned identity and the one the server presented, side by side, so
+ * the owner can compare them with the provider's console. */
+function HostKeyComparison({ hostKey }: { hostKey: { expected: string; presented: string } }) {
+  return (
+    <div role="group" aria-label="SSH identities">
+      <dl className={styles.hostKeyComparison}>
+        <div>
+          <dt>Pinned by Hivra</dt>
+          <dd><code>{hostKey.expected}</code> <CopyButton value={hostKey.expected} label="Copy the pinned fingerprint" /></dd>
+        </div>
+        <div>
+          <dt>Presented by the server</dt>
+          <dd><code>{hostKey.presented}</code> <CopyButton value={hostKey.presented} label="Copy the presented fingerprint" /></dd>
+        </div>
+      </dl>
     </div>
   );
 }

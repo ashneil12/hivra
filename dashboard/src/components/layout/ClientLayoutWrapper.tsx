@@ -12,6 +12,7 @@ import { WorkspaceModalLayerProvider } from '@/components/workspace/WorkspaceMod
 import InteractiveBackground from '@/components/InteractiveBackground';
 import { useWorkspaceViewport } from './useWorkspaceViewport';
 import { NativeWorkspaceProvider, useNativeWorkspace, useNativeWorkspaceEnabled } from './NativeWorkspaceBridge';
+import { accountCode } from '@/lib/account-code';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -62,6 +63,9 @@ export function ClientLayoutWrapper({
   const nativeWorkspace = useNativeWorkspaceEnabled();
   const { keyboardOpen } = useWorkspaceViewport();
   const owner = resourceOwnerKey ?? userEmail;
+  // resourceOwnerKey is the signed-in user id: the account code shown in the
+  // account menu is the one the server setup script names.
+  const ownerAccountCode = resourceOwnerKey ? accountCode(resourceOwnerKey) : null;
   const handleActiveResourceKindChange = useCallback((kind: 'agent' | 'computer' | null) => {
     setActiveResource((current) => current?.owner === owner && current.pathname === pathname && current.kind === kind
       ? current : { owner, pathname, kind });
@@ -125,6 +129,7 @@ export function ClientLayoutWrapper({
           <DashboardSidebar
             userName={userName}
             userEmail={userEmail}
+            accountCode={ownerAccountCode}
             resourceOwnerKey={resourceOwnerKey}
             onActiveResourceKindChange={handleActiveResourceKindChange}
             onAttentionCountChange={handleAttentionCountChange}
@@ -163,6 +168,7 @@ export function ClientLayoutWrapper({
             attentionCount={attentionCount}
             userName={userName}
             userEmail={userEmail}
+            accountCode={ownerAccountCode}
             onOpenSwitcher={openSwitcher}
           />
         )}

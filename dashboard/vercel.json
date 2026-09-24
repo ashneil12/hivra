@@ -89,6 +89,10 @@
       "schedule": "50 4 * * *"
     },
     {
+      "path": "/api/cron/sweep-server-enrollments",
+      "schedule": "20 5 * * *"
+    },
+    {
       "path": "/api/cron/recover-missing-vm-instances",
       "schedule": "*/10 * * * *"
     },
