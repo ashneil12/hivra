@@ -6,7 +6,7 @@
  * (daily fleet sync, pending-resize sweep, unhealthy-box recovery) used to do
  * that with no check. Before such an update launches, this gate runs on the box
  * (inside the same remote script applyLiveUpdate already uses) and reads the
- * agent's durable turn markers (turn-marker-probe.ts):
+ * agent's durable turn markers (agent-activity-probe.ts):
  *
  *   - no live turn            -> proceed, and end any deferral streak;
  *   - a live turn, or a marker it cannot read (fail safe) -> defer. The update
@@ -31,7 +31,7 @@ import {
   TURN_MARKER_FRESH_SECONDS,
   WEBFREE_HERMES_HOME,
   buildTurnMarkerProbePython,
-} from "@/lib/services/turn-marker-probe";
+} from "@/lib/services/agent-activity-probe";
 
 /**
  * Deferral cap by count. With the 15-minute pending-resize and recovery sweeps

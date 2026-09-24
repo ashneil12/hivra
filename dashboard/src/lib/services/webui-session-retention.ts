@@ -258,7 +258,7 @@ export function buildWebUIWsOrphanReapRepairCommand(params: {
 }): string {
   const replaceable = WEBUI_WS_ORPHAN_REAP_REPLACEABLE_SECONDS.join(",");
   return `# Pin dashboard.ws_orphan_reap_grace_s in the persisted config.yaml so a web-chat
-# turn keeps running after its tab closes (see webui-ws-orphan-reap.ts). Sets it
+# turn keeps running after its tab closes (see webui-session-retention.ts). Sets it
 # only when missing or still a Hivra-shipped value; an owner's value is kept.
 # One backup of the pre-repair file. A failure leaves config.yaml untouched and
 # does not fail the update.

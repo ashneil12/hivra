@@ -6,7 +6,7 @@ import {
   TURN_MARKER_FRESH_SECONDS,
   TURN_MARKER_PROBE_PYTHON_FUNCTIONS,
   WEBFREE_HERMES_HOME,
-} from "@/lib/services/turn-marker-probe";
+} from "@/lib/services/agent-activity-probe";
 
 /**
  * Idle-gated update stack provisioner.
@@ -20,7 +20,7 @@ import {
  *   1. idle-sampler (every 3 min): stamps /run/hermes-last-active-<INST> whenever
  *      the agent is processing a turn: a messaging turn (gateway_state.json
  *      active_agents) or a web-chat turn running in official-dashboard (a fresh
- *      turn marker, see turn-marker-probe.ts). Fail-safe: unknown/stale => BUSY.
+ *      turn marker, see agent-activity-probe.ts). Fail-safe: unknown/stale => BUSY.
  *   2. roll (hourly): idle-gated recreate of gateway+official-dashboard onto the
  *      latest :stable — only when idle >= 45 min and a new image exists. A
  *      20-hour cooldown suppresses repeat work for the same image, but never
@@ -159,7 +159,7 @@ export function buildIdleGatedUpdateProvisioningScript(params: {
   // latter come from the agent's durable turn markers on the shared webui-state
   // volume, read from the gateway container (same volume) with the dashboard's
   // docker-inspect state passed in, so a marker left by a dashboard process that
-  // has since restarted does not count (turn-marker-probe.ts).
+  // has since restarted does not count (agent-activity-probe.ts).
   const samplerScript = `#!/usr/bin/env bash
 # hermes-idle-sampler — stamp the "last active" marker whenever the agent is
 # processing a turn (messaging agents in the gateway, or a web-chat turn in

@@ -17,8 +17,8 @@ import {
   WEBUI_WS_ORPHAN_REAP_GRACE_SECONDS,
   WEBUI_WS_ORPHAN_REAP_REPLACEABLE_SECONDS,
   buildWebUIWsOrphanReapRepairCommand,
-} from "../webui-ws-orphan-reap";
-import { TURN_MARKER_FRESH_SECONDS } from "../turn-marker-probe";
+} from "../webui-session-retention";
+import { TURN_MARKER_FRESH_SECONDS } from "../agent-activity-probe";
 import { buildWebUIBootstrapScript, buildWebUIConfigYaml, buildWebUIProvisioningArtifacts } from "../webui-instance-builder";
 
 const python = process.env.HERMES_CONFIG_TEST_PYTHON || "python3";

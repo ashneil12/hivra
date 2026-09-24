@@ -20,7 +20,7 @@ import {
   parseInFlightUpdateGateReport,
   updateDeferralStatePath,
 } from "@/lib/services/inflight-update-gate";
-import { TURN_MARKER_FRESH_SECONDS } from "@/lib/services/turn-marker-probe";
+import { TURN_MARKER_FRESH_SECONDS } from "@/lib/services/agent-activity-probe";
 
 const python = process.env.HERMES_CONFIG_TEST_PYTHON || "python3";
 

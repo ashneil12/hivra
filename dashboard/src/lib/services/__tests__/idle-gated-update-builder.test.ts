@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
-import { TURN_MARKER_FRESH_SECONDS } from "@/lib/services/turn-marker-probe";
+import { TURN_MARKER_FRESH_SECONDS } from "@/lib/services/agent-activity-probe";
 
 /**
  * Decode every base64(+gzip) embedded-file payload in a provisioning snippet,
