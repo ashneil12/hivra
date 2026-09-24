@@ -54,6 +54,7 @@ jest.mock("@/lib/claim/conversion-links-config", () => ({
   CONVERSION_LINKS: { termsUrl: "https://hivra.cloud/terms", conversionUrl: "https://bankr.bot/convert" },
 }));
 
+import { auth } from "@clerk/nextjs/server";
 import { readConversionAccessGate } from "@/lib/claim/conversion-access.server";
 import ConvertPage from "@/app/dashboard/convert/page";
 import TokenVerificationPage from "@/app/token/page";
@@ -146,6 +147,39 @@ describe("policy of ['GB']", () => {
     expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
     expect(screen.getByText(/holding either token keeps your tier/)).toBeInTheDocument();
     expect(gate).toHaveBeenCalledWith(null, expect.any(Date));
+  });
+
+  describe("a signed-in ops admin (OPS_ADMIN_USER_IDS) in the UK", () => {
+    // An obviously fake ID: the repo is public and no real admin is named.
+    const ADMIN_ID = "user_ops_admin_test";
+    const original = process.env.OPS_ADMIN_USER_IDS;
+    beforeEach(() => {
+      process.env.OPS_ADMIN_USER_IDS = ADMIN_ID;
+      jest.mocked(auth).mockResolvedValue({ userId: ADMIN_ID } as never);
+    });
+    afterEach(() => {
+      if (original === undefined) delete process.env.OPS_ADMIN_USER_IDS;
+      else process.env.OPS_ADMIN_USER_IDS = original;
+      jest.mocked(auth).mockResolvedValue({ userId: null } as never);
+    });
+
+    it("sees every token page as an unblocked viewer does", async () => {
+      viewerFrom("GB");
+      await renderPage(TokenomicsPage);
+      expect(screen.getByText(/a year of Pro is \$49 in the token/)).toBeInTheDocument();
+      await renderPage(WhyHivraEvolutionPage);
+      expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
+      await renderPage(ConvertPage);
+      expect(screen.getByRole("link", { name: "Go to conversion" })).toBeInTheDocument();
+      expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
+    });
+
+    it("while another signed-in user in the UK still gets the notice", async () => {
+      jest.mocked(auth).mockResolvedValue({ userId: "user_b" } as never);
+      viewerFrom("GB");
+      await renderPage(TokenomicsPage);
+      expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
+    });
   });
 
   it("pages are unchanged for a viewer from elsewhere", async () => {

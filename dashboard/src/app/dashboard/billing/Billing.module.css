@@ -1435,3 +1435,48 @@
     animation-duration: 2.4s;
   }
 }
+
+/* Per-plan $HermesOS hold amounts (Payment methods). The table scrolls on its
+   own on narrow phones so the page never scrolls sideways. */
+.holdTable {
+  display: grid;
+  gap: 10px;
+  margin-block: 12px 4px;
+}
+.holdTable > table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+.holdTable th,
+.holdTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--etched-border);
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--ink-black);
+}
+.holdTable thead th {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.holdTable tbody tr:last-child th,
+.holdTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+.holdTable tbody th {
+  font-weight: 600;
+}
+.holdAmount {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
