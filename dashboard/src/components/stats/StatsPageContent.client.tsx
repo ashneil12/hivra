@@ -10,6 +10,7 @@ import { Sparkline } from "@/components/stats/Sparkline";
 import { useAgentsDeployedPolling } from "@/hooks/useAgentsDeployedPolling";
 import { useLocale } from "@/components/i18n/LocaleProvider";
 import type { PublicStats } from "@/lib/public-stats";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 interface Stats {
   total: number;
@@ -487,7 +488,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
         }}
       >
         <Link
-          href="/get-started?plan=free"
+          href={PUBLIC_START_HREF}
           className="action-button"
           style={{
             padding: "16px 36px",

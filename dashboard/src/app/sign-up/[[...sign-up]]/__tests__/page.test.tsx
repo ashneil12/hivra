@@ -28,6 +28,9 @@ jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
 }));
 
+const mockAuth = jest.fn();
+jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
+
 const mockSignUp = jest.fn();
 jest.mock("@clerk/nextjs", () => ({
   SignUp: (props: Record<string, unknown>) => {
@@ -42,6 +45,7 @@ describe("SignUpPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.HIVRA_AUTH_MODE;
+    mockAuth.mockResolvedValue({ userId: null });
   });
 
   afterAll(() => {
@@ -68,12 +72,24 @@ describe("SignUpPage", () => {
     expect(redirect).toHaveBeenCalledWith("/get-started?plan=fleet");
   });
 
-  it("redirects legacy reservation signup traffic into the live free plan flow", async () => {
-    await SignUpPage({
+  // FTUE-16: reservation links used to go through the plan picker first.
+  it("sends legacy reservation sign-ups straight to Launch like any new account", async () => {
+    render(await SignUpPage({
       searchParams: Promise.resolve({ from: "reserve" }),
-    });
+    }));
 
-    expect(redirect).toHaveBeenCalledWith("/get-started?plan=free");
+    expect(redirect).not.toHaveBeenCalled();
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1",
+    }));
+  });
+
+  // FTUE-16: public "start" links now come here, signed in or not.
+  it("sends a visitor who is already signed in on to Launch", async () => {
+    mockAuth.mockResolvedValue({ userId: "user_1" });
+    await SignUpPage({ searchParams: Promise.resolve({ agentType: "codex" }) });
+
+    expect(redirect).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1&profile=codex");
   });
 
   it("keeps the plain signup page available when no plan intent is provided", async () => {

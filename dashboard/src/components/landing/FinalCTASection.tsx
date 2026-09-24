@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AnimateIn } from "@/components/ui/animate-in";
 import { useLocale } from "@/components/i18n/LocaleProvider";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 export default function FinalCTASection() {
   const { copy } = useLocale();
@@ -25,7 +26,7 @@ export default function FinalCTASection() {
 
           <div style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap", marginBottom: "1.75rem" }}>
             <Link
-              href="/get-started?plan=free"
+              href={PUBLIC_START_HREF}
               id="final-cta"
               className="action-button"
               style={{

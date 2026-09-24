@@ -115,7 +115,8 @@ describe("/roadmap page", () => {
 
     expect(screen.queryByRole("link", { name: /download roadmap/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /read it here/i })).toHaveAttribute("href", "#what-is-hermesos");
-    expect(screen.getByRole("link", { name: /deploy hivra/i })).toHaveAttribute("href", "/get-started?plan=operator");
+    // FTUE-16: a generic start link goes to sign-up and Launch, not Pro checkout.
+    expect(screen.getByRole("link", { name: /deploy hivra/i })).toHaveAttribute("href", "/sign-up");
 
     const roadmapNav = screen.getByRole("navigation", { name: /roadmap navigation/i });
     expect(within(roadmapNav).getAllByRole("link", { name: /token verification/i }).length).toBeGreaterThanOrEqual(1);
