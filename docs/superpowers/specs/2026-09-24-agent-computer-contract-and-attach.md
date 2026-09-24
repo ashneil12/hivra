@@ -77,6 +77,120 @@ What is implemented, and where it differs from the design below:
   existing Canary provider VM; AC-C5 needs an approved DigitalOcean preview
   team.
 
+## 0.1 Slice 15 (attach) implementation status
+
+**Built on branch `claude/agent-computer`, not yet merged or on Canary.**
+Attach is on only where the deployment's own environment says Canary, and
+no check in 8.3 has run. The first pair is Codex 0.149.1 on an existing
+Ubuntu Desktop computer on Proxmox (Hivra Cloud or My server). Every other
+computer says "Not available to add to an existing computer yet".
+
+| Area | Implemented | Difference from this document |
+|---|---|---|
+| Database | `20260925000000_hivra_agent_attachment_lifecycle.sql`: intent v2 (the reviewed grants and review digest, the pinned installer and grant policy); the plan limit checked again in claim and in dispatch under the per-owner slot lock; activation v2, admitted only with the unit renderer's and the lifecycle program's pinned digests, with the instance token stored beside the binding in a table no role can read; complete only with the recorded readiness observation (it publishes the canonical identity, installation and binding and releases the computer's lease); fail only with an observed cleanup receipt; the contract a revision at a time, delivered only on a matching read-back; Change access and Remove as their own operations on the lease (`agent_access_change`, `agent_detach`); restore refused while an agent is attached; a computer delete detaches the binding with a `computer_deleted` receipt. `20260925000100_hivra_agent_attachment_grants.sql`: `EXECUTE` for `service_role` only on the functions the routes and worker call, revoked from everyone on the v1 activation admission. `20260925000200_hivra_agent_attach_readiness.sql`: the gate reads `computer_not_ready` for a running computer Hivra has not seen ready (no `provisioned_at`, or no gateway `chat_url` for the Chat tab); `refuse_hivra_agent_attachment` ends a claim no dispatch was ever granted for as **failed** with `computer_not_running` or `computer_not_ready` and releases the lease; the worker's state read carries the claim's `createdAt` | **Refinement of 5.9.** The v1 activation chain is retired rather than changed: `attachment-activation-*`, `attachment-native-*`, `preflight-`, `start-` and `observe-attached-codex-activation.py`, `probe-attached-codex-native.py` and `attached-codex-protocol.py` are deleted with their tests. One guest program, `attached-agent.py`, carries activate, observe, access, state and remove, and the database pins its digest |
+| Guest | Units v2, rendered byte-equal by `attachment-service-units.ts` and `attached-agent.py`: the socket, agent, workspace, network, DNS socket and relay, enforcement probe and watchdog timer. `attached-workspace.py` (fd-based idmapped mount, verify, the Remove walker), `attached-network.py` (namespace, veth and NAT, the nftables table with the `onlink`, `gateways` and `blocked` sets, systemd `IPAddressDeny` on the agent and probe units, the relay guard, the enforcement probe, the watchdog), `attached-dns-relay.py`. Folder recovery stops the attached units before it touches `~/Hivra` | **Found on the VMs:** the agent unit also hides the system bus, the snapd, acpid, dhcpcd and uuidd sockets, `io.systemd.Resolve` and `io.systemd.ManagedOOM` (not all of `/run/systemd/resolve`, because `/etc/resolv.conf` links into it). `OOMPolicy=continue`: the memory limit kills the process that hit it and Codex keeps running (T22). Enforcement needs all three layers: the nftables table and each element as the kernel answers for it, systemd's effective `IPAddressDeny` checked by coverage (systemd drops an entry another one covers), and `CONFIG_CGROUP_BPF`. The watchdog keeps Codex stopped until both layers are back, then starts it again. Change access checks the mount point before it stops Codex and refuses a link or anything else that is not a plain empty folder (`workspace_path_not_plain`); a view that is not as granted refuses to start (`view_not_as_granted`). Remove also clears the staging journal it owns. A read-only `state` action lets the worker look after a lost answer instead of changing access again |
+| Chat | `hivra-chat/server.js` attached mode: socket activation, the root-owned token file, its own `HOME` and `CODEX_HOME` (created 0700 when missing: spike S4), the root-owned starting folder, `exec -C <folder> resume`, `-c project_doc_max_bytes=32768`, and the chat route allowlist. The computer gateway's `/agents/<installation id>/` proxy with the socket check | S3 picked outcome (a) of 5.4. Manage says "applies from its next message" for attached Codex 0.149.1 only (`contract-resume-evidence.ts`); agent-owned computers keep "applies to new chats" |
+| Worker and routes | `GET /api/cron/progress-agent-attachments` every minute, at most five steps a pass within 600 s: staging, activation, readiness and completion, cleanup before a failure, Change access and Remove. Before anything runs on the computer the worker checks it is running and ready; a precondition refusal ends the attach as failed with its reason, never held: the computer stopped (`computer_not_running`), is not ready, or its guest has not answered Hivra within three minutes of the claim (`computer_not_ready`). A pending delete still cancels. `GET` and `POST /api/hivra/computers/<id>/agents`, `PATCH` and `DELETE /api/hivra/computers/<id>/agents/<attachment id>`, `GET /api/hivra/attached-agents` | `<id>` is the Hivra computer id (`hivra_agents.id`). **Flag:** `isAgentAttachEnabled()` reads the deployment channel on the server (`isCanaryDeployment`), so production needs no change to keep attach off. Elsewhere the routes answer 404 and the worker does nothing |
+| UI | Computer page → Manage → "Agents on this computer": Add an agent, the gate of 5.8 with the pair line "Adds a new Codex to <computer>. Your other agents stay as they are.", the Review with the isolation line and technical details, progress from receipts only, the plan limit with a Billing link and no Review, "not running" and "not ready" with no Review, a refused add shown as failed with its reason, the contract as "Delivered <time> · checked by Hivra · applies from its next message", Change access and Remove as their own reviews, and the snapshot note. A Chat tab on the computer page once Codex is ready. Launch → "Put an agent on a computer I already have", and the same entry on the Agents list, open the computer list, where each computer that can take Codex shows the pair line and the others "Not available to add to an existing computer yet". The shared agents list (`useWorkspaceAgents`: Home and the agent switcher) and the Agents list show "Codex on <computer>" right after its computer, opening that computer's Chat tab (or Manage while it is being added). A sign-in link from the attached agent opens only on OpenAI or ChatGPT sign-in hosts (T28) | Not built: the "One of my computers" group in Where it runs; the ⌘K palette's own resource list does not include attached agents. Not in scope (the owner's open decision): connecting an existing agent to another computer, and desktop or browser grants |
+
+**Tests in 8.1, where they differ from the list:**
+`attachment-native-service.test.ts` is `attachment-service-units.test.ts`
+(units per grant set, root-owned bind locations, TypeScript and Python
+renderings byte-equal, and the pins against the migration). The contract
+read-back (T33) is split: `attachment-contract-readback.test.ts` covers the
+result line and the worker, and `scripts/test-attached-contract-readback.py`
+(a privileged container) covers root's host and namespace check.
+`hivra-computer-contract-gateway.test.ts` does not exist because the gateway
+protocol of 4.5 is not built (section 0).
+
+**The VM matrix (8.2)** ran as root on disposable Hetzner Cloud VMs, not
+under QEMU from a `workflow_dispatch` workflow; that workflow is not built.
+Hetzner has no nested KVM, so the VMs are the guest. Their images differ from
+the pinned Hivra computer image (`jammy-server-cloudimg-amd64`, per
+`managed-provisioner-channel.ts`): they are Hetzner's own Ubuntu builds, the
+computer base was installed by the provisioner bundle without the remote
+desktop (it needs a Hivra identity), and the guest steps ran the production
+bundles over SSH instead of the Proxmox guest agent. The neighbour, gateway
+and public-range addresses are a network namespace and a Docker container on
+the same VM.
+
+### Spike results
+
+Run on 2026-09-24 with the final guest code, on `cx23` VMs in `fsn1`:
+Ubuntu 22.04.5 (kernel 5.15.0-190-generic, systemd 249) and Ubuntu 24.04.4
+(kernel 6.8.0-138-generic, systemd 255). Codex 0.149.1, x86_64. The model was
+a stub Responses endpoint on the first VM, reached through a public HTTPS
+quick tunnel, which logged every request Codex sent.
+
+| Spike | 22.04 | 24.04 | Result |
+|---|---|---|---|
+| S1 | Pass | Pass | The fd-based idmapped mount of `/home/bux/Hivra` works on ext4 on both kernels: files Codex writes are the owner's, `nosuid,nodev`, writable under the read-only starting folder with `ProtectSystem=strict`. No ACL fallback was needed |
+| S2 | Pass | Pass | Namespace, veth and NAT, the nftables sets, the DNS relay socket at 127.0.0.53 and systemd IP filtering with cgroup BPF all work. With only the nftables layer, and with only the systemd layer, every own address, on-link neighbour, the gateway and the container stay unreachable while DNS, public HTTPS and the agent's own localhost server work. The enforcement probe refuses to start Codex when either layer is missing |
+| S3 | Pass | Pass | `exec --json` runs under unit v2 with an API-key provider. Codex reads `AGENTS.md` in the working folder and, from `CODEX_HOME`, `AGENTS.md` or `AGENTS.override.md` (the agent's own files, which add to the contract and never remove it); `~/AGENTS.md` is not read; the agent's `config.toml` setting `project_doc_max_bytes = 0` is overridden by `-c`. **Resume:** the working folder comes from `-C` before `resume`; rewriting the session file's recorded folder changes nothing; every resumed turn carries the current `AGENTS.md` (a re-render between turns arrives on the next turn, and the earlier revision stays in the replayed history). Device-auth sign-in starts inside the unit and shows a code for an OpenAI sign-in host; finishing it needs an account (AC-A2) |
+| S4 | Pass | Pass | `server.js` runs as the agent's own user. The one fix was creating a missing `CODEX_HOME` |
+
+Claude Code `--resume` and Codex on agent-owned computers (the rest of S3)
+were not run, so those keep "applies to new chats".
+
+**Isolation matrix results** (checks named after the threats in section 6):
+Run on both images with the production bundles, in one lifecycle each
+(`vm-evidence/D2/lifecycle-noble-final2.txt`, `lifecycle-jammy-final3.txt`):
+fetch, stage, activate (all six units active), S1 and S3 as above, the model
+settings through the gateway, device-auth start, the matrix, the watchdog,
+Change access off and on with the T31 fault injection (a link planted at the
+mount point is refused with `workspace_path_not_plain`, the mount table gains
+exactly the view, the owner's programs are unchanged and Files and both
+terminals still answer 200), Remove, and the checks after Remove.
+
+| Check | 22.04 | 24.04 |
+|---|---|---|
+| Matrix (T4, T5, T6, T7, T8, T9, T10, T11, T15, T22, T32, T33, T36, T37, the enforcement probe without either layer, the canary listeners, the owner's Files and terminal after attach) | 25/25 | 25/25 |
+| Watchdog (T24 broken view refuses to start, T24 deleted table restored, T37 a new on-link prefix reaches both layers) | 3/3 | 3/3 |
+| After Remove (T23: no account, groups, mounts, network, paths or units; `~/Hivra` unchanged; the owner's Files and terminal still work) | 7/7 | 7/7 |
+
+**Found on the VMs:** systemd 249 lists the unit user's primary group again
+as a supplementary group and systemd 255 lists none; T9 compares the set of
+groups, and on both Codex holds only its own group and `sudo -n true` fails.
+
+**Terminals after the socket move**, through the public gateway path (a
+quick tunnel to the gateway): both terminals answer 200 with the owner's bearer and refuse anonymous
+requests (401 for the pages; the anonymous WebSocket handshake is refused,
+with 500 on `/terminal/ws` and 401 on `/box-terminal/ws`), a shell opens as
+`bux` in `~/Hivra` on each, nothing listens on 7681 or 7682, and another
+local user cannot connect to either socket (22.04 after the guest runtime
+update, 24.04 fresh).
+
+**Updating the attached Codex.** The attached install is pinned: the
+stager carries the Codex version and its archive digests
+(`stage-attached-codex.py`), and the database admits a claim only with that
+installer's digest (`claim_hivra_agent_attachment` and the dispatch check),
+and an activation only with the pinned lifecycle program's digest. Codex runs
+from a root-owned installation folder that is read-only inside its unit, so it
+cannot replace itself. A new Codex version therefore ships as a reviewed
+release: new archives and digests in the stager, a migration that pins the new
+installer digest, the VM matrix and spike S3 again on 22.04 and 24.04, and
+`contract-resume-evidence.ts` updated only if S3 passes for that version
+(otherwise Manage says "applies to new chats"). New adds get the new version.
+An agent already added keeps its version: there is no in-place update step
+yet, and the owner's path is Remove and Add again, which keeps `~/Hivra` and
+deletes Codex's sign-in and chat history on that computer. An in-place update
+would be a third lease operation beside Change access and Remove (stage the
+new archive, swap it while the unit is stopped, keep `CODEX_HOME`); it is not
+built.
+
+**Still open:**
+
+- Canary acceptance AC-A1 to AC-A12. AC-A2 needs a ChatGPT account or an
+  OpenAI key approved for testing.
+- The Proxmox path: the VMID-bound guest exec and the host allocation lock
+  were not run on a real Proxmox host. The lock is held for the whole guest
+  step, up to about nine minutes for an activation, so other host operations
+  wait behind it.
+- The Desktop after attach, Change access and Remove (no remote desktop on
+  the VMs), aarch64, and the "One of my computers" group.
+- The slot writer guard for queued launches stays in
+  `_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql`.
+
 ---
 
 ## 1. Decisions in one page
