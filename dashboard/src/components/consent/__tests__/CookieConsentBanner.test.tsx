@@ -142,4 +142,55 @@ describe("CookieConsentBanner", () => {
     expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("Save preferences")).toBeInTheDocument();
   });
+
+  describe("inside a Hivra desktop app", () => {
+    beforeEach(() => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: "Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) HivraMac/0.2.1",
+        configurable: true,
+      });
+    });
+    afterEach(() => {
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    });
+
+    it("never shows the web banner and never assumes consent, even where geo would allow opt-out", async () => {
+      mockGeo(false);
+      const { container } = render(<CookieConsentBanner />);
+      // Give any pending geo resolution a chance to (wrongly) grant.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(grant).not.toHaveBeenCalled();
+      expect(readStoredConsent()).toBeNull();
+    });
+
+    it("still opens Cookie settings on request, as an opt-in that starts off", async () => {
+      mockGeo(false);
+      render(<CookieConsentBanner />);
+      fireEvent(window, new Event(OPEN_COOKIE_PREFERENCES_EVENT));
+
+      const toggle = await screen.findByRole("switch", { name: /Product analytics & session replay/i });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByText("Reject all")).toBeInTheDocument();
+      expect(screen.getByText("We use cookies for product analytics and session replay to understand how Hivra is used and to fix bugs. These stay off until you accept.", { exact: false })).toBeInTheDocument();
+      expect(grant).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByText("Accept all"));
+      expect(grant).toHaveBeenCalledTimes(1);
+      expect(readStoredConsent()?.choice).toBe("accepted");
+    });
+
+    it("keeps a choice already stored in the app's web data", async () => {
+      window.localStorage.setItem(
+        CONSENT_STORAGE_KEY,
+        JSON.stringify({ choice: "rejected", version: CONSENT_VERSION, timestamp: 1 })
+      );
+      render(<CookieConsentBanner />);
+      fireEvent(window, new Event(OPEN_COOKIE_PREFERENCES_EVENT));
+      const toggle = await screen.findByRole("switch", { name: /Product analytics & session replay/i });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(readStoredConsent()?.choice).toBe("rejected");
+    });
+  });
 });
