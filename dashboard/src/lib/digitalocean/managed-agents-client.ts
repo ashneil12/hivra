@@ -124,8 +124,19 @@ export interface DigitalOceanWorkspaceDownload {
   sizeBytes: number | null;
 }
 
+/** The prepayment wallet that gates Harness Runtime (not the classic account ledger). */
+export interface DigitalOceanPrepaymentStatus {
+  /** Decimal string as DigitalOcean reports it (for example "12.34"), or null. */
+  balance: string | null;
+  /** True when DigitalOcean is currently refusing to run sessions for lack of funds. */
+  blocked: boolean;
+  autoPrepay: boolean;
+}
+
 export interface DigitalOceanManagedAgentsClient {
   listSandboxSizes(): Promise<DigitalOceanSandboxSize[]>;
+  /** Null when the token cannot read billing (no billing:read); that is a state, not an error. */
+  getPrepaymentStatus(): Promise<DigitalOceanPrepaymentStatus | null>;
   /** Manifest is a JSON document; DigitalOcean parses it as YAML 1.2. */
   createSessionFromManifest(manifest: Record<string, unknown>): Promise<DigitalOceanSession>;
   getSession(sessionId: string): Promise<DigitalOceanSession>;
@@ -525,6 +536,22 @@ export function createDigitalOceanManagedAgentsClient(
           memoryMb: typeof raw.memory_mb === "number" ? raw.memory_mb : 0,
         }];
       });
+    },
+
+    async getPrepaymentStatus() {
+      const path = "/v2/customers/my/prepayment_status";
+      let body: unknown;
+      try {
+        body = await json("GET", path);
+      } catch (error) {
+        if (error instanceof DigitalOceanApiError && error.code === "forbidden") return null;
+        throw error;
+      }
+      const status = (body as { status?: unknown } | null)?.status;
+      if (!status || typeof status !== "object") throw new DigitalOceanApiError("response_invalid", null, "GET", path);
+      const raw = status as Record<string, unknown>;
+      const balance = typeof raw.balance === "string" && /^-?\d{1,12}(?:\.\d{1,6})?$/.test(raw.balance.trim()) ? raw.balance.trim() : null;
+      return { balance, blocked: raw.blocked === true, autoPrepay: raw.is_auto_prepay_enabled === true };
     },
 
     async createSessionFromManifest(manifest) {

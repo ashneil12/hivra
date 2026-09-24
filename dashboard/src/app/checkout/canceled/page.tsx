@@ -7,6 +7,7 @@ import { ArrowRight, CreditCard, Loader2 } from "lucide-react";
 
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
+import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { ACTIVE_PLAN_KEYS, PLANS, formatPrice, type PlanKey } from "@/lib/subscription";
@@ -36,6 +37,9 @@ function CheckoutCanceledContent() {
       ? (planParam as PlanKey)
       : "fleet";
   const plan = PLANS[planKey];
+  // Checkout started from a launch (or another dashboard page) goes back
+  // there. Only a same-origin dashboard path is ever followed.
+  const returnTo = safeReturnPath(searchParams?.get("returnTo"));
 
   const [status, setStatus] = useState<"idle" | "subscribing" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -44,11 +48,11 @@ function CheckoutCanceledContent() {
     setStatus("subscribing");
     setError(null);
 
-    const result = await requestSubscriptionCheckout(planKey);
+    const result = await requestSubscriptionCheckout(planKey, "monthly", { returnTo });
 
     if (result.ok) {
       if (result.activated) {
-        window.location.href = "/dashboard/welcome?step=agent-type";
+        window.location.href = returnTo ? withReturnParams(returnTo, planReturnParams(planKey)) : "/dashboard/welcome?step=agent-type";
         return;
       }
 
@@ -237,6 +241,14 @@ function CheckoutCanceledContent() {
                 {PLAN_GUIDE[planKey]}
               </p>
             </div>
+            {returnTo ? (
+              <a
+                href={returnTo}
+                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-secondary)", textDecoration: "none" }}
+              >
+                {returnTo.startsWith("/dashboard/launch") ? "← Back to your launch" : "← Back"}
+              </a>
+            ) : null}
             <a
               href={`/dashboard/welcome?plan=${planKey}`}
               style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
