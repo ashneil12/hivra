@@ -249,6 +249,21 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   never put the bearer in a URL. Older connection services without this
   capability require an explicit runtime update before those surfaces open;
   header-authenticated API access remains unchanged.
+- **Aeon fork sync.** The Aeon dashboard saves every config edit into `~/aeon`
+  and pushes it with a plain `git push`. After GitHub connect, and on every
+  gateway start, the gateway makes that clone push-capable against the user's
+  fork: `gh auth setup-git` for HTTPS credentials, the GitHub account (and its
+  noreply address) as the clone's commit identity, and a local branch tracking
+  the fork's default branch. Edits made on the computer are committed and
+  replayed onto the fork (only this computer's own commits: the depth-1
+  template checkout's shallow boundary marks where they begin); edits that
+  cannot be applied stay on a local `hivra/unpushed-edits-<time>` branch.
+  Hivra's `apps/dashboard/next.config.ts` is never pushed. Workflows GitHub
+  disabled by itself (`disabled_fork`, `disabled_inactivity`) among `aeon.yml`,
+  `scheduler.yml`, `messages.yml`, `chain-runner.yml` and `setup-commands.yml`
+  are enabled; a manual disable is left alone. The outcome is written to
+  `~/.hivra/aeon-connect.json` and returned as `connect` by
+  `GET /api/login/status`.
 
 ## Gotchas (do NOT reintroduce these)
 

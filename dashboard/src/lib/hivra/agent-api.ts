@@ -657,11 +657,27 @@ function boxBase(boxUrl: string): string {
   return boxUrl.replace(/\/$/, "");
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null }> {
+/** An Aeon computer's last sync with the user's GitHub fork, as recorded by
+ *  the computer (~/.hivra/aeon-connect.json). `pushReady` means dashboard
+ *  saves reach the fork; `workflows` maps each Aeon workflow file to its
+ *  GitHub state after the computer enabled the ones GitHub disabled itself. */
+export interface AeonConnectStatus {
+  status: "syncing" | "ok" | "auth_failed" | "fetch_failed" | "push_failed" | "error";
+  repo: string;
+  branch: string | null;
+  pushReady: boolean;
+  workflows: Record<string, string>;
+  /** Local branches holding edits that could not be applied to the fork. */
+  parkedBranches: string[];
+  detail?: string;
+  at: string;
+}
+
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
   } catch {
     return { loggedIn: false };
   }
