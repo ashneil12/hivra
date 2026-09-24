@@ -8,7 +8,7 @@ Group=bux
 WorkingDirectory=/home/bux
 Environment=HOME=/home/bux
 Environment=PATH=/home/bux/.npm-global/bin:/home/bux/.bun/bin:/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/ttyd -i lo -p 7682 -b /box-terminal -W /bin/bash -l
+ExecStart=/usr/local/bin/ttyd -i lo -p 7682 -b /box-terminal -W /usr/local/bin/hivra-agent-shell --box-terminal
 Restart=always
 RestartSec=5
 
