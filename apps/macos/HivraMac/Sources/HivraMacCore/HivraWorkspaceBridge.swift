@@ -127,7 +127,7 @@ public enum HivraWorkspaceBridgeMessage: Equatable, Sendable {
 
     private static func parseSurfaces(_ value: [String: Any]) -> HivraSurfaceSnapshot? {
         guard Set(value.keys) == ["version", "kind", "pathname", "active", "surfaces"],
-              let pathValue = value["pathname"] as? String,
+              let pathValue = value["pathname"] as? String, !pathValue.contains("?"), !pathValue.contains("#"),
               let pathname = HivraWorkspaceRoute.normalizedPath(pathValue), !pathname.contains("?"),
               let active = value["active"] as? String,
               let rows = value["surfaces"] as? [[String: Any]], rows.count <= 32 else { return nil }

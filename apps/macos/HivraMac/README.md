@@ -17,6 +17,15 @@ remain usable in the embedded pane. Native metadata contains resource names,
 observed status and safe dashboard routes; it carries no guest tokens or keys.
 The adapter does not add a lifecycle API or replace an existing runtime.
 
+Dashboard routes pass through the route grammar shared with the dashboard
+(`apps/shared/native-contract`). A launch result is adopted into its resource tab
+whatever one-shot arrival state its URL carries (such as `?welcome=1` or a
+fragment), and launch URLs keep their validated stage, profile and target.
+Choosing an open resource again selects its retained page, whatever query its
+own route carries. It returns to the resource's route only when the tab has left
+that resource (another origin such as an expired guest transport, or another
+dashboard page) or the request asks for a new desktop transport (`open=`).
+
 ## Build and open
 
 Requirements: macOS 14 or newer and Xcode with the Swift toolchain installed.

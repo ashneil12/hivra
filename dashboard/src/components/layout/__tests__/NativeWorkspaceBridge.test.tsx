@@ -89,12 +89,14 @@ it("clears stale surfaces on route changes and on same-route removal", () => {
   expect(surfaceMessages().at(-1)).toMatchObject({ pathname: "/dashboard/agent/item", active: "", surfaces: [] });
 });
 
-it("validates same-origin dashboard navigation before router.push", () => {
+it("validates root-relative dashboard navigation before router.push", () => {
   render(<Shell />);
   for (const href of ["https://guest.example/dashboard", "/api/instances", "/dashboard/../api", "//guest.example/dashboard", "/dashboard?token=secret"]) send("hivra:navigate", { href });
   send("hivra:navigate", null);
-  expect(push).not.toHaveBeenCalled();
+  // The shared route grammar is root-relative; a shell never sends an origin.
   send("hivra:navigate", { href: `${window.location.origin}/dashboard/computers` });
+  expect(push).not.toHaveBeenCalled();
+  send("hivra:navigate", { href: "/dashboard/computers" });
   expect(push).toHaveBeenLastCalledWith("/dashboard/computers");
   send("hivra:navigate", { href: "/dashboard/launch?kind=agent&start=1" });
   expect(push).toHaveBeenLastCalledWith("/dashboard/launch?kind=agent&start=1");

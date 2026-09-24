@@ -41,25 +41,32 @@ public enum HivraWorkspacePolicy {
         routeChanged && !hasSelectedTab && (!isInitialOwnedRoute || !hasExplicitSelection || showingWebDestination)
     }
 
+    /// The canonical route a page on the trusted origin shows. One-shot arrival
+    /// parameters and fragments do not change which resource or destination it is.
     public static func relativePath(url: URL, trustedURL: URL) -> String? {
         guard HivraWorkspaceBridgeTrust.accepts(trustedURL: trustedURL, frameURL: url, isMainFrame: true),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false), components.fragment == nil else { return nil }
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         return HivraWorkspaceRoute.normalizedPath(components.percentEncodedPath + (components.percentEncodedQuery.map { "?\($0)" } ?? ""))
     }
 
     /// One-time guest transports may replace a resource tab with another origin.
     /// Re-selecting that resource must return through its canonical dashboard route
     /// so an expired handoff is renewed instead of being retained indefinitely.
+    /// A page still on the resource's own route is live work (a chat, terminal or
+    /// desktop) whatever its query says, so it is selected rather than reloaded.
     public static func shouldReloadResourceOnReselection(currentURL: URL?, trustedURL: URL,
                                                          requestedPath: String? = nil) -> Bool {
-        if let requestedPath,
-           let normalized = HivraWorkspaceRoute.normalizedPath(requestedPath),
-           let components = URLComponents(string: normalized),
+        let requested = requestedPath.flatMap(HivraWorkspaceRoute.normalizedPath)
+        if let requested, let components = URLComponents(string: requested),
            components.queryItems?.contains(where: { $0.name == "open" }) == true {
             return true
         }
-        guard let currentURL else { return true }
-        return relativePath(url: currentURL, trustedURL: trustedURL) == nil
+        guard let currentURL,
+              HivraWorkspaceBridgeTrust.accepts(trustedURL: trustedURL, frameURL: currentURL, isMainFrame: true) else { return true }
+        // A tab that moved to another page of the dashboard returns to its resource.
+        guard let requested, let resource = HivraWorkspaceRoute.resourceUID(for: requested) else { return false }
+        let currentPath = URLComponents(url: currentURL, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? ""
+        return HivraWorkspaceRoute.resourceUID(for: currentPath) != resource
     }
 
     /// Authentication entry and the public signed-out landing page revoke native ownership.
