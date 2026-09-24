@@ -42,6 +42,23 @@ describe("HivraAgentsPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("names each agent's own computer from its stored binding (ATT-11)", async () => {
+    listAgentsResultMock.mockResolvedValue({
+      agents: [
+        { ...codeAgent, cpu: 1.5, ram: 3, computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" },
+        { ...codeAgent, id: "agent-2", name: "Cloud Agent", computer_substrate: "provider-vm", deployment_mode: "self-managed" },
+      ],
+      error: null,
+    });
+    render(<HivraAgentsPanel />);
+    const managed = (await screen.findByText("Code Agent")).closest("button")!;
+    expect(within(managed).getByTestId("agent-computer-pair")).toHaveTextContent("· On its own computer · Hivra Cloud");
+    expect(managed).toHaveTextContent("1.5 CPU / 3 GB");
+    expect(managed).toHaveAccessibleName("Open Code Agent, Codex, on its own computer, Hivra Cloud, 1.5 CPU / 3 GB, Running");
+    const provider = screen.getByText("Cloud Agent").closest("button")!;
+    expect(within(provider).getByTestId("agent-computer-pair")).toHaveTextContent("· On its own computer · My cloud");
+  });
+
   it("keeps computers and deleted resources out of the agent inventory", async () => {
     listAgentsResultMock.mockResolvedValue({
       agents: [
@@ -143,7 +160,8 @@ describe("HivraAgentsPanel", () => {
       screen.getByRole("button", { name: /Open Needs repair/ }),
     ).toHaveTextContent("Needs attention");
     expect(
-      screen.getByRole("button", { name: "Open Code Agent, Codex, Running" }),
+      // The name also carries the agent's own computer (ATT-11).
+      screen.getByRole("button", { name: "Open Code Agent, Codex, on its own computer, 2 CPU / 4 GB, Running" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Starting" }));
     expect(screen.getByText("Fresh agent")).toBeInTheDocument();

@@ -52,12 +52,20 @@ import {
 import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { digitalOceanSetupMessage } from "@/lib/agent-computers/computer-contract";
+import {
+  prepareDigitalOceanComputerContract,
+  recordDigitalOceanComputerContractFailed,
+  recordDigitalOceanComputerContractSent,
+} from "@/lib/hivra/computer-contract-delivery";
 import {
   sanitizeManagedSessionEvent,
+  type ManagedPromptSource,
   type ManagedSessionEvent,
 } from "@/lib/hivra/managed-session-transcript";
 import {
   MANAGED_WORKSPACE_ROOT,
+  digitalOceanSandboxResources,
   normalizeManagedWorkspacePath,
   type ManagedSessionDto,
   type ManagedSessionLaunchInput,
@@ -169,9 +177,9 @@ export function digitalOceanSessionName(agentId: string): string {
 }
 
 function sizeResources(size: DigitalOceanSizeSlug): { cpu: number; ram: number } {
-  const match = /^mars-(\d+)vcpu-(\d+)gb$/.exec(size);
-  if (!match) throw new ManagedSessionError("invalid_request", "Choose a supported DigitalOcean size.");
-  return { cpu: Number(match[1]), ram: Number(match[2]) };
+  const resources = digitalOceanSandboxResources(size);
+  if (!resources) throw new ManagedSessionError("invalid_request", "Choose a supported DigitalOcean size.");
+  return resources;
 }
 
 function connectionErrorFor(error: unknown): DigitalOceanConnectionErrorCode {
@@ -604,13 +612,47 @@ async function finishDelete(row: AgentRow, session: DigitalOceanSession | null):
   });
 }
 
-async function recordPrompt(row: AgentRow, runId: string | null, text: string) {
+async function recordPrompt(row: AgentRow, runId: string | null, text: string, source: ManagedPromptSource = "user") {
   if (!runId) return;
-  const { error } = await db().from("hivra_do_session_inputs").insert({ agent_id: row.id, user_id: row.user_id, run_id: runId, text });
+  // Owner prompts keep the original row shape, so they still record before
+  // the source column is deployed. Only Hivra's setup note names its source.
+  const { error } = await db().from("hivra_do_session_inputs").insert({
+    agent_id: row.id, user_id: row.user_id, run_id: runId, text, ...(source === "hivra-setup" ? { source } : {}),
+  });
   if (error && (error as { code?: string }).code !== "23505") {
     // The prompt was delivered; only its transcript copy is missing.
-    log.warn("DigitalOcean session prompt was not recorded", { source: LOG_SOURCE, failureType: "do_prompt_record_failed", agentId: row.id });
+    log.warn("DigitalOcean session prompt was not recorded", { source: LOG_SOURCE, failureType: "do_prompt_record_failed", agentId: row.id, promptSource: source });
   }
+}
+
+/** The stored row as the Computer Contract builder reads it. */
+function contractSubject(row: AgentRow): Record<string, unknown> {
+  return {
+    id: row.id, user_id: row.user_id, type: row.type, name: row.name, status: row.status,
+    computer_substrate: row.computer_substrate, deployment_mode: "self-managed", ...sizeResources(row.do_session_size),
+  };
+}
+
+/**
+ * Send the agent Hivra's setup note (its Computer Contract) as a visible
+ * message, recorded as a Hivra message rather than the owner's. It is never a
+ * hidden turn, and "sent" is all Hivra claims: DigitalOcean accepted it.
+ * Returns null when the contract store has no revision to send.
+ */
+async function sendSetupNote(row: AgentRow, client: DigitalOceanManagedAgentsClient, sessionId: string): Promise<{ runId: string | null; revision: number } | null> {
+  const contract = await prepareDigitalOceanComputerContract(row.user_id, contractSubject(row));
+  if (!contract) return null;
+  const text = digitalOceanSetupMessage(contract.content);
+  let runId: string | null;
+  try {
+    ({ runId } = await client.sendInput(sessionId, text));
+  } catch (error) {
+    await recordDigitalOceanComputerContractFailed(contract, deps.now()).catch(() => undefined);
+    throw error;
+  }
+  await recordPrompt(row, runId, text, "hivra-setup");
+  await recordDigitalOceanComputerContractSent(contract, runId, deps.now());
+  return { runId, revision: contract.revision };
 }
 
 export async function launchDigitalOceanSession(userId: string, input: ManagedSessionLaunchInput): Promise<ManagedSessionDto> {
@@ -691,6 +733,16 @@ export async function launchDigitalOceanSession(userId: string, input: ManagedSe
     log.warn("DigitalOcean session readiness was not observed", { source: LOG_SOURCE, failureType: "do_session_ready_unobserved", agentId, code: error instanceof Error ? error.name : "unknown" });
     return row;
   });
+
+  // The setup note goes first, so the agent knows where it runs before its
+  // first task. Launch Review discloses that it uses a little model usage.
+  if (row.status === "running" && row.do_session_id) {
+    try {
+      await sendSetupNote(row, client, row.do_session_id);
+    } catch (error) {
+      log.warn("DigitalOcean setup note was not delivered", { source: LOG_SOURCE, failureType: "do_setup_note_failed", agentId, code: error instanceof DigitalOceanApiError ? error.code : "unknown" });
+    }
+  }
 
   if (input.firstTask && row.status === "running" && row.do_session_id) {
     try {
@@ -794,6 +846,20 @@ export async function sendManagedSessionInput(userId: string, agentId: string, t
   }
 }
 
+/** Owner-clicked "Send setup note": one visible message with the current note. */
+export async function sendManagedSessionSetupNote(userId: string, agentId: string): Promise<{ runId: string | null; revision: number }> {
+  const { row, client, sessionId } = await liveSession(userId, agentId);
+  if (row.status === "error") throw new ManagedSessionError("not_ready", row.error ?? "This session needs attention.", agentId);
+  let sent: { runId: string | null; revision: number } | null;
+  try {
+    sent = await sendSetupNote(row, client, sessionId);
+  } catch (error) {
+    throw providerError(error, "message", agentId);
+  }
+  if (!sent) throw new ManagedSessionError("database_failed", "Hivra could not prepare the setup note. Nothing was sent.", agentId);
+  return sent;
+}
+
 export async function resolveManagedSessionApproval(
   userId: string,
   agentId: string,
@@ -835,7 +901,7 @@ export async function* streamManagedSessionEvents(
 /** Stored history: the newest window of sanitized events plus Hivra-recorded prompts. */
 export async function readManagedSessionHistory(userId: string, agentId: string): Promise<{
   events: ManagedSessionEvent[];
-  prompts: Array<{ runId: string; text: string; createdAt: string }>;
+  prompts: Array<{ runId: string; text: string; createdAt: string; source: ManagedPromptSource }>;
 }> {
   const { row, client, sessionId } = await liveSession(userId, agentId);
   const events: ManagedSessionEvent[] = [];
@@ -852,13 +918,19 @@ export async function readManagedSessionHistory(userId: string, agentId: string)
   } catch (error) {
     throw providerError(error, "history", agentId);
   }
-  const { data, error } = await db().from("hivra_do_session_inputs").select("run_id,text,created_at")
+  const readPrompts = (columns: string) => db().from("hivra_do_session_inputs").select(columns)
     .eq("agent_id", row.id).eq("user_id", userId).order("created_at", { ascending: false }).limit(HISTORY_PROMPT_LIMIT);
+  let { data, error } = await readPrompts("run_id,text,created_at,source");
+  // Before the source column is deployed every recorded prompt is the owner's.
+  if (error && ["42703", "PGRST204"].includes(String((error as { code?: unknown }).code))) {
+    ({ data, error } = await readPrompts("run_id,text,created_at"));
+  }
   if (error) throw new ManagedSessionError("database_failed", "The conversation prompts could not be read.", agentId);
-  const prompts = (data ?? []).reverse().map((prompt) => ({
-    runId: String((prompt as { run_id: unknown }).run_id),
-    text: String((prompt as { text: unknown }).text),
-    createdAt: String((prompt as { created_at: unknown }).created_at),
+  const prompts = ((data ?? []) as unknown as Array<Record<string, unknown>>).reverse().map((prompt) => ({
+    runId: String(prompt.run_id),
+    text: String(prompt.text),
+    createdAt: String(prompt.created_at),
+    source: (prompt.source === "hivra-setup" ? "hivra-setup" : "user") as ManagedPromptSource,
   }));
   return { events, prompts };
 }

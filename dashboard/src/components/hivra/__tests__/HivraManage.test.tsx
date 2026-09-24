@@ -43,6 +43,11 @@ jest.mock("@/lib/hivra/agent-model-settings-api", () => ({
   getAgentModelSettings: async () => ({ llm: null, pending: null }),
 }));
 
+const mockFetchComputerContract = jest.fn();
+jest.mock("@/lib/hivra/computer-contract-client", () => ({
+  fetchComputerContract: (...args: unknown[]) => mockFetchComputerContract(...args),
+  runComputerContractAction: jest.fn(),
+}));
 jest.mock("@/components/instances/CookieImportModal", () => ({ CookieImportModal: () => null }));
 jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => <div>Tool picker</div> }));
 jest.mock("../HivraPrivateAccessPanel", () => ({ HivraPrivateAccessPanel: () => <div>Private access panel</div> }));
@@ -65,6 +70,7 @@ describe("HivraManage lifecycle guidance", () => {
     mockGetProviderResizeState.mockImplementation(() => new Promise(() => undefined));
     mockListBoxMcp.mockResolvedValue({ servers: [] });
     mockRemoveBoxMcp.mockResolvedValue({ ok: true });
+    mockFetchComputerContract.mockResolvedValue({ kind: "not_started", channel: "proxmox-seed" });
   });
   const agent: HivraAgent = { id: "test-agent", name: "TEST", type: "codex", status: "running", cpu: 2, ram: 4, deployment_mode: "hivra-managed" };
   const plan: PlanInfo = { key: "command", name: "Command", subscribed: true, maxAgents: 8, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128, usage: { agentCount: 3, usedCpu: 22, usedRam: 124 } };
@@ -489,11 +495,35 @@ describe("HivraManage lifecycle guidance", () => {
       expect(document.getElementById("resources")).toContainElement(alert);
     });
 
-    it("labels the destroy target and VM id in product terms", () => {
+    it("labels the destroy target in product terms and keeps the VM id behind Advanced (ATT-12)", () => {
       render(<HivraManage agent={{ ...agent, vmid: 1104 }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
       expect(screen.getByText("Destroy this agent")).toBeInTheDocument();
-      expect(screen.getByText("VM ID")).toBeInTheDocument();
+      const advanced = screen.getByText("Advanced").closest("details")!;
+      expect(advanced).not.toHaveAttribute("open");
+      expect(within(advanced).getByText("VM ID")).toBeInTheDocument();
+      expect(within(advanced).getByText("1104")).toBeInTheDocument();
       expect(screen.queryByText(/Destroy this box/)).not.toBeInTheDocument();
+      expect(screen.getByTitle("Reboot the computer")).toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(/\bthe box\b/);
+    });
+
+    it("shows the agent with its own computer and what it knows about it, before the computer acknowledges (ATT-11)", async () => {
+      render(<HivraManage agent={{ ...agent, cpu: 1.5, ram: 3, computer_substrate: "proxmox-kvm" }} def={getAgent("codex")} plan={plan}
+        onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+      const section = document.getElementById("manage-computer")!.nextElementSibling as HTMLElement;
+      expect(within(section).getByText(/runs on its own computer \(Hivra Cloud · 1\.5 CPU \/ 3 GB\)/)).toBeInTheDocument();
+      expect(await within(section).findByText("Update pending")).toBeInTheDocument();
+      expect(within(section).getByRole("heading", { name: "What TEST knows about its computer" })).toBeInTheDocument();
+      expect(section).not.toHaveTextContent(/Delivered/);
+      expect(mockFetchComputerContract).toHaveBeenCalledWith("test-agent", expect.anything());
+    });
+
+    it("gives a computer an honest Agent slot instead of a contract", () => {
+      render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm" }}
+        def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+      expect(screen.getByText("No agent works on this computer.")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
+      expect(mockFetchComputerContract).not.toHaveBeenCalled();
     });
 
     it("offers a section jump strip that scrolls to the chosen section", async () => {
@@ -507,7 +537,7 @@ describe("HivraManage lifecycle guidance", () => {
         expect(strip).toHaveAttribute("aria-label", "Manage sections");
         // Private access is Ubuntu-computer only, so an agent gets no chip for it; Permissions gets its own.
         expect(within(strip).getAllByRole("button", { hidden: true }).map((button) => button.textContent))
-          .toEqual(["Overview", "Power", "Model", "Permissions", "Tools", "Resources", "Danger"]);
+          .toEqual(["Overview", "Computer", "Power", "Model", "Permissions", "Tools", "Resources", "Danger"]);
         fireEvent.click(within(strip).getByText("Danger"));
         expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
         expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById("manage-danger"));
@@ -529,7 +559,7 @@ describe("HivraManage lifecycle guidance", () => {
           def={getAgent("linux-desktop")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
         const strip = screen.getByRole("navigation", { hidden: true });
         expect(within(strip).getAllByRole("button", { hidden: true }).map((button) => button.textContent))
-          .toEqual(["Overview", "Power", "Private access", "Resources", "Danger"]);
+          .toEqual(["Overview", "Agent", "Power", "Private access", "Resources", "Danger"]);
         fireEvent.click(within(strip).getByText("Private access"));
         expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById("manage-access"));
       } finally {

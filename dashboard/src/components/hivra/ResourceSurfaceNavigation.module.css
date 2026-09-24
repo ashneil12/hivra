@@ -34,11 +34,26 @@
      on a 3-pill computer. Lift the action's accessible name instead of dropping
      it, and keep the 44px tap target. */
   .actionIcon { width: 44px; min-height: 44px; }
+  /* Three group buttons fit a phone; keep their words next to the icons. */
+  .navigation[data-grouped="true"] .primary .surface { min-width: 0; padding: 6px 10px; }
+  .navigation[data-grouped="true"] .primary .surface svg { display: inline; }
+  .subnav { padding: 4px 8px; }
+  .subSurface, .subExport { min-height: 40px; }
+  .subNote { display: none; }
   .catcher { display: block; position: fixed; inset: 0; background: transparent; cursor: pointer; }
   /* The trigger stays above the catcher so tapping it again simply closes. */
   .tools > .surface { position: relative; z-index: 1; }
   .label { font-size: 11px; }
 }
+/* Grouped agent pages: the active group's own surfaces, one row under the bar. */
+.subnav { display: flex; align-items: center; gap: 2px; padding: 6px clamp(12px, 3vw, 20px); border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); flex-shrink: 0; min-width: 0; overflow-x: auto; scrollbar-width: thin; position: relative; z-index: 29; }
+.subSurface, .subExport { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 32px; padding: 5px 10px; border: 1px solid transparent; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; text-decoration: none; }
+.subSurface:hover, .subExport:hover { color: var(--ink-black); }
+.subSurface[aria-selected="true"] { color: var(--ink-black); border-color: var(--etched-border); background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
+.subSurface:focus-visible, .subExport:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.subExport { margin-left: auto; }
+.subNote { margin-left: auto; padding-left: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono), monospace; font-size: 11px; color: var(--text-muted); }
+.subExport + .subNote { margin-left: 0; }
 .nativeActions {
   display: flex;
   justify-content: flex-end;

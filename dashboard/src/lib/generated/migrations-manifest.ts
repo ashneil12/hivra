@@ -358,4 +358,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260924171100", name: "hetzner_same_project_token_replacement" },
   { version: "20260924180000", name: "provider_release_admission_2026_09_24" },
   { version: "20260924190000", name: "hetzner_first_boot_arm_at_start" },
+  { version: "20260924210000", name: "hivra_computer_contracts" },
+  { version: "20260924210100", name: "hivra_agent_provider_seed_attempts" },
 ];

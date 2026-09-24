@@ -48,7 +48,7 @@ function Workspace({ computerId, boxOrigin, surface, active }: Props) {
             color: "var(--ink-black)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
           Reconnect {surface === "files" ? "Files" : "Terminal"}</button> : null}
       </div>
-      {target ? <iframe key={target.id} ref={frame} src={target.url} title={surface === "files" ? "Secure Files connection" : "Box Terminal"}
+      {target ? <iframe key={target.id} ref={frame} src={target.url} title={surface === "files" ? "Secure Files connection" : "Terminal"}
         referrerPolicy="no-referrer" allow={surface === "box-terminal" ? "clipboard-read; clipboard-write" : undefined}
         hidden={surface === "files"} style={{ border: 0, width: "100%", flex: 1, minHeight: 0 }} /> : null}
       {surface === "files" && filesOpened ? <HivraFiles boxUrl={boxOrigin} access={bridge.files} /> : null}

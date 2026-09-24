@@ -84,3 +84,11 @@ it("shows a failed command under Run, not in the Resources section", async () =>
   expect(alert.closest("section")).toBe(run.closest("section"));
   expect(alert.closest("section")).not.toBe(screen.getByRole("button", { name: "Apply limits" }).closest("section"));
 });
+
+it("gives a Linux Sandbox an honest Agent slot until an agent can be added to it", async () => {
+  render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Delete sandbox" })).toBeEnabled());
+  expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
+  expect(screen.getByText(/Adding an agent to a computer you already have isn't available yet/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
+});

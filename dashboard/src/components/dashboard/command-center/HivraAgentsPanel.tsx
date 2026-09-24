@@ -309,6 +309,7 @@ function AgentRow({
   const actionsRef = useRef<HTMLDetailsElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const statusLabel = unifiedStateLabel(agent.state);
+  const pair = agent.computerPair ?? null;
   const { uid } = agent;
   const setActionsOpen = useCallback(
     (open: boolean) => onActionsOpenChange(uid, open),
@@ -354,7 +355,7 @@ function AgentRow({
         type="button"
         className={styles.agentPrimary}
         onClick={onOpen}
-        aria-label={`Open ${agent.name}, ${agent.typeLabel}, ${statusLabel}`}
+        aria-label={`Open ${agent.name}, ${[agent.typeLabel, pair?.relation.toLowerCase(), pair?.placement, pair?.size, statusLabel].filter(Boolean).join(", ")}`}
       >
         <span className={styles.agentIcon} aria-hidden>
           <Bot size={17} />
@@ -364,12 +365,14 @@ function AgentRow({
           <small>
             {agent.typeLabel}
             {agent.model ? ` · ${agent.model}` : ""}
+            {/* The linked pair (ATT-11); its size sits in the resources column. */}
+            {pair ? <span data-testid="agent-computer-pair"> · {[pair.relation, pair.placement].filter(Boolean).join(" · ")}</span> : null}
           </small>
         </span>
         <span className={styles.agentResources}>
-          {typeof agent.cpu === "number"
-            ? `${agent.cpu} vCPU · ${agent.ram} GB`
-            : ""}
+          {pair?.size ?? (typeof agent.cpu === "number"
+            ? `${agent.cpu} CPU / ${agent.ram} GB`
+            : "")}
         </span>
         <span className={styles.agentStatus} data-state={agent.state}>
           <span aria-hidden />
