@@ -14,7 +14,7 @@ import "server-only";
 
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
+import { loadFirstBootRecipeVersion } from "@/lib/infrastructure/first-boot-store";
 import { loadFirstBootOperation, parseFirstBootOperationScope } from "@/lib/infrastructure/first-boot-operations";
 import { loadHetznerCloudCapacityBootstrap } from "@/lib/infrastructure/hetzner-cloud-store";
 import { verifyEnrolledProviderReceipt } from "@/lib/infrastructure/enrolled-provider-receipt";
@@ -72,9 +72,12 @@ export async function loadProviderAgentSeedContext(raw: ProviderGuestSeedRef) {
       .eq("active_connection_id", row.infrastructure_connection_id).eq("connection_revision", row.infrastructure_connection_revision)
       .eq("provider_resource_id", row.provider_server_id).eq("status", "created_off").maybeSingle();
     if (orderError || !order) throw unavailable();
-    const scope = parseFirstBootOperationScope({ binding: { userId: input.userId, connectionId: row.infrastructure_connection_id,
+    const attempt = { userId: input.userId, connectionId: row.infrastructure_connection_id,
       connectionRevision: row.infrastructure_connection_revision, orderId: row.provider_capacity_order_id,
-      attemptId: row.provider_enrollment_attempt_id, quoteFingerprint: order.quote_fingerprint_sha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION },
+      attemptId: row.provider_enrollment_attempt_id, quoteFingerprint: order.quote_fingerprint_sha256 };
+    // The attempt's own first-boot recipe, never the current one: it is part
+    // of the scope digest, and servers keep the recipe they were created with.
+    const scope = parseFirstBootOperationScope({ binding: { ...attempt, recipeVersion: await loadFirstBootRecipeVersion(attempt) },
       providerServerId: row.provider_server_id });
     if (identity.bundle.scopeSha256 !== providerGuestBundleScopeSha256(scope)) throw unavailable();
     return { input, identity, scope, accessMode, targetId: row.deployment_target_id, ip: row.ip };
