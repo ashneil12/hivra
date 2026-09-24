@@ -270,7 +270,12 @@ powers the VM on or off itself.
   enables and restarts `bux-tg`, so a new bot token or pairing link takes
   effect even when the bot is already running.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
-  with `docker stop -t 60` (docker's default is 10 s) and `TimeoutStopSec=75`.
+  with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
+  so the whole guest shutdown fits inside the shortest host budget that stops
+  a Hivra computer (`qm shutdown --timeout 40` on restart, resize and idle
+  parking; the host hard-stops the VM after it). A contract test ties these
+  numbers together. The unit is written at provisioning: computers provisioned
+  earlier keep docker's 10 s default until they are provisioned again.
 
 ## Gotchas (do NOT reintroduce these)
 

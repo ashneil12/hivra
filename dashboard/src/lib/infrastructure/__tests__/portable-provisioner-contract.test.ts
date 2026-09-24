@@ -443,16 +443,37 @@ describe("portable provisioner source contract", () => {
     expect(updater).not.toMatch(/tg\.env|>\s*\/etc\/sudoers/);
   });
 
-  it("gives Agent Zero its full 60 second stop grace instead of docker's 10 seconds", () => {
+  it("gives Agent Zero a stop grace that fits inside every host shutdown budget", () => {
     const installer = source("provision-claude-code-box.sh");
     const unit = installer.slice(
       installer.indexOf("cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT"),
       installer.indexOf("chmod 0644 /etc/systemd/system/hivra-agent-zero.service"),
     );
-    expect(unit).toContain("ExecStop=/usr/bin/docker stop -t 60 hivra-agent-zero");
-    expect(unit).not.toMatch(/ExecStop=\/usr\/bin\/docker stop hivra-agent-zero/);
-    const stopTimeout = Number((unit.match(/^TimeoutStopSec=(\d+)$/m) || [])[1]);
-    expect(stopTimeout).toBeGreaterThan(60);
+    const grace = Number((unit.match(/^ExecStop=\/usr\/bin\/docker stop -t (\d+) hivra-agent-zero$/m) || [])[1]);
+    const unitTimeout = Number((unit.match(/^TimeoutStopSec=(\d+)$/m) || [])[1]);
+    // Every way the dashboard shuts a Hivra computer down gracefully before
+    // it hard-stops the VM (`qm stop`): lifecycle stop/restart/update/resize,
+    // idle parking, snapshot restore and the prepared canary computers.
+    const dashboard = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), "utf8");
+    const lifecycle = dashboard("src/app/api/hivra/agents/[id]/action/route.ts");
+    const lifecycleBudgets = [...lifecycle.matchAll(/verifiedStop(?:VmBody|VmScript)\(vmid, (\d+)[,)]/g)].map((m) => Number(m[1]));
+    const otherBudgets = [
+      "src/lib/hivra/park-idle-agents.ts",
+      "src/lib/hivra/agent-snapshots.ts",
+      "src/lib/hivra/prepared-canary-computers.ts",
+    ].flatMap((file) => [...dashboard(file).matchAll(/qm shutdown \S+ --timeout (\d+)/g)].map((m) => Number(m[1])));
+    // stop, restart and resize at least; the other three files one or more each.
+    expect(lifecycleBudgets.length).toBeGreaterThanOrEqual(3);
+    expect(otherBudgets.length).toBeGreaterThanOrEqual(3);
+    const shortestHostBudget = Math.min(...lifecycleBudgets, ...otherBudgets);
+
+    // More than docker's 10 s default, which kills Agent Zero mid-save.
+    expect(grace).toBeGreaterThan(10);
+    // systemd never kills `docker stop` before the container's grace ends...
+    expect(unitTimeout).toBeGreaterThanOrEqual(grace + 5);
+    // ...and the whole guest still powers off (10 s for everything else)
+    // before the host gives up on its graceful shutdown and hard-stops the VM.
+    expect(unitTimeout + 10).toBeLessThanOrEqual(shortestHostBudget);
   });
 
   it("does not default installer dependencies to a moving main/latest reference", () => {
