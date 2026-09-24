@@ -33,6 +33,7 @@ import {
 } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
 import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { qualifiesForTokenBaseTier, resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { evaluateAndRecordVeniceComputeBoost } from "@/lib/billing/venice-compute-boost";
 import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
@@ -102,14 +103,14 @@ export async function POST(req?: NextRequest) {
     let hermesEvaluated = false;
     try {
       // Token geo-policy: existing tiers are re-evaluated as always; a
-      // blocked request just can't gain a NEW one. (Without a blocked
-      // decision the evaluator still checks the stored country itself.)
+      // blocked request just can't gain a NEW one. The decision is passed
+      // only while a country is listed, so dormant calls are unchanged.
       const geo = await resolveTokenGeoBlock(req, { userId });
       await evaluateAndRecordTokenTierEligibility({
         userId,
         balances,
         access,
-        ...(geo.blocked ? { tokenGeo: geo } : {}),
+        ...(isTokenGeoPolicyActive() ? { tokenGeo: geo } : {}),
       });
       hermesEvaluated = true;
     } catch (err) {

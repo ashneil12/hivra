@@ -56,9 +56,15 @@ jest.mock("@/lib/billing/deposit-quotes", () => ({
   createDepositQuote: (...args: unknown[]) => mockCreateDepositQuote(...args),
   getActiveDepositQuotes: jest.fn(async () => []),
 }));
+const mockRefreshHolding = jest.fn();
 jest.mock("@/lib/billing/token-holdings", () => ({
   ...jest.requireActual("@/lib/billing/token-holdings"),
   getTokenVerificationWallet: jest.fn(async () => ({ address: "0xabc" })),
+  refreshPrimaryHermesTokenHolding: (...args: unknown[]) => mockRefreshHolding(...args),
+}));
+const mockEvaluate = jest.fn();
+jest.mock("@/lib/billing/token-tier-eligibility", () => ({
+  evaluateAndRecordTokenTierEligibility: (...args: unknown[]) => mockEvaluate(...args),
 }));
 
 const mockCreateCryptoTopUp = jest.fn();
@@ -101,6 +107,7 @@ import * as cryptoTopUpRoute from "../crypto/top-up/route";
 import * as tokenAccessRoute from "../token-access/route";
 import * as challengeRoute from "../wallet/challenge/route";
 import * as verifyRoute from "../wallet/verify/route";
+import * as refreshRoute from "../wallet/refresh/route";
 
 const USER = "user_geo";
 const GB_NOTICE = "Token features aren't available to people in the United Kingdom.";
@@ -241,7 +248,17 @@ beforeEach(() => {
   });
   mockVerifyChallenge.mockResolvedValue({ status: "verified", wallet: { address: DEPOSIT }, challenge: { id: "ch_1" } });
   mockCheckoutCreate.mockResolvedValue({ id: "cs_1", url: "https://checkout.stripe.test/1" });
+  mockRefreshHolding.mockResolvedValue({
+    status: "refreshed",
+    snapshot: { id: "snap_1", balanceRaw: "5", qualifiesBaseTier: true },
+    balances: { hermesos: 5n },
+  });
+  mockEvaluate.mockResolvedValue({ configured: true, warnings: [], pro: null, power: null });
 });
+
+function refresh(country?: string) {
+  return refreshRoute.POST(post("/api/billing/wallet/refresh", {}, country));
+}
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -254,12 +271,20 @@ describe("dormant policy (no country listed)", () => {
 
   it.each(TOKEN_ACTIONS)("$name proceeds for a GB request exactly as before", async ({ call, created }) => {
     storedCountry = "GB";
+    const headerGet = jest.spyOn(Headers.prototype, "get");
     const response = await call("GB");
     expect(response.status).toBe(200);
     expect(created()).toHaveBeenCalledTimes(1);
-    // Nothing reads a country: no stored-country or existing-access query.
+    // Nothing reads a country: not the header, no stored-country or existing-access query.
+    expect(headerGet).not.toHaveBeenCalledWith("x-vercel-ip-country");
     expect(mockFrom).not.toHaveBeenCalledWith("signup_risk_assessments");
     expect(mockFrom).not.toHaveBeenCalledWith("token_tier_qualifications");
+  });
+
+  it("wallet refresh calls the tier evaluator with exactly the arguments it always did", async () => {
+    storedCountry = "GB";
+    expect((await refresh("GB")).status).toBe(200);
+    expect(mockEvaluate).toHaveBeenCalledWith({ userId: USER, balances: { hermesos: 5n } });
   });
 });
 
@@ -269,7 +294,10 @@ describe("policy of ['GB']", () => {
   });
 
   it.each(TOKEN_ACTIONS)("$name is refused for a GB IP: 403 token_geo_blocked, nothing created", async ({ call, created }) => {
+    // Positive control for the dormant "header never read" check above.
+    const headerGet = jest.spyOn(Headers.prototype, "get");
     const response = await call("GB");
+    expect(headerGet).toHaveBeenCalledWith("x-vercel-ip-country");
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
       success: false,
@@ -299,7 +327,26 @@ describe("policy of ['GB']", () => {
     }
   });
 
+  it("wallet refresh can't gain a NEW tier from a GB IP: the evaluator gets the blocked decision", async () => {
+    expect((await refresh("GB")).status).toBe(200);
+    expect(mockEvaluate).toHaveBeenCalledWith({
+      userId: USER,
+      balances: { hermesos: 5n },
+      tokenGeo: { blocked: true, country: "GB", signal: "ip_country", message: GB_NOTICE },
+    });
+    mockEvaluate.mockClear();
+    expect((await refresh("FR")).status).toBe(200);
+    expect(mockEvaluate).toHaveBeenCalledWith(expect.objectContaining({ tokenGeo: { blocked: false } }));
+  });
+
   describe("existing access is never revoked", () => {
+    it("lets a holder with a row for that tier lock a deposit quote (a suspended row re-qualifies against it)", async () => {
+      existingQualifications = [{ id: "q_pro" }];
+      const response = await depositQuoteRoute.POST(post("/api/billing/wallet/quote", { tier: "pro" }, "GB"));
+      expect(response.status).toBe(200);
+      expect(mockCreateDepositQuote).toHaveBeenCalledTimes(1);
+    });
+
     it("still returns a blocked user's existing yearly quotes", async () => {
       const response = await yearlyRoute.GET(get("/api/billing/yearly-token-quote", "GB"));
       expect(response.status).toBe(200);

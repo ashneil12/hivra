@@ -27,8 +27,8 @@ To block the United Kingdom, the change is one line:
   blockedCountries: ["GB"],
 ```
 
-"UK" is not a valid code; `token-geo-policy.test.ts` fails the build on a
-malformed entry.
+Use "GB", not "UK": `token-geo-policy.test.ts` fails the build on "UK", a
+lower-case or three-letter code, an unknown region or a duplicate.
 
 ## Who counts as blocked
 
@@ -41,6 +41,11 @@ Either signal blocks (`dashboard/src/lib/compliance/token-geo-gate.ts`):
 2. **Stored country:** `signup_risk_assessments.country_code`, the sign-up IP
    country the free-tier abuse check recorded (proxycheck). Only users that
    check assessed have one. A read failure counts as unknown.
+
+Crons have no request. When one is about to record a first tier qualification,
+the stored country decides, and so does the country Clerk recorded for the
+user's latest session activity (the same source as the `sync-user-geo` cron),
+standing in for the request IP. A failed Clerk read counts as unknown.
 
 Hivra stores no billing address and no profile country, and the Stripe card's
 issuing country is not kept. So the FCA's "refuse a UK payment method" check
@@ -57,11 +62,11 @@ country name follows the matched code).
 |---|---|
 | New yearly token quote | `POST /api/billing/yearly-token-quote` |
 | New managed-Venice token top-up quote | `POST /api/billing/managed-venice/hermesos/quote` |
-| New deposit (hold-for-tier) quote | `POST /api/billing/wallet/quote` |
+| New deposit (hold-for-tier) quote, for a tier with no existing row | `POST /api/billing/wallet/quote` |
 | New crypto (USDC) top-up | `POST /api/billing/crypto/top-up` |
 | Start a $HermesOS → $HIVRA conversion | `POST /api/billing/token-access {"action":"convert"}` |
 | First wallet verification (no existing token access) | `POST /api/billing/wallet/challenge`, `/verify` |
-| New token-tier qualification | refused inside `evaluateAndRecordTokenTierEligibility` (the only place a tier row is created): from the request on wallet refresh/unlock, and from the stored country on crons |
+| New token-tier qualification | refused inside `evaluateAndRecordTokenTierEligibility` (the only place a tier row is created): from the request on wallet refresh/unlock, and from the stored and Clerk session country on crons and other callers |
 
 ## What never changes for anyone
 
@@ -74,9 +79,13 @@ country name follows the matched code).
   never consult the policy. (A deposit quote is only a price lock for a new
   tier, so a blocked user doesn't qualify from one.)
 - Withdrawals and withdraw addresses (exits) are never gated.
-- A user with a tier row, a self-verified wallet or a legacy lock wallet may
-  still verify a wallet, so moving tokens or leaving a lock wallet never costs
-  the tier. The 1-token base tier continues for anyone already verified.
+- A user with a tier row, a self-verified wallet, an older Bankr holder wallet
+  or a legacy lock wallet may still verify a wallet, so moving tokens or
+  leaving a lock wallet never costs the tier.
+- A holder with a row for a tier may still lock a deposit quote for it, so a
+  suspended row can re-qualify at a locked price.
+- A holder who switched to $HIVRA still sees their switch deadline on
+  `/dashboard/convert`.
 - Card payments (plans, top-ups, managed-Venice card credit) never consult it.
 
 `token-geo-surfaces.test.ts` pins both lists against the source.
@@ -92,7 +101,8 @@ country name follows the matched code).
 - Command center: the launch-bonus and launch-allocation rows.
 - Wallet: the buy-token (Uniswap) card; the notice is shown.
 - `/dashboard/convert`: no switch step and no conversion link; contracts,
-  the address checker and the notice stay.
+  the address checker, the user's current access and switch deadline, and the
+  notice stay.
 - `/token`: contracts, BaseScan links and current access stay, the notice is
   added, the proposals and litepaper link are dropped.
 - `/tokenomics`: only the contract addresses, a link to `/token` and the notice.
@@ -109,6 +119,15 @@ is always there. With the empty list no component asks.
   unchanged. So are emails, X posts and anything posted off-site.
 - Agent wallets (the user's own Bankr account) and `POST /api/billing/bankr/wallet`
   (provisions a deposit address; every payment that uses it is gated).
+- **The 1-token base tier is not gated.** It has no qualification record, so
+  the code cannot tell a new holder from an existing one, and gating it would
+  risk revoking existing holders. A blocked user can't reach it without a
+  verified wallet (first verification is gated), but someone who verified a
+  wallet before the policy (or behind a VPN) gets it by holding 1 token.
+  Counsel should say whether that needs closing.
+- A blocked user with a crypto payment already in progress who tries to start
+  another gets the geo 403 rather than the "payment already active" 409; the
+  active payment itself still settles.
 - $HIVRA itself trades on a permissionless pool; nothing here can block that.
 
 ## Enabling it

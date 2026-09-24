@@ -10,6 +10,7 @@ export const DORMANT_MESSAGE = "Conversion opens after $HIVRA launches; terms ar
 export const ANNOUNCED_MESSAGE = "Conversion is not open yet. Terms are published before it opens.";
 export const PROPOSED_LABEL = "Proposed. Terms are published before conversion opens.";
 export const LIVE_LABEL = "Optional. Read the published terms before you convert.";
+export const GEO_BLOCKED_LABEL = "Conversion is not offered to you.";
 
 function formatUtc(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", {
@@ -75,10 +76,14 @@ export function ConvertPanel({
   geoNotice = null,
 }: {
   state: ConversionState;
-  /** Set when the token geo-policy blocks this viewer; conversion is then never offered. */
+  /**
+   * Set when the token geo-policy blocks this viewer: no conversion link or
+   * switch step, but their current access (and any post-switch deadline) is
+   * still shown.
+   */
   geoNotice?: string | null;
 }) {
-  const live = !geoNotice && (state.status === "open" || state.status === "switch-access");
+  const live = state.status === "open" || state.status === "switch-access";
   return (
     <article style={{ maxWidth: 720 }}>
       <header style={{ marginBottom: "1.5rem" }}>
@@ -86,12 +91,14 @@ export function ConvertPanel({
           data-testid="convert-proposed-label"
           style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-secondary)", margin: 0 }}
         >
-          {live ? LIVE_LABEL : PROPOSED_LABEL}
+          {live ? (geoNotice ? GEO_BLOCKED_LABEL : LIVE_LABEL) : PROPOSED_LABEL}
         </p>
         <h1 style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", margin: "0.5rem 0 0.75rem" }}>Convert $HermesOS to $HIVRA</h1>
         <p style={muted}>
           {live
-            ? "Converting is optional and nothing converts automatically. You choose whether to convert."
+            ? geoNotice
+              ? "Nothing converts automatically."
+              : "Converting is optional and nothing converts automatically. You choose whether to convert."
             : "As proposed, converting is optional: nothing converts automatically, there is no deadline, and you choose whether to convert."}
         </p>
       </header>
@@ -149,7 +156,7 @@ export function ConvertPanel({
             Keeping access and converting tokens are separate decisions. Billing shows which token your tier counts.
           </p>
         </Section>
-      ) : state.status === "open" && !geoNotice ? (
+      ) : state.status === "open" ? (
         <Section id="convert-access" title="Your access">
           {state.graceEndsAt ? (
             <p style={body}>
@@ -157,9 +164,20 @@ export function ConvertPanel({
               tier. After that, only $HIVRA counts.
             </p>
           ) : null}
+          {geoNotice ? (
+            <p style={body}>Your tier counts $HIVRA. Billing shows your tier.</p>
+          ) : (
+            <p style={body}>
+              Your tier counts $HIVRA. The $HIVRA you receive has to meet your tier&apos;s amount, so check what you will
+              receive before you convert. Billing shows your tier.
+            </p>
+          )}
+        </Section>
+      ) : state.status === "switch-access" && geoNotice ? (
+        <Section id="convert-access" title="Your access">
           <p style={body}>
-            Your tier counts $HIVRA. The $HIVRA you receive has to meet your tier&apos;s amount, so check what you will
-            receive before you convert. Billing shows your tier.
+            Your tier counts the $HermesOS in your verified wallet. Converting it, or moving it out of that wallet, lowers
+            that balance. Billing shows your tier.
           </p>
         </Section>
       ) : null}

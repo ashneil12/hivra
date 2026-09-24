@@ -62,7 +62,7 @@ describe("token geo-policy surfaces", () => {
   it.each(DECISION_PASSED_TO_EVALUATOR)("%s passes a blocked decision to the tier evaluator", (route) => {
     const text = source(route);
     expect(text).toContain("resolveTokenGeoBlock(req, { userId })");
-    expect(text).toContain("...(geo.blocked ? { tokenGeo: geo } : {})");
+    expect(text).toContain("...(isTokenGeoPolicyActive() ? { tokenGeo: geo } : {})");
   });
 
   it.each(NEVER_GATED)("%s never consults the token geo-policy", (route) => {

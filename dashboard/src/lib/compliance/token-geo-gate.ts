@@ -11,6 +11,9 @@
  *   country the free-tier abuse check recorded at sign-up (proxycheck). Only
  *   users that check assessed have one. Hivra stores no billing address, and
  *   the Stripe card's issuing country is not kept.
+ * - with no request (crons deciding a new tier qualification): the stored
+ *   country, and the country Clerk recorded for the user's latest session
+ *   activity (its IP geo), which stands in for the request IP.
  *
  * With an empty policy this module reads nothing: no header, no query.
  *
@@ -50,6 +53,8 @@ export interface TokenGeoOptions {
   policy?: TokenGeoPolicy;
   /** Test seam; defaults to readStoredTokenCountry. */
   readStoredCountry?: (userId: string) => Promise<string | null>;
+  /** Test seam; defaults to readLatestSessionCountry. */
+  readSessionCountry?: (userId: string) => Promise<string | null>;
 }
 
 const LOG_SOURCE = "compliance/token-geo";
@@ -95,6 +100,45 @@ export async function readStoredTokenCountry(userId: string): Promise<string | n
   }
 }
 
+const CLERK_API = "https://api.clerk.com/v1";
+const CLERK_TIMEOUT_MS = 5_000;
+
+/**
+ * The country Clerk recorded for the user's latest session activity (an ISO
+ * code or an English name), or null: no session, no Clerk key (self-host), or
+ * the read failed. Same source as the sync-user-geo cron.
+ */
+export async function readLatestSessionCountry(userId: string): Promise<string | null> {
+  const key = process.env.CLERK_SECRET_KEY?.trim();
+  if (!key) return null;
+  try {
+    const response = await fetch(`${CLERK_API}/sessions?user_id=${encodeURIComponent(userId)}&limit=1`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(CLERK_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      log.warn("token geo: Clerk session country read failed; treating it as unknown", {
+        source: LOG_SOURCE,
+        userId,
+        failureType: "token_geo_session_country_read_failed",
+        status: response.status,
+      });
+      return null;
+    }
+    const sessions = (await response.json()) as Array<{ latest_activity?: { country?: unknown } }> | null;
+    const country = Array.isArray(sessions) ? sessions[0]?.latest_activity?.country : undefined;
+    return typeof country === "string" && country.trim() ? country.trim() : null;
+  } catch (error) {
+    log.warn("token geo: Clerk session country read threw; treating it as unknown", {
+      source: LOG_SOURCE,
+      userId,
+      failureType: "token_geo_session_country_read_failed",
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    return null;
+  }
+}
+
 function blockedDecision(country: string, signal: TokenGeoSignal): TokenGeoDecision {
   return { blocked: true, country, signal, message: tokenGeoNotice(country) };
 }
@@ -129,9 +173,9 @@ export async function resolveTokenGeoBlock(
 
 /**
  * Whether a NEW token-tier qualification row may be recorded. Existing rows
- * are never passed here. A caller that already resolved the request passes its
- * decision (IP + stored); crons have no request, so only the stored country
- * counts there.
+ * are never passed here. A caller that resolved a request passes its decision
+ * (IP + stored). Without one (crons, and routes that don't pass it) the stored
+ * country and Clerk's latest-session country decide.
  */
 export async function isNewTokenQualificationRefused(
   userId: string,
@@ -142,7 +186,9 @@ export async function isNewTokenQualificationRefused(
   if (!isTokenGeoPolicyActive(policy)) return false;
   if (decision) return decision.blocked;
   const stored = await (options.readStoredCountry ?? readStoredTokenCountry)(userId);
-  return Boolean(stored && isCountryBlockedForTokens(stored, policy));
+  if (stored && isCountryBlockedForTokens(stored, policy)) return true;
+  const session = await (options.readSessionCountry ?? readLatestSessionCountry)(userId);
+  return Boolean(session && isCountryBlockedForTokens(session, policy));
 }
 
 /**
@@ -173,9 +219,32 @@ export async function hasExistingTokenHolderAccess(userId: string): Promise<bool
     .not("verified_at", "is", null)
     .limit(50);
   if (walletsError) throw new Error("Failed to read verified wallets");
+  // The same rule as a token verification wallet (token-holdings.ts
+  // isEligiblePrimaryTokenWallet): any signature/admin wallet, and a Bankr
+  // wallet with no purpose (older holders) or a lock wallet. A payment
+  // deposit address (credit_deposit) is not token access.
   return ((wallets ?? []) as Array<{ verification_method: string | null; metadata: unknown }>).some((wallet) => {
-    if (wallet.verification_method !== "bankr") return true;
+    if (wallet.verification_method === "signature" || wallet.verification_method === "admin") return true;
     const bankr = (wallet.metadata as { bankr?: { purpose?: unknown } } | null)?.bankr;
-    return bankr?.purpose === "hermesos_lock";
+    const purpose = typeof bankr?.purpose === "string" ? bankr.purpose : null;
+    if (wallet.verification_method === "bankr") return !purpose || purpose === "hermesos_lock";
+    return !purpose;
   });
+}
+
+/**
+ * Whether the user already has a tier qualification row for this tier (in any
+ * state). A blocked holder may still lock a deposit quote for it: a suspended
+ * row re-qualifies against an active quote.
+ */
+export async function hasExistingTokenTierRow(userId: string, tier: "pro" | "power"): Promise<boolean> {
+  if (!supabaseAdmin) throw new Error("Database not configured");
+  const { data, error } = await supabaseAdmin
+    .from("token_tier_qualifications")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("tier", tier)
+    .limit(1);
+  if (error) throw new Error("Failed to read token tier qualifications");
+  return Array.isArray(data) && data.length > 0;
 }

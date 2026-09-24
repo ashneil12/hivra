@@ -134,12 +134,18 @@ describe("policy of ['GB']", () => {
     expect(screen.queryByText(/discount/)).not.toBeInTheDocument();
   });
 
-  it("the convert page offers a GB viewer no conversion link and never reads their access", async () => {
+  it("the convert page offers a GB viewer no conversion link, but still shows their switch deadline", async () => {
     viewerFrom("GB");
+    gate.mockResolvedValue({
+      grandfathered: true,
+      convertedAt: "2026-10-02T00:00:00.000Z",
+      conversionGraceEndsAt: "2026-10-05T00:00:00.000Z",
+    });
     await renderPage(ConvertPage);
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
     expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
-    expect(gate).not.toHaveBeenCalled();
+    expect(screen.getByText(/holding either token keeps your tier/)).toBeInTheDocument();
+    expect(gate).toHaveBeenCalledWith(null, expect.any(Date));
   });
 
   it("pages are unchanged for a viewer from elsewhere", async () => {

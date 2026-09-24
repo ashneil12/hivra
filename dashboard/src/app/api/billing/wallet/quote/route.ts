@@ -31,7 +31,7 @@ import { TokenNotAllowedError } from "@/lib/billing/token-access";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
-import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { hasExistingTokenTierRow, resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 
 function isValidTier(value: unknown): value is TierKey {
@@ -127,17 +127,6 @@ export async function POST(req: NextRequest) {
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
 
-    // Token geo-policy: a deposit quote locks the price of a new token tier.
-    const geo = await resolveTokenGeoBlock(req, { userId });
-    if (geo.blocked) {
-      return tokenGeoBlockedResponse(geo, {
-        source: "billing/wallet-quote",
-        route: "/api/billing/wallet/quote",
-        method: "POST",
-        userId,
-      });
-    }
-
     let body: PostBody = {};
     try {
       body = (await req.json()) as PostBody;
@@ -154,6 +143,19 @@ export async function POST(req: NextRequest) {
     if (body.token !== undefined && !isPlatformTokenKey(body.token)) {
       return apiError("Invalid token — must be 'hermesos' or 'hivra'.", 400, {
         failureType: "deposit_quote_bad_token",
+      });
+    }
+
+    // Token geo-policy: a deposit quote locks the price of a NEW token tier.
+    // A holder who already has a row for this tier keeps it: a suspended row
+    // re-qualifies against an active quote.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked && !(await hasExistingTokenTierRow(userId, body.tier))) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
+        userId,
       });
     }
 

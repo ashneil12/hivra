@@ -12,6 +12,7 @@ jest.mock("@/lib/logger", () => ({
 
 import {
   hasExistingTokenHolderAccess,
+  hasExistingTokenTierRow,
   isNewTokenQualificationRefused,
   resolveTokenGeoBlock,
 } from "../token-geo-gate";
@@ -127,6 +128,63 @@ describe("resolveTokenGeoBlock", () => {
       await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(true);
     });
 
+    describe("with no request (crons): Clerk's latest-session country stands in for the IP", () => {
+      const originalKey = process.env.CLERK_SECRET_KEY;
+      const originalFetch = global.fetch;
+      const fetchMock = jest.fn();
+      beforeEach(() => {
+        process.env.CLERK_SECRET_KEY = "sk_test_geo";
+        fetchMock.mockReset();
+        global.fetch = fetchMock as unknown as typeof fetch;
+      });
+      afterEach(() => {
+        global.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.CLERK_SECRET_KEY;
+        else process.env.CLERK_SECRET_KEY = originalKey;
+      });
+      function session(country: unknown, ok = true) {
+        fetchMock.mockResolvedValue({ ok, status: ok ? 200 : 500, json: async () => [{ latest_activity: { country } }] });
+      }
+
+      it("refuses when the latest session was in the UK, by code or by name", async () => {
+        storedCountry(null);
+        session("United Kingdom");
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(true);
+        session("GB");
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(true);
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://api.clerk.com/v1/sessions?user_id=user_a&limit=1",
+          expect.objectContaining({ headers: { Authorization: "Bearer sk_test_geo" } }),
+        );
+      });
+
+      it("allows another country, and treats a failed or empty read as unknown", async () => {
+        storedCountry(null);
+        session("France");
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(false);
+        session("GB", false);
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(false);
+        fetchMock.mockRejectedValue(new Error("timeout"));
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(false);
+        fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(false);
+      });
+
+      it("isn't asked when a request decision exists or the stored country already refuses", async () => {
+        storedCountry("GB");
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(true);
+        await expect(isNewTokenQualificationRefused("user_a", { blocked: false })).resolves.toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it("is never asked with the dormant policy", async () => {
+        jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", []);
+        session("GB");
+        await expect(isNewTokenQualificationRefused("user_a")).resolves.toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+    });
+
     it("returns a 403 with a clear code and the user-facing notice", async () => {
       const decision = await resolveTokenGeoBlock(request("GB"), null);
       if (!decision.blocked) throw new Error("expected a block");
@@ -167,6 +225,9 @@ describe("hasExistingTokenHolderAccess", () => {
     await expect(hasExistingTokenHolderAccess("user_a")).resolves.toBe(true);
     tables([], [{ verification_method: "bankr", metadata: { bankr: { purpose: "hermesos_lock" } } }]);
     await expect(hasExistingTokenHolderAccess("user_a")).resolves.toBe(true);
+    // Older Bankr holder wallets carry no purpose; they count as token wallets too.
+    tables([], [{ verification_method: "bankr", metadata: {} }]);
+    await expect(hasExistingTokenHolderAccess("user_a")).resolves.toBe(true);
   });
 
   it("is false for a new user, including one who only has a crypto-payment deposit address", async () => {
@@ -179,5 +240,13 @@ describe("hasExistingTokenHolderAccess", () => {
   it("throws when it cannot read, rather than guessing", async () => {
     mockFrom.mockImplementation(() => query({ data: null, error: { code: "57014" } }));
     await expect(hasExistingTokenHolderAccess("user_a")).rejects.toThrow("Failed to read token tier qualifications");
+    await expect(hasExistingTokenTierRow("user_a", "pro")).rejects.toThrow("Failed to read token tier qualifications");
+  });
+
+  it("hasExistingTokenTierRow reads the user's row for that tier", async () => {
+    tables([{ id: "q1" }], []);
+    await expect(hasExistingTokenTierRow("user_a", "pro")).resolves.toBe(true);
+    tables([], []);
+    await expect(hasExistingTokenTierRow("user_a", "power")).resolves.toBe(false);
   });
 });

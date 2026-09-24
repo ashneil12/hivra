@@ -18,11 +18,11 @@ export const dynamic = "force-dynamic";
 export default async function ConvertPage() {
   const now = new Date();
   const { userId } = await auth();
-  // Token geo-policy: a blocked viewer gets the factual page (contracts and the
-  // address checker) with the notice, and no switch step or conversion link.
+  // Token geo-policy: a blocked viewer gets the notice and no switch step or
+  // conversion link; their access (and any post-switch deadline) still shows.
   // With the dormant policy this reads nothing.
   const geo = await resolveTokenGeoBlockForPage(userId ?? null);
-  const access = geo.blocked ? null : await readConversionAccessGate(userId ?? null, now);
+  const access = await readConversionAccessGate(userId ?? null, now);
   const state = resolveConversionState(readConversionInputs(access, now));
   if ((state.status === "dormant" || state.status === "announced") && state.problems.length > 0) {
     // A set but invalid launch value is a release defect: surface it instead of

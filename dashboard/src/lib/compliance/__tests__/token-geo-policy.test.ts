@@ -8,15 +8,30 @@ import {
 } from "../token-geo-policy";
 
 describe("token geo-policy", () => {
-  it("lists only upper-case ISO-3166 alpha-2 codes, each once", () => {
-    // Guards the one-line enabling change: a typo ("UK", "gb", "GBR") would
-    // silently block nobody.
-    for (const code of TOKEN_GEO_POLICY.blockedCountries) {
-      expect(code).toMatch(/^[A-Z]{2}$/);
-      expect(normalizeCountryCode(code)).toBe(code);
-      expect(tokenGeoCountryName(code)).not.toBe(code);
+  /** The build-time check on the committed list: canonical alpha-2 codes of real regions, each once. */
+  function listProblems(list: readonly string[]): string[] {
+    const problems: string[] = [];
+    for (const code of list) {
+      if (!/^[A-Z]{2}$/.test(code)) problems.push(`${code}: not an upper-case alpha-2 code`);
+      else if (normalizeCountryCode(code) !== code) problems.push(`${code}: use ${normalizeCountryCode(code)}`);
+      else if (tokenGeoCountryName(code) === code) problems.push(`${code}: not a known region`);
     }
-    expect(new Set(TOKEN_GEO_POLICY.blockedCountries).size).toBe(TOKEN_GEO_POLICY.blockedCountries.length);
+    if (new Set(list).size !== list.length) problems.push("duplicate entries");
+    return problems;
+  }
+
+  it("lists only canonical ISO-3166 alpha-2 codes of real regions, each once", () => {
+    // Guards the one-line enabling change: a typo would silently block nobody.
+    expect(listProblems(TOKEN_GEO_POLICY.blockedCountries)).toEqual([]);
+  });
+
+  it("would fail the build on 'UK', 'gb', 'GBR', an unknown region or a duplicate", () => {
+    expect(listProblems(["GB"])).toEqual([]);
+    expect(listProblems(["UK"])).toEqual(["UK: use GB"]);
+    expect(listProblems(["gb"])).toEqual(["gb: not an upper-case alpha-2 code"]);
+    expect(listProblems(["GBR"])).toEqual(["GBR: not an upper-case alpha-2 code"]);
+    expect(listProblems(["ZZ"])).toEqual(["ZZ: not a known region"]);
+    expect(listProblems(["GB", "GB"])).toEqual(["duplicate entries"]);
   });
 
   it("with an empty list is dormant and blocks no country", () => {
@@ -34,11 +49,17 @@ describe("token geo-policy", () => {
     expect(isCountryBlockedForTokens(" gb ", gb)).toBe(true);
     expect(isCountryBlockedForTokens("US", gb)).toBe(false);
     expect(isCountryBlockedForTokens("IE", gb)).toBe(false);
+    // Clerk records some session countries by English name.
+    expect(isCountryBlockedForTokens("United Kingdom", gb)).toBe(true);
+    expect(isCountryBlockedForTokens("united kingdom", gb)).toBe(true);
+    expect(isCountryBlockedForTokens("Ireland", gb)).toBe(false);
+    // A deprecated alias in the list still means GB at runtime.
+    expect(isCountryBlockedForTokens("GB", { blockedCountries: ["UK"] })).toBe(true);
   });
 
   it("never treats an unknown or missing country as a country", () => {
     const gb = { blockedCountries: ["GB"] };
-    for (const raw of [null, undefined, "", "XX", "T1", "GBR", "United Kingdom", 44]) {
+    for (const raw of [null, undefined, "", "  ", "XX", "T1", "GBR", 44]) {
       expect(normalizeCountryCode(raw)).toBeNull();
       expect(isCountryBlockedForTokens(raw, gb)).toBe(false);
     }

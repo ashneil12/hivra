@@ -292,6 +292,33 @@ describe("convert page panel", () => {
     expect(screen.getByText("0x1111111111111111111111111111111111111111")).toBeInTheDocument();
   });
 
+  it("still shows a blocked holder who already switched their grace deadline, without the link", () => {
+    const switched = resolveConversionState({
+      hivra,
+      phase: "active",
+      links: { termsUrl: "https://hivra.cloud/token/conversion-terms", conversionUrl: "https://bankr.bot/convert/hivra" },
+      access: { grandfathered: true, convertedAt: "2026-10-02T00:00:00.000Z", conversionGraceEndsAt: "2026-10-05T00:00:00.000Z" },
+    });
+    render(<ConvertPanel state={switched} geoNotice={GB_NOTICE} />);
+    expect(screen.getByText(/Until 5 October 2026.*holding either token keeps your tier/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("convert-proposed-label")).toHaveTextContent("Conversion is not offered to you.");
+  });
+
+  it("tells a blocked grandfathered holder what their tier counts, with no switch step", () => {
+    const grandfathered = resolveConversionState({
+      hivra,
+      phase: "active",
+      links: { termsUrl: "https://hivra.cloud/token/conversion-terms", conversionUrl: "https://bankr.bot/convert/hivra" },
+      access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null },
+    });
+    expect(grandfathered.status).toBe("switch-access");
+    render(<ConvertPanel state={grandfathered} geoNotice={GB_NOTICE} />);
+    expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
+    expect(screen.getByText(/Your tier counts the \$HermesOS in your verified wallet/)).toBeInTheDocument();
+    expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
+  });
+
   it("is unchanged without a notice", () => {
     render(<ConvertPanel state={openState} />);
     expect(screen.getByRole("link", { name: /go to conversion/i })).toBeInTheDocument();

@@ -161,6 +161,32 @@ describe("policy of ['GB']", () => {
     expect(mockFrom).toHaveBeenCalledWith("signup_risk_assessments");
   });
 
+  it("refuses a NEW qualification from a cron when Clerk's latest session was in the UK", async () => {
+    storedCountry(null);
+    const originalKey = process.env.CLERK_SECRET_KEY;
+    const originalFetch = global.fetch;
+    process.env.CLERK_SECRET_KEY = "sk_test_geo";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => [{ latest_activity: { country: "United Kingdom" } }],
+    })) as unknown as typeof fetch;
+    try {
+      const db = new FakeDb();
+      await evaluateAndRecordTokenTierEligibility({
+        userId: "user_vpn",
+        balances: { hermesos: 250_000n },
+        db: db as unknown as Db,
+        now: NOW,
+      });
+      expect(db.inserts).toBe(0);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = originalKey;
+    }
+  });
+
   it("still records a first qualification for a user who is not blocked", async () => {
     storedCountry("FR");
     const db = new FakeDb();
