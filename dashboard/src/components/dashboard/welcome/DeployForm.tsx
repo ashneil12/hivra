@@ -35,6 +35,7 @@ import {
 } from "@/lib/billing/managed-venice-client";
 
 import { usePaymentTokenUnit } from "@/hooks/usePaymentToken";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 
 
 export interface DashboardVaultKey {
@@ -132,7 +133,7 @@ export function DeployForm({
   matchedHonchoVaultKey,
   deploying,
   handleDeploy,
-  managedVeniceWalletType,
+  managedVeniceWalletType: managedVeniceWalletTypeChoice,
   setManagedVeniceWalletType,
   managedVeniceAvailableMicroUsd = 0,
   managedVeniceBalanceLoading = false,
@@ -199,6 +200,13 @@ export function DeployForm({
   deployAlert?: ReactNode;
 }) {
   const paymentUnit = usePaymentTokenUnit();
+  // Token geo-policy: a viewer it blocks (or while it is still checking) sees
+  // card credits only, with no token bonus copy. "allowed" at once while the
+  // policy is dormant.
+  const tokenPaymentsShown = useTokenGeoAccess().status === "allowed";
+  const managedVeniceWalletType: ManagedVeniceWalletType = tokenPaymentsShown
+    ? managedVeniceWalletTypeChoice
+    : "card";
   const supportsLiveModels = supportsLiveModelDiscovery(selectedProvider.id);
   const supportsPublicModels = supportsPublicLiveModelDiscovery(selectedProvider.id);
   // Deploy-card redesign: the top-level `managed` toggle is the single source
@@ -431,6 +439,7 @@ export function DeployForm({
                   No Venice markup. Pay exactly provider-rate credits with card.
                 </p>
               </button>
+              {tokenPaymentsShown && (
               <details>
                 <summary style={{ cursor: 'pointer', padding: '12px 0', fontSize: 13 }}>Optional token top-up</summary>
               <button
@@ -458,6 +467,7 @@ export function DeployForm({
                 </p>
               </button>
               </details>
+              )}
             </div>
 
             <div style={{ marginTop: 14 }}>
@@ -904,7 +914,9 @@ export function DeployForm({
                 Managed Venice
               </div>
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
-                No keys to manage. Pay Venice provider rates with card credits, or use {paymentUnit} for bonus credits.
+                {tokenPaymentsShown
+                  ? `No keys to manage. Pay Venice provider rates with card credits, or use ${paymentUnit} for bonus credits.`
+                  : "No keys to manage. Pay Venice provider rates with card credits."}
               </p>
             </button>
             <button

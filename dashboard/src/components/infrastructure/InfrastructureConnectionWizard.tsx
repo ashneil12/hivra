@@ -227,12 +227,15 @@ export function buildInfrastructureConnectionUpdate(
     : { ok: false, errors: issueMap(parsed.error.issues) };
 }
 
-function initialForm(connection: InfrastructureConnectionDto | null): InfrastructureConnectionFormValues {
+function initialForm(
+  connection: InfrastructureConnectionDto | null,
+  prefill: InfrastructureConnectionPrefill | null = null,
+): InfrastructureConnectionFormValues {
   const configuration = connection?.configuration;
   return {
-    name: connection?.name ?? "My host",
+    name: connection?.name ?? prefill?.name ?? "My host",
     setupMode: connection?.setupMode ?? "simple",
-    sshHost: connection?.endpoint?.sshHost ?? "",
+    sshHost: connection?.endpoint?.sshHost ?? prefill?.sshHost ?? "",
     sshPort: String(connection?.endpoint?.sshPort ?? 22),
     sshUser: connection?.endpoint?.sshUser ?? "root",
     sshHostFingerprintSha256: connection?.endpoint?.sshHostFingerprintSha256 ?? "",
@@ -262,8 +265,12 @@ function initialForm(connection: InfrastructureConnectionDto | null): Infrastruc
   };
 }
 
+/** Known facts about a new server, such as a Hetzner server Hivra didn't create. */
+export type InfrastructureConnectionPrefill = { name: string; sshHost: string };
+
 type InfrastructureConnectionWizardProps = {
   connection?: InfrastructureConnectionDto | null;
+  prefill?: InfrastructureConnectionPrefill | null;
   onClose: () => void;
   onConnectionSaved: (connection: InfrastructureConnectionDto) => void;
   onPreflightComplete: (connectionId: string, result: ProxmoxPreflightResult) => void;
@@ -277,13 +284,14 @@ const WIZARD_STEPS = ["Connect", "Inspect", "Recommend", "Prepare", "Ready"] as 
 
 export function InfrastructureConnectionWizard({
   connection = null,
+  prefill = null,
   onClose,
   onConnectionSaved,
   onPreflightComplete,
   onPrepareRequested,
   returnFocusRef,
 }: InfrastructureConnectionWizardProps) {
-  const [form, setForm] = useState(() => initialForm(connection));
+  const [form, setForm] = useState(() => initialForm(connection, prefill));
   const [sshSettingsOpen, setSshSettingsOpen] = useState(() => Boolean(
     connection?.endpoint
     && (connection.endpoint.sshPort !== 22 || connection.endpoint.sshUser !== "root"),

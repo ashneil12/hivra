@@ -177,6 +177,7 @@ import {
   type ManagedVeniceWalletSummaryPayload,
 } from '@/lib/billing/managed-venice-client';
 import { usePaymentTokenUnit } from '@/hooks/usePaymentToken';
+import { useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 
 
 const WELCOME_ROUTE = '/dashboard/welcome';
@@ -664,6 +665,8 @@ async function readExistingInstanceRestorable(instanceId: string): Promise<boole
 
 export function WelcomeFlow() {
   const paymentUnit = usePaymentTokenUnit();
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenPaymentsShown = useTokenGeoAccess().status === 'allowed';
   const router = useRouter();
   const searchParams = useSearchParams();
   const selfHosted = isLocalAuthMode();
@@ -2669,7 +2672,9 @@ export function WelcomeFlow() {
               {flowState === 'agent-type'
                 ? 'Pick the agent software to run — Claude Code, Codex, OpenClaw, Agent Zero or a plain Hermes agent — or a specialist that starts pre-shaped and can still be renamed and retuned.'
                 : flowState === 'plan'
-                  ? `Choose Card or ${paymentUnit}, then finish the deploy.`
+                  ? tokenPaymentsShown
+                    ? `Choose Card or ${paymentUnit}, then finish the deploy.`
+                    : 'Choose a plan, then finish the deploy.'
                   : `${selectedAgentType?.tagline ?? "Name your agent, connect your AI provider, and you're live."}`}
             </p>
           </header>
@@ -4926,8 +4931,12 @@ export function TierPickerCards({
     () => tiers.filter((t): t is TierDefinition & { key: 'pro' | 'power' } => t.key !== 'free'),
     [tiers],
   );
+  // Token geo-policy: no token payment path for a viewer it blocks (or while
+  // it is still checking). "allowed" at once while the policy is dormant.
+  const tokenPaymentsShown = useTokenGeoAccess().status === 'allowed';
+  const cryptoPathOffered = isCryptoBillingUiEnabled() && tokenPaymentsShown;
 
-  if (isCryptoBillingUiEnabled() && paidPathChoice === null) {
+  if (cryptoPathOffered && paidPathChoice === null) {
     return (
       <PaymentMethodIntro
         onSelectFree={onSelectFree}
@@ -4969,7 +4978,8 @@ export function TierPickerCards({
     </div>
     <PlanGrid
       tiers={paidTiers}
-      paidPathChoice={isCryptoBillingUiEnabled() && paidPathChoice === 'crypto' ? 'crypto' : 'card'}
+      paidPathChoice={cryptoPathOffered && paidPathChoice === 'crypto' ? 'crypto' : 'card'}
+      otherPaymentOptions={cryptoPathOffered}
       onBack={() => setPaidPathChoice(null)}
       cardCadence={cardCadence}
       setCardCadence={setCardCadence}
@@ -5233,9 +5243,12 @@ function PlanGrid({
   onSelectCryptoYearly,
   onDeposit,
   cardCheckoutLoadingTier,
+  otherPaymentOptions,
 }: {
   tiers: Array<TierDefinition & { key: 'pro' | 'power' }>;
   paidPathChoice: 'card' | 'crypto';
+  /** Show "Other payment options" (back to the Card / token choice). */
+  otherPaymentOptions: boolean;
   onBack: () => void;
   cardCadence: 'monthly' | 'yearly';
   setCardCadence: (c: 'monthly' | 'yearly') => void;
@@ -5251,7 +5264,7 @@ function PlanGrid({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       <AnimateIn>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-          {isCryptoBillingUiEnabled() && <button
+          {otherPaymentOptions && <button
             type="button"
             onClick={onBack}
             style={{
