@@ -14,7 +14,7 @@ import "@testing-library/jest-dom";
 import posthog from "posthog-js";
 
 import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
-import { listBoxSessions, readBoxSession, stampAgentFirstUsage, uploadBoxFile } from "@/lib/hivra/agent-api";
+import { listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
 import { requestAgentWelcomeMessage } from "@/lib/hivra/agent-welcome";
 
 jest.mock("posthog-js", () => ({
@@ -45,10 +45,14 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   readBoxSession: jest.fn(),
   stampAgentFirstUsage: jest.fn(),
   uploadBoxFile: jest.fn(),
+  listBoxChatRuns: jest.fn(),
+  stopBoxChatRun: jest.fn(),
+  boxChatRunEventsUrl: (boxUrl: string, runId: string) => `${boxUrl}/api/chat/runs/${runId}/events`,
 }));
 
 jest.mock("@/lib/hivra/agent-welcome", () => ({
   requestAgentWelcomeMessage: jest.fn(),
+  isHiddenWelcomeTitle: () => false,
 }));
 
 jest.mock("@/lib/client/logger", () => ({
@@ -89,6 +93,8 @@ describe("HivraChat", () => {
     (listBoxSessions as jest.Mock).mockResolvedValue([]);
     (readBoxSession as jest.Mock).mockResolvedValue([]);
     (stampAgentFirstUsage as jest.Mock).mockResolvedValue(undefined);
+    (listBoxChatRuns as jest.Mock).mockResolvedValue(null);
+    (stopBoxChatRun as jest.Mock).mockResolvedValue(true);
     (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue("Atlas here, ready to grow the SaaS.");
   });
 
@@ -1054,6 +1060,88 @@ describe("HivraChat", () => {
     fireEvent.click(screen.getByText("task A", { selector: "span" }));
     expect(await screen.findByText("A finished the job")).toBeInTheDocument();
     expect(screen.queryByText("B is working")).not.toBeInTheDocument();
+  });
+
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const replyText = (text: string) => ({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
+
+  it("asks the box to keep the turn running without this page, keyed by a client run id", async () => {
+    const read = jest.fn()
+      .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Done."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(read));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="detach-body" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("long task");
+    expect(await screen.findByText("Done.")).toBeInTheDocument();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://box.example.com/api/chat");
+    const body = JSON.parse(String(init.body));
+    expect(body).toMatchObject({ message: "long task", detach: true });
+    expect(body.runId).toMatch(UUID);
+    expect(typeof body.clientRef).toBe("string");
+  });
+
+  it("stops the box run explicitly instead of relying on the dropped connection", async () => {
+    const pending = deferred<{ done: boolean; value?: Uint8Array }>();
+    const read = jest.fn()
+      .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Working on it")))
+      .mockImplementationOnce(() => pending.promise);
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(read));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="detach-stop" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("long task");
+    await screen.findByText("Working on it");
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    const runId = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)).runId;
+    expect(stopBoxChatRun).toHaveBeenCalledWith("https://box.example.com", runId, "box-token");
+    expect(screen.getByLabelText("Response stopped")).toHaveTextContent("Stopped");
+  });
+
+  it("re-attaches to the run when the stream drops mid-turn and shows the finished reply", async () => {
+    const firstRead = jest.fn()
+      .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Half")))
+      .mockRejectedValueOnce(new Error("network changed"));
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Half"), replyText(" and the rest."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(chatResponse(firstRead))
+      .mockResolvedValueOnce(chatResponse(replay));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="detach-drop" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("long task");
+    expect(await screen.findByText("Half and the rest.")).toBeInTheDocument();
+    const runId = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)).runId;
+    expect(fetchMock.mock.calls[1][0]).toBe(`https://box.example.com/api/chat/runs/${runId}/events`);
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+    expect(stopBoxChatRun).not.toHaveBeenCalled();
+  });
+
+  it("picks a reply that kept running while the page was closed back up from the box", async () => {
+    const runId = "00000000-0000-4000-8000-000000000002";
+    window.localStorage.setItem("hivra_sessions_agentresume", JSON.stringify([{
+      id: "s1", title: "long task", claudeSessionId: "00000000-0000-4000-8000-000000000001", createdAt: 1,
+      messages: [
+        { role: "user", text: "long task", tools: [] },
+        { role: "assistant", text: "Half", tools: [], streaming: true, runId },
+      ],
+    }]));
+    window.localStorage.setItem("hivra_sessions_agentresume_active", "s1");
+    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: "00000000-0000-4000-8000-000000000001", title: "long task", updatedAt: 2 }]);
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([{ runId, clientRef: "s1", state: "finished", title: "long task", code: 0, stopped: null, interrupted: false, agentSessionId: null, createdAt: "", finishedAt: "" }]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Half"), replyText(" and it finished while you were away."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(replay));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="agent-resume" token="box-token" agentName="Atlas" agentKind="claude" />);
+    expect(await screen.findByText("Half and it finished while you were away.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(`https://box.example.com/api/chat/runs/${runId}/events`, expect.objectContaining({ headers: { Authorization: "Bearer box-token" } }));
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
   });
 
 });

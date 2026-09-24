@@ -104,7 +104,7 @@ describe("portable provisioner source contract", () => {
   it("keeps the immediately prior releases compatible after a version bump", () => {
     // Regression: the lists end with the current-version constant, so bumping it
     // to 2026.09.21.1 silently dropped installed 2026.09.15.2 computers.
-    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"]) {
+    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2"]) {
       expect(isCompatibleProviderVmProvisionerVersion(prior)).toBe(true);
       expect(supportsModelSettingsProvisionerVersion(prior)).toBe(true);
     }
@@ -204,7 +204,7 @@ describe("portable provisioner source contract", () => {
   it("ships the guest model-setting dependency in the verified bundle and installer", () => {
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-chat/llm-application.js");
     expect(source("provision-claude-code-box.sh")).toContain("hivra-chat/llm-application.js");
-    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js; do");
+    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do");
     expect(source("hivra-chat/server.js")).toContain('require("./llm-application.js")');
   });
   it("derives runtime compatibility from every runtime the vendored bundle accepts", () => {
@@ -389,7 +389,7 @@ describe("portable provisioner source contract", () => {
   it("ships a bounded guest runtime updater that preserves identity and rolls back failed gateway assets", () => {
     const updater = source("hivra-update-guest-runtime.sh");
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-update-guest-runtime.sh");
-    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js)");
+    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)");
     expect(updater).toContain('ARCHIVE_SHA256="$(sha256sum "$ARCHIVE"');
     expect(updater).toContain('install -o root -g root -m 0600 "$ARCHIVE" "$ROOT_ARCHIVE"');
     expect(updater).toContain('sha256sum "$ROOT_ARCHIVE"');
@@ -401,6 +401,22 @@ describe("portable provisioner source contract", () => {
     expect(updater).toContain('meta.surfaceAuth === "post-cookie-v1"');
     expect(updater).toContain("HIVRA_GUEST_RUNTIME_UPDATED");
     expect(updater).not.toMatch(/\.codex|\.claude|\/home\/bux\/\.env|SOUL\.md|USER\.md/);
+  });
+
+  it("keeps in-flight chat runs alive across gateway restarts on new and updated guests", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    const dropIn = "/etc/systemd/system/bux-hivra-chat.service.d/10-hivra-detached-runs.conf";
+    for (const script of [installer, updater]) expect(script).toContain("'[Service]' 'KillMode=process'");
+    expect(installer).toContain(dropIn);
+    expect(updater).toContain('DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"');
+    expect(updater).toContain('node --check "$WORK/chat-runs.cjs"');
+    expect(updater).toContain('bash -n "$WORK/hivra-agent-shell"');
+    // The drop-in is backed up, restored on rollback, reloaded before the
+    // restart, and the update fails unless systemd actually applied it.
+    expect(updater).toContain('"$BACKUP/detached-runs.conf"');
+    expect(updater.indexOf("systemctl daemon-reload; then rollback")).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain('"$(systemctl show -p KillMode --value bux-hivra-chat.service)" != process');
   });
 
   it("does not default installer dependencies to a moving main/latest reference", () => {

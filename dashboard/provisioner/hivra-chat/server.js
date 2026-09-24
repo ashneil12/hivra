@@ -1275,6 +1275,22 @@ function resolveChatSpawn(message, sessionId, images) {
   return { bin: CLAUDE, args, useStdin: true, textMode: false }; // claude reads the prompt from stdin
 }
 
+// Chat turns run detached from the HTTP request that starts them (see
+// ./chat-runs.cjs): the request starts a run and tails its log, so closing the
+// browser no longer ends the agent's work. Only chat runtimes load the store.
+const CHAT_RUNS_MODULE = !COMPUTER_PROFILE && ["claude", "codex", "generic"].includes(AGENT_KIND) ? require("./chat-runs.cjs") : null;
+const CHAT_RUNS = CHAT_RUNS_MODULE ? CHAT_RUNS_MODULE.createChatRunStore({ root: path.join(HOME, ".hivra", "chat-runs") }) : null;
+function logChatStreamError(error) {
+  console.error("hivra-chat: chat run stream failed: " + ((error && error.stack) || error));
+}
+const CHAT_STREAM_HEADERS = {
+  "Content-Type": "application/x-ndjson; charset=utf-8",
+  "Cache-Control": "no-cache, no-transform",
+  "X-Accel-Buffering": "no",
+  "Connection": "keep-alive",
+  "Access-Control-Expose-Headers": "X-Hivra-Run-Id, X-Hivra-Run-State",
+};
+
 function admittedAttachmentPaths(raw) {
   // Validate actual filesystem objects, not just names. This prevents accidental
   // alias disclosure; it is not a sandbox against the same user's running CLI,
@@ -1289,8 +1305,12 @@ function handleChat(req, res) {
   let body = "";
   req.on("data", (c) => { body += c; if (body.length > 2e6) req.destroy(); });
   req.on("end", () => {
-    let message, sessionId, imagesRaw;
-    try { const j = JSON.parse(body); message = j.message; sessionId = j.sessionId; imagesRaw = j.images; }
+    let message, sessionId, imagesRaw, runId, clientRef, detach;
+    try {
+      const j = JSON.parse(body);
+      message = j.message; sessionId = j.sessionId; imagesRaw = j.images;
+      runId = j.runId; clientRef = j.clientRef; detach = j.detach === true;
+    }
     catch (e) { res.writeHead(400); return res.end("bad json"); }
     if (!message || typeof message !== "string") { res.writeHead(400); return res.end("no message"); }
 
@@ -1306,60 +1326,76 @@ function handleChat(req, res) {
     try { spawnCfg = resolveChatSpawn(sendMsg, sessionId, AGENT_KIND === "codex" ? images : []); }
     catch (error) { return llmApplicationFailure(res, error); }
     if (spawnCfg.error) { res.writeHead(400); return res.end(spawnCfg.error); }
+    if (!CHAT_RUNS) return jsonRes(res, 409, { error: "agent chat is unavailable for this computer" });
     const { bin, args, useStdin, textMode } = spawnCfg;
     // venice-active spawns carry their own env (chatSpawnEnv + HIVRA_LLM_API_KEY);
     // everything else uses the shared chat env (AGENT_ENV + bankr wallet vars).
     const spawnEnv = spawnCfg.env || chatSpawnEnv();
 
-    res.writeHead(200, {
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
-      "Connection": "keep-alive",
-    });
-
-    const child = spawn(bin, args, { cwd: HOME, env: spawnEnv });
-    // A fast-exiting CLI can close stdin before the prompt write lands; without
-    // a handler that EPIPE is an unhandled 'error' event and kills the whole box
-    // server (found live with a generic-kind CLI that exits without reading stdin).
-    child.stdin.on("error", () => {});
-    if (useStdin) { child.stdin.write(sendMsg); child.stdin.end(); }
-    else { try { child.stdin.end(); } catch (e) {} }
-
-    let obuf = "";
-    let finished = false;
-    child.stdout.on("data", (d) => {
-      if (textMode) {
-        // Generic agent: no structured output — wrap each stdout chunk as one
-        // {type:"_text"} NDJSON line so the browser renders it as live text.
-        res.write(JSON.stringify({ type: "_text", text: d.toString() }) + "\n");
-        return;
-      }
-      obuf += d.toString();
-      let idx;
-      while ((idx = obuf.indexOf("\n")) >= 0) {
-        const line = obuf.slice(0, idx); obuf = obuf.slice(idx + 1);
-        if (line.trim()) res.write(line + "\n");
-      }
-    });
-    child.stderr.on("data", (d) => {
-      res.write(JSON.stringify({ type: "_stderr", text: d.toString() }) + "\n");
-    });
-    child.on("close", (code) => {
-      finished = true;
-      if (!textMode && obuf.trim()) res.write(obuf + "\n");
-      res.write(JSON.stringify({ type: "_done", code }) + "\n");
+    let started;
+    try {
+      started = CHAT_RUNS.start({
+        runId, clientRef, detached: detach, agentKind: AGENT_KIND, title: message.slice(0, 120),
+        resumeSessionId: typeof sessionId === "string" ? sessionId : null,
+        bin, args, cwd: HOME, env: spawnEnv, textMode, stdinText: useStdin ? sendMsg : null,
+      });
+    } catch (error) {
+      if (error instanceof CHAT_RUNS_MODULE.ChatRunError) return jsonRes(res, error.status, { error: error.message, code: error.code });
+      console.error("hivra-chat: chat run could not start: " + ((error && error.stack) || error));
+      return jsonRes(res, 500, { error: "The agent run could not be started." });
+    }
+    const run = started.record.meta;
+    res.writeHead(200, { ...CHAT_STREAM_HEADERS, "X-Hivra-Run-Id": run.runId });
+    try {
+      CHAT_RUNS.stream(run.runId, res, {
+        preface: { type: "_run", runId: run.runId, detached: run.detached },
+        // Callers that did not opt into detached runs keep the historical
+        // contract: their disconnect stops the turn. Older dashboards abort the
+        // fetch as their Stop button, and the box's own page expects it too.
+        onClientClose: run.detached ? undefined : () => CHAT_RUNS.stop(run.runId, "disconnect"),
+        onError: logChatStreamError,
+      });
+    } catch (error) {
+      // The run keeps going; the client can re-attach through /api/chat/runs.
+      logChatStreamError(error);
       res.end();
-    });
-    child.on("error", (e) => {
-      finished = true;
-      res.write(JSON.stringify({ type: "_stderr", text: "spawn error: " + e.message }) + "\n");
-      res.end();
-    });
-    // Kill the child only if the CLIENT disconnects before we finish — NOT when
-    // the request body finishes reading (req 'close' fires early in Node 18+).
-    res.on("close", () => { if (!finished) { try { child.kill("SIGTERM"); } catch (e) {} } });
+    }
   });
+}
+
+// GET  /api/chat/runs                  recent runs, newest first
+// GET  /api/chat/runs/<id>             one run
+// GET  /api/chat/runs/<id>/events      the run's stream from ?offset= (bytes), live until it finishes
+// POST /api/chat/runs/<id>/stop        explicit stop (the only way a detached run ends early)
+function handleChatRuns(req, res, u, q) {
+  res.setHeader("Cache-Control", "no-store");
+  const parts = u.slice("/api/chat/runs".length).split("/").filter(Boolean);
+  if (parts.length === 0) {
+    if (req.method !== "GET") return jsonRes(res, 405, { error: "method not allowed" });
+    return jsonRes(res, 200, { runs: CHAT_RUNS.list() });
+  }
+  const runId = parts[0];
+  if (!CHAT_RUNS_MODULE.RUN_ID_RE.test(runId) || parts.length > 2) return jsonRes(res, 404, { error: "run not found" });
+  if (parts.length === 1) {
+    if (req.method !== "GET") return jsonRes(res, 405, { error: "method not allowed" });
+    const run = CHAT_RUNS.get(runId);
+    return run ? jsonRes(res, 200, { run }) : jsonRes(res, 404, { error: "run not found" });
+  }
+  if (parts[1] === "stop") {
+    if (req.method !== "POST") return jsonRes(res, 405, { error: "method not allowed" });
+    const run = CHAT_RUNS.stop(runId, "user");
+    return run ? jsonRes(res, 200, { ok: true, run }) : jsonRes(res, 404, { error: "run not found" });
+  }
+  if (parts[1] === "events") {
+    if (req.method !== "GET") return jsonRes(res, 405, { error: "method not allowed" });
+    const run = CHAT_RUNS.get(runId);
+    if (!run) return jsonRes(res, 404, { error: "run not found" });
+    res.writeHead(200, { ...CHAT_STREAM_HEADERS, "X-Hivra-Run-Id": runId, "X-Hivra-Run-State": run.state });
+    // Watching never stops a run: a closed viewer just stops reading.
+    CHAT_RUNS.stream(runId, res, { offset: Number(q.get("offset")) || 0, onError: logChatStreamError });
+    return;
+  }
+  return jsonRes(res, 404, { error: "run not found" });
 }
 
 // ---- reverse-proxy (one tunnel serves chat + both terminals + the noVNC view) ----
@@ -2144,6 +2180,16 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/chat") return authed(req)
     ? COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent chat is unavailable for this computer" }) : handleChat(req, res)
     : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/chat/runs" || u.startsWith("/api/chat/runs/")) {
+    if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+    if (!CHAT_RUNS) return jsonRes(res, 409, { error: "agent chat is unavailable for this computer" });
+    try { return handleChatRuns(req, res, u, q); }
+    catch (error) {
+      console.error("hivra-chat: chat run request failed: " + ((error && error.stack) || error));
+      if (!res.headersSent) return jsonRes(res, 500, { error: "The agent run could not be read." });
+      return res.end();
+    }
+  }
   if (req.method === "GET" && u === "/api/login/status") return authed(req) ? handleLoginStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
