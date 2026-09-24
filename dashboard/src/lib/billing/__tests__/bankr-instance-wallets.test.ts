@@ -977,6 +977,58 @@ describe("user-connected Bankr accounts", () => {
     expect(rows[0].bankr_wallet_id).toBe("wlt_instance_123");
   });
 
+  it("leaves unwhitelisted $0 airdrops behind but still blocks anything Bankr values or whitelists", async () => {
+    const { db, rows } = createMemoryDb();
+    seedActiveHivraWallet(rows);
+    const airdrops = {
+      success: true,
+      balances: {
+        base: {
+          nativeBalance: "0",
+          tokenBalances: [
+            { network: "base", token: { balance: "1000000", balanceUSD: 0, whitelisted: false, baseToken: { symbol: "SPAM" } } },
+            { network: "base", token: { balance: "4", balanceUSD: 0, whitelisted: false, baseToken: { symbol: "JUNK" } } },
+          ],
+        },
+      },
+      nfts: [],
+    };
+
+    const { record } = await connectUserBankrWalletForOwner({
+      owner: { instanceId },
+      userId,
+      apiKey: userKey,
+      replaceProvisionedWallet: true,
+      db,
+      env,
+      fetchImpl: bankrFetch({ portfolio: airdrops }),
+      now,
+    });
+    expect(record.metadata.replacedProvisionedWallet).toMatchObject({ ignoredZeroValueTokens: 2 });
+
+    for (const token of [
+      { balance: "3", balanceUSD: 3, whitelisted: false, baseToken: { symbol: "PRICED" } },
+      { balance: "3", balanceUSD: 0, whitelisted: true, baseToken: { symbol: "LISTED" } },
+      { balance: "3", whitelisted: false, baseToken: { symbol: "UNPRICED" } },
+    ]) {
+      const again = createMemoryDb();
+      seedActiveHivraWallet(again.rows);
+      await expect(
+        connectUserBankrWalletForOwner({
+          owner: { instanceId },
+          userId,
+          apiKey: userKey,
+          replaceProvisionedWallet: true,
+          db: again.db,
+          env,
+          fetchImpl: bankrFetch({
+            portfolio: { success: true, balances: { base: { nativeBalance: "0", tokenBalances: [{ token }] } }, nfts: [] },
+          }),
+        })
+      ).rejects.toMatchObject({ code: "balance_not_empty" });
+    }
+  });
+
   it("fails closed when the old wallet's holdings can't be read", async () => {
     const { db, rows } = createMemoryDb();
     seedActiveHivraWallet(rows);

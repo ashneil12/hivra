@@ -53,6 +53,7 @@ const agent = {
   type: "codex",
   status: "running",
   ip: "10.250.20.42",
+  vmid: 1100,
   proxmox_host: "test-proxmox-host",
   infrastructure_connection_id: null,
   deployment_target_id: null,
