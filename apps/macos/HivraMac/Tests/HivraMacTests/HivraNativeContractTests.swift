@@ -3,7 +3,7 @@ import Testing
 
 @testable import HivraMacCore
 
-/// The route grammar shared with the dashboard. The cases live in
+/// The route grammar and navigation shared with the dashboard. The cases live in
 /// apps/shared/native-contract so the web suite (native-route-grammar.test.ts)
 /// asserts the exact same results.
 @Suite("Shared native workspace contract")
@@ -24,6 +24,17 @@ struct HivraNativeContractTests {
         let contract: String
         let version: Int
         let cases: [Case]
+    }
+
+    struct NavigationFixture: Decodable {
+        struct Item: Decodable, Equatable {
+            let label: String
+            let href: String
+        }
+
+        let contract: String
+        let version: Int
+        let items: [Item]
     }
 
     static func fixture<Fixture: Decodable>(_ name: String) throws -> Fixture {
@@ -52,5 +63,13 @@ struct HivraNativeContractTests {
                 #expect(HivraWorkspacePolicy.destination(for: testCase.input)?.rawValue == shell.destination, label)
             }
         }
+    }
+
+    @Test("names the primary destinations exactly as the dashboard does")
+    func primaryNavigation() throws {
+        let fixture: NavigationFixture = try Self.fixture("primary-navigation.v1.json")
+        #expect(fixture.contract == "hivra.native-workspace.primary-navigation")
+        let native = HivraWorkspaceDestination.primaryNavigation
+        #expect(native.map { NavigationFixture.Item(label: $0.label, href: $0.path) } == fixture.items)
     }
 }

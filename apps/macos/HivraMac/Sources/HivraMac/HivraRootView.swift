@@ -115,9 +115,7 @@ private struct HivraWorkspaceView: View {
         .tint(HivraDesign.crimson)
         .focusedSceneValue(\.hivraWorkspaceActions, HivraWorkspaceActions(
             switchResource: { showingSwitcher = true },
-            home: { session.select(.overview) },
-            agents: { session.select(.agents) },
-            computers: { session.select(.computers) },
+            select: session.select,
             launch: { session.launch() },
             closeTab: session.closeCurrentTab,
             openSeparateWindow: { if let tab = session.activeTab { detach(tab) } },
@@ -175,10 +173,9 @@ private struct HivraWorkspaceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(spacing: 3) {
-                        destination(.overview, symbol: "square.grid.2x2")
-                        destination(.agents, symbol: "sparkle")
-                        destination(.computers, symbol: "desktopcomputer")
-                        destination(.activity, symbol: "waveform.path")
+                        ForEach(HivraWorkspaceDestination.primaryNavigation, id: \.self) { item in
+                            destination(item, symbol: item.symbol)
+                        }
                     }
                     resourceGroup(.agent, title: "AGENTS")
                     resourceGroup(.computer, title: "COMPUTERS")
@@ -186,7 +183,6 @@ private struct HivraWorkspaceView: View {
             }
             VStack(spacing: 3) {
                 Divider().padding(.bottom, 8)
-                destination(.infrastructure, symbol: "server.rack")
                 Button { openSettings() } label: { sidebarLabel("App settings", symbol: "gearshape") }.buttonStyle(.plain)
                 Button { session.select(.settings) } label: { sidebarLabel("Account", symbol: "person.crop.circle") }.buttonStyle(.plain)
                 if session.profile.isBuiltInLocal {

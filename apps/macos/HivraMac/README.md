@@ -3,7 +3,7 @@
 Hivra for Mac uses a SwiftUI workspace around the existing Hivra control plane.
 Home, agent and computer inventories, resource search, retained work tabs,
 connection management, appearance, and local runtime setup are native Mac views.
-Agent interfaces, desktop access, launch, activity, infrastructure, and account
+Agent interfaces, desktop access, launch, activity, capacity, and account
 settings use the existing authenticated web surfaces inside focused work panes.
 
 The main window uses one integrated header for resource tabs and workspace
@@ -79,7 +79,7 @@ Focus mode hides the sidebar and resource tab strip.
 | Option Command O | Open selected resource in a separate window |
 | Shift Command N | New workspace window |
 | Command K | Find and switch resource |
-| Command 1 / 2 / 3 | Home / Agents / Computers |
+| Command 1 / 2 / 3 / 4 / 5 | Home / Computers / Agents / Capacity / Activity |
 | Command N | Launch |
 | Shift Command W | Close the selected resource tab |
 | Shift Command F | Toggle focus mode |

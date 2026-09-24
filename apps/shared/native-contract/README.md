@@ -12,6 +12,7 @@ and it is unrelated to the Solidity sources in the repository's root `contracts/
 | File | Contract | Checked by |
 | --- | --- | --- |
 | `route-grammar.v1.json` | Which dashboard hrefs a shell may adopt into a tab or ask the page to open, and their canonical form | `dashboard/src/lib/__tests__/native-route-grammar.test.ts`, `apps/macos/HivraMac/Tests/HivraMacTests/HivraNativeContractTests.swift` |
+| `primary-navigation.v1.json` | The primary sidebar destinations, their labels and their order (Command/Ctrl 1-5 in a shell) | the same two suites |
 
 ## Route grammar
 

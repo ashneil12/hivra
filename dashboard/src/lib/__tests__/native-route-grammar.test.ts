@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { DASHBOARD_PRIMARY_NAVIGATION } from "@/lib/dashboard-navigation";
 import { parseDashboardResources } from "@/components/layout/dashboard-resources";
 import { buildInfrastructureSetupHref, buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { getInstanceSurfaceHref } from "@/lib/instance-surface-preference";
@@ -21,6 +22,7 @@ const load = <T,>(name: string): T => JSON.parse(readFileSync(path.join(CONTRACT
 
 type RouteCase = { family: string; input: string; expect: string | null };
 const grammar = load<{ contract: string; version: number; cases: RouteCase[] }>("route-grammar.v1.json");
+const navigation = load<{ contract: string; version: number; items: { label: string; href: string }[] }>("primary-navigation.v1.json");
 
 describe("shared native route grammar", () => {
   it("is the version this dashboard implements", () => {
@@ -109,5 +111,12 @@ describe("value sets the grammar mirrors", () => {
   it("names every launch profile and paid upgrade", () => {
     expect([...NATIVE_LAUNCH_PROFILES].sort()).toEqual([...LAUNCH_PROFILE_IDS].sort());
     expect([...NATIVE_UPGRADE_PLANS]).toEqual(PLAN_ORDER.filter((plan) => plan !== "free"));
+  });
+});
+
+describe("shared primary navigation", () => {
+  it("matches the dashboard sidebar, in order", () => {
+    expect(navigation.contract).toBe("hivra.native-workspace.primary-navigation");
+    expect(DASHBOARD_PRIMARY_NAVIGATION.map(({ label, href }) => ({ label, href }))).toEqual(navigation.items);
   });
 });
