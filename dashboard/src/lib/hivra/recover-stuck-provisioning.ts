@@ -1509,9 +1509,10 @@ export async function runRecoverStuckHivraProvisioningSweep(
     .from("hivra_agents")
     .select("id, user_id, type, computer_profile, computer_substrate, status, vmid, ip, proxmox_host, deployment_mode, managed_provisioner_channel, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, infrastructure_binding_token_hash, infrastructure_binding_token_enforced, cf_tunnel_id, cf_hostname, chat_url, api_token, provisioned_at, desired_state, operation_id, operation_kind, operation_started_at, operation_payload, allocation_operation_id, created_at")
     .not("operation_id", "is", null)
-    // Preparation resumes only from its exact guest terminal receipt; a
+    // Preparation resumes only from its exact guest terminal receipt, and an
+    // attached agent's steps only through the attach worker's own receipts; a
     // missing receipt must not be cleared or starve this limited sweep.
-    .neq("operation_kind", "desktop_prepare")
+    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
     // intentionally retained leases must not fill the oldest-12 snapshot/

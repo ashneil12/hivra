@@ -405,16 +405,16 @@ def do_verify(installation):
     info = os.lstat(view)
     if record["workspace"]:
         if len(lines) != 1 or "idmapped" not in lines[0] or "nosuid" not in lines[0] or "nodev" not in lines[0]:
-            raise ValueError("the shared folder is not mounted as its grant says")
+            raise ValueError("view_not_as_granted")
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-            raise ValueError("the shared folder is not mapped to this agent")
+            raise ValueError("view_not_as_granted")
         home = os.environ.get("HOME", "")
         link = os.path.join(home, WORKSPACE)
         if home and not os.path.lexists(link):
             os.symlink(view, link)
     else:
         if lines or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0:
-            raise ValueError("a folder is shared although the grant is off")
+            raise ValueError("view_not_as_granted")
     return {"version": 1, "installationId": installation, "workspace": record["workspace"], "verified": True}
 
 
@@ -522,5 +522,6 @@ if __name__ == "__main__":
         raise
     except Exception as error:
         # Name the refusal; never echo paths or bytes an agent could plant.
-        code = str(error) if str(error) in ("workspace_path_not_plain", "detach_mount_found") else type(error).__name__
+        code = str(error) if str(error) in ("workspace_path_not_plain", "detach_mount_found", "view_not_as_granted") \
+            else type(error).__name__
         raise SystemExit("attached-workspace refused (" + code + ")")

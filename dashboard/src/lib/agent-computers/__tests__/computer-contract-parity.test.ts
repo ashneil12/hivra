@@ -4,6 +4,7 @@
 import { agentLaunchWatchRow, agentSurfacesFor, type AgentSurfaceId } from "../agent-surfaces";
 import { renderComputerContract } from "../computer-contract";
 import { computerContractPlanFor } from "../computer-contract-input";
+import { attachAccessRows, attachedContractInput, attachReview } from "../attach-plan";
 
 const FIXTURES = {
   "Hivra Cloud Codex (browser stack)": { type: "codex", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed", browser: true },
@@ -61,4 +62,36 @@ it("gives dashboard runtimes and computers no contract, but still pins their tab
   expect(computerContractPlanFor({ type: "openclaw" })).toEqual({ status: "not_applicable", reason: "own_instructions" });
   expect(computerContractPlanFor({ type: "linux-desktop", computer_profile: "ubuntu-desktop" })).toEqual({ status: "not_applicable", reason: "computer" });
   expect(agentSurfacesFor({ type: "openclaw" })).toEqual(["aeon", "browser", "box", "files", "manage"]);
+});
+
+describe("attached Codex", () => {
+  // An agent added to a computer is reached from that computer's page: the
+  // Chat tab appears there once it is ready, and the gate's rows are what it
+  // is told it can and cannot use.
+  const computer = { type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    name: "MY_UBUNTU_DESKTOP", status: "running", cpu: 2, ram: 4, chat_url: "https://box.example.com" };
+  const installationId = "00000000-0000-4100-8000-000000000004";
+  const render = (workspace: boolean) => renderComputerContract(attachedContractInput({ agentName: "Codex",
+    computer: { ...computer, ramGb: computer.ram }, installationId, grants: { workspace } }), 1);
+
+  it("puts a Chat tab on the computer's page only once the agent is ready", () => {
+    expect(agentSurfacesFor({ ...computer, attached_agent_ready: true })).toContain("chat");
+    expect(agentSurfacesFor(computer)).not.toContain("chat");
+  });
+
+  it.each([true, false])("with ~/Hivra %s, tells the agent the surfaces the owner has and the Review promises", (workspace) => {
+    const contract = render(workspace);
+    const review = attachReview({ computerName: computer.name, grants: { workspace }, deploymentMode: computer.deployment_mode,
+      servicePolicySha256: "f".repeat(64) }).lines.join(" ");
+    expect(contract).toContain("the Chat tab");
+    expect(review).toContain("the Chat tab");
+    for (const surface of ["session tab", "The Terminal tab", "The Git tab", "The Browser tab"]) expect(contract).not.toContain(surface);
+    expect(contract.includes("the Files tab")).toBe(workspace);
+    expect(review.includes("read and write ~/Hivra")).toBe(workspace);
+    const rows = attachAccessRows({ workspace }, { name: computer.name, cpu: computer.cpu, ramGb: computer.ram });
+    const off = rows.filter((row) => ["always-off", "not-available", "never"].includes(row.state)).map((row) => row.id);
+    expect(off).toEqual(["localNetwork", "chromeProfile", "desktopControl", "sudo", "personalHome"]);
+    expect(contract).toContain("**What you cannot use.** Your user's desktop, their browser or Chrome profile, administrator access, this computer's other services, and the local network.");
+    expect(contract).toContain("You cannot see your user's personal home folder.");
+  });
 });

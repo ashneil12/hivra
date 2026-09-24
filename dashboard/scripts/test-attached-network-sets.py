@@ -84,8 +84,12 @@ class NetworkSets(unittest.TestCase):
                       "2001:db8:77::5/128", "10.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10", "198.18.0.0/15"):
             self.assertIn(value, table)
         for value in ("203.0.113.45/32", "2001:db8:45::10/128", "203.0.113.0/24", "198.51.100.1", "198.51.100.20",
-                      "link-local", "multicast", "fc00::/7", "198.18.0.0/15"):
+                      "169.254.0.0/16", "fe80::/64", "224.0.0.0/4", "ff00::/8", "fc00::/7", "198.18.0.0/15"):
             self.assertIn(value, deny)
+        # systemctl set-property refuses the names link-local and multicast
+        # inside a list (found on real Ubuntu 22.04 and 24.04 VMs).
+        self.assertNotIn("link-local", deny)
+        self.assertNotIn("multicast", deny)
         # Input from the veth is dropped on every address the computer owns, whatever it is bound to.
         self.assertIn('chain input { type filter hook input priority -10; policy accept; iifname "' + OWN["host"] + '" drop; }', table)
         self.assertIn('iifname "' + OWN["host"] + '" meta nfproto ipv6 drop;', table)
@@ -104,6 +108,49 @@ class NetworkSets(unittest.TestCase):
         self.assertFalse(network.covers(self.facts, HOSTS, table, [item for item in deny if item != "203.0.113.45/32"]))
         missing_gateway = dict(self.facts, gateways=[g for g in self.facts["gateways"] if g != "100.101.102.1"])
         self.assertFalse(network.covers(self.facts, HOSTS, network.render_table(INSTALLATION, missing_gateway, HOSTS, False), deny))
+
+    def test_the_live_systemd_layer_counts_by_coverage_and_fails_on_any_gap(self):
+        # systemd drops an entry another entry already covers, so what it
+        # reports is compared by coverage (found on real 22.04 and 24.04 VMs).
+        deny = network.systemd_deny(self.facts, HOSTS)
+        reported = {"value": " ".join(item for item in deny if item != "203.0.113.45/32")}
+        original = network.run
+        network.run = lambda command, check=True: type("Result", (), {"stdout": reported["value"], "returncode": 0})()
+        try:
+            self.assertTrue(network.filters_applied(INSTALLATION, self.facts, HOSTS), "203.0.113.0/24 covers the own address")
+            reported["value"] = " ".join(item for item in deny if item not in ("198.51.100.1", "198.51.100.1/32"))
+            self.assertFalse(network.filters_applied(INSTALLATION, self.facts, HOSTS), "a missing gateway is a gap")
+            reported["value"] = ""
+            self.assertFalse(network.filters_applied(INSTALLATION, self.facts, HOSTS), "no filter at all")
+            reported["value"] = "any-garbage"
+            self.assertFalse(network.filters_applied(INSTALLATION, self.facts, HOSTS))
+        finally:
+            network.run = original
+
+    def test_the_live_table_is_asked_for_every_element_as_the_kernel_holds_it(self):
+        asked = []
+        missing = {"value": None}
+
+        def fake_run(command, check=True):
+            if command[:3] == ["nft", "get", "element"]:
+                asked.append((command[5], command[6]))
+                return type("Result", (), {"returncode": 1 if command[6] == missing["value"] else 0, "stdout": ""})()
+            raise AssertionError(command)
+        original_run, original_present = network.run, network.table_present
+        network.run, network.table_present = fake_run, lambda own: True
+        try:
+            self.assertTrue(network.table_covers(INSTALLATION, self.facts, HOSTS))
+            # A single address is looked up as a plain address, never as a /32 or /128 interval.
+            self.assertIn(("gateways4", "{ 198.51.100.1 }"), asked)
+            self.assertIn(("blocked6", "{ 2001:db8:77::5 }"), asked)
+            self.assertIn(("onlink4", "{ 203.0.113.0/24 }"), asked)
+            self.assertFalse(any("/32 }" in element or "/128 }" in element for _, element in asked))
+            missing["value"] = "{ 100.101.102.2 }"
+            self.assertFalse(network.table_covers(INSTALLATION, self.facts, HOSTS))
+            network.table_present = lambda own: False
+            self.assertFalse(network.table_covers(INSTALLATION, self.facts, HOSTS))
+        finally:
+            network.run, network.table_present = original_run, original_present
 
     def test_the_dns_relay_cgroup_is_pinned_to_the_resolver_port(self):
         guarded = network.render_table(INSTALLATION, self.facts, HOSTS, True)

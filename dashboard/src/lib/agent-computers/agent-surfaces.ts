@@ -24,6 +24,8 @@ export interface AgentSurfaceSubject {
   computer_profile?: string | null;
   computer_substrate?: string | null;
   chat_url?: string | null;
+  /** A computer with an agent added to it and ready to chat (design 5.8). */
+  attached_agent_ready?: boolean;
 }
 
 // Tabs shown for dashboard-surface agents (Aeon, OpenClaw, Agent Zero): the
@@ -54,7 +56,10 @@ export function agentSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[]
     const hasWorkspace = subject.status === "running"
       && subject.computer_profile !== "windows"
       && Boolean(subject.chat_url?.trim());
-    return ordered(hasWorkspace ? [...COMPUTER_BASE_SURFACES, ...COMPUTER_WORKSPACE_SURFACES] : COMPUTER_BASE_SURFACES);
+    // An agent added to the computer is reached from the computer's own page,
+    // through its gateway: the computer gains a Chat tab.
+    const chat = hasWorkspace && subject.attached_agent_ready ? ["chat" as const] : [];
+    return ordered(hasWorkspace ? [...chat, ...COMPUTER_BASE_SURFACES, ...COMPUTER_WORKSPACE_SURFACES] : COMPUTER_BASE_SURFACES);
   }
   if (def?.surface === "dashboard") {
     return ordered([...DASHBOARD_SURFACES, ...(def.browser ? ["browser" as const] : [])]);

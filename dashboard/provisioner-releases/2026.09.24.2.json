@@ -174,8 +174,8 @@
     },
     {
       "path": "hivra-chat/server.js",
-      "bytes": 144936,
-      "sha256": "3bd79bf0c85d1b532b843615c7657ebc012e90580cb760e12c360b931f14fc87"
+      "bytes": 145891,
+      "sha256": "5f98cefc366e4640244d72de5c842f039ef9f432d51261e4bbbee67e401adbcc"
     },
     {
       "path": "hivra-chat/workspace-access-policy.cjs",

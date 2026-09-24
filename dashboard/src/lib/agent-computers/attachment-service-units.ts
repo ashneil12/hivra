@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import { attachedMemoryMaxMb } from "./attach-plan";
 
 // Attached agent service policy v2 (design 5.3 and 5.4). The SHA-256 of THIS
 // FILE's bytes is the reviewed policy the database accepts for an activation
-// (ATTACHED_CODEX_SERVICE_POLICY_SHA256 and its migration gate). Any edit here
-// is a new policy: it needs a new database gate and a new Python rendering in
-// preflight-attached-codex-activation.py, which a test keeps byte-equal.
+// (ATTACHED_SERVICE_POLICY_V2_SHA256 in attach-review.ts and its migration
+// gate). Any edit here is a new policy: it needs a new database gate and the
+// same edit to the Python rendering in provisioner/attached-agent.py, which a
+// test keeps byte-equal.
 //
 // Every path root creates or uses for an attachment is in a root-owned
 // location or a tmpfs systemd creates for the unit, never in the agent's home
@@ -17,9 +19,9 @@ export const ATTACHED_POLICY_VERSION = 2 as const;
 /** The pinned root helpers the units run, installed by the activation step. */
 export const ATTACHED_HELPERS = Object.freeze([
   Object.freeze({ file: "attached-workspace.py", path: "/usr/local/lib/hivra/attached-workspace",
-    sha256: "af4c7568b237e0716ad8fc6f767bb85ee85b4fc68c8d85636b7ffa51ace3d1d3" }),
+    sha256: "4f74a959fea741862fa0525693c0e1965f612fbd7fb2e574af5ee0e0b90576ea" }),
   Object.freeze({ file: "attached-network.py", path: "/usr/local/lib/hivra/attached-network",
-    sha256: "08d97e5b62e86bc0339f8e2b0d38d83c966faef816fe5c4c2dd0587beccbe129" }),
+    sha256: "0cc2470b6135da76894d035637d0bee314935fe4901467b241a800db41810219" }),
   Object.freeze({ file: "attached-dns-relay.py", path: "/usr/local/lib/hivra/attached-dns-relay",
     sha256: "5fd6b334ffe66d9ecdaed1011f9f9f659cf6be1498a8c36b66b5723ff67d5bdf" }),
 ]);
@@ -41,11 +43,7 @@ export interface AttachedUnitFile { name: string; path: string; content: string;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-/** min(2 GB, half the computer's memory), whole MB, at least 512 MB. */
-export function attachedMemoryMaxMb(computerRamGb: number): number {
-  const half = Math.floor((Number(computerRamGb) * 1024) / 2);
-  return Math.max(512, Math.min(2048, Number.isFinite(half) ? half : 512));
-}
+export { attachedMemoryMaxMb };
 
 function checked(input: AttachedServiceInput): AttachedServiceInput {
   const id = input?.installationId;
@@ -75,7 +73,14 @@ function sandbox(id: string, sid: string): string[] {
     "TemporaryFileSystem=/var/lib/hivra:ro /etc/hivra:ro /var/log",
     `BindReadOnlyPaths=/etc/hivra/attachments/${id}`,
     `BindReadOnlyPaths=/etc/hivra/attachments/${id}/resolv.conf:/etc/resolv.conf`,
-    "InaccessiblePaths=/run/dbus/system_bus_socket -/opt/hivra/remote-desktop",
+    // The system bus, the desktop broker's secrets, and the computer's other
+    // local sockets an unprivileged user could otherwise open (VM matrix T6):
+    // snapd, acpid, dhcpcd, uuidd, resolved's varlink socket (DNS goes through
+    // the relay; the folder stays, because /etc/resolv.conf links into it and
+    // the unit binds its own resolver over that file), systemd-oomd (named
+    // io.system.ManagedOOM before systemd 250) and PID 1's private bus, which
+    // systemd 249 on Ubuntu 22.04 leaves connectable.
+    "InaccessiblePaths=/run/dbus/system_bus_socket -/opt/hivra/remote-desktop -/run/snapd.socket -/run/snapd-snap.socket -/run/acpid.socket -/run/dhcpcd -/run/uuidd -/run/systemd/resolve/io.systemd.Resolve -/run/systemd/io.systemd.ManagedOOM -/run/systemd/io.system.ManagedOOM -/run/systemd/private",
     "PrivateTmp=yes",
     "PrivateDevices=yes",
     "PrivateIPC=yes",
@@ -161,10 +166,16 @@ export function buildAttachedServiceUnits(raw: AttachedServiceInput) {
       "RestartSec=5",
       "KillMode=control-group",
       "TimeoutStopSec=15",
+      // An out-of-memory kill ends only the process that ran over, such as a
+      // runaway build, not the chat instance (VM matrix T22).
+      "OOMPolicy=continue",
       ...sandbox(id, sid),
       `BindPaths=${input.home}`,
       `BindReadOnlyPaths=${view}:${view}:norbind`,
-      ...(input.grants.workspace ? [`BindPaths=${view}/Hivra:${view}/Hivra:norbind`] : []),
+      // The ~/Hivra grant: the view is bound in and writable (the contract
+      // says "read and write ~/Hivra"). Without the grant it is not bound, so
+      // the starting folder shows the empty, root-owned 0000 mount point.
+      ...(input.grants.workspace ? [`BindPaths=${view}/Hivra:${view}/Hivra:norbind`, `ReadWritePaths=${view}/Hivra`] : []),
       `ReadWritePaths=${input.home}`,
       `MemoryMax=${input.memoryMaxMb}M`,
       "CPUWeight=50",

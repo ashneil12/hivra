@@ -184,6 +184,24 @@ describe("attached agent gateway proxy", () => {
     expect(lastUpstream.url).toBeUndefined();
   });
 
+  it("refuses the attached instance's own token on the computer, so neither token opens the other (T13)", async () => {
+    const port = await boot();
+    for (const route of [`/agents/${INSTALLATION}/api/meta`, "/api/files?path=.", "/terminal/"]) {
+      const result = await request(port, "GET", route, { Authorization: `Bearer ${GATEWAY_TOKEN}` });
+      expect([route, result.status]).toEqual([route, 401]);
+    }
+    expect(lastUpstream.url).toBeUndefined();
+  });
+
+  it("never reaches the attached agent from a Files or Terminal workspace path", async () => {
+    const port = await boot();
+    for (const route of [`/workspace/grant/agents/${INSTALLATION}/api/meta`, `/workspace/agents/${INSTALLATION}/api/chat`]) {
+      const result = await request(port, "GET", route, { Authorization: `Bearer ${TOKEN}` });
+      expect(result.status).toBe(404);
+    }
+    expect(lastUpstream.url).toBeUndefined();
+  });
+
   it("refuses to forward when the socket is missing, replaced by a regular file, or has the wrong mode (T15)", async () => {
     const port = await boot();
     const good = fs.lstatSync(socketPath).mode;

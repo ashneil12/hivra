@@ -99,6 +99,14 @@ const AGENT_WORKDIR = ATTACHED ? path.resolve(process.env.HIVRA_AGENT_WORKDIR ||
 if (ATTACHED && AGENT_WORKDIR !== "/var/lib/hivra/agent-views/" + ATTACHED_INSTALLATION_ID) {
   throw new Error("An attached agent starts only in its own root-owned folder");
 }
+// Codex 0.149.1 refuses to run when CODEX_HOME does not exist, and a freshly
+// staged home has none (found on real Ubuntu 22.04 and 24.04 VMs). The instance
+// runs as the agent, so it creates its own folder in its own home.
+if (ATTACHED) {
+  const codexHome = path.resolve(String(process.env.CODEX_HOME || ""));
+  if (codexHome !== path.join(HOME, ".codex")) throw new Error("An attached agent keeps Codex's state in its own home");
+  try { fs.mkdirSync(codexHome, { mode: 0o700 }); } catch (error) { if (error.code !== "EEXIST") throw error; }
+}
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
 
 // Per-box Bankr wallet credentials. The dashboard provisions the wallet LAZILY
@@ -1281,11 +1289,16 @@ function resolveChatSpawn(message, sessionId, images) {
     for (const img of images || []) flags.push("-i", img);
     // An attached agent's own config.toml cannot switch off the AGENTS.md
     // Hivra wrote in its starting folder: pin Codex's project-doc budget on
-    // the command line. Whether a resumed session re-reads that file is
-    // spike S3's open question, so Hivra only claims it for new chats.
+    // the command line (spike S3: a config.toml project_doc_max_bytes = 0
+    // drops the file; the command-line value wins).
     if (ATTACHED) flags.push("-c", "project_doc_max_bytes=32768");
-    const args = (sessionId && /^[0-9a-f-]{8,}$/i.test(sessionId))
-      ? ["exec", "resume", ...flags, sessionId, message]
+    const resume = sessionId && /^[0-9a-f-]{8,}$/i.test(sessionId);
+    // Spike S3 on Codex 0.149.1: a resumed turn takes its working folder from
+    // -C given to `exec` before `resume` (or the spawn cwd), never from the
+    // session file the agent can edit, and reads that folder's AGENTS.md again.
+    // So an attached agent resumes in its root-owned starting folder too.
+    const args = resume
+      ? (ATTACHED ? ["exec", "-C", AGENT_WORKDIR, "resume", ...flags, sessionId, message] : ["exec", "resume", ...flags, sessionId, message])
       : ["exec", ...flags, "-C", AGENT_WORKDIR, message];
     return { bin: CODEX, args, useStdin: false, textMode: false, env: llmEnv };
   }

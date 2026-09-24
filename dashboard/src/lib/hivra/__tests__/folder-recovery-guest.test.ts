@@ -193,6 +193,24 @@ assert WORKSPACE_SERVICES == ['hivra-selkies-desktop.service','hivra-remote-desk
 assert calls == [['systemctl','stop'] + list(reversed(WORKSPACE_SERVICES)), ['systemctl','start'] + WORKSPACE_SERVICES]
 assert open(dest + '/Hivra/concurrent','rb').read() == b'preserved'
 `));
+  it("stops an attached agent and unmounts its view before replacing ~/Hivra, and starts it on the new folder (design 5.9)", () => python(`${setup}
+units = temporary + '/units'
+os.mkdir(units)
+agent = 'hivra-attached-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+for name in (agent + '.service', agent + '.socket', agent + '-workspace.service', agent + '-network.service'):
+    open(units + '/' + name, 'w').write('[Unit]')
+ATTACHED_UNITS_DIR = units
+calls = []
+def service(command, **kwargs):
+    calls.append(command)
+    return subprocess.CompletedProcess(command,0)
+subprocess.run = service
+assert run(request([]),dest,receipts,os.getuid(),os.getgid(),True)['verified']
+attached = [agent + '-workspace.service', agent + '.socket', agent + '.service']
+assert calls[0] == ['systemctl','stop'] + list(reversed(WORKSPACE_SERVICES + attached))
+assert calls[0][2:5] == [agent + '.service', agent + '.socket', agent + '-workspace.service'], 'Codex stops before its view is unmounted'
+assert calls[1] == ['systemctl','restart'] + WORKSPACE_SERVICES + attached
+`));
   it("revalidates a prepared tree before installing after a crash", () => python(`${setup}
 open(source + '/Hivra/file','wb').write(b'original')
 entries = invoke({'action':'export'},source)['entries']

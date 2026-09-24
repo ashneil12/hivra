@@ -52,8 +52,11 @@ RESOLV = "nameserver 127.0.0.53\noptions edns0 trust-ad\n"
 STATIC4 = ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
            "192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/3")
 STATIC6 = ("::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8")
-# The systemd layer uses the same ranges; link-local and multicast by name.
-SYSTEMD_STATIC = ("link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+# The systemd layer uses the same ranges. The unit file names link-local and
+# multicast; `systemctl set-property` (systemd 249 and 255) refuses those names
+# inside a list, so the runtime list spells them out as the prefixes systemd
+# means by them.
+SYSTEMD_STATIC = ("169.254.0.0/16", "fe80::/64", "224.0.0.0/4", "ff00::/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
                   "198.18.0.0/15", "fc00::/7")
 PROBE_PORTS = (22, 53, 80, 443, 2019, 5555, 6080, 7681, 7682, 8006, 8080, 8088, 8090, 9222, 18789, 50080)
 PROBE_HOST = "chatgpt.com"
@@ -282,6 +285,51 @@ def apply_filters(installation, facts, hosts):
     return deny
 
 
+def cgroup_bpf():
+    """systemd ignores IP filtering, with only a warning, without cgroup BPF."""
+    try:
+        with open("/boot/config-" + os.uname().release, "r") as source:
+            return "CONFIG_CGROUP_BPF=y" in source.read().splitlines()
+    except OSError:
+        return False
+
+
+def filters_applied(installation, facts, hosts):
+    """The systemd layer as systemd itself reports it on both units: every
+    expected prefix is covered by the unit's effective IPAddressDeny. systemd
+    drops an entry another entry already covers, so coverage, not equality."""
+    own = names(installation)
+    expected = [ipaddress.ip_network(value, strict=False) for value in systemd_deny(facts, hosts)]
+    for unit in (own["unit"] + ".service", own["unit"] + "-probe.service"):
+        effective = []
+        for value in run(["systemctl", "show", unit, "--property=IPAddressDeny", "--value"]).stdout.split():
+            try:
+                effective.append(ipaddress.ip_network(value, strict=False))
+            except ValueError:
+                return False
+        for network in expected:
+            if not any(item.version == network.version and network.subnet_of(item) for item in effective):
+                return False
+    return True
+
+
+def table_covers(installation, facts, hosts):
+    """The nftables layer as the kernel holds it: the table exists and its
+    sets contain every connected prefix, gateway and host address. The kernel
+    answers each lookup itself, so merged intervals still count."""
+    own = names(installation)
+    if not table_present(own):
+        return False
+    for key, values in (("onlink", facts["onlink"]), ("gateways", facts["gateways"]), ("blocked", hosts)):
+        for value in values:
+            network = ipaddress.ip_network(value, strict=False)
+            element = str(network.network_address) if network.prefixlen == network.max_prefixlen else str(network)
+            name = key + ("4" if network.version == 4 else "6")
+            if run(["nft", "get", "element", "inet", own["table"], name, "{ " + element + " }"], check=False).returncode != 0:
+                return False
+    return True
+
+
 def do_up(installation):
     own = names(installation)
     hosts = recorded_network(installation)
@@ -326,10 +374,11 @@ def do_down(installation):
         run(["ip", "link", "delete", own["host"]])
     if netns_present(own):
         run(["ip", "netns", "delete", own["netns"]])
-    try:
-        os.unlink(STATE_DIR + "/" + installation + ".json")
-    except FileNotFoundError:
-        pass
+    for path in (STATE_DIR + "/" + installation + ".json", STATE_DIR + "/" + installation + ".held"):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
     return do_state(installation)
 
 
@@ -416,9 +465,14 @@ def do_enforce(installation):
     finally:
         for item in listeners:
             item.close()
-    passed = started.returncode == 0 and properties.get("Result") == "success" and properties.get("ExecMainStatus") == "0" and accepted == 0
+    # Each layer must hold on its own, so each is also checked as the kernel and
+    # systemd report it: a probe that passes on one layer alone is not enough.
+    layers = {"nftables": table_covers(installation, facts, hosts), "systemd": filters_applied(installation, facts, hosts),
+              "cgroupBpf": cgroup_bpf()}
+    passed = (started.returncode == 0 and properties.get("Result") == "success" and properties.get("ExecMainStatus") == "0"
+              and accepted == 0 and all(layers.values()))
     return {"version": 1, "installationId": installation, "state": "enforced" if passed else "refused",
-            "targets": len(probe["targets"]), "ports": len(probe["ports"]), "canaryConnections": accepted}
+            "targets": len(probe["targets"]), "ports": len(probe["ports"]), "canaryConnections": accepted, "layers": layers}
 
 
 def _accept(listener):
@@ -435,6 +489,10 @@ def agent_active(own):
     return run(["systemctl", "is-active", own["unit"] + ".service"], check=False).stdout.strip() == "active"
 
 
+def held_path(installation):
+    return STATE_DIR + "/" + installation + ".held"
+
+
 def do_watchdog(installation):
     own = names(installation)
     actions = []
@@ -445,19 +503,35 @@ def do_watchdog(installation):
             actions.append("workspace_owner_restored")
     observed = do_state(installation)
     intact = observed["netns"] and observed["veth"] and observed["table"] and observed["factsCurrent"]
+    if intact:
+        facts, hosts = computer_facts(installation), recorded_network(installation)
+        intact = table_covers(installation, facts, hosts) and filters_applied(installation, facts, hosts)
     if relay_cgroup_exists(installation) and not observed["relayGuard"]:
         intact = False
-    if not intact:
-        was_active = agent_active(own)
-        run(["systemctl", "stop", own["unit"] + ".service"], timeout=60)
-        actions.append("agent_stopped")
-        do_up(installation)
-        actions.append("network_restored")
+    # An agent this watchdog stopped stays stopped until a probe passes again.
+    held = os.path.exists(held_path(installation))
+    if not intact or held:
+        was_active = agent_active(own) or held
+        if agent_active(own):
+            run(["systemctl", "stop", own["unit"] + ".service"], timeout=60)
+            actions.append("agent_stopped")
+        if not intact:
+            do_up(installation)
+            actions.append("network_restored")
         verdict = do_enforce(installation)
         actions.append("probe_" + verdict["state"])
         if verdict["state"] == "enforced" and was_active:
-            run(["systemctl", "start", own["unit"] + ".service"], timeout=60)
+            run(["systemctl", "start", own["unit"] + ".socket", own["unit"] + ".service"], timeout=60)
             actions.append("agent_started")
+            try:
+                os.unlink(held_path(installation))
+            except FileNotFoundError:
+                pass
+        elif was_active:
+            os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+            fd = os.open(held_path(installation), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            os.close(fd)
+            actions.append("agent_held")
     result = {"version": 1, "installationId": installation, "actions": actions}
     if actions:
         print("Hivra watchdog: " + ", ".join(actions), file=sys.stderr)
@@ -470,7 +544,10 @@ def do_verify(installation):
     if os.geteuid() == 0:
         raise ValueError("verify runs as the agent, not as root")
     own = names(installation)
-    interfaces = sorted(name for _, name in socket.if_nameindex())
+    # Netlink (if_nameindex) is outside the unit's address families; the
+    # namespace's own interface list is in /proc/self/net/dev.
+    with open("/proc/self/net/dev", "r") as source:
+        interfaces = sorted(line.split(":", 1)[0].strip() for line in source.read(65536).splitlines()[2:] if ":" in line)
     if interfaces != sorted(["lo", own["agent"]]):
         raise ValueError("the agent is not in its own network namespace")
     with open("/etc/resolv.conf", "r") as source:
@@ -492,6 +569,15 @@ def do_verify(installation):
     return {"version": 1, "installationId": installation, "verified": True}
 
 
+def own_resolver(target, port):
+    """The agent's own DNS relay socket on its namespace loopback: its only
+    expected answer. Everything else on 127.0.0.53 must stay closed."""
+    address = ipaddress.ip_address(target)
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return port == 53 and str(address) == "127.0.0.53"
+
+
 def reach(targets, ports, timeout):
     """Non-blocking connects to every target and port at once; list the ones that answered."""
     selector = selectors.DefaultSelector()
@@ -499,6 +585,8 @@ def reach(targets, ports, timeout):
     for target in targets:
         family = socket.AF_INET6 if ":" in target else socket.AF_INET
         for port in ports:
+            if own_resolver(target, port):
+                continue
             sock = socket.socket(family, socket.SOCK_STREAM)
             sock.setblocking(False)
             code = sock.connect_ex((target, port))

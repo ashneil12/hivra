@@ -74,7 +74,7 @@ it("uses exact private RPC arguments and requires literal confirmation, not trut
   expect(rpc).toHaveBeenLastCalledWith("read_hivra_attachment_execution", { p_owner: "owner", p_operation_id: prepared.operationId });
   rpc.mockResolvedValue({ data: true, error: null });
   expect(await store.dispatch(prepared, dispatched.dispatchId!)).toBe(true);
-  expect(rpc).toHaveBeenLastCalledWith("dispatch_hivra_agent_attachment", expect.objectContaining({
+  expect(rpc).toHaveBeenLastCalledWith("dispatch_hivra_agent_attachment_v2", expect.objectContaining({
     p_expected_generation: "2", p_expected_authority: prepared.guestAuthority, p_dispatch_id: dispatched.dispatchId,
   }));
   for (const response of [{ data: true }, { data: "true", error: null }, { data: null, error: null },

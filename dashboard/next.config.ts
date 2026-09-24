@@ -151,6 +151,11 @@ const nextConfig: NextConfig = {
       "./provisioner/**/*",
       "./provisioner/.gitignore",
     ],
+    // The attach worker sends the pinned staging and lifecycle programs.
+    "/api/cron/progress-agent-attachments": [
+      "./provisioner/**/*",
+      "./provisioner/.gitignore",
+    ],
   },
   async redirects() {
     return [

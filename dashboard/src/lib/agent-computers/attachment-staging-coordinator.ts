@@ -16,7 +16,7 @@ export type AttachmentStagingProgress = { operationId: string; state: "staging_r
 
 /** One durable-worker pass, NOT an HTTP launch handler or attachment completion.
  * No retry loops, lease release, cancellation, activation or hidden dispatch on
- * recovery. Production invocation stays disabled until lifecycle integration.
+ * recovery. The attach worker (attachment-worker.ts) is its only caller.
  */
 export async function progressAttachmentStaging(
   ownerId: string, operationId: string, architecture: "x86_64" | "aarch64", overrides: Partial<Dependencies> = {},
