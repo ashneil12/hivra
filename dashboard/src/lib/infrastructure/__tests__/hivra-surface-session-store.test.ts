@@ -192,6 +192,25 @@ describe("Hivra surface sign-ins across a gateway restart", () => {
     expect(fs.readdirSync(hivraDir()).sort()).toEqual(["api-token", "surface-sessions.json"]);
   });
 
+  it("never accepts a value read from the store as a sign-in cookie, before or after a restart", async () => {
+    let gateway = await start();
+    const secret = await signIn(gateway);
+    const doc = readStore();
+    const [saved] = doc.sessions as StoreEntry[];
+    expect(saved.h).toBe(digest(secret));
+    // Everything the file holds, used as the cookie: the digest, the binding
+    // and the epoch. Only the secret the file does not hold signs a surface in.
+    const readable = [saved.h, doc.binding as string, doc.epoch as string];
+
+    for (const value of readable) expect(await surfaceStatus(gateway, value)).toBe(401);
+    expect(await surfaceStatus(gateway, secret)).toBe(200);
+
+    await stop(gateway);
+    gateway = await start();
+    expect(await surfaceStatus(gateway, secret)).toBe(200);
+    for (const value of readable) expect(await surfaceStatus(gateway, value)).toBe(401);
+  });
+
   it("signs every surface out and starts a new bootId when the API token changes", async () => {
     let gateway = await start();
     const epoch = await bootId(gateway);
@@ -237,6 +256,38 @@ describe("Hivra surface sign-ins across a gateway restart", () => {
     const gateway = await start();
     expect(await bootId(gateway)).not.toBe(epoch);
     expect(await surfaceStatus(gateway, secretFor(1))).toBe(401);
+  });
+
+  it.each([
+    ["group-writable", 0o775],
+    ["world-writable", 0o777],
+  ])("neither loads nor writes a store in a %s ~/.hivra", async (_label, mode) => {
+    const epoch = "e".repeat(32);
+    // A private, valid store for this token: only the directory is wrong.
+    const planted = JSON.stringify(craftedStore(epoch, [{ h: digest(secretFor(1)), e: Date.now() + 60 * 60 * 1000 }]));
+    writeStore(planted);
+    fs.chmodSync(hivraDir(), mode);
+    let gateway = await start();
+    const first = await bootId(gateway);
+    expect(first).toMatch(/^[a-f0-9]{32}$/);
+    expect(first).not.toBe(epoch);
+    expect(await surfaceStatus(gateway, secretFor(1))).toBe(401);
+    // A sign-in works for this process, but nothing is saved into that directory.
+    const secret = await signIn(gateway);
+    expect(await surfaceStatus(gateway, secret)).toBe(200);
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(planted);
+    expect(fs.readdirSync(hivraDir()).sort()).toEqual(["api-token", "surface-sessions.json"]);
+    expect(gateway.stderr()).toContain("cannot keep sign-ins");
+
+    await stop(gateway);
+    gateway = await start();
+    // Sign-ins were lost, and the new bootId says so.
+    const second = await bootId(gateway);
+    expect(second).not.toBe(first);
+    expect(second).not.toBe(epoch);
+    expect(await surfaceStatus(gateway, secret)).toBe(401);
+    expect(await surfaceStatus(gateway, secretFor(1))).toBe(401);
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(planted);
   });
 
   it("honours each sign-in's expiry across a restart and prunes it from the store", async () => {
