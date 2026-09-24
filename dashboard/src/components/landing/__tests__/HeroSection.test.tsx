@@ -85,9 +85,10 @@ describe("HeroSection", () => {
     );
 
     expect(screen.getByRole("heading", { level: 1, name: /你的 AI Agent，\s*始终在线/i })).toBeInTheDocument();
+    // FTUE-16: "Start free" joins every other new account at sign-up, then Launch.
     expect(screen.getByRole("link", { name: /免费开始/i })).toHaveAttribute(
       "href",
-      "/get-started?plan=free"
+      "/sign-up"
     );
     expect(screen.getAllByRole("link").some(link => link.getAttribute("href") === "#launch")).toBe(true);
     expect(screen.getByText(/免费层级始终可用/i)).toBeInTheDocument();

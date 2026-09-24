@@ -60,8 +60,9 @@ export type LaunchDeploymentSnapshot =
     }
   | { mode: "digitalocean"; connectionId: string; targetId: string };
 
-/** Secret-free choices for a DigitalOcean sandbox. The model key is typed for
- * one launch and lives only in the page's memory. */
+/** Secret-free choices for a DigitalOcean sandbox. A pasted model key is
+ * typed for one launch and lives only in the page's memory; a saved one is
+ * named by its Vault id and sent only once the owner confirms it. */
 export type LaunchDigitalOceanChoice = {
   size: DigitalOceanSandboxSize;
   /** "vendor": the agent's own provider key (Anthropic, OpenAI). "digitalocean-
@@ -71,6 +72,15 @@ export type LaunchDigitalOceanChoice = {
   model: string;
   /** Optional first message, sent right after Hivra's setup note. */
   firstTask: string;
+  /** Where the provider key comes from. Null until the owner picks: their
+   * saved Vault key when they have one, otherwise a pasted key. */
+  keySource: "saved" | "paste" | null;
+  /** The saved Vault key the owner confirmed for this launch. */
+  vaultKeyId: string | null;
+  /** The owner ticked "Send this key to DigitalOcean" for this launch. */
+  sendSavedKey: boolean;
+  /** Save a pasted provider key in the Vault before launching. Off until ticked. */
+  saveKey: boolean;
 };
 
 export const DEFAULT_DIGITALOCEAN_CHOICE: LaunchDigitalOceanChoice = {
@@ -78,6 +88,10 @@ export const DEFAULT_DIGITALOCEAN_CHOICE: LaunchDigitalOceanChoice = {
   modelMode: "vendor",
   model: "",
   firstTask: "",
+  keySource: null,
+  vaultKeyId: null,
+  sendSavedKey: false,
+  saveKey: false,
 };
 
 type LaunchResult = {

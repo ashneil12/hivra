@@ -36,9 +36,10 @@ describe("FinalCTASection", () => {
 
     expect(screen.getByRole("heading", { level: 2, name: /ready to deploy/i })).toBeInTheDocument();
 
+    // FTUE-16: sign-up, then Launch, which turns Free on only for Hivra Cloud.
     expect(screen.getByRole("link", { name: /start free/i })).toHaveAttribute(
       "href",
-      "/get-started?plan=free"
+      "/sign-up"
     );
 
     expect(screen.getByRole("link", { name: /see pricing/i })).toHaveAttribute("href", "#pricing");

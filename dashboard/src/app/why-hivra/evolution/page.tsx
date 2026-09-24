@@ -13,6 +13,7 @@ import { buildAbsoluteSiteUrl, buildWebsiteMetadata } from "@/lib/metadata";
 import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 import styles from "../page.module.css";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const PAGE_PATH = "/why-hivra/evolution";
 const SITE_ROOT = buildAbsoluteSiteUrl("/");
@@ -295,7 +296,7 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
             The mission hasn&apos;t changed.
           </h2>
           <p>Make launching and operating AI agents as easy as launching a website.</p>
-          <Link href="/get-started?plan=free" className={`action-button ${styles.ctaButton}`}>
+          <Link href={PUBLIC_START_HREF} className={`action-button ${styles.ctaButton}`}>
             Launch Your First Agent <span aria-hidden="true">→</span>
           </Link>
         </section>

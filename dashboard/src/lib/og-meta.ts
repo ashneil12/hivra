@@ -32,4 +32,28 @@ export const OG_IMAGE = {
     alt: "Hivra Status — live platform health",
     type: OG_CONTENT_TYPE,
   },
+  // Token-facing cards: factual copy only (no price, returns or pitch).
+  token: {
+    url: "/token/opengraph-image",
+    width: OG_SIZE.width,
+    height: OG_SIZE.height,
+    alt: "Hivra token contracts. Official addresses are listed at hivra.cloud/token.",
+    type: OG_CONTENT_TYPE,
+  },
+  tokenomics: {
+    url: "/tokenomics/opengraph-image",
+    width: OG_SIZE.width,
+    height: OG_SIZE.height,
+    alt: "Proposed $HIVRA tokenomics from Hivra. Information, not an offer.",
+    type: OG_CONTENT_TYPE,
+  },
 } as const;
+
+// Pages whose metadata does not pass `images` still get their own card.
+// Next.js ignores a segment's opengraph-image file when the page's metadata
+// already sets openGraph.images, and buildWebsiteMetadata always sets them, so
+// the default has to come from here rather than from the file convention.
+export const OG_IMAGE_BY_PATH: Readonly<Record<string, (typeof OG_IMAGE)[keyof typeof OG_IMAGE]>> = {
+  "/token": OG_IMAGE.token,
+  "/tokenomics": OG_IMAGE.tokenomics,
+};
