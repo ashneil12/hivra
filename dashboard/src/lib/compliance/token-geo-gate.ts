@@ -15,7 +15,14 @@
  *   country, and the country Clerk recorded for the user's latest session
  *   activity (its IP geo), which stands in for the request IP.
  *
- * With an empty policy this module reads nothing: no header, no query.
+ * Ops admins (lib/ops-access.ts, OPS_ADMIN_USER_IDS / OPS_ADMIN_EMAILS) are
+ * exempt, so the team can test and operate the service from a listed country.
+ * The check runs only once a signal would block, and only against server-side
+ * identity: the Clerk session's user ID, and the user's verified primary email
+ * as Clerk holds it. Nothing in the request can claim it.
+ *
+ * With an empty policy this module reads nothing: no header, no query, no
+ * admin lookup.
  *
  * What it gates is NEW token actions only (quotes, a first tier qualification,
  * a first wallet verification, conversion). Existing tier rows, yearly years,
@@ -23,6 +30,7 @@
  * payments never consult it.
  */
 import { log } from "@/lib/logger";
+import { isOpsAdminEmailConfigured, isOpsAdminUser } from "@/lib/ops-access";
 import { supabaseAdmin } from "@/lib/supabase";
 
 import {
@@ -55,6 +63,8 @@ export interface TokenGeoOptions {
   readStoredCountry?: (userId: string) => Promise<string | null>;
   /** Test seam; defaults to readLatestSessionCountry. */
   readSessionCountry?: (userId: string) => Promise<string | null>;
+  /** Test seam; defaults to isTokenGeoExemptOpsAdmin. */
+  isExemptUser?: (userId: string) => Promise<boolean>;
 }
 
 const LOG_SOURCE = "compliance/token-geo";
@@ -139,14 +149,101 @@ export async function readLatestSessionCountry(userId: string): Promise<string |
   }
 }
 
+type ClerkUserEmails = {
+  primary_email_address_id?: string | null;
+  email_addresses?: Array<{
+    id?: string | null;
+    email_address?: string | null;
+    verification?: { status?: string | null } | null;
+  }> | null;
+};
+
+/**
+ * The user's primary email as Clerk holds it, only when Clerk has verified it;
+ * otherwise null (none, unverified, no Clerk key, or the read failed). An
+ * address the user added but never verified can't make them an ops admin.
+ */
+export async function readVerifiedPrimaryEmail(userId: string): Promise<string | null> {
+  const key = process.env.CLERK_SECRET_KEY?.trim();
+  if (!key) return null;
+  try {
+    const response = await fetch(`${CLERK_API}/users/${encodeURIComponent(userId)}`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(CLERK_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      log.warn("token geo: Clerk user read failed; not treating the user as an ops admin", {
+        source: LOG_SOURCE,
+        userId,
+        failureType: "token_geo_admin_email_read_failed",
+        status: response.status,
+      });
+      return null;
+    }
+    const user = (await response.json()) as ClerkUserEmails | null;
+    const primaryId = user?.primary_email_address_id;
+    if (!primaryId) return null;
+    const primary = (user?.email_addresses ?? []).find((address) => address?.id === primaryId);
+    if (primary?.verification?.status !== "verified") return null;
+    const email = primary.email_address?.trim();
+    return email ? email : null;
+  } catch (error) {
+    log.warn("token geo: Clerk user read threw; not treating the user as an ops admin", {
+      source: LOG_SOURCE,
+      userId,
+      failureType: "token_geo_admin_email_read_failed",
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    return null;
+  }
+}
+
+/**
+ * Whether the user is an ops admin (lib/ops-access.ts `isOpsAdminUser`), and
+ * so exempt from the token geo-policy. The user ID is matched first, with no
+ * I/O; the verified primary email is read from Clerk only when OPS_ADMIN_EMAILS
+ * is set. Any failure answers false, so the block stands.
+ */
+export async function isTokenGeoExemptOpsAdmin(userId: string): Promise<boolean> {
+  if (isOpsAdminUser({ userId })) return true;
+  if (!isOpsAdminEmailConfigured()) return false;
+  const email = await readVerifiedPrimaryEmail(userId);
+  return Boolean(email && isOpsAdminUser({ userId, email }));
+}
+
 function blockedDecision(country: string, signal: TokenGeoSignal): TokenGeoDecision {
   return { blocked: true, country, signal, message: tokenGeoNotice(country) };
 }
 
 /**
+ * Whether a signal that would block this user is waived because they are an
+ * ops admin. Called only after a signal would block, never with the dormant
+ * policy, and never for a signed-out visitor.
+ */
+async function isExemptFromBlock(
+  userId: string | null | undefined,
+  country: string,
+  signal: TokenGeoSignal | "session_country",
+  options: TokenGeoOptions
+): Promise<boolean> {
+  if (!userId) return false;
+  const exempt = await (options.isExemptUser ?? isTokenGeoExemptOpsAdmin)(userId);
+  if (exempt) {
+    log.info("token geo: ops admin exempt from a token geo block", {
+      source: LOG_SOURCE,
+      userId,
+      country,
+      signal,
+      failureType: "token_geo_ops_admin_exempt",
+    });
+  }
+  return exempt;
+}
+
+/**
  * Whether this request may start a NEW token action. Blocks when the IP
- * country or the user's stored country is in the policy. The empty policy
- * returns "not blocked" before reading anything.
+ * country or the user's stored country is in the policy, unless the user is
+ * an ops admin. The empty policy returns "not blocked" before reading anything.
  */
 export async function resolveTokenGeoBlock(
   request: TokenGeoRequest,
@@ -156,26 +253,30 @@ export async function resolveTokenGeoBlock(
   const policy = options.policy ?? TOKEN_GEO_POLICY;
   if (!isTokenGeoPolicyActive(policy)) return TOKEN_GEO_NOT_BLOCKED;
 
+  const userId = user?.userId;
+  let decision: TokenGeoDecision = TOKEN_GEO_NOT_BLOCKED;
   const ipCountry = readIpCountry(request);
   if (ipCountry && isCountryBlockedForTokens(ipCountry, policy)) {
-    return blockedDecision(ipCountry, "ip_country");
-  }
-
-  const userId = user?.userId;
-  if (userId) {
+    decision = blockedDecision(ipCountry, "ip_country");
+  } else if (userId) {
     const stored = await (options.readStoredCountry ?? readStoredTokenCountry)(userId);
     if (stored && isCountryBlockedForTokens(stored, policy)) {
-      return blockedDecision(stored, "stored_country");
+      decision = blockedDecision(stored, "stored_country");
     }
   }
-  return TOKEN_GEO_NOT_BLOCKED;
+
+  if (decision.blocked && (await isExemptFromBlock(userId, decision.country, decision.signal, options))) {
+    return TOKEN_GEO_NOT_BLOCKED;
+  }
+  return decision;
 }
 
 /**
  * Whether a NEW token-tier qualification row may be recorded. Existing rows
  * are never passed here. A caller that resolved a request passes its decision
- * (IP + stored). Without one (crons, and routes that don't pass it) the stored
- * country and Clerk's latest-session country decide.
+ * (IP + stored, with the ops-admin exemption already applied). Without one
+ * (crons, and routes that don't pass it) the stored country and Clerk's
+ * latest-session country decide, and an ops admin is exempt.
  */
 export async function isNewTokenQualificationRefused(
   userId: string,
@@ -185,10 +286,19 @@ export async function isNewTokenQualificationRefused(
   const policy = options.policy ?? TOKEN_GEO_POLICY;
   if (!isTokenGeoPolicyActive(policy)) return false;
   if (decision) return decision.blocked;
+
+  let blockedBy: { country: string; signal: TokenGeoSignal | "session_country" } | null = null;
   const stored = await (options.readStoredCountry ?? readStoredTokenCountry)(userId);
-  if (stored && isCountryBlockedForTokens(stored, policy)) return true;
-  const session = await (options.readSessionCountry ?? readLatestSessionCountry)(userId);
-  return Boolean(session && isCountryBlockedForTokens(session, policy));
+  if (stored && isCountryBlockedForTokens(stored, policy)) {
+    blockedBy = { country: stored, signal: "stored_country" };
+  } else {
+    const session = await (options.readSessionCountry ?? readLatestSessionCountry)(userId);
+    if (session && isCountryBlockedForTokens(session, policy)) {
+      blockedBy = { country: session, signal: "session_country" };
+    }
+  }
+  if (!blockedBy) return false;
+  return !(await isExemptFromBlock(userId, blockedBy.country, blockedBy.signal, options));
 }
 
 /**
