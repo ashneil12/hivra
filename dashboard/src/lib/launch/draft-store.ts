@@ -113,7 +113,7 @@ function safeModelAccess(value: unknown): LaunchModelAccess {
     keySource: input.keySource === "saved" ? "saved" : "paste",
     vaultKeyId: typeof input.vaultKeyId === "string" && UUID.test(input.vaultKeyId) ? input.vaultKeyId.toLowerCase() : null,
     sendSavedKey: input.sendSavedKey === true,
-    saveKey: input.saveKey !== false,
+    saveKey: input.saveKey === true,
     walletType: input.walletType === "hermesos" ? "hermesos" : "card",
     baseUrl,
   };

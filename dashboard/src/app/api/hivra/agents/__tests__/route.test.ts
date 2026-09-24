@@ -888,6 +888,23 @@ describe("POST /api/hivra/agents", () => {
       expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
     });
 
+    it("returns the original agent when a resumed launch's saved key has since been deleted", async () => {
+      vaultRow = null;
+      mockLaunchByRequest.mockResolvedValue({ request_id: LAUNCH_REQUEST_ID, agent_id: "44444444-4444-4444-8444-444444444444", phase: "promoted" });
+      mockLaunchAgent.mockResolvedValue({ id: "44444444-4444-4444-8444-444444444444", user_id: "user-free", type: "codex",
+        status: "running", llm_api_key_encrypted: "private-ciphertext" });
+      const response = await POST(makeRequest({ type: "codex",
+        llm: { provider: "venice", mode: "byok", vaultKeyId: VAULT_KEY_ID }, launchRequestId: LAUNCH_REQUEST_ID }));
+
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.data).toMatchObject({ launchRequestId: LAUNCH_REQUEST_ID, agent: { id: "44444444-4444-4444-8444-444444444444" } });
+      expect(JSON.stringify(payload)).not.toMatch(/private-/);
+      expect(mockLaunchByRequest).toHaveBeenCalledWith("user-free", LAUNCH_REQUEST_ID);
+      expect(mockLaunchReserve).not.toHaveBeenCalled(); expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    });
+
     it("refuses a request that names a saved key and pastes one too", async () => {
       const response = await POST(makeRequest({ type: "codex",
         llm: { provider: "venice", mode: "byok", vaultKeyId: VAULT_KEY_ID, apiKey: "synthetic-launch-key" }, launchRequestId: LAUNCH_REQUEST_ID }));

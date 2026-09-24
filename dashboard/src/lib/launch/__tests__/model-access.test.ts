@@ -181,6 +181,11 @@ describe("models, wallets and plain-words summaries", () => {
       .toBe("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · DeepSeek V4 Pro (via Venice)");
     expect(summary("codex", access({ mode: "api-key", keySource: "paste", saveKey: true })))
       .toBe("The Venice AI key you pasted, sent to Codex 1's computer and saved in your Vault · DeepSeek V4 Pro (via Venice)");
+    // The Vault keeps one key per provider, so Review says which saved key a save replaces.
+    expect(summary("codex", access({ mode: "api-key", keySource: "paste", saveKey: true }), [VENICE_KEY]))
+      .toBe("The Venice AI key you pasted, sent to Codex 1's computer and saved in your Vault, replacing ••3f2a · DeepSeek V4 Pro (via Venice)");
+    expect(summary("codex", access({ mode: "api-key", keySource: "paste", saveKey: false }), [VENICE_KEY]))
+      .toBe("The Venice AI key you pasted, sent to Codex 1's computer · DeepSeek V4 Pro (via Venice)");
     expect(summary("hermes", access({ mode: "credits" }))).toMatch(/^Hivra credits \(\$4\.25 available\) · /);
     expect(summary("aeon", access({ mode: "credits" }))).toBe("Hivra credits ($4.25 available). Aeon sets them up when you connect GitHub.");
     expect(summary("ubuntu-desktop", access())).toBeNull();

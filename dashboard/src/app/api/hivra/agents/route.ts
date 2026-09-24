@@ -1024,7 +1024,17 @@ async function launchAgent(request: NextRequest) {
     // A saved Vault key is read here, for this owner only, and then carried
     // exactly like a pasted key.
     const vaultLlm = await resolveLaunchLlmVaultKey(userId, body.llm);
-    if (!vaultLlm.ok) return apiError(vaultLlm.error, vaultLlm.status);
+    if (!vaultLlm.ok) {
+      // Resuming a launch that was already accepted must not depend on the
+      // saved key still existing: return the agent the first request created.
+      // Nothing new is admitted, and a launch that was never accepted still
+      // gets the Vault error.
+      if (vaultLlm.status === 404 && type === "codex" && body.launchRequestId !== undefined) {
+        const original = await createLaunchModelAdmissionService().original(userId, body.launchRequestId as string).catch(() => null);
+        if (original) return apiSuccess({ agent: sanitizeHivraAgentRow(original.agent), launchRequestId: original.requestId }, 200);
+      }
+      return apiError(vaultLlm.error, vaultLlm.status);
+    }
     const llmValidation = validateLlmInput(vaultLlm.llm, type);
     if (!llmValidation.ok) return apiError(llmValidation.error || "Invalid LLM config", 400);
     const llmInput = llmValidation.input ?? null;

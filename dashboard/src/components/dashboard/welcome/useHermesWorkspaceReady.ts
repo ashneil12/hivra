@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 // Readiness poll cadence. Mirrors WebuiIframe's handoff polling: the same
 // /webui-login-url route is the source of truth for "the workspace is actually
@@ -18,18 +18,36 @@ function clampPollDelay(value: unknown): number {
   return Math.min(POLL_MAX_MS, Math.max(POLL_MIN_MS, Math.floor(value)));
 }
 
-/** True once a new Hermes agent's workspace answers: the login URL route has
+export type HermesWorkspaceReadiness = {
+  /** The login URL route minted a real login URL: the workspace answers. */
+  ready: boolean;
+  /** Checks are running now. False once they stopped at their deadline. */
+  checking: boolean;
+  /** Start another bounded round of checks after they stopped. */
+  recheck: () => void;
+};
+
+/** Whether a new Hermes agent's workspace answers: the login URL route has
  * probed its gateway and chat and minted a real login URL. Observed state
- * only; a pending answer, a non-ready body or any error keeps it false. */
-export function useHermesWorkspaceReady(instanceId: string | null | undefined): boolean {
+ * only; a pending answer, a non-ready body or any error keeps it not ready.
+ * Checks stop after a bounded window and say so, so a screen never claims a
+ * check that is no longer running. */
+export function useHermesWorkspaceReadiness(instanceId: string | null | undefined): HermesWorkspaceReadiness {
   const [readyFor, setReadyFor] = useState<string | null>(null);
+  const [round, setRound] = useState(0);
+  const [stopped, setStopped] = useState<{ instanceId: string; round: number } | null>(null);
   const ready = Boolean(instanceId) && readyFor === instanceId;
+  const gaveUp = !ready && Boolean(instanceId) && stopped !== null && stopped.instanceId === instanceId && stopped.round === round;
 
   useEffect(() => {
     if (!instanceId || ready) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const deadline = Date.now() + POLL_DEADLINE_MS;
+    const next = (delay: number) => {
+      if (Date.now() < deadline) timer = setTimeout(poll, delay);
+      else setStopped({ instanceId, round });
+    };
 
     const poll = async () => {
       try {
@@ -46,14 +64,10 @@ export function useHermesWorkspaceReady(instanceId: string | null | undefined): 
           setReadyFor(instanceId);
           return;
         }
-        if (Date.now() < deadline) {
-          timer = setTimeout(poll, clampPollDelay(body?.retryAfterMs));
-        }
+        next(clampPollDelay(body?.retryAfterMs));
       } catch {
         if (cancelled) return;
-        if (Date.now() < deadline) {
-          timer = setTimeout(poll, POLL_MAX_MS);
-        }
+        next(POLL_MAX_MS);
       }
     };
 
@@ -62,7 +76,13 @@ export function useHermesWorkspaceReady(instanceId: string | null | undefined): 
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [instanceId, ready]);
+  }, [instanceId, ready, round]);
 
-  return ready;
+  const recheck = useCallback(() => setRound(value => value + 1), []);
+  return { ready, checking: Boolean(instanceId) && !ready && !gaveUp, recheck };
+}
+
+/** True once a new Hermes agent's workspace answers (see useHermesWorkspaceReadiness). */
+export function useHermesWorkspaceReady(instanceId: string | null | undefined): boolean {
+  return useHermesWorkspaceReadiness(instanceId).ready;
 }

@@ -32,7 +32,7 @@ import {
   type LaunchDestinationState,
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
-import { useHermesWorkspaceReady } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
+import { useHermesWorkspaceReadiness } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
 import { FreeTierCardVerification } from "@/components/billing/FreeTierCardVerification";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
@@ -555,7 +555,7 @@ function HermesLaunched({
   onLeave: () => void;
   onStartNew: () => void;
 }) {
-  const ready = useHermesWorkspaceReady(instanceId);
+  const { ready, checking, recheck } = useHermesWorkspaceReadiness(instanceId);
   const telegramHref = `${href}${href.includes("?") ? "&" : "?"}connect=telegram`;
   return (
     <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading" aria-live="polite">
@@ -574,7 +574,14 @@ function HermesLaunched({
         </>
       ) : (
         <>
-          <p className={styles.observed} role="status"><Loader2 size={13} className={styles.spin} aria-hidden /> Waiting for the workspace to answer</p>
+          {checking ? (
+            <p className={styles.observed} role="status"><Loader2 size={13} className={styles.spin} aria-hidden /> Waiting for the workspace to answer</p>
+          ) : (
+            <p className={styles.observed} role="status">
+              The workspace hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
+              <button type="button" className={styles.outcomeLink} onClick={recheck}>Check again</button>
+            </p>
+          )}
           <Link className={styles.secondaryAction} data-testid="launch-primary-action" href={href} onClick={onLeave}>
             Open {name} now
           </Link>

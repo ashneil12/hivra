@@ -28,7 +28,18 @@ async function start(runtime = "codex", observeSpawn = false) {
     processes.spawn = (bin,args,options) => {
       if (!${JSON.stringify(observeSpawn)}) throw Error("Agent execution is outside this fixture");
       const {EventEmitter} = require("node:events"), {PassThrough} = require("node:stream");
-      const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
+      const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {}; child.unref = () => {};
+      if (args[1] === "--run") {
+        // Chat turns start a detached runner that execs the CLI from the run's
+        // spec with this environment. Stand in for it: report what the CLI
+        // would receive, then finish the run.
+        const fs = require("node:fs"), path = require("node:path"), dir = args[2];
+        const specText = fs.readFileSync(path.join(dir, "spec.json"), "utf8"), spec = JSON.parse(specText);
+        process.send({spawn: {bin: spec.bin, args: spec.args, modelKey: options.env.HIVRA_LLM_API_KEY ?? null, specText}});
+        fs.appendFileSync(path.join(dir, "events.ndjson"), JSON.stringify({type: "_done", code: 0}) + "\\n");
+        fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({state: "finished", code: 0, finishedAt: new Date().toISOString()}));
+        return child;
+      }
       process.send({spawn: {bin,args,modelKey:options.env.HIVRA_LLM_API_KEY??null}});
       process.nextTick(() => child.emit("close",0));
       return child;
@@ -205,8 +216,8 @@ it("preserves repeated explicit legacy set and clear until application protocol 
 
 it("spawns pinned Codex with Responses for configured providers, keeping the key out of argv and native auth unchanged", async () => {
   await stop(); await start("codex", true);
-  const spawns: Array<{ args: string[]; modelKey: string | null }> = [];
-  child!.on("message", (message: { spawn?: { args: string[]; modelKey: string | null } }) => { if (message.spawn) spawns.push(message.spawn); });
+  const spawns: Array<{ args: string[]; modelKey: string | null; specText?: string }> = [];
+  child!.on("message", (message: { spawn?: { args: string[]; modelKey: string | null; specText?: string } }) => { if (message.spawn) spawns.push(message.spawn); });
   expect((await request("/api/llm", { method: "POST", body: JSON.stringify(SETTING) })).status).toBe(200);
   const providerState = await request("/api/llm");
   expect(JSON.parse(providerState.body)).toMatchObject({ provider: "venice", providerChatProtocol: "responses-v1" });
@@ -217,6 +228,9 @@ it("spawns pinned Codex with Responses for configured providers, keeping the key
   expect(spawns[0].args).toEqual(expect.arrayContaining(['model_providers.venice.wire_api="responses"', 'model_providers.venice.requires_openai_auth=false', 'web_search="disabled"']));
   expect(spawns[0].modelKey).toBe(SETTING.apiKey);
   expect(JSON.stringify(spawns[0].args)).not.toContain(SETTING.apiKey);
+  // The detached run's spec on disk never carries the key either.
+  expect(spawns[0].specText).toBeDefined();
+  expect(spawns[0].specText).not.toContain(SETTING.apiKey);
   expect((await request("/api/llm", { method: "POST", body: "{}" })).status).toBe(200);
   await request("/api/chat", { method: "POST", body: JSON.stringify({ message: "fixture native" }) });
   expect(spawns).toHaveLength(2);

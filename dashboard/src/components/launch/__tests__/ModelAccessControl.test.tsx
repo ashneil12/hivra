@@ -103,10 +103,21 @@ describe("ModelAccessControl", () => {
     fireEvent.change(input, { target: { value: "synthetic-venice-key" } });
     expect(latest.pastedKey).toBe("synthetic-venice-key");
     expect(JSON.stringify(latest.access)).not.toContain("synthetic-venice-key");
-    expect(screen.getByRole("checkbox", { name: "Save it in my Vault for next time" })).toBeChecked();
+    // Saving is opt-in, and says it replaces the saved key: the Vault keeps one per provider.
+    const save = screen.getByRole("checkbox", { name: /^Save it in my Vault for next time, replacing your saved key ••/ });
+    expect(save).not.toBeChecked();
+    fireEvent.click(save);
+    expect(latest.access.saveKey).toBe(true);
 
     fireEvent.click(choice(/^Hivra credits/));
     expect(latest.pastedKey).toBe("");
+  });
+
+  it("offers to save a pasted key without mentioning a replacement when none is saved", () => {
+    render(<Harness profileId="codex" savedKeys={[]} />);
+    fireEvent.click(choice(/^Use my API key/));
+    const save = screen.getByRole("checkbox", { name: "Save it in my Vault for next time" });
+    expect(save).not.toBeChecked();
   });
 
   it("picks models from a list, with a free-text model ID only under Advanced", () => {

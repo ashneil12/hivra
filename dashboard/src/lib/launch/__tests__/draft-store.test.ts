@@ -242,6 +242,21 @@ describe("launch draft storage", () => {
     expect(JSON.stringify(read())).not.toContain("must-not-survive");
   });
 
+  it("saves a pasted key to the Vault only when this draft explicitly chose to", () => {
+    const base = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
+    write(base);
+    const raw = JSON.parse(window.localStorage.getItem(KEY) || "{}");
+    // A draft saved before this choice existed, or with any non-true value, never saves.
+    delete raw.modelAccess.saveKey;
+    window.localStorage.setItem(KEY, JSON.stringify(raw));
+    expect(read()?.modelAccess.saveKey).toBe(false);
+    raw.modelAccess.saveKey = "yes";
+    window.localStorage.setItem(KEY, JSON.stringify(raw));
+    expect(read()?.modelAccess.saveKey).toBe(false);
+    write({ ...base, modelAccess: { ...base.modelAccess, saveKey: true } });
+    expect(read()?.modelAccess.saveKey).toBe(true);
+  });
+
   it("drops a model choice that could carry a credential or reach outside the dashboard", () => {
     const draft = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
     window.localStorage.setItem(KEY, JSON.stringify({
