@@ -10,7 +10,7 @@ export default function UseCasesSection() {
   const section = english ? {
     eyebrow: "Make room for the work", titlePrefix: "Another computer.", titleEmphasis: "Plenty of reasons.",
     intro: "Set up a workspace for one project, one application or one agent. Keep it separate from the rest of your day.", items: HOMEPAGE_USE_CASES,
-    footer: "You don't have to attach an agent at all. It's a computer.", cta: "Choose a computer",
+    footer: "A computer runs fine without an agent. Launch an agent and it gets a computer of its own.", cta: "Choose a computer",
   } : copy.useCases;
   const icons = [Terminal, Brain, Clock, Server];
   return <section id="use-cases" className={`${styles.section} ${styles.useSection}`}>

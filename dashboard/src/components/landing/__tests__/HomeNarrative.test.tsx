@@ -42,7 +42,10 @@ test("the FAQ renders the same answers used by homepage structured data", () => 
     expect(screen.getByText(q)).toBeInTheDocument();
     expect(screen.getByText(a)).toBeInTheDocument();
   }
-  expect(screen.getByText(/without attaching an agent/)).toBeInTheDocument();
+  // ATT-02: a computer runs without an agent, and an agent gets its own
+  // computer. The FAQ must not imply attaching an agent to a computer later.
+  expect(screen.getByText(/A computer runs fine without an agent, and every agent you launch gets a computer of its own/)).toBeInTheDocument();
+  expect(screen.queryByText(/attach/i)).not.toBeInTheDocument();
   expect(screen.getByText(/Self-hosting needs no token/)).toBeInTheDocument();
   expect(screen.queryByText(/free managed tier/)).not.toBeInTheDocument();
 });

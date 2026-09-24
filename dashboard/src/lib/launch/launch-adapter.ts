@@ -168,7 +168,8 @@ export async function submitLaunchDraft(
     ram: draft.resources.ram,
     maximumCpu: draft.resources.maximumCpu,
     maximumRam: draft.resources.maximumRam,
-    browser: draft.profileId === "codex",
+    // Same flag the legacy welcome launch sends; false keeps Codex at its base floor.
+    browser: draft.profileId === "codex" && draft.browser,
     deployment,
     launchRequestId: draft.launchRequestId,
   };

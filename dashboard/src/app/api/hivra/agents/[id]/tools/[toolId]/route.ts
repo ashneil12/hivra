@@ -1,6 +1,7 @@
 // Hivra agent — uninstall a TOOL (Wave 6). DELETE removes the tool's MCP server
 // from the box config over SSH. Teaching skills are LEFT in place (inert markdown
-// without the server, possibly shared). Codex / claude-code boxes only.
+// without the server, possibly shared). Codex / claude-code boxes on a Proxmox
+// host only.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -13,6 +14,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { toolMcpKindForType } from "@/lib/hivra/tool-mcp-seed";
+import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import { uninstallToolFromBox } from "@/lib/hivra/tool-install";
 import { getToolById } from "@/data/curated-tools";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
@@ -54,6 +56,8 @@ export async function DELETE(
     if (!toolMcpKindForType(agent.type as string | null)) {
       return apiError("This agent type doesn't support installable tools", 400);
     }
+    const blocked = catalogToolsUnavailableReason(agent.computer_substrate);
+    if (blocked) return apiError(blocked, 400);
     if (agent.status !== "running" || !agent.ip) {
       return apiError("Agent isn't running yet", 409);
     }
