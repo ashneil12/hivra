@@ -10,6 +10,7 @@ import {
 } from "@/lib/billing/client";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import type { BillingActivityData } from "@/components/billing/BillingActivityPanel";
 import {
   describeWalletProviderError,
@@ -177,6 +178,8 @@ export function useBillingController() {
   const cryptoBillingEnabled = isCryptoBillingUiEnabled();
   const creditTopUpsEnabled = isCreditTopUpsUiEnabled();
   const selfServeDowngradeEnabled = isSelfServeDowngradeUiEnabled();
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenGeo = useTokenGeoAccess();
 
   const [data, setData] = useState<UsageData | null>(null);
   const [activity, setActivity] = useState<BillingActivityData | null>(null);
@@ -1101,6 +1104,7 @@ export function useBillingController() {
       creditTopUpsEnabled,
       selfServeDowngradeEnabled,
     },
+    tokenGeo,
     status: { loading, confirming },
     data,
     activity,

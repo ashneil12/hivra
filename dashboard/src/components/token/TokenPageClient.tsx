@@ -7,6 +7,7 @@ import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { TokenPageEntry, TokenPageEntryStatus } from "@/lib/token-verification-content";
+import { TokenGeoNotice } from "./TokenGeoNotice";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
@@ -49,8 +50,18 @@ function CopyAddressButton({ value }: { value: string }) {
   </>;
 }
 
-/** `entries` are computed on the server at render, so the markup never depends on the viewer's clock. */
-export default function TokenPageClient({ entries }: { entries: TokenPageEntry[] }) {
+/**
+ * `entries` are computed on the server at render, so the markup never depends on the viewer's clock.
+ * `geoNotice` is set only when the token geo-policy blocks this viewer: the page then keeps the
+ * factual contract and access sections, adds the notice, and drops the proposals.
+ */
+export default function TokenPageClient({
+  entries,
+  geoNotice = null,
+}: {
+  entries: TokenPageEntry[];
+  geoNotice?: string | null;
+}) {
   return <PublicSite>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
@@ -59,6 +70,7 @@ export default function TokenPageClient({ entries }: { entries: TokenPageEntry[]
         <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>$HermesOS and Hivra.</h1>
         <p style={{ fontSize: "1.2rem", color: "var(--public-muted)" }}>Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the proposed $HIVRA token.</p>
       </header>
+      {geoNotice ? <TokenGeoNotice notice={geoNotice} /> : null}
       <section id="verify" aria-labelledby="verify-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
         <h2 id="verify-title">Verify the token contracts</h2>
         <p>Hivra has two platform tokens on Base. Compare the full contract address before using either.</p>
@@ -96,7 +108,7 @@ export default function TokenPageClient({ entries }: { entries: TokenPageEntry[]
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
-      <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
+      {geoNotice ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
         <p className="mono" style={{ fontSize: 11 }}>PROPOSED. NOT AVAILABLE HERE.</p>
         <h2 id="proposals-title">The proposed $HIVRA migration</h2>
         <p>The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.</p>
@@ -105,7 +117,7 @@ export default function TokenPageClient({ entries }: { entries: TokenPageEntry[]
         <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
         <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>
         <p><a href="/docs/litepaper/">Read the full litepaper and economy proposal</a></p>
-      </section>
+      </section>}
     </main>
   </PublicSite>;
 }
