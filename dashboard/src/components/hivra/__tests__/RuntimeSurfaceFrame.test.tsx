@@ -69,7 +69,8 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(1);
     expect(submittedInto[0]).toBe(frame);
 
-    // The gateway restarted while the page stayed open.
+    // The gateway lost its sign-ins while the page stayed open (a new sign-in
+    // epoch: its store was replaced, e.g. after the box token was rotated).
     answer = meta({ bootId: BOOT_B });
     await settle(5_000);
     await act(async () => { fireEvent.focus(window); });
@@ -97,7 +98,7 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     }
   });
 
-  it("notices a restart on its periodic check without any user action", async () => {
+  it("notices lost sign-ins on its periodic check without any user action", async () => {
     renderFrame();
     await settle();
     expect(requestSubmit).toHaveBeenCalledTimes(1);
@@ -106,7 +107,7 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     await settle(SURFACE_RECHECK_INTERVAL_MS);
     expect(requestSubmit).toHaveBeenCalledTimes(2);
 
-    // Settled on the new process: later checks leave the frame alone.
+    // Settled on the new epoch: later checks leave the frame alone.
     await settle(SURFACE_RECHECK_INTERVAL_MS * 2);
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
@@ -119,13 +120,14 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     await settle();
     expect(requestSubmit).toHaveBeenCalledTimes(1);
 
-    // Back up as a new process: the failure retry sees it long before 30 s.
+    // Back up with a new sign-in epoch: the failure retry sees it long
+    // before 30 s.
     answer = meta({ bootId: BOOT_B });
     await settle(1_000);
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
-  it("does not reload a loaded frame while the bootId is unchanged, even across a failed probe", async () => {
+  it("does not reload a loaded frame across an ordinary restart that kept its sign-ins (same bootId, a failed probe between)", async () => {
     renderFrame();
     await settle();
     const frame = screen.getByTitle("Agent Zero · runtime");
@@ -150,8 +152,9 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     await settle();
     expect(requestSubmit).toHaveBeenCalledTimes(1);
 
-    // The update's rollback restarted the previous gateway: a new process, so
-    // the frame's session is gone even though there is no bootId to compare.
+    // The update's rollback restarted the previous gateway, which kept
+    // sign-ins in memory only: the frame's session is gone even though there
+    // is no bootId to compare.
     answer = meta();
     await settle(SURFACE_RECHECK_INTERVAL_MS);
     expect(requestSubmit).toHaveBeenCalledTimes(2);
@@ -179,7 +182,8 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
   });
 
   it("re-authenticates once a legacy gateway is updated to one that reports its bootId", async () => {
-    // Update & restart replaces the gateway process, so the old session is gone.
+    // The legacy gateway kept sign-ins in memory only, so replacing it lost
+    // the frame's session; the new gateway starts a fresh sign-in epoch.
     answer = meta();
     renderFrame();
     await settle();
@@ -252,18 +256,23 @@ describe("RuntimeSurfaceFrame native runtime start", () => {
     expect(screen.queryByText("Starting DeepSeek…")).not.toBeInTheDocument();
   });
 
-  it("waits again, instead of loading a 503, when DeepSeek's gateway restarts", async () => {
+  it.each([
+    ["kept its sign-ins", BOOT_A],
+    ["lost its sign-ins", BOOT_B],
+  ])("waits again, instead of loading a 503, when DeepSeek's gateway restarts and %s", async (_label, bootAfter) => {
     answer = deepseek(true);
     renderFrame("https://box.example.com/");
     await settle();
     expect(requestSubmit).toHaveBeenCalledTimes(1);
 
-    answer = deepseek(false, BOOT_B);
+    // Even with its sign-ins kept, the loaded frame shows the broker's 503
+    // while DeepSeek starts again, so it is replaced once DeepSeek is ready.
+    answer = deepseek(false, bootAfter);
     await settle(SURFACE_RECHECK_INTERVAL_MS);
     expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
     expect(requestSubmit).toHaveBeenCalledTimes(1);
 
-    answer = deepseek(true, BOOT_B);
+    answer = deepseek(true, bootAfter);
     await settle(1_000);
     expect(screen.getByTitle("Agent Zero · runtime")).toBeInTheDocument();
     expect(requestSubmit).toHaveBeenCalledTimes(2);

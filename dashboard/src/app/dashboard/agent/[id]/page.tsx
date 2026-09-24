@@ -166,7 +166,7 @@ function AuthenticatedSurface({
   const newTabFormRef = useRef<HTMLFormElement>(null);
   // Probes the runtime before any bearer is sent, bootstraps this frame, and
   // signs in again, into a new frame keyed on the generation, when the
-  // computer's gateway restarts (see the hook).
+  // computer's gateway lost its sign-ins (see the hook).
   const {
     status: accessStatus,
     generation,

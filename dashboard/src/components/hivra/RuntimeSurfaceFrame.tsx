@@ -11,9 +11,10 @@
 // `/api/meta` for protocol support (never send a bearer to an unverified
 // runtime), then POST the token to `/auth/bootstrap` inside a hidden form whose
 // target is the iframe, so the credential never lands in a URL. The shared
-// hook also signs in again after the box gateway restarts (into a new frame,
-// keyed on its generation, so no history entry is added) and waits, for a
-// bounded time, for a native runtime (DeepSeek) to be ready before opening it.
+// hook also signs in again when the box gateway lost its sign-ins (a new
+// bootId; an ordinary restart keeps them), into a new frame keyed on its
+// generation so no history entry is added, and waits, for a bounded time, for
+// a native runtime (DeepSeek) to be ready before opening it.
 
 import { ExternalLink, Loader2 } from "lucide-react";
 import { useId, useRef } from "react";

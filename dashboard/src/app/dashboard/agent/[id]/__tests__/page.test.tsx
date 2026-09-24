@@ -945,6 +945,8 @@ describe("AgentPage", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
+  // bootId is the gateway's sign-in epoch: it stays the same across an
+  // ordinary restart (sign-ins are saved) and changes when they were lost.
   describe("after the computer's gateway restarts", () => {
     const BOOT_A = "00000000400080000000000000000001";
     const BOOT_B = "00000000400080000000000000000002";
@@ -966,7 +968,7 @@ describe("AgentPage", () => {
       clock = jest.spyOn(Date, "now").mockReturnValue(now + 10_000);
     }
 
-    it("signs a loaded terminal in again, in a new frame, when the gateway's bootId changes", async () => {
+    it("signs a loaded terminal in again, in a new frame, when the gateway lost its sign-ins (new bootId)", async () => {
       render(<AgentPage />);
       fireEvent.click(await findSurfaceButton(/claude code session/i));
       const frame = await screen.findByTitle("Claude Code session");
@@ -989,7 +991,7 @@ describe("AgentPage", () => {
       expect(next).not.toHaveAttribute("src");
     });
 
-    it("leaves a loaded terminal alone while the bootId is unchanged", async () => {
+    it("leaves a loaded terminal alone after a restart that kept its sign-ins (same bootId)", async () => {
       render(<AgentPage />);
       fireEvent.click(await findSurfaceButton(/claude code session/i));
       const frame = await screen.findByTitle("Claude Code session");
@@ -1027,8 +1029,8 @@ describe("AgentPage", () => {
       await screen.findByTitle("Terminal");
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
 
-      // Restarted while the agent session was out of view; hidden frames do
-      // not poll, so nothing happens until it is shown again.
+      // Sign-ins were lost while the agent session was out of view; hidden
+      // frames do not poll, so nothing happens until it is shown again.
       bootId = BOOT_B;
       later();
       fireEvent.click(getSurfaceButton(/claude code session/i));

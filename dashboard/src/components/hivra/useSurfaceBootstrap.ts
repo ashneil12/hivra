@@ -8,16 +8,20 @@
 // then POST the token to /auth/bootstrap from a hidden form whose target is
 // the surface's own frame, so the credential never lands in a URL.
 //
-// The box gateway keeps those sessions only in memory. After it restarts
-// (runtime update, crash, service restart) the frame's cookie is dead and each
-// reconnect is a 401 while the dashboard still shows the surface as ready.
-// Gateways that advertise a per-process `bootId` make that visible: while the
-// surface is mounted and active it re-probes /api/meta on window focus, the
-// `online` event, the page becoming visible and every 30 s, and when the
-// bootId changed (or appeared, or disappeared) it signs in again. An unchanged
-// bootId, or a gateway that never had one (older runtimes), never reloads a
-// loaded frame. A surface whose check failed recovers by itself once a later
-// probe succeeds.
+// Current gateways save those sign-ins (as digests, bound to the box token),
+// so an ordinary restart (runtime update, crash, reboot) keeps the frame's
+// cookie valid. Their `bootId` is the epoch of that saved store, not of the
+// process: it changes only when sign-ins were actually lost (the first start
+// of a gateway that saves them, a token rotation, a store that was corrupt or
+// could not be saved). Older gateways kept sign-ins in memory only and
+// advertise no bootId, so their restarts left each reconnect a 401 while the
+// dashboard still showed the surface as ready. While the surface is mounted and
+// active it re-probes /api/meta on window focus, the `online` event, the page
+// becoming visible and every 30 s, and when the bootId changed (or appeared,
+// or disappeared, i.e. the gateway was replaced by one with a different store)
+// it signs in again. An unchanged bootId, or a gateway that never had one,
+// never reloads a loaded frame. A surface whose check failed recovers by
+// itself once a later probe succeeds.
 //
 // Each sign-in is a new `generation`, and hosts key their iframe on it: the
 // bootstrap is POSTed into a freshly mounted frame with the same name, never
@@ -226,11 +230,12 @@ function advance(previous: SurfaceAccess, probe: RuntimeProbe, now: number): Sur
       // frame, whatever the bootId says (older gateways have none): wait for
       // it again, then sign in afresh.
       if (probe.status === "starting") return wait();
-      // Otherwise only a different gateway process invalidates the frame's
+      // Otherwise only a different sign-in epoch invalidates the frame's
       // session. A failed probe (network blip, gateway mid-restart) or an
-      // unchanged bootId leaves the loaded surface and its own reconnect
-      // alone. A bootId that appears (update) or disappears (rollback to an
-      // older runtime) is a different process too; a gateway that never had
+      // unchanged bootId (an ordinary restart keeps its saved sign-ins) leaves
+      // the loaded surface and its own reconnect alone. A bootId that appears
+      // (update from a gateway that kept sign-ins in memory) or disappears
+      // (rollback to one) means they were lost too; a gateway that never had
       // one never reloads.
       if (probe.status !== "ready" || probe.bootId === previous.bootId) return previous;
       return signIn();
@@ -342,7 +347,7 @@ export function useSurfaceBootstrap({ url, token, active = true }: { url: string
         setAccess((previous) => previous && previous.key === probeKey && previous.token === token
           ? advance(previous, result, now) : previous);
         // A failed probe on a loaded frame is often a gateway mid-restart:
-        // look again soon so the new bootId is seen in seconds, not 30 s.
+        // look again soon so a changed bootId is seen in seconds, not 30 s.
         if (unsettled || result.status === "unavailable") {
           const delay = SURFACE_RETRY_BACKOFF_MS[Math.min(attempt, SURFACE_RETRY_BACKOFF_MS.length - 1)];
           attempt += 1;
