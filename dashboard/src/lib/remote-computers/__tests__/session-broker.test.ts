@@ -197,6 +197,163 @@ describe("remote desktop session broker", () => {
     expect(await issueRemoteDesktopSession(handoffParams())).toMatchObject({ ok: false, code: "session_revoke_failed" });
     expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(2);
   });
+  describe("a lease whose session answer never reached the browser", () => {
+    // The browser names earlier requests of its own whose answers it never
+    // read; only the lease that such a request left may be retired.
+    const LOST_SESSION_ID = "00000000-0000-4000-8000-000000000001";
+    const LOST_CHALLENGE = "L".repeat(43);
+    const ordinaryParams = (overrides: Record<string, unknown> = {}) => issueParams({
+      computerKind: "hivra-agent", requestedTransport: "selkies-websocket", ownerHandoff: false,
+      unansweredPkceChallenges: [LOST_CHALLENGE], ...overrides,
+    });
+    const lostLease = (overrides: Record<string, unknown> = {}) => ({
+      id: LOST_SESSION_ID, user_id: "user-1", computer_kind: "hivra-agent", computer_id: COMPUTER_ID,
+      transport: "selkies-websocket", input_role: "controller", input_state: "takeover-pending",
+      exchanged_at: null, revoked_at: null, pkce_challenge: LOST_CHALLENGE, ...overrides,
+    });
+    const issued = { data: { status: "issued", capabilityGeneration: GENERATION, streamingMode: "hq",
+      brokerOrigin: "https://desktop.example.com" }, error: null };
+    const conflict = { data: { status: "controller_conflict" }, error: null };
+    beforeEach(() => {
+      // Queued answers must never leak from one case into the next.
+      (supabaseAdmin!.rpc as jest.Mock).mockReset();
+      (supabaseAdmin!.from as jest.Mock).mockReset();
+    });
+
+    /**
+     * Two reads of the sessions table: the unanswered-lease lookup (it filters
+     * with `.is`) and the conflict classification.
+     */
+    function sessionTables(params: { unanswered: unknown[]; controllers?: unknown[]; unansweredError?: unknown }) {
+      const capabilityBuilder = capabilityLookup();
+      const lookups: Array<Record<string, jest.Mock>> = [];
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        if (table !== "hivra_remote_desktop_sessions") return capabilityBuilder;
+        const builder: Record<string, jest.Mock> = {};
+        builder.select = jest.fn(() => builder);
+        builder.eq = jest.fn(() => builder);
+        builder.in = jest.fn(() => builder);
+        builder.is = jest.fn(() => builder);
+        builder.returns = jest.fn(async () => builder.is.mock.calls.length
+          ? { data: params.unanswered, error: params.unansweredError ?? null }
+          : { data: params.controllers ?? [], error: null });
+        lookups.push(builder);
+        return builder;
+      });
+      return lookups;
+    }
+
+    it("retires this owner's never-exchanged lease that the browser names, then issues", async () => {
+      const lookups = sessionTables({ unanswered: [lostLease()] });
+      (supabaseAdmin!.rpc as jest.Mock)
+        .mockResolvedValueOnce(conflict)
+        .mockResolvedValueOnce({ data: { status: "revoked", inputState: "released" }, error: null })
+        .mockResolvedValueOnce(issued);
+      const result = await issueRemoteDesktopSession(ordinaryParams());
+      expect(result).toMatchObject({ ok: true });
+      const calls = (supabaseAdmin!.rpc as jest.Mock).mock.calls;
+      expect(calls.map(([name]) => name)).toEqual([
+        "issue_hivra_remote_desktop_session_v3",
+        "revoke_hivra_remote_desktop_session",
+        "issue_hivra_remote_desktop_session_v3",
+      ]);
+      expect(calls[1][1]).toEqual({ p_user_id: "user-1", p_session_id: LOST_SESSION_ID, p_reason: "handoff_abandoned" });
+      // The retry asks for the same session the refused call described.
+      expect(calls[2][1].p_session_id).toBe(calls[0][1].p_session_id);
+      expect(calls[2][1].p_pkce_challenge).toBe(PKCE);
+      // The lookup is narrowed to exactly the leases a lost answer can leave.
+      const lookup = lookups[0];
+      expect(lookup.eq.mock.calls).toEqual(expect.arrayContaining([
+        ["user_id", "user-1"], ["computer_kind", "hivra-agent"], ["computer_id", COMPUTER_ID],
+        ["transport", "selkies-websocket"], ["input_role", "controller"], ["input_state", "takeover-pending"],
+      ]));
+      expect(lookup.is.mock.calls).toEqual(expect.arrayContaining([["exchanged_at", null], ["revoked_at", null]]));
+      expect(lookup.in).toHaveBeenCalledWith("pkce_challenge", [LOST_CHALLENGE]);
+    });
+
+    it.each([
+      ["was exchanged", { exchanged_at: new Date().toISOString() }],
+      ["is another owner's", { user_id: "other-owner" }],
+      ["was revoked", { revoked_at: new Date().toISOString() }],
+      ["holds input", { input_state: "active" }],
+      ["bears a challenge the browser did not name", { pkce_challenge: "N".repeat(43) }],
+      ["is for another computer", { computer_id: "00000000-0000-4000-8000-000000000009" }],
+      ["is a native client's", { transport: "sunshine-moonlight" }],
+      ["has no valid id", { id: "not-a-uuid" }],
+    ])("never retires a lease that %s, and reports the conflict", async (_label, overrides) => {
+      sessionTables({ unanswered: [lostLease(overrides)], controllers: [{
+        capability_generation: GENERATION, input_state: "takeover-pending", revoked_at: null,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }] });
+      (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue(conflict);
+      expect(await issueRemoteDesktopSession(ordinaryParams())).toMatchObject({ ok: false, code: "controller_conflict" });
+      expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks only once more, and reports what still blocks the desktop after the retirement", async () => {
+      sessionTables({ unanswered: [lostLease()], controllers: [{
+        capability_generation: GENERATION, input_state: "release-pending", revoked_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }] });
+      (supabaseAdmin!.rpc as jest.Mock)
+        .mockResolvedValueOnce(conflict)
+        .mockResolvedValueOnce({ data: { status: "revoked", inputState: "released" }, error: null })
+        .mockResolvedValueOnce(conflict);
+      expect(await issueRemoteDesktopSession(ordinaryParams())).toMatchObject({ ok: false, code: "controller_releasing" });
+      expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not ask again when the lease could not be retired or looked up", async () => {
+      sessionTables({ unanswered: [lostLease()] });
+      (supabaseAdmin!.rpc as jest.Mock)
+        .mockResolvedValueOnce(conflict)
+        .mockResolvedValueOnce({ data: null, error: { message: "revoke failed" } });
+      expect(await issueRemoteDesktopSession(ordinaryParams())).toMatchObject({ ok: false, code: "controller_conflict" });
+      expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(2);
+
+      jest.clearAllMocks();
+      sessionTables({ unanswered: [], unansweredError: { message: "lookup failed" } });
+      (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue(conflict);
+      expect(await issueRemoteDesktopSession(ordinaryParams())).toMatchObject({ ok: false, code: "controller_conflict" });
+      expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it("looks for nothing when the browser names no request or the desktop is free", async () => {
+      const lookups = sessionTables({ unanswered: [lostLease()] });
+      (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue(conflict);
+      await issueRemoteDesktopSession(ordinaryParams({ unansweredPkceChallenges: undefined }));
+      expect(lookups.some(lookup => lookup.is.mock.calls.length > 0)).toBe(false);
+      expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(1);
+
+      jest.clearAllMocks();
+      const free = sessionTables({ unanswered: [lostLease()] });
+      (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue(issued);
+      expect(await issueRemoteDesktopSession(ordinaryParams())).toMatchObject({ ok: true });
+      expect(free).toHaveLength(0);
+    });
+
+    it("leaves an explicit take-over to its own revoke-and-wait path", async () => {
+      controllerConflictLookup([handoffController({ input_state: "takeover-pending" })]);
+      (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce(conflict)
+        .mockResolvedValueOnce({ data: { status: "revoked", inputState: "released" }, error: null });
+      expect(await issueRemoteDesktopSession(ordinaryParams({ ownerHandoff: true }))).toMatchObject({ code: "controller_releasing" });
+      expect((supabaseAdmin!.rpc as jest.Mock).mock.calls[1][1]).toMatchObject({ p_reason: "user_revoked" });
+    });
+
+    it.each([
+      ["a Hermes instance", { computerKind: "hermes-instance" }],
+      ["a viewer", { inputRole: "viewer" }],
+      ["a native client", { client: { kind: "native", moonlight: true, webCodecs: true, udp: "direct" }, requestedTransport: "sunshine-moonlight" }],
+      ["no transport named", { requestedTransport: undefined }],
+      ["this request's own challenge", { unansweredPkceChallenges: [PKCE] }],
+      ["a repeated challenge", { unansweredPkceChallenges: [LOST_CHALLENGE, LOST_CHALLENGE] }],
+      ["a malformed challenge", { unansweredPkceChallenges: ["short"] }],
+      ["more than eight", { unansweredPkceChallenges: Array.from({ length: 9 }, (_, index) => String(index).repeat(43)) }],
+    ])("refuses unanswered requests named by %s", async (_label, overrides) => {
+      expect(await issueRemoteDesktopSession(ordinaryParams(overrides))).toMatchObject({ ok: false, code: "invalid_request" });
+      expect(supabaseAdmin!.rpc).not.toHaveBeenCalled();
+    });
+  });
   it.each([{ computerKind: "hermes-instance" }, { inputRole: "viewer" }, { purpose: "recovery" },
     { client: { kind: "native", moonlight: true, webCodecs: true, udp: "direct" } },
     { requestedTransport: "sunshine-moonlight" }] as const)("rejects owner handoff outside browser Hivra daily-driver %j", async overrides => {

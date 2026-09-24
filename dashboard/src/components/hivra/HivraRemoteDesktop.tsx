@@ -10,9 +10,12 @@ import { clientLog } from "@/lib/client/logger";
 
 import { HivraDesktopViewport } from "./HivraDesktopViewport";
 import {
+  desktopIssueAnswered,
+  desktopIssueSent,
   desktopProofSuccesses,
   refreshDesktopCapability,
   runDesktopIssue,
+  unansweredDesktopIssues,
 } from "@/lib/remote-computers/desktop-session-lane";
 import {
   DESKTOP_STREAMING_MODE_DETAILS,
@@ -554,6 +557,10 @@ export function HivraRemoteDesktop({
         // A proof that succeeds after this point may have landed after the
         // server read this computer's capability for the request below.
         const proofSuccesses = desktopProofSuccesses(computerId);
+        // Earlier requests whose answers never arrived may each have left a
+        // lease only their lost answer could use (see desktop-session-lane).
+        const unansweredPkceChallenges = unansweredDesktopIssues(computerId, challenge);
+        desktopIssueSent(computerId, challenge);
         const response = await fetch("/api/remote-desktop/sessions", {
           method: "POST",
           credentials: "same-origin",
@@ -561,6 +568,7 @@ export function HivraRemoteDesktop({
           body: JSON.stringify({
             computerKind: "hivra-agent",
             ownerHandoff: requestOwnerHandoff,
+            ...(unansweredPkceChallenges.length ? { unansweredPkceChallenges } : {}),
             computerId,
             purpose: "daily-driver",
             inputRole: "controller",
@@ -572,6 +580,14 @@ export function HivraRemoteDesktop({
           }),
         });
         const payload = await response.json().catch(() => null) as SessionResponsePayload | null;
+        // Only an answer the server gave after deciding says what this request
+        // left behind: a grant names its lease and a refusal made none. A
+        // server error or an unreadable body may follow a lease that was made
+        // (and capability_changed is a lease the server made but withheld).
+        if (payload && typeof payload.success === "boolean" && response.status < 500
+          && payload.code !== "capability_changed") {
+          desktopIssueAnswered(computerId, challenge);
+        }
         const grantedId = payload?.data?.id;
         if (attempt !== attemptRef.current) {
           if (grantedId) await atMost(releaseSession(grantedId, unreleased), UNRELEASED_REVOKE_WAIT_MS);

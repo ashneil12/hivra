@@ -2,11 +2,15 @@
 
 import {
   DESKTOP_ISSUE_LANE_WAIT_MS,
+  desktopIssueAnswered,
+  desktopIssueSent,
   desktopProofSuccesses,
   refreshDesktopCapability,
   resetDesktopSessionLaneForTests,
   runDesktopIssue,
+  unansweredDesktopIssues,
 } from "../desktop-session-lane";
+import { MAX_UNANSWERED_DESKTOP_ISSUES, UNANSWERED_DESKTOP_ISSUE_TTL_MS } from "../desktop-session-limits";
 
 const COMPUTER = "00000000-0000-4000-8000-000000000001";
 const OTHER = "00000000-0000-4000-8000-000000000002";
@@ -125,5 +129,68 @@ describe("desktop session lane", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  describe("session requests whose answers never arrived", () => {
+    const challenge = (letter: string) => letter.repeat(43);
+
+    it("remembers a request until its answer is read, per computer, and never names the request being sent", () => {
+      desktopIssueSent(COMPUTER, challenge("a"));
+      desktopIssueSent(COMPUTER, challenge("b"));
+      desktopIssueSent(OTHER, challenge("c"));
+      expect(unansweredDesktopIssues(COMPUTER)).toEqual([challenge("a"), challenge("b")]);
+      expect(unansweredDesktopIssues(COMPUTER, challenge("b"))).toEqual([challenge("a")]);
+      desktopIssueAnswered(COMPUTER, challenge("b"));
+      expect(unansweredDesktopIssues(COMPUTER)).toEqual([challenge("a")]);
+      expect(unansweredDesktopIssues(OTHER)).toEqual([challenge("c")]);
+    });
+
+    it("survives a reload of this tab through sessionStorage, but not a new tab", () => {
+      desktopIssueSent(COMPUTER, challenge("a"));
+      resetDesktopSessionLaneForTests({ keepStorage: true });
+      expect(unansweredDesktopIssues(COMPUTER)).toEqual([challenge("a")]);
+      resetDesktopSessionLaneForTests();
+      expect(unansweredDesktopIssues(COMPUTER)).toEqual([]);
+    });
+
+    it("stores only the challenge, never a verifier, and forgets one once no lease of it can remain", () => {
+      jest.useFakeTimers();
+      try {
+        desktopIssueSent(COMPUTER, challenge("a"));
+        const stored = Object.keys(window.sessionStorage).map(key => window.sessionStorage.getItem(key));
+        expect(stored).toHaveLength(1);
+        expect(JSON.parse(stored[0]!)).toEqual([{ challenge: challenge("a"), sentAt: Date.now() }]);
+        jest.advanceTimersByTime(UNANSWERED_DESKTOP_ISSUE_TTL_MS - 1);
+        expect(unansweredDesktopIssues(COMPUTER)).toEqual([challenge("a")]);
+        jest.advanceTimersByTime(1);
+        expect(unansweredDesktopIssues(COMPUTER)).toEqual([]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("keeps only the latest requests the broker will accept", () => {
+      const letters = "abcdefghijk".split("");
+      for (const letter of letters) desktopIssueSent(COMPUTER, challenge(letter));
+      expect(unansweredDesktopIssues(COMPUTER)).toEqual(letters.slice(-MAX_UNANSWERED_DESKTOP_ISSUES).map(challenge));
+    });
+
+    it("ignores stored entries it did not write and still works when storage throws", () => {
+      window.sessionStorage.setItem(`hivra.remote-desktop.unanswered-issues.v1:${COMPUTER}`, JSON.stringify([
+        { challenge: "short", sentAt: Date.now() }, { challenge: challenge("z"), sentAt: "now" }, null,
+        { challenge: challenge("y"), sentAt: Date.now() },
+      ]));
+      expect(unansweredDesktopIssues(COMPUTER)).toEqual([challenge("y")]);
+      resetDesktopSessionLaneForTests();
+      const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+      const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+      try {
+        desktopIssueSent(COMPUTER, challenge("a"));
+        expect(unansweredDesktopIssues(COMPUTER)).toEqual([challenge("a")]);
+      } finally {
+        setItem.mockRestore();
+        getItem.mockRestore();
+      }
+    });
   });
 });

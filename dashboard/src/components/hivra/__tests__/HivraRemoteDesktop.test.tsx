@@ -1710,6 +1710,81 @@ describe("HivraRemoteDesktop", () => {
       dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.disconnected.v1", sessionId, reason });
     }
 
+    /** Real SHA-256 PKCE with fresh randomness, so every request has its own challenge. */
+    function useDistinctPkce() {
+      const nodeCrypto = jest.requireActual<typeof import("node:crypto")>("node:crypto");
+      Object.defineProperty(window, "crypto", { configurable: true, value: {
+        getRandomValues: (value: Uint8Array) => nodeCrypto.randomFillSync(value),
+        subtle: { digest: async (_algorithm: string, data: Uint8Array) => nodeCrypto.createHash("sha256").update(data).digest() },
+      } });
+    }
+
+    /**
+     * The session broker's one-controller fence, as the database applies it:
+     * a live, never-revoked controller lease on this computer refuses the next
+     * issue. A lease that was never exchanged and whose challenge the request
+     * names as unanswered is retired first (the broker's
+     * retireUnansweredHandoffs). `loseAnswerTo` / `neverAnswer` list issue
+     * numbers whose lease is recorded but whose answer never reaches the page.
+     */
+    function fencedSessionServer(options: { loseAnswerTo?: number[]; neverAnswer?: number[]; foreignLease?: boolean } = {}) {
+      type Lease = { id: string; challenge: string; live: boolean; exchanged: boolean };
+      const leases: Lease[] = options.foreignLease
+        ? [{ id: "00000000-0000-4000-8000-0000000000ff", challenge: "f".repeat(43), live: true, exchanged: true }]
+        : [];
+      const log: string[] = [];
+      const bodies: Array<{ pkceChallenge: string; ownerHandoff?: boolean; unansweredPkceChallenges?: string[] }> = [];
+      let granted = 0;
+      fetchMock.mockImplementation((input, init) => {
+        const url = String(input);
+        if (init?.method === "DELETE") {
+          const id = decodeURIComponent(url.split("/").at(-1) ?? "");
+          const lease = leases.find(candidate => candidate.id === id);
+          if (lease) lease.live = false;
+          log.push(`revoke ${id}`);
+          return response(200, { success: true, data: { inputState: "released" } });
+        }
+        if (url === "/api/remote-desktop/sessions" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          bodies.push(body);
+          const named: string[] = body.unansweredPkceChallenges ?? [];
+          for (const lease of leases) {
+            if (lease.live && !lease.exchanged && named.includes(lease.challenge)) {
+              lease.live = false;
+              log.push(`retire ${lease.id}`);
+            }
+          }
+          if (leases.some(lease => lease.live)) {
+            log.push("issue refused: controller_conflict");
+            return response(409, { success: false, code: "controller_conflict", error: "Another human controller still owns this computer input lease." });
+          }
+          granted += 1;
+          const id = SESSION_IDS[granted - 1];
+          leases.push({ id, challenge: body.pkceChallenge, live: true, exchanged: false });
+          if (options.neverAnswer?.includes(granted)) {
+            log.push(`issue ${id} granted, answer lost`);
+            return new Promise<Response>(() => {});
+          }
+          if (options.loseAnswerTo?.includes(granted)) {
+            log.push(`issue ${id} granted, answer lost`);
+            return Promise.reject(new TypeError("Failed to fetch"));
+          }
+          log.push(`issue ${id} granted`);
+          return response(201, { success: true, data: session(id) });
+        }
+        return response(200, { success: true, data: { prepared: true } });
+      });
+      return {
+        log,
+        bodies,
+        /** The handoff document exchanged this session's code. */
+        exchange(id: string) {
+          const lease = leases.find(candidate => candidate.id === id);
+          if (lease) lease.exchanged = true;
+        },
+      };
+    }
+
     it("reconnects on its own after a short backoff and says the desktop is still running", async () => {
       jest.useFakeTimers();
       try {
@@ -2212,7 +2287,10 @@ describe("HivraRemoteDesktop", () => {
       },
     );
 
-    it("a reconnect after a network drop never revokes its own new session, even when the network flaps mid-request", async () => {
+    // This pins only that online/offline nudges while the reconnect's request
+    // is out neither start a second attempt nor revoke the session it brings
+    // back. A request that the flap actually fails is the next test.
+    it("online and offline nudges while the reconnect's request is out neither start a second attempt nor revoke its session", async () => {
       jest.useFakeTimers();
       let online = true;
       Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => online });
@@ -2250,6 +2328,88 @@ describe("HivraRemoteDesktop", () => {
         expect(screen.getByText("Connected")).toBeTruthy();
       } finally {
         delete (window.navigator as { onLine?: boolean }).onLine;
+        jest.useRealTimers();
+      }
+    });
+
+    it("reconnects past its own lease when the network drops the reconnect's session answer, without Take over here", async () => {
+      jest.useFakeTimers();
+      useDistinctPkce();
+      try {
+        const server = fencedSessionServer({ loseAnswerTo: [2] });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        server.exchange(SESSION_IDS[0]);
+        dropStream(frame, SESSION_IDS[0], "transport-error");
+        await advance(0);
+        // The first reconnect's request reaches the server and is granted, but
+        // the answer is lost on the way back: fetch rejects.
+        await advance(2_000);
+        await waitFor(() => expect(server.log).toContain(`issue ${SESSION_IDS[1]} granted, answer lost`));
+        // The next attempt names that request, so the lease only its lost
+        // answer could use no longer counts as another controller.
+        await advance(5_000);
+        await waitFor(() => expect(server.log).toContain(`issue ${SESSION_IDS[2]} granted`));
+        await openStream(SESSION_IDS[2]);
+        expect(server.log).toEqual([
+          `issue ${SESSION_IDS[0]} granted`,
+          `revoke ${SESSION_IDS[0]}`,
+          `issue ${SESSION_IDS[1]} granted, answer lost`,
+          `retire ${SESSION_IDS[1]}`,
+          `issue ${SESSION_IDS[2]} granted`,
+        ]);
+        expect(server.bodies[2].unansweredPkceChallenges).toEqual([server.bodies[1].pkceChallenge]);
+        expect(server.bodies.every(body => body.ownerHandoff === false)).toBe(true);
+        expect(screen.queryByRole("button", { name: /take over/i })).toBeNull();
+        expect(screen.queryByText(/Another human controller/)).toBeNull();
+        expect(screen.queryByText(/Waiting briefly for the existing controller/)).toBeNull();
+        // A request whose answer was read is never named; the lost one stays
+        // named until no lease of it can still exist.
+        dropStream(screen.getByTitle("Codex remote desktop") as HTMLIFrameElement, SESSION_IDS[2]);
+        // (That stream was up for less than a minute, so this is the third attempt.)
+        await advance(15_000);
+        await waitFor(() => expect(server.bodies).toHaveLength(4));
+        expect(server.bodies[3].unansweredPkceChallenges).toEqual([server.bodies[1].pkceChallenge]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("a reload while its session request was out does not leave the reloaded page waiting on that request's lease", async () => {
+      useDistinctPkce();
+      const server = fencedSessionServer({ neverAnswer: [1] });
+      const before = render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      await waitFor(() => expect(server.log).toEqual([`issue ${SESSION_IDS[0]} granted, answer lost`]));
+      // The page reloads: its module state is gone, this tab's sessionStorage is not.
+      before.unmount();
+      resetDesktopSessionLaneForTests({ keepStorage: true });
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+      expect(server.log).toEqual([
+        `issue ${SESSION_IDS[0]} granted, answer lost`,
+        `retire ${SESSION_IDS[0]}`,
+        `issue ${SESSION_IDS[1]} granted`,
+      ]);
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: SESSION_IDS[1] });
+      expect(screen.getByText("Connected")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /take over/i })).toBeNull();
+    });
+
+    it("still waits for, and never retires, a lease this tab did not lose the answer to", async () => {
+      jest.useFakeTimers();
+      useDistinctPkce();
+      try {
+        // Another tab holds the desktop; this tab's own requests were all answered.
+        const server = fencedSessionServer({ foreignLease: true });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        // Step through the 10 s grace and the 2 s retries up to 20 s.
+        for (let elapsed = 0; elapsed < 25_000; elapsed += 1_000) await advance(1_000);
+        expect(await screen.findByRole("button", { name: /take over here/i })).toBeTruthy();
+        expect(server.log.filter(line => line === "issue refused: controller_conflict").length).toBeGreaterThan(1);
+        expect(server.log.filter(line => line.startsWith("retire"))).toEqual([]);
+        expect(server.bodies.every(body => body.unansweredPkceChallenges === undefined)).toBe(true);
+      } finally {
         jest.useRealTimers();
       }
     });
@@ -2406,6 +2566,34 @@ describe("HivraRemoteDesktop", () => {
       dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
       dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: SESSION_B });
       expect(screen.getByText("Connected")).toBeTruthy();
+    });
+
+    it.each([
+      [503, { success: false, code: "session_issue_failed", error: "Desktop sessions are unavailable." }, true],
+      [409, { success: false, code: "capability_changed", error: "The desktop capability changed during session creation." }, true],
+      [502, null, true],
+      [429, { success: false, error: "Too many requests" }, false],
+    ])("names a request the server answered %s on the next try only when that answer may follow a lease it made", async (status, body, named) => {
+      const nodeCrypto = jest.requireActual<typeof import("node:crypto")>("node:crypto");
+      Object.defineProperty(window, "crypto", { configurable: true, value: {
+        getRandomValues: (value: Uint8Array) => nodeCrypto.randomFillSync(value),
+        subtle: { digest: async (_algorithm: string, data: Uint8Array) => nodeCrypto.createHash("sha256").update(data).digest() },
+      } });
+      const bodies: Array<{ pkceChallenge: string; unansweredPkceChallenges?: string[] }> = [];
+      fetchMock.mockImplementation((input, init) => {
+        if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") {
+          bodies.push(JSON.parse(String(init.body)));
+          if (bodies.length > 1) return response(201, { success: true, data: session(SESSION_A) });
+          return body === null
+            ? Promise.resolve({ ok: false, status, json: async () => { throw new SyntaxError("Unexpected token <"); } } as unknown as Response)
+            : response(status, body);
+        }
+        return response(200, { success: true, data: { prepared: true } });
+      });
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      fireEvent.click(await screen.findByRole("button", { name: /try again/i }));
+      expect(await screen.findByTitle("Codex remote desktop")).toBeTruthy();
+      expect(bodies[1].unansweredPkceChallenges).toEqual(named ? [bodies[0].pkceChallenge] : undefined);
     });
 
     it("keeps a session the handoff document just exchanged when that document was slow to load", async () => {
