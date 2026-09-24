@@ -6,6 +6,7 @@ import { Loader2, Maximize2, Minimize2, Monitor, RefreshCw, Settings2, ShieldChe
 
 import styles from "./HivraRemoteDesktop.module.css";
 import { useWorkspaceModalLayer } from "@/components/workspace/WorkspaceModalLayerContext";
+import { clientLog } from "@/lib/client/logger";
 
 import { HivraDesktopViewport } from "./HivraDesktopViewport";
 import {
@@ -20,6 +21,7 @@ type ConnectionState =
   | "connecting"
   | "connected"
   | "disconnected"
+  | "reconnecting"
   | "unavailable"
   | "blocked"
   | "preparing"
@@ -61,6 +63,7 @@ const STATE_LABELS: Record<ConnectionState, string> = {
   connecting: "Opening",
   connected: "Connected",
   disconnected: "Disconnected",
+  reconnecting: "Reconnecting",
   unavailable: "Unavailable",
   blocked: "Blocked",
   preparing: "Opening",
@@ -103,6 +106,22 @@ const CONTROLLER_CONFLICT_GRACE_MS = 10_000;
 const CONTROLLER_CONFLICT_RETRY_INTERVAL_MS = 2_000;
 const ACTIVE_CONTROLLER_RETRY_WINDOW_MS = 20_000;
 const RELEASING_CONTROLLER_RETRY_WINDOW_MS = 40_000;
+// Losing the stream does not stop the desktop or the apps open on it. While
+// this page is visible and online, reconnect on our own a few times, spaced out
+// so a restarting desktop gateway or a network change can settle; after that,
+// Reconnect is the user's. Every attempt proves the runtime first and never
+// installs anything. A stream that then stays up for a minute earns a fresh
+// budget, so a flapping link cannot keep requesting sessions.
+const STREAM_RECONNECT_DELAYS_MS = [2_000, 5_000, 15_000] as const;
+const STREAM_RECONNECT_STABLE_MS = 60_000;
+/** Broker reasons that mean only this page's stream ended, not the desktop. */
+const STREAM_DROP_REASONS: ReadonlySet<string> = new Set([
+  "transport-closed",
+  "transport-error",
+  "document-reloaded",
+  "document-closed",
+]);
+const STREAM_DROPPED_MESSAGE = "Stream disconnected. Your desktop and its apps are still running.";
 const VIEWPORT_UPDATE_DEBOUNCE_MS = 100;
 const MAX_BROWSER_TIMING_SAMPLES = 200;
 type BrowserTimingSample = { durationMs: number; outcome: "changed" | "timeout" };
@@ -311,6 +330,20 @@ export function HivraRemoteDesktop({
   stateRef.current = state;
   const hiddenEpisodeRef = useRef<{ startedAt: number; ended: boolean; consumed: boolean; returned?: boolean; refreshed?: boolean } | null>(null);
   const allowAutomaticPrepareRef = useRef(true);
+  // Automatic reconnection after the stream dropped. `armed` lasts until a
+  // stream connects again, the budget runs out, or the user acts; `attempts`
+  // survives a reconnect that drops again before it proved stable.
+  const recoveryRef = useRef<{ armed: boolean; immediate: boolean; attempts: number; connectedAt: number | null }>({
+    armed: false, immediate: false, attempts: 0, connectedAt: null,
+  });
+  const [recoveryTick, setRecoveryTick] = useState(0);
+  /** The user's own action (or a repair) replaces any pending automatic reconnect. */
+  const cancelStreamRecovery = useCallback(() => {
+    const recovery = recoveryRef.current;
+    recovery.armed = false;
+    recovery.immediate = false;
+    recovery.attempts = 0;
+  }, []);
 
   const connect = useCallback(async (options: { allowPrepare?: boolean; ownerHandoff?: boolean } = {}) => {
     allowAutomaticPrepareRef.current = options.allowPrepare !== false;
@@ -668,25 +701,33 @@ export function HivraRemoteDesktop({
       setHandoffListenerReady(false);
     };
     const closePersistedPage = (event: PageTransitionEvent) => {
-      if (event.persisted && stateRef.current === "connected") {
+      const wasStreaming = stateRef.current === "connected";
+      if (event.persisted && wasStreaming) {
         hiddenEpisodeRef.current ??= { startedAt: Date.now(), ended: false, consumed: false };
         hiddenEpisodeRef.current.ended = true;
-      } else if (!event.persisted) hiddenEpisodeRef.current = null;
+      } else if (!event.persisted) {
+        hiddenEpisodeRef.current = null;
+        cancelStreamRecovery();
+      }
       closeCurrentSession();
       setBrokerOrigin(null);
       setHandoffListenerReady(false);
       setExpiresAt(null);
       setState("disconnected");
-      setMessage("This desktop session ended. Reconnect when you are ready; no new session has been opened.");
+      // Only this page's stream closed; nothing on the computer was stopped.
+      setMessage(wasStreaming
+        ? `${STREAM_DROPPED_MESSAGE} Reconnect when you are ready.`
+        : "The desktop stream closed with this page. Reconnect when you are ready.");
     };
     window.addEventListener("pagehide", closePersistedPage);
     return () => {
       window.removeEventListener("pagehide", closePersistedPage);
       hiddenEpisodeRef.current = null;
+      cancelStreamRecovery();
       initialConnectionStartedRef.current = false;
       closeCurrentSession();
     };
-  }, [connect]);
+  }, [cancelStreamRecovery, connect]);
 
   useEffect(() => {
     // Start can remount this retained surface while Manage is visible. Do not
@@ -704,7 +745,14 @@ export function HivraRemoteDesktop({
       episode.returned = true;
       if (episode.ended && stateRef.current === "disconnected") {
         episode.consumed = true;
-        void connect({ allowPrepare: false });
+        // The stream ended while nobody was looking. Its first reconnect runs
+        // at once, even after a spent budget, and a failure then follows the
+        // bounded backoff below.
+        const recovery = recoveryRef.current;
+        recovery.armed = true;
+        recovery.immediate = true;
+        recovery.attempts = Math.min(recovery.attempts, STREAM_RECONNECT_DELAYS_MS.length - 1);
+        setRecoveryTick(tick => tick + 1);
       } else if (stateRef.current === "connected" && !episode.refreshed && Date.now() - episode.startedAt >= CAPABILITY_REFRESH_INTERVAL_MS) {
         episode.refreshed = true;
         // Still-live authority needs only a fresh proof, not another session.
@@ -731,7 +779,73 @@ export function HivraRemoteDesktop({
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pageshow", pageshow);
     };
-  }, [active, computerId, connect, state]);
+  }, [active, computerId, state]);
+
+  // Reconnect is gated on the page being seen and the device being online, so
+  // re-evaluate a pending recovery whenever either changes.
+  useEffect(() => {
+    const nudge = () => { if (recoveryRef.current.armed) setRecoveryTick(tick => tick + 1); };
+    document.addEventListener("visibilitychange", nudge);
+    window.addEventListener("online", nudge);
+    window.addEventListener("offline", nudge);
+    window.addEventListener("pageshow", nudge);
+    return () => {
+      document.removeEventListener("visibilitychange", nudge);
+      window.removeEventListener("online", nudge);
+      window.removeEventListener("offline", nudge);
+      window.removeEventListener("pageshow", nudge);
+    };
+  }, []);
+
+  useEffect(() => {
+    const recovery = recoveryRef.current;
+    if (!recovery.armed) return;
+    const offline = navigator.onLine === false;
+    const pageLive = active && !document.hidden && !offline;
+    if (state === "reconnecting") {
+      if (!pageLive) {
+        // Never open a stream for a page nobody can see, or with no network.
+        // The nudges above resume the same attempt when that changes.
+        setState("disconnected");
+        if (offline) setMessage(`${STREAM_DROPPED_MESSAGE} Reconnecting when this device is back online.`);
+        return;
+      }
+      const delay = recovery.immediate ? 0 : STREAM_RECONNECT_DELAYS_MS[recovery.attempts] ?? 0;
+      const timer = window.setTimeout(() => {
+        if (!recovery.armed) return;
+        recovery.immediate = false;
+        recovery.attempts += 1;
+        // The same read-only foreground proof as a return from a hidden tab:
+        // it never installs or repairs, and never displaces another controller.
+        void connect({ allowPrepare: false });
+      }, delay);
+      return () => window.clearTimeout(timer);
+    }
+    // An attempt is in flight until it settles into one of the states below.
+    if (state === "connecting" || state === "preparing" || state === "connected") return;
+    const retryable = state === "disconnected" || (state === "failed" && !controllerConflict);
+    if (!retryable || recovery.attempts >= STREAM_RECONNECT_DELAYS_MS.length) {
+      recovery.armed = false;
+      recovery.immediate = false;
+      if (state === "disconnected") setMessage(`${STREAM_DROPPED_MESSAGE} Reconnect when you are ready.`);
+      if (retryable) {
+        clientLog.warn("remote desktop stream did not reconnect automatically", {
+          source: "hivra-remote-desktop",
+          failureType: "hivra_remote_desktop_reconnect_exhausted",
+          computerId,
+          attempts: recovery.attempts,
+          finalState: state,
+        });
+      }
+      return;
+    }
+    if (!pageLive) {
+      if (offline && state === "disconnected") setMessage(`${STREAM_DROPPED_MESSAGE} Reconnecting when this device is back online.`);
+      return;
+    }
+    setState("reconnecting");
+    setMessage(`${STREAM_DROPPED_MESSAGE} Reconnecting…`);
+  }, [active, computerId, connect, controllerConflict, recoveryTick, state]);
 
   useEffect(() => {
     if (!brokerOrigin) return;
@@ -790,13 +904,38 @@ export function HivraRemoteDesktop({
         const startedAt = setupStartedAtRef.current;
         setupStartedAtRef.current = null;
         if (startedAt != null) setSecureSetupMs(Math.max(0, window.performance.now() - startedAt));
+        const recovery = recoveryRef.current;
+        recovery.armed = false;
+        recovery.immediate = false;
+        recovery.connectedAt = Date.now();
         setState("connected");
         setMessage("Human input is isolated from the agent while this desktop is open.");
       } else if (type === "hivra.remote-desktop.disconnected.v1") {
         const failure = event.data as { reason?: unknown };
         if (handoffRef.current?.sent === false || Object.keys(event.data).length !== 3
           || !["transport-closed", "transport-error", "stream-unavailable", "document-reloaded", "document-closed"].includes(String(failure.reason))) return;
-        endSession("disconnected", "This desktop session ended. Reconnect when you are ready; no new session has been opened.");
+        const reason = String(failure.reason);
+        const recovery = recoveryRef.current;
+        // Only a stream that was showing the desktop proves the desktop was up.
+        // A stream that never opened says nothing about it, and on a first
+        // open the user's Reconnect stays the next step.
+        const streamDropped = stateRef.current === "connected" && STREAM_DROP_REASONS.has(reason);
+        if (streamDropped) {
+          if (recovery.connectedAt !== null && Date.now() - recovery.connectedAt >= STREAM_RECONNECT_STABLE_MS) {
+            recovery.attempts = 0;
+          }
+          recovery.armed = true;
+        }
+        recovery.connectedAt = null;
+        clientLog.info("remote desktop stream ended", {
+          source: "hivra-remote-desktop",
+          reason,
+          wasStreaming: streamDropped,
+          reconnecting: recovery.armed,
+        });
+        endSession("disconnected", streamDropped || recovery.armed
+          ? STREAM_DROPPED_MESSAGE
+          : "The desktop stream stopped before it finished opening. Reconnect when you are ready.");
       } else if (type === "hivra.remote-desktop.failed.v1") {
         const failure = event.data as { type?: unknown; reason?: unknown };
         const keys = Object.keys(failure);
@@ -955,6 +1094,7 @@ export function HivraRemoteDesktop({
 
   const prepareDesktop = useCallback(async () => {
     hiddenEpisodeRef.current = null;
+    cancelStreamRecovery();
     const attempt = ++attemptRef.current;
     conflictWaitRef.current?.finish();
     const previous = sessionIdRef.current;
@@ -1052,7 +1192,13 @@ export function HivraRemoteDesktop({
       setState("prepare-failed");
       setMessage("Desktop couldn’t open. Retry to repair the runtime and try again.");
     }
-  }, [computerId, connect]);
+  }, [cancelStreamRecovery, computerId, connect]);
+
+  /** Every connect the user asks for supersedes an automatic one. */
+  const connectByUser = (options?: { allowPrepare?: boolean; ownerHandoff?: boolean }) => {
+    cancelStreamRecovery();
+    void connect(options);
+  };
 
   const retryDesktop = useCallback(() => {
     refreshAttemptedRef.current = false;
@@ -1142,7 +1288,7 @@ export function HivraRemoteDesktop({
         <span className={styles.stripStatus} aria-hidden="true">
           {state === "connected" ? (
             <ShieldCheck size={13} color="var(--success, #33c978)" />
-          ) : state === "connecting" || state === "preparing" ? (
+          ) : state === "connecting" || state === "preparing" || state === "reconnecting" ? (
             <Loader2 size={13} className="animate-spin" />
           ) : (
             <Monitor size={13} />
@@ -1182,6 +1328,12 @@ export function HivraRemoteDesktop({
           <button type="button" onClick={() => void prepareDesktop()} className={styles.stripAction}>
             Update desktop <RefreshCw size={11} />
           </button>
+        ) : state === "unavailable" && !allowAutomaticPrepareRef.current ? (
+          // An automatic reconnect whose runtime proof failed must not leave
+          // the user without the Reconnect they had before it ran.
+          <button type="button" onClick={() => connectByUser()} className={styles.stripAction}>
+            Reconnect <RefreshCw size={11} />
+          </button>
         ) : state === "unavailable" && autoPrepareAttemptedRef.current ? (
           <button type="button" onClick={() => void retryDesktop()} className={styles.stripAction}>
             Retry <RefreshCw size={11} />
@@ -1191,12 +1343,12 @@ export function HivraRemoteDesktop({
             Retry <RefreshCw size={11} />
           </button>
         ) : state === "failed" && controllerConflict ? (
-          <button type="button" onClick={() => void connect({ allowPrepare: false, ownerHandoff: true })} className={styles.stripAction}>
+          <button type="button" onClick={() => connectByUser({ allowPrepare: false, ownerHandoff: true })} className={styles.stripAction}>
             Take over here <RefreshCw size={11} />
           </button>
-        ) : state === "failed" || state === "disconnected" ? (
-          <button type="button" onClick={() => void connect()} className={styles.stripAction}>
-            {state === "disconnected" ? "Reconnect" : "Try again"} <RefreshCw size={11} />
+        ) : state === "failed" || state === "disconnected" || state === "reconnecting" ? (
+          <button type="button" onClick={() => connectByUser()} className={styles.stripAction}>
+            {state === "failed" ? "Try again" : "Reconnect"} <RefreshCw size={11} />
           </button>
         ) : null}
         {state === "connected" || expanded ? (
@@ -1278,7 +1430,7 @@ export function HivraRemoteDesktop({
           <div style={{ maxWidth: 520 }}>
             <Monitor size={24} style={{ margin: "0 auto 14px" }} />
             <h2 className="serif" style={{ color: "var(--ink-black)", fontWeight: 400, fontSize: 24, marginBottom: 8 }}>
-              {state === "disconnected" ? "This desktop session has ended"
+              {state === "disconnected" || state === "reconnecting" ? "Stream disconnected"
                   : state === "prepare-paused" ? "Desktop couldn’t open right now"
                     : state === "prepare-pending" ? "Desktop is still opening"
                     : state === "prepare-failed" ? "Desktop couldn’t open"
@@ -1287,7 +1439,10 @@ export function HivraRemoteDesktop({
                     ? "This computer needs a current launch"
                     : "Remote desktop isn’t ready on this computer"}
             </h2>
-            <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0 }}>{message}</p>
+            <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0 }}>
+              {/* The heading already says the stream disconnected. */}
+              {state === "disconnected" || state === "reconnecting" ? message.replace(/^Stream disconnected\. /, "") : message}
+            </p>
           </div>
         </div>
       )}

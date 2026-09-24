@@ -5,7 +5,14 @@ import { TextEncoder } from "node:util";
 
 import { HivraRemoteDesktop } from "../HivraRemoteDesktop";
 import { WorkspaceModalLayerProvider } from "@/components/workspace/WorkspaceModalLayerContext";
+import { clientLog } from "@/lib/client/logger";
 import { streamModeStorageKey } from "@/lib/remote-computers/streaming-mode-preference";
+
+// The real client logger forwards warnings through fetch, which these tests
+// count; keep its calls observable instead.
+jest.mock("@/lib/client/logger", () => ({
+  clientLog: { info: jest.fn(), warn: jest.fn() },
+}));
 
 const COMPUTER_ID = "00000000-0000-4000-8000-000000001041";
 const ORIGIN = "https://agent.example.test";
@@ -403,7 +410,7 @@ describe("HivraRemoteDesktop", () => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
   });
 
-  it("ends only the exact current media session and never automatically opens a replacement", async () => {
+  it("ends only the exact current media session and keeps Reconnect one click away", async () => {
     const a = "018f6d3c-1d91-7c65-9d86-37fc915b8377";
     const b = "018f6d3c-1d91-7c65-9d86-37fc915b8378";
     let issued = 0;
@@ -426,7 +433,8 @@ describe("HivraRemoteDesktop", () => {
     dispatchBrokerMessage(frame, { ...terminal, extra: true });
     expect(screen.getByText("Connected")).toBeTruthy();
     dispatchBrokerMessage(frame, terminal);
-    expect(await screen.findByText("Disconnected")).toBeTruthy();
+    // The automatic reconnect waits out its backoff; the old frame is gone.
+    expect(await screen.findByText("Reconnecting")).toBeTruthy();
     expect(screen.queryByTitle("Codex remote desktop")).toBeNull();
     expect(screen.queryByText(/Human input is isolated/)).toBeNull();
     dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1" });
@@ -1553,9 +1561,8 @@ describe("HivraRemoteDesktop", () => {
       sessionId: firstId,
       reason: "transport-closed",
     });
-    expect(await screen.findByText("Disconnected")).toBeTruthy();
     // Revoke from disconnect is in-flight and gated; reconnect must still issue.
-    fireEvent.click(screen.getByRole("button", { name: /reconnect/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /reconnect/i }));
     await waitFor(() => expect(issueCalls).toBe(2));
     expect(await screen.findByTitle("Codex remote desktop")).toBeTruthy();
     releaseRevoke();
@@ -1584,4 +1591,274 @@ describe("HivraRemoteDesktop", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url) === `${ORIGIN}/desktop/handoff`)).toBe(true);
   });
 
+  describe("after the stream drops", () => {
+    const SESSION_IDS = [1, 2, 3, 4, 5].map(n => `00000000-0000-4000-8000-00000000000${n}`);
+    const advance = (milliseconds: number) => act(async () => { jest.advanceTimersByTime(milliseconds); });
+
+    function mockDesktop(overrides: {
+      issue?: (attempt: number) => Promise<Response> | undefined;
+      refresh?: (attempt: number) => Promise<Response> | undefined;
+    } = {}) {
+      const counts = { issued: 0, refresh: 0, prepare: 0 };
+      fetchMock.mockImplementation((input, init) => {
+        if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") {
+          counts.issued += 1;
+          return overrides.issue?.(counts.issued)
+            ?? response(201, { success: true, data: session(SESSION_IDS[counts.issued - 1]) });
+        }
+        if (String(input) === `/api/hivra/agents/${COMPUTER_ID}/remote-desktop` && init?.method === "POST") {
+          const action = JSON.parse(String(init.body)).action;
+          if (action === "refresh") {
+            counts.refresh += 1;
+            const refreshed = overrides.refresh?.(counts.refresh);
+            if (refreshed) return refreshed;
+          }
+          if (action === "prepare") counts.prepare += 1;
+        }
+        return response(200, { success: true, data: { prepared: true } });
+      });
+      return counts;
+    }
+
+    async function openStream(sessionId: string) {
+      const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId });
+      expect(screen.getByText("Connected")).toBeTruthy();
+      return frame;
+    }
+
+    function dropStream(frame: HTMLIFrameElement, sessionId: string, reason = "transport-closed") {
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.disconnected.v1", sessionId, reason });
+    }
+
+    it("reconnects on its own after a short backoff and says the desktop is still running", async () => {
+      jest.useFakeTimers();
+      try {
+        const counts = mockDesktop();
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        dropStream(frame, SESSION_IDS[0]);
+
+        expect(screen.getByText("Reconnecting")).toBeTruthy();
+        expect(screen.getByRole("heading", { name: "Stream disconnected" })).toBeTruthy();
+        expect(screen.getByTitle("Stream disconnected. Your desktop and its apps are still running. Reconnecting…")).toBeTruthy();
+        expect(screen.queryByText(/session has ended/i)).toBeNull();
+        expect(screen.getByRole("button", { name: /reconnect/i })).toBeTruthy();
+
+        await advance(1_500);
+        expect(counts.issued).toBe(1);
+        await advance(500);
+        await waitFor(() => expect(counts.issued).toBe(2));
+        // A read-only proof precedes the new authority; nothing is installed
+        // and another controller is never displaced.
+        const steps = fetchMock.mock.calls
+          .filter(([input, init]) => init?.method === "POST" && (String(input) === "/api/remote-desktop/sessions" || JSON.parse(String(init.body)).action))
+          .map(([input, init]) => String(input) === "/api/remote-desktop/sessions" ? "issue" : JSON.parse(String(init?.body)).action);
+        expect(steps).toEqual(["issue", "refresh", "issue"]);
+        expect(counts.prepare).toBe(0);
+        const reissued = fetchMock.mock.calls.filter(([input, init]) => String(input) === "/api/remote-desktop/sessions" && init?.method === "POST").at(-1);
+        expect(JSON.parse(String(reissued?.[1]?.body)).ownerHandoff).toBe(false);
+
+        await openStream(SESSION_IDS[1]);
+        expect(screen.queryByText(/Stream disconnected/)).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("stops after a bounded number of automatic attempts and leaves the next step to the user", async () => {
+      jest.useFakeTimers();
+      try {
+        const counts = mockDesktop({
+          issue: attempt => attempt === 1 ? undefined : response(503, { success: false, error: "Desktop opening is unavailable." }),
+        });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        dropStream(frame, SESSION_IDS[0], "transport-error");
+
+        for (const [delay, issued] of [[2_000, 2], [5_000, 3], [15_000, 4]]) {
+          expect(screen.getByText("Reconnecting")).toBeTruthy();
+          await advance(delay - 500);
+          expect(counts.issued).toBe(issued - 1);
+          await advance(500);
+          await waitFor(() => expect(counts.issued).toBe(issued));
+        }
+        expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+        await advance(120_000);
+        expect(counts.issued).toBe(4);
+        expect(counts.refresh).toBe(3);
+        expect(counts.prepare).toBe(0);
+        expect(screen.queryByText("Reconnecting")).toBeNull();
+        expect(clientLog.warn).toHaveBeenCalledWith(
+          "remote desktop stream did not reconnect automatically",
+          expect.objectContaining({ failureType: "hivra_remote_desktop_reconnect_exhausted", attempts: 3, finalState: "failed" }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+        await waitFor(() => expect(counts.issued).toBe(5));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("carries the budget across a reconnect that drops again soon and refills it after a stable minute", async () => {
+      jest.useFakeTimers();
+      try {
+        const counts = mockDesktop();
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        let frame = await openStream(SESSION_IDS[0]);
+        dropStream(frame, SESSION_IDS[0]);
+        await advance(2_000);
+        await waitFor(() => expect(counts.issued).toBe(2));
+
+        // Dropped again straight away: the second attempt waits longer.
+        frame = await openStream(SESSION_IDS[1]);
+        dropStream(frame, SESSION_IDS[1]);
+        await advance(4_000);
+        expect(counts.issued).toBe(2);
+        await advance(1_000);
+        await waitFor(() => expect(counts.issued).toBe(3));
+
+        // Up for a minute: the next drop starts from the shortest wait again.
+        frame = await openStream(SESSION_IDS[2]);
+        await advance(60_000);
+        dropStream(frame, SESSION_IDS[2]);
+        await advance(2_000);
+        await waitFor(() => expect(counts.issued).toBe(4));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("still reconnects once on return when the stream drops while hidden after a spent budget", async () => {
+      jest.useFakeTimers();
+      try {
+        const counts = mockDesktop();
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        let frame = await openStream(SESSION_IDS[0]);
+        for (const [index, delay] of [[0, 2_000], [1, 5_000], [2, 15_000]]) {
+          dropStream(frame, SESSION_IDS[index]);
+          await advance(delay);
+          await waitFor(() => expect(counts.issued).toBe(index + 2));
+          frame = await openStream(SESSION_IDS[index + 1]);
+        }
+        Object.defineProperty(document, "hidden", { configurable: true, value: true });
+        act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+        dropStream(frame, SESSION_IDS[3]);
+        await advance(60_000);
+        expect(counts.issued).toBe(4);
+        Object.defineProperty(document, "hidden", { configurable: true, value: false });
+        act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+        await advance(0);
+        await waitFor(() => expect(counts.issued).toBe(5));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("waits until the page is visible and online before reconnecting", async () => {
+      jest.useFakeTimers();
+      let online = true;
+      Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => online });
+      try {
+        const counts = mockDesktop();
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        online = false;
+        act(() => { window.dispatchEvent(new Event("offline")); });
+        dropStream(frame, SESSION_IDS[0]);
+        expect(screen.getByText("Disconnected")).toBeTruthy();
+        expect(screen.getByTitle("Stream disconnected. Your desktop and its apps are still running. Reconnecting when this device is back online.")).toBeTruthy();
+        await advance(60_000);
+        expect(counts.issued).toBe(1);
+
+        online = true;
+        act(() => { window.dispatchEvent(new Event("online")); });
+        expect(screen.getByText("Reconnecting")).toBeTruthy();
+        // Hidden before the backoff ends: nothing opens for a page nobody sees.
+        Object.defineProperty(document, "hidden", { configurable: true, value: true });
+        act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+        await advance(60_000);
+        expect(counts.issued).toBe(1);
+
+        Object.defineProperty(document, "hidden", { configurable: true, value: false });
+        act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+        expect(screen.getByText("Reconnecting")).toBeTruthy();
+        await advance(2_000);
+        await waitFor(() => expect(counts.issued).toBe(2));
+        expect(counts.prepare).toBe(0);
+      } finally {
+        delete (window.navigator as { onLine?: boolean }).onLine;
+        jest.useRealTimers();
+      }
+    });
+
+    it("lets Reconnect replace a pending automatic attempt without opening a second session", async () => {
+      jest.useFakeTimers();
+      try {
+        const counts = mockDesktop();
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        dropStream(frame, SESSION_IDS[0]);
+        fireEvent.click(screen.getByRole("button", { name: /reconnect/i }));
+        await waitFor(() => expect(counts.issued).toBe(2));
+        expect(counts.refresh).toBe(0);
+        // Even when that stream never opens (the 30 s handoff timeout), the
+        // cancelled automatic attempt does not come back.
+        await advance(31_000);
+        expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+        await advance(30_000);
+        expect(counts.issued).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("keeps Reconnect when an automatic reconnect cannot prove the runtime, and stops there", async () => {
+      jest.useFakeTimers();
+      try {
+        const counts = mockDesktop({
+          refresh: () => response(409, { success: false, code: "capability_refresh_failed", error: "This computer's current desktop runtime could not be verified." }),
+        });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        dropStream(frame, SESSION_IDS[0]);
+        await advance(2_000);
+        await waitFor(() => expect(counts.refresh).toBe(1));
+        expect(await screen.findByText("Unavailable")).toBeTruthy();
+        await advance(60_000);
+        expect(counts.refresh).toBe(1);
+        expect(counts.issued).toBe(1);
+        expect(counts.prepare).toBe(0);
+
+        fireEvent.click(screen.getByRole("button", { name: /reconnect/i }));
+        await waitFor(() => expect(counts.issued).toBe(2));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it.each(["stream-unavailable", "transport-closed"])(
+      "neither claims a running desktop nor retries on its own when a first open never streamed (%s)",
+      async reason => {
+        jest.useFakeTimers();
+        try {
+          const counts = mockDesktop();
+          render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+          const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+          dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+          dropStream(frame, SESSION_IDS[0], reason);
+          expect(screen.getByText("Disconnected")).toBeTruthy();
+          expect(screen.getByTitle("The desktop stream stopped before it finished opening. Reconnect when you are ready.")).toBeTruthy();
+          expect(screen.queryByText(/still running/)).toBeNull();
+          await advance(60_000);
+          expect(counts.issued).toBe(1);
+          expect(screen.getByRole("button", { name: /reconnect/i })).toBeTruthy();
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+    );
+  });
 });
