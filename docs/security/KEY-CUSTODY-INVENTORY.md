@@ -213,7 +213,10 @@ conclusions. Custody and regulatory treatment are under legal review.
   (`hermes-config-write.ts`, `webui-instance-builder.ts`). Hivra boxes get it
   in `/home/bux/.hivra/bankr.env` (mode 0600, owned by the `bux` user the agent
   runs as), which the box's chat server reads on every agent turn
-  (`bankr-wallet-env-seed.ts`, `provisioner/hivra-chat/server.js`).
+  (`bankr-wallet-env-seed.ts`, `provisioner/hivra-chat/server.js`). While the
+  agent keeps this wallet, Hermes runtime updates re-deliver these values and
+  never clear them, and the Hivra-box boot reconcile described in row 10 does
+  not touch these rows.
 - **Funds:** whatever the user deposits. They stay until withdrawn.
 - **Who can move:** the agent (with the key, to any address); Hivra, through
   `POST …/bankr-wallet/withdraw` on the user's request (any recipient the user
@@ -237,6 +240,8 @@ conclusions. Custody and regulatory treatment are under legal review.
   key, and anything sent to its address later stays there.
 - **Since this change:** no new wallets of this kind are created. Existing
   ones keep their key, balance display, runtime delivery and withdrawals.
+- **Copies in backups:** where this key was delivered to a Hermes "webfree"
+  box, the box backups described in row 10 hold copies of it too.
 
 ### 10. User-connected agent wallets — class C (new default)
 
@@ -267,15 +272,74 @@ conclusions. Custody and regulatory treatment are under legal review.
 - **How long:** the user's funds stay in the user's own Bankr account.
 - **Revocation:** the user revokes the key at bankr.bot/api-keys (immediate at
   Bankr), or presses Disconnect in Hivra, which deletes Hivra's stored copy and
-  stops delivering the key. Removal from the agent depends on the runtime:
-  on a running Hivra box the env file is deleted and the next agent turn runs
-  without it (a stopped box keeps the file, because nothing re-syncs it at
-  start); on Hermes agents with a config API the config is rewritten without
-  it; on Hermes "webfree" boxes (backend `gateway` or `webui`) the key
-  stays in the box's persisted environment, because runtime updates never
-  clear `BANKR_*` values (`webui-runtime-env.ts`). The dashboard reports which
-  of these happened and, when removal isn't confirmed, tells the user to
-  revoke the key at Bankr. Disconnect never revokes the key at Bankr.
+  stops delivering the key. Disconnect never revokes the key at Bankr. Removal
+  from the agent depends on the runtime. The Hivra-box boot step and the Hermes
+  "webfree" steps below are implemented in code and tests; live acceptance is
+  pending (open item 6).
+  - **Hivra boxes:** on a running box, `bankr.env` is deleted over SSH and the
+    next agent turn runs without it. A box that isn't running keeps the file
+    until it next boots. At every boot (start, restart, resize, runtime update,
+    the first start after a snapshot restore, and a box the stuck-provisioning
+    sweep brings to running) Hivra re-applies the wallet row: it writes
+    `bankr.env` for an active user-connected row and deletes it otherwise
+    (`hivra-lane.ts` `reconcileBankrEnvAfterHivraBoot`). Only user-connected
+    rows are handled this way. Each write or delete runs from the Proxmox host
+    only after it checks the VM's owner binding tag and configured IP, over SSH
+    pinned to the guest host key that QEMU Guest Agent attests for that VM; a
+    box that fails those checks is left untouched (`bankr-wallet-env-seed.ts`).
+    Such a box, for example an older box whose owner binding isn't enforced,
+    never receives a connected key, and a disconnect leaves any existing
+    `bankr.env` on it in place; the dashboard says so and points the user to
+    revoking at Bankr.
+  - **Hermes agents with a config API:** the config is rewritten without the
+    key.
+  - **Hermes "webfree" boxes** (backend `gateway` or `webui`): the key leaves
+    the box's persisted environment at the box's next runtime update, or at
+    once if the user leaves "Restart the agent now" ticked in the Disconnect
+    dialog (ticked by default). That option starts a runtime update of the box
+    (`hermes-webfree-wallet-sync.ts`, the same path as the Update button), so
+    the agent restarts for about 1–3 minutes and chats in progress stop. Only
+    running, active boxes are restarted; a paused, stopped or suspended box, or
+    one already mid-update, keeps the key until its next update. The update
+    removes only values belonging to a wallet this agent has had, matched by
+    address against every address the row records: the current one, the ones
+    it replaced (`metadata.priorUserConnectedAddresses`, kept from this change
+    onwards) and any Hivra-created wallet it switched away from: `BANKR_*` in
+    `/state/.env`, and the `bankr:` blocks in `config.yaml`, the profile
+    configs and the managed-Venice backups, only when `/state/.env`'s
+    `BANKR_AGENT_WALLET_ADDRESS` is one of those addresses; and `BANKR_*` in each
+    cloned profile `.env` (`/state/profiles/<name>/.env`; Hermes profile clones
+    copy the base `.env`, `profile-service.ts`) that holds one of them. A file
+    holding any other address is never touched. Rows overwritten before this
+    change carry no address history, so a box still holding one of those older
+    wallets is cleaned only when its address matches one the row records. The first
+    clear removes the address line, so later updates leave any `BANKR_*` value
+    set afterwards alone. A failed wallet lookup, a missing row and every
+    Hivra-provisioned wallet leave the box as before
+    (`instance-orchestrator.ts` `resolveBankrRuntimeEnvPlanForUpdate`,
+    `webui-instance-builder.ts`, `webui-runtime-env.ts`).
+  - The dashboard reports which of these happened and, when removal isn't
+    confirmed, tells the user to revoke the key at Bankr (or to run Update
+    once an in-flight update finishes).
+- **Copies in backups:** when per-instance backups are enabled
+  (`daily-instance-backups` cron, `DAILY_INSTANCE_BACKUPS_ENABLED`; deployed
+  value not verified), `backup-vm-restic.sh` copies each Hermes "webfree"
+  box's state volume, including `/state/.env`, the profile `.env` files and
+  `config.yaml` with any `BANKR_*` lines or `bankr:` block, into an encrypted
+  restic repository for that instance on a Hetzner Storage Box. Those copies
+  stay until the retention policy prunes them (by default 7 daily, 4 weekly
+  and 3 monthly snapshots, changeable through `HERMES_RESTIC_KEEP_*` on the
+  host). Disconnect and the runtime clear do not touch them. Whole-VM backups
+  for paid tiers (`daily-vm-backups` cron, `backup-vm-daily.sh`,
+  `DAILY_VM_BACKUPS_ENABLED`, 7 kept; deployed value not verified) contain the
+  same disk. `backup-vm-restic.sh` also stages the state volume in a plain,
+  unencrypted mirror on the Proxmox host (`/var/lib/hermes-restic-src/<id>`)
+  before each backup, and a failed run can leave that mirror in place. On
+  Hivra boxes, restore points are Proxmox disk snapshots (`qm snapshot`,
+  `agent-snapshots.ts`) that include `/home/bux/.hivra/bankr.env` as it was
+  when the restore point was taken; they keep it until the restore point is
+  deleted. Revoking the key at bankr.bot/api-keys is the only step that stops
+  every copy working at once.
 - **Agent deletion:** when the agent reaches its terminal deleted state
   (`hermes_instances.status` or `hivra_agents.status = 'deleted'`, from any
   delete path), a database trigger (`drop_user_bankr_key_after_agent_delete`,
@@ -285,9 +349,17 @@ conclusions. Custody and regulatory treatment are under legal review.
   as a database warning and never blocks the delete. It does not revoke the
   key at Bankr. Hivra-provisioned wallets (row 9) are left as they are, so
   their funds can still be withdrawn.
-- **Delivery timing:** on Hermes "webfree" boxes a newly connected key reaches
-  the agent at its next runtime update, as Hivra-provisioned keys always have.
-  A Hivra box that isn't running doesn't receive it; the dashboard says so.
+- **Delivery timing:** a Hermes "webfree" box receives a connected key at its
+  next runtime update, as Hivra-provisioned keys always have, or at once if
+  the user ticks "Restart the agent now" in the Connect dialog (unticked by
+  default), which starts a runtime update of a running, active box; the agent
+  then restarts for about 1–3 minutes and chats in progress stop. That update
+  writes the key to `BANKR_*`, drops any `BANKR_*` key the new wallet doesn't
+  set (such as a replaced wallet's withdrawal destination), strips older
+  `bankr:` blocks from `config.yaml`, and removes `BANKR_*` from cloned profile
+  `.env` files holding the wallet it replaces (implemented in code; live
+  acceptance pending). A Hivra box that isn't running receives the key at its
+  next boot; the dashboard says it doesn't have it yet.
 
 ### 11. User-supplied Bankr keys in the vault or as a model provider — class C
 
@@ -353,13 +425,30 @@ conclusions. Custody and regulatory treatment are under legal review.
    soft delete and the wallet's funds may still need withdrawing. For a
    user-connected wallet (row 10) Hivra's copy of the key is deleted when the
    agent is deleted; the key stays valid at Bankr until the user revokes it.
-6. On Hermes "webfree" boxes, `BANKR_*` values in the persisted box
-   environment are never cleared by Hivra (rows 9 and 10). A stopped Hivra box
-   keeps its `bankr.env` after a disconnect.
-7. Bankr's `GET /wallet/me` and `GET /wallet/portfolio` response shapes and the
-   bulk key revocation endpoint (`DELETE /partner/wallets/{id}/api-keys`) are
-   implemented from Bankr's published documentation. They have not been
-   exercised against a real user-owned Bankr account or a real switch.
+6. The runtime removal paths in row 10 are implemented in code and covered by
+   tests but not yet accepted on a live box: the Hivra-box `bankr.env`
+   reconcile at every boot (user-connected rows only, over the pinned SSH
+   path), and on Hermes "webfree" boxes the `BANKR_*` upsert or clear at the
+   box's next runtime update, or at once when the user chooses the restart,
+   which removes only values matching the disconnected wallet, including in
+   cloned profile `.env` files. This item stays open until those checks pass.
+   Hivra-provisioned values (row 9) are never cleared from Hermes "webfree"
+   boxes. Restic backups of Hermes "webfree" state volumes
+   (`backup-vm-restic.sh`), and whole-VM backups where enabled, keep copies of
+   `/state/.env`, including `BANKR_*`, until backup retention expires, so
+   revoking the key at bankr.bot/api-keys is the only immediate way to stop a
+   disconnected key working.
+7. Bankr's `GET /wallet/me` and `GET /wallet/portfolio` response shapes were
+   checked read-only against a real user-owned Bankr account on 2026-09-24 and
+   match the code. The bulk key revocation endpoint
+   (`DELETE /partner/wallets/{id}/api-keys`) is implemented from Bankr's
+   published documentation and has not been exercised in a real switch.
+8. Runtime updates of a Hermes "webfree" box are not serialised. A disconnect
+   with "Restart the agent now" that lands while another update of the same
+   box (the fleet redeploy cron or a manual Update) is still launching can run
+   alongside it; if the older update finishes last, it can write the
+   disconnected key back until the box's next update. The same overlap
+   between a manual Update and the cron existed before this change.
 
 ## Engineering recommendation for class B lock wallets
 
