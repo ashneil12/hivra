@@ -83,13 +83,30 @@ describe("buildBootstrapContent", () => {
     expect(promptBlock.match(new RegExp(BOOTSTRAP_END, "g"))).toHaveLength(1);
   });
 
-  it("tailors capabilities to the agent type (browser for claude, not codex)", () => {
-    const claude = buildBootstrapContent({ id: "c", name: "Forge", type: "claude-code", goal: "build" });
-    const codex = buildBootstrapContent({ id: "x", name: "Forge", type: "codex", goal: "build" });
-    expect(claude.soul).toContain("browser");
-    expect(claude.promptBlock).toContain("browser");
-    expect(codex.soul).not.toContain("browser");
-    expect(codex.promptBlock).not.toContain("browser");
+  // ATT-08/ATT-09 regression: every non-Codex agent used to be told it can
+  // "drive a real browser" even with browser automation off, and Codex was told
+  // it has no browser even when launched with one. Browser automation is a
+  // per-computer Manage toggle with no stored flag, and this seed runs once, so
+  // the claim must be conditional for every type that ships the browser stack.
+  it("states the browser conditionally for agent types that ship one (Claude Code and Codex alike)", () => {
+    const conditional = "drive a real browser when browser automation is on in Manage";
+    for (const type of ["claude-code", "codex"]) {
+      const { soul, promptBlock } = buildBootstrapContent({ id: type, name: "Forge", type, goal: "build" });
+      expect(soul).toContain(`- **You can:** write and run code, use a full terminal, and ${conditional}.`);
+      expect(promptBlock).toContain(`You can write and run code, use a full terminal, and ${conditional}.`);
+      // Never the old unconditional claim.
+      expect(soul).not.toContain("drive a real browser,");
+      expect(promptBlock).not.toContain("drive a real browser,");
+    }
+  });
+
+  it("never claims a browser for agent types without the browser stack", () => {
+    for (const type of ["hermes", "aeon", null]) {
+      const { soul, promptBlock } = buildBootstrapContent({ id: String(type), name: "Forge", type, goal: "build" });
+      expect(soul).toContain("- **You can:** write and run code, and use a full terminal.");
+      expect(soul).not.toContain("browser");
+      expect(promptBlock).not.toContain("browser");
+    }
   });
 
   it("degrades gracefully with no onboarding (identity from name alone)", () => {

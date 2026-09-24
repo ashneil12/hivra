@@ -21,7 +21,7 @@ export default function FullTokenomicsSection({ headingLevel = 2 }: { headingLev
         <span className={styles.eyebrow}>Existing access</span>
         <h3>A fixed quantity.<br />{" "}A choice to keep.</h3>
         <p>Existing $HermesOS holders can qualify for compute. The amount you need is fixed when your holding first qualifies. A price fall doesn&apos;t take away access you already have, as long as you keep holding it.</p>
-        <p>You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final. Self-hosting Hivra requires neither the token nor a Hivra account.</p>
+        <p>You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final, except where the law gives you a right to cancel. Self-hosting Hivra requires neither the token nor a Hivra account.</p>
       </article>
       <article className={styles.migration}>
         <span className={styles.eyebrow}>Proposed migration</span>

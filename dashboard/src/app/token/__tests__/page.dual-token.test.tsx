@@ -6,6 +6,15 @@ import { render, screen, within } from "@testing-library/react";
 
 import TokenVerificationPage from "../page";
 
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: {
+    contractAddress: "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
+    decimals: 18,
+    poolId: `0x${"cd".repeat(32)}`,
+    activatesAt: "2026-01-01T00:00:00Z",
+  },
+}));
+
 jest.mock("next/link", () => {
   const MockLink = ({
     href,
@@ -93,24 +102,20 @@ jest.mock("framer-motion", () => {
   };
 });
 
-describe("/token page", () => {
-  it("separates the verified existing contract and current access from proposals", () => {
+describe("/token page once $HIVRA is live", () => {
+  it("lists $HIVRA first with its contract, and $HermesOS as the legacy token", () => {
     render(<TokenVerificationPage />);
     const main = within(screen.getByRole("main"));
-    expect(main.getByRole("heading", { name: "$HermesOS and Hivra." })).toBeInTheDocument();
-    expect(main.getByText("0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3")).toBeInTheDocument();
-    expect(main.getByRole("link", { name: "View the contract on BaseScan" })).toHaveAttribute("href", "https://basescan.org/token/0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3");
-    expect(main.getByRole("heading", { name: "Existing holder access" })).toBeInTheDocument();
-    expect(main.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
-    expect(main.getByText(/No migration action is offered/)).toBeInTheDocument();
-    expect(main.getByText(/Use Hivra and pay by card without connecting a wallet/)).toBeInTheDocument();
-    // The dashboard calls this route "Billing" everywhere (nav, Settings row, page eyebrow).
-    expect(main.getByRole("link", { name: "Open Billing" })).toHaveAttribute("href", "/dashboard/billing");
-    expect(main.queryByText(/Billing & Access/)).not.toBeInTheDocument();
-    expect(main.queryByRole("button", { name: /buy|claim|migrate/i })).not.toBeInTheDocument();
-    // Two platform token entries: $HIVRA is not launched while dormant.
-    expect(main.getByText(/Not launched yet\. There is no \$HIVRA contract yet/)).toBeInTheDocument();
-    expect(main.getByText(/Hivra never confirms contract addresses in DMs or private messages/)).toBeInTheDocument();
-    expect(main.queryByText(/Nibbii/)).not.toBeInTheDocument();
+    const entries = screen.getAllByText(/0x[0-9a-fA-F]{40}/).map((node) => node.textContent);
+    expect(entries).toEqual([
+      "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
+      "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3",
+    ]);
+    expect(main.getByRole("link", { name: "View the $HIVRA contract on BaseScan" })).toHaveAttribute(
+      "href",
+      "https://basescan.org/token/0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf"
+    );
+    expect(main.getByText(/The legacy \$HermesOS contract/)).toBeInTheDocument();
+    expect(main.queryByText(/Not launched yet/)).not.toBeInTheDocument();
   });
 });

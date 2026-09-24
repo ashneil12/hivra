@@ -54,7 +54,7 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
   const { container } = render(<TokenomicsSection />);
   for (const sentence of [
     "The amount you need is fixed when your holding first qualifies.",
-    "a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final.",
+    "a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits.",
     "Bankr would run the conversion.",
     "The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps.",
     "Once $HIVRA launches, new users hold and pay with $HIVRA.",
@@ -64,5 +64,8 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
     expect(litepaper).toContain(sentence);
     expect(container.textContent).toContain(sentence);
   }
+  // UK consumers keep a 14-day right to cancel (CCR 2013 regs 29, 30, 36), so the
+  // site must not repeat the Litepaper's bare "final" without the exception.
+  expect(container.textContent).toContain("Token payments are final, except where the law gives you a right to cancel.");
   expect(container.textContent).not.toMatch(/Nibbii|remain to be settled|fixed at deposit|own wallet|market quote/);
 });

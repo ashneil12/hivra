@@ -11,8 +11,8 @@ dashboard/src/app/api/billing/wallet/eligibility/__tests__/route.test.ts:generic
 dashboard/src/app/api/cron/purge-error-hivra-agents/__tests__/route.test.ts:generic-api-key:58
 dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generic-api-key:12
 dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generic-api-key:13
-dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2126
-dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2202
+dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2176
+dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2252
 dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:300
 dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:351
 dashboard/src/components/infrastructure/__tests__/InfrastructureConnectionsPage.test.tsx:generic-api-key:351

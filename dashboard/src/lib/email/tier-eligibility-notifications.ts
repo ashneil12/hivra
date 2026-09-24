@@ -14,10 +14,9 @@
 import { Resend } from "resend";
 import { clerkClient } from "@clerk/nextjs/server";
 
-import {
-  HERMESOS_TOKEN_DECIMALS,
-  HERMESOS_TOKEN_SYMBOL,
-} from "@/lib/billing/token-holdings";
+import { HERMESOS_TOKEN_DECIMALS } from "@/lib/billing/token-holdings";
+import { HERMESOS_TOKEN, platformTokenByKey } from "@/lib/billing/token-registry";
+import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
 import type {
   EligibilityResult,
   EligibilityTransition,
@@ -65,17 +64,20 @@ interface EmailContent {
   text: string;
 }
 
-function buildEmailContent(params: SendParams): EmailContent | null {
+export function buildEmailContent(params: SendParams): EmailContent | null {
   const tierName = tierLabel(params.tier);
-  const sym = HERMESOS_TOKEN_SYMBOL;
-  const balanceStr = formatTokenAmount(params.currentBalance);
   const tierEval = params.tier === "pro" ? params.evaluation.pro : params.evaluation.power;
   if (!tierEval) return null;
+  // The unit of the token this tier is held in ($HermesOS or $HIVRA).
+  const token = platformTokenByKey(tierEval.tokenKey ?? "hermesos") ?? HERMESOS_TOKEN;
+  const sym = token.displayUnit;
+  const balanceStr = formatTokenAmount(params.currentBalance, token.decimals);
 
   const qualifyingStr = tierEval.qualifyingQuantity
-    ? formatTokenAmount(tierEval.qualifyingQuantity)
+    ? formatTokenAmount(tierEval.qualifyingQuantity, token.decimals)
     : "—";
-  const thresholdStr = tierEval.threshold !== null ? formatTokenAmount(tierEval.threshold) : "the current threshold";
+  const thresholdStr =
+    tierEval.threshold !== null ? formatTokenAmount(tierEval.threshold, token.decimals) : "the current threshold";
 
   if (params.transition === "qualified") {
     return {
@@ -94,11 +96,11 @@ function buildEmailContent(params: SendParams): EmailContent | null {
 
   if (params.transition === "breached") {
     return {
-      subject: `Your $${sym} balance dropped below your qualifying quantity`,
+      subject: `Your ${sym} balance dropped below your qualifying quantity`,
       text: [
         `Your wallet now holds ${balanceStr} ${sym}. Your qualifying quantity for the ${tierName} tier was ${qualifyingStr} ${sym}.`,
         ``,
-        `Your ${tierName} tier eligibility has ended. To regain ${tierName}, deposit back to at least the current threshold of ${thresholdStr} ${sym}. (Note: re-qualifying uses the current threshold, not your original qualifying quantity.)`,
+        `You keep ${tierName} for a ${REQUALIFICATION_GRACE_HOURS}-hour grace period. Bring your balance back to ${qualifyingStr} ${sym} within it and nothing changes. After it, ${tierName} is suspended, and re-qualifying uses the threshold at that time (currently ${thresholdStr} ${sym}), not your original qualifying quantity.`,
         ``,
         `View your wallet: https://hermesos.cloud/dashboard/wallet`,
       ].join("\n"),
@@ -140,7 +142,7 @@ function buildEmailContent(params: SendParams): EmailContent | null {
     return {
       subject: `Your ${tierName} tier eligibility has been suspended`,
       text: [
-        `Your wallet holds ${balanceStr} ${sym}. Your qualifying quantity for the ${tierName} tier was ${qualifyingStr} ${sym}, and the 48-hour grace period has elapsed without your balance returning above that threshold.`,
+        `Your wallet holds ${balanceStr} ${sym}. Your qualifying quantity for the ${tierName} tier was ${qualifyingStr} ${sym}, and the ${REQUALIFICATION_GRACE_HOURS}-hour grace period has elapsed without your balance returning above that threshold.`,
         ``,
         `Your ${tierName} tier is now suspended.`,
         ``,

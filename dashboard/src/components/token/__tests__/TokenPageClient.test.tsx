@@ -3,6 +3,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import TokenPageClient from "../TokenPageClient";
+import { getTokenPageEntries } from "@/lib/token-verification-content";
 
 const mockCopy = jest.fn();
 jest.mock("@/lib/client/clipboard", () => ({ copyTextToClipboard: (value: string) => mockCopy(value) }));
@@ -14,7 +15,7 @@ jest.mock("@/components/public-site/PublicSite", () => ({
 describe("TokenPageClient contract address", () => {
   it("copies the full contract address and confirms it", async () => {
     mockCopy.mockResolvedValue(true);
-    render(<TokenPageClient />);
+    render(<TokenPageClient entries={getTokenPageEntries()} />);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy address" }));
@@ -27,7 +28,7 @@ describe("TokenPageClient contract address", () => {
 
   it("tells the reader to select the address when the copy fails", async () => {
     mockCopy.mockResolvedValue(false);
-    render(<TokenPageClient />);
+    render(<TokenPageClient entries={getTokenPageEntries()} />);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy address" }));

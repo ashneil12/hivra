@@ -101,6 +101,9 @@ export interface YearlyTokenQuotePayload {
   priceUsdAtQuote: string;
   tokensRequiredDisplay: string;
   tokenSymbol: string;
+  /** Contract of the token this quote must be paid in. */
+  tokenAddress?: string;
+  tokenKey?: string;
   depositAddress: string;
   expiresAt: string;
   status: string;

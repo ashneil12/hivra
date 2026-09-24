@@ -56,9 +56,10 @@ function clampPollDelay(value: unknown): number {
  *
  *   Part 2 — Connected (ready === true). The gateway answered and a login URL
  *     was minted, so the workspace genuinely works. The WebUI step flips to
- *     done, confetti fires (the real milestone), and NOW the Telegram prompt
- *     becomes the hero — connecting it from here actually works, and "open the
- *     agent" lands straight in a live workspace.
+ *     done, confetti fires (the real milestone), and "Start chatting" is the
+ *     primary action — it lands straight in a live chat. Telegram is offered
+ *     as a secondary option (connecting it from here actually works), never
+ *     as the step that stands between the user and their first chat.
  *
  * There is no auto-redirect in either phase — the user moves on themselves.
  */
@@ -78,7 +79,8 @@ export function DeployedCelebration({
    *  success so catalog breadth reads as credibility, not a hidden detail. */
   engineName?: string | null;
   onContinue: () => void;
-  /** When provided, Telegram becomes the hero action in the connected phase. */
+  /** When provided, the connected phase offers Telegram as a secondary action
+   *  beneath "Start chatting". */
   onConnectTelegram?: () => void;
   /** The just-created instance id. Drives the readiness poll that flips this
    *  screen from "booting" to "connected". Omit to skip the poll (the screen
@@ -328,16 +330,12 @@ export function DeployedCelebration({
         </motion.div>
 
         <motion.div variants={item} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-          {ready && onConnectTelegram ? (
+          {ready ? (
             <>
-              {/* Part 2: the workspace is live, so Telegram is now a real action. */}
-              <p style={{ margin: 0, fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.5, maxWidth: 420 }}>
-                One last thing — put {agentName} in your pocket. Connect Telegram and chat with it from your
-                phone, and get pinged the moment work is done.
-              </p>
+              {/* Part 2: the workspace is live, so chatting is the primary action. */}
               <button
                 type="button"
-                onClick={onConnectTelegram}
+                onClick={onContinue}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -355,59 +353,36 @@ export function DeployedCelebration({
                   textTransform: "uppercase",
                 }}
               >
-                <Send size={15} aria-hidden="true" />
-                Connect Telegram
-              </button>
-              <button
-                type="button"
-                onClick={onContinue}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 7,
-                  minHeight: 44,
-                  padding: "0.5rem 0.6rem",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-mono), monospace",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Skip for now — open {agentName}
-                <ArrowRight size={13} aria-hidden="true" />
-              </button>
-            </>
-          ) : ready ? (
-            <>
-              {/* Part 2 without a Telegram handler — just open the live agent. */}
-              <button
-                type="button"
-                onClick={onContinue}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 9,
-                  minHeight: 44,
-                  padding: "0.85rem 1.6rem",
-                  border: "1px solid var(--ink-black)",
-                  background: "var(--ink-black)",
-                  color: "var(--vellum-bg)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-mono), monospace",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Open agent now
+                Start chatting
                 <ArrowRight size={15} aria-hidden="true" />
               </button>
+              {onConnectTelegram ? (
+                // Telegram is optional and secondary: it never stands between
+                // the user and their first chat.
+                <button
+                  type="button"
+                  onClick={onConnectTelegram}
+                  style={{
+                    display: "inline-flex",
+                  minHeight: 44,
+                    alignItems: "center",
+                    gap: 7,
+                    padding: "0.5rem 0.6rem",
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    fontFamily: "var(--font-mono), monospace",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <Send size={13} aria-hidden="true" />
+                  Also chat from Telegram
+                </button>
+              ) : null}
             </>
           ) : (
             <>

@@ -13,6 +13,7 @@ import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { toolMcpKindForType } from "@/lib/hivra/tool-mcp-seed";
+import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 
 type ToolTargetLane = "cli" | "hermes";
 
@@ -29,14 +30,16 @@ export interface ToolTarget {
   /** True when a tool can actually be written right now. */
   installable: boolean;
   /** Why not, when installable is false. */
-  blockedReason?: "not_running" | "unsupported_type" | "no_ip";
+  blockedReason?: "not_running" | "unsupported_type" | "unsupported_substrate" | "no_ip";
+  /** Plain sentence for the owner when the block is permanent for this agent. */
+  blockedMessage?: string;
   /** Bare MCP server names currently installed on this target. */
   installedTools?: string[];
 }
 
 import { readInstalledHermesToolNames } from "@/lib/hivra/hermes-tool-config";
 
-const CLI_SELECT = "id,name,type,status,ip";
+const CLI_SELECT = "id,name,type,status,ip,computer_substrate";
 const HERMES_SELECT = "id,name,status,lifecycle_state,backend,gateway_url,config";
 
 /**
@@ -61,6 +64,9 @@ export async function listToolTargets(userId: string): Promise<ToolTarget[]> {
       const type = String(row.type || "");
       const status = String(row.status || "");
       const supported = Boolean(toolMcpKindForType(type));
+      // Only Proxmox boxes have the host path an install uses; say so up front
+      // rather than offering an install the route can only refuse.
+      const substrateBlock = supported ? catalogToolsUnavailableReason(row.computer_substrate) : null;
       const hasIp = Boolean(String(row.ip || "").trim());
       out.push({
         uid: `cli-${row.id}`,
@@ -69,14 +75,17 @@ export async function listToolTargets(userId: string): Promise<ToolTarget[]> {
         name: String(row.name || "Agent"),
         type,
         status,
-        installable: supported && status === "running" && hasIp,
+        installable: supported && !substrateBlock && status === "running" && hasIp,
         blockedReason: !supported
           ? "unsupported_type"
-          : status !== "running"
-            ? "not_running"
-            : !hasIp
-              ? "no_ip"
-              : undefined,
+          : substrateBlock
+            ? "unsupported_substrate"
+            : status !== "running"
+              ? "not_running"
+              : !hasIp
+                ? "no_ip"
+                : undefined,
+        ...(substrateBlock ? { blockedMessage: substrateBlock } : {}),
         installedTools: [],
       });
     }

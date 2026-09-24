@@ -17,6 +17,7 @@ import {
   type YearlyTokenTier,
 } from "@/lib/billing/token-plan-prices";
 import type { BillingController } from "../useBillingController";
+import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
 import type { BillingTabId } from "./billing-tabs";
 import styles from "../Billing.module.css";
 
@@ -25,7 +26,7 @@ export const CRYPTO_PAYMENT_RULES = [
   "Base network only.",
   "Send the exact amount in one transfer.",
   "Prices lock for 20 minutes.",
-  "Token payments are final.",
+  TOKEN_PAYMENT_FINALITY,
   "Yearly access doesn't renew automatically.",
 ] as const;
 
