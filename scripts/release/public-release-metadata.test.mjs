@@ -39,6 +39,7 @@ test('all tracked npm application roots declare Apache-2.0 consistently', () => 
     'services/browser-sidecar',
     'services/posthog-proxy-worker',
     'services/venice-proxy-worker',
+    'services/host-relay-worker',
   ]) {
     const manifest = JSON.parse(read(`${directory}/package.json`));
     const lock = JSON.parse(read(`${directory}/package-lock.json`));
@@ -52,7 +53,7 @@ test('public-address sanitization cannot rewrite dependency semver or engine con
   assert.equal(browser.packages['node_modules/mailparser'].dependencies['html-to-text'], '10.0.1');
   assert.equal(browser.packages['node_modules/socks'].engines.node, '>= 10.0.0');
 
-  for (const directory of ['services/posthog-proxy-worker', 'services/venice-proxy-worker']) {
+  for (const directory of ['services/posthog-proxy-worker', 'services/venice-proxy-worker', 'services/host-relay-worker']) {
     const lock = JSON.parse(read(`${directory}/package-lock.json`));
     assert.equal(lock.packages['node_modules/@poppinss/dumper'].dependencies['supports-color'], '^10.0.0');
     assert.equal(lock.packages['node_modules/ws'].engines.node, '>=10.0.0');
@@ -293,6 +294,8 @@ test('release metadata changes cannot bypass the CI guard path filters', () => {
     'services/browser-sidecar/package-lock.json',
     'services/posthog-proxy-worker/**',
     'services/venice-proxy-worker/**',
+    'services/host-relay-worker/**',
+    'services/host-connector/**',
     'scripts/release/**',
     '.github/workflows/worker-builds.yml',
     '.github/workflows/public-release-safety.yml',
@@ -333,7 +336,8 @@ test('every third-party GitHub Action is pinned to an immutable commit', () => {
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   ], 'the offline VM fixture adds only the reviewed checkout and evidence upload');
-  assert.equal(actionCount, 12, 'review the complete workflow action inventory when it changes');
+  // 13: the host-connector job adds one pinned actions/checkout.
+  assert.equal(actionCount, 13, 'review the complete workflow action inventory when it changes');
 });
 
 test('workflow action inventory fails closed on alternate uses-key forms', () => {

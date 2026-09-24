@@ -1,0 +1,24 @@
+# Host relay — Cloudflare Worker + Durable Objects (CANARY).
+#
+# Lets hosted Hivra reach a user's machine that has no inbound ports (home or
+# office). The machine's hivra-connector dials out; Hivra's SSH client dials
+# out; one Durable Object per connection pipes the bytes. SSH stays end to end.
+#
+# Deploy:  CLOUDFLARE_API_TOKEN=<workers-scoped-token> npx wrangler deploy
+# Secret:  npx wrangler secret put HOST_RELAY_SECRET
+#          (at least 32 characters; must match HOST_RELAY_SECRET on the Vercel
+#          canary project)
+name = "host-relay-canary"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "HOST_RELAY"
+class_name = "HostRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["HostRelay"]
+
+# HOST_RELAY_SECRET is a SECRET, never a [vars] entry.
