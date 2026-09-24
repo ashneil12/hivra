@@ -61,15 +61,17 @@ Closing the resource tab releases its view and closes its separate window;
 it does not stop the remote agent or computer. Clearing the account or removing
 a connection also closes its owned windows. Closing the parent workspace closes
 its resource views. Tabs and pop-outs are not restored across app exits.
-Non-resource web pop-ups still use independent URL-based windows. Terminal
-connections and desktop controllers keep their existing session/lease rules.
-Focus mode hides the sidebar and resource tab strip.
+**Open in Separate Window** on a page that is not a resource (Launch, Activity,
+Account) opens an ordinary web window for that address: it has no native
+workspace metadata or desktop hand-off, and only HTTP(S) addresses are restored.
+Terminal connections and desktop controllers keep their existing session/lease
+rules. Focus mode hides the sidebar and resource tab strip.
 
 | Shortcut | Action |
 | --- | --- |
 | Option Command O | Open selected resource in a separate window |
 | Shift Command N | New workspace window |
-| Command K | Find and switch resource |
+| Command K | Find and switch resource (Escape closes it) |
 | Command 1 / 2 / 3 | Home / Agents / Computers |
 | Command N | Launch |
 | Shift Command W | Close the selected resource tab |
@@ -82,6 +84,46 @@ Focus mode hides the sidebar and resource tab strip.
 App settings contains Appearance, Connections, and Local Hivra. System, Dark,
 and Light control the native shell's appearance. Embedded runtime interfaces
 retain their own theme controls.
+
+## Web pages, popups, links and downloads
+
+Embedded pages follow browser rules for windows, links, downloads and dialogs:
+
+- **Popups.** A page that opens a window with a user gesture (an OAuth sign-in,
+  a connector authorization, a blank window the page fills in later) gets a
+  real popup window. The page keeps its handle, so `window.opener`,
+  `postMessage` and `window.close()` work. The popup is sized from the page's
+  request within the screen, opens over the window that asked for it, names the
+  page's origin in its title, and is never restored at launch. It closes when the
+  page closes it, when you close it, or when the tab, window or account that
+  opened it goes away. Popups are ordinary web content: they never receive the
+  workspace or desktop hand-off bridges. Windows opened without a user gesture
+  are blocked, as in a browser.
+- **Links.** A link you click that opens another site in a new window (for
+  example a link in agent chat) opens in your default browser; links that stay
+  in the pane load there as before. Sign-in providers stay in the app so they can
+  return to the page that asked. A dashboard route opened in a new window opens
+  its resource tab or destination in the workspace instead. `mailto:` and `tel:`
+  links open the Mac app registered for them (Mail, FaceTime) only when you
+  click them in the page itself. Other schemes (and `about:`, `blob:`, `data:` and
+  `javascript:` addresses, which WebKit handles itself) are never handed to macOS.
+- **Downloads.** Attachments, `download` links and files WebKit cannot show are
+  saved to Downloads. An existing file is never replaced: a second
+  `report.pdf` becomes `report (1).pdf`. A notice with **Show in Finder** appears
+  briefly at the bottom of the page that started the download. Downloaded files
+  keep macOS quarantine.
+- **Dialogs and files.** JavaScript alerts, confirmations and prompts appear as
+  sheets on the page's window and name the site asking. After the first dialog,
+  you can stop a page from showing more until it navigates. File inputs open the
+  Mac file picker, honouring multiple selection and folder selection.
+- **Recovery.** If a page's web content process stops, the pane shows a recovery
+  card with **Reload** instead of going blank. **Try again** after a failed first
+  load retries the address that failed.
+
+Pages identify the app with the user-agent token `HivraMac/<version>`, taken
+from the bundle's `CFBundleShortVersionString`; unbundled development builds
+report `HivraMac/0.0.0-dev`. Debug builds allow Safari's Web Inspector on every
+web view; release builds do not.
 
 ## Connections
 
@@ -101,7 +143,10 @@ because its connection is selected.
 ## Desktop access and acceptance boundaries
 
 The origin-bound native desktop bridge remains separate from the workspace
-metadata bridge. The existing Moonlight identity, pairing, launch, stop and
+metadata bridge. Only views that belong to a connection carry either bridge:
+the connection page, its resource tabs and their pop-out windows, trusting that
+connection's exact origin from the main frame. Popups and ordinary web windows
+never carry them. The existing Moonlight identity, pairing, launch, stop and
 lease controls retain their own authorization and readiness checks. Installing
 this shell does not admit an operating system or provider that lacks accepted
 runtime evidence. Browser desktop controls, native Moonlight and guest runtime
