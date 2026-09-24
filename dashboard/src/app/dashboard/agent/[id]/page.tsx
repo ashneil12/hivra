@@ -1,6 +1,6 @@
 "use client";
 
-// Hivra per-agent view — Chat (Chat, <Agent> session) · Computer (Terminal,
+// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Terminal,
 // Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
@@ -38,7 +38,7 @@ import { HivraGit } from "@/components/hivra/HivraGit";
 import { HivraSkills } from "@/components/hivra/HivraSkills";
 import { HivraTelegram } from "@/components/hivra/HivraTelegram";
 import { HivraManage } from "@/components/hivra/HivraManage";
-import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
+import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
 import { HivraRemoteDesktop } from "@/components/hivra/HivraRemoteDesktop";
 import { HivraConsoleDesktop } from "@/components/hivra/HivraConsoleDesktop";
 import { HivraOmarchyDesktop } from "@/components/hivra/HivraOmarchyDesktop";
@@ -856,14 +856,21 @@ export default function AgentPage() {
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Chat · Computer (Terminal, Files,
-  // Browser, Git) · Manage. Computers keep their short flat list.
+  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
+  // Computer (Terminal, Files, Browser, Git) · Manage. Computers keep their
+  // short flat list. Agent and Manage always open their first view (Chat or
+  // the dashboard, Settings); Computer reopens the view last used in it.
   const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
     id: group.id,
     label: group.label,
     icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
     surfaces: group.surfaces,
+    home: group.id === "computer" ? undefined : group.surfaces[0],
   }));
+  // The switcher's caption names the kind ("Agent · Running"). A chat agent's
+  // bar already opens with an Agent button, so there it keeps only the status.
+  const switcherKind = isComputer ? "computer" : "agent";
+  const kindInBar = Boolean(surfaceGroups?.some((group) => group.label === resourceKindLabel(switcherKind)));
   // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
   // falls back to the dashboard surface.
   // One shared decision with the workspace: resource-landing owns "what does
@@ -943,7 +950,7 @@ export default function AgentPage() {
         identity={
           nativeWorkspace ? undefined : (
             <div className={styles.identity}>
-              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={isComputer ? "computer" : "agent"} status={provisioning ? activity.label : agent.status} />
+              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} showKind={!kindInBar} status={provisioning ? activity.label : agent.status} />
             </div>
           )
         }

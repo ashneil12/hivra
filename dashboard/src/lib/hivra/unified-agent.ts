@@ -10,6 +10,7 @@
 import { resourceAttention, type ResourceAttention } from "./resource-attention";
 import type { HivraAgent } from "./agent-api";
 import { getAgent as catalogAgent } from "./agent-catalog";
+import { getComputerTemplate } from "./computer-catalog";
 import { agentComputerPair, type AgentComputerPair } from "@/lib/agent-computers/agent-surfaces";
 
 export type UnifiedKind = "hermes" | "hivra";
@@ -108,7 +109,10 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
     uid: `x-${a.id}`, kind: "hivra", id: a.id, name: a.name, emoji: a.emoji ?? null,
     attention: resourceAttention(a.status),
     statusRaw: a.status, state, dot: HIVRA_DOT[state],
-    vendor: def?.vendor || a.type, typeLabel: def?.name || a.type,
+    // Every computer shares the linux-desktop catalog entry ("Ubuntu Desktop"),
+    // so its operating system comes from the stored profile.
+    vendor: def?.vendor || a.type,
+    typeLabel: (a.computer_profile && getComputerTemplate(a.computer_profile)?.name) || def?.name || a.type,
     resourceKind,
     computerProfile: a.computer_profile ?? null,
     surfaceKind: def?.surface,

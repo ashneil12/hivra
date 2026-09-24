@@ -107,14 +107,14 @@ const GROUP_ORDER: Record<AgentSurfaceGroupId, readonly AgentSurfaceId[]> = {
 
 /**
  * Agent pages group their surfaces as the agent, its computer, and Manage:
- * Chat · Computer (Terminal, Files, Browser, Git) · Manage. Groups with no
+ * Agent · Computer (Terminal, Files, Browser, Git) · Manage. Groups with no
  * surface are dropped. Computers keep their short flat list and never call this.
  */
 export function agentSurfaceGroups(surfaces: readonly AgentSurfaceId[], def?: Pick<AgentDef, "surface"> | null): AgentSurfaceGroup[] {
   const present = new Set(surfaces);
   const groups: AgentSurfaceGroup[] = (["work", "computer", "manage"] as const).map((id) => ({
     id,
-    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Chat") : id === "computer" ? "Computer" : "Manage",
+    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "computer" ? "Computer" : "Manage",
     surfaces: GROUP_ORDER[id].filter((surface) => present.has(surface)),
   }));
   return groups.filter((group) => group.surfaces.length > 0);

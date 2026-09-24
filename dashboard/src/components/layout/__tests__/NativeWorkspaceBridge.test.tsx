@@ -65,6 +65,26 @@ it("publishes metadata and the actual surface list while preserving the guarded 
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
+it("gives the native bar an agent's own surface names, not the web's group names", () => {
+  // The web groups an agent as Agent · Computer · Manage and calls Manage's own
+  // tab Settings inside its group; the native bar is flat, so it keeps "Manage".
+  const agentSurfaces = [
+    { id: "chat", label: "Chat" }, { id: "terminal", label: "Codex session" }, { id: "box", label: "Terminal" }, { id: "manage", label: "Manage" },
+  ].map(surface => ({ ...surface, icon: <span /> }));
+  const groups = [
+    { id: "work", label: "Agent", icon: <span />, surfaces: ["chat", "terminal"], home: "chat" },
+    { id: "computer", label: "Computer", icon: <span />, surfaces: ["box"] },
+    { id: "manage", label: "Manage", icon: <span />, surfaces: ["manage"], home: "manage" },
+  ];
+  render(<NativeWorkspaceProvider enabled pathname="/dashboard/agent/item" ownerKey="user_123">
+    <ResourceSurfaceNavigation surfaces={agentSurfaces} groups={groups} active="manage" onSelect={jest.fn()} exportHref="/api/hivra/agents/item/export" />
+  </NativeWorkspaceProvider>);
+  expect(surfaceMessages().at(-1)).toMatchObject({ active: "manage",
+    surfaces: [{ id: "chat", label: "Chat" }, { id: "terminal", label: "Codex session" }, { id: "box", label: "Terminal" }, { id: "manage", label: "Manage" }] });
+  expect(screen.queryByRole("navigation", { name: "Resource surfaces" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/item/export");
+});
+
 it("accepts only current advertised surface selections without replacing the work pane", () => {
   const onSelect = jest.fn();
   const view = render(<Shell onSelect={onSelect} />);

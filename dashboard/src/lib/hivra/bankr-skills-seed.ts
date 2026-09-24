@@ -16,7 +16,13 @@
 // per-box Bankr wallet is a separate, later concern.
 
 import { CURATED_SKILLS } from "@/data/curated-skills";
+import { log } from "@/lib/logger";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
+import { bankrSkillSlug, loadableSkillContent, SkillContentError } from "./skill-file";
+
+export { bankrSkillSlug };
+
+const LOG_SOURCE = "hivra/bankr-skills-seed";
 
 // Per-CLI skills dir, relative to the box user's $HOME (/home/bux). Claude reads
 // ~/.claude/skills; codex reads ~/.agents/skills (the OpenAI skills spec dir —
@@ -40,20 +46,12 @@ export interface BankrSkillFile {
   content: string;
 }
 
-// Slug from the catalog identifier (not the leaf name) so two skills sharing a
-// leaf — e.g. `BankrBot/skills/bankr-twitter-agent` and
-// `BankrBot/skills/skills/bankr-twitter-agent` — never collide on disk. The CLI
-// reads the real skill name from each file's frontmatter, so the directory name
-// only needs to be unique + filesystem-safe.
-export function bankrSkillSlug(identifier: string): string {
-  return identifier
-    .replace(/^BankrBot\/skills\//, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase();
-}
-
-/** The Bankr skills with non-empty vendored content, each given a unique slug. */
+/**
+ * The Bankr skills with non-empty vendored content, each given a unique slug.
+ * Every file is one Codex can load (repaired if needed, see skill-file.ts); a
+ * skill that can't be made loadable is left out and logged, since nobody picked
+ * it and one broken file must not hold back the rest of the suite.
+ */
 export function collectBankrSkillFiles(): BankrSkillFile[] {
   const files: BankrSkillFile[] = [];
   const seen = new Set<string>();
@@ -62,11 +60,24 @@ export function collectBankrSkillFiles(): BankrSkillFile[] {
     if (typeof skill.content !== "string" || !skill.content.trim()) continue;
     const base = bankrSkillSlug(skill.identifier);
     if (!base) continue;
+    let content: string;
+    try {
+      content = loadableSkillContent(skill);
+    } catch (err) {
+      if (!(err instanceof SkillContentError)) throw err;
+      log.warn("Bankr skill left out of the seed: its SKILL.md can't be loaded", {
+        source: LOG_SOURCE,
+        failureType: "skill_file_unloadable",
+        identifier: skill.identifier,
+        problem: err.problem,
+      });
+      continue;
+    }
     let slug = base;
     let n = 2;
     while (seen.has(slug)) slug = `${base}-${n++}`;
     seen.add(slug);
-    files.push({ slug, content: skill.content });
+    files.push({ slug, content });
   }
   return files;
 }

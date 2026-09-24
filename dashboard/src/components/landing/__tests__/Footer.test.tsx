@@ -64,6 +64,14 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
+  it("links the official X account in a new tab", () => {
+    render(<Footer />);
+    const x = screen.getByRole("link", { name: "X (@HivraOS)" });
+    expect(x).toHaveAttribute("href", "https://x.com/HivraOS");
+    expect(x).toHaveAttribute("target", "_blank");
+    expect(x).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("links the changelog next to the roadmap entry", () => {
     render(<Footer />);
 
@@ -78,7 +86,13 @@ describe("Footer", () => {
     );
 
     expect(screen.getByRole("link", { name: "Roadmap" })).toHaveAttribute("href", "/roadmap");
-    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/#agents");
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+  });
+  it("links the restored hubs sitewide so they are never orphaned", () => {
+    render(<Footer />);
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("href", "/pricing");
+    expect(screen.getByRole("link", { name: "Free tools" })).toHaveAttribute("href", "/tools");
   });
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
     render(<Footer />);

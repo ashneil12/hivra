@@ -1,5 +1,7 @@
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
+import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
+import { getTokenPhaseCopy, type TokenomicsPhaseCopy } from "@/lib/token-phase-copy";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
 
@@ -18,12 +20,12 @@ const USES = [
  * proposal: the factual contract addresses, where to verify them, and the
  * notice. No payment discount, bonus, migration, uses or treasury copy.
  */
-function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLevel: 1 | 2; restriction: TokenomicsGeoRestriction }) {
+function RestrictedTokenomicsSection({ headingLevel, restriction, copy }: { headingLevel: 1 | 2; restriction: TokenomicsGeoRestriction; copy: TokenomicsPhaseCopy }) {
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
       <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra.</p></div>
+      <div><p>{copy.restrictedHeaderLead}</p></div>
     </header>
     <TokenGeoNotice notice={restriction.notice} />
     <div data-testid="tokenomics-contracts">
@@ -40,16 +42,23 @@ function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLev
   </section>;
 }
 
+/**
+ * `phase` is the $HIVRA phase to write the copy for; the page passes the one it
+ * rendered with, and it defaults to the phase now. Only the header and the
+ * migration paragraphs change with it; dormant, they are the copy from before.
+ */
 export default function FullTokenomicsSection({
   headingLevel = 2,
   geoRestriction = null,
-}: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null } = {}) {
-  if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} />;
+  phase = getHivraTokenPhase(),
+}: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null; phase?: HivraTokenPhase } = {}) {
+  const copy = getTokenPhaseCopy(phase).tokenomics;
+  if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} copy={copy} />;
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
       <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+      <div><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
     </header>
 
     <div className={styles.accessMigration}>
@@ -62,9 +71,9 @@ export default function FullTokenomicsSection({
       <article className={styles.migration}>
         <span className={styles.eyebrow}>Proposed migration</span>
         <h3>Keeping access and converting tokens are separate decisions.</h3>
-        <p>The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.</p>
+        <p>{copy.migrationParagraphs[0]}</p>
         <ol className={styles.claimFlow} aria-label="Proposed claim flow"><li><span>01</span>$HermesOS</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>ETH proceeds</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>$HIVRA</li></ol>
-        <p>Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.</p>
+        <p>{copy.migrationParagraphs[1]}</p>
       </article>
     </div>
 

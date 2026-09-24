@@ -32,6 +32,17 @@ export interface ResourceSwitcherProps {
   name?: string;
   kind?: "agent" | "computer";
   status?: string;
+  /**
+   * Whether the caption names the kind ("Agent · Running"). A host whose bar
+   * already has a button with that word passes false, so the caption keeps
+   * only the status instead of saying it twice.
+   */
+  showKind?: boolean;
+}
+
+/** The kind word the caption shows, so a host can tell when it already says it. */
+export function resourceKindLabel(kind?: "agent" | "computer"): string {
+  return kind === "computer" ? "Computer" : "Agent";
 }
 
 /** Colour family for the status word; unknown in-progress labels read as busy. */
@@ -49,7 +60,7 @@ function agentHref(agent: UnifiedAgent): string {
     : `/dashboard/agent/${encodeURIComponent(agent.id)}`;
 }
 
-export function ResourceSwitcher({ currentUid, name, kind, status }: ResourceSwitcherProps) {
+export function ResourceSwitcher({ currentUid, name, kind, status, showKind = true }: ResourceSwitcherProps) {
   const router = useRouter();
   const [opened, setOpened] = useState(false);
 
@@ -59,6 +70,7 @@ export function ResourceSwitcher({ currentUid, name, kind, status }: ResourceSwi
       name={name}
       kind={kind}
       status={status}
+      showKind={showKind}
       router={router}
       onFirstOpen={() => setOpened(true)}
       opened={opened}
@@ -82,6 +94,7 @@ function ResourceSwitcherTrigger({
   name,
   kind,
   status,
+  showKind,
   router,
   opened,
   onFirstOpen,
@@ -90,6 +103,7 @@ function ResourceSwitcherTrigger({
   name?: string;
   kind?: "agent" | "computer";
   status?: string;
+  showKind: boolean;
   router: ReturnType<typeof useRouter>;
   opened: boolean;
   onFirstOpen: () => void;
@@ -137,10 +151,10 @@ function ResourceSwitcherTrigger({
           {kind === "computer" ? <Monitor size={18} aria-hidden /> : <Bot size={18} aria-hidden />}
           {/* Parts are tagged so a narrow host can fold this onto one line
               (name, then a status dot and word) without a second markup. */}
-          <span className={styles.copy}><strong>{name}</strong><small>
-            <span data-switcher-part="kind">{kind === "computer" ? "Computer" : "Agent"}</span>
-            {status ? <><span data-switcher-part="separator" aria-hidden="true"> · </span><span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}>{status}</span></> : null}
-          </small></span>
+          <span className={styles.copy}><strong>{name}</strong>{showKind || status ? <small>
+            {showKind ? <span data-switcher-part="kind">{resourceKindLabel(kind)}</span> : null}
+            {status ? <>{showKind ? <span data-switcher-part="separator" aria-hidden="true"> · </span> : null}<span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}>{status}</span></> : null}
+          </small> : null}</span>
         </> : <span>Switch</span>}
         <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-[var(--text-muted)]" />
       </button>
