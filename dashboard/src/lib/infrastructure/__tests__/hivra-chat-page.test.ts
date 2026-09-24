@@ -34,6 +34,7 @@ const RUN_2 = "00000000-0000-4000-8000-000000000003";
 const RUN_3 = "00000000-0000-4000-8000-000000000004";
 const OTHER_SESSION = "00000000-0000-4000-8000-000000000005";
 const ELSEWHERE = "This reply is showing live in another tab of this page.";
+const ELSEWHERE_STATUS = "a reply is running in another tab";
 const eventsPath = (runId: string) => `/api/chat/runs/${runId}/events`;
 const stopPath = (runId: string) => `/api/chat/runs/${runId}/stop`;
 
@@ -190,7 +191,9 @@ afterEach(() => {
 });
 
 type PageWindow = Window & typeof globalThis & { eval(source: string): unknown };
-type PageOptions = { locks?: FakeLocks; owner?: string };
+// `holdStorageEvents`: the tab handles other tabs' saves late (a busy tab
+// runs its own queued work first) until `deliverStorageEvents()`.
+type PageOptions = { locks?: FakeLocks; owner?: string; holdStorageEvents?: boolean };
 
 // Load the page into a new same-origin frame: the frame shares this origin's
 // localStorage, so a second frame is what the same page is after a reload, or
@@ -221,6 +224,14 @@ function openPage(computer: Transport, runIds: string[] = [], options: PageOptio
     fetch: (input: unknown, init?: Init) => (closed ? new Promise(() => undefined) : computer.fetch(input, init)),
     TextDecoder,
     console: { ...console, warn: (...args: unknown[]) => warnings.push(args.map(String).join(" ")), error: (...args: unknown[]) => errors.push(args.map(String).join(" ")) },
+  });
+  const heldStorageEvents: StorageEvent[] = [];
+  let holdingStorageEvents = Boolean(options.holdStorageEvents);
+  // Registered before the page's own listener, so it can keep an event from it.
+  w.addEventListener("storage", (event) => {
+    if (!holdingStorageEvents) return;
+    event.stopImmediatePropagation();
+    heldStorageEvents.push(event);
   });
   w.eval(APP);
   const close = () => {
@@ -254,6 +265,12 @@ function openPage(computer: Transport, runIds: string[] = [], options: PageOptio
     offers: () => Array.from(doc.querySelectorAll<HTMLElement>(".msg.assistant .offer"), (node) => (node.hidden ? "" : node.textContent)).filter(Boolean),
     stored: () => JSON.parse(w.localStorage.getItem(STORE_KEY) || "null"),
     skewClock(ms: number) { skew = ms; },
+    deliverStorageEvents() {
+      holdingStorageEvents = false;
+      for (const event of heldStorageEvents.splice(0)) {
+        w.dispatchEvent(new w.StorageEvent("storage", { key: event.key, oldValue: event.oldValue, newValue: event.newValue, url: event.url }));
+      }
+    },
     // How many times a reply's body is rewritten from here on.
     countPaints() {
       let count = 0;
@@ -1025,6 +1042,126 @@ describe("the computer's own chat page", () => {
     expect(computer.callsTo("POST", "/api/chat")).toHaveLength(1);
     expect(locks.holder(RUN_1)).toBeUndefined();
     expect([...tabA.errors, ...tabB.errors]).toEqual([]);
+  });
+
+  it.each(["has heard of it", "has not heard of it yet"])("while a reply runs in one tab, another tab (which %s) holds its message until that reply finishes, then continues the same conversation", async (heard) => {
+    const locks = new FakeLocks();
+    const first = new LiveStream();
+    const second = new LiveStream();
+    const streams = [first, second];
+    const computer = new FakeComputer().on("POST", "/api/chat", () => streams.shift()!.response());
+    const tabA = openPage(computer, [RUN_1], { locks, owner: "tab-a" });
+    const tabB = openPage(computer, [RUN_2], { locks, owner: "tab-b", holdStorageEvents: heard !== "has heard of it" });
+    await tabA.opened();
+    await tabB.opened();
+
+    // The first message of a new chat. The agent has not reported its
+    // session yet (Claude Code takes a few seconds to start).
+    tabA.send("First question");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the first start");
+    first.push({ type: "_run", runId: RUN_1, detached: true });
+    if (heard === "has heard of it") {
+      await waitFor(() => tabB.sendButton().disabled, "the other tab to stop taking messages");
+      expect(tabB.userMessages()).toEqual(["First question"]);
+      expect(tabB.notes()).toEqual([ELSEWHERE]);
+      expect(tabB.status()).toBe(ELSEWHERE_STATUS);
+    } else {
+      expect(tabB.userMessages()).toEqual([]);
+      expect(tabB.sendButton().disabled).toBe(false);
+    }
+
+    // Before: the other tab started a second agent conversation (no session
+    // to continue yet), or, once the session was known, had its message
+    // refused as busy and saved a failed turn into the shared conversation.
+    tabB.input().value = "Second question";
+    tabB.input().dispatchEvent(new tabB.w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await waitFor(() => tabB.status() === ELSEWHERE_STATUS && tabB.sendButton().disabled, "the other tab to hold the message");
+    await sleep(50);
+    expect(computer.callsTo("POST", "/api/chat")).toHaveLength(1);
+    expect(tabB.input().value).toBe("Second question");
+    expect(tabB.userMessages()).toEqual(["First question"]);
+    expect(tabB.notes()).toEqual([ELSEWHERE]);
+    tabB.deliverStorageEvents();
+
+    // The reply finishes in the first tab: the other tab shows it with no
+    // note, and its message continues the conversation that reply started.
+    first.push(...claudeTurn("First answer."), { type: "_done", code: 0 });
+    first.end();
+    await waitFor(() => tabB.replies()[0] === "First answer." && !tabB.sendButton().disabled, "the other tab to take messages again");
+    expect(tabB.notes()).toEqual([""]);
+    expect(tabB.status()).toBe("ready");
+    tabB.sendButton().click();
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the second start");
+    expect(computer.callsTo("POST", "/api/chat")[1].body).toEqual({ message: "Second question", sessionId: SESSION_ID, detach: true, runId: RUN_2 });
+    second.push({ type: "_run", runId: RUN_2, detached: true }, delta("Second answer."), { type: "_done", code: 0 });
+    second.end();
+    await waitFor(() => tabA.replies()[1] === "Second answer.", "the first tab to show the second reply");
+    expect(tabA.stored().turns).toEqual([
+      expect.objectContaining({ runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID, warnings: [] }),
+      expect.objectContaining({ runId: RUN_2, done: true, outcome: "complete", resumes: SESSION_ID, warnings: [] }),
+    ]);
+    expect([...tabA.errors, ...tabB.errors]).toEqual([]);
+  });
+
+  it("a tab opened while another tab shows a reply drops its note about that tab once the reply finishes there", async () => {
+    const locks = new FakeLocks();
+    const live = new LiveStream();
+    const computer = new FakeComputer().on("POST", "/api/chat", () => live.response());
+    const tabA = openPage(computer, [RUN_1], { locks, owner: "tab-a" });
+    await tabA.opened();
+    tabA.send("Migrate the database");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, delta("Step one."));
+    await waitFor(() => tabA.replies()[0] === "Step one.", "the reply to stream");
+
+    const tabB = openPage(computer, [], { locks, owner: "tab-b" });
+    await waitFor(() => tabB.notes()[0] === ELSEWHERE, "the new tab to leave the reply to the first");
+    expect(tabB.sendButton().disabled).toBe(true);
+    expect(tabB.status()).toBe(ELSEWHERE_STATUS);
+
+    live.push(delta(" Step two."), { type: "_done", code: 0 });
+    live.end();
+    await waitFor(() => tabB.replies()[0] === "Step one. Step two.", "the finished reply in the new tab");
+    tabB.w.dispatchEvent(new tabB.w.Event("focus"));
+    await sleep(50);
+    expect(tabB.notes()).toEqual([""]);
+    expect(tabB.sendButton().disabled).toBe(false);
+    expect(tabB.status()).toBe("ready");
+    expect(computer.callsTo("GET", eventsPath(RUN_1))).toEqual([]);
+    expect([...tabA.errors, ...tabB.errors]).toEqual([]);
+  });
+
+  it("a reply the computer no longer has closes without the reconnecting note", async () => {
+    seed([storedTurn({ user: "Write the report", assistant: "Part one.", runId: RUN_1, sessionId: SESSION_ID })]);
+    let reads = 0;
+    const computer = new FakeComputer().on("GET", eventsPath(RUN_1), () => (++reads === 1 ? json(503, { error: "busy" }) : json(404, { error: "run not found" })));
+    const page = openPage(computer);
+    await waitFor(() => reads === 2 && page.status() === "ready", "the reply to close", 10_000);
+    expect(page.replies()).toEqual(["Part one.\n\n⚠ This reply is no longer available on the computer."]);
+    expect(page.notes()).toEqual([""]);
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "error" });
+    expect(page.errors).toEqual([]);
+  });
+
+  it("a tab that saves before it has handled another tab's save keeps the turn that tab added", async () => {
+    seed([storedTurn({ user: "First question", assistant: "First answer.", runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID })]);
+    const live = new LiveStream();
+    const computer = new FakeComputer().on("POST", "/api/chat", () => live.response());
+    const tabA = openPage(computer, [], { holdStorageEvents: true });
+    const tabB = openPage(computer, [RUN_2]);
+    await tabA.opened();
+    await tabB.opened();
+    tabB.send("Second question");
+    await waitFor(() => tabB.stored().turns.length === 2, "the other tab to save its turn");
+    expect(tabA.userMessages()).toEqual(["First question"]);
+
+    // The first tab closes, saving what it has, before it handled that save.
+    tabA.closeTab();
+    expect(tabB.stored().turns.map((turn: StoredTurn) => turn.runId)).toEqual([RUN_1, RUN_2]);
+    const again = openPage(new FakeComputer());
+    await again.opened();
+    expect(again.userMessages()).toEqual(["First question", "Second question"]);
+    expect([...tabA.errors, ...tabB.errors, ...again.errors]).toEqual([]);
   });
 });
 

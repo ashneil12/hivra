@@ -11,7 +11,8 @@
 // until the computer has accepted this page's session. Tabs of this page share
 // the saved conversation: every save merges by run id, other tabs' saves arrive
 // as `storage` events, and a Web Lock per run keeps two tabs from following the
-// same run.
+// same run. While another tab is following a reply, this tab does not send: the
+// agent's conversation is busy until that reply finishes.
 //
 // Stream lines (one JSON object each):
 //   claude   `claude -p --output-format stream-json --include-partial-messages`
@@ -46,6 +47,7 @@ const SIGNED_OUT_SEND = "Your session on this computer has ended, so the message
 const OFFLINE = "Lost the connection to the computer. The agent keeps working; the reply continues here when the computer is reachable again.";
 const UNSENT = "Couldn't reach the computer. This page checks again when the connection is back and tells you if the message needs sending again.";
 const ELSEWHERE = "This reply is showing live in another tab of this page.";
+const ELSEWHERE_STATUS = "a reply is running in another tab";
 const SESSION_LOST = "The agent couldn't reopen this conversation on the computer (it may have been cleaned up), so it did not get your message. Send it again to start a new conversation with the agent, or press New chat.";
 
 // `warn` picks the stderr lines worth showing, as the dashboard's chat does.
@@ -72,6 +74,16 @@ const noop = () => {};
 // The run this page is following live, or null. At most one at a time.
 let active = null;
 let refreshing = false;
+// A message is waiting on the check that no other tab is following a reply.
+let sending = false;
+// Run ids of unfinished replies another tab of this page is following, as far
+// as this tab knows (see checkElsewhere).
+let elsewhere = new Set();
+// Run locks this tab holds, by run id, until the browser has let them go.
+// `lockEpoch` changes whenever this tab takes or lets go of one.
+const ownLocks = new Set();
+let lockEpoch = 0;
+let elsewhereChecks = 0;
 // "open" once the computer accepted this page's session; "checking",
 // "signed-out" or "unreachable" keep the saved conversation off the screen.
 let access = "checking";
@@ -323,6 +335,9 @@ function renderAll() {
 function paintText(turn) {
   const view = views.get(turn);
   if (!view) return;
+  // Transient lines (reconnecting, offline, another tab) are about a reply
+  // that is still coming. Once it has ended, here or in another tab, they go.
+  if (turn.done) view.transient = "";
   const live = driving(turn);
   let text = turn.assistant;
   for (const warning of turn.warnings) text += (text ? "\n\n" : "") + "⚠ " + warning;
@@ -397,11 +412,12 @@ function setStatus(text) {
 function syncControls() {
   const busy = Boolean(active);
   const open = access === "open";
-  sendBtn.disabled = busy || !open;
+  const waiting = replyElsewhere();
+  sendBtn.disabled = busy || waiting || !open;
   sendBtn.hidden = busy;
   stopBtn.hidden = !busy;
   stopBtn.disabled = Boolean(active && active.stopping);
-  if (newBtn) newBtn.disabled = busy || !open;
+  if (newBtn) newBtn.disabled = busy || waiting || !open;
 }
 
 function setAccess(next, message) {
@@ -631,6 +647,7 @@ function claimRun(runId) {
   if (!locks || typeof locks.request !== "function") return Promise.resolve(noop);
   return new Promise((resolve) => {
     let answered = false;
+    let granted = false;
     const unavailable = (e) => {
       console.warn("hivra-chat: could not coordinate this reply with other tabs of this page", e);
       if (!answered) resolve(noop);
@@ -639,29 +656,98 @@ function claimRun(runId) {
       locks.request(lockName(runId), { ifAvailable: true }, (lock) => {
         answered = true;
         if (!lock) { resolve(null); return null; }
+        granted = true;
+        ownLocks.add(runId);
+        lockEpoch += 1;
         return new Promise((release) => resolve(() => release()));
-      }).catch(unavailable);
+      }).catch(unavailable).then(() => {
+        // The browser has let the lock go.
+        if (!granted) return;
+        ownLocks.delete(runId);
+        lockEpoch += 1;
+      });
     } catch (e) {
       unavailable(e);
     }
   });
 }
-async function replyRunningElsewhere() {
+
+// ---- replies other tabs are following ----------------------------------------
+//
+// The agent works on one message of a conversation at a time. While another tab
+// is following a reply (it holds the run's lock), a message from this tab would
+// start a second conversation with the agent (that reply has no session yet) or
+// be refused as busy. So this tab holds its message, says why, and takes
+// messages again once the reply finishes there, or picks the reply up itself if
+// that tab goes away.
+
+// This conversation's unfinished replies another tab holds the lock of. Empty
+// when this browser has no Web Locks (every tab may follow a run then).
+async function followedElsewhere() {
   const locks = navigator.locks;
-  if (!locks || typeof locks.query !== "function") return false;
-  try {
-    const snapshot = await locks.query();
-    const held = new Set((snapshot && Array.isArray(snapshot.held) ? snapshot.held : []).map((lock) => lock.name));
-    return state.turns.some((turn) => !turn.done && held.has(lockName(turn.runId)));
-  } catch (e) {
-    console.warn("hivra-chat: could not ask the other tabs of this page what they are showing", e);
-    return false;
+  if (!locks || typeof locks.query !== "function") return new Set();
+  let snapshot = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const epoch = lockEpoch;
+    try {
+      snapshot = await locks.query();
+    } catch (e) {
+      console.warn("hivra-chat: could not ask the other tabs of this page what they are showing", e);
+      return new Set();
+    }
+    // Unless this tab took or let go of a lock meanwhile: then the answer may
+    // still list one of its own, so ask again.
+    if (epoch === lockEpoch) break;
   }
+  const held = new Set((snapshot && Array.isArray(snapshot.held) ? snapshot.held : []).map((lock) => lock.name));
+  return new Set(state.turns
+    .filter((turn) => !turn.done && !driving(turn) && !ownLocks.has(turn.runId) && held.has(lockName(turn.runId)))
+    .map((turn) => turn.runId));
+}
+// Ask again which replies other tabs are following, and show it. Resolves to
+// what this check found.
+async function checkElsewhere() {
+  const check = ++elsewhereChecks;
+  const found = await followedElsewhere();
+  if (check === elsewhereChecks) {
+    elsewhere = found;
+    showElsewhere();
+  }
+  return found;
+}
+function replyElsewhere() {
+  return !active && state.turns.some((turn) => !turn.done && elsewhere.has(turn.runId));
+}
+// A note under each reply another tab is following, and no sending until they
+// finish.
+function showElsewhere() {
+  const unfinished = new Set(state.turns.filter((turn) => !turn.done && !driving(turn)).map((turn) => turn.runId));
+  for (const runId of Array.from(elsewhere)) if (!unfinished.has(runId)) elsewhere.delete(runId);
+  for (const turn of state.turns) {
+    const view = views.get(turn);
+    if (!view || !unfinished.has(turn.runId)) continue;
+    if (elsewhere.has(turn.runId)) {
+      if (view.transient !== ELSEWHERE) note(turn, ELSEWHERE);
+    } else if (view.transient === ELSEWHERE) {
+      note(turn, ""); // that tab went away: this one picks the reply up on its next check
+    }
+  }
+  syncControls();
+  if (access !== "open" || active) return;
+  if (replyElsewhere()) setStatus(ELSEWHERE_STATUS);
+  else if (statusEl.textContent === ELSEWHERE_STATUS) setStatus("ready");
+}
+// Another tab saved: ask about an unfinished reply this tab has not placed yet
+// (that tab may be following it), and let go of any that finished there.
+function afterOtherTabSaved() {
+  if (!active && state.turns.some((turn) => !turn.done && !driving(turn) && !elsewhere.has(turn.runId))) void checkElsewhere();
+  else showElsewhere();
 }
 
 function beginRun(turn, starting, release) {
   const view = views.get(turn);
   if (view) view.transient = "";
+  elsewhere.delete(turn.runId);
   const position = positions.get(turn);
   positions.delete(turn);
   active = {
@@ -930,9 +1016,25 @@ async function follow(run) {
 }
 
 async function send(raw) {
-  if (active || access !== "open") return;
+  if (active || sending || access !== "open") return;
   const text = String(raw != null ? raw : input.value).trim();
   if (!text) return;
+  // Not while another tab is following a reply (see followedElsewhere). Read
+  // the saved conversation first: that tab's newest turn may not have arrived
+  // here as a storage event yet. The message stays in the composer.
+  sending = true;
+  let found;
+  try {
+    sync();
+    found = await checkElsewhere();
+  } finally {
+    sending = false;
+  }
+  if (found.size) {
+    if (access === "open" && !active) setStatus(ELSEWHERE_STATUS);
+    return;
+  }
+  if (active || access !== "open") return;
   input.value = "";
   autoGrow();
   const now = Date.now();
@@ -942,13 +1044,15 @@ async function send(raw) {
   if (previous) schedulePaint(previous, "text"); // its "Start a new chat" offer goes
   renderTurn(turn);
   const run = beginRun(turn, true, noop);
-  saveNow(); // a reload from here on finds the turn and its run
+  // Hold the run's lock before other tabs hear of the turn, so they see that
+  // this tab is following it and hold their own messages.
   const release = await claimRun(turn.runId); // a new run id: no other tab has it
   if (active !== run) {
     if (release) release();
     return;
   }
   run.release = release || noop;
+  saveNow(); // a reload from here on finds the turn and its run
   const body = JSON.stringify({ message: text, sessionId: turn.resumes, detach: true, runId: turn.runId });
   let resp = null;
   for (let attempt = 0; attempt < START_DELAYS_MS.length && !resp; attempt++) {
@@ -1066,6 +1170,9 @@ async function refresh() {
   refreshing = true;
   let run = null;
   try {
+    // A tab that was following a reply may have gone away since: take
+    // messages again while this check waits on the computer.
+    if (access === "open" && elsewhere.size) await checkElsewhere();
     let resp;
     try {
       resp = await fetch("/api/chat/runs", { credentials: "same-origin", cache: "no-store" });
@@ -1107,8 +1214,8 @@ async function refresh() {
         return;
       }
       if (!release) {
-        note(turn, ELSEWHERE);
-        setStatus("ready");
+        elsewhere.add(turn.runId);
+        showElsewhere();
         continue;
       }
       run = beginRun(turn, false, release);
@@ -1122,8 +1229,10 @@ async function refresh() {
 
 async function newChat() {
   if (active || access !== "open") return;
-  if (await replyRunningElsewhere()) {
-    setStatus("a reply is running in another tab");
+  // A new chat would drop a reply another tab is still following.
+  sync();
+  if ((await checkElsewhere()).size) {
+    if (access === "open" && !active) setStatus(ELSEWHERE_STATUS);
     return;
   }
   if (active || access !== "open") return;
@@ -1163,13 +1272,15 @@ const onWake = () => wake(WAKE_STALL_MS);
 window.addEventListener("focus", onWake);
 window.addEventListener("online", onWake);
 // Back from the back-forward cache: other tabs may have saved meanwhile.
-window.addEventListener("pageshow", () => { sync(); onWake(); });
+window.addEventListener("pageshow", () => { sync(); afterOtherTabSaved(); onWake(); });
 document.addEventListener("visibilitychange", onWake);
 setInterval(() => wake(STALL_MS), REATTACH_INTERVAL_MS);
 window.addEventListener("pagehide", saveNow);
 // Another tab of this page saved the conversation.
 window.addEventListener("storage", (event) => {
-  if (event.key === STORE_KEY) sync();
+  if (event.key !== STORE_KEY) return;
+  sync();
+  afterOtherTabSaved();
 });
 
 syncControls();

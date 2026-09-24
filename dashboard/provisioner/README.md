@@ -241,7 +241,10 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   browser's localStorage, shows it only after an authenticated
   `GET /api/chat/runs` succeeds, rebuilds an unfinished reply from the run's
   log after a reload, and within one page re-attaches from the bytes it has
-  already applied. The `10-hivra-detached-runs.conf` drop-in sets
+  already applied. Tabs of the page share that conversation: while one tab is
+  following a reply, the others hold new messages until it finishes there, or
+  take the reply over on their next check if that tab closes. The
+  `10-hivra-detached-runs.conf` drop-in sets
   `KillMode=process` on `bux-hivra-chat.service`, so a gateway restart (runtime
   update, crash) leaves in-flight runs working; permission flags are unchanged.
 - **Agent terminal.** For Claude Code and Codex, `hivra-agent-shell` runs the
