@@ -12,6 +12,7 @@ import html
 import hashlib
 import math
 import re
+import struct
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -21,6 +22,21 @@ from link_policy import enhance_links
 
 REPO = Path(__file__).resolve().parents[2]
 OUTPUT = REPO / "docs/litepaper/index.html"
+# The page is served by the Next.js app at /docs/litepaper/index.html, so it may
+# link these same-origin app files by site-root path. Each maps to the committed
+# file the app serves at that path.
+SITE_ROOT_FILES = {
+    "/favicon.ico": "dashboard/src/app/favicon.ico",
+    "/apple-icon.png": "dashboard/src/app/apple-icon.png",
+}
+# Share tags need absolute URLs; they name the canonical site.
+SITE_URL = "https://hivra.cloud"
+PAGE_URL = SITE_URL + "/docs/litepaper/index.html"
+PAGE_TITLE = "Hivra · Somewhere better to work"
+PAGE_DESCRIPTION = ("Your agent needs a computer. It doesn't need yours. Explore Hivra's vision for "
+                    "independent agent computers and an ecosystem with boundaries outside the agent.")
+SHARE_IMAGE = "assets/boundary-monolith-v5.png"
+SHARE_IMAGE_ALT = "Architectural illustration of a bounded computer."
 PRODUCT_GROUPS = {
     "Gate": "Next", "Exchange": "Next", "Arena": "Next", "Signal": "Next",
     "Vault": "Then", "Passport": "Then", "Seal": "Then", "Rescue": "Then",
@@ -124,6 +140,10 @@ def check_local_url(value, base):
         return
     if target.path == "/":
         return
+    if target.path in SITE_ROOT_FILES:
+        require((REPO / SITE_ROOT_FILES[target.path]).is_file(),
+                "Site file is missing from the dashboard: " + value)
+        return
     path = unquote(target.path)
     require(not path.startswith("/") and "\\" not in path,
             "Local links must be repository-relative: " + value)
@@ -184,6 +204,12 @@ class LocalLinkChecker(HTMLParser):
             check_local_url(value, OUTPUT.parent)
 
 
+def png_size(path):
+    header = path.read_bytes()[:24]
+    require(header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR", "Not a PNG: " + str(path))
+    return struct.unpack(">II", header[16:24])
+
+
 def slug(value):
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
@@ -198,7 +224,7 @@ def build_page():
     feature_names = ["Come back to it", "Settle in", "Follow the work", "Know what has access"]
     feature_big = ['STAYS.', 'CLOSE.', 'VISIBLE.', 'BOUNDED.']
     feature_images = ['agent-computer-opportunity-v2.png', 'boundary-monolith-v5.png', 'observable-run-v2.png', 'agent-computer-hero-v2.png']
-    feature_alts = ['One workspace connects to a laptop, tablet and phone.', 'Architectural illustration of a bounded computer.', 'Concept illustration connecting a request, observed actions and result.', 'Personal device beside a separate agent computer.']
+    feature_alts = ['One workspace connects to a laptop, tablet and phone.', SHARE_IMAGE_ALT, 'Concept illustration connecting a request, observed actions and result.', 'Personal device beside a separate agent computer.']
     features = ''
     for i, name in enumerate(feature_names):
         features += f'<article class="quality-panel"><div class="quality-word" aria-hidden="true">{feature_big[i]}</div><div class="quality-layout"><figure><img src="assets/{feature_images[i]}" alt="{feature_alts[i]}" width="1536" height="1024" loading="lazy"></figure><div class="quality-copy"><span class="quality-position" aria-hidden="true">{i+1:02d} / 04</span><h3>{escape(name)}</h3>{blocks(quality_sub[name])}</div></div></article>'
@@ -255,15 +281,28 @@ def build_page():
     problem_context = '\n\n'.join(problem_paragraphs[3:])
     chapter_links = [('opportunity', 'The problem'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('platform', 'Open by design'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
     index_links = ''.join(f'<a href="#{target}"><span class="index-number">{i+1:02d}</span><span>{label}</span>{explore_arrow}</a>' for i, (target, label) in enumerate(chapter_links))
+    share_width, share_height = png_size(OUTPUT.parent / SHARE_IMAGE)
     # Reader copy is rendered at build time. Chapter headings and diagrams are intentionally shaped below.
     page=f'''<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Your agent needs a computer. It doesn't need yours. Explore Hivra's vision for independent agent computers and an ecosystem with boundaries outside the agent.">
+<meta name="description" content="{escape(PAGE_DESCRIPTION)}">
 <meta name="theme-color" content="#090909">
-<title>Hivra · Somewhere better to work</title>
-<link rel="icon" href="data:,">
+<title>{escape(PAGE_TITLE)}</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Hivra">
+<meta property="og:title" content="{escape(PAGE_TITLE)}">
+<meta property="og:description" content="{escape(PAGE_DESCRIPTION)}">
+<meta property="og:url" content="{PAGE_URL}">
+<meta property="og:image" content="{SITE_URL}/docs/litepaper/{SHARE_IMAGE}">
+<meta property="og:image:width" content="{share_width}">
+<meta property="og:image:height" content="{share_height}">
+<meta property="og:image:alt" content="{escape(SHARE_IMAGE_ALT)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@HivraOS">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/apple-icon.png">
 <link rel="preload" as="image" href="assets/boundary-monolith-v5.png">
 <link rel="stylesheet" href="litepaper.css?v={hashlib.sha256((OUTPUT.parent / "litepaper.css").read_bytes()).hexdigest()[:12]}">
 <link rel="preload" as="font" type="font/ttf" crossorigin href="assets/fonts/Manrope-Variable.ttf">

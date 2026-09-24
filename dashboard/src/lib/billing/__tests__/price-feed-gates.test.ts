@@ -2,11 +2,14 @@
 import {
   PLATFORM_PRICE_MAX_DEVIATION_BPS,
   PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
+  PlatformTokenPriceGateError,
   _resetPlatformPriceReferenceCacheForTests,
   fetchPlatformTokenPriceCrossCheck,
   fetchPlatformTokenPriceUsd,
+  priceGateRefusalFromError,
   toDecimalString,
 } from "@/lib/billing/price-feed";
+import { LivePriceUnavailableError } from "@/lib/billing/live-thresholds";
 import { HERMESOS_POOL_ID, HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 
 const TOKEN = HERMESOS_TOKEN.address;
@@ -204,5 +207,88 @@ describe("platform token price gates", () => {
     const cross = await fetchPlatformTokenPriceCrossCheck(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
     expect(cross).toMatchObject({ source: "geckoterminal_ohlcv_median", priceUsd: "0.000000002" });
     expect(toDecimalString(1.09036588922258e-6)).toBe("0.00000109036588922");
+  });
+});
+
+describe("price gate refusals name the token, the reason and what was observed", () => {
+  async function refusal(fetchImpl: unknown) {
+    try {
+      await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    } catch (error) {
+      expect(error).toBeInstanceOf(PlatformTokenPriceGateError);
+      return error as PlatformTokenPriceGateError;
+    }
+    throw new Error("expected the price gate to refuse");
+  }
+
+  it("liquidity_floor: the pool's liquidity against the token's floor", async () => {
+    const error = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 9_999)], closes: [0.0000011] }));
+    expect(error.refusal).toEqual({
+      assetKey: "hermesos",
+      asset: "$HermesOS",
+      reason: "liquidity_floor",
+      gate: "liquidity",
+      observed: { liquidityUsd: 9_999, minLiquidityUsd: 10_000, poolId: HERMESOS_POOL_ID },
+    });
+  });
+
+  it("median_deviation: how far the spot sits above the median, and the band", async () => {
+    const error = await refusal(
+      fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000013", 80_000)], closes: [0.0000011, 0.0000011, 0.0000011, 0.00000111] })
+    );
+    expect(error.reason).toBe("median_deviation");
+    expect(error.gate).toBe("deviation");
+    expect(error.observed).toMatchObject({
+      maxDeviationBps: PLATFORM_PRICE_MAX_DEVIATION_BPS,
+      medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
+      liquidityUsd: 80_000,
+      poolId: HERMESOS_POOL_ID,
+    });
+    expect(Number(error.observed.aboveMedianBps)).toBeGreaterThan(PLATFORM_PRICE_MAX_DEVIATION_BPS);
+  });
+
+  it("no_candle: a pool the median source has never seen trade (still a reference outage)", async () => {
+    const error = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], candles: [] }));
+    expect(error).toMatchObject({ gate: "reference_unavailable", reason: "no_candle", assetKey: "hermesos" });
+    expect(error.observed).toEqual({ stage: "reference", poolId: HERMESOS_POOL_ID });
+  });
+
+  it("no_candle: a pool the median source has not indexed yet (HTTP 404), still a reference outage", async () => {
+    // GeckoTerminal answers 404 for a pool it has not indexed, as it does for a new pool on launch day.
+    const error = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 404 }));
+    expect(error).toMatchObject({ gate: "reference_unavailable", reason: "no_candle", assetKey: "hermesos" });
+    expect(error.observed).toEqual({ stage: "reference", poolId: HERMESOS_POOL_ID, httpStatus: 404 });
+  });
+
+  it("feed_error: a source outage or a canonical pool missing from the source", async () => {
+    const geckoDown = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 503 }));
+    expect(geckoDown).toMatchObject({ gate: "reference_unavailable", reason: "feed_error", asset: "$HermesOS" });
+    // The status tells an outage (5xx) from a rate limit (429) in the log and the alert.
+    expect(geckoDown.observed).toEqual({ stage: "reference", poolId: HERMESOS_POOL_ID, httpStatus: 503 });
+    _resetPlatformPriceReferenceCacheForTests();
+    const geckoLimited = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 429 }));
+    expect(geckoLimited).toMatchObject({ reason: "feed_error", observed: { httpStatus: 429 } });
+    _resetPlatformPriceReferenceCacheForTests();
+    const dexDown = await refusal(jest.fn(async () => ({ ok: false, status: 502, json: async () => ({}) }) as unknown as Response));
+    expect(dexDown).toMatchObject({ gate: "spot_unavailable", reason: "feed_error", assetKey: "hermesos" });
+    expect(dexDown.observed).toEqual({ stage: "spot", poolId: HERMESOS_POOL_ID, httpStatus: 502 });
+    const poolMissing = await refusal(fakeFetch({ pairs: [pair(SATELLITE, "0.0000011", 500_000)], closes: [0.0000011] }));
+    // Raised by the shared DEXScreener read, then named for the token.
+    expect(poolMissing).toMatchObject({ gate: "pool_missing", reason: "feed_error", assetKey: "hermesos", asset: "$HermesOS" });
+    expect(poolMissing.observed).toMatchObject({ stage: "spot", poolId: HERMESOS_POOL_ID, otherPairs: 1 });
+  });
+
+  it("finds the refusal behind a wrapped error, and none behind an unrelated one", async () => {
+    const gateError = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 9_999)], closes: [0.0000011] }));
+    expect(priceGateRefusalFromError(gateError)?.reason).toBe("liquidity_floor");
+    const wrapped = new LivePriceUnavailableError("Live $HermesOS price unavailable", gateError);
+    expect(priceGateRefusalFromError(wrapped)).toEqual(gateError.refusal);
+    const carried = Object.assign(new Error("deposits paused"), {
+      priceGateRefusal: { ...gateError.refusal, reason: "median_deviation" as const },
+    });
+    expect(priceGateRefusalFromError(carried)?.reason).toBe("median_deviation");
+    expect(priceGateRefusalFromError(new Error("unrelated"))).toBeNull();
+    expect(priceGateRefusalFromError(new LivePriceUnavailableError("down", new Error("socket hang up")))).toBeNull();
+    expect(priceGateRefusalFromError(undefined)).toBeNull();
   });
 });
