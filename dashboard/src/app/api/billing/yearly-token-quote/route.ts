@@ -43,6 +43,8 @@ import { TokenNotAllowedError } from "@/lib/billing/token-access";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { log } from "@/lib/logger";
 
 function isValidTier(value: unknown): value is TierKey {
@@ -207,6 +209,18 @@ export async function POST(req: NextRequest) {
     const { userId } = await auth();
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
+
+    // Token geo-policy: a new yearly quote is a new token payment. Existing
+    // quotes and years (GET, check-now, settlement) are never refused.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/yearly-token-quote",
+        route: "/api/billing/yearly-token-quote",
+        method: "POST",
+        userId,
+      });
+    }
 
     let body: PostBody = {};
     try {

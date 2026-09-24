@@ -25,6 +25,8 @@ import {
   type UserTokenAccess,
 } from "@/lib/billing/token-access";
 import { TOKEN_CONVERSION_GRACE_HOURS } from "@/lib/billing/token-registry";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 
 const LOG_CONTEXT = { source: "billing/token-access", route: "/api/billing/token-access" };
 
@@ -88,6 +90,17 @@ export async function POST(req: NextRequest) {
       ...RATE_LIMIT_PRESETS.secretWrite,
     });
     if (rateLimited) return rateLimited;
+
+    // Token geo-policy: converting starts a $HermesOS -> $HIVRA conversion.
+    // Refusing it leaves the user's current access exactly as it is.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        ...LOG_CONTEXT,
+        method: "POST",
+        userId,
+      });
+    }
 
     const access = await convertGrandfatheredUserToHivra(userId);
     return apiSuccess(serializeAccess(access));

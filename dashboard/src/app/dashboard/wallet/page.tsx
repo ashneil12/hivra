@@ -6,6 +6,8 @@ import { motion } from 'framer-motion';
 import { CheckCircle2, Copy, AlertTriangle, ArrowDownToLine, ExternalLink } from 'lucide-react';
 import touch from '@/components/tools/touch.module.css';
 import { useLocale } from '@/components/i18n/LocaleProvider';
+import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
+import { useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
 import {
@@ -315,6 +317,8 @@ export default function WalletPage() {
   const searchParams = useSearchParams();
   const { copy } = useLocale();
   const walletCopy = copy.dashboard.wallet;
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenGeo = useTokenGeoAccess();
   const fromWelcome = searchParams?.get('from') === 'welcome';
   const welcomeRedirectFiredRef = useRef(false);
   const [data, setData] = useState<WalletApiPayload | null>(null);
@@ -920,7 +924,11 @@ export default function WalletPage() {
         </div>
       )}
 
-      <BuyTokenCard />
+      {/* Token geo-policy: no buy-token card for a viewer it blocks (or while
+          it is still checking); a blocked viewer sees the notice instead.
+          Existing holdings, withdrawals and tiers below are unchanged. */}
+      {tokenGeo.status === 'allowed' ? <BuyTokenCard /> : null}
+      {tokenGeo.notice ? <TokenGeoNotice notice={tokenGeo.notice} /> : null}
 
       {walletEnv && (
         <WalletEnvironmentNotice
