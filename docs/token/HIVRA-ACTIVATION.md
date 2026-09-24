@@ -286,17 +286,22 @@ quote fails closed with a 503 "try again later":
   (`source`), the token (`asset`, `assetKey`), the reason (`gateReason`:
   `liquidity_floor`, `median_deviation`, `no_candle` or `feed_error`), the
   underlying `gate` and the `observed` values (for example `liquidityUsd` and
-  `minLiquidityUsd`, or `aboveMedianBps` and `maxDeviationBps`). At most one
-  line per token and reason per minute per server process; the next line's
+  `minLiquidityUsd`, `aboveMedianBps` and `maxDeviationBps`, or the price
+  source's `httpStatus`: a pool GeckoTerminal has not indexed yet answers 404
+  and is reported as `no_candle`, while a 429 rate limit or a 5xx outage is
+  `feed_error`). At most one line per token and reason per minute per server
+  process; the next line's
   `refusalsSinceLastLog` counts the refusals folded into it. The per-request
   503 line is logged at info, so it does not flood production logs.
 - an ops alert: a `warn` row in `ops_events` with source `billing/price-gate`,
   on /dashboard/ops and in the `/api/ops/events/feed` alert feed. At most one
   per token per 30 minutes from each server process, and the row is keyed to
   the 30-minute window, so other processes in the same window add to its
-  count rather than opening another row. It does not page anyone: email and
-  Telegram paging is only for fatal ops events. There is no Discord or Slack
-  alert path in the code base.
+  count rather than opening another row. Each report overwrites the row's
+  metadata, so the gate, reason and observed values on it are from the most
+  recently reported refusal in the window, not the first. It does not page
+  anyone: email and Telegram paging is only for fatal ops events. There is no
+  Discord or Slack alert path in the code base.
 
 On launch day, filter the logs for `price_gate_refused` or watch
 /dashboard/ops for `billing/price-gate`.

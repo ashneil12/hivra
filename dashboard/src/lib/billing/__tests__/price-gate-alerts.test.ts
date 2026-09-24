@@ -85,6 +85,10 @@ describe("reportPriceGateRefusal", () => {
       },
     });
     expect(alert.message).not.toMatch(/[–—]/);
+    // Every report in the window overwrites the row's metadata (ops-events.ts), so the
+    // message must not claim it holds the first refusal.
+    expect(alert.message).toContain("the most recently reported refusal in the window");
+    expect(alert.message).not.toMatch(/\bfirst\b/i);
     expect(sanitizeOpsMetadata(alert.metadata)).toEqual(alert.metadata);
   });
 

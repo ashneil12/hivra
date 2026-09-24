@@ -16,7 +16,9 @@
  *      and in the /api/ops/events/feed alert feed. At most one per token per
  *      PRICE_GATE_ALERT_INTERVAL_MS (30 minutes) from this process, and the row's fingerprint names the
  *      30-minute clock window, so other server processes in the same window
- *      count into that row instead of opening another. It does not page:
+ *      count into that row instead of opening another. Each report overwrites
+ *      the row's metadata, so it holds the most recently reported refusal,
+ *      not the first. It does not page:
  *      email and Telegram paging is reserved for fatal ops events.
  *
  * Log and metadata keys avoid the word "token": the logger's sanitizer
@@ -117,7 +119,7 @@ async function alertRefusal(refusal: PriceGateRefusal, context: PriceGateRefusal
     source: PRICE_GATE_ALERT_SOURCE,
     severity: "warn",
     title: `${refusal.asset} quotes refused by a price gate`,
-    message: `A price gate refused ${refusal.asset} quotes in the 30-minute window from ${windowStart}. Quotes stay closed until the gate passes; card payment is unaffected. The metadata has the first refusal's gate, reason and observed values.`,
+    message: `A price gate refused ${refusal.asset} quotes in the 30-minute window from ${windowStart}. Quotes stay closed until the gate passes; card payment is unaffected. The metadata has the gate, reason and observed values of the most recently reported refusal in the window.`,
     metadata: {
       asset: refusal.asset,
       assetKey: refusal.assetKey,

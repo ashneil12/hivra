@@ -253,12 +253,25 @@ describe("price gate refusals name the token, the reason and what was observed",
     expect(error.observed).toEqual({ stage: "reference", poolId: HERMESOS_POOL_ID });
   });
 
+  it("no_candle: a pool the median source has not indexed yet (HTTP 404), still a reference outage", async () => {
+    // GeckoTerminal answers 404 for a pool it has not indexed, as it does for a new pool on launch day.
+    const error = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 404 }));
+    expect(error).toMatchObject({ gate: "reference_unavailable", reason: "no_candle", assetKey: "hermesos" });
+    expect(error.observed).toEqual({ stage: "reference", poolId: HERMESOS_POOL_ID, httpStatus: 404 });
+  });
+
   it("feed_error: a source outage or a canonical pool missing from the source", async () => {
     const geckoDown = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 503 }));
     expect(geckoDown).toMatchObject({ gate: "reference_unavailable", reason: "feed_error", asset: "$HermesOS" });
+    // The status tells an outage (5xx) from a rate limit (429) in the log and the alert.
+    expect(geckoDown.observed).toEqual({ stage: "reference", poolId: HERMESOS_POOL_ID, httpStatus: 503 });
+    _resetPlatformPriceReferenceCacheForTests();
+    const geckoLimited = await refusal(fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], geckoStatus: 429 }));
+    expect(geckoLimited).toMatchObject({ reason: "feed_error", observed: { httpStatus: 429 } });
     _resetPlatformPriceReferenceCacheForTests();
     const dexDown = await refusal(jest.fn(async () => ({ ok: false, status: 502, json: async () => ({}) }) as unknown as Response));
     expect(dexDown).toMatchObject({ gate: "spot_unavailable", reason: "feed_error", assetKey: "hermesos" });
+    expect(dexDown.observed).toEqual({ stage: "spot", poolId: HERMESOS_POOL_ID, httpStatus: 502 });
     const poolMissing = await refusal(fakeFetch({ pairs: [pair(SATELLITE, "0.0000011", 500_000)], closes: [0.0000011] }));
     // Raised by the shared DEXScreener read, then named for the token.
     expect(poolMissing).toMatchObject({ gate: "pool_missing", reason: "feed_error", assetKey: "hermesos", asset: "$HermesOS" });

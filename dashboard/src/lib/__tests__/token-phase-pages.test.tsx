@@ -142,8 +142,13 @@ it("a scheduled /token names the instant Hivra starts using $HIVRA, and does not
   setPhase("scheduled");
   const { container } = renderPage(TokenVerificationPage);
   expect(screen.getByText("The $HIVRA contract. Hivra starts using it at 1 October 2099, 16:00 UTC.")).toBeInTheDocument();
+  const hivra = within(container.querySelector('[data-token="hivra"]') as HTMLElement);
+  // The status label agrees with the launched hero: $HIVRA is on Base, not "launching".
+  expect(hivra.getByRole("heading", { level: 3 })).toHaveTextContent(/^\$HIVRA LIVE ON BASE$/);
   const hermesos = within(container.querySelector('[data-token="hermesos"]') as HTMLElement);
+  expect(hermesos.getByRole("heading", { level: 3 })).toHaveTextContent(/^\$HermesOS LIVE$/);
   expect(hermesos.getByText("The existing $HermesOS contract.")).toBeInTheDocument();
+  expect(container.textContent).not.toMatch(/soon|launching|not launched/i);
 });
 
 it("an active /token lists $HIVRA first as LIVE and $HermesOS as LEGACY", () => {

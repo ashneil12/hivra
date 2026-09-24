@@ -20,7 +20,8 @@ import { TokenGeoNotice } from "./TokenGeoNotice";
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
   legacy: "LEGACY",
-  scheduled: "LAUNCHING SOON",
+  // $HIVRA is on Base; the note under it names the instant Hivra starts using it.
+  scheduled: "LIVE ON BASE",
   not_launched: "NOT LAUNCHED YET",
 };
 
@@ -34,7 +35,7 @@ const ENTRY_NOTE: Record<"hermesos" | "hivra", Record<TokenPageEntryStatus, stri
   hivra: {
     live: "The $HIVRA contract. New token payments and holdings use it.",
     legacy: "The $HIVRA contract.",
-    scheduled: "The $HIVRA contract. It goes live at the published launch time.",
+    scheduled: "The $HIVRA contract. Hivra starts using it at the published switch time.",
     not_launched: "",
   },
 };

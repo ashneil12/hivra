@@ -187,12 +187,39 @@ export function priceGateRefusalFromError(error: unknown): PriceGateRefusal | nu
   return null;
 }
 
-/** The median source has no candle for the pool (never traded, or not indexed yet). */
+/**
+ * A price source answered with an HTTP error. The status goes into the
+ * refusal's `observed` values, so a 429 rate limit, a 5xx outage and a 404
+ * can be told apart in the logs and the ops alert.
+ */
+class PriceSourceHttpError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus: number
+  ) {
+    super(message);
+    this.name = "PriceSourceHttpError";
+  }
+}
+
+/**
+ * The median source has no candle for the pool: never traded, or not indexed
+ * yet (GeckoTerminal answers 404 for a pool it has not indexed).
+ */
 class NoCandleError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly httpStatus?: number
+  ) {
     super(message);
     this.name = "NoCandleError";
   }
+}
+
+/** `observed` plus the HTTP status of the source error behind a refusal, when it had one. */
+function withHttpStatus(observed: PriceGateObserved, error: unknown): PriceGateObserved {
+  const httpStatus = (error as { httpStatus?: unknown } | null)?.httpStatus;
+  return typeof httpStatus === "number" ? { ...observed, httpStatus } : observed;
 }
 
 /** A gate error raised below the token level (a shared fetch), named for `token`. */
@@ -243,9 +270,7 @@ async function fetchTokenPriceUsd(
   }
 
   if (!response.ok) {
-    throw new Error(
-      `DEXScreener price fetch failed status=${response.status}`
-    );
+    throw new PriceSourceHttpError(`DEXScreener price fetch failed status=${response.status}`, response.status);
   }
 
   const payload = (await response.json()) as DexScreenerTokensResponse;
@@ -380,7 +405,13 @@ async function readPoolMedianCloseNative(
   } finally {
     clearTimeout(timeoutHandle);
   }
-  if (!response.ok) throw new Error(`GeckoTerminal OHLCV fetch failed status=${response.status}`);
+  if (response.status === 404) {
+    // A pool GeckoTerminal has not indexed yet (a new pool on launch day): no candle, not an outage.
+    throw new NoCandleError(`GeckoTerminal does not know pool ${poolId} (status=404)`, 404);
+  }
+  if (!response.ok) {
+    throw new PriceSourceHttpError(`GeckoTerminal OHLCV fetch failed status=${response.status}`, response.status);
+  }
   const payload = (await response.json()) as GeckoOhlcvResponse;
   const base = payload.meta?.base?.address?.toLowerCase();
   if (base && base !== tokenAddress.toLowerCase()) {
@@ -443,7 +474,7 @@ export async function fetchPlatformTokenPriceUsd(
     throw new PlatformTokenPriceGateError(
       "spot_unavailable",
       `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      { token, observed: { stage: "spot", poolId: token.poolId } }
+      { token, observed: withHttpStatus({ stage: "spot", poolId: token.poolId }, error) }
     );
   }
   const { pair, ...quote } = spot;
@@ -530,7 +561,11 @@ async function referenceFor(
       `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`,
       // Still a reference outage for the stale-price fallback (live-thresholds),
       // but reported as no_candle when the pool simply has no candle yet.
-      { token, reason: error instanceof NoCandleError ? "no_candle" : "feed_error", observed: { stage: "reference", poolId } }
+      {
+        token,
+        reason: error instanceof NoCandleError ? "no_candle" : "feed_error",
+        observed: withHttpStatus({ stage: "reference", poolId }, error),
+      }
     );
   }
 }
@@ -553,7 +588,7 @@ export async function fetchPlatformTokenPriceCrossCheck(
     throw new PlatformTokenPriceGateError(
       "spot_unavailable",
       `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      { token, observed: { stage: "spot", poolId: token.poolId } }
+      { token, observed: withHttpStatus({ stage: "spot", poolId: token.poolId }, error) }
     );
   }
   const usdPerNative = Number(pair.priceUsd) / Number(pair.priceNative);
