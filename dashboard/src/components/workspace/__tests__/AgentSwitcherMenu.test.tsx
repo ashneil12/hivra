@@ -46,14 +46,14 @@ describe("AgentSwitcherMenu on touch", () => {
   it("focuses the search for a mouse and keyboard", async () => {
     setPointer(false);
     renderMenu();
-    expect(await screen.findByRole("combobox", { name: "Search your runtimes" })).toHaveFocus();
+    expect(await screen.findByRole("combobox", { name: "Search your agents and computers" })).toHaveFocus();
   });
 
   it("keeps the keyboard down on touch and lands on the current runtime", async () => {
     setPointer(true);
     renderMenu();
-    await screen.findByRole("dialog", { name: "Switch runtime" });
-    expect(screen.getByRole("combobox", { name: "Search your runtimes" })).not.toHaveFocus();
+    await screen.findByRole("dialog", { name: "Switch agent or computer" });
+    expect(screen.getByRole("combobox", { name: "Search your agents and computers" })).not.toHaveFocus();
     expect(screen.getByRole("option", { name: /Two/ })).toHaveFocus();
   });
 
@@ -68,7 +68,7 @@ describe("AgentSwitcherMenu on touch", () => {
     Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 667 });
     renderMenu();
-    const dialog = await screen.findByRole("dialog", { name: "Switch runtime" });
+    const dialog = await screen.findByRole("dialog", { name: "Switch agent or computer" });
     expect(dialog.style.getPropertyValue("--agent-menu-max-height")).toBe("420px");
     viewport.height = 380;
     act(() => listeners.resize());
@@ -79,7 +79,7 @@ describe("AgentSwitcherMenu on touch", () => {
   it("closes when an iframe takes focus away from the page, without asking for focus back", async () => {
     setPointer(false);
     const { onClose } = renderMenu();
-    await screen.findByRole("dialog", { name: "Switch runtime" });
+    await screen.findByRole("dialog", { name: "Switch agent or computer" });
     act(() => window.dispatchEvent(new Event("blur")));
     expect(onClose).toHaveBeenCalledWith({ restoreFocus: false });
   });
@@ -103,7 +103,7 @@ describe("AgentSwitcherMenu on touch", () => {
   it("keeps the anchor's last position when the anchor is hidden", async () => {
     setPointer(true);
     const { anchor } = renderMenu();
-    const dialog = await screen.findByRole("dialog", { name: "Switch runtime" });
+    const dialog = await screen.findByRole("dialog", { name: "Switch agent or computer" });
     const placed = { top: dialog.style.top, left: dialog.style.left, width: dialog.style.width };
     jest.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 } as DOMRect);
     act(() => window.dispatchEvent(new Event("resize")));
@@ -113,7 +113,7 @@ describe("AgentSwitcherMenu on touch", () => {
   it("gives the search a full-row tap target and no iOS autocorrect", async () => {
     setPointer(true);
     renderMenu();
-    const search = await screen.findByRole("combobox", { name: "Search your runtimes" });
+    const search = await screen.findByRole("combobox", { name: "Search your agents and computers" });
     expect(search.closest("label")).not.toBeNull();
     expect(search).toHaveAttribute("autocapitalize", "none");
     expect(search).toHaveAttribute("autocorrect", "off");

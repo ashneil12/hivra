@@ -1,6 +1,7 @@
 import {
   duplicateFleetNames,
   fleetEntryHref,
+  fleetEntryOpenLabel,
   fleetSections,
   matchesFleetQuery,
 } from "../fleet-sections";
@@ -109,6 +110,20 @@ describe("fleet entry destination", () => {
     // A computer has no conversation; landing it on one is the bug that started
     // this whole line of work.
     expect(fleetEntryHref(ubuntu)).toBe("/dashboard/agent/ubuntu?tab=desktop");
+  });
+
+  it("opens a Linux Sandbox on Manage and never promises it a desktop", () => {
+    // A sandbox is terminal-only; the agent page lands it on Manage.
+    const sandbox = agent("x-sandbox", "MY_LINUX_SANDBOX", {
+      resourceKind: "computer",
+      typeLabel: "Linux Sandbox",
+      agentType: "linux-terminal",
+      computerProfile: null,
+    });
+    expect(fleetEntryHref(sandbox)).toBe("/dashboard/agent/sandbox?tab=manage");
+    expect(fleetEntryOpenLabel(sandbox)).toBe("Open sandbox");
+    expect(fleetEntryOpenLabel(ubuntu)).toBe("Open desktop");
+    expect(fleetEntryOpenLabel(codexAgent)).toBe("Open agent");
   });
 
   it("sends a Hermes instance to the instance route, not the agent route", () => {
