@@ -2305,7 +2305,7 @@ export function LaunchJourney() {
           ) : planChecked && plan?.needsActivation && !selfHosted ? (
             <div className={styles.notice} role="status">
               <Cloud size={16} aria-hidden />
-              <span>{`The Free plan runs one agent or computer with ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} on Hivra Cloud at no cost. You turn it on before you launch.`}</span>
+              <span>{`The Free plan runs one agent or computer with ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} on Hivra Cloud at no cost. You turn it on when you launch there; your own cloud or server doesn't need it.`}</span>
             </div>
           ) : null}
           {planChecked && !plan?.usage && !selfHosted ? (

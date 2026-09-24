@@ -9,6 +9,7 @@ import { LanguageSwitcher, useLocale } from "@/components/i18n/LocaleProvider";
 import styles from "../public-site/public-site.module.css";
 import SourceLink from "../public-site/SourceLink";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 interface LandingHeaderProps {
   /**
@@ -120,7 +121,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
   const accountLinks = (mobile = false) => (
     <div className={mobile ? [styles.mobileAccount, phoneMenu && styles.mobileAccountTop].filter(Boolean).join(" ") : styles.accountLinks}>
       {!isSignedIn && <Link href="/sign-in" className={styles.loginLink} onClick={() => setMenuOpen(false)}>{copy.nav.login}</Link>}
-      <Link href={isSignedIn ? "/dashboard" : "/get-started?plan=free"} className={styles.headerCta} onClick={() => setMenuOpen(false)}>
+      <Link href={isSignedIn ? "/dashboard" : PUBLIC_START_HREF} className={styles.headerCta} onClick={() => setMenuOpen(false)}>
         {isSignedIn ? copy.nav.openDashboard : copy.nav.register}<ArrowRight size={16} strokeWidth={1.5} aria-hidden="true" />
       </Link>
     </div>
@@ -192,7 +193,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
       <noscript>
         <nav aria-label="Mobile navigation" className={styles.noScriptNav}>
           {links.map(({ label, href }) => <a key={href} href={href}>{label}</a>)}
-          <a href={isSignedIn ? "/dashboard" : "/get-started?plan=free"}>{isSignedIn ? copy.nav.openDashboard : copy.nav.register}</a>
+          <a href={isSignedIn ? "/dashboard" : PUBLIC_START_HREF}>{isSignedIn ? copy.nav.openDashboard : copy.nav.register}</a>
         </nav>
       </noscript>
     </header>
