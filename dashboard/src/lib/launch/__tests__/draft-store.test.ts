@@ -57,6 +57,62 @@ describe("launch draft storage", () => {
     });
   });
 
+  it("round-trips the Codex browser choice and restores older Codex drafts with the browser on", () => {
+    const draft = {
+      ...createLaunchDraft(),
+      resourceKind: "agent" as const,
+      profileId: "codex" as const,
+      browser: false,
+      browserSource: "custom" as const,
+    };
+    writeLaunchDraft(draft);
+    expect(readLaunchDraft()).toMatchObject({ browser: false, browserSource: "custom" });
+
+    // Drafts written before the choice existed were launched with the browser.
+    const legacy: Record<string, unknown> = { ...draft, launchState: "uncertain" };
+    delete legacy.browser;
+    delete legacy.browserSource;
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy));
+    expect(readLaunchDraft()).toMatchObject({ browser: true, browserSource: "recommended", launchState: "uncertain" });
+
+    // Only Codex has a browser sidecar.
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify({
+      ...legacy, resourceKind: "computer", profileId: "ubuntu-desktop", browser: true,
+    }));
+    expect(readLaunchDraft()?.browser).toBe(false);
+  });
+
+  it("keeps the size a browser raise replaced only when it is an owner's own Codex size", () => {
+    const raisedFrom = { cpu: 1, ram: 2, maximumCpu: 1, maximumRam: 2, source: "custom" as const };
+    const draft = {
+      ...createLaunchDraft(),
+      resourceKind: "agent" as const,
+      profileId: "codex" as const,
+      browser: true,
+      browserSource: "custom" as const,
+      resources: { cpu: 1.5, ram: 3, maximumCpu: 1.5, maximumRam: 3, source: "custom" as const },
+      browserRaisedFrom: raisedFrom,
+    };
+    writeLaunchDraft(draft);
+    expect(readLaunchDraft()).toEqual(draft);
+
+    const raw = JSON.parse(window.sessionStorage.getItem(LAUNCH_DRAFT_STORAGE_KEY) || "{}");
+    for (const invalid of [{ ...raisedFrom, cpu: 99 }, { ...raisedFrom, source: "recommended" }, "1 CPU / 2 GB"]) {
+      window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify({ ...raw, browserRaisedFrom: invalid }));
+      expect(readLaunchDraft()).toMatchObject({ resources: draft.resources, browserRaisedFrom: null });
+    }
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify({
+      ...raw, resourceKind: "computer", profileId: "ubuntu-desktop",
+    }));
+    expect(readLaunchDraft()?.browserRaisedFrom).toBeNull();
+
+    // Drafts saved before this existed have nothing to give back.
+    const legacy = { ...raw };
+    delete legacy.browserRaisedFrom;
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy));
+    expect(readLaunchDraft()).toMatchObject({ resources: draft.resources, browserRaisedFrom: null });
+  });
+
   it("persists resumable ISO task metadata without persisting a signed URL", () => {
     const draft = {
       ...createLaunchDraft(),
