@@ -1,4 +1,6 @@
+import { DIGITALOCEAN_SANDBOX_SIZES } from "@/lib/infrastructure/contracts";
 import {
+  DEFAULT_DIGITALOCEAN_CHOICE,
   DEFAULT_MODEL_ACCESS,
   LAUNCH_DRAFT_SCHEMA_VERSION,
   LAUNCH_NAME_MAX_LENGTH,
@@ -9,6 +11,7 @@ import {
   type LaunchDraft,
   type LaunchDraftTemplate,
   type LaunchDeploymentSnapshot,
+  type LaunchDigitalOceanChoice,
   type LaunchErrorAction,
   type LaunchModelAccess,
   type LaunchProfileId,
@@ -70,6 +73,7 @@ export function createLaunchDraft(): LaunchDraft {
     browserSource: "recommended",
     browserRaisedFrom: null,
     capacity: { mode: "hivra-managed", targetId: null },
+    digitalOcean: { ...DEFAULT_DIGITALOCEAN_CHOICE },
     modelAccess: { ...DEFAULT_MODEL_ACCESS },
     sendMemoryKey: false,
     template: null,
@@ -169,10 +173,29 @@ function safeResources(value: unknown): LaunchResources | null {
   return { cpu, ram, maximumCpu, maximumRam, source };
 }
 
+const DIGITALOCEAN_MODEL = /^[A-Za-z0-9._:/-]{1,128}$/;
+
+/** The secret-free DigitalOcean choices. A model key is never part of them. */
+function safeDigitalOceanChoice(value: unknown): LaunchDigitalOceanChoice {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_DIGITALOCEAN_CHOICE };
+  const input = value as Record<string, unknown>;
+  return {
+    size: (DIGITALOCEAN_SANDBOX_SIZES as readonly unknown[]).includes(input.size)
+      ? input.size as LaunchDigitalOceanChoice["size"] : DEFAULT_DIGITALOCEAN_CHOICE.size,
+    modelMode: input.modelMode === "digitalocean-inference" ? "digitalocean-inference" : "vendor",
+    model: typeof input.model === "string" && DIGITALOCEAN_MODEL.test(input.model) ? input.model : "",
+    firstTask: typeof input.firstTask === "string" ? input.firstTask.slice(0, 8_000) : "",
+  };
+}
+
 function safeSubmittedDeployment(value: unknown): LaunchDeploymentSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
   if (input.mode === "hivra-managed") return { mode: "hivra-managed" };
+  if (input.mode === "digitalocean" && typeof input.connectionId === "string" && UUID.test(input.connectionId)
+    && typeof input.targetId === "string" && UUID.test(input.targetId)) {
+    return { mode: "digitalocean", connectionId: input.connectionId.toLowerCase(), targetId: input.targetId.toLowerCase() };
+  }
   if (
     input.mode === "self-managed"
     && typeof input.connectionId === "string"
@@ -222,7 +245,9 @@ function safeDraft(value: unknown): LaunchDraft | null {
     ? input.capacity as Record<string, unknown>
     : {};
   let capacity: LaunchCapacityChoice;
-  if (capacityInput.mode === "self-managed") {
+  if (capacityInput.mode === "digitalocean" && typeof capacityInput.targetId === "string" && UUID.test(capacityInput.targetId)) {
+    capacity = { mode: "digitalocean", targetId: capacityInput.targetId.toLowerCase() };
+  } else if (capacityInput.mode === "self-managed") {
     capacity = {
       mode: "self-managed",
       targetId: typeof capacityInput.targetId === "string" && UUID.test(capacityInput.targetId)
@@ -295,6 +320,7 @@ function safeDraft(value: unknown): LaunchDraft | null {
     browserSource: input.browserSource === "custom" ? "custom" : "recommended",
     browserRaisedFrom: browserRaisedFrom?.source === "custom" ? browserRaisedFrom : null,
     capacity,
+    digitalOcean: safeDigitalOceanChoice(input.digitalOcean),
     modelAccess: safeModelAccess(input.modelAccess),
     // Consent to send a saved memory key is Hermes' only, and only ever true.
     sendMemoryKey: profileId === "hermes" && input.sendMemoryKey === true,

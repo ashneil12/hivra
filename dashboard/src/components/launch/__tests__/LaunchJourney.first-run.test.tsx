@@ -215,7 +215,7 @@ describe("a paying customer whose plan is on hold", () => {
     expect(screen.queryByText(/not turned on yet/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No charge\. It runs on the Free plan/)).not.toBeInTheDocument();
     expect(screen.getByText("Uses your Pro plan allowance once the plan is active again.")).toBeInTheDocument();
-    expect(billingLink("Set up your own capacity")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
     expect(checkoutMock).not.toHaveBeenCalled();
   });

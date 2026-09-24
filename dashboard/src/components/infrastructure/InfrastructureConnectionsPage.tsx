@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
@@ -71,6 +71,7 @@ import { getAgent } from "@/lib/hivra/agent-catalog";
 import {
   buildLaunchSetupHref,
   parsePortableLaunchResourceId,
+  type PortableLaunchResourceId,
 } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
@@ -90,9 +91,8 @@ import { ProviderComputerSetupDialog } from "./ProviderComputerSetupDialog";
 import { HetznerCloudCleanupDialog } from "./HetznerCloudCleanupDialog";
 import { HetznerCloudConnectionCard, type HetznerSetupEvidenceStatus } from "./HetznerCloudConnectionCard";
 import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
-import { DigitalOceanConnectionCard } from "./DigitalOceanConnectionCard";
+import { DigitalOceanConnectionCard, digitalOceanLaunchHref } from "./DigitalOceanConnectionCard";
 import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
-import { DigitalOceanLaunchDialog } from "./DigitalOceanLaunchDialog";
 import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
@@ -146,19 +146,43 @@ function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | nul
     : null;
 }
 
-export function InfrastructureConnectionsPage() {
+/** The Capacity page opened in a sheet over Launch: its launch comes from
+ * Launch, and a ready place to run goes straight back to it. */
+export type EmbeddedCapacity = {
+  launchResourceId: PortableLaunchResourceId | null;
+  /** A ready server or DigitalOcean team the owner chose for their launch. */
+  onLaunchTarget: (targetId: string) => void;
+  onClose: () => void;
+};
+
+/** The target a Launch link inside the sheet points at, if it is one. */
+function launchTargetFromHref(href: string | null): string | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href, "https://hivra.invalid");
+    if (url.origin !== "https://hivra.invalid" || url.pathname !== "/dashboard/launch") return null;
+    return url.searchParams.get("targetId");
+  } catch {
+    return null;
+  }
+}
+
+export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: EmbeddedCapacity | null } = {}) {
   // DigitalOcean sessions are Hivra agents; offer them only where those are on.
   const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
   useEffect(() => {
     setHivraAgentsEnabled(isHivraEnabled());
   }, []);
   const searchParams = useSearchParams();
-  const requestedLaunchResource = parsePortableLaunchResourceId(searchParams?.get("launch"));
+  const router = useRouter();
+  const requestedLaunchResource = embedded ? embedded.launchResourceId : parsePortableLaunchResourceId(searchParams?.get("launch"));
   // Deep link from a DigitalOcean agent whose token stopped working.
   const requestedTokenReplacement = searchParams?.get("replaceToken") ?? null;
-  const unifiedLaunchReturn = searchParams?.get("returnTo") === "unified-launch";
+  const unifiedLaunchReturn = embedded ? true : searchParams?.get("returnTo") === "unified-launch";
   const selfHosted = isLocalAuthMode();
-  const pendingLaunch = usePendingLaunch();
+  const pendingLaunch = usePendingLaunch(embedded
+    ? { launchParam: embedded.launchResourceId, returnTo: "unified-launch" }
+    : null);
   const [connections, setConnections] = useState<InfrastructureConnectionDto[]>([]);
   const [targets, setTargets] = useState<DeploymentTargetDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,7 +198,6 @@ export function InfrastructureConnectionsPage() {
   const [hetznerDialogOpen, setHetznerDialogOpen] = useState(false);
   const [digitalOceanDialogOpen, setDigitalOceanDialogOpen] = useState(false);
   const [replacingDigitalOcean, setReplacingDigitalOcean] = useState<DigitalOceanConnectionDto | null>(null);
-  const [digitalOceanLaunch, setDigitalOceanLaunch] = useState<{ connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto } | null>(null);
   const [digitalOceanTargets, setDigitalOceanTargets] = useState<DigitalOceanDeploymentTargetDto[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSessionDto[]>([]);
   const [digitalOceanRefreshing, setDigitalOceanRefreshing] = useState<Set<string>>(() => new Set());
@@ -713,24 +736,41 @@ export function InfrastructureConnectionsPage() {
 
   return (
     <LaunchOnServerProvider pending={pendingLaunch} targets={targets}>
-    <div className={styles.page}>
-      <div className={styles.pageGlow} aria-hidden="true" />
+    <div
+      className={embedded ? styles.embeddedPage : styles.page}
+      // Inside Launch, "Launch on this server" and "Continue launch" hand the
+      // server back to the same launch instead of opening Launch again.
+      onClickCapture={embedded ? (event) => {
+        const anchor = (event.target as HTMLElement | null)?.closest?.("a");
+        const targetId = launchTargetFromHref(anchor?.getAttribute("href") ?? null);
+        if (!targetId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        embedded.onLaunchTarget(targetId);
+      } : undefined}
+    >
+      {embedded ? null : <div className={styles.pageGlow} aria-hidden="true" />}
       <main className={styles.pageInner}>
-        <nav className={styles.breadcrumb} aria-label="Breadcrumb">
+        {embedded ? null : <nav className={styles.breadcrumb} aria-label="Breadcrumb">
           <Link href="/dashboard">Home</Link>
           <ArrowRight size={12} aria-hidden="true" />
           <span aria-current="page">Capacity</span>
-        </nav>
+        </nav>}
 
         <header className={styles.pageHeader}>
           <div className={styles.pageHeading}>
             <span className={styles.eyebrow}>Capacity</span>
-            <h1>Where your agents run.</h1>
-            <p>
-              {selfHosted
-                ? "Connect a cloud project or bring a computer you control."
-                : "Hivra Cloud, your cloud accounts, and your own servers: the places your agents and computers run."}
-            </p>
+            {embedded ? <>
+              <h1 id="launch-capacity-sheet-heading">Add capacity for your launch</h1>
+              <p>Connect a server or a cloud account, or finish setting one up. When it&apos;s ready, choose Launch on this server and Hivra takes you back to your launch.</p>
+            </> : <>
+              <h1>Where your agents run.</h1>
+              <p>
+                {selfHosted
+                  ? "Connect a cloud project or bring a computer you control."
+                  : "Hivra Cloud, your cloud accounts, and your own servers: the places your agents and computers run."}
+              </p>
+            </>}
           </div>
           {!showingFirstConnection ? (
             <button
@@ -917,7 +957,6 @@ export function InfrastructureConnectionsPage() {
                         sessions={managedSessions.filter((session) => session.connectionId === connection.id)}
                         refreshing={digitalOceanRefreshing.has(connection.id)}
                         error={digitalOceanErrors[connection.id] ?? null}
-                        onLaunch={() => { if (target) setDigitalOceanLaunch({ connection, target }); }}
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
                         onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
@@ -1006,7 +1045,11 @@ export function InfrastructureConnectionsPage() {
                 upsertConnection(connection);
                 setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
                 setDigitalOceanDialogOpen(false);
-                setDigitalOceanLaunch({ connection, target });
+                // Connected and ready: choose what runs there in Launch.
+                if (target.status === "ready" && target.capabilities.launchReady) {
+                  if (embedded) embedded.onLaunchTarget(target.id);
+                  else router.push(digitalOceanLaunchHref(target.id));
+                }
               }}
             />
           ) : null}
@@ -1029,17 +1072,6 @@ export function InfrastructureConnectionsPage() {
             />
           ) : null}
 
-          {digitalOceanLaunch ? (
-            <DigitalOceanLaunchDialog
-              connection={digitalOceanLaunch.connection}
-              target={digitalOceanLaunch.target}
-              onClose={() => setDigitalOceanLaunch(null)}
-              returnFocusRef={addCapacityButtonRef}
-              onLaunched={(session) => {
-                setManagedSessions((current) => [session, ...current.filter((candidate) => candidate.agentId !== session.agentId)]);
-              }}
-            />
-          ) : null}
 
           {!selfHosted && hivraCloudDialogOpen ? (
             <HivraCloudPurchaseDialog

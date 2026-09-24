@@ -97,10 +97,13 @@ export function useLaunchReadyTargetIds(targets: readonly DeploymentTargetDto[])
 
 /** The launch the owner came here from: ?launch=<resource>, or the launch
  * journey's unsent draft that this owner saved in this browser. */
-export function usePendingLaunch(): PendingLaunch | null {
+export function usePendingLaunch(
+  /** Capacity opened inside Launch passes its launch here instead of in the URL. */
+  override: { launchParam: string | null; returnTo: string | null } | null = null,
+): PendingLaunch | null {
   const searchParams = useSearchParams();
-  const launchParam = searchParams?.get("launch") ?? null;
-  const returnTo = searchParams?.get("returnTo") ?? null;
+  const launchParam = override ? override.launchParam : searchParams?.get("launch") ?? null;
+  const returnTo = override ? override.returnTo : searchParams?.get("returnTo") ?? null;
   // Drafts are saved per owner; until auth says who, there is none to read.
   const { isLoaded, userId } = useAuth();
   const ownerId = isLoaded ? userId ?? null : null;

@@ -94,6 +94,7 @@
 
 .field input:not([type="checkbox"]),
 .field select,
+.field textarea,
 .advanced input {
   width: 100%;
   min-width: 0;
@@ -191,9 +192,16 @@
 .advanced summary:focus-visible,
 .field input:not([type="checkbox"]):focus-visible,
 .field select:focus-visible,
+.field textarea:focus-visible,
 .advanced input:focus-visible,
 .consent input:focus-visible,
 .checkbox input:focus-visible {
   outline: 2px solid var(--launch-accent, #ff4244);
   outline-offset: 3px;
+}
+
+.field textarea {
+  font-family: inherit;
+  line-height: 1.45;
+  resize: vertical;
 }
