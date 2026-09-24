@@ -740,8 +740,8 @@ export default function AgentPage() {
   // writer once the workspace route became a door — the only one was
   // `UnifiedWorkspace`, which stopped being imported. This route is where the
   // visit actually happens, so it is where the record belongs. Recording is
-  // fire-and-forget and cannot navigate: a stored selection is offered on Home,
-  // never followed.
+  // fire-and-forget and cannot navigate: Home offers the stored selection as
+  // "Continue", and follows it only when the app itself is opened at Home.
   useEffect(() => {
     if (!id) return;
     persistWorkspaceSelection({

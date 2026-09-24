@@ -21,6 +21,13 @@ jest.mock("@/lib/workspace/workspace-persistence", () => ({
   restoreWorkspaceSelection: jest.fn(() => null),
 }));
 
+let appOpenAtHome = false;
+const markHomeOpened = jest.fn();
+jest.mock("@/lib/workspace/app-open", () => ({
+  isAppOpenAtHome: () => appOpenAtHome,
+  markHomeOpened: () => markHomeOpened(),
+}));
+
 const mockedUseWorkspaceAgents = jest.mocked(useWorkspaceAgents);
 const mockedRestore = jest.mocked(restoreWorkspaceSelection);
 
@@ -72,6 +79,7 @@ describe("FleetControlPane", () => {
     jest.clearAllMocks();
     mockedUseWorkspaceAgents.mockReturnValue(state());
     mockedRestore.mockReturnValue(null);
+    appOpenAtHome = false;
   });
 
   it("lists BOTH families, so a Hivra-only owner sees their runtimes", () => {
@@ -143,7 +151,7 @@ describe("FleetControlPane", () => {
     );
     render(<FleetControlPane />);
 
-    expect(screen.getByText(/Hermes runtimes are unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Your Hermes agents couldn't be loaded/)).toBeInTheDocument();
     // The Hivra half must still be usable.
     expect(screen.getByText("CODEX_AGENT")).toBeInTheDocument();
 
@@ -170,17 +178,30 @@ describe("FleetControlPane", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
-  // A bare visit continues where you left off. This used to be forbidden, because
-  // it "teleported" you into a box of the app's choosing — but the app is no
-  // longer choosing: `lastSelection` is the runtime you opened yourself.
-  it("continues into the last runtime you were in", () => {
+  // Home reached from inside the app (the Home link, the logo) is the list.
+  // It used to follow the saved selection, so Home from inside an agent
+  // bounced straight back into that agent.
+  it("shows the list with a Continue link when Home is reached inside the app", () => {
+    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+    render(<FleetControlPane />);
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Where will you work?" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Continue\s*CODEX_AGENT/ })).toHaveAttribute("href", "/dashboard/agent/codex?tab=chat");
+    expect(markHomeOpened).toHaveBeenCalled();
+  });
+
+  // Opening the app at Home continues where you left off: `lastSelection` is
+  // the agent or computer you opened yourself.
+  it("continues into the last agent you were in when the app is opened at Home", () => {
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
     render(<FleetControlPane />);
     expect(replace).toHaveBeenCalledWith("/dashboard/agent/codex?tab=chat");
     expect(screen.queryByRole("heading", { name: "Where will you work?" })).not.toBeInTheDocument();
   });
 
-  it("resumes the surface, not just the runtime", () => {
+  it("resumes the surface, not just the agent", () => {
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: "x-ubuntu", surface: "desktop" });
     render(<FleetControlPane />);
     expect(replace).toHaveBeenCalledWith("/dashboard/agent/ubuntu?tab=desktop");
@@ -190,6 +211,7 @@ describe("FleetControlPane", () => {
     // A stopped box is not a place to resume into — the resume link already
     // guards on this, and the redirect must agree with it or arriving would
     // strand you somewhere that cannot open.
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
     const stopped = { ...codex, state: "stopped" as const };
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [stopped] }));
@@ -201,6 +223,7 @@ describe("FleetControlPane", () => {
   it("does not redirect when the list is still loading", () => {
     // Redirecting before the fleet confirms would open a runtime that may have
     // stopped since, so the decision waits for the list.
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [], loading: true }));
     render(<FleetControlPane />);
@@ -208,6 +231,7 @@ describe("FleetControlPane", () => {
   });
 
   it("does not resume from a partial list while sources are loading", () => {
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
     mockedUseWorkspaceAgents.mockReturnValue(state({ loading: true }));
     const view = render(<FleetControlPane />);
@@ -226,7 +250,7 @@ describe("FleetControlPane", () => {
   });
 
   it("stays put when the navigation asked for the list explicitly", () => {
-    // Only the explicit all-resources link asks to stay on the list.
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
     render(<FleetControlPane requested />);
     expect(replace).not.toHaveBeenCalled();
@@ -275,6 +299,7 @@ describe("FleetControlPane", () => {
   );
 
   it('does not resume a cached resource from an unavailable source', () => {
+    appOpenAtHome = true;
     mockedRestore.mockReturnValue({ uid: 'x-codex', surface: 'conversation' });
     mockedUseWorkspaceAgents.mockReturnValue(state({ hivraError: 'Unavailable' }));
     render(<FleetControlPane />);
