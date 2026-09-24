@@ -30,32 +30,21 @@ it("does not let a detached native receiver break the web surface", () => {
   expect(() => postNativeWorkspace({ version: 1, kind: "surfaces", pathname: "/dashboard", active: "", surfaces: [] })).not.toThrow();
 });
 
+// Route families, arrival parameters and security rejections are shared with the
+// Mac app in apps/shared/native-contract (native-route-grammar.test.ts).
 it.each([
-  ["/dashboard", "/dashboard"],
-  ["/dashboard/", "/dashboard"],
-  ["/dashboard/agent/item?tab=desktop", "/dashboard/agent/item?tab=desktop"],
-  ["/dashboard/agent/item?open=fast&tab=desktop", "/dashboard/agent/item?tab=desktop&open=fast"],
-  ["/dashboard/agent/item?open=native&tab=desktop", "/dashboard/agent/item?tab=desktop&open=native"],
   ["/dashboard/agent/%69tem?tab=%66iles", "/dashboard/agent/item?tab=files"],
-  [`${origin}/dashboard/computers`, "/dashboard/computers"],
   ["/dashboard/launch?start=1&kind=computer", "/dashboard/launch?kind=computer&start=1"],
 ])("accepts and canonicalizes the app-owned dashboard route %s", (input, expected) => {
-  expect(nativeDashboardHref(input, origin)).toBe(expected);
+  expect(nativeDashboardHref(input)).toBe(expected);
 });
 
 it.each([
-  "https://elsewhere.example/dashboard", "https://hivra.example.evil/dashboard", "http://hivra.example/dashboard",
-  "https://user:password@hivra.example/dashboard", "//hivra.example/dashboard", "javascript:alert(1)",
-  "/api/instances", "/dashboard-elsewhere", "/dashboard/../api", "/dashboard/%2e%2e/api", "/dashboard/%252e%252e/api",
-  "/dashboard//settings", "/dashboard/agent%2fitem", "/dashboard/agent%255citem", "/dashboard/agent/%2569tem",
-  "/dashboard/agent/..\\api", "/dashboard?token=secret", "/dashboard#secret", "/dashboard?tab=files&tab=manage",
-  "/dashboard?tab=Files", "/dashboard?tab=https://elsewhere.example", "/dashboard/launch?tab=files",
-  "/dashboard/agent/item?tab=desktop&open=slow", "/dashboard/agent/item?tab=files&open=fast",
-  "/dashboard/agents?tab=desktop&open=fast", "/dashboard/agent/item?tab=desktop&open=fast&token=secret",
-  "/dashboard/launch?kind=agent", "/dashboard/launch?kind=computer&start=0", "/dashboard/launch?kind=agent&start=1&profile=private",
-  "/dashboard?tab=files\n", "/dashboard/agent/%00item", "/dashboard/agent/%23fragment", "/dashboard/agent/%3fquery",
+  // A native shell sends root-relative routes; an origin is never part of one.
+  `${origin}/dashboard/computers`, "https://elsewhere.example/dashboard", "https://user:password@hivra.example/dashboard",
+  "//hivra.example/dashboard", "javascript:alert(1)", "/dashboard/../api", "/dashboard?token=secret",
 ])("rejects unsafe or unsupported navigation %s", input => {
-  expect(nativeDashboardHref(input, origin)).toBeNull();
+  expect(nativeDashboardHref(input)).toBeNull();
 });
 
 it("copies only the eight catalog metadata fields", () => {

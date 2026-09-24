@@ -3,51 +3,27 @@ import Foundation
 public enum HivraWorkspaceDestination: String, CaseIterable, Codable, Sendable {
     case overview, agents, computers, activity, infrastructure, launch, settings
 
+    /// The dashboard's primary navigation, in its order (apps/shared/native-contract/primary-navigation.v1.json).
+    public static let primaryNavigation: [Self] = [.overview, .computers, .agents, .infrastructure, .activity]
+
     public var path: String { self == .overview ? "/dashboard" : "/dashboard/\(rawValue)" }
-    public var label: String { self == .overview ? "Home" : rawValue.capitalized }
+    public var label: String {
+        switch self {
+        case .overview: "Home"
+        // The route keeps its original path; the dashboard calls it Capacity.
+        case .infrastructure: "Capacity"
+        default: rawValue.capitalized
+        }
+    }
 }
 
 /// Dashboard presentation routes only. Guest addresses and authentication parameters are not routes.
 public enum HivraWorkspaceRoute {
+    public static let grammarVersion = HivraWorkspaceRouteGrammar.version
+
+    /// The canonical dashboard route for `value`, or nil. Shared with the dashboard; see HivraWorkspaceRouteGrammar.
     public static func normalizedPath(_ value: String) -> String? {
-        guard !value.isEmpty, value.utf8.count <= 2_048,
-              !value.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }),
-              !value.contains("\\"), !value.contains("#"),
-              var components = URLComponents(string: value),
-              components.scheme == nil, components.host == nil,
-              components.user == nil, components.password == nil,
-              components.port == nil else { return nil }
-        let encodedPath = components.percentEncodedPath
-        guard let path = encodedPath.removingPercentEncoding,
-              !path.contains("%"), !path.contains("\\"),
-              !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
-              encodedPath.range(of: "%2f|%5c", options: [.regularExpression, .caseInsensitive]) == nil,
-              path == "/dashboard" || path.hasPrefix("/dashboard/") else { return nil }
-        var segments = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        if segments.last == "" { segments.removeLast() }
-        guard segments.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
-        components.path = segments.joined(separator: "/")
-        if let query = components.queryItems {
-            if components.path == "/dashboard/launch" {
-                guard query.count == 2, Set(query.map(\.name)) == ["kind", "start"],
-                      let kind = query.first(where: { $0.name == "kind" })?.value,
-                      ["agent", "computer"].contains(kind),
-                      query.first(where: { $0.name == "start" })?.value == "1" else { return nil }
-                components.queryItems = [URLQueryItem(name: "kind", value: kind), URLQueryItem(name: "start", value: "1")]
-            } else if components.path.hasPrefix("/dashboard/agent/"), query.count == 2,
-                      Set(query.map(\.name)) == ["tab", "open"] {
-                guard query.first(where: { $0.name == "tab" })?.value == "desktop",
-                      let open = query.first(where: { $0.name == "open" })?.value,
-                      ["fast", "native"].contains(open) else { return nil }
-                components.queryItems = [URLQueryItem(name: "tab", value: "desktop"), URLQueryItem(name: "open", value: open)]
-            } else {
-                guard query.count == 1, let item = query.first, item.name == "tab",
-                      let value = item.value, isSurfaceID(value) else { return nil }
-                components.queryItems = [URLQueryItem(name: "tab", value: value)]
-            }
-        }
-        guard let normalized = components.string, normalized.utf8.count <= 2_048 else { return nil }
-        return normalized
+        HivraWorkspaceRouteGrammar.normalize(value)
     }
 
     public static func url(for path: String, profile: HivraConnectionProfile) -> URL? {

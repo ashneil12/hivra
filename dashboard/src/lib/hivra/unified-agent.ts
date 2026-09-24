@@ -94,6 +94,13 @@ function hermesState(s: string): UnifiedState {
   return "other";
 }
 
+/** Agent or computer: the one rule for web Home, the sidebar and native shells.
+ *  A desktop profile makes any row a computer, as the canonical resource shadow
+ *  classifies it, and so does a computer runtime without a stored profile. */
+export function hivraResourceKind(row: { type: string; computer_profile?: string | null }): "agent" | "computer" {
+  return row.computer_profile || catalogAgent(row.type)?.resourceKind === "computer" ? "computer" : "agent";
+}
+
 const HIVRA_DOT: Record<UnifiedState, string> = { running: "#22c55e", updating: "#f59e0b", provisioning: "#3b82f6", stopped: "var(--text-muted)", error: "#c0392b", other: "var(--text-muted)" };
 const HERMES_DOT: Record<UnifiedState, string> = { running: "#22c55e", updating: "#f59e0b", provisioning: "#3b82f6", stopped: "var(--text-muted)", error: "#c0392b", other: "var(--text-muted)" };
 
@@ -103,7 +110,7 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
   // "updating", distinct from a first-time launch ("provisioning").
   let state = hivraState(a.status);
   if (state === "provisioning" && a.provisioned_at) state = "updating";
-  const resourceKind = a.computer_profile || def?.resourceKind === "computer" ? "computer" : "agent";
+  const resourceKind = hivraResourceKind(a);
   return {
     uid: `x-${a.id}`, kind: "hivra", id: a.id, name: a.name, emoji: a.emoji ?? null,
     attention: resourceAttention(a.status),

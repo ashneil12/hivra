@@ -12,6 +12,9 @@ struct HivraWorkspaceNavigationTests {
             "/dashboard/infrastructure", "/dashboard/launch", "/dashboard/settings",
         ])
         #expect(HivraWorkspaceDestination.overview.label == "Home")
+        // Capacity keeps its original route; the wire and stored value stays `infrastructure`.
+        #expect(HivraWorkspaceDestination.infrastructure.label == "Capacity")
+        #expect(HivraWorkspaceDestination(rawValue: "infrastructure") == .infrastructure)
     }
 
     @Test("normalizes equivalent routes and resolves against the exact profile origin")
@@ -27,32 +30,15 @@ struct HivraWorkspaceNavigationTests {
         #expect(HivraWorkspaceRoute.url(for: "/dashboard", profile: unsafeProfile) == nil)
     }
 
-    @Test("allows only the explicit launch kind and start values, with canonical query ordering")
-    func validatesLaunchQuery() {
-        for kind in ["agent", "computer"] {
-            #expect(HivraWorkspaceRoute.normalizedPath("/dashboard/launch?start=1&kind=\(kind)") == "/dashboard/launch?kind=\(kind)&start=1")
-        }
-        for path in ["/dashboard/launch?kind=agent", "/dashboard/launch?kind=runtime&start=1",
-                     "/dashboard/launch?kind=agent&start=0", "/dashboard/launch?kind=agent&kind=computer",
-                     "/dashboard/launch?kind=agent&start=1&token=secret", "/dashboard/agents?kind=agent&start=1"] {
-            #expect(HivraWorkspaceRoute.normalizedPath(path) == nil)
-        }
-    }
-
-    @Test("rejects external, traversal, credential and ambiguous relative routes")
-    func rejectsUnsafePaths() {
-        for path in ["https://example.test/dashboard", "//example.test/dashboard", "javascript:alert(1)",
-                     "/dashboard-evil", "/login", "dashboard/agents", "/dashboard/../login",
-                     "/dashboard/%2e%2e/login", "/dashboard/%252e%252e/login", "/dashboard/agent%2fabc",
-                     "/dashboard/agent\\abc", "/dashboard//agents", "/dashboard/./agents",
-                     "/dashboard?token=secret", "/dashboard#token=secret", "/dashboard?tab=chat&tab=desktop",
-                     "/dashboard/agent/abc?tab=desktop&open=slow", "/dashboard/agent/abc?tab=files&open=fast",
-                     "/dashboard/agents?tab=desktop&open=fast", "/dashboard/agent/abc?tab=desktop&open=fast&token=secret",
-                     "/dashboard?tab=https://guest.invalid", "/dashboard?tab=", "/dashboard/\nabc",
-                     "/dashboard/%00abc", "/dashboard/%xx", "/dashboard/" + String(repeating: "x", count: 2_048),
-                     "/dashboard/" + String(repeating: "é", count: 500)] {
-            #expect(HivraWorkspaceRoute.normalizedPath(path) == nil)
-        }
+    // Route families, arrival parameters and security rejections are shared with the
+    // dashboard in apps/shared/native-contract (HivraNativeContractTests).
+    @Test("bounds a route at 2,048 bytes before and after canonicalization")
+    func boundsRouteLength() {
+        let longest = "/dashboard/" + String(repeating: "x", count: 2_037)
+        #expect(HivraWorkspaceRoute.normalizedPath(longest) == longest)
+        #expect(HivraWorkspaceRoute.normalizedPath(longest + "x") == nil)
+        #expect(HivraWorkspaceRoute.normalizedPath(longest + "?welcome=1") == nil)
+        #expect(HivraWorkspaceRoute.normalizedPath("/dashboard/" + String(repeating: "é", count: 500)) == nil)
     }
 
     @Test("accepts only an exact trusted origin in the main frame")

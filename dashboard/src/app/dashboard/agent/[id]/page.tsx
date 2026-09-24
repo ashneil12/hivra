@@ -558,7 +558,19 @@ export default function AgentPage() {
   // reused module in a test must not carry another page's actions over.
   const actionStore = useSurfaceActionStoreInstance();
   const id = (params?.id as string) || "";
-  const launchWelcome = searchParams?.get("welcome") === "1";
+  // A launch result arrives with ?welcome=1. It describes this arrival, not the
+  // page: read it once per agent and keep it for the visit, then drop it from
+  // the address so a reload, a copied link or a native shell sees only the route.
+  const welcomeParam = searchParams?.get("welcome") === "1";
+  const [welcomeArrival, setWelcomeArrival] = useState<string | null>(() => (welcomeParam ? id : null));
+  if (welcomeParam && welcomeArrival !== id) setWelcomeArrival(id);
+  const launchWelcome = welcomeArrival === id;
+  useEffect(() => {
+    if (!welcomeParam) return;
+    const nextURL = new URL(window.location.href);
+    nextURL.searchParams.delete("welcome");
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+  }, [welcomeParam]);
   const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
   const [agent, setAgent] = useState<HivraAgent | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -923,11 +935,12 @@ export default function AgentPage() {
 
       {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
           connected get a one-line pointer to the Telegram tab (the component
-          gates itself on ?welcome=1 + probe + per-box dismiss). Hidden while
-          already on the Telegram tab and for dashboard-surface agents (no
-          Telegram tab to point at). */}
+          gates itself on this visit's welcome + probe + per-box dismiss).
+          Hidden while already on the Telegram tab and for dashboard-surface
+          agents (no Telegram tab to point at). */}
       {agent.status === "running" && agent.chat_url && !isDashboard && !isComputer && effectiveTab !== "telegram" ? (
         <ChannelConnectNudge
+          welcome={launchWelcome}
           boxUrl={agent.chat_url}
           token={agent.api_token}
           boxId={agent.id}

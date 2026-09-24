@@ -8,6 +8,20 @@ extension HivraWorkspaceResource {
     var needsAttention: Bool { ["failed", "error", "degraded", "unhealthy", "needs_attention"].contains(status.lowercased()) }
 }
 
+extension HivraWorkspaceDestination {
+    var symbol: String {
+        switch self {
+        case .overview: "square.grid.2x2"
+        case .computers: "desktopcomputer"
+        case .agents: "sparkle"
+        case .infrastructure: "server.rack"
+        case .activity: "waveform.path"
+        case .launch: "plus"
+        case .settings: "person.crop.circle"
+        }
+    }
+}
+
 struct HivraResourceStatus: View {
     let resource: HivraWorkspaceResource
     var showsLabel = true

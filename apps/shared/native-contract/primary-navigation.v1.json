@@ -1,0 +1,12 @@
+{
+  "contract": "hivra.native-workspace.primary-navigation",
+  "version": 1,
+  "description": "The dashboard's primary navigation, in order. The web sidebar (DASHBOARD_PRIMARY_NAVIGATION) and every native shell sidebar show exactly these labels for exactly these routes; native shells bind them to Command/Ctrl 1-5 in this order.",
+  "items": [
+    { "label": "Home", "href": "/dashboard" },
+    { "label": "Computers", "href": "/dashboard/computers" },
+    { "label": "Agents", "href": "/dashboard/agents" },
+    { "label": "Capacity", "href": "/dashboard/infrastructure" },
+    { "label": "Activity", "href": "/dashboard/activity" }
+  ]
+}
