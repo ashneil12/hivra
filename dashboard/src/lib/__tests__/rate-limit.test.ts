@@ -1,4 +1,4 @@
-import { enforceRateLimit, getIP } from "../rate-limit";
+import { enforceRateLimit, getIP, reserveRateLimit } from "../rate-limit";
 import { NextRequest } from "next/server";
 
 describe("Rate Limiting Utility", () => {
@@ -23,6 +23,13 @@ describe("Rate Limiting Utility", () => {
     // 6th request should fail
     const res = enforceRateLimit("test_ip", { limit: 5, windowMs: 60000 });
     expect(res.success).toBe(false);
+  });
+
+  test("says how long a refused request must wait", () => {
+    const config = { limit: 1, windowMs: 60_000 };
+    expect(enforceRateLimit("retry_after_key", config).success).toBe(true);
+    dateNowSpy.mockReturnValue(1000000000 + 15_000);
+    expect(enforceRateLimit("retry_after_key", config)).toEqual({ success: false, retryAfterMs: 45_000 });
   });
 
   test("should allow requests after the window expires", () => {
@@ -80,5 +87,79 @@ describe("Rate Limiting Utility", () => {
     const req = new NextRequest("http://localhost");
     req.headers.set("cf-connecting-ip", "definitely-not-an-ip");
     expect(getIP(req)).toBe("127.0.0.1");
+  });
+});
+
+describe("reserveRateLimit", () => {
+  let now = 2_000_000_000;
+  let dateNowSpy: jest.SpyInstance;
+  const config = { limit: 1, windowMs: 15 * 60_000 };
+
+  beforeEach(() => {
+    dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => now);
+  });
+  afterEach(() => dateNowSpy.mockRestore());
+
+  test("gives a failed run's slot back so it can be retried at once", () => {
+    const first = reserveRateLimit("reserve_failed", config);
+    if (!first.success) throw new Error("expected a reservation");
+    first.settle("failed");
+    now += 1_000;
+    expect(reserveRateLimit("reserve_failed", config).success).toBe(true);
+  });
+
+  test("keeps a successful run's slot for the rest of the window", () => {
+    const first = reserveRateLimit("reserve_succeeded", config);
+    if (!first.success) throw new Error("expected a reservation");
+    first.settle("succeeded");
+    now += 60_000;
+    expect(reserveRateLimit("reserve_succeeded", config)).toEqual({
+      success: false,
+      retryAfterMs: 14 * 60_000,
+      inFlight: false,
+    });
+    now += 14 * 60_000 + 1;
+    expect(reserveRateLimit("reserve_succeeded", config).success).toBe(true);
+  });
+
+  test("refuses a concurrent run, even across a window rollover", () => {
+    const first = reserveRateLimit("reserve_concurrent", config);
+    if (!first.success) throw new Error("expected a reservation");
+    expect(reserveRateLimit("reserve_concurrent", config)).toMatchObject({ success: false, inFlight: true });
+    now += 16 * 60_000;
+    expect(reserveRateLimit("reserve_concurrent", config)).toMatchObject({ success: false, inFlight: true });
+    first.settle("failed");
+    expect(reserveRateLimit("reserve_concurrent", config).success).toBe(true);
+  });
+
+  test("keeps a run that is still going through the hourly cleanup", () => {
+    dateNowSpy.mockRestore();
+    jest.useFakeTimers({ now: 3_000_000_000 });
+    try {
+      jest.isolateModules(() => {
+        // A fresh module so its cleanup interval runs on the fake clock.
+        const { reserveRateLimit: reserve } = jest.requireActual("../rate-limit") as typeof import("../rate-limit");
+        const running = reserve("reserve_cleanup", config);
+        if (!running.success) throw new Error("expected a reservation");
+        jest.advanceTimersByTime(2 * 60 * 60_000);
+        expect(reserve("reserve_cleanup", config)).toMatchObject({ success: false, inFlight: true });
+        running.settle("failed");
+        expect(reserve("reserve_cleanup", config).success).toBe(true);
+      });
+    } finally {
+      jest.useRealTimers();
+      dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => now);
+    }
+  });
+
+  test("settles once", () => {
+    const first = reserveRateLimit("reserve_once", { limit: 2, windowMs: 60_000 });
+    const second = reserveRateLimit("reserve_once", { limit: 2, windowMs: 60_000 });
+    if (!first.success || !second.success) throw new Error("expected reservations");
+    first.settle("failed");
+    first.settle("failed");
+    // Only the first failure gave a slot back, so the second run still counts.
+    expect(reserveRateLimit("reserve_once", { limit: 2, windowMs: 60_000 }).success).toBe(true);
+    expect(reserveRateLimit("reserve_once", { limit: 2, windowMs: 60_000 }).success).toBe(false);
   });
 });

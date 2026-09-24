@@ -275,6 +275,12 @@ type InfrastructureConnectionWizardProps = {
   onConnectionSaved: (connection: InfrastructureConnectionDto) => void;
   onPreflightComplete: (connectionId: string, result: ProxmoxPreflightResult) => void;
   onPrepareRequested?: (connection: InfrastructureConnectionDto) => void;
+  /** Opens the shared review dialog for Linux Sandbox setup on this host. */
+  onGvisorSetupRequested?: (connection: InfrastructureConnectionDto, mode: "prepare" | "repair") => void;
+  /** Opens this saved connection's settings to change its SSH user. */
+  onEditRequested?: (connection: InfrastructureConnectionDto) => void;
+  /** This wizard's own Linux Sandbox check came back ready. */
+  onGvisorReady?: (connectionId: string) => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
 };
 
@@ -289,6 +295,9 @@ export function InfrastructureConnectionWizard({
   onConnectionSaved,
   onPreflightComplete,
   onPrepareRequested,
+  onGvisorSetupRequested,
+  onEditRequested,
+  onGvisorReady,
   returnFocusRef,
 }: InfrastructureConnectionWizardProps) {
   const [form, setForm] = useState(() => initialForm(connection, prefill));
@@ -301,6 +310,8 @@ export function InfrastructureConnectionWizard({
   const [savedConnection, setSavedConnection] = useState<InfrastructureConnectionDto | null>(connection);
   const [discovery, setDiscovery] = useState<HostDiscoveryResult | null>(null);
   const [preflight, setPreflight] = useState<ProxmoxPreflightResult | null>(null);
+  // Set when this wizard's Linux Sandbox check passed: the host is ready.
+  const [gvisorReady, setGvisorReady] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [privateKeyFileName, setPrivateKeyFileName] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -371,6 +382,7 @@ export function InfrastructureConnectionWizard({
     setOperationError(null);
     setDiscovery(null);
     setPreflight(null);
+    setGvisorReady(false);
     try {
       const result = await discoverInfrastructureHost(targetConnection.id);
       setDiscovery(result);
@@ -479,7 +491,7 @@ export function InfrastructureConnectionWizard({
     : phase === "discovering"
       ? 1
       : phase === "discovery"
-        ? 2
+        ? gvisorReady ? 4 : 2
         : phase === "preflighting"
           ? 2
           : phase === "preflight" && preflight?.ok && preflight.target.launchReady
@@ -494,7 +506,7 @@ export function InfrastructureConnectionWizard({
     : phase === "discovering"
       ? `Inspecting ${savedConnection?.name ?? form.name}`
       : phase === "discovery"
-        ? "Host recommendation"
+        ? gvisorReady ? "Ready for Linux Sandbox" : "Host recommendation"
         : phase === "preflighting"
           ? "Checking readiness"
           : preflight?.ok && preflight.target.launchReady
@@ -777,12 +789,24 @@ export function InfrastructureConnectionWizard({
           ) : phase === "discovery" && discovery ? (
             <InfrastructureHostDiscoveryResult
               result={discovery}
+              hostName={savedConnection?.name ?? form.name}
+              sshUser={form.sshUser}
               connectionId={savedConnection?.id}
               onRetry={() => savedConnection && void runDiscovery(savedConnection)}
               onDone={onClose}
               onStrictPreflightRequested={supportsStrictProxmoxDiscovery(discovery)
                 ? () => savedConnection && void runPreflight(savedConnection)
                 : undefined}
+              onGvisorSetupRequested={savedConnection && onGvisorSetupRequested
+                ? (mode) => onGvisorSetupRequested(savedConnection, mode)
+                : undefined}
+              onConnectAsRootRequested={savedConnection && onEditRequested
+                ? () => onEditRequested(savedConnection)
+                : undefined}
+              onGvisorReady={() => {
+                setGvisorReady(true);
+                if (savedConnection) onGvisorReady?.(savedConnection.id);
+              }}
             />
           ) : phase === "discovery" ? (
             <OperationFailure

@@ -24,6 +24,9 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
   runProxmoxHostScriptWithStdin: (...args: unknown[]) => mockRunWithStdin(...args),
 }));
 
+import { readFileSync } from "node:fs";
+
+import { HIVRA_GVISOR_PREPARE_STAGES } from "../gvisor-computer-contract";
 import { findGvisorComputerByLaunchRequest, mutateGvisorComputer, prepareGvisorHost } from "../gvisor-computer-service";
 
 const userId = "user_test";
@@ -114,6 +117,8 @@ it("reports a sanitized Docker runtime-registration timeout from preparation", a
   await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({
     code: "remote_failed",
     message: "Docker did not confirm the exact runsc runtime path within 30 seconds of its configuration reload.",
+    // The named stage lets the review dialog mark the step setup stopped in.
+    stage: "runtime-registration",
   });
   expect(mockCompletePreflight).toHaveBeenCalledWith(
     userId,
@@ -122,6 +127,21 @@ it("reports a sanitized Docker runtime-registration timeout from preparation", a
     expect.any(String),
     expect.objectContaining({ connectionStatus: "error", lastErrorCode: "PROVISIONER_UNAVAILABLE" }),
   );
+});
+
+it("reports no stage when the host names one Hivra doesn't know", async () => {
+  mockRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: "HIVRA_GVISOR_PREPARE_FAILED_V1 invented-stage\n" });
+  await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({
+    code: "remote_failed",
+    message: "The gVisor host preparation could not be confirmed.",
+    stage: null,
+  });
+});
+
+it("keeps the stage list in step with the prepare script", () => {
+  const script = readFileSync(`${process.cwd()}/provisioner/gvisor/prepare-gvisor-host.sh`, "utf8");
+  const stages = [...script.matchAll(/^prepare_stage="([a-z-]+)"$/gm)].map((match) => match[1]).filter((stage) => stage !== "complete");
+  expect(stages).toEqual([...HIVRA_GVISOR_PREPARE_STAGES]);
 });
 
 it("releases a rejected resize only after unchanged live status, then accepts a new size", async () => {

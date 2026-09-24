@@ -13,8 +13,10 @@ import {
   type ProviderComputerSetupView,
 } from "@/lib/infrastructure/provider-computer-setup-contracts";
 import { buildLaunchSetupHref, type PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { launchOnProviderServer } from "@/lib/infrastructure/launch-on-server";
 
 import styles from "./Infrastructure.module.css";
+import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
 
 const SETUP_POLL_MS = 5_000;
 const SETUP_WINDOW_MS = 10 * 60_000;
@@ -31,11 +33,6 @@ const PRE_ENROLLMENT_STAGES = new Set<ProviderComputerSetupView["stage"]>([
   "waiting_for_capacity", "awaiting_setup", "busy", "firewall_requested", "waiting_for_firewall",
   "power_requested", "waiting_for_power", "waiting_for_identity",
 ]);
-
-/** Where a ready Hivra-created server opens the launch journey. */
-export function launchOnTargetHref(targetId: string): string {
-  return `/dashboard/launch?start=1&targetId=${encodeURIComponent(targetId)}`;
-}
 
 export function formatClock(milliseconds: number): string {
   const total = Math.max(0, Math.floor(milliseconds / 1_000));
@@ -111,6 +108,7 @@ export function ProviderComputerSetupPanel({
   const stopped = useRef(false);
   const expiryChecked = useRef<string | null>(null);
   const selectorId = useId();
+  const launch = useLaunchOnServer();
 
   const current = orderId
     ? computers.find((item) => item.orderId === orderId)
@@ -260,12 +258,11 @@ export function ProviderComputerSetupPanel({
 
     <div className={styles.resultActions}>
       {onClose ? <button type="button" className={styles.secondaryButton} disabled={running} onClick={onClose}>{closeLabel}</button> : null}
-      {!running && launchTargetId && requestedRuntimeSupported && <Link
-        className={styles.primaryButton}
-        href={launchResourceId
-          ? buildLaunchSetupHref(launchResourceId, launchTargetId, { unified: unifiedLaunchReturn })
-          : launchOnTargetHref(launchTargetId)}
-      >{launchResourceId ? "Continue your launch" : "Launch on this server"}</Link>}
+      {!running && launchTargetId && requestedRuntimeSupported && <LaunchOnServerLink
+        action={launchResourceId
+          ? launchOnProviderServer(launchTargetId, { source: "handoff", resourceId: launchResourceId, unified: unifiedLaunchReturn })
+          : launch.forProviderServer(launchTargetId)}
+      />}
       {!running && !requestedRuntimeSupported && launchResourceId && <Link
         className={styles.primaryButton}
         href={buildLaunchSetupHref(launchResourceId, null, { unified: unifiedLaunchReturn })}

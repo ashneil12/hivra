@@ -64,5 +64,7 @@ describe("enforceAuthenticatedRouteRateLimit", () => {
     });
 
     expect(blocked?.status).toBe(429);
+    expect(Number(blocked?.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(Number(blocked?.headers.get("retry-after"))).toBeLessThanOrEqual(60);
   });
 });

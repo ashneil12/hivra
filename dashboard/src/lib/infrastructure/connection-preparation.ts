@@ -32,6 +32,7 @@ import {
   PORTABLE_HIVRA_SIMPLE_BRIDGE,
   PORTABLE_HIVRA_SIMPLE_VMID_RANGE,
 } from "./portable-provisioner-contract";
+import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
 
 const MAX_PROVISIONER_BUNDLE_BYTES = 2 * 1024 * 1024;
 // Leave enough of the route's 300-second budget for the mandatory read-only
@@ -53,6 +54,21 @@ export type InfrastructurePreparationErrorCode =
   | "PREPARATION_SUPERSEDED"
   | "PREPARATION_INTERNAL_ERROR";
 
+/** Why the host script stopped, read from its own fail() lines. Only these
+ * fixed names leave the server; raw host output never does. */
+export const PREPARATION_FAILURE_CAUSES = [
+  "root_required",
+  "proxmox_version_unsupported",
+  "kvm_unavailable",
+  "storage_unavailable",
+  "host_tools_missing",
+  "network_conflict",
+  "network_setup_failed",
+  "image_download_failed",
+  "already_running",
+] as const;
+export type PreparationFailureCause = (typeof PREPARATION_FAILURE_CAUSES)[number];
+
 type PreparationFailure = {
   ok: false;
   connectionId: string;
@@ -60,6 +76,7 @@ type PreparationFailure = {
     code: InfrastructurePreparationErrorCode;
     message: string;
     remediation?: string;
+    cause?: PreparationFailureCause;
   };
 };
 
@@ -108,7 +125,7 @@ const ERROR_COPY: Record<
   },
   HOST_ADDRESS_BLOCKED: {
     message: "The SSH host resolves to an address this control plane cannot reach.",
-    remediation: "Use a permitted address or explicitly enable private networking on a self-hosted control plane.",
+    // Mode-dependent; see failure().
   },
   SSH_HOST_KEY_MISMATCH: {
     message: "The server identity did not match the pinned SSH fingerprint.",
@@ -132,15 +149,65 @@ const ERROR_COPY: Record<
   },
   PREPARATION_INTERNAL_ERROR: {
     message: "The host preparation operation could not be started safely.",
-    remediation: "Try again after the current Hivra build finishes deploying.",
+    // Mode-dependent; see failure().
   },
+};
+
+function preparationErrorCopy(code: InfrastructurePreparationErrorCode): { message: string; remediation?: string } {
+  const copy = ERROR_COPY[code];
+  if (code === "HOST_ADDRESS_BLOCKED") return { ...copy, remediation: blockedAddressRemediation() };
+  if (code === "PREPARATION_INTERNAL_ERROR") return { ...copy, remediation: internalFailureRemediation() };
+  return copy;
+}
+
+const CAUSE_MESSAGES: Record<PreparationFailureCause, string> = {
+  root_required: "Setup needs a root login on this server.",
+  proxmox_version_unsupported: "Setup needs Proxmox VE 8 or 9 on this server.",
+  kvm_unavailable: "Setup stopped because KVM isn't available on this server.",
+  storage_unavailable: "Setup couldn't find active Proxmox storage for virtual machines.",
+  host_tools_missing: "Setup couldn't find a tool it needs on this server.",
+  network_conflict: "Setup stopped so it wouldn't change a network Hivra doesn't own.",
+  network_setup_failed: "Setup couldn't finish Hivra's private network for agent computers.",
+  image_download_failed: "Setup couldn't download or verify the Ubuntu image.",
+  already_running: "Another setup is already running on this server.",
 };
 
 function failure(
   connectionId: string,
   code: InfrastructurePreparationErrorCode,
+  cause?: PreparationFailureCause,
 ): PreparationFailure {
-  return { ok: false, connectionId, error: { code, ...ERROR_COPY[code] } };
+  return {
+    ok: false,
+    connectionId,
+    error: cause
+      ? { code, ...preparationErrorCopy(code), message: CAUSE_MESSAGES[cause], cause }
+      : { code, ...preparationErrorCopy(code) },
+  };
+}
+
+/** Map the prepare script's last fail() line to a fixed cause. Anything the
+ * script doesn't name this way stays a generic preparation failure. */
+export function classifyPreparationFailureCause(stderr: string): PreparationFailureCause | undefined {
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const failLines = lines.filter((line) => line.startsWith("[hivra-prepare] ") || line.startsWith("[hivra-network-preflight] "));
+  const last = failLines.at(-1);
+  if (last?.startsWith("[hivra-network-preflight] ")) return "network_conflict";
+  const message = last?.slice("[hivra-prepare] ".length) ?? "";
+  if (message === "run as root") return "root_required";
+  if (message === "Proxmox VE 8 or 9 is required") return "proxmox_version_unsupported";
+  if (message === "KVM is unavailable") return "kvm_unavailable";
+  if (message === "another Hivra host preparation is already running") return "already_running";
+  if (/storage/i.test(message)) return "storage_unavailable";
+  if (/^[a-z0-9_.+-]+ is required$/.test(message)) return "host_tools_missing";
+  if (/cloud image|Ubuntu image/i.test(message)) return "image_download_failed";
+  if (/exists but is not a bridge/.test(message)) return "network_conflict";
+  if (/network service is not active|isolation is not active|network ownership/.test(message)) {
+    return "network_setup_failed";
+  }
+  // curl reports its own errors before set -e stops the image download.
+  if (lines.some((line) => /^curl: \(\d+\)/.test(line))) return "image_download_failed";
+  return undefined;
 }
 
 function safeBundleRelativePath(relativePath: string): boolean {
@@ -431,6 +498,7 @@ export async function prepareSimpleProxmoxConnection(
 
   const failWhileLeased = async (
     code: InfrastructurePreparationErrorCode,
+    cause?: PreparationFailureCause,
   ): Promise<PreparationFailure> => {
     try {
       const completed = await deps.completePreflight(
@@ -449,7 +517,7 @@ export async function prepareSimpleProxmoxConnection(
     } catch {
       return failure(connectionId, "PREPARATION_INTERNAL_ERROR");
     }
-    return failure(connectionId, code);
+    return failure(connectionId, code, cause);
   };
 
   let execution: HostScriptResult;
@@ -462,7 +530,11 @@ export async function prepareSimpleProxmoxConnection(
     return failWhileLeased("SSH_CONNECTION_FAILED");
   }
   if (!execution.ok) {
-    return failWhileLeased(classifyTransportFailure(execution));
+    const code = classifyTransportFailure(execution);
+    return failWhileLeased(
+      code,
+      code === "PREPARATION_FAILED" ? classifyPreparationFailureCause(execution.stderr) : undefined,
+    );
   }
   if (!hasExpectedPreparationReceipt(execution.stdout)) {
     return failWhileLeased("PREPARATION_FAILED");

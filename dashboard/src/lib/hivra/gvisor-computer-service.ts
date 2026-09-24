@@ -13,8 +13,8 @@ import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "@/lib/servi
 import {
   GvisorComputerReceiptSchema, GvisorComputerRequestSchema, GvisorExecReceiptSchema,
   HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_BUNDLE_URL,
-  isGvisorPendingBoundObservation, isGvisorPreflightFresh,
-  type GvisorComputerReceipt, type GvisorComputerRequest,
+  isGvisorPendingBoundObservation, isGvisorPreflightFresh, isHivraGvisorPrepareStage,
+  type GvisorComputerReceipt, type GvisorComputerRequest, type HivraGvisorPrepareStage,
 } from "./gvisor-computer-contract";
 
 const ADAPTER = "/opt/hivra/gvisor-adapter/hivra-gvisor-adapter";
@@ -59,11 +59,23 @@ function cleanupReceipt(agent: GvisorAgent, receipt: GvisorComputerReceipt) {
   } };
 }
 
-function preparationFailureMessage(stdout: string, stderr: string): string {
+/** A failed host preparation, with the named stage it stopped in when the
+ * script reported one. */
+export class GvisorPreparationError extends GvisorComputerError {
+  constructor(message: string, readonly stage: HivraGvisorPrepareStage | null) {
+    super("remote_failed", message); this.name = "GvisorPreparationError";
+  }
+}
+
+function preparationFailureStage(stdout: string, stderr: string): HivraGvisorPrepareStage | null {
   const stage = `${stdout}\n${stderr}`.split("\n")
     .find(line => line.startsWith(PREPARE_FAILURE))
-    ?.slice(PREPARE_FAILURE.length);
-  const messages: Record<string, string> = {
+    ?.slice(PREPARE_FAILURE.length).trim();
+  return isHivraGvisorPrepareStage(stage) ? stage : null;
+}
+
+function preparationFailureMessage(stage: HivraGvisorPrepareStage | null): string {
+  const messages: Record<HivraGvisorPrepareStage, string> = {
     "host-eligibility": "The host no longer meets the supported gVisor preparation requirements.",
     prerequisites: "The required Docker and installation tools could not be prepared on this host.",
     "bundle-download": "The pinned gVisor bundle could not be downloaded or verified.",
@@ -75,9 +87,7 @@ function preparationFailureMessage(stdout: string, stderr: string): string {
     "image-pull": "The pinned Linux application image could not be downloaded.",
     "sandbox-smoke-test": "The prepared gVisor runtime did not pass its isolated sandbox test.",
   };
-  return stage && messages[stage]
-    ? messages[stage]
-    : "The gVisor host preparation could not be confirmed.";
+  return stage ? messages[stage] : "The gVisor host preparation could not be confirmed.";
 }
 
 async function executionAuthority(userId: string, targetId: string, binding?: Pick<GvisorAgent,
@@ -236,7 +246,8 @@ export async function prepareGvisorHost(userId: string, connectionId: string) {
     const receipt = remote.stdout.split("\n").find(value => value.startsWith(`HIVRA_GVISOR_PREPARED_V1 ${HIVRA_GVISOR_BUNDLE_SHA256} `));
     const runscSha256 = receipt?.split(" ")[2];
     if (!remote.ok || !receipt || !/^[0-9a-f]{64}$/.test(runscSha256 ?? "") || !receipt.endsWith(` ${adapterSha}`)) {
-      throw new GvisorComputerError("remote_failed", preparationFailureMessage(remote.stdout, remote.stderr));
+      const stage = preparationFailureStage(remote.stdout, remote.stderr);
+      throw new GvisorPreparationError(preparationFailureMessage(stage), stage);
     }
     return { adapterVersion: HIVRA_GVISOR_ADAPTER_VERSION, adapterSha256: adapterSha,
       bundleUrl: HIVRA_GVISOR_BUNDLE_URL, bundleSha256: HIVRA_GVISOR_BUNDLE_SHA256, runscSha256,

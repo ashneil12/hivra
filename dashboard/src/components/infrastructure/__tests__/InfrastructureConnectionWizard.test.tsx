@@ -16,16 +16,19 @@ import type {
 } from "@/lib/infrastructure/contracts";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import {
+  checkGvisorConnection,
   createInfrastructureConnection,
   discoverInfrastructureHost,
   preflightInfrastructureConnection,
 } from "@/lib/infrastructure/client";
 
 jest.mock("@/lib/infrastructure/client", () => ({
+  ...jest.requireActual("@/lib/infrastructure/client"),
   createInfrastructureConnection: jest.fn(),
   discoverInfrastructureHost: jest.fn(),
   preflightInfrastructureConnection: jest.fn(),
   updateInfrastructureConnection: jest.fn(),
+  checkGvisorConnection: jest.fn(),
 }));
 
 const PRIVATE_KEY = [
@@ -96,7 +99,7 @@ const savedHost: InfrastructureConnectionDto = {
   lastCheckedAt: null,
 };
 
-const supportedDiscovery: HostDiscoveryResult = {
+const supportedDiscovery: Extract<HostDiscoveryResult, { ok: true }> = {
   ok: true,
   snapshot: {
     discoveryId: "22222222-2222-4222-8222-222222222222",
@@ -136,6 +139,39 @@ const supportedDiscovery: HostDiscoveryResult = {
     ],
   },
 };
+
+function gvisorDiscovery(installed: boolean): Extract<HostDiscoveryResult, { ok: true }> {
+  return {
+    ok: true,
+    snapshot: {
+      ...supportedDiscovery.snapshot,
+      host: {
+        ...supportedDiscovery.snapshot.host,
+        os: { family: "linux", id: "ubuntu", versionId: "24.04" },
+        environment: { ...supportedDiscovery.snapshot.host.environment, virtualization: "virtual-machine" },
+        kvm: { devicePresent: false, cpuVirtualization: true },
+      },
+      engines: supportedDiscovery.snapshot.engines.map((engine) => engine.id === "proxmox-kvm"
+        ? { ...engine, availability: "unavailable" as const, supported: false, detectedVersion: null, unmetRequirements: ["ENGINE_NOT_INSTALLED" as const] }
+        : engine.id === "gvisor"
+          ? {
+              ...engine,
+              availability: installed ? "installed" as const : "installable" as const,
+              supported: true,
+              detectedVersion: installed ? "runsc version release-20260907.0" : null,
+              unmetRequirements: installed ? [] : ["ENGINE_NOT_INSTALLED" as const, "DOCKER_REQUIRED" as const],
+            }
+          : engine),
+    },
+  };
+}
+
+function fillAndConnect() {
+  fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "host.example.com" } });
+  fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
+  fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+}
 
 const incompletePreflight: ProxmoxPreflightResult = {
   ok: true,
@@ -427,7 +463,7 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
 
     expect(await screen.findByRole("heading", {
-      name: "A supported isolation engine is installed.",
+      name: "My host runs Proxmox VE 8.4.1.",
     })).toBeInTheDocument();
     expect(createInfrastructureConnection).toHaveBeenCalledWith(expect.objectContaining({
       provider: "host",
@@ -440,8 +476,77 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     expect(await screen.findByRole("heading", { name: "Host inspected - setup needed" })).toBeInTheDocument();
     expect(preflightInfrastructureConnection).toHaveBeenCalledWith(savedHost.id);
 
-    fireEvent.click(screen.getByRole("button", { name: "Prepare recommended setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review setup" }));
     expect(onPrepareRequested).toHaveBeenCalledWith(savedHost);
+  });
+
+  it("hands Linux Sandbox setup to the shared review dialog", async () => {
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(gvisorDiscovery(false));
+    const onGvisorSetupRequested = jest.fn();
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        onGvisorSetupRequested={onGvisorSetupRequested}
+      />,
+    );
+    fillAndConnect();
+
+    expect(await screen.findByRole("heading", { name: "My host can run Linux Sandbox after a short setup." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review setup" }));
+    expect(onGvisorSetupRequested).toHaveBeenCalledWith(savedHost, "prepare");
+  });
+
+  // INF-17: the progress bar used to stop at Recommend on the Linux Sandbox path.
+  it("moves the progress bar to Ready when this wizard's Linux Sandbox check passes", async () => {
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(gvisorDiscovery(true));
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: "44444444-4444-4444-8444-444444444444", ready: true });
+    const onGvisorReady = jest.fn();
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        onGvisorReady={onGvisorReady}
+      />,
+    );
+    fillAndConnect();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check readiness" }));
+    expect(await screen.findByRole("heading", { name: "My host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "Ready, current" })).toHaveAttribute("aria-current", "step");
+    expect(onGvisorReady).toHaveBeenCalledWith(savedHost.id);
+  });
+
+  it("offers Connect as root when discovery signed in without root", async () => {
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+      ...supportedDiscovery,
+      snapshot: {
+        ...gvisorDiscovery(false).snapshot,
+        host: { ...gvisorDiscovery(false).snapshot.host, environment: { ...gvisorDiscovery(false).snapshot.host.environment, effectivePrivilege: "non-root" } },
+        engines: gvisorDiscovery(false).snapshot.engines.map((engine) => engine.id === "gvisor"
+          ? { ...engine, availability: "unavailable" as const, supported: false, unmetRequirements: ["ROOT_REQUIRED" as const, "ENGINE_NOT_INSTALLED" as const] }
+          : engine),
+      },
+    } satisfies HostDiscoveryResult);
+    const onEditRequested = jest.fn();
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        onEditRequested={onEditRequested}
+      />,
+    );
+    fireEvent.click(screen.getByText("SSH settings"));
+    fireEvent.change(screen.getByLabelText("SSH user"), { target: { value: "ubuntu" } });
+    fillAndConnect();
+
+    expect(await screen.findByRole("heading", { name: "Signed in as ubuntu without root access." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect as root" }));
+    expect(onEditRequested).toHaveBeenCalledWith(savedHost);
   });
 
   it.each([
@@ -474,7 +579,7 @@ describe("InfrastructureConnectionWizard payload builders", () => {
       fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
       fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
       fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
-      await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+      await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
 
       if (scrolls) {
         expect(scrollIntoView).toHaveBeenCalled();
@@ -539,7 +644,7 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
     fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
-    await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+    await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
 
     fireEvent.click(screen.getByRole("button", { name: "Check Proxmox readiness" }));
     expect(screen.getByRole("listitem", { name: "Recommend, current" })).toHaveAttribute("aria-current", "step");
@@ -573,13 +678,13 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
     fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
-    await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+    await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
 
     fireEvent.click(screen.getByRole("button", { name: "Check Proxmox readiness" }));
 
     expect(await screen.findByRole("heading", { name: "Readiness issue" })).toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Recommend, current" })).toHaveAttribute("aria-current", "step");
     expect(screen.getByRole("listitem", { name: "Prepare" })).not.toHaveAttribute("aria-current");
-    expect(screen.queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 });

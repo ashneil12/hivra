@@ -8,8 +8,12 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 
 import { spawnSync } from "node:child_process";
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import {
   buildPortableProvisionerPreparationScript,
+  classifyPreparationFailureCause,
   loadPortableProvisionerBundle,
   prepareSimpleProxmoxConnection,
   type PortableProvisionerBundleAsset,
@@ -336,5 +340,88 @@ describe("portable Proxmox host preparation", () => {
     const result = await prepareSimpleProxmoxConnection("user_1", CONNECTION_ID, deps);
 
     expect(result).toMatchObject({ ok: false, error: { code: "PREPARATION_SUPERSEDED" } });
+  });
+
+  it("reports why the host script stopped as a fixed cause, never its raw output", async () => {
+    const deps = dependencies();
+    deps.executeHostScript.mockResolvedValue({
+      ok: false,
+      stdout: "",
+      stderr: "[hivra-prepare] creating host-to-guest key\n[hivra-prepare] no active VM-capable Proxmox storage was found\n",
+      error: "Remote bash exited with code 1",
+    });
+
+    const result = await prepareSimpleProxmoxConnection("user_1", CONNECTION_ID, deps);
+
+    expect(result).toEqual({
+      ok: false,
+      connectionId: CONNECTION_ID,
+      error: expect.objectContaining({
+        code: "PREPARATION_FAILED",
+        cause: "storage_unavailable",
+        message: "Setup couldn't find active Proxmox storage for virtual machines.",
+      }),
+    });
+    expect(JSON.stringify(result)).not.toContain("VM-capable Proxmox storage was found");
+    expect(deps.completePreflight).toHaveBeenCalledWith(
+      "user_1", CONNECTION_ID, 4, "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ connectionStatus: "error" }),
+    );
+  });
+
+  it.each([
+    ["[hivra-prepare] run as root", "root_required"],
+    ["[hivra-prepare] Proxmox VE 8 or 9 is required", "proxmox_version_unsupported"],
+    ["[hivra-prepare] KVM is unavailable", "kvm_unavailable"],
+    ["[hivra-prepare] another Hivra host preparation is already running", "already_running"],
+    ["[hivra-prepare] selected storage is not active and VM-capable", "storage_unavailable"],
+    ["[hivra-prepare] pveversion is required", "host_tools_missing"],
+    ["[hivra-network-preflight] refusing to adopt an existing unowned bridge", "network_conflict"],
+    ["[hivra-prepare] hivra0 exists but is not a bridge", "network_conflict"],
+    ["[hivra-prepare] IPv4 guest egress isolation is not active", "network_setup_failed"],
+    ["[hivra-prepare] Ubuntu cloud image checksum verification failed", "image_download_failed"],
+    ["curl: (6) Could not resolve host: cloud-images.ubuntu.com", "image_download_failed"],
+    ["something unexpected", undefined],
+  ])("classifies %j as %s", (stderr, cause) => {
+    expect(classifyPreparationFailureCause(stderr)).toBe(cause);
+  });
+
+  it("matches the prepare script's own fail() messages", () => {
+    const script = readFileSync(path.join(process.cwd(), "provisioner", "prepare-proxmox-host.sh"), "utf8");
+    for (const message of [
+      "run as root",
+      "Proxmox VE 8 or 9 is required",
+      "KVM is unavailable",
+      "another Hivra host preparation is already running",
+      "no active VM-capable Proxmox storage was found",
+      "selected storage is not active and VM-capable",
+      "$command is required",
+      "exists but is not a bridge",
+      "Hivra network service is not active",
+      "IPv4 guest egress isolation is not active",
+      "Ubuntu cloud image checksum verification failed",
+    ]) {
+      const escaped = message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      expect(script).toMatch(new RegExp(`fail "[^"]*${escaped}`));
+    }
+  });
+
+  it("classifies the real script's first refusal on a machine that isn't a prepared Proxmox host", () => {
+    // Runs only the script's checks: as a normal user it stops at the root
+    // check; as root off Proxmox it stops at the missing Proxmox tools. Both
+    // come before its first change.
+    const run = spawnSync("bash", [path.join(process.cwd(), "provisioner", "prepare-proxmox-host.sh")], {
+      encoding: "utf8",
+      env: {
+        PATH: "/usr/bin:/bin",
+        HIVRA_SOURCE_DIR: path.join(process.cwd(), "provisioner"),
+      } as unknown as NodeJS.ProcessEnv,
+      timeout: 20_000,
+    });
+    expect(run.status).not.toBe(0);
+    const expected = typeof process.getuid === "function" && process.getuid() === 0
+      ? "host_tools_missing"
+      : "root_required";
+    expect(classifyPreparationFailureCause(run.stderr)).toBe(expected);
   });
 });

@@ -15,8 +15,11 @@ import {
 } from "lucide-react";
 
 import {
+  isGvisorDeploymentTarget,
   isProxmoxDeploymentTarget,
   type DeploymentTargetDto,
+  type GvisorDeploymentTargetDto,
+  type ProxmoxDeploymentTargetDto,
   type SshInfrastructureConnectionDto,
   type ProxmoxPreflightResult,
 } from "@/lib/infrastructure/contracts";
@@ -29,6 +32,7 @@ import {
 import { canPrepareFromSavedTarget } from "@/lib/infrastructure/preparation-eligibility";
 
 import styles from "./Infrastructure.module.css";
+import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
 
 
 type InfrastructureConnectionCardProps = {
@@ -52,13 +56,22 @@ export function InfrastructureConnectionCard({
   onEdit,
   onDelete,
 }: InfrastructureConnectionCardProps) {
+  const launch = useLaunchOnServer();
   const base = connectionPresentation(connection);
   const latest = latestPreflight ? preflightHeadline(latestPreflight) : null;
   // A local connection edit or in-flight check can invalidate a previously
   // ready target before the registry refresh completes. Never reuse that
   // cached readiness while the connection itself is no longer ready.
-  const trustedSavedTarget = (connection.status === "ready" || connection.status === "error")
+  const connectionTrusted = connection.status === "ready" || connection.status === "error";
+  const trustedSavedTarget: ProxmoxDeploymentTargetDto | undefined = connectionTrusted
     && savedTarget && isProxmoxDeploymentTarget(savedTarget)
+    && savedTarget.connectionId === connection.id
+    ? savedTarget
+    : undefined;
+  // A Linux host prepared for gVisor publishes its own target kind. It runs
+  // Linux Sandbox only, so it gets its own badge instead of "Ready for agents".
+  const gvisorTarget: GvisorDeploymentTargetDto | undefined = connectionTrusted
+    && savedTarget && isGvisorDeploymentTarget(savedTarget)
     && savedTarget.connectionId === connection.id
     ? savedTarget
     : undefined;
@@ -67,13 +80,23 @@ export function InfrastructureConnectionCard({
     trustedSavedTarget?.status === "ready" &&
     trustedSavedTarget.capabilities.launchReady,
   );
+  const gvisorReady = Boolean(
+    connection.status === "ready"
+    && gvisorTarget?.status === "ready"
+    && gvisorTarget.capabilities.launchReady,
+  );
   const savedTargetIncomplete = Boolean(
-    trustedSavedTarget && !savedTargetReady,
+    (trustedSavedTarget && !savedTargetReady) || (gvisorTarget && !gvisorReady),
   );
   const discoveryOnly = Boolean(
     connection.status === "pending" && connection.lastCheckedAt && !latest && !savedTarget,
   );
   const canPrepareRecommendedSetup = canPrepareFromSavedTarget(connection, trustedSavedTarget);
+  // Only saved, ready evidence earns the launch action, never a local check
+  // result that the registry hasn't published yet.
+  const launchAction = !checking && connection.status === "ready"
+    ? launch.forTarget(savedTargetReady ? trustedSavedTarget : gvisorReady ? gvisorTarget : null)
+    : null;
   const tone = checking
     ? "checking"
     : latest?.tone === "ready"
@@ -82,7 +105,7 @@ export function InfrastructureConnectionCard({
         ? "error"
         : latest?.tone === "incomplete"
           ? "checking"
-          : savedTargetReady
+          : savedTargetReady || gvisorReady
             ? "connected"
             : savedTargetIncomplete
               ? "checking"
@@ -99,11 +122,13 @@ export function InfrastructureConnectionCard({
           ? "Needs attention"
           : savedTargetReady
             ? "Ready for agents"
-            : savedTargetIncomplete
-              ? "Setup incomplete"
-              : discoveryOnly
-                ? "Inspected — setup needed"
-                : base.label;
+            : gvisorReady
+              ? "Ready for Linux Sandbox"
+              : savedTargetIncomplete
+                ? "Setup incomplete"
+                : discoveryOnly
+                  ? "Needs setup"
+                  : base.label;
   const host = connection.endpoint.sshHost.includes(":")
     ? `[${connection.endpoint.sshHost}]:${connection.endpoint.sshPort}`
     : `${connection.endpoint.sshHost}:${connection.endpoint.sshPort}`;
@@ -115,7 +140,7 @@ export function InfrastructureConnectionCard({
           <Server size={19} />
         </span>
         <div className={styles.connectionIdentity}>
-          <span className={styles.eyebrow}>Self-managed host</span>
+          <span className={styles.eyebrow}>My server</span>
           <h2>{connection.name}</h2>
         </div>
         <span className={`${styles.statusBadge} ${styles[`status_${tone}`]}`}>
@@ -150,13 +175,17 @@ export function InfrastructureConnectionCard({
           <span>
             {latest?.detail
               ?? (savedTargetReady
-                ? "The latest readiness check confirms the current launch requirements."
-                : savedTargetIncomplete
-                  ? trustedSavedTarget?.capabilities.issues[0]?.message
-                    ?? "The host was discovered, but launch requirements are not complete."
-                  : discoveryOnly
-                    ? "Hivra reached this host. Choose a supported setup, then run its readiness check."
-                    : base.detail)}
+                ? "Agents and computers can run here. Launch checks the server again before anything starts."
+                : gvisorReady
+                  ? "Linux Sandbox can run here. Launch checks the server again before anything starts."
+                  : gvisorTarget
+                    ? "The last Linux Sandbox check didn't pass. Inspect the server again to see what it needs."
+                    : savedTargetIncomplete
+                      ? trustedSavedTarget?.capabilities.issues[0]?.message
+                        ?? "Hivra inspected this server, but it isn't ready to launch yet."
+                      : discoveryOnly
+                        ? "Hivra reached this server. Inspect it again to see its next step."
+                        : base.detail)}
           </span>
         </div>
       </div>
@@ -208,12 +237,42 @@ export function InfrastructureConnectionCard({
             </span>
           ) : null}
         </div>
+      ) : gvisorTarget ? (
+        <div className={styles.savedTargetEvidence}>
+          <div className={styles.savedTargetHeading}>
+            <div>
+              <span className={styles.sectionLabel}>Latest Linux Sandbox check</span>
+              <strong>{gvisorTarget.displayName}</strong>
+            </div>
+            <span>{formatInfrastructureDate(gvisorTarget.lastPreflightAt)}</span>
+          </div>
+          <div className={styles.savedTargetFacts}>
+            <span>
+              <small>CPU</small>
+              <strong>{gvisorTarget.capacity.cpu.totalCores === null
+                ? "Unknown"
+                : `${gvisorTarget.capacity.cpu.totalCores} cores`}</strong>
+            </span>
+            <span>
+              <small>Memory free</small>
+              <strong>{gvisorTarget.capacity.memoryBytes.available === null
+                ? "Unknown"
+                : formatInfrastructureBytes(gvisorTarget.capacity.memoryBytes.available)}</strong>
+            </span>
+            <span>
+              <small>Runs</small>
+              <strong>Linux Sandbox</strong>
+            </span>
+          </div>
+        </div>
       ) : null}
 
       <div className={styles.cardActions}>
-        {canPrepareRecommendedSetup ? (
+        {launchAction ? (
+          <LaunchOnServerLink action={launchAction} />
+        ) : canPrepareRecommendedSetup ? (
           <button type="button" className={styles.primaryButton} onClick={onPrepare} disabled={checking}>
-            <ServerCog size={14} aria-hidden="true" /> Prepare recommended setup
+            <ServerCog size={14} aria-hidden="true" /> Review setup
           </button>
         ) : null}
         <button type="button" className={styles.secondaryButton} onClick={onCheck} disabled={checking}>

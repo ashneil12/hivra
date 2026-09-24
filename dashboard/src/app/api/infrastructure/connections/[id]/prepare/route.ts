@@ -8,7 +8,10 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import {
+  hostOperationLimitedResponse,
+  reserveAuthenticatedRouteRateLimit,
+} from "@/lib/authenticated-rate-limit";
 import {
   prepareSimpleProxmoxConnection,
   type InfrastructurePreparationErrorCode,
@@ -47,16 +50,30 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // Host preparation mutates a Proxmox server and may download a large base
-    // image. Keep this considerably tighter than ordinary settings writes.
-    const rateLimitError = enforceAuthenticatedRouteRateLimit(request, {
+    // image. Keep this considerably tighter than ordinary settings writes, but
+    // count only a run that is still going or that succeeded: a person who
+    // fixes a failure's cause can try again at once.
+    const reservation = reserveAuthenticatedRouteRateLimit(request, {
       routeKey: `infrastructure_connection_prepare:${parsedId.data}`,
       userId,
       limit: 1,
       windowMs: 15 * 60_000,
     });
-    if (rateLimitError) return noStore(rateLimitError);
+    if (reservation.limited) {
+      return noStore(hostOperationLimitedResponse(reservation.limited, {
+        inFlight: "Setup is already running on this server. Wait for it to finish, then check the result.",
+        recent: "This server was set up in the last 15 minutes.",
+      }));
+    }
 
-    const preparation = await prepareSimpleProxmoxConnection(userId, parsedId.data);
+    let preparation: Awaited<ReturnType<typeof prepareSimpleProxmoxConnection>>;
+    try {
+      preparation = await prepareSimpleProxmoxConnection(userId, parsedId.data);
+    } catch (error) {
+      reservation.settle("failed");
+      throw error;
+    }
+    reservation.settle(preparation.ok ? "succeeded" : "failed");
     if (!preparation.ok) {
       const status = ERROR_STATUS[preparation.error.code];
       return noStore(
@@ -64,7 +81,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
           preparation.error.message,
           status,
           { failureType: preparation.error.code.toLowerCase() },
-          { code: preparation.error.code },
+          {
+            code: preparation.error.code,
+            ...(preparation.error.cause ? { cause: preparation.error.cause } : {}),
+          },
           {
             source: "infrastructure/connections/[id]/prepare",
             route: "/api/infrastructure/connections/[id]/prepare",
