@@ -63,9 +63,11 @@ export const AUTH_CARD_ELEMENTS = {
 } satisfies AuthCardElements;
 
 /** The shared card, with a page's own element classes (its title size, say). */
-export function authCardAppearance(elements: AuthCardElements = {}) {
+export function authCardAppearance(overrides: AuthCardElements = {}) {
+  // Any element name, so a page can style one the shared card leaves alone.
+  const elements: AuthCardElements = { ...AUTH_CARD_ELEMENTS, ...overrides };
   return {
-    elements: { ...AUTH_CARD_ELEMENTS, ...elements },
+    elements,
     variables: { ...AUTH_CARD_VARIABLES },
   };
 }
