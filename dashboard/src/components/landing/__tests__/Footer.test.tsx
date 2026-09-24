@@ -64,6 +64,14 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
+  it("links the official X account in a new tab", () => {
+    render(<Footer />);
+    const x = screen.getByRole("link", { name: "X (@HivraOS)" });
+    expect(x).toHaveAttribute("href", "https://x.com/HivraOS");
+    expect(x).toHaveAttribute("target", "_blank");
+    expect(x).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("links the changelog next to the roadmap entry", () => {
     render(<Footer />);
 

@@ -22,6 +22,12 @@ from urllib.parse import unquote, urlsplit
 
 REPO = Path(__file__).resolve().parents[2]
 PAGE = REPO / "docs/litepaper/index.html"
+# Same-origin files the Next.js app serves at the site root, which the page
+# links by site-root path. Kept separate from build.py so the test checks it.
+SITE_ROOT_FILES = {
+    "/favicon.ico": REPO / "dashboard/src/app/favicon.ico",
+    "/apple-icon.png": REPO / "dashboard/src/app/apple-icon.png",
+}
 VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
     "meta", "param", "source", "track", "wbr",
@@ -160,6 +166,43 @@ class LitepaperContentTests(unittest.TestCase):
         self.assertGreaterEqual(len(homepage_links), 3)
         self.assertTrue(any("Back to Hivra" in node.text() for node in homepage_links))
 
+    def test_shared_links_get_a_title_description_image_and_the_official_x_account(self):
+        meta = {}
+        for node in self.page.elements:
+            if node.tag == "meta":
+                key = node.attrs.get("property") or node.attrs.get("name")
+                if key:
+                    meta[key] = node.attrs.get("content")
+        title = next(node for node in self.page.elements if node.tag == "title").text().strip()
+        self.assertEqual(meta["og:title"], title)
+        self.assertEqual(meta["og:description"], meta["description"])
+        self.assertEqual(meta["og:type"], "website")
+        self.assertEqual(meta["og:url"], "https://hivra.cloud/docs/litepaper/index.html")
+        self.assertEqual(meta["twitter:card"], "summary_large_image")
+        self.assertEqual(meta["twitter:site"], "@HivraOS")
+        # The share image is absolute and names a committed litepaper asset.
+        image = urlsplit(meta["og:image"])
+        self.assertEqual((image.scheme, image.netloc), ("https", "hivra.cloud"))
+        self.assertTrue(image.path.startswith("/docs/litepaper/assets/"))
+        asset = REPO / image.path.lstrip("/")
+        self.assertTrue(asset.is_file(), "Missing share image: " + meta["og:image"])
+        header = asset.read_bytes()[:24]
+        self.assertEqual(
+            (int(meta["og:image:width"]), int(meta["og:image:height"])),
+            (int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")),
+        )
+        self.assertTrue(meta["og:image:alt"])
+
+    def test_the_tab_shows_the_app_favicon(self):
+        icons = {
+            node.attrs.get("rel"): node.attrs.get("href")
+            for node in self.page.elements if node.tag == "link" and "icon" in node.attrs.get("rel", "")
+        }
+        self.assertEqual(icons.get("icon"), "/favicon.ico")
+        self.assertEqual(icons.get("apple-touch-icon"), "/apple-icon.png")
+        for href in icons.values():
+            self.assertTrue(SITE_ROOT_FILES[href].is_file(), "Missing app file: " + href)
+
     def test_standalone_tokenomics_preserves_the_complete_economy_wording(self):
         expected = "# Hivra tokenomics\n\n" + section(
             self.markdown, "The economy", 2
@@ -216,6 +259,10 @@ class LitepaperContentTests(unittest.TestCase):
                     continue
                 target = urlsplit(value)
                 if target.scheme or target.netloc:
+                    continue
+                if target.path in SITE_ROOT_FILES:
+                    with self.subTest(tag=node.tag, attribute=attribute, url=value):
+                        self.assertTrue(SITE_ROOT_FILES[target.path].is_file(), "Missing app file: " + value)
                     continue
                 with self.subTest(tag=node.tag, attribute=attribute, url=value):
                     resolved = (PAGE.parent / unquote(target.path)).resolve() if target.path else PAGE
