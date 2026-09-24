@@ -266,26 +266,45 @@ powers the VM on or off itself.
     stays an uncommitted edit on the computer. Only this computer's own
     commits are replayed (the depth-1 template checkout's shallow boundary
     marks where they begin).
-  - Nothing on the computer is discarded. Every move is a
+  - Nothing on the computer is lost. Every move is a
     `git rebase --autostash` (never a forced checkout): commits that conflict
     with the fork are kept on a local `hivra/unpushed-edits-<time>` branch
     first; a move that fails for any other reason (for example an untracked
     file in the way) changes nothing and reports `error` with the files named;
-    edits git cannot put back after a move stay in the stash list.
+    edits git cannot put back after a move stay in the stash list. A file git
+    left with unresolved conflicts (for example an autostash the dashboard's
+    own `git pull --rebase --autostash` could not put back, or a
+    `git stash pop` in the terminal) is never committed or pushed: the sync
+    stops with `error` and names it.
   - A branch or commit the owner checked out by hand is left exactly as it is
     (nothing committed, HEAD not moved) and reported as `on_other_branch`.
+    A rebase, merge, cherry-pick, revert, `git am` or bisect left unfinished
+    in the clone is also left exactly as it is, with nothing written into it,
+    and reported as `operation_in_progress` with the command that finishes or
+    cancels it. The only rebase a sync ever rolls back is its own: before each
+    rebase it records what git will record for it
+    (`~/.hivra/aeon-sync-rebase.json`: orig-head, head-name and onto), so the
+    next sync can roll it back after a gateway stop interrupted it. A rebase
+    the dashboard's own save left when it was stopped part-way is not the
+    sync's, so it waits for the owner too.
   - Hivra's `apps/dashboard/next.config.ts` (the `/aeon` basePath) is never
-    pushed. A durable copy is kept in `~/.hivra/aeon-next.config.ts`, and
-    every sync first rolls back a rebase a stopped gateway left unfinished and
-    puts the file back whenever it lacks the basePath config.
+    pushed. A durable copy is kept in `~/.hivra/aeon-next.config.ts`. Every
+    sync puts the file back from that copy (or from the provisioner's text)
+    whenever it lacks the basePath config, holds conflict-marker lines or is
+    unmerged in the index (the unmerged entry is cleared); a copy with
+    conflict markers is never kept.
   - Statuses: `ok`, `auth_failed` (GitHub rejected the sign-in),
     `unreachable` and `fetch_failed` (retried after 30 s, 1, 2 and 4 min),
     `credentials_failed` (`gh auth setup-git` failed or git has no sign-in),
     `push_denied` (GitHub refused the push: 403, permissions or workflow
     scope), `push_failed` (any other push failure, after one retry following a
-    fresh fetch and replay), `on_other_branch` and `error`. Connect answers 400
-    only for `push_denied` (with the token-permissions fix) and
-    `credentials_failed` (connect again).
+    fresh fetch and replay; the detail carries what GitHub said, such as a
+    repository rule, push protection or a protected branch),
+    `on_other_branch`, `operation_in_progress` and `error`. Connect answers
+    200 only for `ok`, `syncing` (the sync outlasted the request) and the
+    retried `unreachable` and `fetch_failed`. Every other status answers 400:
+    `push_denied` with the token-permissions fix, `credentials_failed` with
+    "connect again", and the rest with the status detail.
   - Workflows GitHub disabled by itself (`disabled_fork`,
     `disabled_inactivity`) among `aeon.yml`, `scheduler.yml`, `messages.yml`,
     `chain-runner.yml` and `setup-commands.yml` are enabled; a manual disable

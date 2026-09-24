@@ -1962,17 +1962,28 @@ function handleLoginCompleteAeon(res, body) {
           if (replied) return;
           replied = true;
           if (hardFail) return jsonRes(res, 400, { ok: false, error: result.message });
-          // GitHub refused this computer's push (403, or a token without the
-          // workflow permission): every dashboard save would silently stay on
-          // the computer. Same class as no_secrets, so the same actionable
-          // hard failure. Only a refusal from GitHub gets this message.
-          if (sync && sync.status === "push_denied") {
-            return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Edit the token at github.com/settings/tokens?type=beta → Repository permissions → set Contents and Workflows to Read and write, then reconnect." });
-          }
-          // gh could not become git's credential helper (or git still has no
-          // sign-in): nothing about the token to change, so say to reconnect.
-          if (sync && sync.status === "credentials_failed") {
-            return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Connect GitHub again to retry." });
+          // Connect succeeds only when dashboard saves now reach the fork
+          // (ok), the sync is still running (syncing), or the computer
+          // retries the sync on its own (unreachable, fetch_failed). Any other
+          // outcome leaves every save on the computer and does not clear by
+          // itself, so it fails the connect with what went wrong.
+          if (sync && sync.status !== "ok" && sync.status !== "syncing" && !AEON_RETRYABLE_STATUSES.has(sync.status)) {
+            // GitHub refused this computer's push (403, or a token without the
+            // workflow permission): same class as no_secrets, so the same
+            // token fix. Only a refusal from GitHub gets this message.
+            if (sync.status === "push_denied") {
+              return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Edit the token at github.com/settings/tokens?type=beta → Repository permissions → set Contents and Workflows to Read and write, then reconnect." });
+            }
+            // gh could not become git's credential helper (or git still has
+            // no sign-in): nothing about the token to change, so say to reconnect.
+            if (sync.status === "credentials_failed") {
+              return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Connect GitHub again to retry." });
+            }
+            // A push GitHub rejected for another reason (repository rules,
+            // push protection, a protected branch), a git operation left
+            // unfinished in the terminal, another branch checked out, or files
+            // in the way: the detail says what happened and what to do.
+            return jsonRes(res, 400, { ok: false, sync, error: sync.detail || "This computer could not sync with " + (sync.repo || "your GitHub fork") + "." });
           }
           // venice: "ok" | "failed" | "unsupported" (fork's gateway predates the
           // VENICE_BASE_URL override) | undefined when wiring wasn't requested.
@@ -2096,7 +2107,11 @@ function finalizeAeonConnect(venice, cb) {
 // `git rebase --autostash` (git sets the working tree's other edits aside and
 // puts them back, or keeps them in the stash list when they collide with the
 // fork), commits the fork cannot take are kept on a local branch first, and a
-// sync interrupted by a gateway stop is rolled back by the next one.
+// sync interrupted by a gateway stop is rolled back by the next one. Only a
+// rebase the sync itself started (recorded in AEON_SYNC_REBASE_MARKER) is ever
+// rolled back; a rebase, merge or other git operation started anywhere else
+// (the owner's terminal, a dashboard save stopped part-way) is left exactly as
+// it is and reported, and nothing is written into it.
 const AEON_CONNECT_FILE = path.join(HOME, ".hivra", "aeon-connect.json");
 const AEON_CONNECT_SYNC_WAIT_MS = 45000;
 // Waits before each retry of a sync GitHub could not be reached for (about 7.5
@@ -2125,6 +2140,11 @@ const AEON_NEXT_CONFIG_MARKER = "AEON_BASE_PATH";
 // sync stopped part-way (a runtime update restarts this gateway) can never
 // lose it: every sync puts it back whenever the working-tree file lacks it.
 const AEON_NEXT_CONFIG_BACKUP = path.join(HOME, ".hivra", "aeon-next.config.ts");
+// Written (fsynced) right before each rebase the sync starts, and removed once
+// no rebase is in progress: { origHead, headName, onto } as git records them in
+// .git/rebase-merge. A rebase in progress that does not match it is not the
+// sync's, so the sync never rolls it back.
+const AEON_SYNC_REBASE_MARKER = path.join(HOME, ".hivra", "aeon-sync-rebase.json");
 // Byte-identical to the file provision-claude-code-box.sh writes (a contract
 // test keeps them together); used only when no durable copy exists yet.
 const AEON_HIVRA_NEXT_CONFIG = [
@@ -2161,6 +2181,37 @@ function aeonDetail(text) {
   return (lines[lines.length - 1] || "no detail").slice(0, 300);
 }
 
+// Why the remote rejected a push, from what it said rather than git's closing
+// "failed to push some refs" line: GitHub's `remote: error:` lines (GH013
+// repository rules and push protection, GH006 protected branch), the rule
+// items it lists, and each `! [remote rejected] <ref> (<reason>)`. Empty when
+// the remote did not reject anything (the push never reached it).
+function aeonPushRejection(text) {
+  const reasons = [];
+  const add = (reason) => {
+    const clean = String(reason || "").trim();
+    if (clean && !reasons.includes(clean)) reasons.push(clean);
+  };
+  let rejected = false;
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trim();
+    const refRejected = line.match(/^!\s+\[(?:remote )?rejected\]\s+\S+(?:\s+->\s+\S+)?\s+\((.+)\)$/);
+    if (refRejected) {
+      rejected = true;
+      add(refRejected[1]);
+      continue;
+    }
+    const remote = line.match(/^remote:\s*(.*)$/);
+    if (!remote) continue;
+    const said = remote[1].trim();
+    const error = said.match(/^(?:error|fatal):\s*(.+)$/i);
+    if (error) add(error[1]);
+    else if (/^-\s+\S/.test(said)) add(said.replace(/^-\s+/, ""));
+  }
+  if (!rejected && !reasons.length) return "";
+  return reasons.slice(0, 6).join("; ").slice(0, 500);
+}
+
 // What a failed call to GitHub means. "credentials": git has no usable GitHub
 // credentials on this computer; "denied": GitHub answered and refused
 // (401/403, a token without the permission, the workflow-scope refusal);
@@ -2169,8 +2220,12 @@ function aeonDetail(text) {
 function aeonRemoteFailure(text) {
   const t = String(text || "");
   if (/could not read (Username|Password)|terminal prompts disabled/i.test(t)) return "credentials";
+  // GitHub answers a rate limit with 403: checked before the refusals.
   if (/rate limit/i.test(t)) return "transient";
   if (/HTTP 40[13]\b|returned error: 40[13]\b|Permission to \S+ denied|permission denied|denied to |Bad credentials|Write access to repository not granted|refusing to allow an? (Personal Access Token|OAuth App|GitHub App)|Authentication failed|requires authentication|gh auth login/i.test(t)) return "denied";
+  // GitHub answered and rejected the ref (a rule, push protection, a moved
+  // branch). Whatever else its message mentions, it was reached.
+  if (/^\s*!\s+\[(remote )?rejected\]/m.test(t)) return "other";
   if (/timed? ?out|deadline exceeded|could not resolve|no such host|lookup |dial tcp|connection (refused|reset|closed|timed out)|failed to connect|couldn't connect|network is unreachable|temporary failure|\bTLS\b|\bSSL\b|\bEOF\b|remote end hung up|RPC failed|HTTP 5\d\d|returned error: 5\d\d|HTTP 429|returned error: 429|error connecting to|ECONN|EAI_AGAIN|ETIMEDOUT/i.test(t)) return "transient";
   return "other";
 }
@@ -2232,17 +2287,39 @@ function writeAeonConnectStatus(state) {
   return record;
 }
 
+// Hivra's basePath config: the AEON_BASE_PATH switch setting both basePath and
+// assetPrefix, and no conflict-marker lines (a file git left mid-merge holds
+// both sides, so it names AEON_BASE_PATH and is still a syntax error).
+function aeonNextConfigUsable(text) {
+  return typeof text === "string"
+    && text.includes(AEON_NEXT_CONFIG_MARKER)
+    && /\bbasePath\b/.test(text)
+    && /\bassetPrefix\b/.test(text)
+    && !/^(<{7}|={7}|>{7}|\|{7})(\s|$)/m.test(text);
+}
+
 // Keep the dashboard's /aeon basePath config in place. While the working-tree
 // file is Hivra's version, a durable copy of it is kept; whenever it is not
 // (a sync stopped part-way, an autostash git could not put back, a fork that
-// changed the file), the durable copy (or the provisioner's text) is put back.
-// The running dashboard keeps serving its build; the file matters for the next
-// build, so it must never be lost.
-function ensureAeonNextConfig() {
+// changed the file, the dashboard's own `pull --rebase --autostash` leaving it
+// conflicted), the durable copy (or the provisioner's text) is put back and
+// an unmerged index entry for it is cleared. Nothing is written while a git
+// operation is unfinished in the clone. The running dashboard keeps serving
+// its build; the file matters for the next build, so it must never be lost.
+async function ensureAeonNextConfig(gitDir) {
+  if (aeonGitOperation(gitDir)) return;
   const file = path.join(AEON_DIR, AEON_NEXT_CONFIG);
+  if ((await aeonGit("ls-files", "--unmerged", "--", AEON_NEXT_CONFIG)).out) {
+    const cleared = await aeonGit("reset", "--quiet", "--", AEON_NEXT_CONFIG);
+    if (!cleared.ok) {
+      console.error("hivra-chat: aeon clone: the unresolved merge of " + AEON_NEXT_CONFIG + " could not be cleared: " + aeonDetail(cleared.err));
+      return;
+    }
+    console.error("hivra-chat: aeon clone: cleared an unresolved merge of " + AEON_NEXT_CONFIG + " (git stash list keeps what was set aside)");
+  }
   let current = null;
   try { current = fs.readFileSync(file, "utf8"); } catch {}
-  if (current !== null && current.includes(AEON_NEXT_CONFIG_MARKER)) {
+  if (aeonNextConfigUsable(current)) {
     let saved = null;
     try { saved = fs.readFileSync(AEON_NEXT_CONFIG_BACKUP, "utf8"); } catch {}
     if (saved !== current) {
@@ -2253,13 +2330,14 @@ function ensureAeonNextConfig() {
   }
   let text = null;
   try { text = fs.readFileSync(AEON_NEXT_CONFIG_BACKUP, "utf8"); } catch {}
-  if (!text || !text.includes(AEON_NEXT_CONFIG_MARKER)) text = AEON_HIVRA_NEXT_CONFIG;
+  if (!aeonNextConfigUsable(text)) text = AEON_HIVRA_NEXT_CONFIG;
   if (!fs.existsSync(path.dirname(file))) {
     console.error("hivra-chat: aeon dashboard folder is missing; " + AEON_NEXT_CONFIG + " could not be restored");
     return;
   }
   if (writeFileDurably(file, text, 0o644)) {
-    console.error("hivra-chat: aeon dashboard basePath config was missing from " + AEON_NEXT_CONFIG + " and has been restored");
+    const what = current !== null && current.includes(AEON_NEXT_CONFIG_MARKER) ? "was damaged in " : "was missing from ";
+    console.error("hivra-chat: aeon dashboard basePath config " + what + AEON_NEXT_CONFIG + " and has been restored");
   }
 }
 
@@ -2303,24 +2381,84 @@ function aeonRebaseInProgress(gitDir) {
   return fs.existsSync(path.join(gitDir, "rebase-merge")) || fs.existsSync(path.join(gitDir, "rebase-apply"));
 }
 
-// A gateway stopped mid-sync can leave a rebase half done: roll it back before
-// anything else reads the clone. `rebase --abort` returns HEAD to where it was
-// and puts the autostash back. If git itself was stopped before it wrote its
-// rebase state, `rebase --quit` keeps the autostash in the stash list, and it
-// is put straight back when nothing has moved since it was made.
+// A git operation left unfinished in the clone, with how to finish or cancel
+// it, or null. The sync starts only rebases, so every merge, cherry-pick,
+// revert, am or bisect is someone else's.
+function aeonGitOperation(gitDir) {
+  const has = (name) => fs.existsSync(path.join(gitDir, name));
+  if (has("rebase-apply/applying")) return { name: "git am", how: "Finish it (git am --continue) or cancel it (git am --abort)" };
+  if (aeonRebaseInProgress(gitDir)) return { name: "git rebase", rebase: true, how: "Finish it (git rebase --continue) or cancel it (git rebase --abort)" };
+  if (has("MERGE_HEAD")) return { name: "git merge", how: "Finish it (git commit) or cancel it (git merge --abort)" };
+  if (has("CHERRY_PICK_HEAD")) return { name: "git cherry-pick", how: "Finish it (git cherry-pick --continue) or cancel it (git cherry-pick --abort)" };
+  if (has("REVERT_HEAD")) return { name: "git revert", how: "Finish it (git revert --continue) or cancel it (git revert --abort)" };
+  if (has("sequencer")) return { name: "git cherry-pick or revert", how: "Finish it (git cherry-pick --continue or git revert --continue) or cancel it (--abort)" };
+  if (has("BISECT_LOG")) return { name: "git bisect", how: "End it (git bisect reset)" };
+  return null;
+}
+
+// Record, before the sync starts a rebase, what git will record for it, so a
+// later sync can tell this rebase from one started anywhere else.
+async function recordAeonSyncRebase(onto) {
+  const head = await aeonRev("HEAD");
+  const ref = await aeonGit("symbolic-ref", "--quiet", "HEAD");
+  const record = { origHead: head, headName: ref.ok && ref.out ? ref.out : "detached HEAD", onto: await aeonRev(onto) };
+  if (!head || !record.onto) return false;
+  try { fs.mkdirSync(path.dirname(AEON_SYNC_REBASE_MARKER), { recursive: true }); } catch {}
+  return writeFileDurably(AEON_SYNC_REBASE_MARKER, JSON.stringify(record) + "\n", 0o600);
+}
+
+// The record goes once no rebase is in progress (a rebase the sync could not
+// roll back keeps it, so the next sync can).
+function clearAeonSyncRebase(gitDir) {
+  if (aeonRebaseInProgress(gitDir)) return;
+  try { fs.rmSync(AEON_SYNC_REBASE_MARKER, { force: true }); } catch {}
+}
+
+// Whether the rebase in progress is the one the sync recorded: git's own
+// orig-head, head-name and onto must match the record. A file git had not
+// written yet (it was stopped as the rebase began) does not count against it.
+function aeonSyncOwnsRebase(gitDir) {
+  let record = null;
+  try { record = JSON.parse(fs.readFileSync(AEON_SYNC_REBASE_MARKER, "utf8")); } catch {}
+  if (!record || typeof record !== "object" || typeof record.origHead !== "string") return false;
+  const stateDir = ["rebase-merge", "rebase-apply"].map((name) => path.join(gitDir, name)).find((dir) => fs.existsSync(dir));
+  if (!stateDir || fs.existsSync(path.join(stateDir, "applying"))) return false;
+  const recorded = { "orig-head": record.origHead, "head-name": record.headName, onto: record.onto };
+  return Object.keys(recorded).every((name) => {
+    let actual = null;
+    try { actual = fs.readFileSync(path.join(stateDir, name), "utf8").trim(); } catch {}
+    return actual === null || actual === recorded[name];
+  });
+}
+
+// Before anything else reads the clone. A gateway stopped mid-sync can leave
+// the sync's own rebase half done: roll it back. `rebase --abort` returns HEAD
+// to where it was and puts the autostash back. If git itself was stopped
+// before it wrote its rebase state, `rebase --quit` keeps the autostash in the
+// stash list, and it is put straight back when nothing has moved since it was
+// made. Any other unfinished git operation is left exactly as it is and
+// returned as { busy }; { error } when the sync's own rebase stays.
 async function recoverAeonClone(gitDir) {
-  if (!aeonRebaseInProgress(gitDir)) return;
+  const operation = aeonGitOperation(gitDir);
+  if (!operation) {
+    clearAeonSyncRebase(gitDir);
+    return {};
+  }
+  if (!operation.rebase || !aeonSyncOwnsRebase(gitDir)) return { busy: operation };
   const aborted = await aeonGit("rebase", "--abort");
   if (aborted.ok) {
+    clearAeonSyncRebase(gitDir);
     console.error("hivra-chat: aeon clone: rolled back a rebase an earlier sync left unfinished");
-    return;
+    return {};
   }
   const stashBefore = await aeonRev("refs/stash");
   const quit = await aeonGit("rebase", "--quit");
   if (!quit.ok) {
-    console.error("hivra-chat: aeon clone: an unfinished rebase could not be rolled back: " + aeonDetail(aborted.err) + "; " + aeonDetail(quit.err));
-    return;
+    const detail = aeonDetail(aborted.err) + "; " + aeonDetail(quit.err);
+    console.error("hivra-chat: aeon clone: an unfinished rebase could not be rolled back: " + detail);
+    return { error: "A rebase an earlier sync left unfinished in the Aeon folder on this computer could not be rolled back: " + detail };
   }
+  clearAeonSyncRebase(gitDir);
   const stashAfter = await aeonRev("refs/stash");
   if (stashAfter && stashAfter !== stashBefore
     && (await aeonRev(stashAfter + "^1")) === (await aeonRev("HEAD"))
@@ -2329,6 +2467,7 @@ async function recoverAeonClone(gitDir) {
     if (!popped.ok) console.error("hivra-chat: aeon clone: edits set aside by an unfinished rebase stay in the stash list: " + aeonDetail(popped.err));
   }
   console.error("hivra-chat: aeon clone: cleared an unfinished rebase an earlier sync left behind");
+  return {};
 }
 
 // Where this computer's own edits begin. The provisioned clone is a depth-1
@@ -2354,7 +2493,8 @@ async function aeonEditsBase(gitDir, head, upstream) {
 // while another fork was connected) are kept on a local
 // hivra/unpushed-edits-<time> branch and the clone follows the fork; every
 // other edit rides through each move in git's autostash. Returns
-// { parked, notes } or { error }.
+// { parked, notes }, { error } or, when a git operation the sync did not start
+// is unfinished in the clone, { busy } with nothing moved around it.
 async function carryAeonEdits({ branch, gitDir, onBranch, switchedRepo }) {
   const upstream = "refs/remotes/origin/" + branch;
   const localRef = "refs/heads/" + branch;
@@ -2381,6 +2521,18 @@ async function carryAeonEdits({ branch, gitDir, onBranch, switchedRepo }) {
     }
     return "Local Aeon edits could not be kept aside on a branch.";
   };
+
+  // A git operation someone else started since the sync began: left alone.
+  const busy = aeonGitOperation(gitDir);
+  if (busy) return { busy, parked, notes };
+  // A file git left conflicted (an autostash the dashboard's own pull could
+  // not put back, a `git stash pop` in the terminal) holds conflict markers:
+  // it is never staged, committed or pushed, and nothing is moved around it.
+  const unresolved = (await aeonGit("diff", "--name-only", "--diff-filter=U")).out.split("\n").filter(Boolean);
+  if (unresolved.length) {
+    return fail("Files in the Aeon folder on this computer have unresolved git conflicts: " + unresolved.slice(0, 10).join(", ")
+      + ". Resolve them in the terminal; nothing was committed or pushed.");
+  }
 
   // The dashboard's saves: tracked edits under the paths it writes, plus what
   // it already staged. Pathspecs git does not know are skipped (git add fails
@@ -2434,8 +2586,18 @@ async function carryAeonEdits({ branch, gitDir, onBranch, switchedRepo }) {
   }
 
   const stashBefore = await aeonRev("refs/stash");
-  const replay = (start) => aeonGit("rebase", "--quiet", "--autostash", "--onto", upstream, start);
+  // Each rebase is recorded first, so only the sync's own is ever rolled back.
+  const replay = async (start) => {
+    if (!(await recordAeonSyncRebase(upstream))) return { ok: false, unrecorded: true, err: "" };
+    return aeonGit("rebase", "--quiet", "--autostash", "--onto", upstream, start);
+  };
+  const unrecorded = "The Aeon folder on this computer could not follow the fork: the sync could not record its progress in " + AEON_SYNC_REBASE_MARKER + ".";
+  // A rebase in progress that is not the one just recorded was started
+  // elsewhere while this one could not begin: it is never rolled back.
+  const foreignRebase = () => (aeonRebaseInProgress(gitDir) && !aeonSyncOwnsRebase(gitDir) ? { busy: aeonGitOperation(gitDir), parked, notes } : null);
   let moved = await replay(from);
+  if (moved.unrecorded) return fail(unrecorded);
+  if (!moved.ok && foreignRebase()) return foreignRebase();
   if (!moved.ok) {
     const conflicted = aeonRebaseInProgress(gitDir)
       && Boolean((await aeonGit("diff", "--name-only", "--diff-filter=U")).out);
@@ -2455,6 +2617,8 @@ async function carryAeonEdits({ branch, gitDir, onBranch, switchedRepo }) {
     if (failure) return fail(failure);
     notes.push(aeonDetail(moved.err));
     moved = await replay("HEAD");
+    if (moved.unrecorded) return fail(unrecorded);
+    if (!moved.ok && foreignRebase()) return foreignRebase();
     if (!moved.ok) {
       if (aeonRebaseInProgress(gitDir)) await aeonGit("rebase", "--abort");
       return fail("The Aeon folder on this computer could not follow the fork. " + aeonMoveFailureDetail(moved.err));
@@ -2499,16 +2663,27 @@ async function syncAeonForkOnce(reason, attempt) {
       state.retryAt = new Date(Date.now() + AEON_SYNC_RETRY_DELAYS_MS[attempt]).toISOString();
     }
     if (status !== "ok") console.error("hivra-chat: aeon fork sync (" + reason + ") " + status + ": " + (detail || "") + (state.retryAt ? " (retrying at " + state.retryAt + ")" : ""));
-    return writeAeonConnectStatus(state);
+    return state;
   };
+  // The outcome is written only once the clone is settled, so whoever reads
+  // it (the connect reply, /api/login/status, a test) sees the final state.
+  const settle = (status, detail) => writeAeonConnectStatus(finish(status, detail));
 
   const gitDir = (await aeonGit("rev-parse", "--absolute-git-dir")).out;
-  if (!gitDir) return finish("error", "The Aeon folder on this computer is not a git clone.");
+  if (!gitDir) return settle("error", "The Aeon folder on this computer is not a git clone.");
   // Before anything else: roll back what an interrupted sync left, and make
   // sure the basePath config is on disk (and durably copied) before any move.
-  await recoverAeonClone(gitDir);
-  ensureAeonNextConfig();
-  try {
+  // A git operation started anywhere else (the owner's terminal, a dashboard
+  // save stopped part-way) is left exactly as it is: nothing is written into
+  // it, and saves wait until it is finished or cancelled.
+  const busyDetail = (operation) => "A " + operation.name + (operation.rebase ? " that Hivra's sync did not start" : "")
+    + " is unfinished in the Aeon folder on this computer, and the sync left it exactly as it is. " + operation.how
+    + " in the terminal; Aeon dashboard saves are not pushed to " + repo + " until then.";
+  const recovered = await recoverAeonClone(gitDir);
+  if (recovered.busy) return settle("operation_in_progress", busyDetail(recovered.busy));
+  if (recovered.error) return settle("error", recovered.error);
+  await ensureAeonNextConfig(gitDir);
+  const steps = async () => {
     const account = await aeonGh("api", "user");
     let user = null;
     try { user = JSON.parse(account.out); } catch {}
@@ -2580,6 +2755,7 @@ async function syncAeonForkOnce(reason, attempt) {
     };
     const carried = await carryAeonEdits({ branch, gitDir, onBranch, switchedRepo });
     recordCarry(carried);
+    if (carried.busy) return finish("operation_in_progress", busyDetail(carried.busy));
     if (carried.error) return finish("error", carried.error);
     await aeonGit("config", "hivra.syncedFork", repo);
     await aeonGit("config", "hivra.syncedBranch", branch);
@@ -2602,6 +2778,7 @@ async function syncAeonForkOnce(reason, attempt) {
       if (refetched.ok) {
         const again = await carryAeonEdits({ branch, gitDir, onBranch: branch, switchedRepo: false });
         recordCarry(again);
+        if (again.busy) return finish("operation_in_progress", busyDetail(again.busy));
         if (again.error) return finish("error", again.error);
         push = await pushOnce();
       } else {
@@ -2614,6 +2791,10 @@ async function syncAeonForkOnce(reason, attempt) {
       if (kind === "credentials") return finish("credentials_failed", "Git on this computer has no GitHub sign-in to push to " + repo + ": " + aeonDetail(push.err));
       if (kind === "denied") return finish("push_denied", "GitHub refused this computer's push to " + repo + ": " + aeonDetail(push.err));
       if (kind === "transient") return finish("unreachable", "Could not reach GitHub to push to " + repo + ": " + aeonDetail(push.err));
+      // What GitHub said (a repository rule, push protection, a protected
+      // branch), not git's closing "failed to push some refs" line.
+      const rejection = aeonPushRejection(push.err);
+      if (rejection) return finish("push_failed", "GitHub rejected this computer's push to " + repo + ": " + rejection);
       return finish("push_failed", "This computer could not push to " + repo + ": " + aeonDetail(push.err));
     }
     const said = [];
@@ -2621,9 +2802,15 @@ async function syncAeonForkOnce(reason, attempt) {
     const stashed = notes.filter((note) => /git stash/.test(note));
     if (stashed.length) said.push(stashed.map((note) => note.charAt(0).toUpperCase() + note.slice(1) + ".").join(" "));
     return finish("ok", said.join(" "));
+  };
+  let outcome;
+  try {
+    outcome = await steps();
   } finally {
-    ensureAeonNextConfig();
+    clearAeonSyncRebase(gitDir);
+    await ensureAeonNextConfig(gitDir);
   }
+  return writeAeonConnectStatus(outcome);
 }
 
 let aeonSyncChain = Promise.resolve();

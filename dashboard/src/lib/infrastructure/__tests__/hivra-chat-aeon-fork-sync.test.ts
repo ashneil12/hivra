@@ -511,6 +511,48 @@ describe("Aeon fork sync in the Hivra guest gateway", () => {
     expect(login.connect).toMatchObject({ status: "push_denied", pushReady: false, repo: `${LOGIN}/aeon` });
   });
 
+  it("fails the connect with GitHub's own reason when it rejects the push for something other than permissions", async () => {
+    seedUpstream();
+    git(root, "clone", "--quiet", "--bare", upstreamGit, forkGit);
+    provisionClone();
+    // Like GitHub's repository rules / push protection (GH013): the fork
+    // rejects every push of a ref, whatever the token may do.
+    fs.writeFileSync(path.join(forkGit, "hooks", "pre-receive"), [
+      "#!/usr/bin/env bash",
+      "echo 'error: GH013: Repository rule violations found for refs/heads/main.' >&2",
+      "echo '' >&2",
+      "echo '- GITHUB PUSH PROTECTION' >&2",
+      "echo '    Resolve the following violations before pushing again' >&2",
+      "echo '    - Push cannot contain secrets' >&2",
+      "exit 1",
+      "",
+    ].join("\n"), { mode: 0o755 });
+    // An MCP save made before GitHub was connected, left staged by the dashboard.
+    write(path.join(clone, ".mcp.json"), "{\n  \"mcpServers\": { \"search\": { \"command\": \"search-mcp\" } }\n}\n");
+    expect(commitAndPush([".mcp.json"], "chore: update .mcp.json from dashboard").synced).toBe(false);
+
+    const gateway = await boot();
+    const connect = await request(gateway, "POST", "/api/login/complete", { code: "github_pat_fixture" });
+    expect(connect.status).toBe(400);
+    const reply = JSON.parse(connect.body);
+    expect(reply.ok).toBe(false);
+    expect(reply.sync).toMatchObject({ status: "push_failed", pushReady: false });
+    expect(reply.sync.retryAt).toBeUndefined();
+    // What GitHub said, not git's closing line, and no token advice.
+    expect(reply.error).toContain(`GitHub rejected this computer's push to ${LOGIN}/aeon`);
+    expect(reply.error).toContain("GH013: Repository rule violations found for refs/heads/main.");
+    expect(reply.error).toContain("Push cannot contain secrets");
+    expect(reply.error).toContain("pre-receive hook declined");
+    expect(reply.error).not.toContain("failed to push some refs");
+    expect(reply.error).not.toContain("Read and write");
+    expect(reply.sync.detail).toBe(reply.error);
+    // Nothing reached the fork; the save is still on the computer.
+    expect(forkShow("main:.mcp.json")).not.toContain("search-mcp");
+    expect(git(clone, "show", "main:.mcp.json")).toContain("search-mcp");
+    const login = JSON.parse((await request(gateway, "GET", "/api/login/status")).body);
+    expect(login.connect).toMatchObject({ status: "push_failed", pushReady: false });
+  });
+
   it("does not blame the token when the push fails because GitHub cannot be reached", async () => {
     seedUpstream();
     git(root, "clone", "--quiet", "--bare", upstreamGit, forkGit);
@@ -763,6 +805,230 @@ describe("Aeon fork sync in the Hivra guest gateway", () => {
     restarted.child.kill("SIGTERM");
     await restarted.exited;
   });
+
+  it("rolls back its own rebase when the gateway and git were stopped as that rebase began", async () => {
+    connectedComputer();
+    const first = await boot();
+    const firstStatus = await settledStatus(first);
+    expect(firstStatus).toMatchObject({ status: "ok" });
+    await first.close();
+    botCommitOnFork("memory/log.md", "run 1\n", "chore: aeon memory");
+    write(path.join(clone, "scripts/notify.sh"), "#!/usr/bin/env bash\necho notify from this computer\n");
+
+    // The gateway is stopped just as it starts its rebase (after recording it)...
+    const stopped = startRealGateway({ HIVRA_TEST_STOP_AT: "rebase --quiet --autostash --onto refs/remotes/origin/main refs/remotes/origin/main" });
+    expect(await stopped.exited).toEqual({ code: null, signal: "SIGTERM" });
+    // ...and git with it, after it set the edits aside and reset the working
+    // tree but before it wrote the rest of its rebase state.
+    const autostash = git(clone, "stash", "create", "autostash");
+    fs.mkdirSync(path.join(clone, ".git", "rebase-merge"));
+    fs.writeFileSync(path.join(clone, ".git", "rebase-merge", "autostash"), autostash + "\n");
+    git(clone, "reset", "--quiet", "--hard");
+    expect(readClone("scripts/notify.sh")).not.toContain("from this computer");
+
+    const restarted = startRealGateway();
+    const settled = await waitForStatus(() => restarted.output.join(""), (current) => current.status !== "syncing", firstStatus.at);
+    restarted.child.kill("SIGTERM");
+    await restarted.exited;
+    expect(settled).toMatchObject({ status: "ok", pushReady: true });
+    expect(restarted.output.join("")).toMatch(/rolled back a rebase an earlier sync left unfinished|cleared an unfinished rebase an earlier sync left behind/);
+    expect(fs.existsSync(path.join(clone, ".git", "rebase-merge"))).toBe(false);
+    // The edits git had set aside are back, and so is the basePath config.
+    expect(readClone("scripts/notify.sh")).toContain("echo notify from this computer");
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(HIVRA_NEXT_CONFIG);
+    expect(git(clone, "stash", "list")).toBe("");
+    expect(git(clone, "rev-parse", "HEAD")).toBe(git(forkGit, "rev-parse", "main"));
+    expect(fs.existsSync(path.join(home, ".hivra", "aeon-sync-rebase.json"))).toBe(false);
+  });
+
+  it("leaves a rebase the owner started in the terminal exactly as it is when the gateway restarts", async () => {
+    connectedComputer();
+    const first = await boot();
+    const firstStatus = await settledStatus(first);
+    expect(firstStatus).toMatchObject({ status: "ok" });
+    await first.close();
+    const mainBefore = git(clone, "rev-parse", "main");
+    // In the terminal: an experiment branch, rebased onto the fork, which
+    // stops on a conflict the owner resolves by hand (not yet added).
+    git(clone, "checkout", "--quiet", "-b", "experiment");
+    write(path.join(clone, "STRATEGY.md"), "# Strategy\nExperiment.\n");
+    git(clone, "commit", "--quiet", "-m", "experiment", "--", "STRATEGY.md");
+    const experiment = git(clone, "rev-parse", "experiment");
+    botCommitOnFork("STRATEGY.md", "# Strategy\nFrom GitHub.\n", "chore: strategy from github");
+    const forkTip = git(forkGit, "rev-parse", "main");
+    git(clone, "fetch", "--quiet", "origin");
+    expect(gitOk(clone, "rebase", "--autostash", "origin/main").status).not.toBe(0);
+    const byHand = "# Strategy\nFrom GitHub.\nExperiment, merged by hand.\n";
+    write(path.join(clone, "STRATEGY.md"), byHand);
+    const rebaseHead = git(clone, "rev-parse", "HEAD");
+    // A record an earlier sync left behind for a rebase of its own.
+    fs.writeFileSync(path.join(home, ".hivra", "aeon-sync-rebase.json"), JSON.stringify({ origHead: mainBefore, headName: "refs/heads/main", onto: forkTip }));
+
+    // A runtime update restarts the real gateway process.
+    const restarted = startRealGateway();
+    const settled = await waitForStatus(() => restarted.output.join(""), (current) => current.status !== "syncing", firstStatus.at);
+    restarted.child.kill("SIGTERM");
+    await restarted.exited;
+    expect(settled).toMatchObject({ status: "operation_in_progress", pushReady: false, parkedBranches: [] });
+    expect(settled.detail).toContain("git rebase that Hivra's sync did not start");
+    expect(settled.detail).toContain("git rebase --continue");
+    expect(settled.detail).toContain("git rebase --abort");
+    expect(settled.retryAt).toBeUndefined();
+    expect(restarted.output.join("")).not.toContain("rolled back");
+    // The rebase, the hand resolution and every ref are as the owner left them,
+    // and nothing was written into the rebase (the config is in its autostash).
+    expect(fs.existsSync(path.join(clone, ".git", "rebase-merge"))).toBe(true);
+    expect(readClone("STRATEGY.md")).toBe(byHand);
+    expect(porcelain()).toContain("UU STRATEGY.md");
+    expect(git(clone, "rev-parse", "HEAD")).toBe(rebaseHead);
+    expect(git(clone, "rev-parse", "experiment")).toBe(experiment);
+    expect(git(clone, "rev-parse", "main")).toBe(mainBefore);
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(TEMPLATE_NEXT_CONFIG);
+    expect(git(forkGit, "rev-parse", "main")).toBe(forkTip);
+
+    // The owner finishes their rebase with their resolution, and their edits come back.
+    git(clone, "add", "STRATEGY.md");
+    git(clone, "-c", "core.editor=true", "rebase", "--continue");
+    expect(git(clone, "show", "experiment:STRATEGY.md")).toBe(byHand.trimEnd());
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(HIVRA_NEXT_CONFIG);
+    expect(git(clone, "stash", "list")).toBe("");
+  });
+
+  it("leaves a rebase the owner starts while a sync is running exactly as it is", async () => {
+    connectedComputer();
+    const first = await boot();
+    const firstStatus = await settledStatus(first);
+    expect(firstStatus).toMatchObject({ status: "ok" });
+    await first.close();
+    write(path.join(clone, "STRATEGY.md"), "# Strategy\nLocal.\n");
+    git(clone, "commit", "--quiet", "-m", "local strategy", "--", "STRATEGY.md");
+    const local = git(clone, "rev-parse", "HEAD");
+    const forkTip = git(forkGit, "rev-parse", "main");
+
+    // Just as the sync fetches, the owner starts an interactive rebase in the
+    // terminal that stops (cleanly) to edit their commit.
+    let started = false;
+    const second = await boot({}, {
+      onGit: (args) => {
+        if (started || args[0] !== "fetch") return;
+        started = true;
+        git(clone, "-c", "sequence.editor=sed -i.bak -e s/^pick/edit/", "rebase", "-i", "--autostash", "HEAD~1");
+      },
+    });
+    const settled = await settledStatus(second, firstStatus.at);
+    expect(started).toBe(true);
+    expect(settled).toMatchObject({ status: "operation_in_progress", pushReady: false });
+    expect(settled.detail).toContain("git rebase that Hivra's sync did not start");
+    expect(fs.existsSync(path.join(clone, ".git", "rebase-merge"))).toBe(true);
+    expect(git(clone, "rev-parse", "HEAD")).toBe(local);
+    expect(git(clone, "rev-parse", "main")).toBe(local);
+    expect(git(forkGit, "rev-parse", "main")).toBe(forkTip);
+    expect(git(clone, "stash", "list")).toBe("");
+    // The owner carries on: their rebase finishes and their edits come back.
+    git(clone, "rebase", "--continue");
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(HIVRA_NEXT_CONFIG);
+  });
+
+  it("never concludes a merge the owner left unfinished on the synced branch", async () => {
+    connectedComputer();
+    const first = await boot();
+    const firstStatus = await settledStatus(first);
+    expect(firstStatus).toMatchObject({ status: "ok" });
+    await first.close();
+    // In the terminal on main: a local commit, then a merge of the fork that
+    // conflicts; the owner resolves and stages it but has not committed.
+    write(path.join(clone, "STRATEGY.md"), "# Strategy\nFrom this computer.\n");
+    git(clone, "commit", "--quiet", "-m", "local strategy", "--", "STRATEGY.md");
+    botCommitOnFork("STRATEGY.md", "# Strategy\nFrom GitHub.\n", "chore: strategy from github");
+    const forkTip = git(forkGit, "rev-parse", "main");
+    git(clone, "fetch", "--quiet", "origin");
+    expect(gitOk(clone, "merge", "--no-edit", "origin/main").status).not.toBe(0);
+    write(path.join(clone, "STRATEGY.md"), "# Strategy\nMerged by hand.\n");
+    git(clone, "add", "STRATEGY.md");
+    const head = git(clone, "rev-parse", "HEAD");
+
+    const second = await boot();
+    const settled = await settledStatus(second, firstStatus.at);
+    expect(settled).toMatchObject({ status: "operation_in_progress", pushReady: false });
+    expect(settled.detail).toContain("A git merge is unfinished");
+    expect(settled.detail).toContain("git merge --abort");
+    // No commit concluded the merge, nothing reached the fork.
+    expect(fs.existsSync(path.join(clone, ".git", "MERGE_HEAD"))).toBe(true);
+    expect(git(clone, "rev-parse", "HEAD")).toBe(head);
+    expect(git(forkGit, "rev-parse", "main")).toBe(forkTip);
+    expect(porcelain()).toContain("M  STRATEGY.md");
+    expect(readClone("STRATEGY.md")).toBe("# Strategy\nMerged by hand.\n");
+  });
+
+  it("never commits or pushes a file the dashboard's own pull left conflicted", async () => {
+    connectedComputer();
+    const first = await boot();
+    const firstStatus = await settledStatus(first);
+    expect(firstStatus).toMatchObject({ status: "ok" });
+    await first.close();
+    // A terminal draft of STRATEGY.md, while an Actions run changes it on the fork.
+    write(path.join(clone, "STRATEGY.md"), "# Strategy\nDraft on this computer.\n");
+    botCommitOnFork("STRATEGY.md", "# Strategy\nFrom GitHub.\n", "chore: strategy from github");
+    // A dashboard save: its push is rejected, so it runs pull --rebase
+    // --autostash, and git cannot put the draft back over the fork's change.
+    write(path.join(clone, "aeon.yml"), readClone("aeon.yml").replace("digest:\n    enabled: false", "digest:\n    enabled: true"));
+    expect(commitAndPush(["aeon.yml"], "chore: enable digest")).toEqual({ synced: true });
+    expect(porcelain()).toContain("UU STRATEGY.md");
+    expect(readClone("STRATEGY.md")).toMatch(/^<{7} /m);
+    const forkTip = git(forkGit, "rev-parse", "main");
+
+    const second = await boot();
+    const settled = await settledStatus(second, firstStatus.at);
+    expect(settled).toMatchObject({ status: "error", pushReady: false });
+    expect(settled.detail).toContain("unresolved git conflicts: STRATEGY.md");
+    // No conflict markers reached the public fork; the file is left for the owner.
+    expect(git(forkGit, "rev-parse", "main")).toBe(forkTip);
+    expect(forkShow("main:STRATEGY.md")).toBe("# Strategy\nFrom GitHub.");
+    expect(porcelain()).toContain("UU STRATEGY.md");
+    expect(git(clone, "stash", "show", "-p", "stash@{0}")).toContain("+Draft on this computer.");
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(HIVRA_NEXT_CONFIG);
+  });
+
+  it("puts back a basePath config the dashboard's own pull left conflicted, and never keeps a conflicted copy", async () => {
+    connectedComputer();
+    // This computer's own (valid) variant of the config, kept by the first sync.
+    const kept = HIVRA_NEXT_CONFIG + "// kept on this computer\n";
+    write(path.join(clone, "apps/dashboard/next.config.ts"), kept);
+    const first = await boot();
+    const firstStatus = await settledStatus(first);
+    expect(firstStatus).toMatchObject({ status: "ok" });
+    expect(fs.readFileSync(nextConfigBackup(), "utf8")).toBe(kept);
+    await first.close();
+    // Upstream Aeon (via the fork) changes next.config.ts; a dashboard save's
+    // push is rejected, and its pull --rebase --autostash leaves the file conflicted.
+    const upstreamConfig = "import type { NextConfig } from 'next'\n\nconst nextConfig: NextConfig = { reactStrictMode: true }\n\nexport default nextConfig\n";
+    botCommitOnFork("apps/dashboard/next.config.ts", upstreamConfig, "chore: sync upstream");
+    write(path.join(clone, "aeon.yml"), readClone("aeon.yml").replace("digest:\n    enabled: false", "digest:\n    enabled: true"));
+    expect(commitAndPush(["aeon.yml"], "chore: enable digest")).toEqual({ synced: true });
+    expect(porcelain()).toContain("UU apps/dashboard/next.config.ts");
+    const conflicted = readClone("apps/dashboard/next.config.ts");
+    expect(conflicted).toMatch(/^<{7} /m);
+    expect(conflicted).toContain("AEON_BASE_PATH");
+
+    const second = await boot();
+    const settled = await settledStatus(second, firstStatus.at);
+    expect(settled).toMatchObject({ status: "ok", pushReady: true });
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(kept);
+    expect(fs.readFileSync(nextConfigBackup(), "utf8")).toBe(kept);
+    expect(porcelain().filter((line) => line.includes("next.config.ts"))).toEqual([" M apps/dashboard/next.config.ts"]);
+    expect(second.logs.join("\n")).toContain("basePath config was damaged");
+    expect(forkShow("main:apps/dashboard/next.config.ts")).toBe(upstreamConfig.trimEnd());
+    await second.close();
+
+    // A computer where an earlier gateway already copied the conflicted file
+    // over its durable copy: the provisioner's text is put back instead.
+    write(path.join(clone, "apps/dashboard/next.config.ts"), conflicted);
+    fs.writeFileSync(nextConfigBackup(), conflicted);
+    const third = await boot();
+    expect(await settledStatus(third, settled.at)).toMatchObject({ status: "ok" });
+    expect(readClone("apps/dashboard/next.config.ts")).toBe(HIVRA_NEXT_CONFIG);
+    expect(fs.readFileSync(nextConfigBackup(), "utf8")).toBe(HIVRA_NEXT_CONFIG);
+  }, 300_000);
 
   it("puts a lost basePath config back from its durable copy, or from the provisioner's text", async () => {
     connectedComputer();

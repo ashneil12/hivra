@@ -666,9 +666,15 @@ function boxBase(boxUrl: string): string {
  *  - fetch_failed: the fork could not be read; also retried.
  *  - credentials_failed: git could not be given the GitHub sign-in.
  *  - push_denied: GitHub refused the push (token permissions).
- *  - push_failed: the push failed for another reason.
+ *  - push_failed: the push failed for another reason; `detail` carries what
+ *    GitHub said (a repository rule, push protection, a protected branch).
  *  - on_other_branch: the owner checked out another branch by hand; nothing
- *    was changed and saves are not pushed until the default branch is back. */
+ *    was changed and saves are not pushed until the default branch is back.
+ *  - operation_in_progress: a git rebase, merge or other operation the sync
+ *    did not start is unfinished in the clone; nothing was changed and saves
+ *    are not pushed until it is finished or cancelled.
+ *  GitHub connect fails (HTTP 400) for every status other than syncing, ok,
+ *  unreachable and fetch_failed. */
 export interface AeonConnectStatus {
   status:
     | "syncing"
@@ -680,6 +686,7 @@ export interface AeonConnectStatus {
     | "push_denied"
     | "push_failed"
     | "on_other_branch"
+    | "operation_in_progress"
     | "error";
   repo: string;
   branch: string | null;
