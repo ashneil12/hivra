@@ -134,8 +134,10 @@ export async function seedProviderAgent(
     } else if (part === "bankr-skills") {
       parts.push({ part, script: buildBankrSkillsGuestScript(dir, collectBankrSkillFiles()) });
     } else {
-      const { files } = collectSkillFilesForIds(coerceSkillIds(row.template_skills));
-      if (files.length > 0) parts.push({ part, script: buildBankrSkillsGuestScript(dir, files) });
+      // A template skill Codex couldn't load holds the part back, as it does
+      // on Hivra Cloud (installCuratedSkillsOnBox); the next pass retries.
+      const { files, unloadable } = collectSkillFilesForIds(coerceSkillIds(row.template_skills));
+      if (files.length > 0 && unloadable.length === 0) parts.push({ part, script: buildBankrSkillsGuestScript(dir, files) });
     }
   }
   if (parts.length === 0) return { attempted: [], confirmed: [] };
