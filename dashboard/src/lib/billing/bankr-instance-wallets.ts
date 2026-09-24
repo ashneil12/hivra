@@ -1072,7 +1072,7 @@ async function listProvisionedWalletHoldings(params: {
   record: InstanceBankrWalletRecord;
   env?: Record<string, string | undefined>;
   fetchImpl?: BankrUserFetch;
-}): Promise<string[]> {
+}): Promise<{ holdings: string[]; ignoredZeroValueTokens: number }> {
   const unavailable = () =>
     new AgentWalletConnectError(
       "balance_unavailable",
@@ -1118,6 +1118,7 @@ async function listProvisionedWalletHoldings(params: {
   };
 
   const holdings: string[] = [];
+  let ignoredZeroValueTokens = 0;
   for (const [chain, entryValue] of Object.entries(balances as Record<string, unknown>)) {
     const entry = asRecord(entryValue);
     if (amountOf(entry.nativeBalance) > (chain === "base" ? HIVRA_GAS_TOPUP_ETH : 0)) {
@@ -1126,7 +1127,15 @@ async function listProvisionedWalletHoldings(params: {
     if (!Array.isArray(entry.tokenBalances)) throw unavailable();
     for (const tokenValue of entry.tokenBalances) {
       const token = asRecord(asRecord(tokenValue).token);
-      if (amountOf(token.balance) > 0) {
+      const amount = amountOf(token.balance);
+      // Wallets on Base collect unsolicited airdrops. A token Bankr neither
+      // whitelists nor prices above $0 is left behind rather than blocking
+      // the switch forever (seen on a real Bankr wallet: 34 such entries).
+      if (amount > 0 && token.whitelisted === false && token.balanceUSD === 0) {
+        ignoredZeroValueTokens += 1;
+        continue;
+      }
+      if (amount > 0) {
         holdings.push(`${token.balance} ${readString(asRecord(token.baseToken).symbol) ?? "tokens"} on ${chain}`);
       }
     }
@@ -1134,7 +1143,7 @@ async function listProvisionedWalletHoldings(params: {
   // Requested with include=nfts, so a missing list means the response isn't the documented one.
   if (!Array.isArray(payload.nfts)) throw unavailable();
   if (payload.nfts.length > 0) holdings.push(`${payload.nfts.length} NFT${payload.nfts.length === 1 ? "" : "s"}`);
-  return holdings;
+  return { holdings, ignoredZeroValueTokens };
 }
 
 async function revokeAllPartnerWalletApiKeys(params: {
@@ -1249,7 +1258,7 @@ export async function connectUserBankrWalletForOwner(params: {
         409
       );
     }
-    const holdings = await listProvisionedWalletHoldings({
+    const { holdings, ignoredZeroValueTokens } = await listProvisionedWalletHoldings({
       record: existing,
       env: params.env,
       fetchImpl: params.fetchImpl,
@@ -1267,6 +1276,7 @@ export async function connectUserBankrWalletForOwner(params: {
       bankrWalletId: existing.bankrWalletId,
       evmAddress: existing.normalizedEvmAddress,
       replacedAt: now.toISOString(),
+      ignoredZeroValueTokens,
     };
   }
 

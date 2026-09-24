@@ -6,16 +6,54 @@ import {
   buildInstanceBankrAgentConfig,
   type InstanceBankrWalletRecord,
 } from "@/lib/billing/bankr-instance-wallets";
-import type { HivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
+import type {
+  HivraAgentExecutionContext,
+  HivraAgentInfrastructureBinding,
+} from "@/lib/hivra/agent-execution-context";
 import { removeBankrWalletEnvFromBox, seedBankrWalletEnvOntoBox } from "@/lib/hivra/bankr-wallet-env-seed";
 import { supabaseAdmin } from "@/lib/supabase";
 
-export interface OwnedHivraWalletAgent {
+// Every column resolveHivraAgentExecutionContext reads. Selecting fewer makes
+// the resolver see an unbound agent and refuse with "invalid infrastructure
+// binding", which is how wallet delivery broke once binding tokens, channels
+// and substrates were added.
+export const HIVRA_WALLET_AGENT_COLUMNS = [
+  "id",
+  "user_id",
+  "type",
+  "status",
+  "ip",
+  "vmid",
+  "proxmox_host",
+  "deployment_mode",
+  "managed_provisioner_channel",
+  "computer_substrate",
+  "infrastructure_connection_id",
+  "deployment_target_id",
+  "infrastructure_connection_revision",
+  "infrastructure_binding_token_hash",
+  "infrastructure_binding_token_enforced",
+  "provider_capacity_order_id",
+  "provider_enrollment_attempt_id",
+  "provider_server_id",
+] as const satisfies readonly (keyof OwnedHivraWalletAgent)[];
+
+// Compile-time guard: adding a field to HivraAgentInfrastructureBinding without
+// selecting it here fails the build instead of breaking wallets at runtime.
+type UnselectedBindingColumn = Exclude<
+  keyof HivraAgentInfrastructureBinding,
+  (typeof HIVRA_WALLET_AGENT_COLUMNS)[number]
+>;
+const everyBindingColumnSelected: [UnselectedBindingColumn] extends [never] ? true : never = true;
+void everyBindingColumnSelected;
+
+export interface OwnedHivraWalletAgent extends HivraAgentInfrastructureBinding {
   id: string;
   user_id: string;
   type: string;
   status: string;
   ip: string | null;
+  vmid: number | null;
   proxmox_host: string | null;
   infrastructure_connection_id: string | null;
   deployment_target_id: string | null;
@@ -26,11 +64,11 @@ export async function loadOwnedHivraWalletAgent(id: string, userId: string): Pro
   if (!supabaseAdmin) return null;
   const { data } = await supabaseAdmin
     .from("hivra_agents")
-    .select("id,user_id,type,status,ip,proxmox_host,infrastructure_connection_id,deployment_target_id,infrastructure_connection_revision")
+    .select(HIVRA_WALLET_AGENT_COLUMNS.join(","))
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
-  return (data as OwnedHivraWalletAgent | null) || null;
+  return (data as unknown as OwnedHivraWalletAgent | null) || null;
 }
 
 export type HivraWalletEnvSync =
