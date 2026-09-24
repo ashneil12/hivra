@@ -1,4 +1,6 @@
-import { buildLlmsTxt, LLMS_TXT_SECTIONS, PUBLIC_REPOSITORY_URL } from "../llms-txt";
+import { buildLlmsTxt, llmsTxtSections, PUBLIC_REPOSITORY_URL } from "../llms-txt";
+
+const LLMS_TXT_SECTIONS = llmsTxtSections("dormant");
 
 const SITE = "https://example.test";
 

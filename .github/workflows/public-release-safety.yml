@@ -35,6 +35,11 @@ jobs:
       - name: Guard the litepaper render, approved wording and link policy
         run: python3 -B docs/litepaper/build.py --check && python3 -B docs/litepaper/test_content.py && python3 -B docs/litepaper/test_link_policy.py
 
+      # The export must never change a published token or app icon URL. The
+      # end-to-end export test needs Pillow and skips without it.
+      - name: Guard the brand export overwrite rule
+        run: python3 -B docs/brand/test_export_brand_assets.py
+
       - name: Guard standalone database bindings and recovery helpers
         run: node --test dashboard/scripts/hivra-self-host.test.mjs dashboard/scripts/hivra-self-host-docker.test.mjs dashboard/scripts/hivra-self-host-backup.test.mjs dashboard/scripts/hivra-self-host-storage.test.mjs
 
