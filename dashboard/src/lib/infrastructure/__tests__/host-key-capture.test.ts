@@ -8,13 +8,20 @@ import type { AddressInfo } from "node:net";
 import { Server as Ssh2Server, utils as ssh2Utils } from "ssh2";
 
 import { InfrastructureNetworkError } from "../connection-runtime";
+import { generateVerifiedEd25519SshKeyPair } from "../ed25519-ssh-key";
 import { captureServerHostKey } from "../host-key-capture";
 import { canonicalEd25519HostKey } from "../ssh-host-key";
 
 type Seen = { authentications: number; sessions: number; clients: number };
 
 async function sshServer(type: "ed25519" | "rsa"): Promise<{ port: number; publicKey: string; seen: Seen; close: () => Promise<void> }> {
-  const key = type === "rsa" ? ssh2Utils.generateKeyPairSync("rsa", { bits: 2048 }) : ssh2Utils.generateKeyPairSync("ed25519");
+  // ssh2's own Ed25519 generator makes a key it can't parse about 1 time in
+  // 170 (a leading zero byte, see ed25519-ssh-key.ts), which failed this test
+  // at random; the verified generator skips those keys.
+  const key = type === "rsa"
+    ? ssh2Utils.generateKeyPairSync("rsa", { bits: 2048 })
+    : (({ privateKeyOpenSsh, publicKeyOpenSsh }) => ({ private: privateKeyOpenSsh, public: publicKeyOpenSsh }))(
+      generateVerifiedEd25519SshKeyPair("host-key-capture"));
   const seen: Seen = { authentications: 0, sessions: 0, clients: 0 };
   const server = new Ssh2Server({ hostKeys: [key.private] }, client => {
     seen.clients += 1;
