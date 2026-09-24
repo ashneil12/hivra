@@ -20,6 +20,10 @@ import {
   preflightInfrastructureConnection,
 } from "@/lib/infrastructure/client";
 
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ push: jest.fn() }),
+}));
 jest.mock("@/lib/infrastructure/client", () => ({
   InfrastructureApiError: jest.requireActual("@/lib/infrastructure/client").InfrastructureApiError,
   createInfrastructureConnection: jest.fn(),

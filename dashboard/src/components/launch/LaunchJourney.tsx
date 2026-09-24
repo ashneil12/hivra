@@ -2610,7 +2610,7 @@ export function LaunchJourney() {
             <dl aria-label="Technical details">
               {digitalOceanLane ? <>
                 <div><dt>Isolation</dt><dd>DigitalOcean sandbox microVM</dd></div>
-                <div><dt>Runtime</dt><dd>{digitalOceanHarness ?? currentProfile.runtimeId} on DigitalOcean Managed Agents</dd></div>
+                <div><dt>Agent</dt><dd>{digitalOceanHarness ?? currentProfile.runtimeId} on DigitalOcean Managed Agents</dd></div>
                 {digitalOceanTarget ? <div><dt>Team id</dt><dd>{digitalOceanTarget.id}</dd></div> : null}
               </> : <>
                 <div><dt>Isolation</dt><dd>{isolationDetail(substrate)}</dd></div>
