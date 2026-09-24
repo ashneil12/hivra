@@ -70,12 +70,9 @@ function coarsePointer(): boolean {
  * place those lived. What changes is that it now costs no layout space at all
  * and closes on a click anywhere outside it.
  *
- * It serves BOTH resource families, so its own copy says "runtimes" rather than
- * "agents": the menu returns computers, and a search field promising agents
- * would contradict the rows directly beneath it. That is the same word the Chat
- * control pane and the owner use for the set, so one noun covers both families
- * everywhere. The per-group headings still name each family, which is where that
- * distinction belongs.
+ * It serves BOTH resource families, so its copy names both ("agents and
+ * computers"), matching the sidebar's switcher and Hivra's glossary. The
+ * per-group headings still name each family.
  */
 export function AgentSwitcherMenu(props: AgentSwitcherMenuProps) {
   // Mounted only while open, so the query and highlight start fresh every time
@@ -305,7 +302,7 @@ function AgentSwitcherPanel({
       <div
         ref={attachMenu}
         role="dialog"
-        aria-label="Switch runtime"
+        aria-label="Switch agent or computer"
         tabIndex={-1}
         onKeyDown={handleKeyDown}
         style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)", outline: "none" }}
@@ -325,8 +322,8 @@ function AgentSwitcherPanel({
             aria-controls={LISTBOX_ID}
             aria-autocomplete="list"
             aria-activedescendant={activeAgent ? optionId(activeAgent.uid) : undefined}
-            aria-label="Search your runtimes"
-            placeholder="Search runtimes"
+            aria-label="Search your agents and computers"
+            placeholder="Search agents and computers"
             value={query}
             autoCapitalize="none"
             autoCorrect="off"
@@ -348,18 +345,18 @@ function AgentSwitcherPanel({
         <div
           id={LISTBOX_ID}
           role="listbox"
-          aria-label="Your runtimes"
+          aria-label="Your agents and computers"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1"
         >
           {loading ? (
             <p className="px-2.5 py-3 text-[13px] text-[var(--text-muted)]">
-              Loading your runtimes…
+              Loading your agents and computers…
             </p>
           ) : flat.length === 0 ? (
             <p className="px-2.5 py-3 text-[13px] text-[var(--text-muted)]">
               {query.trim()
-                ? "Nothing in your runtimes matches that search."
-                : "No runtimes yet. Launch one to get started."}
+                ? "Nothing matches that search."
+                : "No agents or computers yet. Launch one to get started."}
             </p>
           ) : (
             sections.map((section) => (
@@ -441,7 +438,7 @@ function AgentSwitcherPanel({
             className="mono flex min-h-[40px] min-w-0 flex-1 items-center gap-2 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
           >
             <Plus aria-hidden="true" size={14} />
-            Launch a runtime
+            Launch an agent or computer
           </a>
           {/* The test guide used to be an unlabelled book glyph in the header.
               It is a contributor-facing panel, not a per-task tool, so it is

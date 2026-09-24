@@ -224,11 +224,11 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
       if (data.success) {
         window.location.href = '/dashboard';
       } else {
-        alert("Failed to delete instance: " + data.error);
+        alert("Failed to delete this agent: " + data.error);
         setActionLoading(false);
       }
     } catch {
-      alert("Error deleting instance.");
+      alert("Error deleting this agent.");
       setActionLoading(false);
     }
 };
@@ -237,8 +237,8 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
     if (!settingsReady) return;
     if (next && typeof window !== 'undefined' && !window.confirm(
       'Enable Advanced cloud access?\n\n' +
-      'This gives the agent root privileges in its managed runtime and access to the isolated VM\'s Docker daemon. ' +
-      'It can install software, run containers, delete data, or break its own runtime. ' +
+      'This gives the agent root privileges on its own computer and access to the isolated VM\'s Docker daemon. ' +
+      'It can install software, run containers, delete data, or break its own setup. ' +
       'It cannot access the Proxmox host or another customer\'s VM. Continue?'
     )) {
       return;
@@ -408,7 +408,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
       });
       const applyJson = await applyRes.json();
       if (!applyRes.ok || !applyJson.success) {
-        setContextError('Saved, but applying it failed — hit Redeploy on this instance to apply.');
+        setContextError('Saved, but applying it failed — hit Redeploy on this agent to apply.');
         return;
       }
       setContextMessage('Settings saved. Restart requested — wait for the agent to reconnect.');
@@ -522,7 +522,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
 
         <div style={{ display: 'grid', gap: '1.25rem', maxWidth: 680 }}>
           <p style={{ fontSize: 13, margin: 0, opacity: 0.82, lineHeight: 1.55 }}>
-            Run the native Hermes Desktop app on this instance — no local install, no Tailscale, no port-forwarding.
+            Run the native Hermes Desktop app on this agent’s computer — no local install, no Tailscale, no port-forwarding.
             The agent, memory, browser, scheduled tasks and tools all keep running here in the cloud.
           </p>
           <ConnectDesktopButton instanceId={instanceId} />
@@ -546,7 +546,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         <div style={{ display: 'grid', gap: '1rem', maxWidth: 680 }}>
           <p style={{ fontSize: 13, margin: 0, opacity: 0.8, lineHeight: 1.5 }}>
             Treat this isolated VM as your own cloud computer. When enabled, the agent gets
-            root privileges in its managed runtime and can use this VM&apos;s Docker daemon to
+            root privileges on its computer and can use this VM&apos;s Docker daemon to
             install software, run your own containers, and host additional workloads. It
             remains isolated from the Proxmox host and every other customer VM.
           </p>
@@ -667,7 +667,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
               />
               <span style={{ fontSize: 12, opacity: 0.7, lineHeight: 1.5 }}>
                 From <code>daytona.io</code>. Stored encrypted. Commands run in Daytona&apos;s
-                cloud (not on your box), your working tree lives there and syncs back on
+                cloud (not on your agent&apos;s computer), your working tree lives there and syncs back on
                 teardown, and Daytona caps sandbox disk at 10 GiB.
               </span>
             </label>

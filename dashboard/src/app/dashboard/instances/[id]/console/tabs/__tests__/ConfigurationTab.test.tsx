@@ -66,7 +66,7 @@ describe('ConfigurationTab Component', () => {
     });
 
     expect(await screen.findByRole('heading', { name: /hermes desktop backend/i })).toBeInTheDocument();
-    expect(screen.getByText(/run the native hermes desktop app on this instance/i)).toBeInTheDocument();
+    expect(screen.getByText(/run the native hermes desktop app on this agent’s computer/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect desktop/i })).toBeInTheDocument();
   });
 

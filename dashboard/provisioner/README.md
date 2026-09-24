@@ -221,12 +221,27 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   `/home/bux/.claude/browser.env`. The overlay's `local-browser-keeper.py` writes
   the **same** `browser.env` contract pointing at the local Chrome, so everything
   downstream (agent + `browser-harness-js`) is unchanged.
-- **Chat transport.** `POST /api/chat {message, sessionId}` spawns `claude` with
-  the prompt on **stdin** (so arbitrary user text never hits arg parsing) and
-  forwards each NDJSON line as a chunked response. Multi-turn is via
-  `--resume <session_id>` (client captures `session_id` from the `system/init`
-  and `result` events). Server uses only Node built-ins — no `package.json`,
-  no `npm install`.
+- **Chat transport.** `POST /api/chat {message, sessionId}` starts the agent CLI
+  (`claude` with the prompt on **stdin**, so arbitrary user text never hits arg
+  parsing) and streams its NDJSON events as a chunked response. Multi-turn is
+  via `--resume <session_id>` (client captures `session_id` from the
+  `system/init` and `result` events). Server uses only Node built-ins — no
+  `package.json`, no `npm install`.
+- **Detached chat runs.** Each turn runs under its own runner process
+  (`hivra-chat/chat-runs.cjs`) that owns the CLI and writes the stream to
+  `~/.hivra/chat-runs/<runId>/events.ndjson`; the HTTP response only tails that
+  log. With `{detach: true, runId, clientRef}` a closed tab or dropped network
+  no longer ends the turn: `GET /api/chat/runs` lists recent runs,
+  `GET /api/chat/runs/<id>/events` replays one from the start (live until it
+  finishes) and `POST /api/chat/runs/<id>/stop` is the only way to end it early.
+  Requests without `detach` keep the historical contract (their disconnect
+  stops the turn). The `10-hivra-detached-runs.conf` drop-in sets
+  `KillMode=process` on `bux-hivra-chat.service`, so a gateway restart (runtime
+  update, crash) leaves in-flight runs working; permission flags are unchanged.
+- **Agent terminal.** For Claude Code and Codex, `hivra-agent-shell` runs the
+  CLI inside a private tmux session (`tmux -L hivra-agent`, session named after
+  the CLI). Closing the Terminal tab detaches; reopening it re-attaches to the
+  same session.
 - **Surface authentication.** `/api/meta` advertises `surfaceAuth: "post-cookie-v1"`.
   The dashboard checks that capability without credentials, then POSTs the
   bearer to `/auth/bootstrap` to obtain an opaque, HttpOnly session cookie and

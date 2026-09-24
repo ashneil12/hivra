@@ -63,7 +63,7 @@ describe("BuzzConnectionsPage", () => {
 
     expect(await screen.findByText("Studio Relay")).toBeInTheDocument();
     expect(screen.getByText("Membership verified")).toBeInTheDocument();
-    expect(screen.getByText("Runtime not installed")).toBeInTheDocument();
+    expect(screen.getByText("Buzz connector not installed")).toBeInTheDocument();
     expect(screen.getByText(/Other substrates remain unavailable/)).toBeInTheDocument();
     expect(screen.getByText(/does not reuse the agent's existing vendor login or conversation/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open relay/i })).toHaveAttribute("href", "https://buzz.example");
@@ -171,16 +171,16 @@ describe("BuzzConnectionsPage", () => {
     }) as typeof fetch;
 
     render(<BuzzConnectionsPage />);
-    await screen.findByText("Runtime not installed");
-    fireEvent.change(screen.getByLabelText("Buzz runtime API key for Research"), { target: { value: "sk-write-only-test" } });
+    await screen.findByText("Buzz connector not installed");
+    fireEvent.change(screen.getByLabelText("Buzz connector API key for Research"), { target: { value: "sk-write-only-test" } });
     fireEvent.change(screen.getByLabelText("Buzz owner public key for Research"), { target: { value: "c".repeat(64) } });
-    fireEvent.click(screen.getByRole("button", { name: "Activate runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Turn on connector" }));
 
     expect(await screen.findByText(/Owner-only Buzz sidecar active/)).toBeInTheDocument();
     expect(screen.queryByDisplayValue("sk-write-only-test")).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("sk-write-only-test");
-    expect(screen.getByRole("button", { name: "Check runtime" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check connector" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove connector" })).toBeInTheDocument();
   });
 
   it("uses the saved Venice Vault key without rendering or posting plaintext", async () => {
@@ -207,14 +207,14 @@ describe("BuzzConnectionsPage", () => {
     }) as typeof fetch;
 
     render(<BuzzConnectionsPage />);
-    await screen.findByText("Runtime not installed");
-    fireEvent.change(screen.getByLabelText("Buzz runtime provider for Research"), { target: { value: "venice" } });
-    expect(screen.queryByLabelText("Buzz runtime API key for Research")).not.toBeInTheDocument();
+    await screen.findByText("Buzz connector not installed");
+    fireEvent.change(screen.getByLabelText("Buzz connector provider for Research"), { target: { value: "venice" } });
+    expect(screen.queryByLabelText("Buzz connector API key for Research")).not.toBeInTheDocument();
     expect(screen.getByText("Venice key from your API keys")).toBeInTheDocument();
     // The key page is called API keys, so this surface must not say Vault.
     expect(screen.queryByText(/Vault/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Buzz owner public key for Research"), { target: { value: "c".repeat(64) } });
-    fireEvent.click(screen.getByRole("button", { name: "Activate runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Turn on connector" }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
       `/api/hivra/buzz/bindings/${BINDING}`, expect.objectContaining({ method: "POST" }),
     ));
@@ -241,17 +241,17 @@ describe("BuzzConnectionsPage", () => {
     }) as typeof fetch;
 
     render(<BuzzConnectionsPage />);
-    const remove = await screen.findByRole("button", { name: "Remove runtime" });
+    const remove = await screen.findByRole("button", { name: "Remove connector" });
     remove.focus();
     fireEvent.click(remove);
     expect(posts).toHaveLength(0);
     // The Remove button becomes Cancel in place, so keyboard focus stays on the safe choice.
-    expect(screen.getByRole("button", { name: "Cancel Buzz runtime removal for Research" })).toBe(remove);
+    expect(screen.getByRole("button", { name: "Cancel Buzz connector removal for Research" })).toBe(remove);
     expect(remove).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel Buzz runtime removal for Research" }));
-    expect(screen.queryByRole("button", { name: "Confirm remove runtime for Research" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Remove runtime" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm remove runtime for Research" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Buzz connector removal for Research" }));
+    expect(screen.queryByRole("button", { name: "Confirm remove connector for Research" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm remove connector for Research" }));
     await waitFor(() => expect(posts).toEqual([{ action: "runtime_remove" }]));
   });
 
@@ -268,7 +268,7 @@ describe("BuzzConnectionsPage", () => {
     })) as typeof fetch;
     render(<BuzzConnectionsPage />);
     expect(screen.getByRole("link", { name: /^Home/ })).toHaveAttribute("href", "/dashboard?runtimes=1");
-    const model = await screen.findByLabelText("Buzz runtime model for Research");
+    const model = await screen.findByLabelText("Buzz connector model for Research");
     expect(model).toHaveAttribute("autocapitalize", "none");
     expect(model).toHaveAttribute("autocorrect", "off");
     expect(model).toHaveAttribute("spellcheck", "false");
