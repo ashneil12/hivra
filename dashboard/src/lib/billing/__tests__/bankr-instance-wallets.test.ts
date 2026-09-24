@@ -1,14 +1,19 @@
 import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import {
   AGENT_WALLET_CONNECT_CONSENT_VERSION,
+  bankrRuntimeWalletAddressHistory,
   buildInstanceBankrAgentConfig,
   connectUserBankrWalletForOwner,
   decryptInstanceBankrApiKey,
   decryptInstanceBankrRuntimeApiKey,
   disconnectUserBankrWalletForOwner,
   instanceBankrWalletPublicSummary,
+  isRevokedUserConnectedWallet,
   isUserConnectedBankrWallet,
+  isUserConnectedWalletRecord,
+  type InstanceBankrWalletRecord,
   listWithdrawalRecipientsForInstance,
+  PRIOR_USER_CONNECTED_ADDRESSES_LIMIT,
   provisionBankrWalletForHivraAgent,
   provisionBankrWalletForInstance,
   readInstanceBankrWalletBalances,
@@ -1137,6 +1142,115 @@ describe("user-connected Bankr accounts", () => {
     ).rejects.toMatchObject({ code: "hivra_provisioned_address" });
   });
 
+  describe("earlier wallets a reconnect replaced (metadata.priorUserConnectedAddresses)", () => {
+    const walletA = "0x0000000000000000000000000000000000000A11";
+    const walletB = "0x0000000000000000000000000000000000000b22";
+    const keyFor = (label: string) => `bk_usr_${label}_prior_wallet_test_key`;
+    const connectTo = (db: ReturnType<typeof createMemoryDb>["db"], address: string, label: string) =>
+      connectUserBankrWalletForOwner({
+        owner: { instanceId },
+        userId,
+        apiKey: keyFor(label),
+        db,
+        env,
+        fetchImpl: bankrFetch({ meBody: { success: true, wallets: [{ chain: "evm", address }] } }),
+        now,
+      });
+
+    it("remembers each earlier wallet across reconnects and disconnects, and hands all of them to the runtime clear", async () => {
+      const { db, rows } = createMemoryDb();
+
+      // K1 on wallet A. Nothing earlier yet.
+      const first = await connectTo(db, walletA, "k1");
+      expect(first.record.metadata).not.toHaveProperty("priorUserConnectedAddresses");
+      expect(bankrRuntimeWalletAddressHistory(first.record)).toEqual([walletA.toLowerCase()]);
+
+      // Disconnect with the restart skipped: the row is revoked on A.
+      await disconnectUserBankrWalletForOwner({ owner: { instanceId }, userId, db, now });
+
+      // K2 for another wallet B, again without a restart: the row must still
+      // name A, which the box may hold.
+      const second = await connectTo(db, walletB, "k2");
+      expect(second.record.metadata.priorUserConnectedAddresses).toEqual([walletA.toLowerCase()]);
+      expect(bankrRuntimeWalletAddressHistory(second.record)).toEqual([walletB, walletA.toLowerCase()]);
+
+      // A new key for the same wallet B adds nothing.
+      const sameWallet = await connectTo(db, walletB, "k3");
+      expect(sameWallet.record.metadata.priorUserConnectedAddresses).toEqual([walletA.toLowerCase()]);
+
+      // A disconnect keeps the record.
+      const disconnected = await disconnectUserBankrWalletForOwner({ owner: { instanceId }, userId, db, now });
+      expect(disconnected.metadata.priorUserConnectedAddresses).toEqual([walletA.toLowerCase()]);
+      expect(isRevokedUserConnectedWallet(disconnected)).toBe(true);
+      expect(bankrRuntimeWalletAddressHistory(disconnected)).toEqual([walletB, walletA.toLowerCase()]);
+
+      // Back to wallet A: B is now the earlier one, and nothing is lost.
+      const back = await connectTo(db, walletA, "k4");
+      expect(back.record.metadata.priorUserConnectedAddresses).toEqual([walletA.toLowerCase(), walletB]);
+      expect(bankrRuntimeWalletAddressHistory(back.record)).toEqual([walletA.toLowerCase(), walletB]);
+      expect(rows).toHaveLength(1);
+      expect(JSON.stringify(rows[0].metadata)).not.toContain("prior_wallet_test_key");
+    });
+
+    it("keeps the most recent 20, moving an address that comes back to the end", async () => {
+      const { db, rows } = createMemoryDb();
+      const address = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
+      const stored = Array.from({ length: PRIOR_USER_CONNECTED_ADDRESSES_LIMIT }, (_, i) => address(0x100 + i));
+      rows.push({
+        id: "wallet_row_history",
+        instance_id: instanceId,
+        user_id: userId,
+        bankr_wallet_id: `user:${walletB}`,
+        evm_address: walletB,
+        normalized_evm_address: walletB,
+        status: "revoked",
+        api_key_status: "revoked",
+        metadata: {
+          custodyModel: "user_owned_bankr_account",
+          // Garbage and a duplicate are dropped on the next write.
+          priorUserConnectedAddresses: [...stored, "not-an-address", stored[3]],
+        },
+      });
+
+      const { record } = await connectTo(db, walletA, "k5");
+      const prior = record.metadata.priorUserConnectedAddresses as string[];
+      expect(prior).toHaveLength(PRIOR_USER_CONNECTED_ADDRESSES_LIMIT);
+      expect(prior[prior.length - 1]).toBe(walletB);
+      expect(prior).toEqual([...stored.slice(1), walletB]);
+
+      // Reconnect an address already on the list, then move off it again: it is
+      // replaced a second time, so it moves to the end instead of repeating.
+      await connectTo(db, stored[5], "k6");
+      const { record: again } = await connectTo(db, walletB, "k7");
+      expect(again.metadata.priorUserConnectedAddresses).toEqual([
+        ...stored.slice(2, 5),
+        ...stored.slice(6),
+        walletB,
+        walletA.toLowerCase(),
+        stored[5],
+      ]);
+    });
+
+    it("records a replaced Hivra-created wallet on its own, and the runtime clear still covers it", async () => {
+      const { db, rows } = createMemoryDb();
+      seedActiveHivraWallet(rows);
+
+      const { record } = await connectUserBankrWalletForOwner({
+        owner: { instanceId },
+        userId,
+        apiKey: userKey,
+        replaceProvisionedWallet: true,
+        db,
+        env,
+        fetchImpl: bankrFetch(),
+        now,
+      });
+
+      expect(record.metadata).not.toHaveProperty("priorUserConnectedAddresses");
+      expect(bankrRuntimeWalletAddressHistory(record)).toEqual([normalizedUserWallet, normalizedWalletAddress]);
+    });
+  });
+
   it("never hands Hivra a user's own key for a transfer, only the runtime", async () => {
     const { db } = createMemoryDb();
     const { record } = await connectUserBankrWalletForOwner({ owner: { instanceId }, userId, apiKey: userKey, db, env, fetchImpl: bankrFetch(), now });
@@ -1159,6 +1273,8 @@ describe("user-connected Bankr accounts", () => {
     });
     await expect(buildInstanceBankrAgentConfig(record)).resolves.toBeNull();
     expect(instanceBankrWalletPublicSummary(record)).toMatchObject({ evmAddress: null, custody: "user_connected", apiKeyPreview: null });
+    // The row the real disconnect writes is exactly what a live update clears.
+    expect(isRevokedUserConnectedWallet(record)).toBe(true);
 
     const partnerFetch = jest.fn();
     await expect(
@@ -1178,5 +1294,64 @@ describe("user-connected Bankr accounts", () => {
       code: "not_connected",
     });
     await expect(isUserConnectedBankrWallet({ owner: { instanceId }, db })).resolves.toBe(false);
+  });
+});
+
+describe("user-connected wallet predicates (drive the webfree BANKR_* clear)", () => {
+  function walletRecord(custodyModel: string | undefined, status: InstanceBankrWalletRecord["status"]): InstanceBankrWalletRecord {
+    return {
+      id: "wallet_row_1",
+      instanceId,
+      hivraAgentId: null,
+      userId,
+      bankrWalletId: "wlt_1",
+      evmAddress: normalizedWalletAddress,
+      normalizedEvmAddress: normalizedWalletAddress,
+      apiKeyPreview: null,
+      apiKeyStatus: status === "revoked" ? "revoked" : "active",
+      withdrawalDestinationEvm: null,
+      withdrawalDestinationSetAt: null,
+      status,
+      metadata: custodyModel === undefined ? {} : { custodyModel },
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  }
+
+  it("is revoked-user-connected only for the user's own account in status revoked", () => {
+    expect(isRevokedUserConnectedWallet(walletRecord("user_owned_bankr_account", "revoked"))).toBe(true);
+
+    for (const status of ["active", "pending", "failed"] as const) {
+      expect(isRevokedUserConnectedWallet(walletRecord("user_owned_bankr_account", status))).toBe(false);
+    }
+    // Every existing Hivra-provisioned wallet keeps today's behaviour, in any state.
+    for (const status of ["active", "pending", "failed", "revoked"] as const) {
+      expect(isRevokedUserConnectedWallet(walletRecord("bankr_custodied_agent_wallet", status))).toBe(false);
+      expect(isRevokedUserConnectedWallet(walletRecord(undefined, status))).toBe(false);
+      expect(isRevokedUserConnectedWallet(walletRecord("something_else", status))).toBe(false);
+    }
+    expect(isRevokedUserConnectedWallet(null)).toBe(false);
+    expect(isRevokedUserConnectedWallet(undefined)).toBe(false);
+  });
+
+  it("follows the same custody rule for isUserConnectedWalletRecord, whatever the status", () => {
+    for (const status of ["active", "pending", "failed", "revoked"] as const) {
+      expect(isUserConnectedWalletRecord(walletRecord("user_owned_bankr_account", status))).toBe(true);
+      expect(isUserConnectedWalletRecord(walletRecord("bankr_custodied_agent_wallet", status))).toBe(false);
+      expect(isUserConnectedWalletRecord(walletRecord(undefined, status))).toBe(false);
+      expect(isUserConnectedWalletRecord(walletRecord("something_else", status))).toBe(false);
+    }
+    expect(isUserConnectedWalletRecord(null)).toBe(false);
+    expect(isUserConnectedWalletRecord(undefined)).toBe(false);
+  });
+
+  it("never throws on a partial row without metadata", () => {
+    const stub = { id: "wallet-row", status: "revoked" } as unknown as InstanceBankrWalletRecord;
+    expect(() => isRevokedUserConnectedWallet(stub)).not.toThrow();
+    expect(isRevokedUserConnectedWallet(stub)).toBe(false);
+    expect(isUserConnectedWalletRecord({ id: "wallet-row" } as unknown as InstanceBankrWalletRecord)).toBe(false);
+    expect(
+      isUserConnectedWalletRecord({ id: "wallet-row", metadata: null } as unknown as InstanceBankrWalletRecord)
+    ).toBe(false);
   });
 });

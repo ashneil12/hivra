@@ -29,7 +29,11 @@ const mockProviderResize = jest.fn();
 const mockRevokeRemoteDesktopCapability = jest.fn();
 const mockPrepareHivraTailscaleForDelete = jest.fn();
 const mockMutateGvisorComputer = jest.fn();
+const mockReconcileWalletEnv = jest.fn();
 let mockPrivateAccessRow: Record<string, unknown> | null;
+jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
+  reconcileBankrEnvAfterHivraBoot: (...args: unknown[]) => mockReconcileWalletEnv(...args),
+}));
 jest.mock("@/lib/hivra/provider-agent-power", () => ({ advanceProviderAgentPower: (...args: unknown[]) => mockProviderPower(...args) }));
 jest.mock("@/lib/hivra/provider-agent-resize", () => ({ advanceProviderResize: (...args: unknown[]) => mockProviderResize(...args) }));
 jest.mock("@/lib/hivra/tailscale-private-access", () => ({
@@ -627,6 +631,7 @@ describe("GET /api/hivra/agents/[id]", () => {
     jest.clearAllMocks();
     updates.length = 0;
     mockCompleteRunningResult = true;
+    mockReconcileWalletEnv.mockReset().mockResolvedValue({ status: "skipped" });
     mockAuth.mockResolvedValue({ userId: "user-free" });
     mockResolveProxmoxTargetConfiguration.mockReturnValue({ env: { PROXMOX_NODE: "fixturenode10" } });
     mockResolveSelfManagedProxmoxExecutionContext.mockResolvedValue(selfManagedContext());
@@ -1294,6 +1299,79 @@ describe("GET /api/hivra/agents/[id]", () => {
       } finally {
         rmSync(work, { recursive: true, force: true });
       }
+    });
+  });
+
+  // Regression (Gap C): a wallet connected or disconnected while the box was
+  // stopped, or a snapshot restore's old bankr.env, was never re-applied when
+  // the box came back up.
+  describe("wallet env after boot", () => {
+    const OPERATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const READY = `{"vmid":1090,"ready":true,"chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}`;
+    const poll = () => GET(makeGetRequest() as never, { params: Promise.resolve({ id: "agent-1" }) });
+
+    beforeEach(() => {
+      mockAgentRow = { ...mockAgentRow, operation_kind: "start", operation_payload: null };
+    });
+
+    it("re-applies the wallet row once the start completion wins, with the poll's lifecycle context", async () => {
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(mockReconcileWalletEnv).toHaveBeenCalledTimes(1);
+      const [call] = mockReconcileWalletEnv.mock.calls[0];
+      expect(call).toEqual({
+        userId: "user-free",
+        agent: expect.objectContaining({ id: "agent-1", type: "claude-code", status: "running", ip: "10.253.0.90" }),
+        executionContext: expect.objectContaining({ kind: "managed", host: "fixturenode10" }),
+        trigger: "poll",
+      });
+      // The same resolved context the poll itself used, not a re-resolution.
+      expect(call.executionContext.env).toBe(mockRunProxmoxHostScript.mock.calls[0][1]);
+      expect(mockResolveProxmoxTargetConfiguration).toHaveBeenCalledTimes(1);
+      const completeOrder = mockSupabaseRpc.mock.invocationCallOrder[
+        mockSupabaseRpc.mock.calls.findIndex(([name]) => name === "complete_hivra_agent_running")
+      ];
+      expect(completeOrder).toBeLessThan(mockReconcileWalletEnv.mock.invocationCallOrder[0]);
+    });
+
+    it("does not run when another poll wins the completion, the helper failed, or the box is already running", async () => {
+      mockCompleteRunningResult = false;
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+      expect((await poll()).status).toBe(200);
+
+      mockCompleteRunningResult = true;
+      mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_id: OPERATION_ID, operation_kind: "start" };
+      mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: true, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ ok: true, stdout: '{"vmid":1090,"ready":false,"error":"start failed"}\n', stderr: "" });
+      expect((await poll()).status).toBe(200);
+
+      mockAgentRow = { ...mockAgentRow, status: "running", operation_id: null, operation_kind: null, bootstrapped_at: "2026-06-05T12:00:00.000Z" };
+      expect((await poll()).status).toBe(200);
+
+      expect(mockReconcileWalletEnv).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["resolves failed", () => mockReconcileWalletEnv.mockResolvedValue({ status: "failed", error: "ssh timed out" })],
+      ["rejects", () => mockReconcileWalletEnv.mockRejectedValue(new Error("unexpected"))],
+    ])("still reports the box running when the wallet sync %s", async (_label, arrange) => {
+      arrange();
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ success: true, data: { agent: { id: "agent-1", status: "running" } } });
+      expect(mockReconcileWalletEnv).toHaveBeenCalledTimes(1);
     });
   });
 });

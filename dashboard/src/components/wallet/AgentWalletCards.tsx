@@ -687,14 +687,64 @@ const secondaryActionStyle = {
 
 /**
  * Whether the connect/disconnect call reached the running agent. The Hermes
- * route reports `configSync`, the Hivra route `envSync`; "skipped" means the
- * runtime takes the change at its next update, "failed" that it couldn't be
- * reached.
+ * route reports `configSync`, the Hivra route `envSync`; "update_started"
+ * means a Hermes webfree agent is restarting to load the change, "skipped"
+ * that the runtime takes the change at its next update, "failed" that it
+ * couldn't be reached.
  */
-function runtimeSyncStatus(data: unknown): 'synced' | 'skipped' | 'failed' | null {
+function runtimeSyncStatus(data: unknown): 'synced' | 'skipped' | 'failed' | 'update_started' | null {
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
   const value = record.envSync ?? record.configSync;
-  return value === 'synced' || value === 'skipped' || value === 'failed' ? value : null;
+  return value === 'synced' || value === 'skipped' || value === 'failed' || value === 'update_started'
+    ? value
+    : null;
+}
+
+/** Why the Hermes route skipped delivering the change now, or null. */
+function configSyncSkipReason(data: unknown): string | null {
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  return record.configSync === 'skipped' && typeof record.configSyncReason === 'string' ? record.configSyncReason : null;
+}
+
+function identityUnverifiable(data: unknown): boolean {
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  return record.envSyncReason === 'identity_unverifiable';
+}
+
+// Older boxes that can't prove which VM they are never receive a wallet key.
+const UNVERIFIABLE_BOX_NOTICE =
+  'This agent\'s computer can\'t be verified as the one you own, so Hivra didn\'t send the key to it. Recreate the agent to use a wallet.';
+
+const RUN_UPDATE_NOTICE = 'Your agent is already updating. Run Update once it finishes to apply this change.';
+const AGENT_RESTARTING_NOTICE = 'The agent is restarting to apply this.';
+
+/**
+ * Hermes agents only. A "webfree" Hermes box takes a wallet change only when
+ * its runtime restarts, which takes 1–3 minutes and stops chats in progress, so
+ * the user chooses whether that happens now. Boxes that don't need a restart
+ * ignore the choice.
+ */
+function RestartAgentCheckbox({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label style={{ ...modalNote, display: 'flex', gap: 8, alignItems: 'flex-start', cursor: disabled ? 'default' : 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        style={{ marginTop: 3 }}
+      />
+      <span>Restart the agent now if it needs a restart to pick this up (about 1–3 minutes; chats in progress stop).</span>
+    </label>
+  );
 }
 
 function NoticeBox({ children, warn = false }: { children: React.ReactNode; warn?: boolean }) {
@@ -821,10 +871,13 @@ export function ConnectBankrModal({
   const [apiKey, setApiKey] = useState('');
   const [consent, setConsent] = useState(false);
   const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+  // Off by default: connecting shouldn't interrupt a running agent unless asked.
+  const [restartAgent, setRestartAgent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const keyFieldId = useId();
+  const hermesLane = card.instance.lane === 'hermes';
   // The server can still ask for the switch confirmation (an agent whose
   // Hivra wallet the card didn't show), so the mode can change here.
   const [replacing, setReplacing] = useState(mode === 'replace');
@@ -842,6 +895,7 @@ export function ConnectBankrModal({
           apiKey: apiKey.trim(),
           consent: true,
           ...(replacing ? { replaceProvisionedWallet: true } : {}),
+          ...(hermesLane ? { restartAgent } : {}),
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -860,12 +914,20 @@ export function ConnectBankrModal({
           'Switched, but Hivra couldn\'t confirm the old wallet\'s keys were revoked at Bankr. Contact support so this can be finished.'
         );
       }
-      if (runtime === 'failed') {
+      if (runtime === 'failed' && identityUnverifiable(body?.data)) {
+        notices.push(`Connected. ${UNVERIFIABLE_BOX_NOTICE}`);
+      } else if (runtime === 'failed') {
         notices.push('Connected, but Hivra couldn\'t reach the agent to give it the key. Connect again to retry.');
+      } else if (runtime === 'update_started') {
+        notices.push(`Connected. ${AGENT_RESTARTING_NOTICE}`);
+      } else if (configSyncSkipReason(body?.data) === 'restart_not_requested') {
+        notices.push('Connected. The agent picks up the key at its next update, or run Update on its page to apply it now.');
+      } else if (configSyncSkipReason(body?.data) === 'update_in_progress') {
+        notices.push(`Connected. ${RUN_UPDATE_NOTICE}`);
       } else if (runtime === 'skipped') {
         notices.push(
           card.instance.lane === 'hivra'
-            ? 'Connected, but the agent isn\'t running, so it doesn\'t have the key yet. Connect again once it\'s running.'
+            ? 'Connected. The agent isn\'t running, so it gets the key when it next starts.'
             : 'Connected. The agent gets the key at its next update.'
         );
       }
@@ -887,7 +949,7 @@ export function ConnectBankrModal({
     } finally {
       setSubmitting(false);
     }
-  }, [apiKey, card.instance, onClose, onConnected, ready, replacing]);
+  }, [apiKey, card.instance, hermesLane, onClose, onConnected, ready, replacing, restartAgent]);
 
   return (
     <AgentWalletModalFrame
@@ -998,6 +1060,7 @@ export function ConnectBankrModal({
           bankr.bot/api-keys or disconnect it here at any time.
         </span>
       </label>
+      {hermesLane && <RestartAgentCheckbox checked={restartAgent} onChange={setRestartAgent} disabled={submitting} />}
       {error && (
         <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
           {error}
@@ -1018,15 +1081,23 @@ export function DisconnectBankrModal({
   onClose: () => void;
   onDisconnected: (wallet: InstanceBankrWalletPublicSummary) => void;
 }) {
+  // On by default: after a disconnect the agent keeps the key until it restarts.
+  const [restartAgent, setRestartAgent] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const hermesLane = card.instance.lane === 'hermes';
 
   const handleDisconnect = useCallback(async () => {
     setSubmitting(true);
     setError(null);
     try {
-      const response = await fetch(`${agentWalletApiBase(card.instance)}/connect`, { method: 'DELETE' });
+      const response = await fetch(
+        `${agentWalletApiBase(card.instance)}/connect`,
+        hermesLane
+          ? { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restartAgent }) }
+          : { method: 'DELETE' }
+      );
       const body = await response.json().catch(() => ({}));
       const wallet = body?.data?.wallet as InstanceBankrWalletPublicSummary | undefined;
       if (!response.ok || !body?.success || !wallet) {
@@ -1034,8 +1105,25 @@ export function DisconnectBankrModal({
         return;
       }
       onDisconnected(wallet);
-      if (runtimeSyncStatus(body?.data) === 'synced') {
+      const runtime = runtimeSyncStatus(body?.data);
+      if (runtime === 'synced') {
         onClose();
+      } else if (runtime === 'update_started') {
+        setNotice(
+          `Hivra deleted its copy. ${AGENT_RESTARTING_NOTICE} The key still works at Bankr until you revoke it at bankr.bot/api-keys.`
+        );
+      } else if (configSyncSkipReason(body?.data) === 'restart_not_requested') {
+        setNotice(
+          'Hivra deleted its copy. The agent keeps the key until its next update (run Update on its page to apply it now); revoke it at bankr.bot/api-keys to stop it immediately.'
+        );
+      } else if (configSyncSkipReason(body?.data) === 'update_in_progress') {
+        setNotice(
+          `Hivra deleted its copy. ${RUN_UPDATE_NOTICE} The key still works at Bankr until you revoke it at bankr.bot/api-keys.`
+        );
+      } else if (identityUnverifiable(body?.data)) {
+        setNotice(
+          'Hivra deleted its copy, but this agent\'s computer can\'t be verified, so Hivra couldn\'t remove the key from it. Revoke it at bankr.bot/api-keys to stop the agent using it.'
+        );
       } else {
         setNotice(
           'Hivra deleted its copy, but couldn\'t confirm the key was removed from the running agent. Revoke it at bankr.bot/api-keys to stop the agent using it.'
@@ -1046,7 +1134,7 @@ export function DisconnectBankrModal({
     } finally {
       setSubmitting(false);
     }
-  }, [card.instance, onClose, onDisconnected]);
+  }, [card.instance, hermesLane, onClose, onDisconnected, restartAgent]);
 
   return (
     <AgentWalletModalFrame
@@ -1082,6 +1170,9 @@ export function DisconnectBankrModal({
       <p style={modalText}>
         Hivra deletes its copy of the key and stops giving it to the agent. Your funds stay in your Bankr account.
       </p>
+      {hermesLane && !notice && (
+        <RestartAgentCheckbox checked={restartAgent} onChange={setRestartAgent} disabled={submitting} />
+      )}
       <NoticeBox warn>
         <span style={modalNote}>
           The key still works at Bankr, including any copy the agent already loaded, until you revoke it at{' '}

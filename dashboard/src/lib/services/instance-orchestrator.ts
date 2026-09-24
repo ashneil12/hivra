@@ -17,6 +17,7 @@ import {
 import {
   buildWebUIBootstrapScript,
   buildWebUIProvisioningArtifacts,
+  type WebUIDeployParams,
 } from "@/lib/services/webui-instance-builder";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { deriveDnsDomainFromGatewayUrl } from "@/lib/services/cloudflare-dns";
@@ -33,9 +34,13 @@ import {
   resolveProviderDeploymentSecret,
 } from "@/lib/provider-deployment-auth";
 import {
+  bankrRuntimeWalletAddressHistory,
   buildInstanceBankrAgentConfig,
   getBankrWalletForInstance,
+  isRevokedUserConnectedWallet,
+  isUserConnectedWalletRecord,
   type InstanceBankrAgentConfig,
+  type InstanceBankrWalletRecord,
 } from "@/lib/billing/bankr-instance-wallets";
 import {
   getRuntimeAgentSettings,
@@ -188,23 +193,102 @@ export async function resolveInstanceIpv4(
   return "";
 }
 
-async function resolveBankrAgentConfigForUpdate(
+/**
+ * What a live update does with the box's BANKR_* runtime env.
+ *
+ * - `upsert`: write the wallet's values (the only case with a config).
+ *   `userConnected` marks a key from the user's own Bankr account, whose
+ *   update also strips config.yaml's stale `bankr:` block and drops BANKR_*
+ *   from cloned profile .env files holding any of `walletAddresses`, so each
+ *   profile picks up the key this run delivers.
+ * - `preserve`: leave whatever the box has. Covers no wallet row, a row with
+ *   nothing to deliver (pending, failed, a revoked Hivra-provisioned row) and
+ *   any lookup or decrypt failure, so a transient error never wipes live
+ *   wallet credentials.
+ * - `clear`: remove the disconnected wallet's BANKR_* and the `bankr:` block.
+ *   Only for a row the lookup definitively resolved to a user-connected wallet
+ *   the user disconnected.
+ *
+ * `walletAddresses` is every address the row has delivered
+ * (bankrRuntimeWalletAddressHistory: the current one, which a disconnect
+ * keeps, each earlier wallet a reconnect replaced and a replaced Hivra-created
+ * wallet), lower-cased. A connect or disconnect can skip the restart, so the
+ * box may still hold any of them. The update script matches each file's
+ * BANKR_AGENT_WALLET_ADDRESS against this set and never touches a file
+ * holding any other address. A revoked row without one valid address is
+ * preserved instead.
+ */
+export type BankrRuntimeEnvPlan =
+  | { action: "upsert"; config: InstanceBankrAgentConfig; userConnected: false }
+  | { action: "upsert"; config: InstanceBankrAgentConfig; userConnected: true; walletAddresses: string[] }
+  | {
+      action: "preserve";
+      reason: "no_wallet" | "not_deliverable" | "lookup_failed" | "disconnected_address_unknown";
+    }
+  | { action: "clear"; reason: "user_disconnected"; walletAddresses: string[] };
+
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+function warnBankrAgentConfigUnavailable(instanceId: string, err: unknown): void {
+  log.warn("bankr agent config unavailable during live update", {
+    source: LOG_SOURCE,
+    failureType: "bankr_agent_config_update_unavailable",
+    instanceId,
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+export async function resolveBankrRuntimeEnvPlanForUpdate(
   instanceId: string,
   supabaseAdmin: SupabaseClient
-): Promise<InstanceBankrAgentConfig | null> {
+): Promise<BankrRuntimeEnvPlan> {
+  let record: InstanceBankrWalletRecord | null;
   try {
-    return await buildInstanceBankrAgentConfig(
-      await getBankrWalletForInstance({ instanceId, db: supabaseAdmin })
-    );
+    record = await getBankrWalletForInstance({ instanceId, db: supabaseAdmin });
   } catch (err) {
-    log.warn("bankr agent config unavailable during live update", {
-      source: LOG_SOURCE,
-      failureType: "bankr_agent_config_update_unavailable",
-      instanceId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+    warnBankrAgentConfigUnavailable(instanceId, err);
+    return { action: "preserve", reason: "lookup_failed" };
   }
+  if (!record) return { action: "preserve", reason: "no_wallet" };
+
+  if (isRevokedUserConnectedWallet(record)) {
+    const walletAddresses = bankrRuntimeWalletAddressHistory(record);
+    if (walletAddresses.length === 0) {
+      log.warn("bankr runtime env left in place: disconnected user wallet has no address", {
+        source: LOG_SOURCE,
+        failureType: "bankr_runtime_env_clear_without_address",
+        instanceId,
+        walletRowId: record.id,
+      });
+      return { action: "preserve", reason: "disconnected_address_unknown" };
+    }
+    log.info("bankr runtime env cleared for a disconnected user wallet", {
+      source: LOG_SOURCE,
+      instanceId,
+      walletRowId: record.id,
+      bankrRuntimeEnv: "clear",
+      walletAddressCount: walletAddresses.length,
+    });
+    return { action: "clear", reason: "user_disconnected", walletAddresses };
+  }
+
+  let config: InstanceBankrAgentConfig | null;
+  try {
+    config = await buildInstanceBankrAgentConfig(record);
+  } catch (err) {
+    warnBankrAgentConfigUnavailable(instanceId, err);
+    return { action: "preserve", reason: "lookup_failed" };
+  }
+  if (!config) return { action: "preserve", reason: "not_deliverable" };
+  if (!isUserConnectedWalletRecord(record)) return { action: "upsert", config, userConnected: false };
+  // The delivered address is in the set too: a new key for the same wallet
+  // must replace every profile copy of the old one.
+  const delivered = config.walletAddress.trim();
+  const walletAddresses = [
+    ...(EVM_ADDRESS_PATTERN.test(delivered) ? [delivered.toLowerCase()] : []),
+    ...bankrRuntimeWalletAddressHistory(record),
+  ].filter((address, index, all) => all.indexOf(address) === index);
+  return { action: "upsert", config, userConnected: true, walletAddresses };
 }
 
 export async function applyLiveUpdate(
@@ -253,7 +337,18 @@ export async function applyLiveUpdate(
   const resolvedAgentImage = resolveAgentImageForStoredConfig(instance.config);
   const isOperatorosFlavor = isOperatorosFlavorConfig(instance.config);
   const runtimeAgentSettings = getRuntimeAgentSettings(instance.config);
-  const bankrAgentConfig = await resolveBankrAgentConfigForUpdate(instance.id, supabaseAdmin);
+  const bankrRuntimeEnvPlan = await resolveBankrRuntimeEnvPlanForUpdate(instance.id, supabaseAdmin);
+  const bankrAgentConfig = bankrRuntimeEnvPlan.action === "upsert" ? bankrRuntimeEnvPlan.config : null;
+  // Only a user-connected wallet changes the webfree script: a disconnect
+  // clears BANKR_* belonging to any wallet the row delivered, a connect
+  // replaces them, drops config.yaml's `bankr:` block and refreshes profile
+  // copies. Every other plan leaves the script exactly as it was.
+  const bankrRuntimeReconcile: WebUIDeployParams["bankrRuntimeReconcile"] =
+    bankrRuntimeEnvPlan.action === "clear"
+      ? { action: "clear_user_disconnected", walletAddresses: bankrRuntimeEnvPlan.walletAddresses }
+      : bankrRuntimeEnvPlan.action === "upsert" && bankrRuntimeEnvPlan.userConnected
+        ? { action: "replace_user_connected", walletAddresses: bankrRuntimeEnvPlan.walletAddresses }
+        : undefined;
 
   // Validate API key against provider before deploying
   if (apiKey) {
@@ -434,6 +529,7 @@ export async function applyLiveUpdate(
           ? (providerDeploymentSecret.authBundle as CodexVaultBundle | undefined)
           : undefined,
       bankr: bankrAgentConfig,
+      ...(bankrRuntimeReconcile ? { bankrRuntimeReconcile } : {}),
       browserSidecarEnabled,
       // Docker-socket access is root-equivalent. A persisted Proxmox guest or
       // a direct, non-host-attached Hetzner server proves this runtime is in a
