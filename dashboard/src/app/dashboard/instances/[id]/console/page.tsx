@@ -55,7 +55,7 @@ const ACTION_CONFIG: Record<
     buttonLabel: 'REDEPLOY CONFIG',
     confirmTitle: 'Confirm Redeploy',
     confirmDescription:
-      'This will redeploy the live agent stack using the latest saved configuration. It is the right action when runtime behavior looks stale or infrastructure-backed settings have changed.',
+      'This will redeploy the live agent stack using the latest saved configuration. It is the right action when the agent behaves as if it has old settings, or settings that live outside the agent have changed.',
     expectation: 'Expect a short interruption while Docker Compose reapplies the agent services.',
     successMessage:
       'Redeploy requested. Hermes is rebuilding the live agent stack with your saved configuration.',
@@ -67,20 +67,20 @@ const ACTION_CONFIG: Record<
     buttonLabel: 'UPDATE NOW',
     confirmTitle: 'Confirm Update',
     confirmDescription:
-      'This safely pulls the latest runtime changes and recreates the live agent stack without removing mounted Docker volumes, so memories, sessions, profiles, and other persistent data stay attached.',
+      'This safely pulls the latest agent software and recreates the live agent stack without removing mounted Docker volumes, so memories, sessions, profiles, and other persistent data stay attached.',
     expectation:
       'Expect a short interruption while Hermes refreshes the services and checks they come back healthy.',
     successMessage:
-      'Update requested. Hermes is safely refreshing the live agent runtime now.',
+      'Update requested. Hermes is safely refreshing the agent now.',
     inProgressMessage:
-      'Update is already in progress. Hermes is safely refreshing the live agent runtime now.',
+      'Update is already in progress. Hermes is safely refreshing the agent now.',
     tone: 'primary',
   },
   restart_gateway: {
     buttonLabel: 'RESTART GATEWAY',
     confirmTitle: 'Confirm Gateway Restart',
     confirmDescription:
-      'This restarts the live Hermes gateway process without redeploying configuration. Use it when the gateway looks stuck but your current runtime configuration is already correct.',
+      'This restarts the live Hermes gateway process without redeploying configuration. Use it when the gateway looks stuck but the agent’s saved settings are already correct.',
     expectation:
       'Expect a short interruption while Hermes restarts the live gateway and reconnects the dashboard.',
     successMessage:
@@ -90,29 +90,29 @@ const ACTION_CONFIG: Record<
     tone: 'primary',
   },
   repair_runtime: {
-    buttonLabel: 'REPAIR RUNTIME',
-    confirmTitle: 'Confirm Runtime Repair',
+    buttonLabel: 'REPAIR AGENT',
+    confirmTitle: 'Confirm Agent Repair',
     confirmDescription:
       'This stops the agent stack, repairs permissions, and recreates the agent stack. It preserves persistent volumes (memories, sessions, profiles) but resets the running containers.',
     expectation:
-      'Expect a short interruption while Hermes repairs and restarts the agent runtime.',
+      'Expect a short interruption while Hermes repairs and restarts the agent.',
     successMessage:
-      'Runtime repair requested. Hermes is restoring the live agent runtime now.',
+      'Repair requested. Hermes is restoring the agent now.',
     inProgressMessage:
-      'Runtime repair is already in progress. Hermes is restoring the live agent runtime now.',
+      'Repair is already in progress. Hermes is restoring the agent now.',
     tone: 'warning',
   },
   rebuild_runtime: {
-    buttonLabel: 'REBUILD RUNTIME',
-    confirmTitle: 'Confirm Runtime Rebuild',
+    buttonLabel: 'REBUILD AGENT',
+    confirmTitle: 'Confirm Agent Rebuild',
     confirmDescription:
-      'This clears disposable runtime state like generated logs and rebuilds the agent stack from scratch. Persistent data (memories, sessions, profiles) is kept on the mounted volumes.',
+      'This clears disposable state like generated logs and rebuilds the agent stack from scratch. Persistent data (memories, sessions, profiles) is kept on the mounted volumes.',
     expectation:
-      'Expect a longer interruption while Hermes tears down and rebuilds the runtime image.',
+      'Expect a longer interruption while Hermes tears down and rebuilds the agent image.',
     successMessage:
-      'Runtime rebuild requested. Hermes is rebuilding the live agent runtime now.',
+      'Rebuild requested. Hermes is rebuilding the agent now.',
     inProgressMessage:
-      'Runtime rebuild is already in progress. Hermes is rebuilding the live agent runtime now.',
+      'Rebuild is already in progress. Hermes is rebuilding the agent now.',
     tone: 'warning',
   },
 };
@@ -573,7 +573,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
               <h1 className="serif" style={{ fontSize: 'clamp(2.5rem, 8vw, 3.5rem)', fontWeight: 400, lineHeight: 1, margin: 0, color: 'var(--ink-black)', wordBreak: 'break-word' }}>Console.</h1>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', marginTop: '1rem' }}>
                 <p className="mono" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5, margin: 0, color: 'var(--ink-black)' }}>
-                  Instance Settings & Operations
+                  Agent Settings & Operations
                 </p>
                 {hostIp && (
                   <p
