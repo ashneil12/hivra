@@ -40,6 +40,11 @@ describe("renderComputerContract", () => {
     expect(block).toContain("You are the Codex agent \"Codex 1\". You run on your own computer, an Ubuntu Linux virtual machine on Hivra Cloud.");
     expect(block).toContain("Hivra reserved 1.5 CPU and 3 GB of memory for it, and it can use up to 2 CPU and 4 GB when the host has room.");
     expect(block).toContain("You run as the user bux, with administrator (sudo) access. Your workspace is your home folder, /home/bux.");
+    // Manage shows Permissions only when the computer's chat service supports
+    // it right now, so the note never sends the agent to a section that may
+    // not be there.
+    expect(block).toContain("Your user can limit what you may do from Hivra; if a command is refused, that may be why.");
+    expect(block).not.toContain("Permissions");
     expect(block).toContain("Tools your user adds in Manage → Tools load on your next message.");
     // ATT-10: the user's real surfaces replace "There is no cloud live-view URL".
     expect(block).toContain("The Files tab shows your home folder");

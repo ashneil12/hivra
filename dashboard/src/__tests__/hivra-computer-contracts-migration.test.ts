@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-it("stores Computer Contract revisions service-only, with a receipt for every delivery, and marks Hivra's setup note", () => {
+it("stores Computer Contract revisions service-only, with a receipt for every delivery, marks Hivra's setup note, and claims provider seed attempts", () => {
   const output = execFileSync(
     process.execPath,
     [path.resolve(__dirname, "../../scripts/test-hivra-computer-contracts.cjs")],

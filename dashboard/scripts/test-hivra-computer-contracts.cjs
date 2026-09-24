@@ -1,11 +1,14 @@
-// Apply every migration up to 20260924190000 in PostgreSQL/WASM (twice for the
-// new file, proving it re-runs), then check what it adds:
+// Apply every migration up to 20260924200000 in PostgreSQL/WASM (twice for the
+// two new files, proving they re-run), then check what they add:
 // - hivra_computer_contracts: one row per agent revision on a known channel
 //   (Proxmox seed, provider seed, DigitalOcean message), a delivered or sent
 //   revision always carries its receipt, content is capped, and the table is
 //   closed to anon and authenticated with RLS on;
 // - hivra_do_session_inputs.source: existing prompts read as the owner's, and
-//   only Hivra's visible setup note may be marked otherwise.
+//   only Hivra's visible setup note may be marked otherwise;
+// - hivra_agents.provider_seed_attempted_at: empty on existing rows, and the
+//   conditional claim the provider upkeep makes lets one attempt through and
+//   makes the next one wait.
 // Entirely in memory: no credentials or live database.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -14,6 +17,7 @@ const { PGlite } = require("@electric-sql/pglite");
 
 const MIGRATIONS = path.resolve(__dirname, "../supabase/migrations");
 const TARGET = "20260924190000_hivra_computer_contracts.sql";
+const SEED_ATTEMPTS = "20260924200000_hivra_agent_provider_seed_attempts.sql";
 const CONNECTION = "11111111-1111-4111-8111-111111111111";
 const AGENT = "22222222-2222-4222-8222-222222222222";
 const SESSION_NAME = "hivra-22222222222242228222222222222222";
@@ -52,9 +56,9 @@ async function main() {
       create function public.digest(text, text) returns bytea language sql as $$ select sha256(convert_to($1, 'UTF8')) $$;
       create function public.digest(bytea, text) returns bytea language sql as $$ select sha256($1) $$;
     `);
-    const files = fs.readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql") && name <= TARGET).sort();
-    assert.equal(files.at(-1), TARGET, "the migration under test is applied last");
-    for (const name of [...files, TARGET]) {
+    const files = fs.readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql") && name <= SEED_ATTEMPTS).sort();
+    assert.deepEqual(files.slice(-2), [TARGET, SEED_ATTEMPTS], "the migrations under test are applied last");
+    for (const name of [...files, TARGET, SEED_ATTEMPTS]) {
       // PGlite ships without extensions; the functions they provide are stubbed above.
       await db.exec(fs.readFileSync(path.join(MIGRATIONS, name), "utf8").replace(/create extension[^;]*;/gi, ""));
     }
@@ -118,6 +122,20 @@ async function main() {
     await rejects(db, `insert into public.hivra_do_session_inputs (agent_id,user_id,run_id,text,source) values ('${AGENT}','owner','run_3','x','system')`,
       /hivra_do_session_inputs_source_check/, "an unknown prompt source");
     assert.equal(Number((await one("select count(*) as n from pg_constraint where conname = 'hivra_do_session_inputs_source_check'")).n), 1);
+
+    // Provider seed attempts: existing rows start empty; the claim the upkeep
+    // makes (a conditional update) succeeds once, then waits.
+    assert.equal((await one("select provider_seed_attempted_at from public.hivra_agents where id = $1", [AGENT])).provider_seed_attempted_at, null);
+    const claim = async (at, waitMinutes) => (await db.query(
+      `update public.hivra_agents set provider_seed_attempted_at = $2::timestamptz
+        where id = $1 and (provider_seed_attempted_at is null or provider_seed_attempted_at < $2::timestamptz - make_interval(mins => $3))
+        returning id`, [AGENT, at, waitMinutes])).rows.length;
+    assert.equal(await claim("2026-09-24T12:00:00Z", 1), 1, "the first attempt is claimed");
+    assert.equal(await claim("2026-09-24T12:00:30Z", 1), 0, "a second attempt within the wait is not");
+    assert.equal(await claim("2026-09-24T12:01:30Z", 1), 1, "an attempt after the wait is");
+    const column = await one(`select data_type, is_nullable from information_schema.columns
+      where table_schema = 'public' and table_name = 'hivra_agents' and column_name = 'provider_seed_attempted_at'`);
+    assert.deepEqual(column, { data_type: "timestamp with time zone", is_nullable: "YES" });
 
     console.log("PASS hivra computer contracts");
   } finally {

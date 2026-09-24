@@ -806,8 +806,9 @@ export default function AgentPage() {
   }
   if (agent.computer_substrate === "do-managed-session") {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
-    // surface. Box tabs (files, git, terminal, skills) do not apply.
-    return <DigitalOceanAgentWorkspace agentId={agent.id} onDeleted={() => go("/dashboard")} />;
+    // surface, with its own Chat, Files and Manage views. The computer tabs
+    // (Terminal, Browser, Git) and Skills do not apply.
+    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => go("/dashboard")} />;
   }
 
   const def = catalogAgent(agent.type);

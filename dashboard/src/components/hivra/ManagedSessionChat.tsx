@@ -164,11 +164,21 @@ export function ManagedSessionChat({
   initialSession,
   onDeleted,
   onCredentialProblem,
+  firstTask,
+  historyVersion = 0,
 }: {
   initialSession: ManagedSessionDto;
   onDeleted?: () => void;
   /** Called when a request fails because Hivra's DigitalOcean token cannot manage this agent. */
   onCredentialProblem?: (error: ManagedSessionApiError) => void;
+  /**
+   * The task chosen at launch. When the stored conversation holds no message
+   * from the owner, it goes back in the message box, unsent, so a launch that
+   * couldn't deliver it never loses it.
+   */
+  firstTask?: string | null;
+  /** Changing it reloads the stored conversation, for example after Hivra sent its setup note. */
+  historyVersion?: number;
 }) {
   const agentId = initialSession.agentId;
   const [session, setSession] = useState(initialSession);
@@ -192,6 +202,18 @@ export function ManagedSessionChat({
     if (isManagedSessionCredentialProblem(error)) onCredentialProblemRef.current?.(error);
   }, []);
   const streamable = Boolean(session.sessionId) && session.status !== "deleted" && session.status !== "deleting";
+  const firstTaskRef = useRef(firstTask);
+  useEffect(() => { firstTaskRef.current = firstTask; }, [firstTask]);
+  const nameRef = useRef(session.name);
+  useEffect(() => { nameRef.current = session.name; }, [session.name]);
+  const firstTaskOfferedRef = useRef(false);
+  // Reload the stored conversation when asked, the same way Reconnect does.
+  const [seenHistoryVersion, setSeenHistoryVersion] = useState(historyVersion);
+  if (seenHistoryVersion !== historyVersion) {
+    setSeenHistoryVersion(historyVersion);
+    setHistoryLoaded(false);
+    setStreamState("idle");
+  }
 
   useEffect(() => { lastEventIdRef.current = transcript.lastEventId; }, [transcript.lastEventId]);
 
@@ -221,6 +243,14 @@ export function ManagedSessionChat({
         for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text, prompt.source);
         setTranscript(next);
         setHistoryLoaded(true);
+        // Once per visit: a launch task with no trace in the conversation was
+        // never sent. Offer it back; only the owner's Send sends it.
+        const task = (firstTaskRef.current ?? "").trim();
+        if (!firstTaskOfferedRef.current && task && !next.runs.some((run) => run.promptSource !== "hivra-setup")) {
+          setDraft((current) => current || task);
+          setNotice({ tone: "info", text: `Your first task hasn't been sent to ${nameRef.current} yet. It's in the message box. Send it when you're ready.` });
+        }
+        firstTaskOfferedRef.current = true;
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;

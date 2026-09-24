@@ -65,6 +65,7 @@ import {
 } from "@/lib/hivra/managed-session-transcript";
 import {
   MANAGED_WORKSPACE_ROOT,
+  digitalOceanSandboxResources,
   normalizeManagedWorkspacePath,
   type ManagedSessionDto,
   type ManagedSessionLaunchInput,
@@ -176,9 +177,9 @@ export function digitalOceanSessionName(agentId: string): string {
 }
 
 function sizeResources(size: DigitalOceanSizeSlug): { cpu: number; ram: number } {
-  const match = /^mars-(\d+)vcpu-(\d+)gb$/.exec(size);
-  if (!match) throw new ManagedSessionError("invalid_request", "Choose a supported DigitalOcean size.");
-  return { cpu: Number(match[1]), ram: Number(match[2]) };
+  const resources = digitalOceanSandboxResources(size);
+  if (!resources) throw new ManagedSessionError("invalid_request", "Choose a supported DigitalOcean size.");
+  return resources;
 }
 
 function connectionErrorFor(error: unknown): DigitalOceanConnectionErrorCode {

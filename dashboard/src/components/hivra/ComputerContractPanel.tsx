@@ -4,11 +4,12 @@
 // Hivra has told the agent about that computer (the Computer Contract).
 //
 // Observed state only. A revision reads "Delivered" only after the computer
-// read back the exact bytes; before that it is "Update pending". A DigitalOcean
-// note is only ever "Sent in chat". Every change of what the agent is told is
-// the owner's own button, and a DigitalOcean send says it costs a little usage.
+// read back the exact bytes, with the time it was last read; before that it is
+// "Update pending". A DigitalOcean note is only ever "Sent in chat". Every
+// change of what the agent is told is the owner's own button, and a
+// DigitalOcean send says it costs a little usage.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Bot, Link2, Loader2, RefreshCw, RotateCcw, Send } from "lucide-react";
 
@@ -38,6 +39,11 @@ export function formatContractTime(iso: string, now = new Date()): string {
     : `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
 }
 
+/** While a running computer's first delivery is on its way, look again this often. */
+export const CONTRACT_PENDING_POLL_MS = 8_000;
+/** And stop looking after this many tries; "Send now" stays available. */
+export const CONTRACT_PENDING_POLL_LIMIT = 8;
+
 const ERROR_COPY: Record<string, string> = {
   unreachable: "Hivra couldn't reach the computer.",
   unsafe_file: "The instructions file on the computer isn't a plain file Hivra can safely update.",
@@ -51,30 +57,61 @@ function StateTag({ state, children }: { state: string; children: React.ReactNod
   return <span className={styles.state} data-state={state}>{children}</span>;
 }
 
-export function ComputerContractPanel({ agent, runtimeName }: { agent: ComputerContractPanelAgent; runtimeName: string }) {
+/** A running computer whose note Hivra is still sending, with no error yet. */
+function awaitingFirstLook(status: ComputerContractStatus | null, running: boolean): boolean {
+  if (!running || !status) return false;
+  if (status.kind === "not_started") return status.channel !== "do-setup-message";
+  return status.kind === "tracked" && status.channel !== "do-setup-message" && status.state === "pending" && !status.lastError;
+}
+
+export function ComputerContractPanel({
+  agent,
+  runtimeName,
+  onStatus,
+}: {
+  agent: ComputerContractPanelAgent;
+  runtimeName: string;
+  /** Called with every status the panel shows, and what produced it. */
+  onStatus?: (status: ComputerContractStatus, cause: "load" | ComputerContractAction) => void;
+}) {
   const [status, setStatus] = useState<ComputerContractStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [acting, setActing] = useState<ComputerContractAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const [reload, setReload] = useState(0);
+  const [polls, setPolls] = useState(0);
   const running = agent.status === "running";
+  const onStatusRef = useRef(onStatus);
+  useEffect(() => { onStatusRef.current = onStatus; }, [onStatus]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchComputerContract(agent.id, controller.signal)
-      .then((next) => { setStatus(next); setLoadError(null); })
+      .then((next) => { setStatus(next); setLoadError(null); onStatusRef.current?.(next, "load"); })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Couldn't load this.");
       });
     return () => controller.abort();
-  }, [agent.id, agent.name, agent.status, agent.cpu, agent.ram, reload]);
+  }, [agent.id, agent.name, agent.status, agent.cpu, agent.ram, reload, polls]);
+
+  // Hivra sends the note in the background after the agent page loads. While
+  // that first delivery is on its way, look again a few times so "Delivered"
+  // appears without a reload. Reading the status never contacts the computer.
+  const waiting = awaitingFirstLook(status, running) && polls < CONTRACT_PENDING_POLL_LIMIT;
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setTimeout(() => setPolls((count) => count + 1), CONTRACT_PENDING_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [waiting, polls]);
 
   const act = useCallback(async (action: ComputerContractAction) => {
     setActing(action);
     setActionError(null);
     try {
-      setStatus(await runComputerContractAction(agent.id, action));
+      const next = await runComputerContractAction(agent.id, action);
+      setStatus(next);
+      onStatusRef.current?.(next, action);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "That didn't go through. Nothing changed.");
     } finally {
@@ -114,7 +151,10 @@ export function ComputerContractPanel({ agent, runtimeName }: { agent: ComputerC
       actions = running || agent.status === "stopped" ? button("send", "Send setup note", <Send size={13} aria-hidden />, true) : null;
     } else {
       meta = <StateTag state="pending">Update pending</StateTag>;
-      body = <p className={styles.body}>Hivra sends it once the computer is running.</p>;
+      body = <p className={styles.body}>{running
+        ? "Hivra hasn't sent it yet. It sends it the next time it reaches the computer."
+        : "Hivra sends it once the computer is running."}</p>;
+      actions = running ? button("deliver", "Send now", <Send size={13} aria-hidden />) : null;
     }
   } else {
     const digitalOcean = status.channel === "do-setup-message";
@@ -127,10 +167,15 @@ export function ComputerContractPanel({ agent, runtimeName }: { agent: ComputerC
       ? <p className={styles.body}>{ERROR_COPY[status.lastError]} Last try {formatContractTime(status.lastAttemptAt)}.</p>
       : null;
     if (status.state === "delivered" && status.deliveredAt) {
+      const lastLook = status.checkedAt ?? status.deliveredAt;
+      // A later look that failed: say so, and keep the last observation.
+      const lookFailed = status.lastError && ERROR_COPY[status.lastError] && status.lastAttemptAt
+        && Date.parse(status.lastAttemptAt) > Date.parse(lastLook);
       meta = <><span>{revision}</span><span aria-hidden>·</span><StateTag state="delivered">Delivered {formatContractTime(status.deliveredAt)}</StateTag></>;
       body = <>
         <p className={styles.body}>The computer confirmed this text is in the instructions {agent.name} reads. It applies to new chats.</p>
-        {status.checkedAt && status.checkedAt !== status.deliveredAt ? <p className={styles.body}>Checked again {formatContractTime(status.checkedAt)}.</p> : null}
+        <p className={styles.body}>Last checked {formatContractTime(lastLook)}. Hivra looks again about once an hour when you open {agent.name}.</p>
+        {lookFailed ? <p className={styles.body}>{ERROR_COPY[status.lastError as string]} Last try {formatContractTime(status.lastAttemptAt as string)}.</p> : null}
       </>;
       actions = running ? button("check", "Check again", <RefreshCw size={13} aria-hidden />) : null;
       details = <p>Reported by software on this computer. {agent.name} runs there with administrator access, so Hivra can&apos;t check it independently. Changes made on the computer show up when you check again.</p>;
@@ -161,7 +206,9 @@ export function ComputerContractPanel({ agent, runtimeName }: { agent: ComputerC
           : `Hivra sends revision ${status.revision} once the computer is running.`}</p>
         {failure}{previous}
       </>;
-      actions = running && status.lastError ? button("deliver", "Try again", <RefreshCw size={13} aria-hidden />) : null;
+      actions = !running ? null : status.lastError
+        ? button("deliver", "Try again", <RefreshCw size={13} aria-hidden />)
+        : button("deliver", "Send now", <Send size={13} aria-hidden />);
     }
   }
 

@@ -110,7 +110,9 @@ function ownComputerSections(input: ComputerContractInput, agent: string): strin
 
   return [
     `**Who and where.** You are the ${runtime} agent ${JSON.stringify(agent)}. You run on your own computer, an Ubuntu Linux virtual machine ${where}. Hivra reserved ${amount(cpu)} CPU and ${amount(memoryGb)} GB of memory for it${burst}. It keeps running when your user's laptop is closed.`,
-    "**Your account.** You run as the user bux, with administrator (sudo) access. Your workspace is your home folder, /home/bux. Your user can limit what you may do in Manage → Permissions; if a command is refused, that may be why.",
+    // Where the owner sets permissions depends on what the computer's chat
+    // service supports right now, so the note doesn't name a Manage section.
+    "**Your account.** You run as the user bux, with administrator (sudo) access. Your workspace is your home folder, /home/bux. Your user can limit what you may do from Hivra; if a command is refused, that may be why.",
     `**What you can use.** ${canUse.join(" ")}`,
     `**How your user sees and helps you.** ${sees.join(" ")}`,
     "**Boundaries.** Your user decides what you may access, in Hivra. Don't work around a limit or a refused command. If a task needs more access, tell them exactly what you need.",

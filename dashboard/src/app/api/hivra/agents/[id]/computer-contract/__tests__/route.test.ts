@@ -37,7 +37,7 @@ jest.mock("@/lib/hivra/computer-contract-delivery", () => ({
   computerContractStatusFor: (...args: unknown[]) => mockStatus(...args),
   advanceProxmoxComputerContract: (...args: unknown[]) => mockAdvance(...args),
   advanceProviderComputerContract: (...args: unknown[]) => mockAdvanceProvider(...args),
-  prepareDigitalOceanComputerContract: (...args: unknown[]) => mockPrepare(...args),
+  prepareComputerContractRevision: (...args: unknown[]) => mockPrepare(...args),
 }));
 jest.mock("@/lib/hivra/do-managed-sessions", () => ({
   ...jest.requireActual("@/lib/hivra/do-managed-sessions"),
@@ -84,14 +84,16 @@ beforeEach(() => {
 });
 
 describe("GET /api/hivra/agents/[id]/computer-contract", () => {
-  it("reports status for the owner's agent only, without contacting the computer", async () => {
+  it("reports status for the owner's agent only, storing the current revision without contacting the computer", async () => {
     const response = await GET(get(), params);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ success: true, data: { contract: TRACKED } });
     expect(queries[0]).toEqual(expect.arrayContaining([["id", AGENT_ID], ["user_id", "user_1"], ["not status", "deleted"]]));
+    // Manage can show the exact text and revision before delivery.
+    expect(mockPrepare).toHaveBeenCalledWith("user_1", CODEX);
     expect(mockAdvance).not.toHaveBeenCalled();
-    expect(mockPrepare).not.toHaveBeenCalled();
+    expect(mockContext).not.toHaveBeenCalled();
   });
 
   it("returns 404 for an agent the caller does not own and 401 when signed out", async () => {
@@ -115,14 +117,22 @@ describe("POST /api/hivra/agents/[id]/computer-contract", () => {
     const response = await POST(post({ action }), params);
     expect(response.status).toBe(200);
     expect(mockContext).toHaveBeenCalledWith("user_1", CODEX);
-    expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, { PROXMOX_NODE: "fixturenode10" }, action);
+    expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, { PROXMOX_NODE: "fixturenode10" }, action, { deadline: expect.any(Number) });
+  });
+
+  it("gives each step a deadline inside the route's 60 s budget", async () => {
+    const before = Date.now();
+    await POST(post({ action: "deliver" }), params);
+    const { deadline } = mockAdvance.mock.calls[0][4] as { deadline: number };
+    expect(deadline).toBeGreaterThanOrEqual(before + 50_000);
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 55_000);
   });
 
   it.each(["deliver", "check", "restore"])("runs %s for a computer in the owner's own cloud over its enrolled pin, never the Proxmox host", async (action) => {
     row = { ...CODEX, computer_substrate: "provider-vm", deployment_mode: "self-managed" };
     const response = await POST(post({ action }), params);
     expect(response.status).toBe(200);
-    expect(mockAdvanceProvider).toHaveBeenCalledWith("user_1", row, action);
+    expect(mockAdvanceProvider).toHaveBeenCalledWith("user_1", row, action, { deadline: expect.any(Number) });
     expect(mockContext).not.toHaveBeenCalled();
     expect(mockAdvance).not.toHaveBeenCalled();
   });

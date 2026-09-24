@@ -60,7 +60,9 @@ jest.mock("@/components/hivra/HivraChat", () => ({
 }));
 
 jest.mock("@/components/hivra/DigitalOceanAgentWorkspace", () => ({
-  DigitalOceanAgentWorkspace: ({ agentId }: { agentId: string }) => <div>DigitalOcean session {agentId}</div>,
+  DigitalOceanAgentWorkspace: ({ agentId, firstTask }: { agentId: string; firstTask?: string | null }) => (
+    <div>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</div>
+  ),
 }));
 
 jest.mock("@/components/hivra/HivraLogin", () => ({
@@ -265,9 +267,11 @@ describe("AgentPage", () => {
 
   it("opens a DigitalOcean agent in its session workspace, never the box chat or login", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "claude-code", name: "DO_AGENT", cpu: 2, ram: 4,
-      status: "running", computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null });
+      status: "running", computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null,
+      first_task: "Summarize the repo" });
     render(<AgentPage />);
-    expect(await screen.findByText("DigitalOcean session agent_123")).toBeInTheDocument();
+    // The workspace gets the launch's first task, so an unsent one is offered back.
+    expect(await screen.findByText("DigitalOcean session agent_123 · first task: Summarize the repo")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
     expect(mockBrowserStatus).not.toHaveBeenCalled();

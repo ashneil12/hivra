@@ -7,6 +7,10 @@ import "server-only";
 // provider VM they were skipped without a word. This sends the same guest
 // scripts over the provider seed lane, all pending parts in one connection,
 // and reports which parts the computer confirmed so each is stamped once.
+// provider-agent-upkeep.ts decides when; the agent page never waits for it.
+//
+// Existing provider computers get these seeds late, so the identity files are
+// written only where nobody changed them since the installer finished.
 //
 // Model settings are not part of it: a provider launch already delivered them
 // in the installer's launch document.
@@ -39,6 +43,18 @@ export interface ProviderAgentSeedRow {
   bootstrapped_at?: string | null;
   bankr_skills_seeded_at?: string | null;
   template_skills_seeded_at?: string | null;
+  /** When the computer's installer finished (the provider launch receipt). */
+  provider_install_stopped_at?: string | null;
+}
+
+/**
+ * Identity files changed after this Unix time are the agent's or its owner's
+ * and are kept on a first seed. The installer's finish time; without one,
+ * every existing file is kept.
+ */
+export function providerIdentityKeepAfter(row: Pick<ProviderAgentSeedRow, "provider_install_stopped_at">): number {
+  const stopped = Date.parse(String(row.provider_install_stopped_at ?? ""));
+  return Number.isFinite(stopped) && stopped > 0 ? Math.floor(stopped / 1000) : 0;
 }
 
 /** Seeds still due for a running Claude Code or Codex agent on a provider VM. */
@@ -112,7 +128,9 @@ export async function seedProviderAgent(
         personality: row.personality ?? null, emoji: row.emoji ?? null, soulPromptId: row.soul_prompt_id ?? null,
         sharedMemory: await deps.sharedMemory(userId),
       };
-      parts.push({ part, script: buildGuestScript(buildBootstrapContent(agent), null) });
+      // A computer launched before this seed existed may have run for days:
+      // never replace a SOUL.md or USER.md written since its installer finished.
+      parts.push({ part, script: buildGuestScript(buildBootstrapContent(agent), null, { keepChangedAfter: providerIdentityKeepAfter(row) }) });
     } else if (part === "bankr-skills") {
       parts.push({ part, script: buildBankrSkillsGuestScript(dir, collectBankrSkillFiles()) });
     } else {

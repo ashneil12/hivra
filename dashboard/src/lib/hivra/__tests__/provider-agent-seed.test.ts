@@ -9,6 +9,7 @@ import {
   buildProviderAgentSeedScript,
   parseProviderAgentSeedOutput,
   providerAgentSeedsDue,
+  providerIdentityKeepAfter,
   seedProviderAgent,
   type ProviderAgentSeedRow,
 } from "../provider-agent-seed";
@@ -83,6 +84,21 @@ describe("seedProviderAgent", () => {
     expect(bootstrap).toContain('"$BUX/SOUL.md"');
     expect(bootstrap).toContain("HIVRA:BOOTSTRAP:START");
     expect(bootstrap).not.toContain("llm-provider.json");
+  });
+
+  it("never replaces identity files the agent or owner changed since the installer finished", async () => {
+    const run = jest.fn<Promise<{ ok: true; stdout: string }>, [{ userId: string; agentId: string }, string]>(async () => ({ ok: true,
+      stdout: "HIVRA_PROVIDER_SEED_DONE\n" }));
+    await seedProviderAgent("user_1", { ...ROW, provider_install_stopped_at: "2026-09-20T08:00:00.000Z" }, { run, sharedMemory: async () => "" });
+    const bootstrap = gunzipSync(Buffer.from(/printf '%s' '([A-Za-z0-9+/=]+)'/.exec(run.mock.calls[0][1])![1], "base64")).toString("utf8");
+    expect(bootstrap).toContain(`-gt ${Date.parse("2026-09-20T08:00:00.000Z") / 1000} ]`);
+    expect(bootstrap).toContain("HIVRA_SEED_KEPT");
+  });
+
+  it("keeps every existing identity file when the installer's finish time is unknown", () => {
+    expect(providerIdentityKeepAfter({ provider_install_stopped_at: "2026-09-20T08:00:00.500Z" })).toBe(Math.floor(Date.parse("2026-09-20T08:00:00.500Z") / 1000));
+    expect(providerIdentityKeepAfter({ provider_install_stopped_at: null })).toBe(0);
+    expect(providerIdentityKeepAfter({ provider_install_stopped_at: "not a time" })).toBe(0);
   });
 
   it("confirms nothing when the computer can't be reached, so the next poll tries again", async () => {

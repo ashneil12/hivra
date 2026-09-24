@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { ComputerContractStatus } from "@/lib/agent-computers/computer-contract-status";
 
@@ -11,7 +11,13 @@ jest.mock("@/lib/hivra/computer-contract-client", () => ({
   runComputerContractAction: (...args: unknown[]) => mockAction(...args),
 }));
 
-import { ComputerAgentSlot, ComputerContractPanel, formatContractTime } from "../ComputerContractPanel";
+import {
+  CONTRACT_PENDING_POLL_LIMIT,
+  CONTRACT_PENDING_POLL_MS,
+  ComputerAgentSlot,
+  ComputerContractPanel,
+  formatContractTime,
+} from "../ComputerContractPanel";
 
 const AGENT = { id: "agent-1", name: "Codex 1", status: "running", deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm", cpu: 1.5, ram: 3 };
 const NOW = new Date().toISOString();
@@ -63,10 +69,78 @@ it("says Update pending before the computer acknowledges, and offers Try again a
   expect(await screen.findByText(`Delivered ${formatContractTime(NOW)}`)).toBeInTheDocument();
 });
 
+it("says when it last looked at a delivered copy, and when a later look failed", async () => {
+  const earlier = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+  await renderWith(tracked({ deliveredAt: earlier, checkedAt: earlier, lastAttemptAt: NOW, lastError: "unreachable" }));
+  expect(screen.getByText(`Delivered ${formatContractTime(earlier)}`)).toBeInTheDocument();
+  expect(screen.getByText(`Last checked ${formatContractTime(earlier)}. Hivra looks again about once an hour when you open Codex 1.`)).toBeInTheDocument();
+  expect(screen.getByText(`Hivra couldn't reach the computer. Last try ${formatContractTime(NOW)}.`)).toBeInTheDocument();
+});
+
+it("offers Send now for a running computer whose note hasn't gone out, and looks again until it lands", async () => {
+  jest.useFakeTimers();
+  try {
+    const pending = tracked({ state: "pending", deliveredAt: null, checkedAt: null, lastAttemptAt: null, lastError: null });
+    mockFetch.mockResolvedValueOnce(pending).mockResolvedValueOnce(pending).mockResolvedValueOnce(tracked());
+    const onStatus = jest.fn();
+    render(<ComputerContractPanel agent={AGENT} runtimeName="Codex" onStatus={onStatus} />);
+    await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText("Update pending")).toBeInTheDocument();
+    expect(screen.getByText("Hivra sends revision 3 the next time it reaches the computer.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send now" })).toBeInTheDocument();
+    await act(async () => { await jest.advanceTimersByTimeAsync(CONTRACT_PENDING_POLL_MS); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(CONTRACT_PENDING_POLL_MS); });
+    expect(screen.getByText(`Delivered ${formatContractTime(NOW)}`)).toBeInTheDocument();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(onStatus).toHaveBeenLastCalledWith(expect.objectContaining({ state: "delivered" }), "load");
+    // Delivered: no more looking.
+    await act(async () => { await jest.advanceTimersByTimeAsync(CONTRACT_PENDING_POLL_MS * 3); });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+it("stops looking after a few tries and leaves Send now to the owner", async () => {
+  jest.useFakeTimers();
+  try {
+    mockFetch.mockResolvedValue(tracked({ state: "pending", deliveredAt: null, checkedAt: null, lastAttemptAt: null, lastError: null }));
+    render(<ComputerContractPanel agent={AGENT} runtimeName="Codex" />);
+    for (let tick = 0; tick < CONTRACT_PENDING_POLL_LIMIT + 3; tick += 1) {
+      await act(async () => { await jest.advanceTimersByTimeAsync(CONTRACT_PENDING_POLL_MS); });
+    }
+    expect(mockFetch).toHaveBeenCalledTimes(1 + CONTRACT_PENDING_POLL_LIMIT);
+    mockAction.mockResolvedValueOnce(tracked());
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+    expect(mockAction).toHaveBeenCalledWith("agent-1", "deliver");
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+it("says a running computer's first note is on its way, never that it waits for the computer to start", async () => {
+  await renderWith({ kind: "not_started", channel: "proxmox-seed" });
+  expect(screen.getByText("Hivra hasn't sent it yet. It sends it the next time it reaches the computer.")).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(/once the computer is running/);
+  expect(screen.getByRole("button", { name: "Send now" })).toBeInTheDocument();
+});
+
+it("tells whoever hosts the panel what it shows and what an action changed", async () => {
+  const onStatus = jest.fn();
+  mockFetch.mockResolvedValueOnce(tracked({ channel: "do-setup-message", state: "pending", deliveredAt: null }));
+  render(<ComputerContractPanel agent={{ ...AGENT, computer_substrate: "do-managed-session" }} runtimeName="Codex" onStatus={onStatus} />);
+  await waitFor(() => expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({ state: "pending" }), "load"));
+  mockAction.mockResolvedValueOnce(tracked({ channel: "do-setup-message", state: "sent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send setup note" }));
+  await waitFor(() => expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({ state: "sent" }), "send"));
+});
+
 it("waits for a stopped computer instead of offering a delivery it cannot make", async () => {
   await renderWith(tracked({ state: "pending", deliveredAt: null, lastError: null }), { ...AGENT, status: "stopped" });
   expect(screen.getByText(/once the computer is running/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send now" })).not.toBeInTheDocument();
 });
 
 it("reports an edited copy as changed and restores it only on the owner's click", async () => {

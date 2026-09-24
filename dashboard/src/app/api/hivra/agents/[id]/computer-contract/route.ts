@@ -2,7 +2,7 @@
 //
 // GET says what Manage may show about the note Hivra gives the agent about its
 // computer. It never contacts the computer. POST runs one explicit step:
-//   deliver  Try again now (Hivra Cloud, My server and My cloud)
+//   deliver  Send now, or Try again (Hivra Cloud, My server and My cloud)
 //   check    Read the computer's copy without writing
 //   restore  Replace a copy someone edited on the computer
 //   send     DigitalOcean: send the current note as one visible message
@@ -24,7 +24,7 @@ import {
   advanceProviderComputerContract,
   advanceProxmoxComputerContract,
   computerContractStatusFor,
-  prepareDigitalOceanComputerContract,
+  prepareComputerContractRevision,
 } from "@/lib/hivra/computer-contract-delivery";
 import { sendManagedSessionSetupNote } from "@/lib/hivra/do-managed-sessions";
 import {
@@ -60,20 +60,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!supabaseAdmin) return noStore(apiError("Database not configured", 500));
     const agent = await loadOwnedAgent(id, userId);
     if (!agent) return noStore(apiError("Agent not found", 404));
-    // A DigitalOcean note is sent only when the owner or launch sends it, so
-    // Manage needs the current revision to offer "Send update". Minting it
-    // sends nothing.
-    const plan = computerContractPlanFor(agent as unknown as Parameters<typeof computerContractPlanFor>[0]);
-    if (plan.status === "deliverable" && plan.channel === "do-setup-message") {
-      await prepareDigitalOceanComputerContract(userId, agent);
-    }
+    // Store the revision for the agent's current facts so Manage can show its
+    // exact text and number before it is delivered, and offer "Send update"
+    // on DigitalOcean. Minting sends nothing and contacts no computer.
+    await prepareComputerContractRevision(userId, agent);
     return noStore(apiSuccess({ contract: await computerContractStatusFor(userId, agent) }));
   } catch (error) {
     return noStore(handleApiError(error));
   }
 }
 
+// Each step starts a round trip to the computer only when it can finish
+// inside this request (maxDuration 60 s).
+const STEP_DEADLINE_MS = 55_000;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const deadline = Date.now() + STEP_DEADLINE_MS;
   try {
     if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { id } = await params;
@@ -112,7 +114,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (plan.channel === "provider-seed") {
       // My cloud: the enrolled provider pin, bound to this owner and agent.
-      return noStore(apiSuccess({ contract: await advanceProviderComputerContract(userId, agent, action) }));
+      return noStore(apiSuccess({ contract: await advanceProviderComputerContract(userId, agent, action, { deadline }) }));
     }
     let context;
     try {
@@ -122,7 +124,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (safeError) return noStore(apiError(safeError.message, safeError.status));
       throw contextError;
     }
-    const contract = await advanceProxmoxComputerContract(userId, agent, context.env, action);
+    const contract = await advanceProxmoxComputerContract(userId, agent, context.env, action, { deadline });
     return noStore(apiSuccess({ contract }));
   } catch (error) {
     return noStore(handleApiError(error));

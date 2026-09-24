@@ -12,6 +12,10 @@ import "server-only";
 //
 // DigitalOcean: the note is a visible first "Hivra setup" message
 // (do-managed-sessions.ts sends it); this module prepares and records it.
+//
+// Nothing here runs on the agent page's critical path: the agent poll
+// schedules the automatic step after its response (after-response.ts), and
+// every round trip is started only when it can finish inside its request.
 
 import { log } from "@/lib/logger";
 import {
@@ -43,12 +47,37 @@ type AgentRow = ComputerContractSubject & { id: string; ip?: string | null };
 const LOG_SOURCE = "hivra/computer-contract";
 /** An automatic retry waits this long after the last attempt. */
 export const COMPUTER_CONTRACT_RETRY_MS = 60_000;
+/**
+ * After an error the computer won't fix by itself (no instructions file, a
+ * file Hivra won't touch, a read-back that didn't match), an automatic retry
+ * waits this long instead. "Try again" never waits.
+ */
+export const COMPUTER_CONTRACT_STUCK_RETRY_MS = 30 * 60_000;
+/**
+ * A delivered revision is read back again at most this often while the owner
+ * uses the agent, so "Delivered" stays an observation rather than a memory.
+ */
+export const COMPUTER_CONTRACT_RECHECK_MS = 60 * 60_000;
+/** What one round trip to the computer may take, with margin. */
+export const COMPUTER_CONTRACT_SEND_BUDGET_MS = 30_000;
+
+/** Errors a later automatic try can clear on its own. */
+const TRANSIENT_ERRORS = new Set(["unreachable", "unrecognized_output"]);
+
+export function computerContractRetryWaitMs(lastError: string | null): number {
+  return !lastError || TRANSIENT_ERRORS.has(lastError) ? COMPUTER_CONTRACT_RETRY_MS : COMPUTER_CONTRACT_STUCK_RETRY_MS;
+}
 
 type Dependencies = {
   seed: typeof runComputerContractSeed;
   providerSeed: typeof runProviderComputerContractSeed;
   now: () => Date;
 };
+/**
+ * `deadline` (milliseconds on the `now` clock): a round trip is started only
+ * when it can finish before it, so a step never outlives its request.
+ */
+export type ComputerContractStepOptions = Partial<Dependencies> & { deadline?: number };
 const defaults: Dependencies = { seed: runComputerContractSeed, providerSeed: runProviderComputerContractSeed, now: () => new Date() };
 
 /** One bounded round trip to the computer with the fixed guest program. */
@@ -66,6 +95,19 @@ export async function computerContractStatusFor(userId: string, rawAgent: Record
   const plan = computerContractPlanFor(agent);
   if (plan.status === "not_applicable") return { kind: "not_applicable", reason: plan.reason };
   return computerContractStatusFromRows(plan.channel, await loadComputerContracts(userId, agent.id));
+}
+
+/**
+ * Store the revision for the agent's current facts without sending anything,
+ * so Manage can show the exact text and its revision before delivery.
+ * Returns null when no contract applies or the store is unavailable.
+ */
+export async function prepareComputerContractRevision(userId: string, rawAgent: Record<string, unknown>): Promise<ComputerContractRow | null> {
+  const agent = subjectOf(rawAgent);
+  const plan = computerContractPlanFor(agent);
+  if (plan.status !== "deliverable") return null;
+  const ensured = await ensureComputerContractRevision({ userId, agentId: agent.id, channel: plan.channel, contract: plan.input });
+  return ensured?.latest ?? null;
 }
 
 /** The facts file written next to the block (~/.hivra/computer.json). */
@@ -105,10 +147,12 @@ function request(row: ComputerContractRow, mode: ComputerContractGuestRequest["m
 /**
  * Advance the seeded delivery of the agent's current revision.
  *
- * - `auto` (the agent poll): mint a revision if the input changed, then
- *   deliver it unless it is delivered, in conflict, or was tried within the
- *   last minute.
- * - `deliver` (Try again): the same, without the retry wait.
+ * - `auto` (in the background after the agent page loads): mint a revision if
+ *   the input changed, then deliver it unless it is delivered, in conflict,
+ *   or was tried too recently (a minute, or half an hour after an error the
+ *   computer won't fix by itself). A delivered revision is read back again at
+ *   most once an hour, so an edit or a reinstall shows up as a change.
+ * - `deliver` (Send now, Try again): the same, without the wait.
  * - `restore` (Restore, an explicit owner action): replace an edited copy.
  * - `check` (Check again): read the computer's copy without writing.
  *
@@ -122,6 +166,7 @@ async function advanceSeededComputerContract(
   send: Send,
   mode: ComputerContractMode,
   now: () => Date,
+  deadline: number | undefined,
 ): Promise<ComputerContractStatus> {
   const agent = subjectOf(rawAgent);
   const plan = computerContractPlanFor(agent);
@@ -135,8 +180,12 @@ async function advanceSeededComputerContract(
   const { rows } = ensured;
   const status = (current: ComputerContractRow) => computerContractStatusFromRows(plan.channel, [current, ...rows.filter((row) => row.id !== current.id)]);
   const at = now();
+  const roomForRoundTrip = () => deadline === undefined || now().getTime() + COMPUTER_CONTRACT_SEND_BUDGET_MS <= deadline;
+  const since = (iso: string | null) => (iso ? at.getTime() - Date.parse(iso) : Infinity);
 
-  if (mode === "check") {
+  /** Read the computer's copy and record what it holds. Never writes. */
+  const observe = async (): Promise<ComputerContractStatus> => {
+    latest = await recordComputerContractAttempt(latest, at);
     const outcome = await send(request(latest, "check", "absent"));
     if (!outcome.ok || outcome.result.status !== "observed") {
       latest = await recordComputerContractError(latest, outcome.ok ? outcome.result.status : outcome.error);
@@ -161,13 +210,22 @@ async function advanceSeededComputerContract(
       latest = await recordComputerContractConflict(latest, at);
     }
     return status(latest);
-  }
+  };
 
-  if (latest.delivery_state === "delivered" && mode !== "restore") return status(latest);
-  if (latest.delivery_state === "conflict" && mode === "auto") return status(latest);
-  if (mode === "auto" && latest.last_attempt_at && at.getTime() - Date.parse(latest.last_attempt_at) < COMPUTER_CONTRACT_RETRY_MS) {
+  if (mode === "check") return roomForRoundTrip() ? observe() : status(latest);
+
+  if (mode === "auto") {
+    if (latest.delivery_state === "conflict") return status(latest);
+    if (latest.delivery_state === "delivered") {
+      // An hour after the last read-back or try, look again.
+      const lastLook = Math.min(since(latest.checked_at ?? latest.delivered_at), since(latest.last_attempt_at));
+      return lastLook >= COMPUTER_CONTRACT_RECHECK_MS && roomForRoundTrip() ? observe() : status(latest);
+    }
+    if (since(latest.last_attempt_at) < computerContractRetryWaitMs(latest.last_error)) return status(latest);
+  } else if (latest.delivery_state === "delivered" && mode !== "restore") {
     return status(latest);
   }
+  if (!roomForRoundTrip()) return status(latest);
 
   latest = await recordComputerContractAttempt(latest, at);
   const delivered = newestDelivered(rows.filter((row) => row.id !== latest.id));
@@ -201,9 +259,11 @@ async function advanceSeededComputerContract(
     }
     if (result.status === "state_conflict") {
       // The block is a revision Hivra wrote whose receipt was lost: swap
-      // from that one instead of calling it an edit.
+      // from that one instead of calling it an edit. Without room for a
+      // second round trip it stays pending; the next try swaps it.
       const known = rows.find((row) => row.content_sha256 === result.observed);
       if (attempt === 0 && known && result.observed !== expected) {
+        if (!roomForRoundTrip()) return status(latest);
         expected = result.observed;
         continue;
       }
@@ -216,17 +276,24 @@ async function advanceSeededComputerContract(
   return status(latest);
 }
 
-/** Hivra Cloud and My server: the Proxmox host-to-guest seed lane. */
+/**
+ * Hivra Cloud and My server: the Proxmox host-to-guest seed lane. `env` may be
+ * a function: the owner-scoped host environment is then resolved only when a
+ * round trip is actually due, not on every page load.
+ */
 export async function advanceProxmoxComputerContract(
   userId: string,
   rawAgent: Record<string, unknown>,
-  env: ProxmoxEnvironment,
+  env: ProxmoxEnvironment | (() => Promise<ProxmoxEnvironment>),
   mode: ComputerContractMode,
-  dependencies: Partial<Dependencies> = {},
+  options: ComputerContractStepOptions = {},
 ): Promise<ComputerContractStatus> {
-  const deps = { ...defaults, ...dependencies };
+  const deps = { ...defaults, ...options };
   const ip = String(rawAgent.ip ?? "");
-  return advanceSeededComputerContract(userId, rawAgent, "proxmox-seed", (guestRequest) => deps.seed(ip, guestRequest, env), mode, deps.now);
+  let resolved: Promise<ProxmoxEnvironment> | null = null;
+  const environment = () => (resolved ??= typeof env === "function" ? env() : Promise.resolve(env));
+  return advanceSeededComputerContract(userId, rawAgent, "proxmox-seed",
+    async (guestRequest) => deps.seed(ip, guestRequest, await environment()), mode, deps.now, options.deadline);
 }
 
 /** My cloud: the enrolled provider seed lane (provider-guest-seed.ts). */
@@ -234,22 +301,20 @@ export async function advanceProviderComputerContract(
   userId: string,
   rawAgent: Record<string, unknown>,
   mode: ComputerContractMode,
-  dependencies: Partial<Dependencies> = {},
+  options: ComputerContractStepOptions = {},
 ): Promise<ComputerContractStatus> {
-  const deps = { ...defaults, ...dependencies };
+  const deps = { ...defaults, ...options };
   const ref = { userId, agentId: String(rawAgent.id) };
-  return advanceSeededComputerContract(userId, rawAgent, "provider-seed", (guestRequest) => deps.providerSeed(ref, guestRequest), mode, deps.now);
+  return advanceSeededComputerContract(userId, rawAgent, "provider-seed", (guestRequest) => deps.providerSeed(ref, guestRequest), mode, deps.now, options.deadline);
 }
 
 // ── DigitalOcean ───────────────────────────────────────────────────────────
 
 /** The revision to send as a DigitalOcean session's visible setup note. */
 export async function prepareDigitalOceanComputerContract(userId: string, rawAgent: Record<string, unknown>): Promise<ComputerContractRow | null> {
-  const agent = subjectOf(rawAgent);
-  const plan = computerContractPlanFor(agent);
+  const plan = computerContractPlanFor(subjectOf(rawAgent));
   if (plan.status !== "deliverable" || plan.channel !== "do-setup-message") return null;
-  const ensured = await ensureComputerContractRevision({ userId, agentId: agent.id, channel: plan.channel, contract: plan.input });
-  return ensured?.latest ?? null;
+  return prepareComputerContractRevision(userId, rawAgent);
 }
 
 /** DigitalOcean accepted the message and returned its run. Not "delivered". */

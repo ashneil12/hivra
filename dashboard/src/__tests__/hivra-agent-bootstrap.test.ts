@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getGoal, deriveIdentity, GOALS, DEFAULT_GOAL_ID } from "@/lib/hivra/agent-identity";
@@ -240,6 +242,83 @@ describe("identity seed per runtime (ATT-14)", () => {
     const script = buildGuestScript(content, llm);
     expect(script).toContain("$BUX/SOUL.md");
     expect(script).toContain("system-prompt.md");
+  });
+});
+
+// ATT-05 backfill: a provider computer may have run for days before its first
+// seed. The guest script runs for real in bash against a stand-in home.
+const hasBash = spawnSync("bash", ["--version"]).status === 0;
+(hasBash ? describe : describe.skip)("first seed on a computer that already ran (keepChangedAfter)", () => {
+  const INSTALLED = 1_790_000_000; // the installer finished at this Unix time
+  const content = buildBootstrapContent({ id: "p1", name: "Atlas", type: "codex", goal: "grow" });
+  // The guest is Ubuntu (GNU stat). On a BSD stat, answer `stat -c %Y` the same way.
+  const GNU_STAT_SHIM = `if ! command stat -c %Y / >/dev/null 2>&1; then
+stat() { if [ "$1" = "-c" ]; then shift 2; command stat -f %m "$@"; else command stat "$@"; fi; }
+fi
+`;
+  let home: string;
+  const file = (name: string) => join(home, name);
+  const at = (name: string, seconds: number) => utimesSync(file(name), seconds, seconds);
+  const run = (script: string) => {
+    const local = GNU_STAT_SHIM + script.replace("BUX=/home/bux", `BUX=${home}`).replace(/chown [^\n]*\n/g, "true\n");
+    return spawnSync("bash", ["-c", local], { encoding: "utf8" });
+  };
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "hivra-seed-"));
+    writeFileSync(file("system-prompt.md"), "# Base persona\n");
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it("keeps a SOUL.md or USER.md written after the installer finished, and seeds the rest", () => {
+    writeFileSync(file("SOUL.md"), "the agent refined this\n");
+    at("SOUL.md", INSTALLED + 86_400);
+    const result = run(buildGuestScript(content, null, { keepChangedAfter: INSTALLED }));
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("HIVRA_SEED_KEPT SOUL.md");
+    expect(result.stdout).toContain("HIVRA_SEED_OK");
+    expect(readFileSync(file("SOUL.md"), "utf8")).toBe("the agent refined this\n");
+    expect(readFileSync(file("USER.md"), "utf8")).toBe(content.user);
+    expect(readFileSync(file("system-prompt.md"), "utf8")).toContain(BOOTSTRAP_START);
+  });
+
+  it("replaces files nobody changed since the installer, like the base installer's SOUL.md", () => {
+    writeFileSync(file("SOUL.md"), "base installer persona\n");
+    writeFileSync(file("USER.md"), "base installer user\n");
+    at("SOUL.md", INSTALLED - 60);
+    at("USER.md", INSTALLED);
+    const result = run(buildGuestScript(content, null, { keepChangedAfter: INSTALLED }));
+    expect(result.stdout).not.toContain("HIVRA_SEED_KEPT");
+    expect(readFileSync(file("SOUL.md"), "utf8")).toBe(content.soul);
+    expect(readFileSync(file("USER.md"), "utf8")).toBe(content.user);
+  });
+
+  it("replaces them on a re-seed the owner asked for once Hivra has seeded the computer", () => {
+    writeFileSync(file("system-prompt.md"), `# Base persona\n${content.promptBlock}`);
+    writeFileSync(file("SOUL.md"), "the old persona\n");
+    at("SOUL.md", INSTALLED + 86_400);
+    const renamed = buildBootstrapContent({ id: "p1", name: "Orion", type: "codex", goal: "grow" });
+    run(buildGuestScript(renamed, null, { keepChangedAfter: INSTALLED }));
+    expect(readFileSync(file("SOUL.md"), "utf8")).toBe(renamed.soul);
+  });
+
+  it("keeps every existing file when the installer's finish time is unknown", () => {
+    writeFileSync(file("USER.md"), "notes\n");
+    const result = run(buildGuestScript(content, null, { keepChangedAfter: 0 }));
+    expect(result.stdout).toContain("HIVRA_SEED_KEPT USER.md");
+    expect(readFileSync(file("USER.md"), "utf8")).toBe("notes\n");
+    expect(existsSync(file("SOUL.md"))).toBe(true);
+  });
+
+  it("rejects a time that isn't whole Unix seconds", () => {
+    expect(() => buildGuestScript(content, null, { keepChangedAfter: 1.5 })).toThrow("keepChangedAfter");
+    expect(() => buildGuestScript(content, null, { keepChangedAfter: -1 })).toThrow("keepChangedAfter");
+  });
+
+  it("leaves the Hivra Cloud seed as it was: it always writes both files", () => {
+    writeFileSync(file("SOUL.md"), "anything\n");
+    at("SOUL.md", INSTALLED + 86_400);
+    run(buildGuestScript(content, null));
+    expect(readFileSync(file("SOUL.md"), "utf8")).toBe(content.soul);
   });
 });
 

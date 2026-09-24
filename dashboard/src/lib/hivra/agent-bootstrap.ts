@@ -260,12 +260,23 @@ export function agentReadsHivraIdentity(type?: string | null): boolean {
 // launch picked an alternative LLM provider, also writes ~/.hivra/llm-provider.json
 // (0600 — it holds the API key; the chat server reads it per spawn). With
 // identity off (a dashboard runtime), only the model settings are written.
+//
+// `keepChangedAfter` (Unix seconds) is for a computer that may have run for a
+// while before its first seed (ATT-05 backfill on a provider VM). On such a
+// computer, until Hivra's block is in system-prompt.md, a SOUL.md or USER.md
+// changed after that time was written by the agent or its owner, and is kept
+// as it is. Once Hivra has seeded the computer, a re-seed (the owner changed
+// the persona) replaces them as before.
 export function buildGuestScript(
   content: BootstrapContent,
   llm?: BoxLlmPayload | null,
-  options: { identity?: boolean } = {},
+  options: { identity?: boolean; keepChangedAfter?: number } = {},
 ): string {
   const identity = options.identity !== false;
+  const keepAfter = options.keepChangedAfter;
+  if (keepAfter !== undefined && (!Number.isSafeInteger(keepAfter) || keepAfter < 0)) {
+    throw new Error("keepChangedAfter must be a Unix time in seconds");
+  }
   const soulB64 = b64(content.soul);
   const userB64 = b64(content.user);
   const blockB64 = b64(content.promptBlock);
@@ -276,11 +287,28 @@ chown -R bux:bux "$BUX/.hivra" 2>/dev/null || true
 chmod 0600 "$BUX/.hivra/llm-provider.json" 2>/dev/null || true
 `
     : "";
-  const identitySection = identity ? `printf '%s' '${soulB64}' | base64 -d > "$BUX/SOUL.md"
+  const identityWrites = keepAfter === undefined
+    ? `printf '%s' '${soulB64}' | base64 -d > "$BUX/SOUL.md"
 printf '%s' '${userB64}' | base64 -d > "$BUX/USER.md"
 chown bux:bux "$BUX/SOUL.md" "$BUX/USER.md" 2>/dev/null || true
 chmod 0644 "$BUX/SOUL.md" "$BUX/USER.md" 2>/dev/null || true
-` : "";
+`
+    : `FIRST_SEED=1
+if [ -f "$BUX/system-prompt.md" ] && grep -qF '${BOOTSTRAP_START}' "$BUX/system-prompt.md"; then FIRST_SEED=0; fi
+seed_identity_file() {
+  # A file whose time can't be read counts as changed: when unsure, keep it.
+  if [ "$FIRST_SEED" = 1 ] && { [ -e "$1" ] || [ -L "$1" ]; } && [ "$(stat -c %Y "$1" 2>/dev/null || echo 9999999999)" -gt ${keepAfter} ]; then
+    echo "HIVRA_SEED_KEPT $(basename "$1")"
+    return 0
+  fi
+  printf '%s' "$2" | base64 -d > "$1"
+  chown bux:bux "$1" 2>/dev/null || true
+  chmod 0644 "$1" 2>/dev/null || true
+}
+seed_identity_file "$BUX/SOUL.md" '${soulB64}'
+seed_identity_file "$BUX/USER.md" '${userB64}'
+`;
+  const identitySection = identity ? identityWrites : "";
   const promptSection = identity ? `SP="$BUX/system-prompt.md"
 if [ -f "$SP" ]; then
   awk '
