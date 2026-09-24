@@ -13,8 +13,9 @@ const DAY = 24 * HOUR;
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 // Fake upstream modelled on dsh browser-auth: one launch token for the process
-// lifetime, every exchange mints a fresh signed cookie, and any unexpired
-// minted cookie authenticates (an invalid one gets 401).
+// lifetime, every exchange mints a fresh signed cookie, and a minted cookie
+// authenticates only while issuedAt <= now < expiresAt (anything else gets 401),
+// as dsh's BrowserAuth.isAuthenticated does.
 async function fixture(t, { lifetime = 60000, broker: brokerOptions = {} } = {}) {
   const token = randomBytes(32).toString('base64url');
   const observed = [];
@@ -40,13 +41,14 @@ async function fixture(t, { lifetime = 60000, broker: brokerOptions = {} } = {})
       const now = Date.now();
       const payload = Buffer.from(JSON.stringify({ version: 1, authority: req.headers.host, issuedAt: now, expiresAt: now + lifetime })).toString('base64url');
       cookie = `dsh-auth-${createHash('sha256').update(req.headers.host).digest('base64url')}=v1.${payload}.${randomBytes(32).toString('base64url')}`;
-      minted.set(cookie, now + lifetime);
+      minted.set(cookie, { issuedAt: now, expiresAt: now + lifetime });
       res.writeHead(303, { location: '/', 'set-cookie': `${cookie}; Path=/; HttpOnly; SameSite=Strict` });
       res.end(); return;
     }
     observed.push({ url: req.url, headers: req.headers, method: req.method });
     if (rejectNext) { rejectNext = false; res.writeHead(401); res.end(); return; }
-    if (!(minted.get(req.headers.cookie) > Date.now())) { res.writeHead(401); res.end(); return; }
+    const session = minted.get(req.headers.cookie);
+    if (!session || session.issuedAt > Date.now() || session.expiresAt <= Date.now()) { res.writeHead(401); res.end(); return; }
     if (req.url === '/redirect') { res.writeHead(303, { location: `/?token=${token}` }); res.end(); return; }
     if (req.url === '/park') { parked.push(res); return; }
     if (req.url === '/plugins/events') {
@@ -273,6 +275,30 @@ test('a 30-day upstream cookie is renewed inside its last day, not before', asyn
   t.mock.timers.tick(23 * HOUR + 1); // The first cookie has now expired.
   assert.equal((await f.request()).status, 200);
   assert.equal(f.exchanges(), 2);
+});
+
+// The README's live renewal check skews the guest clock into the cookie's last
+// day, then restores it. Model exactly what that check must observe.
+test('the operator clock-skew check sees renewed, then one 503 with upstream_unauthorized and renewed', async t => {
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const f = await fixture(t, { lifetime: 30 * DAY }); await f.launch();
+  t.mock.timers.setTime(start + 29 * DAY + 12 * HOUR);
+  await f.until(() => f.diagnostics.includes('renewed'), 'no proactive renewal inside the last day');
+  assert.equal(f.broker.ready(), true, 'readiness never lapses before expiry');
+  assert.equal((await f.request()).status, 200);
+  // Clock restored: the renewed cookie now has a future issuedAt. Only upstream
+  // can tell, and it refuses the cookie on the next native request.
+  t.mock.timers.setTime(start + 1000);
+  assert.equal(f.broker.ready(), true);
+  const observedBefore = f.observed.length;
+  assert.equal((await f.request()).status, 503);
+  await f.until(() => f.diagnostics.length === 3, 'no re-exchange after the upstream 401');
+  assert.deepEqual(f.diagnostics, ['renewed', 'upstream_unauthorized', 'renewed']);
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.observed.length, observedBefore + 2, 'the rejected request is not replayed');
+  assert.equal(f.exchanges(), 3);
+  f.assertDiagnosticsSecretFree();
 });
 
 test('a transient renewal failure retries on the bounded schedule', async t => {

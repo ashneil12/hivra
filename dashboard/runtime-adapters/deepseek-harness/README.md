@@ -26,18 +26,26 @@ gateway regressions live beside the broker tests.
   after restart), access revocation and unconditional teardown. The operator
   harness was later pinned to `2026.09.02.8`; this repository records no live
   DeepSeek run on any later release, **including the current bundle**. The
-  harness now pins the current Canary release and delivery directory, so it can
-  re-run that acceptance (`npm run lab:deepseek-proxmox`, fenced to the Canary
-  origin and allowlisted targets).
+  harness now pins the current Canary release and delivery directory and checks
+  that bundle against its `BUNDLE.sha256`, so it can re-run that acceptance
+  (see [Operator re-acceptance on Canary](#operator-re-acceptance-on-canary)).
 - **Offline systemd fixture** (`scripts/test-deepseek-systemd-vm.py`,
   GitHub-hosted QEMU, no network): real service stop/restart, detached
-  cgroup-member cleanup, retained replay and worker cancellation last passed
-  with its payload pinned to release `2026.08.31.4`. It now builds its payload
-  from the committed release, so it must be re-dispatched after each sealed
-  bundle. It is not model, browser or public access proof.
+  cgroup-member cleanup, retained replay and worker cancellation. The fixture
+  was pinned to release `2026.08.31.4`, but its last recorded pass is the
+  `.31.3` native worker checkpoint (worker failure, native cancellation and
+  retained-controller recovery), recorded in
+  `docs/superpowers/specs/2026-08-31-hivra-remote-computers.md`. No pass at
+  `.31.4` or any later release is recorded. It now builds its payload from the
+  committed release, so it must be re-dispatched after each sealed bundle. It is
+  not model, browser or public access proof.
 - **Native session renewal** (this broker revision): proactive renewal before
   cookie expiry and one re-exchange after an upstream 401 are covered by unit
-  tests against a fake upstream. Not yet exercised on a live computer.
+  tests against a fake upstream that applies dsh's cookie rule
+  (`issuedAt <= now < expiresAt`). The
+  [live check](#session-renewal-check-disposable-computer-only) below was
+  dry-run only on a workstation, against the real gateway and broker with that
+  stand-in upstream. Not yet exercised on a live computer.
 
 ## Artifact and environment
 
@@ -184,6 +192,96 @@ identity, verifies immutable install/reuse, actual shell/PTY, native HTML, write
 0600 permissions, restart persistence, native WebSocket/SSE and revocation, and
 unconditionally removes the exact owned container. No real model key is used.
 `PASS` means this **local component smoke** passed, never public enablement.
+
+## Operator re-acceptance on Canary
+
+Not yet run on the current release. `scripts/deepseek-proxmox-canary.ts` is
+operator-only: it refuses anything but the Canary origin
+(`NEXT_PUBLIC_APP_URL=https://canary.hermesos.cloud`), a target named in
+`HIVRA_DEEPSEEK_LAB_TARGETS` with its own
+`HIVRA_DEEPSEEK_LAB_TARGET_<TARGET>_VMID_START/_END` range, and pinned SSH
+(`PROXMOX_SSH_HOST_FINGERPRINT`). From `dashboard/`, every operation takes
+`--target <t> --expected-hostname <t> --ledger <private file>`:
+
+```sh
+npm run lab:deepseek-proxmox -- --inspect  ...   # free VMID/IP and capacity, no mutation
+npm run lab:deepseek-proxmox -- --launch --vmid <n> --octet <n> ...
+npm run lab:deepseek-proxmox -- --read-access --token-file <new private file> ...
+npm run lab:deepseek-proxmox -- --restart ...    # new boot identity, then native readiness
+npm run lab:deepseek-proxmox -- --teardown ...   # VM, volumes, host artifacts and tunnel
+```
+
+Inspect and launch refuse a host, before the allocation lock or any claim,
+unless `/root/hivra-provisioner-canary` is at the current release and every
+file matches its `BUNDLE.sha256` (exit 4 with `HIVRA_DEEPSEEK_VERSION_MISMATCH`,
+`HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING` or
+`HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH`).
+
+### Session renewal check (disposable computer only)
+
+This skews the guest clock, so run it only on a harness computer that is torn
+down afterwards. Run it as root on the Proxmox host, in one shell, between
+`--launch` and `--teardown`, with the native UI tab closed (its own requests
+would otherwise trip the 401 first). `VMID` and `IP` come from the ledger.
+
+1. Attest the guest's SSH identity exactly as the harness restart does:
+
+   ```sh
+   VMID=<ledger vmid>; IP=<ledger ip>
+   D=$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX"); chmod 0700 "$D"
+   /root/hivra-provisioner-canary/hivra-guest-ssh-known-hosts "$VMID" "$IP" "$D"
+   g() { ssh -i /etc/hivra/keys/vm-orchestrator -o BatchMode=yes -o IdentitiesOnly=yes \
+     -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
+     -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$D/known_hosts" \
+     -o HostKeyAlias="hivra-vmid-$VMID" -o ConnectTimeout=3 "ubuntu@$IP" "$@"; }
+   journal() { g "sudo -n journalctl -u bux-hivra-chat.service -o cat --no-pager | grep 'DeepSeek native session:' | tail -n 5"; }
+   health() { g 'curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/healthz'; }
+   ```
+
+2. Proactive renewal. Upstream cookies last 30 days; move the guest clock into
+   the last day:
+
+   ```sh
+   g 'sudo -n timedatectl set-ntp false && sudo -n date -s "@$(( $(date +%s) + 29*86400 + 43200 ))"'
+   sleep 5; journal; health
+   ```
+
+   Expect a new `DeepSeek native session: renewed` line and `200`. The cookie
+   was renewed before it expired, so readiness never dropped.
+
+3. Upstream 401. Restore the clock. The cookie renewed in step 2 now carries a
+   future `issuedAt`, which upstream refuses (dsh accepts a cookie only while
+   `issuedAt <= now`). Send one native request through the broker with a Hivra
+   session minted after the restore (a session minted during the skew would
+   outlive its 12-hour lifetime):
+
+   ```sh
+   g 'sudo -n date -s "@$(( $(date +%s) - 29*86400 - 43200 ))" && sudo -n timedatectl set-ntp true'
+   g 'bash -s' <<'PROBE'
+   set -eu
+   origin=$(python3 -c 'import json; print(json.load(open("/etc/hivra/deepseek-native.json"))["publicOrigin"])')
+   host=${origin#https://}
+   cookie=$(sudo -n cat /home/bux/.hivra/api-token | curl -sS -o /dev/null -D - -H "Host: $host" \
+       --data-urlencode token@- --data-urlencode destination=/ http://127.0.0.1:8080/auth/bootstrap \
+     | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-hivra_auth=[^;]*\);.*/\1/p')
+   [ -n "$cookie" ]
+   for attempt in 1 2; do
+     curl -sS -o /dev/null -w '%{http_code}\n' -H "Host: $host" -H "Cookie: $cookie" http://127.0.0.1:8080/
+     sleep 2
+   done
+   PROBE
+   journal; health
+   ```
+
+   Expect `503` then `200`, and the journal to end with exactly one
+   `upstream_unauthorized` followed by `renewed`. The rejected request is not
+   replayed.
+
+4. Re-check from outside: `curl -fsS <ledger launch url>/healthz` prints `ok`,
+   and the native UI opens through that URL with a fresh bootstrap (an HTML form
+   POST of the `--read-access` token and `destination=/` to
+   `<url>/auth/bootstrap`; never put the token in a URL) and still answers a
+   model prompt. Then `rm -rf -- "$D"` and run `--teardown`.
 
 ## Remaining public-enable gates
 
