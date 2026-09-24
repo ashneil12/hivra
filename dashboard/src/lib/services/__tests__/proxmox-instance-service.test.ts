@@ -2219,7 +2219,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     // Real `buildProxmoxMetricsScript` output captured read-only on pve11
     // (pve-manager 9.2.2) on 2026-09-24; only the VM name is scrubbed.
     const captured = readFileSync(
-      join(__dirname, "fixtures", "pve9-qm-metrics-output.txt"),
+      join(__dirname, "fixtures", "pve9-qm-metrics.capture.txt"),
       "utf8"
     );
     // PVE 9's one-shot `qm status --verbose` has no cpu/cputime line at all.
