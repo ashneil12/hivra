@@ -109,6 +109,13 @@ const RELEASING_CONTROLLER_RETRY_WINDOW_MS = 40_000;
 // A re-sent revoke normally answers in well under a second. On a link that
 // hangs it, the open goes ahead after this and the conflict wait covers it.
 const UNRELEASED_REVOKE_WAIT_MS = 5_000;
+// The handoff document has this long to load and say it is ready.
+const HANDOFF_READY_TIMEOUT_MS = 30_000;
+// Once it has the handoff, the document exchanges it (retrying a slow control
+// plane for up to about 18 s) and gives the stream 30 s after it loads to
+// paint a frame, reporting either failure itself. This only catches a
+// document that went silent.
+const STREAM_OPEN_AFTER_HANDOFF_TIMEOUT_MS = 60_000;
 // Losing the stream does not stop the desktop or the apps open on it. While
 // this page is visible and online, reconnect on our own a few times, spaced out
 // so a restarting desktop gateway or a network change can settle; after that,
@@ -1041,9 +1048,10 @@ export function HivraRemoteDesktop({
       setMessage(nextMessage);
       void releaseSession(sessionId, unreleasedSessionsRef.current);
     };
-    timeout = window.setTimeout(() => {
+    const openTimedOut = () => {
       if (liveHandoff()) endSession("failed", "The computer answered, but its desktop stream did not finish opening.", "stream-open-timeout");
-    }, 30_000);
+    };
+    timeout = window.setTimeout(openTimedOut, HANDOFF_READY_TIMEOUT_MS);
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== brokerOrigin || event.source !== frameRef.current?.contentWindow) return;
       const type = event.data && typeof event.data === "object" ? (event.data as { type?: unknown }).type : null;
@@ -1063,6 +1071,12 @@ export function HivraRemoteDesktop({
           streamingMode: current.handoff.streamingMode,
         }, brokerOrigin);
         current.handoff.sent = true;
+        // The handoff document is alive and now exchanges the session. Give
+        // that and the first frame their own time rather than what is left of
+        // the document's: a document that took 29.9 s to load must not have
+        // its just-exchanged session revoked 0.1 s later.
+        window.clearTimeout(timeout);
+        timeout = window.setTimeout(openTimedOut, STREAM_OPEN_AFTER_HANDOFF_TIMEOUT_MS);
       } else if (type === "hivra.remote-desktop.connected.v1") {
         const current = liveHandoff();
         if (!current?.handoff.sent || Object.keys(event.data).length !== 2) return;

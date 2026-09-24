@@ -2209,4 +2209,85 @@ describe("HivraRemoteDesktop", () => {
       },
     );
   });
+
+  describe("on a first open", () => {
+    const SESSION_A = "00000000-0000-4000-8000-00000000000a";
+    const advance = (milliseconds: number) => act(async () => { jest.advanceTimersByTime(milliseconds); });
+
+    function track() {
+      const calls = { refresh: 0, prepare: 0, issue: 0, revoked: [] as string[], order: [] as string[] };
+      return calls;
+    }
+
+    it("keeps a session the handoff document just exchanged when that document was slow to load", async () => {
+      jest.useFakeTimers();
+      try {
+        const calls = track();
+        fetchMock.mockImplementation((input, init) => {
+          const url = String(input);
+          if (init?.method === "DELETE") {
+            calls.revoked.push(url.split("/").at(-1) ?? "");
+            return response(200, { success: true });
+          }
+          if (url === "/api/remote-desktop/sessions") {
+            calls.issue += 1;
+            return response(201, { success: true, data: session(SESSION_A) });
+          }
+          return response(200, { success: true, data: { prepared: true } });
+        });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+        const posted = jest.spyOn(frame.contentWindow!, "postMessage");
+
+        // The document says it is ready just inside its 30 s and exchanges.
+        await advance(29_900);
+        dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+        expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: "hivra.remote-desktop.handoff.v2", sessionId: SESSION_A }), ORIGIN);
+        await advance(200);
+        expect(calls.revoked).toEqual([]);
+        expect(screen.queryByText(/did not finish opening/)).toBeNull();
+
+        await advance(15_000);
+        dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: SESSION_A });
+        expect(screen.getByText("Connected")).toBeTruthy();
+        expect(calls.revoked).toEqual([]);
+        expect(calls.issue).toBe(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("still ends, once, a handoff whose document goes silent after it was sent", async () => {
+      jest.useFakeTimers();
+      try {
+        const calls = track();
+        fetchMock.mockImplementation((input, init) => {
+          const url = String(input);
+          if (init?.method === "DELETE") {
+            calls.revoked.push(url.split("/").at(-1) ?? "");
+            return response(200, { success: true });
+          }
+          if (url === "/api/remote-desktop/sessions") {
+            calls.issue += 1;
+            return response(201, { success: true, data: session(SESSION_A) });
+          }
+          return response(200, { success: true, data: { prepared: true } });
+        });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+        await advance(1_000);
+        dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+        await advance(59_000);
+        expect(calls.revoked).toEqual([]);
+        await advance(1_000);
+        expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+        expect(screen.getByTitle("The computer answered, but its desktop stream did not finish opening.")).toBeTruthy();
+        await advance(0);
+        expect(calls.revoked).toEqual([SESSION_A]);
+        expect(calls.issue).toBe(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
 });
