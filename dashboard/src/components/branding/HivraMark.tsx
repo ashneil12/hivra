@@ -6,26 +6,28 @@ interface HivraMarkProps {
   style?: CSSProperties;
 }
 
+/** The 192px app icon that docs/brand/export-brand-assets.py resizes from the approved logo. */
+export const HIVRA_MARK_SRC = "/brand/hivra-icon-192.png";
+
 /**
- * Project-authored Hivra mark. The simple rail-and-bridge geometry remains
- * legible at favicon size and avoids a runtime dependency on a bitmap logo.
+ * The approved Hivra mark (docs/brand/hivra-logo.jpg), never redrawn here.
+ * 192px covers every current size (28 to 76px) at 2x.
+ *
+ * A plain <img> serves the exported PNG as is: it is already small, and the
+ * next/image optimizer would only re-encode the approved bytes.
  */
 export function HivraMark({ size = 40, className, style }: HivraMarkProps) {
   return (
-    <svg
-      aria-hidden="true"
-      className={className}
-      data-testid="hivra-mark"
-      viewBox="0 0 128 128"
+    // eslint-disable-next-line @next/next/no-img-element -- see above: the approved bytes are served unmodified
+    <img
+      src={HIVRA_MARK_SRC}
+      alt="Hivra"
       width={size}
       height={size}
+      decoding="async"
+      className={className}
+      data-testid="hivra-mark"
       style={{ display: "block", flex: "0 0 auto", ...style }}
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="128" height="128" rx="18" fill="#0a0a0c" />
-      <path d="M24 20h18v88H24zM86 20h18v88H86z" fill="#f7f4ee" />
-      <path d="M36 54h56v20H36z" fill="#ef3f48" />
-      <path d="M29 32h8v12h-8zM29 84h8v12h-8zM91 32h8v12h-8zM91 84h8v12h-8z" fill="#0a0a0c" />
-    </svg>
+    />
   );
 }
