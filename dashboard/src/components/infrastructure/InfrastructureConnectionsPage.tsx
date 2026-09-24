@@ -170,10 +170,11 @@ export function openEnrollments(
     // command can still be run, and a download may mean a run is under way.
     if (item.phase === "issued") return Date.parse(item.expiresAt) > now;
     // No, cancel: "Cancelled." and its uninstall command stay until the owner
-    // dismisses them, even after a refresh reads the command as rejected.
-    if (item.phase === "rejected") return declinedHere.has(item.id);
-    // "A server used your setup command…" stays visible for an hour.
-    return item.phase === "unsupported" && item.decidedAt !== null && now - Date.parse(item.decidedAt) < 60 * 60_000;
+    // dismisses them, even after a refresh reads the command as rejected; after
+    // a reload, like "A server used your setup command…", for an hour.
+    const recent = item.decidedAt !== null && now - Date.parse(item.decidedAt) < 60 * 60_000;
+    if (item.phase === "rejected") return declinedHere.has(item.id) || recent;
+    return item.phase === "unsupported" && recent;
   });
   // A command declined on this page that the list no longer returns.
   for (const [id, item] of declinedHere) {

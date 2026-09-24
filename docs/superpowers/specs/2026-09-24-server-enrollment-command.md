@@ -1,10 +1,10 @@
 # My server: one-command enrollment, design and threat model
 
 Date: 2026-09-24
-Status: Design and threat model for slice 13. Revision 5 is implemented on
+Status: Design and threat model for slice 13. Revision 6 is implemented on
 branch `claude/capacity-connect` (code, migration `20260924213000`, script
 `2026.09.24.1`) and was checked on disposable Ubuntu 22.04 and 24.04 servers
-(section 21). The migration must be applied to a database before code that
+(section 21, 24.04 again on the final code in Revision 6). The migration must be applied to a database before code that
 reads it serves there (section 20). It is not merged, deployed or accepted on Canary: section 18
 lists what the Canary run must still show, section 22 is that run on a
 disposable Hetzner server, and until it passes nothing here claims a working
@@ -60,6 +60,20 @@ repeats Prepare-then-check on 22.04 (21, 22.3); and the Capacity chooser's
 "Before you connect" for a remote server now describes the command (a
 terminal with sudo), not an address, key file and fingerprint, and its button
 reads "Connect a server you already have" (4).
+Revision 6 (2026-09-24) fixes the review of round 2. After No, "Cancelled."
+and the uninstall command stay until the owner dismisses them: the panel keeps
+them after its poll reads the command back as rejected, and the Capacity page
+keeps a command declined there listed, with Dismiss, even once its list stops
+returning it. The panel names how a command ended in its own words
+(cancelled, used, expired) instead of reading every ended command as
+"expired", and a command used elsewhere refreshes the page's connections (4).
+A failed "Cancel this command" says so beside the command (4). The waiting
+line's live region holds only the observed state; the clock ticks outside it,
+so a screen reader hears changes of state, not every second (4). Yes steps
+past a connection name that another create took between its check and its
+insert (13). A fourth disposable server binds Ubuntu 24.04 to the final
+script and gVisor check (21), and the Canary run first checks the
+deployment's `NEXT_PUBLIC_APP_URL` (22.1).
 Scope: redesign proposal C7 / slice 13 (INF-03), plus the privilege change it
 depends on (INF-04) and the trust-on-first-use rule it shares with the advanced
 SSH wizard (INF-14).
@@ -192,7 +206,10 @@ The waiting line reports only what Hivra saw: "The setup script was downloaded
 with your command at 12:03:41" once a fetch is counted, "Hivra refused a
 report for your command: it arrived over IPv6 only" after a refused report
 (7), and "Your command reached its download limit. Get a new command." after the
-20th download (6.2). The origin in the command is the deployment's own `NEXT_PUBLIC_APP_URL`
+20th download (6.2). Only that observed state sits in the panel's live region
+(`role="status"`); the clock beside it ticks outside the region, so a screen
+reader announces a download, a refusal or a report, not every second
+(Revision 6). The origin in the command is the deployment's own `NEXT_PUBLIC_APP_URL`
 (Canary shows the Canary origin). The code is never put in a link or the page
 URL.
 
@@ -292,7 +309,27 @@ to `/dashboard/launch?target=<id>`.
 
 After No: "Cancelled. Hivra deleted its key for that server, so it can't sign
 in. To remove the hivra user from that server, run: `curl … /enroll/uninstall |
-sudo bash`."
+sudo bash`." It stays until the owner dismisses it (Revision 6): the panel
+keeps it after its own poll reads the command back as `rejected`, with **Get a
+new command** under it, and the Capacity page keeps a command declined there
+under Setup commands with **[Dismiss]**, even once its list stops returning
+the command. A command declined in the panel stays listed on the page too.
+After a reload, the page shows a command declined in the last hour the same
+way, like an unsupported result (a dismissal lasts until the page reloads).
+
+A command that ended reads in its own words in the panel, never as expired
+unless it expired: "This command was cancelled. Get a new command." (after
+10 refused reports: "This command was cancelled after 10 refused reports.
+Get a new command."), "This command was used, and your server is connected.
+Close this panel to see it under Capacity." (Yes here or in another window;
+the page reloads its connections when the panel sees it), "This command was
+used, and your server's access was replaced. Close this panel to see it under
+Capacity.", and "This command expired. Get a new command."
+
+When **Cancel this command** fails, the page says so beside the command:
+Hivra's message, then "It wasn't cancelled and still works until it expires.
+Try again." (for a command that ended meanwhile, only Hivra's message, and the
+refreshed list shows how it ended).
 
 ## 5. The enrollment code
 
@@ -1967,6 +2004,12 @@ proposal's original target and stays optional, for the owner to approve.
 
 ### 22.1 Before the run
 
+0. Check the Canary deployment's `NEXT_PUBLIC_APP_URL` is exactly
+   `https://canary.hermesos.cloud` (Vercel project `hermesos-canary`,
+   Production environment; read it, don't change it without the owner). The
+   command's origin and the readiness self-probe (10.6) both come from it: a
+   production origin there makes the panel say setup commands are unavailable,
+   or print a command that points at `hivra.cloud`. (Revision 6.)
 1. Apply the migration to the Canary database (`hermesos-canary`,
    `srrwbdvxlqvqjuexitaf`) **before the PR is merged into `canary`**, not with
    the build (section 20: once merged, the new code serves at once, and
@@ -2052,7 +2095,8 @@ Hetzner console or `ssh-keyscan -t ed25519`, its Ed25519 fingerprint. Check
    server's public IPv4 (or "Hivra couldn't see this server's address" if 22.1
    step 4 found Cloudflare), Ubuntu 24.04, the CPU count, RAM, the same three
    words and the Ed25519 identity matching 22.2. Yes and No, cancel are
-   separate buttons.
+   separate buttons. With a screen reader (VoiceOver) on the open panel, the
+   waiting line is not re-announced every second.
 6. Yes, this is my server. Hivra inspects the server and says it can run Linux
    Sandbox after a short setup. Review setup → Prepare (gVisor) → ready. Then
    Check readiness on the server's card (inspection, then the strict check)
@@ -2074,7 +2118,10 @@ Hetzner console or `ssh-keyscan -t ed25519`, its Ed25519 fingerprint. Check
     code and `cf-connecting-ip`, `x-real-ip` and `x-forwarded-for` set: the
     constant 401. With a second real command's code, a report carrying the
     same headers shows the server's real address as "Connected from"; choose
-    No, cancel.
+    No, cancel. "Cancelled." and the uninstall command are still there after
+    10 seconds and after reloading Capacity; Dismiss removes them (Revision 6). Repeat once in the panel instead of the
+    page: after No, the panel still shows "Cancelled." with the uninstall
+    command after 5 seconds, never "This command expired".
 11. Replace drill: run a third command on the connected server; the card offers
     "Replace <name>'s access", not Yes; Replace; after the check the Linux
     Sandbox terminal opens again. Forged report: from a second machine (the

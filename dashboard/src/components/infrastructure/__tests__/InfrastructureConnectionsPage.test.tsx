@@ -2464,6 +2464,24 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: "Setup commands" })).not.toBeInTheDocument());
   });
 
+  it("shows a command declined in the last hour, with the uninstall command, after a reload", async () => {
+    const uninstall = "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash";
+    const declined: ServerEnrollmentDto = {
+      ...ISSUED_ENROLLMENT, phase: "rejected", scriptFetches: 1, decidedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      confirmBy: new Date(Date.now() + 20 * 60_000).toISOString(),
+      report: { kind: "enrolled", reportedAt: new Date(Date.now() - 11 * 60_000).toISOString(), observedAddress: "203.0.113.24",
+        sshPort: 22, hostFingerprintSha256: "SHA256:" + "X".repeat(43), consent: "terminal", words: "amber-falcon-river",
+        reenrollment: false, facts: { hostname: "web-7", osId: "ubuntu", osVersionId: "24.04", architecture: "x86_64",
+          cpuCount: 2, memoryBytes: 4 * 1024 ** 3, virtualization: "kvm", proxmoxVersion: null, sshMatchRules: false } },
+    };
+    const old = { ...declined, id: "66666666-6666-4666-8666-666666666666", decidedAt: new Date(Date.now() - 61 * 60_000).toISOString() };
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [declined, old], uninstallCommand: uninstall });
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    expect(within(commands).getAllByRole("heading", { name: "Cancelled." })).toHaveLength(1);
+    expect(within(commands).getByText(uninstall)).toBeInTheDocument();
+  });
+
   it("keeps creation blocked and explains how to replace a read-only project token", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
