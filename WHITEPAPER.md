@@ -385,15 +385,17 @@ The prior contract does not disappear. Two similarly named assets will exist, an
 
 ### 8.6 Wallets and keys
 
-Hivra uses Bankr for wallets, and Bankr holds the private keys.
+Hivra's wallet features run on Bankr. Bankr wallets are smart wallets whose private keys nobody can export, Hivra included.
 
-**Payment addresses.** Token payments for Hivra's services arrive at a per-customer address and are swept to Hivra's treasury. Once paid, the funds are Hivra's.
+**Payment addresses.** Hivra creates a Bankr payment address for each user who pays in crypto. Payments for credits, yearly plans and managed inference land there, and Hivra moves them to its own treasury. Once paid, the funds are Hivra's. Hivra also holds the key to a treasury wallet that pays the network fees for those transfers.
 
-**Agent wallets.** An agent can use a wallet so it can pay for things its owner approves. New agents connect the owner's own Bankr account. The owner creates the key, sets its limits at Bankr and can revoke it there at any time. Hivra stores that key encrypted, passes it to the agent, and never starts transfers from it. Agents set up earlier keep a wallet Hivra created until their owner switches.
+**Agent wallets.** New agent wallets belong to the user's own Bankr account. The user creates the key at bankr.bot, sets its permissions and spending limits there, and lets Hivra store it encrypted and give it to that agent. The user can revoke it at Bankr or disconnect it in Hivra at any time. Hivra's own Bankr account has no access to these wallets, and Hivra never starts transfers from them.
 
-**Older access wallets.** Some early holders qualified for access by depositing tokens into a platform wallet. New access uses the holder's own wallet, and no new platform wallets are created for it.
+**Older agent wallets.** Agents created before this change may use a wallet Hivra created. For those, Hivra holds the key, gives it to the agent, and can move funds, for example to complete a withdrawal the owner asks for. Owners can switch to their own Bankr account once the wallet is empty.
 
-The custody and regulatory treatment of each is under legal review.
+**Older access wallets.** Some users deposited $HermesOS into a Hivra-created wallet to hold a service tier. No new ones are created, and holders can withdraw to an address they choose.
+
+Custody and regulatory treatment are under legal review.
 
 ---
 
