@@ -48,6 +48,48 @@ export const ManagedSessionActionSchema = z.object({
   action: z.enum(["pause", "resume", "delete"]),
 }).strict();
 
+/** Forgetting releases the Hivra agent without deleting the DigitalOcean session. */
+export const ManagedSessionForgetSchema = z.object({
+  acknowledge: z.literal("session-may-remain-at-digitalocean"),
+}).strict();
+
+export const MANAGED_WORKSPACE_ROOT = "/workspace";
+const WORKSPACE_PATH_MAX = 1024;
+
+/**
+ * Normalize a path inside the session's /workspace to its relative form ("" is
+ * the root). Returns null for anything that could leave the workspace or that
+ * no real file name would contain.
+ */
+export function normalizeManagedWorkspacePath(input: string): string | null {
+  if (typeof input !== "string" || input.length > WORKSPACE_PATH_MAX) return null;
+  if (/[\u0000-\u001f\u007f]/.test(input)) return null;
+  let value = input.trim();
+  if (value === MANAGED_WORKSPACE_ROOT || value.startsWith(`${MANAGED_WORKSPACE_ROOT}/`)) {
+    value = value.slice(MANAGED_WORKSPACE_ROOT.length);
+  }
+  const segments = value.split("/").filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === ".." || segment.length > 255)) return null;
+  return segments.join("/");
+}
+
+export type ManagedWorkspaceEntryKind = "file" | "directory" | "symlink" | "other";
+
+export interface ManagedWorkspaceEntry {
+  name: string;
+  kind: ManagedWorkspaceEntryKind;
+  sizeBytes: number | null;
+  modifiedAt: string | null;
+}
+
+export interface ManagedWorkspaceListing {
+  /** Relative to /workspace; "" is the root. */
+  path: string;
+  entries: ManagedWorkspaceEntry[];
+  /** True when the folder had more entries than Hivra lists at once. */
+  truncated: boolean;
+}
+
 export const ManagedSessionApprovalSchema = z.object({
   outcome: z.enum(["approve", "reject"]),
 }).strict();

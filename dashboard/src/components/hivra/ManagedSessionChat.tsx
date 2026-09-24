@@ -16,10 +16,12 @@ import {
   answerManagedSessionApproval,
   changeManagedSession,
   getManagedSession,
+  isManagedSessionCredentialProblem,
   managedSessionEventsUrl,
   parseManagedSessionStreamEvent,
   readManagedSessionHistory,
   sendManagedSessionMessage,
+  type ManagedSessionApiError,
 } from "@/lib/hivra/managed-session-client";
 import {
   DIGITALOCEAN_HARNESS_LABELS,
@@ -135,9 +137,12 @@ function RunView({
 export function ManagedSessionChat({
   initialSession,
   onDeleted,
+  onCredentialProblem,
 }: {
   initialSession: ManagedSessionDto;
   onDeleted?: () => void;
+  /** Called when a request fails because Hivra's DigitalOcean token cannot manage this agent. */
+  onCredentialProblem?: (error: ManagedSessionApiError) => void;
 }) {
   const agentId = initialSession.agentId;
   const [session, setSession] = useState(initialSession);
@@ -155,6 +160,11 @@ export function ManagedSessionChat({
   const lastEventIdRef = useRef<string | null>(null);
   const onDeletedRef = useRef(onDeleted);
   useEffect(() => { onDeletedRef.current = onDeleted; }, [onDeleted]);
+  const onCredentialProblemRef = useRef(onCredentialProblem);
+  useEffect(() => { onCredentialProblemRef.current = onCredentialProblem; }, [onCredentialProblem]);
+  const noteFailure = useCallback((error: unknown) => {
+    if (isManagedSessionCredentialProblem(error)) onCredentialProblemRef.current?.(error);
+  }, []);
   const streamable = Boolean(session.sessionId) && session.status !== "deleted" && session.status !== "deleting";
 
   useEffect(() => { lastEventIdRef.current = transcript.lastEventId; }, [transcript.lastEventId]);
@@ -188,11 +198,12 @@ export function ManagedSessionChat({
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
+        noteFailure(error);
         setNotice({ tone: "error", text: error instanceof Error ? error.message : "The conversation history could not be loaded." });
         setHistoryLoaded(true);
       });
     return () => controller.abort();
-  }, [agentId, historyLoaded, streamable]);
+  }, [agentId, historyLoaded, noteFailure, streamable]);
 
   useEffect(() => {
     if (!streamable || !historyLoaded) return;
@@ -241,11 +252,12 @@ export function ManagedSessionChat({
       else setOrphanPrompts((current) => [...current, text]);
       if (session.status === "paused") setSession((current) => ({ ...current, status: "ready" }));
     } catch (error) {
+      noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : "The message was not delivered." });
     } finally {
       setSending(false);
     }
-  }, [agentId, draft, sending, session.status]);
+  }, [agentId, draft, noteFailure, sending, session.status]);
 
   const answer = useCallback(async (requestId: string, outcome: "approve" | "reject") => {
     setSubmitting((current) => ({ ...current, [requestId]: outcome }));
@@ -257,9 +269,10 @@ export function ManagedSessionChat({
         delete next[requestId];
         return next;
       });
+      noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : "The decision was not delivered." });
     }
-  }, [agentId]);
+  }, [agentId, noteFailure]);
 
   const lifecycle = useCallback(async (action: "pause" | "resume" | "delete") => {
     setLifecycleBusy(action);
@@ -269,12 +282,13 @@ export function ManagedSessionChat({
       setSession(next);
       if (next.status === "deleted") onDeletedRef.current?.();
     } catch (error) {
+      noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : `The ${action} was not confirmed.` });
     } finally {
       setLifecycleBusy(null);
       setConfirmDelete(false);
     }
-  }, [agentId]);
+  }, [agentId, noteFailure]);
 
   const status = statusCopy(session, transcript);
   const paused = status.label === "Paused";

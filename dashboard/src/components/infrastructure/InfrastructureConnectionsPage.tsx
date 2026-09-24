@@ -128,6 +128,8 @@ export function InfrastructureConnectionsPage() {
   }, []);
   const searchParams = useSearchParams();
   const requestedLaunchResource = parsePortableLaunchResourceId(searchParams?.get("launch"));
+  // Deep link from a DigitalOcean agent whose token stopped working.
+  const requestedTokenReplacement = searchParams?.get("replaceToken") ?? null;
   const unifiedLaunchReturn = searchParams?.get("returnTo") === "unified-launch";
   const selfHosted = isLocalAuthMode();
   const [connections, setConnections] = useState<InfrastructureConnectionDto[]>([]);
@@ -328,6 +330,16 @@ export function InfrastructureConnectionsPage() {
     void loadConnections(controller.signal);
     return () => controller.abort();
   }, [loadConnections]);
+
+  // Open "Replace token" once for the connection a deep link names.
+  const handledTokenReplacement = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedTokenReplacement || handledTokenReplacement.current === requestedTokenReplacement) return;
+    const connection = connections.find((candidate) => candidate.id === requestedTokenReplacement);
+    if (!connection || connection.provider !== "digitalocean") return;
+    handledTokenReplacement.current = requestedTokenReplacement;
+    setReplacingDigitalOcean(connection);
+  }, [connections, requestedTokenReplacement]);
 
   const targetsByConnection = useMemo(() => {
     const indexed = new Map<string, DeploymentTargetDto>();
@@ -591,19 +603,19 @@ export function InfrastructureConnectionsPage() {
       <div className={styles.pageGlow} aria-hidden="true" />
       <main className={styles.pageInner}>
         <nav className={styles.breadcrumb} aria-label="Breadcrumb">
-          <Link href="/dashboard">Command Center</Link>
+          <Link href="/dashboard">Home</Link>
           <ArrowRight size={12} aria-hidden="true" />
-          <span aria-current="page">Infrastructure</span>
+          <span aria-current="page">Capacity</span>
         </nav>
 
         <header className={styles.pageHeader}>
           <div className={styles.pageHeading}>
-            <span className={styles.eyebrow}>Infrastructure</span>
-            <h1>Your infrastructure.</h1>
+            <span className={styles.eyebrow}>Capacity</span>
+            <h1>Where your agents run.</h1>
             <p>
               {selfHosted
                 ? "Connect a cloud project or bring a computer you control."
-                : "Manage your plan and the machines that power your agents and computers."}
+                : "Hivra Cloud, your cloud accounts, and your own servers: the places your agents and computers run."}
             </p>
           </div>
           {!showingFirstConnection ? (
@@ -618,7 +630,7 @@ export function InfrastructureConnectionsPage() {
               {entryChooserOpen
                 ? <X size={16} aria-hidden="true" />
                 : <Plus size={16} aria-hidden="true" />}
-              {entryChooserOpen ? "Close options" : "Add infrastructure"}
+              {entryChooserOpen ? "Close options" : "Add capacity"}
             </button>
           ) : null}
         </header>
@@ -782,6 +794,11 @@ export function InfrastructureConnectionsPage() {
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
                         onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
+                        onExpiryChanged={(credentialExpiry) => setConnections((current) => current.map((candidate) => (
+                          candidate.id === connection.id && candidate.provider === "digitalocean"
+                            ? { ...candidate, credentialExpiry }
+                            : candidate
+                        )))}
                       />
                     );
                   }

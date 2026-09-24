@@ -14,6 +14,13 @@ export class FakeDigitalOcean {
   decisions: Array<{ sessionId: string; requestId: string; outcome: string }> = [];
   events: DigitalOceanSessionEvent[] = [];
   tokens: string[] = [];
+  /** Tokens DigitalOcean now rejects with 401 on every session call. */
+  rejectedTokens = new Set<string>();
+  /** Files in each session's /workspace, keyed by path relative to /workspace. */
+  workspace = new Map<string, { kind: "f" | "d" | "l"; size?: number; mtime?: number; content?: string }>();
+  execs: Array<{ sessionId: string; argv: string[] }> = [];
+  execResult: { exitCode: number; stdout?: string; stderr?: string } | null = null;
+  downloads: Array<{ sessionId: string; path: string; asArchive: boolean }> = [];
   /** Next create call throws this error (after optionally creating anyway). */
   failNextCreate: { error: DigitalOceanApiError; createAnyway?: boolean } | null = null;
   readyAfterPolls = 0;
@@ -23,6 +30,9 @@ export class FakeDigitalOcean {
 
   client = (apiToken: string): DigitalOceanManagedAgentsClient => {
     this.tokens.push(apiToken);
+    const guard = () => {
+      if (this.rejectedTokens.has(apiToken)) throw new DigitalOceanApiError("unauthorized", 401, "GET", "/v2/agents/sessions");
+    };
     return {
       listSandboxSizes: async () => {
         if (apiToken === "bad-token-000000000000000") throw new DigitalOceanApiError("unauthorized", 401, "GET", "/v2/agents/sessions/sandbox/sizes");
@@ -49,12 +59,14 @@ export class FakeDigitalOcean {
         return { ...session! };
       },
       getSession: async (sessionId) => {
+        guard();
         const session = this.sessions.get(sessionId);
         if (!session) throw new DigitalOceanApiError("not_found", 404, "GET", "/v2/agents/sessions");
         this.advance(session);
         return { ...session };
       },
       findSessionByName: async (name) => {
+        guard();
         const session = [...this.sessions.values()].find((candidate) => candidate.name === name) ?? null;
         if (session) this.advance(session);
         return session ? { ...session } : null;
@@ -75,6 +87,33 @@ export class FakeDigitalOcean {
       },
       resolveHitl: async (sessionId, requestId, outcome) => { this.decisions.push({ sessionId, requestId, outcome }); },
       streamEvents: () => this.replayEvents(),
+      execInSandbox: async (sessionId, input) => {
+        guard();
+        this.execs.push({ sessionId, argv: input.argv });
+        if (this.execResult) return { stdout: "", stderr: "", ...this.execResult };
+        // Emulate the listing script: argv = [sh, -c, script, $0, $1].
+        const dir = (input.argv[4] ?? "/workspace").replace(/^\/workspace\/?/, "");
+        const isDir = dir === "" || this.workspace.get(dir)?.kind === "d";
+        if (!isDir) return { exitCode: 3, stdout: "", stderr: "" };
+        const prefix = dir ? `${dir}/` : "";
+        const stdout = [...this.workspace.entries()]
+          .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes("/"))
+          .map(([path, entry]) => `${entry.kind}\t${entry.size ?? 4096}\t${entry.mtime ?? 1_790_000_000.5}\t${path.slice(prefix.length)}\u0000`)
+          .join("");
+        return { exitCode: 0, stdout, stderr: "" };
+      },
+      downloadWorkspace: async (sessionId, input) => {
+        guard();
+        this.downloads.push({ sessionId, path: input.path, asArchive: Boolean(input.asArchive) });
+        const entry = this.workspace.get(input.path);
+        if (!entry && !input.asArchive) throw new DigitalOceanApiError("not_found", 404, "GET", "/v2/agents/sessions/workspace/download");
+        const bytes = new TextEncoder().encode(input.asArchive ? "tar-bytes" : entry?.content ?? "");
+        return {
+          body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
+          isArchive: Boolean(input.asArchive),
+          sizeBytes: entry?.size ?? bytes.byteLength,
+        };
+      },
     };
   };
 

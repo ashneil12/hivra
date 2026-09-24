@@ -479,6 +479,34 @@ const DigitalOceanApiTokenSchema = z
     message: "DigitalOcean API token cannot contain whitespace or control characters",
   });
 
+const CalendarDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date")
+  .refine((value) => {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }, { message: "Choose a real date" });
+
+/** What the owner tells Hivra about when a provider token stops working.
+ * DigitalOcean does not report a personal access token's expiry through the
+ * API, so this is the owner's declaration, never provider evidence. */
+export const ProviderTokenExpiryInputSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("none") }).strict(),
+  z.object({ mode: z.literal("date"), date: CalendarDateSchema }).strict(),
+]);
+
+export const CredentialExpiryDtoSchema = z
+  .object({
+    source: z.literal("owner-declared"),
+    noExpiry: z.boolean(),
+    expiresOn: CalendarDateSchema.nullable(),
+    declaredAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .refine((value) => value.noExpiry === (value.expiresOn === null), {
+    message: "Token expiry is inconsistent",
+  });
+
 export const DigitalOceanConnectionCreateSchema = z
   .object({
     name: ConnectionNameSchema,
@@ -490,6 +518,7 @@ export const DigitalOceanConnectionCreateSchema = z
         apiToken: DigitalOceanApiTokenSchema,
       })
       .strict(),
+    tokenExpiry: ProviderTokenExpiryInputSchema.optional(),
   })
   .strict();
 
@@ -612,6 +641,8 @@ export const InfrastructureConnectionDtoSchema = z.discriminatedUnion("provider"
         })
         .strict(),
       lastErrorCode: z.enum(DIGITALOCEAN_CONNECTION_ERROR_CODES).nullable(),
+      /** Owner-declared token expiry; absent when never recorded. */
+      credentialExpiry: CredentialExpiryDtoSchema.nullable().optional(),
     })
     .strict(),
 ]);
@@ -1565,6 +1596,8 @@ export type DigitalOceanConnectionDto = Extract<
   { provider: "digitalocean" }
 >;
 export type DigitalOceanConnectionCreate = z.infer<typeof DigitalOceanConnectionCreateSchema>;
+export type ProviderTokenExpiryInput = z.infer<typeof ProviderTokenExpiryInputSchema>;
+export type CredentialExpiryDto = z.infer<typeof CredentialExpiryDtoSchema>;
 export type DigitalOceanConnectionErrorCode = (typeof DIGITALOCEAN_CONNECTION_ERROR_CODES)[number];
 export type DigitalOceanHarness = (typeof DIGITALOCEAN_HARNESSES)[number];
 export type DigitalOceanSandboxSize = (typeof DIGITALOCEAN_SANDBOX_SIZES)[number];

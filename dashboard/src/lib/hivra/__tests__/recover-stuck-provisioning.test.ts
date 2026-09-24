@@ -7,6 +7,7 @@ import {
   runRecoverStuckHivraProvisioningSweep,
   STUCK_PROVISIONING_THRESHOLD_MS,
 } from "../recover-stuck-provisioning";
+import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
@@ -41,6 +42,10 @@ jest.mock("@/lib/hivra/agent-events", () => ({
 
 jest.mock("@/lib/hivra/agent-ready-telemetry", () => ({
   captureHivraAgentComputerReady: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
+  reconcileBankrEnvAfterHivraBoot: jest.fn(),
 }));
 
 jest.mock("@/lib/services/cloudflare-tunnel", () => ({
@@ -174,6 +179,9 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
   const mockedPreparePrivateAccess = prepareHivraTailscaleForDelete as jest.MockedFunction<
     typeof prepareHivraTailscaleForDelete
   >;
+  const mockedReconcileWallet = reconcileBankrEnvAfterHivraBoot as jest.MockedFunction<
+    typeof reconcileBankrEnvAfterHivraBoot
+  >;
   const realFetch = global.fetch;
   let updates: RecordedUpdate[];
 
@@ -275,6 +283,7 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     mockedReleaseOperation.mockResolvedValue(true);
     mockedCompleteDelete.mockResolvedValue(true);
     mockedPreparePrivateAccess.mockResolvedValue({ ok: true, disposition: "guest_logged_out" });
+    mockedReconcileWallet.mockReset().mockResolvedValue({ status: "skipped" });
     global.fetch = jest.fn().mockRejectedValue(new Error("no network in tests"));
   });
 
@@ -1226,5 +1235,105 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     const summary = await runRecoverStuckHivraProvisioningSweep();
 
     expect(summary).toMatchObject({ scanned: 2, recovered: 1, skipped: 1 });
+  });
+
+  // Regression (Gap C): a box this sweep brings up after nobody polled it must
+  // get the wallet row applied to its bankr.env, as a polled boot does.
+  describe("wallet env after a recovered boot", () => {
+    const probe = (vmStatus: string, receipt: "match" | "missing", marker = "") => ({
+      ok: true,
+      stdout: [
+        "HIVRA_RECOVERY_VM exists",
+        `HIVRA_RECOVERY_VM_STATUS ${vmStatus}`,
+        "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+        "HIVRA_RECOVERY_OWNERSHIP match",
+        `HIVRA_RECOVERY_OPERATION_RECEIPT ${receipt}`,
+        ...(marker ? [`HIVRA_RECOVERY_MARKER ${marker}`] : []),
+        "",
+      ].join("\n"),
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    const staleStart = (overrides: Partial<Record<string, unknown>> = {}) => buildStuckRow({
+      status: "provisioning",
+      operation_kind: "start",
+      allocation_operation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      ...overrides,
+    });
+
+    it("re-applies the wallet row once after flipping a stale start to running, without the teardown context", async () => {
+      installSupabase([staleStart()]);
+      mockedRunScript.mockResolvedValue(probe("running", "match", READY_MARKER));
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ recovered: 1 });
+      expect(mockedReconcileWallet).toHaveBeenCalledTimes(1);
+      const [call] = mockedReconcileWallet.mock.calls[0];
+      expect(call).toEqual({
+        userId: "user_42",
+        agent: expect.objectContaining({ id: AGENT_ID, type: "claude-code", status: "running", ip: "10.250.20.93" }),
+        trigger: "recovery",
+      });
+      expect(call.executionContext).toBeUndefined();
+      expect(mockedCompleteRunning.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedReconcileWallet.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("does not touch the wallet when another poll wins the running flip", async () => {
+      installSupabase([staleStart()]);
+      mockedRunScript.mockResolvedValue(probe("running", "match", READY_MARKER));
+      mockedCompleteRunning.mockResolvedValue(false);
+
+      await runRecoverStuckHivraProvisioningSweep();
+
+      expect(mockedReconcileWallet).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["settled stale start with a receipt", staleStart, "match"],
+      ["stale start without a receipt", () => staleStart({ status: "running" }), "missing"],
+      ["stale restart without a receipt", () => staleStart({ status: "running", operation_kind: "restart" }), "missing"],
+      ["stale resize without a receipt", () => staleStart({ operation_kind: "resize", operation_payload: { cpu: 2, ram: 4 } }), "missing"],
+    ] as const)("re-applies the wallet row for a %s only when the VM is running", async (_label, row, receipt) => {
+      installSupabase([row()]);
+      mockedRunScript.mockResolvedValue(probe("stopped", receipt));
+      await runRecoverStuckHivraProvisioningSweep();
+      expect(mockedCompleteOperation).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
+      expect(mockedReconcileWallet).not.toHaveBeenCalled();
+
+      installSupabase([row()]);
+      mockedRunScript.mockResolvedValue(probe("running", receipt));
+      await runRecoverStuckHivraProvisioningSweep();
+      expect(mockedCompleteOperation).toHaveBeenLastCalledWith(expect.objectContaining({ status: "running" }));
+      expect(mockedReconcileWallet).toHaveBeenCalledTimes(1);
+      expect(mockedReconcileWallet).toHaveBeenCalledWith(expect.objectContaining({
+        userId: "user_42",
+        agent: expect.objectContaining({ id: AGENT_ID, status: "running" }),
+        trigger: "recovery",
+      }));
+    });
+
+    it("does not re-apply after a lost lifecycle completion", async () => {
+      installSupabase([staleStart({ status: "running" })]);
+      mockedRunScript.mockResolvedValue(probe("running", "missing"));
+      mockedCompleteOperation.mockResolvedValue(false);
+
+      await runRecoverStuckHivraProvisioningSweep();
+
+      expect(mockedReconcileWallet).not.toHaveBeenCalled();
+    });
+
+    it("keeps the recovery outcome when the wallet sync rejects", async () => {
+      installSupabase([staleStart()]);
+      mockedRunScript.mockResolvedValue(probe("running", "match", READY_MARKER));
+      mockedReconcileWallet.mockRejectedValue(new Error("unexpected"));
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ scanned: 1, recovered: 1, skipped: 0 });
+      expect(summary.results[0]).toMatchObject({ action: "recovered_from_log" });
+      expect(mockedReconcileWallet).toHaveBeenCalledTimes(1);
+    });
   });
 });

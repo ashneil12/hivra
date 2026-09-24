@@ -3,17 +3,22 @@
 import { z } from "zod";
 
 import {
+  CredentialExpiryDtoSchema,
   DigitalOceanConnectionCreateSchema,
   DigitalOceanDeploymentTargetDtoSchema,
   InfrastructureConnectionDtoSchema,
+  ProviderTokenExpiryInputSchema,
+  type CredentialExpiryDto,
   type DigitalOceanConnectionCreate,
   type DigitalOceanConnectionDto,
   type DigitalOceanDeploymentTargetDto,
+  type ProviderTokenExpiryInput,
 } from "@/lib/infrastructure/contracts";
 import {
   ManagedSessionLaunchSchema,
   type ManagedSessionDto,
   type ManagedSessionLaunchInput,
+  type ManagedWorkspaceListing,
 } from "@/lib/hivra/managed-session-contracts";
 import type { ManagedSessionEvent } from "@/lib/hivra/managed-session-transcript";
 
@@ -91,8 +96,20 @@ export async function refreshDigitalOceanAccount(connectionId: string) {
   return request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/refresh`, { method: "POST" }, ConnectionResultSchema);
 }
 
-export async function replaceDigitalOceanAccountToken(connectionId: string, apiToken: string) {
-  return request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/token`, { method: "POST", body: JSON.stringify({ apiToken }) }, ConnectionResultSchema);
+export async function replaceDigitalOceanAccountToken(connectionId: string, apiToken: string, tokenExpiry?: ProviderTokenExpiryInput) {
+  const expiry = tokenExpiry ? ProviderTokenExpiryInputSchema.parse(tokenExpiry) : undefined;
+  return request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/token`, {
+    method: "POST",
+    body: JSON.stringify({ apiToken, ...(expiry ? { tokenExpiry: expiry } : {}) }),
+  }, ConnectionResultSchema);
+}
+
+export async function setDigitalOceanAccountTokenExpiry(connectionId: string, tokenExpiry: ProviderTokenExpiryInput): Promise<CredentialExpiryDto> {
+  const expiry = ProviderTokenExpiryInputSchema.parse(tokenExpiry);
+  return (await request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/token-expiry`, {
+    method: "PUT",
+    body: JSON.stringify({ tokenExpiry: expiry }),
+  }, z.object({ credentialExpiry: CredentialExpiryDtoSchema }))).credentialExpiry;
 }
 
 export async function listManagedSessions(signal?: AbortSignal) {
@@ -108,12 +125,66 @@ export async function launchManagedSession(input: ManagedSessionLaunchInput): Pr
 }
 
 export async function getManagedSession(agentId: string, options: { reconcile?: boolean; signal?: AbortSignal } = {}): Promise<ManagedSessionDto> {
+  return (await getManagedSessionWithExpiry(agentId, options)).session;
+}
+
+/** The session plus the owner-declared expiry of its DigitalOcean token, when recorded. */
+export async function getManagedSessionWithExpiry(
+  agentId: string,
+  options: { reconcile?: boolean; signal?: AbortSignal } = {},
+): Promise<{ session: ManagedSessionDto; credentialExpiry: CredentialExpiryDto | null }> {
   const query = options.reconcile ? "?reconcile=1" : "";
-  return (await request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}${query}`, { method: "GET", signal: options.signal }, z.object({ session: ManagedSessionDtoSchema }))).session;
+  const result = await request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}${query}`, { method: "GET", signal: options.signal }, z.object({
+    session: ManagedSessionDtoSchema,
+    credentialExpiry: CredentialExpiryDtoSchema.nullable().optional(),
+  }));
+  return { session: result.session, credentialExpiry: result.credentialExpiry ?? null };
+}
+
+/** Errors that mean Hivra's saved DigitalOcean token cannot manage this agent. */
+export function isManagedSessionCredentialProblem(error: unknown): error is ManagedSessionApiError {
+  return error instanceof ManagedSessionApiError
+    && (error.code === "invalid_credentials" || error.code === "provider_forbidden" || error.code === "connection_changed");
 }
 
 export async function changeManagedSession(agentId: string, action: "pause" | "resume" | "delete"): Promise<ManagedSessionDto> {
   return (await request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}/lifecycle`, { method: "POST", body: JSON.stringify({ action }) }, z.object({ session: ManagedSessionDtoSchema }))).session;
+}
+
+export async function listDigitalOceanModels(connectionId: string, signal?: AbortSignal): Promise<string[]> {
+  return (await request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/models`, { method: "GET", signal },
+    z.object({ models: z.array(z.string().regex(/^[A-Za-z0-9._:/-]{1,128}$/)) }))).models;
+}
+
+/** Release an agent whose DigitalOcean token no longer works. Nothing is deleted at DigitalOcean. */
+export async function forgetManagedSession(agentId: string): Promise<ManagedSessionDto> {
+  return (await request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}/forget`, {
+    method: "POST",
+    body: JSON.stringify({ acknowledge: "session-may-remain-at-digitalocean" }),
+  }, z.object({ session: ManagedSessionDtoSchema }))).session;
+}
+
+const ManagedWorkspaceListingSchema: z.ZodType<ManagedWorkspaceListing> = z.object({
+  path: z.string(),
+  entries: z.array(z.object({
+    name: z.string().min(1),
+    kind: z.enum(["file", "directory", "symlink", "other"]),
+    sizeBytes: z.number().int().nonnegative().nullable(),
+    modifiedAt: z.string().nullable(),
+  })),
+  truncated: z.boolean(),
+});
+
+export async function listManagedWorkspace(agentId: string, path: string, signal?: AbortSignal): Promise<ManagedWorkspaceListing> {
+  const query = path ? `?${new URLSearchParams({ path })}` : "";
+  return (await request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}/workspace${query}`, { method: "GET", signal },
+    z.object({ listing: ManagedWorkspaceListingSchema }))).listing;
+}
+
+export function managedWorkspaceDownloadUrl(agentId: string, path: string, options: { archive?: boolean } = {}): string {
+  const query = new URLSearchParams({ path });
+  if (options.archive) query.set("archive", "1");
+  return `/api/hivra/managed-sessions/${encodeURIComponent(agentId)}/workspace/download?${query}`;
 }
 
 export async function sendManagedSessionMessage(agentId: string, text: string): Promise<{ runId: string | null }> {

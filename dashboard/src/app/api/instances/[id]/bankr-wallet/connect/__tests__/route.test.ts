@@ -6,6 +6,7 @@ import {
   loadOwnedHermesInstance,
   syncBankrConfigToRunningHermesInstance,
 } from "@/lib/agent-wallets/hermes-lane";
+import { applyBankrWalletChangeToWebfreeInstance } from "@/lib/agent-wallets/hermes-webfree-wallet-sync";
 import {
   AgentWalletConnectError,
   connectUserBankrWalletForOwner,
@@ -22,6 +23,10 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 jest.mock("@/lib/agent-wallets/hermes-lane", () => ({
   loadOwnedHermesInstance: jest.fn(),
   syncBankrConfigToRunningHermesInstance: jest.fn(),
+}));
+
+jest.mock("@/lib/agent-wallets/hermes-webfree-wallet-sync", () => ({
+  applyBankrWalletChangeToWebfreeInstance: jest.fn(),
 }));
 
 jest.mock("@/lib/billing/bankr-instance-wallets", () => {
@@ -85,6 +90,9 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
   const mockedDisconnect = disconnectUserBankrWalletForOwner as jest.MockedFunction<typeof disconnectUserBankrWalletForOwner>;
   const mockedRateLimit = enforceAuthenticatedRouteRateLimit as jest.MockedFunction<typeof enforceAuthenticatedRouteRateLimit>;
   const mockedPreinstall = preinstallBankrSuiteForInstance as jest.MockedFunction<typeof preinstallBankrSuiteForInstance>;
+  const mockedWebfree = applyBankrWalletChangeToWebfreeInstance as jest.MockedFunction<
+    typeof applyBankrWalletChangeToWebfreeInstance
+  >;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -96,6 +104,7 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
       connectedRecord({ status: "revoked", apiKeyStatus: "revoked", apiKeyPreview: null })
     );
     mockedPreinstall.mockResolvedValue({ seeded: true, count: 3 });
+    mockedWebfree.mockResolvedValue({ status: "update_started" });
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -141,6 +150,7 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
     expect(mockedSync).toHaveBeenCalledTimes(1);
     expect(body.data.wallet).toMatchObject({ evmAddress: USER_WALLET, custody: "user_connected" });
     expect(body.data.configSync).toBe("synced");
+    expect(mockedWebfree).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain(USER_KEY);
     expect(JSON.stringify((log.info as jest.Mock).mock.calls)).not.toContain(USER_KEY);
   });
@@ -184,7 +194,22 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
     expect(response.status).toBe(200);
     expect(mockedDisconnect).toHaveBeenCalledWith({ owner: { instanceId: "inst_123" }, userId: "user_123" });
     expect(mockedSync).toHaveBeenCalledTimes(1);
+    expect(mockedWebfree).not.toHaveBeenCalled();
     expect(body.data.wallet).toMatchObject({ status: "revoked", evmAddress: null, custody: "user_connected" });
+  });
+
+  it("keeps the config-API sync on non-webfree boxes whatever restartAgent says", async () => {
+    for (const restartAgent of [true, false]) {
+      mockedSync.mockClear();
+      const connect = await (await POST(request("POST", { apiKey: USER_KEY, consent: true, restartAgent }), params)).json();
+      const disconnect = await (await DELETE(request("DELETE", { restartAgent }), params)).json();
+
+      expect(mockedSync).toHaveBeenCalledTimes(2);
+      expect(connect.data.configSync).toBe("synced");
+      expect(disconnect.data.configSync).toBe("synced");
+      expect(connect.data.configSyncReason).toBeUndefined();
+    }
+    expect(mockedWebfree).not.toHaveBeenCalled();
   });
 
   it("refuses to disconnect a wallet that isn't a connected Bankr account", async () => {
@@ -194,5 +219,126 @@ describe("/api/instances/[id]/bankr-wallet/connect", () => {
     const response = await DELETE(request("DELETE"), params);
     expect(response.status).toBe(409);
     expect(mockedSync).not.toHaveBeenCalled();
+  });
+
+  describe("webfree boxes (backend gateway/webui) get the change through a runtime update the user asks for", () => {
+    beforeEach(() => {
+      mockedLoad.mockResolvedValue({ id: "inst_123", status: "running", backend: "gateway" } as unknown as Awaited<
+        ReturnType<typeof loadOwnedHermesInstance>
+      >);
+      mockedPreinstall.mockResolvedValue({ seeded: true, count: 3 });
+    });
+
+    it("connects, installs the Bankr skills while the agent is still up, then starts the requested update", async () => {
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true, restartAgent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedSync).not.toHaveBeenCalled();
+      expect(mockedWebfree).toHaveBeenCalledWith({ instanceId: "inst_123", userId: "user_123" });
+      expect(mockedPreinstall.mock.invocationCallOrder[0]).toBeLessThan(mockedWebfree.mock.invocationCallOrder[0]);
+      expect(body.data.configSync).toBe("update_started");
+      expect(body.data.configSyncReason).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain(USER_KEY);
+    });
+
+    it.each([
+      ["omitted", {}],
+      ["false", { restartAgent: false }],
+    ])("never restarts the agent on connect when restartAgent is %s", async (_label, flag) => {
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true, ...flag }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedConnect).toHaveBeenCalledTimes(1);
+      expect(mockedWebfree).not.toHaveBeenCalled();
+      expect(mockedSync).not.toHaveBeenCalled();
+      // The Bankr skills still install through the agent, which stays up.
+      expect(mockedPreinstall).toHaveBeenCalledTimes(1);
+      expect(body.data).toMatchObject({ configSync: "skipped", configSyncReason: "restart_not_requested" });
+    });
+
+    it.each([
+      ["no body (older clients)", undefined],
+      ["restartAgent false", { restartAgent: false }],
+    ])("never restarts the agent on disconnect with %s", async (_label, body) => {
+      const response = await DELETE(request("DELETE", body), params);
+      const json = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedDisconnect).toHaveBeenCalledTimes(1);
+      expect(mockedWebfree).not.toHaveBeenCalled();
+      expect(json.data).toMatchObject({
+        configSync: "skipped",
+        configSyncReason: "restart_not_requested",
+        wallet: { status: "revoked" },
+      });
+    });
+
+    it("starts the requested update only after the disconnect has committed", async () => {
+      const response = await DELETE(request("DELETE", { restartAgent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedSync).not.toHaveBeenCalled();
+      expect(mockedWebfree).toHaveBeenCalledWith({ instanceId: "inst_123", userId: "user_123" });
+      expect(mockedDisconnect.mock.invocationCallOrder[0]).toBeLessThan(mockedWebfree.mock.invocationCallOrder[0]);
+      expect(body.data).toMatchObject({ configSync: "update_started", wallet: { status: "revoked" } });
+    });
+
+    it.each([
+      ["POST", { apiKey: USER_KEY, consent: true, restartAgent: "true" }],
+      ["DELETE", { restartAgent: 1 }],
+    ] as const)("refuses a %s whose restartAgent isn't a boolean, before changing anything", async (method, body) => {
+      const response = method === "POST" ? await POST(request(method, body), params) : await DELETE(request(method, body), params);
+
+      expect(response.status).toBe(400);
+      expect(mockedConnect).not.toHaveBeenCalled();
+      expect(mockedDisconnect).not.toHaveBeenCalled();
+      expect(mockedWebfree).not.toHaveBeenCalled();
+    });
+
+    it("does not start an update when the disconnect is refused", async () => {
+      mockedDisconnect.mockRejectedValueOnce(
+        new AgentWalletConnectError("not_connected", "This agent isn't connected to your Bankr account.", 409)
+      );
+      const response = await DELETE(request("DELETE", { restartAgent: true }), params);
+      expect(response.status).toBe(409);
+      expect(mockedWebfree).not.toHaveBeenCalled();
+    });
+
+    it("returns why delivery was skipped", async () => {
+      mockedWebfree.mockResolvedValueOnce({ status: "skipped", reason: "update_in_progress" });
+      const response = await DELETE(request("DELETE", { restartAgent: true }), params);
+      const body = await response.json();
+
+      expect(body.data).toMatchObject({ configSync: "skipped", configSyncReason: "update_in_progress" });
+    });
+
+    it("reports and logs a failed update", async () => {
+      mockedWebfree.mockResolvedValueOnce({ status: "failed" });
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true, restartAgent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.configSync).toBe("failed");
+      expect(log.warn).toHaveBeenCalledWith(
+        "agent wallet runtime update failed after connect change",
+        expect.objectContaining({ instanceId: "inst_123", failureType: "agent_wallet_connect_runtime_update_failed" })
+      );
+    });
+  });
+
+  it("rate limits disconnect, which can start a runtime update", async () => {
+    mockedRateLimit.mockReturnValueOnce(new Response(null, { status: 429 }) as never);
+    const response = await DELETE(request("DELETE"), params);
+
+    expect(response.status).toBe(429);
+    expect(mockedRateLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ routeKey: "agent_wallet_disconnect", userId: "user_123" })
+    );
+    expect(mockedDisconnect).not.toHaveBeenCalled();
+    expect(mockedWebfree).not.toHaveBeenCalled();
   });
 });

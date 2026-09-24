@@ -269,7 +269,43 @@ describe("runtime delivery is reported, not assumed", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
     });
 
-    expect(await within(dialog).findByRole("status")).toHaveTextContent(/isn't running, so it doesn't have the key yet/);
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(/isn't running, so it gets the key when it next starts/);
+  });
+
+  it("never presents a plain restart as applying a webfree wallet change", async () => {
+    // Restart and Stop/Start reload the same persisted env; only Update rewrites it.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { wallet: connectedWallet, configSync: "skipped", configSyncReason: "restart_not_requested" } }),
+    });
+    const hermesCard = card({ instance: { id: "inst_1", name: "Scout", status: "running", provider: "openai", lane: "hermes" } });
+    render(<ConnectBankrModal card={hermesCard} mode="connect" onClose={jest.fn()} onConnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+    });
+    const status = await within(dialog).findByRole("status");
+    expect(status).toHaveTextContent(/run Update/);
+    expect(status).not.toHaveTextContent(/restart it/i);
+  });
+
+  it("tells the user a box that can't be verified never gets the key, instead of asking them to retry", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { wallet: connectedWallet, envSync: "failed", envSyncReason: "identity_unverifiable" } }),
+    });
+    render(<ConnectBankrModal card={card()} mode="connect" onClose={jest.fn()} onConnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+    });
+    const status = await within(dialog).findByRole("status");
+    expect(status).toHaveTextContent(/can't be verified/);
+    expect(status).not.toHaveTextContent(/Connect again/);
   });
 
   it("says so when the old wallet's keys couldn't be revoked after a switch", async () => {
@@ -333,6 +369,124 @@ describe("runtime delivery is reported, not assumed", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/hivra/agents/agent_1/bankr-wallet/connect", { method: "DELETE" });
     expect(await within(dialog).findByRole("status")).toHaveTextContent(/Revoke it at bankr\.bot\/api-keys/);
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("Hermes agents restart to apply a wallet change only when the user asks", () => {
+  const fetchMock = jest.fn();
+  const RESTART_LABEL = /Restart the agent now if it needs a restart to pick this up/i;
+  const hermesCard = (overrides: Partial<AgentWalletCardData> = {}) =>
+    card({ instance: { id: "inst_1", name: "Scout", status: "running", provider: "openai", lane: "hermes" }, ...overrides });
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  async function connectWith(data: Record<string, unknown>, options: { tickRestart?: boolean } = {}) {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { wallet: connectedWallet, ...data } }) });
+    const onClose = jest.fn();
+    render(<ConnectBankrModal card={hermesCard()} mode="connect" onClose={onClose} onConnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra/i }));
+    if (options.tickRestart) fireEvent.click(within(dialog).getByRole("checkbox", { name: RESTART_LABEL }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+    });
+    return { dialog, onClose, sent: JSON.parse(fetchMock.mock.calls[0][1].body) };
+  }
+
+  async function disconnectWith(data: Record<string, unknown>, options: { untickRestart?: boolean } = {}) {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { wallet: { ...connectedWallet, status: "revoked", evmAddress: null }, ...data } }),
+    });
+    const onClose = jest.fn();
+    render(<DisconnectBankrModal card={hermesCard({ wallet: connectedWallet })} onClose={onClose} onDisconnected={jest.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    if (options.untickRestart) fireEvent.click(within(dialog).getByRole("checkbox", { name: RESTART_LABEL }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    });
+    return { dialog, onClose, init: fetchMock.mock.calls[0][1] };
+  }
+
+  it("offers the restart unticked on connect and ticked on disconnect", () => {
+    const { unmount } = render(
+      <ConnectBankrModal card={hermesCard()} mode="connect" onClose={jest.fn()} onConnected={jest.fn()} />
+    );
+    const connectRestart = within(screen.getByRole("dialog")).getByRole("checkbox", { name: RESTART_LABEL });
+    expect(connectRestart).not.toBeChecked();
+    expect(screen.getByRole("dialog")).toHaveTextContent("about 1–3 minutes; chats in progress stop");
+    unmount();
+
+    render(<DisconnectBankrModal card={hermesCard({ wallet: connectedWallet })} onClose={jest.fn()} onDisconnected={jest.fn()} />);
+    expect(within(screen.getByRole("dialog")).getByRole("checkbox", { name: RESTART_LABEL })).toBeChecked();
+  });
+
+  it("does not offer the restart for a Hivra box", () => {
+    const { unmount } = render(<ConnectBankrModal card={card()} mode="connect" onClose={jest.fn()} onConnected={jest.fn()} />);
+    expect(screen.queryByRole("checkbox", { name: RESTART_LABEL })).not.toBeInTheDocument();
+    unmount();
+
+    render(<DisconnectBankrModal card={card({ wallet: connectedWallet })} onClose={jest.fn()} onDisconnected={jest.fn()} />);
+    expect(screen.queryByRole("checkbox", { name: RESTART_LABEL })).not.toBeInTheDocument();
+  });
+
+  it("asks for no restart on connect unless the user ticks it", async () => {
+    const { sent } = await connectWith({ configSync: "skipped", configSyncReason: "restart_not_requested" });
+    expect(sent).toMatchObject({ consent: true, restartAgent: false });
+  });
+
+  it("asks for the restart on connect when the user ticks it, and says the agent is restarting", async () => {
+    const { dialog, onClose, sent } = await connectWith({ configSync: "update_started" }, { tickRestart: true });
+    expect(sent).toMatchObject({ restartAgent: true });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("Connected. The agent is restarting to apply this.");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("says when a connected key waits for the agent's next update", async () => {
+    const { dialog } = await connectWith({ configSync: "skipped", configSyncReason: "restart_not_requested" });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "Connected. The agent picks up the key at its next update, or run Update on its page to apply it now."
+    );
+  });
+
+  it("asks for the restart on disconnect by default, and says the agent is restarting", async () => {
+    const { dialog, onClose, init } = await disconnectWith({ configSync: "update_started" });
+    expect(init).toMatchObject({ method: "DELETE", headers: { "Content-Type": "application/json" } });
+    expect(JSON.parse(init.body)).toEqual({ restartAgent: true });
+    const status = await within(dialog).findByRole("status");
+    expect(status).toHaveTextContent("The agent is restarting to apply this.");
+    expect(status).toHaveTextContent(/still works at Bankr until you revoke it at bankr\.bot\/api-keys/);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("sends no restart when the user unticks it, and says the agent keeps the key until it restarts", async () => {
+    const { dialog, init } = await disconnectWith(
+      { configSync: "skipped", configSyncReason: "restart_not_requested" },
+      { untickRestart: true }
+    );
+    expect(JSON.parse(init.body)).toEqual({ restartAgent: false });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "Hivra deleted its copy. The agent keeps the key until its next update (run Update on its page to apply it now); revoke it at bankr.bot/api-keys to stop it immediately."
+    );
+  });
+
+  it("asks the user to run Update when an update was already running during connect", async () => {
+    const { dialog } = await connectWith({ configSync: "skipped", configSyncReason: "update_in_progress" }, { tickRestart: true });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "Your agent is already updating. Run Update once it finishes to apply this change."
+    );
+  });
+
+  it("asks the user to run Update and revoke at Bankr when an update was already running during disconnect", async () => {
+    const { dialog } = await disconnectWith({ configSync: "skipped", configSyncReason: "update_in_progress" });
+    const status = await within(dialog).findByRole("status");
+    expect(status).toHaveTextContent(/Run Update once it finishes to apply this change/);
+    expect(status).toHaveTextContent(/revoke it at bankr\.bot\/api-keys/);
+    expect(status).not.toHaveTextContent(/restarting/);
   });
 });
 
