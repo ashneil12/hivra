@@ -19,6 +19,7 @@ const mockGetProviderResizeState = jest.fn();
 const mockListBoxMcp = jest.fn();
 const mockRemoveBoxMcp = jest.fn();
 const mockAddBoxMcp = jest.fn();
+const mockListBoxChatRuns = jest.fn();
 jest.mock("@/lib/hivra/agent-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-api"),
   browserToggle: (...args: unknown[]) => mockBrowserToggle(...args),
@@ -37,6 +38,7 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   listBoxMcp: (...args: unknown[]) => mockListBoxMcp(...args),
   removeBoxMcp: (...args: unknown[]) => mockRemoveBoxMcp(...args),
   addBoxMcp: (...args: unknown[]) => mockAddBoxMcp(...args),
+  listBoxChatRuns: (...args: unknown[]) => mockListBoxChatRuns(...args),
 }));
 jest.mock("@/lib/hivra/agent-model-settings-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-model-settings-api"),
@@ -71,6 +73,7 @@ describe("HivraManage lifecycle guidance", () => {
     mockListBoxMcp.mockResolvedValue({ servers: [] });
     mockRemoveBoxMcp.mockResolvedValue({ ok: true });
     mockFetchComputerContract.mockResolvedValue({ kind: "not_started", channel: "proxmox-seed" });
+    mockListBoxChatRuns.mockResolvedValue(null);
   });
   const agent: HivraAgent = { id: "test-agent", name: "TEST", type: "codex", status: "running", cpu: 2, ram: 4, deployment_mode: "hivra-managed" };
   const plan: PlanInfo = { key: "command", name: "Command", subscribed: true, maxAgents: 8, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128, usage: { agentCount: 3, usedCpu: 22, usedRam: 124 } };
@@ -239,15 +242,126 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Update & restart" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
   });
-  it("lets a running Proxmox computer refresh its Hivra runtime through the durable restart path", async () => {
+  it("updates a running Proxmox computer's runtime in place without presenting a restart", async () => {
+    let finish!: () => void;
+    mockUpdateAgentRuntime.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
     const onChanged = jest.fn();
     render(<HivraManage agent={{ ...agent, computer_substrate: "proxmox-kvm" }} plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
-    fireEvent.click(screen.getByRole("button", { name: "Update & restart" }));
+    expect(screen.queryByRole("button", { name: /Update & restart/ })).not.toBeInTheDocument();
+    const update = screen.getByRole("button", { name: "Update connection service" });
+    expect(update).toHaveAttribute("title", expect.stringMatching(/without restarting the computer/));
+    const guidance = screen.getByText(/brings Hivra’s connection service up to date/);
+    expect(guidance).toHaveTextContent("without restarting the computer");
+    expect(guidance).toHaveTextContent("model credentials");
+    expect(guidance).not.toHaveTextContent(/then reboots/);
+
+    fireEvent.click(update);
+
+    const progress = screen.getByText("Updating the connection service…").closest("[role=\"status\"]");
+    expect(progress).toHaveTextContent("The computer keeps running");
+    expect(progress).not.toHaveTextContent(/reboot/i);
     await waitFor(() => expect(mockUpdateAgentRuntime).toHaveBeenCalledWith("test-agent"));
-    expect(onChanged).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/refreshes Hivra’s connection service/)).toHaveTextContent("model credentials");
+    await act(async () => finish());
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    // The update never asks the computer about replies: detached runs survive it.
+    expect(mockListBoxChatRuns).not.toHaveBeenCalled();
+  });
+
+  describe("replies in progress before Stop or Restart", () => {
+    const chatAgent: HivraAgent = {
+      ...agent,
+      computer_substrate: "proxmox-kvm",
+      chat_url: "https://box-test.example",
+      api_token: "box-fixture-token",
+    };
+    const running = (runId: string) => ({ runId, clientRef: null, state: "running" as const, title: "t", code: null, stopped: null, interrupted: false, agentSessionId: null, createdAt: "2026-09-24T10:00:00.000Z", finishedAt: null });
+    const finished = (runId: string) => ({ ...running(runId), state: "finished" as const, code: 0, finishedAt: "2026-09-24T10:01:00.000Z" });
+    function renderChat(props: Partial<{ agent: HivraAgent; def: ReturnType<typeof getAgent> }> = {}) {
+      const onChanged = jest.fn();
+      render(<HivraManage agent={props.agent ?? chatAgent} def={props.def ?? getAgent("codex")} plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
+      return onChanged;
+    }
+
+    it.each([
+      ["Restart", mockRestartAgent, "Restart anyway", "2 replies are still being written and will stop."],
+      ["Stop", mockStopAgent, "Stop anyway", "2 replies are still being written and will stop."],
+    ] as const)("asks before %s ends replies the computer is still writing", async (button, request, proceed, message) => {
+      mockListBoxChatRuns.mockResolvedValue([running("run-a"), finished("run-b"), running("run-c")]);
+      const onChanged = renderChat();
+
+      fireEvent.click(screen.getByRole("button", { name: button }));
+
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog).toHaveTextContent(message);
+      expect(mockListBoxChatRuns).toHaveBeenCalledWith("https://box-test.example", "box-fixture-token", expect.any(AbortSignal));
+      expect(request).not.toHaveBeenCalled();
+
+      fireEvent.click(within(dialog).getByRole("button", { name: proceed }));
+
+      await waitFor(() => expect(request).toHaveBeenCalledWith("test-agent"));
+      await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it("uses the singular for one reply and sends nothing when the owner cancels", async () => {
+      mockListBoxChatRuns.mockResolvedValue([running("run-a")]);
+      renderChat({ def: getAgent("claude-code") });
+
+      fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog).toHaveTextContent("1 reply is still being written and will stop.");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(mockRestartAgent).not.toHaveBeenCalled();
+      expect(mockStopAgent).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["has no run API (older runtime or unreachable)", null],
+      ["has only finished replies", [finished("run-a")]],
+      ["has no replies", []],
+    ])("restarts straight away when the computer %s", async (_case, runs) => {
+      mockListBoxChatRuns.mockResolvedValue(runs);
+      const onChanged = renderChat();
+
+      fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+
+      await waitFor(() => expect(mockRestartAgent).toHaveBeenCalledWith("test-agent"));
+      await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it("does not hold Stop behind a computer that never answers", async () => {
+      jest.useFakeTimers();
+      try {
+        mockListBoxChatRuns.mockImplementation((_url: string, _token: string, signal: AbortSignal) => new Promise((resolve) => {
+          signal.addEventListener("abort", () => resolve(null));
+        }));
+        renderChat();
+
+        fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+        expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
+        expect(mockStopAgent).not.toHaveBeenCalled();
+        await act(async () => { jest.advanceTimersByTime(4_000); });
+
+        expect(mockStopAgent).toHaveBeenCalledWith("test-agent");
+        expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("asks nothing of a computer without a chat agent", async () => {
+      renderChat({ agent: { ...chatAgent, type: "linux-desktop", computer_profile: "ubuntu-desktop" }, def: getAgent("linux-desktop") });
+
+      fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+
+      await waitFor(() => expect(mockRestartAgent).toHaveBeenCalledWith("test-agent"));
+      expect(mockListBoxChatRuns).not.toHaveBeenCalled();
+    });
   });
   it("keeps clear restart progress visible until the lifecycle request finishes", async () => {
     let finish!: () => void;
@@ -276,7 +390,7 @@ describe("HivraManage lifecycle guidance", () => {
       browserOn={false}
     />);
     expect(screen.getByText("Computer")).toBeInTheDocument();
-    expect(screen.getByText(/your files and local logins remain on the computer/)).toBeInTheDocument();
+    expect(screen.getByText(/apps, files, and local logins stay as they are/)).toHaveTextContent("without restarting the computer");
     expect(screen.getByText(/Permanently deletes this computer and everything on it/)).toBeInTheDocument();
     expect(screen.queryByText(/Permanently deletes the agent and everything on it/)).not.toBeInTheDocument();
   });
@@ -297,7 +411,7 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByText(new RegExp(`prepared ${name} computer`, "i"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Update & restart" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
     expect(screen.queryByText("Restore points")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/isolated Linux VM/i)).not.toBeInTheDocument();

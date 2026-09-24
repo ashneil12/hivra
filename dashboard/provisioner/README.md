@@ -209,10 +209,18 @@ is the alternative long-lived-token path.
    process environments, and they never claim release approval.
 
 For an already-running Proxmox computer, `hivra-update-guest-runtime.sh VMID IP`
-updates only the Hivra Chat connection-service assets and then verifies secure
-surface authentication plus unchanged agent identity/API-token metadata. The
-dashboard owns the lifecycle lock and performs the reboot after this helper
-returns a verified receipt; the helper never powers the VM on or off itself.
+updates only the Hivra Chat connection-service assets in place and then verifies
+secure surface authentication plus unchanged agent identity/API-token metadata.
+Only `bux-hivra-chat` restarts; the VM is never powered off or on, so desktop
+apps, agent services, tmux-backed agent terminals and detached chat runs keep
+running while proxied browser views reconnect. For a Claude
+Code / Codex computer it also consumes a staged agent-run reporter credential
+(`HIVRA_ACTIVITY_TELEMETRY_FILE`, the same slot and code as the start helper)
+and reinstalls the reporter after the gateway commit. Its stdout carries only
+host-authored lines: at most one `HIVRA_ACTIVITY_COLLECTOR` line, then
+`HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>`. The dashboard holds the lifecycle
+lock for the whole update and completes the operation as running only on that
+receipt.
 
 ## Architecture notes
 

@@ -755,10 +755,10 @@ export interface BoxChatRun {
   createdAt: string;
   finishedAt: string | null;
 }
-/** Recent runs, newest first; null when the box predates detached runs or is unreachable. */
-export async function listBoxChatRuns(boxUrl: string, token?: string | null): Promise<BoxChatRun[] | null> {
+/** Recent runs, newest first; null when the box predates detached runs, is unreachable, or the signal aborts. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatRun[] | null> {
   try {
-    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token) });
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token), signal });
     if (!r.ok) return null;
     const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
     return Array.isArray(runs) ? runs : null;

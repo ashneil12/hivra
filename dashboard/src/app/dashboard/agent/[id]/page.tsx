@@ -314,12 +314,12 @@ function AuthenticatedSurface({
               : accessStatus === "upgrade-required"
                 ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
                 : missingToken
-                  ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update & restart, then try Terminal or Files again. Your computer and its files are unchanged."
+                  ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update connection service, then try Terminal or Files again. Your computer and its files are unchanged."
                   : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus === "upgrade-required" ? (
             <p style={{ fontSize: 13, maxWidth: 460, margin: "12px auto 0", lineHeight: 1.6 }}>
-              Open Manage and choose <strong>Update &amp; restart</strong>. Hivra refreshes the connection service without deleting your computer, files, or agent login.
+              Open Manage and choose <strong>Update connection service</strong>. Hivra updates it in place, without restarting the computer or deleting its files or agent login.
             </p>
           ) : null}
           {accessStatus !== "checking" ? (
@@ -1069,7 +1069,7 @@ export default function AgentPage() {
           ) : chatReadiness === "upgrade_required" ? (
             <div className={styles.statusPanel} role="status">
               <h3>This computer needs a Chat update</h3>
-              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update &amp; restart; you can still use native sign-in in the Codex terminal.</p>
+              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update connection service (the computer keeps running); you can still use native sign-in in the Codex terminal.</p>
               <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
             </div>
           ) : chatReadiness === "unavailable" ? (

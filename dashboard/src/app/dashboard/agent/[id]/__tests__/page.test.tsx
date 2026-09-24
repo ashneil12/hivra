@@ -294,7 +294,7 @@ describe("AgentPage", () => {
     mockChatReadiness.mockResolvedValue("upgrade_required");
     render(<AgentPage />);
     expect(await screen.findByText("This computer needs a Chat update")).toBeInTheDocument();
-    expect(screen.getByText(/Open Manage and choose Update & restart/)).toBeInTheDocument();
+    expect(screen.getByText(/Open Manage and choose Update connection service \(the computer keeps running\)/)).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
   });
@@ -671,7 +671,8 @@ describe("AgentPage", () => {
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Connection update needed")).toBeInTheDocument();
-    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update & restart");
+    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update connection service");
+    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("without restarting the computer");
     expect(screen.queryByRole("link", { name: /update the connection service/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open in new tab/i })).toBeDisabled();
     expect(document.querySelector("iframe, form")).toBeNull();
@@ -1553,7 +1554,7 @@ describe("AgentPage", () => {
     expect(await screen.findByText("Files panel")).toHaveAttribute("data-workspace-root", "true");
   });
 
-  it("tells a computer with missing box credentials to update and restart instead of a false connection error", async () => {
+  it("tells a computer with missing box credentials to update its runtime instead of a false connection error", async () => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123",
       type: "linux-desktop",
@@ -1569,7 +1570,7 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     await screen.findByRole("navigation", { name: "Resource surfaces" });
     fireEvent.click(getSurfaceButton(/^Terminal$/));
-    expect(await screen.findByText(/Secure access credentials for this computer/)).toBeInTheDocument();
+    expect(await screen.findByText(/Secure access credentials for this computer/)).toHaveTextContent("Open Manage and choose Update connection service");
     expect(screen.queryByText(/connection service isn’t reachable yet/)).not.toBeInTheDocument();
     expect(document.documentElement.outerHTML).not.toContain("box-token");
   });
