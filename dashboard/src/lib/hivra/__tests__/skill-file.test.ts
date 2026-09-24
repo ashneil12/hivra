@@ -40,7 +40,7 @@ describe("skillFrontmatterProblem", () => {
 
   it("refuses a blank line or byte-order mark before the opening ---", () => {
     expect(skillFrontmatterProblem(`\n${skill("name: a\ndescription: b")}`)).toBe("it doesn't start with a --- line");
-    expect(skillFrontmatterProblem(`﻿${skill("name: a\ndescription: b")}`)).toBe("it doesn't start with a --- line");
+    expect(skillFrontmatterProblem(`\uFEFF${skill("name: a\ndescription: b")}`)).toBe("it doesn't start with a --- line");
   });
 
   it("refuses an empty block, invalid YAML, and a block that isn't key: value fields", () => {
@@ -121,7 +121,7 @@ describe("normalizeSkillContent", () => {
   it("drops blank lines and a byte-order mark above the opening ---", () => {
     const content = skill("name: a\ndescription: b");
     expect(normalizeSkillContent(`\n\n${content}`, META)).toBe(content);
-    expect(normalizeSkillContent(`﻿${content}`, META)).toBe(content);
+    expect(normalizeSkillContent(`\uFEFF${content}`, META)).toBe(content);
     // Both at once: blank first line and an unclosed fence.
     expect(normalizeSkillContent("\n---\nname: a\ndescription: b\n\n# A\n", META)).toBe("---\nname: a\ndescription: b\n---\n\n# A\n");
   });

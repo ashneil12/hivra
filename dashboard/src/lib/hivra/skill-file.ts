@@ -40,7 +40,7 @@ export const SKILL_DESCRIPTION_MAX_CHARS = 1024;
 const FENCE = "---";
 
 // Rust's str::trim keeps a byte-order mark; JavaScript's trim drops it.
-const isFence = (line: string): boolean => line.trim() === FENCE && !line.includes("﻿");
+const isFence = (line: string): boolean => line.trim() === FENCE && !line.includes("\uFEFF");
 const isBlank = (line: string): boolean => line.trim() === "";
 const isHeading = (line: string): boolean => /^#{1,6}\s/.test(line);
 const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(" ");
@@ -117,7 +117,7 @@ export class SkillContentError extends Error {
 // mark) above the opening ---, an opening --- that is never closed, and no
 // frontmatter at all. Returns null when there is nothing to work with.
 function repairSkillContent(content: string, meta: SkillRepairMetadata): string | null {
-  const lines = content.replace(/^﻿/, "").split(/\r?\n/);
+  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
   const first = lines.findIndex((line) => !isBlank(line));
   if (first === -1) return null;
   const rest = lines.slice(first);
