@@ -10,7 +10,8 @@ import {
 } from "@/lib/hivra/agent-api";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import { launchManagedSession, ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
-import type { DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
 import { getApiErrorMessage, getCardRequiredMessage, isCardRequiredResponse } from "@/lib/billing/card-required";
@@ -41,6 +42,7 @@ import {
   type HermesModelChoice,
 } from "./runtime-requests";
 import { digitalOceanLaunchRequest } from "./digitalocean-launch";
+import { GvisorRecheckError, gvisorNeedsRecheck, recheckGvisorForLaunch } from "./gvisor-launch-recheck";
 
 type ReceiptBearingCreateInput = CreateAgentInput & { launchRequestId: string };
 
@@ -59,6 +61,7 @@ const CLOCK_SKEW_MS = 120_000;
 /** The last thing Hivra reported about a launch in flight. Only observed
  * facts: the moment the request was sent, then any receipt phase read back. */
 export type LaunchObservation =
+  | { kind: "checking-host"; at: number }
   | { kind: "sent"; at: number }
   | { kind: "receipt"; phase: string; at: number };
 
@@ -75,6 +78,8 @@ export type LaunchSubmitOptions = {
   onObserved?: (observation: LaunchObservation) => void;
   /** The DigitalOcean team a DigitalOcean launch runs on, as Launch last read it. */
   digitalOceanTarget?: DigitalOceanDeploymentTargetDto | null;
+  /** The connected server a self-managed launch runs on, as Launch last read it. */
+  selfManagedTarget?: DeploymentTargetDto | null;
 };
 
 /** A correctable rejection that also offers a next step. */
@@ -476,6 +481,20 @@ export async function submitLaunchDraft(
   if (profileId === "linux-terminal") {
     if (deployment.mode !== "self-managed") {
       throw new HivraLaunchCorrectableError("Linux Sandbox requires a compatible gVisor host you connected.", 409, "gvisor_self_managed_only");
+    }
+    const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
+    if (gvisorNeedsRecheck(host, Date.now())) {
+      options.onObserved?.({ kind: "checking-host", at: Date.now() });
+      try {
+        await recheckGvisorForLaunch(host);
+      } catch (error) {
+        if (!(error instanceof GvisorRecheckError)) throw error;
+        throw new LaunchCorrectableError(error.message, error.status, "gvisor_recheck_failed", {
+          kind: "open",
+          label: "Check it in Capacity",
+          href: buildInfrastructureSetupHref("linux-terminal", { unified: true }),
+        });
+      }
     }
     return submitWithReceipt({
       type: "linux-terminal",
