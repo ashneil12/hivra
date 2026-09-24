@@ -3,7 +3,7 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import { sshExec } from "@/lib/hetzner/ssh";
 import { decryptApiKey } from "@/lib/crypto";
 import { getProxmoxInfrastructure, resolveProxmoxHostEnv, runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
-import { applyLiveUpdate, resolveInstanceIpv4 } from "../instance-orchestrator";
+import { applyLiveUpdate, resolveBankrRuntimeEnvPlanForUpdate, resolveInstanceIpv4 } from "../instance-orchestrator";
 import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { validateProviderApiKey } from "@/lib/services/provider-validation";
 import { buildAgentDeployScript, getHetznerInstanceStatus, resolveGatewayConfiguration } from "@/lib/services/hetzner-instance-service";
@@ -18,6 +18,7 @@ import {
   getBankrWalletForInstance,
 } from "@/lib/billing/bankr-instance-wallets";
 import { isProTierUser } from "@/lib/billing/pro-tier";
+import { log } from "@/lib/logger";
 
 jest.mock("@/lib/hetzner/ssh", () => ({
   sshExec: jest.fn(),
@@ -97,10 +98,18 @@ jest.mock("@/lib/instance-settings", () => ({
   getRuntimeAgentSettings: jest.fn(),
 }));
 
-jest.mock("@/lib/billing/bankr-instance-wallets", () => ({
-  buildInstanceBankrAgentConfig: jest.fn(),
-  getBankrWalletForInstance: jest.fn(),
-}));
+jest.mock("@/lib/billing/bankr-instance-wallets", () => {
+  // The custody predicates are pure: keep them real so the clear/replace
+  // decisions below run the production rules, not a stub.
+  const actual = jest.requireActual("@/lib/billing/bankr-instance-wallets");
+  return {
+    buildInstanceBankrAgentConfig: jest.fn(),
+    getBankrWalletForInstance: jest.fn(),
+    bankrRuntimeWalletAddressHistory: actual.bankrRuntimeWalletAddressHistory,
+    isRevokedUserConnectedWallet: actual.isRevokedUserConnectedWallet,
+    isUserConnectedWalletRecord: actual.isUserConnectedWalletRecord,
+  };
+});
 
 jest.mock("@/lib/billing/pro-tier", () => ({
   isProTierUser: jest.fn(),
@@ -1492,6 +1501,389 @@ describe("applyLiveUpdate", () => {
 
     expect(buildWebUIBootstrapScript).toHaveBeenCalledTimes(1);
     expect(buildAgentDeployScript).not.toHaveBeenCalled();
+  });
+});
+
+const USER_CONNECTED = "user_owned_bankr_account";
+const HIVRA_PROVISIONED = "bankr_custodied_agent_wallet";
+const bankrConfig = {
+  walletAddress: "0x00000000000000000000000000000000000c0ffe",
+  apiKey: "bk_test_runtime_key",
+  walletId: "user:0x00000000000000000000000000000000000c0ffe",
+  withdrawalDestination: null,
+};
+
+const USER_WALLET_ADDRESS = "0x00000000000000000000000000000000000c0ffe";
+// Wallets from the user's own Bankr account that later reconnects replaced,
+// oldest first, and the Hivra-created wallet the first connect replaced.
+const K1_WALLET_ADDRESS = "0x0000000000000000000000000000000000000a11";
+const OLDER_WALLET_ADDRESS = "0x0000000000000000000000000000000000000b22";
+const HIVRA_WALLET_ADDRESS = "0x000000000000000000000000000000000000ba5e";
+
+function walletRow(
+  custodyModel: string,
+  status: "active" | "pending" | "failed" | "revoked",
+  overrides: Record<string, unknown> = {}
+) {
+  // A disconnect keeps the row's address; only the key is dropped.
+  return {
+    id: "wallet-row-1",
+    status,
+    evmAddress: USER_WALLET_ADDRESS,
+    normalizedEvmAddress: USER_WALLET_ADDRESS,
+    metadata: { custodyModel },
+    ...overrides,
+  };
+}
+
+describe("resolveBankrRuntimeEnvPlanForUpdate", () => {
+  const db = {} as SupabaseClient;
+  let warnSpy: jest.SpyInstance;
+  let infoSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    warnSpy = jest.spyOn(log, "warn").mockImplementation(() => {});
+    infoSpy = jest.spyOn(log, "info").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    infoSpy.mockRestore();
+  });
+
+  it("preserves the box's key when the wallet lookup fails, with today's warning", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "preserve",
+      reason: "lookup_failed",
+    });
+    expect(buildInstanceBankrAgentConfig).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "bankr agent config unavailable during live update",
+      expect.objectContaining({ failureType: "bankr_agent_config_update_unavailable", instanceId: "inst-1" })
+    );
+  });
+
+  it("preserves when there is no wallet row", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(null);
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "preserve",
+      reason: "no_wallet",
+    });
+    expect(buildInstanceBankrAgentConfig).not.toHaveBeenCalled();
+  });
+
+  it("clears only a user-connected wallet the user disconnected, without decrypting anything", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(walletRow(USER_CONNECTED, "revoked"));
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "clear",
+      reason: "user_disconnected",
+      walletAddresses: [USER_WALLET_ADDRESS],
+    });
+    expect(buildInstanceBankrAgentConfig).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ instanceId: "inst-1", walletRowId: "wallet-row-1", bankrRuntimeEnv: "clear" })
+    );
+  });
+
+  it("hands the update the disconnected wallet's address, lower-cased, so it clears only that wallet's values", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(
+      walletRow(USER_CONNECTED, "revoked", {
+        evmAddress: "0x00000000000000000000000000000000000C0FFE",
+        normalizedEvmAddress: undefined,
+      })
+    );
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toMatchObject({
+      action: "clear",
+      walletAddresses: [USER_WALLET_ADDRESS],
+    });
+  });
+
+  it("clears every wallet the row has delivered, not only its current one", async () => {
+    // K1 was delivered with a restart; the user then reconnected (twice)
+    // without one, so the box can still hold any earlier wallet.
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(
+      walletRow(USER_CONNECTED, "revoked", {
+        metadata: {
+          custodyModel: USER_CONNECTED,
+          priorUserConnectedAddresses: [OLDER_WALLET_ADDRESS, "0x0000000000000000000000000000000000000A11", "junk"],
+          replacedProvisionedWallet: { bankrWalletId: "wlt_1", evmAddress: HIVRA_WALLET_ADDRESS },
+        },
+      })
+    );
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "clear",
+      reason: "user_disconnected",
+      // Current first, then the most recent earlier wallet, then the Hivra one.
+      walletAddresses: [USER_WALLET_ADDRESS, K1_WALLET_ADDRESS, OLDER_WALLET_ADDRESS, HIVRA_WALLET_ADDRESS],
+    });
+    expect(buildInstanceBankrAgentConfig).not.toHaveBeenCalled();
+  });
+
+  it("still clears the row's earlier wallets when its current address is unusable", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(
+      walletRow(USER_CONNECTED, "revoked", {
+        evmAddress: "",
+        normalizedEvmAddress: null,
+        metadata: { custodyModel: USER_CONNECTED, priorUserConnectedAddresses: [K1_WALLET_ADDRESS] },
+      })
+    );
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "clear",
+      reason: "user_disconnected",
+      walletAddresses: [K1_WALLET_ADDRESS],
+    });
+  });
+
+  it("preserves, and warns, when a disconnected wallet row has no usable address", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(
+      walletRow(USER_CONNECTED, "revoked", { evmAddress: "", normalizedEvmAddress: "not-an-address" })
+    );
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "preserve",
+      reason: "disconnected_address_unknown",
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ failureType: "bankr_runtime_env_clear_without_address", instanceId: "inst-1" })
+    );
+  });
+
+  it("upserts an active Hivra-provisioned wallet with no address set (today's script)", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(walletRow(HIVRA_PROVISIONED, "active"));
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValueOnce(bankrConfig);
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "upsert",
+      config: bankrConfig,
+      userConnected: false,
+    });
+  });
+
+  it("upserts an active user-connected wallet with every address the row has delivered", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(
+      walletRow(USER_CONNECTED, "active", {
+        metadata: { custodyModel: USER_CONNECTED, priorUserConnectedAddresses: [OLDER_WALLET_ADDRESS, K1_WALLET_ADDRESS] },
+      })
+    );
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValueOnce(bankrConfig);
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "upsert",
+      config: bankrConfig,
+      userConnected: true,
+      walletAddresses: [USER_WALLET_ADDRESS, K1_WALLET_ADDRESS, OLDER_WALLET_ADDRESS],
+    });
+  });
+
+  it("puts the delivered wallet in the set once, so a new key for the same wallet refreshes profile copies", async () => {
+    // K1 -> K2 on one address: nothing earlier to remember, but the set still
+    // names the delivered wallet.
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(walletRow(USER_CONNECTED, "active"));
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValueOnce({
+      ...bankrConfig,
+      apiKey: "bk_test_runtime_key_k2",
+      walletAddress: "0x00000000000000000000000000000000000C0FFE",
+    });
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toMatchObject({
+      action: "upsert",
+      userConnected: true,
+      walletAddresses: [USER_WALLET_ADDRESS],
+    });
+  });
+
+  it("preserves when decrypting the key throws", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(walletRow(USER_CONNECTED, "active"));
+    (buildInstanceBankrAgentConfig as jest.Mock).mockRejectedValueOnce(new Error("bad ciphertext"));
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "preserve",
+      reason: "lookup_failed",
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "bankr agent config unavailable during live update",
+      expect.objectContaining({ failureType: "bankr_agent_config_update_unavailable" })
+    );
+  });
+
+  it.each(["revoked", "pending", "failed"] as const)(
+    "never clears a Hivra-provisioned wallet in status %s",
+    async (status) => {
+      (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce(walletRow(HIVRA_PROVISIONED, status));
+      (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValueOnce(null);
+
+      await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+        action: "preserve",
+        reason: "not_deliverable",
+      });
+    }
+  );
+
+  it("never clears a row whose custody is unknown or missing", async () => {
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValueOnce({ id: "wallet-row", status: "revoked" });
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValueOnce(null);
+
+    await expect(resolveBankrRuntimeEnvPlanForUpdate("inst-1", db)).resolves.toEqual({
+      action: "preserve",
+      reason: "not_deliverable",
+    });
+  });
+});
+
+describe("applyLiveUpdate BANKR_* reconcile flag", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (decryptApiKey as jest.Mock).mockReturnValue("plain-api-key");
+    (getRuntimeAgentSettings as jest.Mock).mockReturnValue({});
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValue(null);
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(null);
+    (isProTierUser as jest.Mock).mockResolvedValue({ ok: false, tier: "free" });
+    (validateProviderApiKey as jest.Mock).mockResolvedValue({ valid: true });
+    (getProfileDeploymentState as jest.Mock).mockResolvedValue({ profileRoutes: [], profilesToRestore: [] });
+    (resolveGatewayConfiguration as jest.Mock).mockReturnValue({
+      fqdn: "agent.example.com",
+      gatewayUrl: "https://agent.example.com",
+    });
+    (buildWebUIProvisioningArtifacts as jest.Mock).mockReturnValue({
+      composeYaml: "compose",
+      caddyfile: "caddy",
+      envFile: "env",
+      configYaml: "config",
+      hermesEnvFile: "hermesenv",
+    });
+    (buildWebUIBootstrapScript as jest.Mock).mockReturnValue("#!/bin/bash\necho webui ok\n");
+    (resolveProviderBaseUrl as jest.Mock).mockReturnValue(undefined);
+    (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
+  });
+
+  async function webUIParamsFor(setup: () => void): Promise<Record<string, unknown>> {
+    setup();
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
+      }),
+    } as unknown as SupabaseClient;
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-webfree",
+        user_id: "user-123",
+        provider: "openai",
+        backend: "gateway",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase
+    );
+    expect(result).toEqual({ applied: true });
+    const params = (buildWebUIProvisioningArtifacts as jest.Mock).mock.calls[0][0];
+    // The bootstrap builder must see the very same params.
+    expect((buildWebUIBootstrapScript as jest.Mock).mock.calls[0][1]).toBe(params);
+    return params;
+  }
+
+  it("asks for a BANKR_* clear only for a disconnected user-connected wallet", async () => {
+    const params = await webUIParamsFor(() => {
+      (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(USER_CONNECTED, "revoked"));
+    });
+
+    expect(params.bankrRuntimeReconcile).toEqual({
+      action: "clear_user_disconnected",
+      walletAddresses: [USER_WALLET_ADDRESS],
+    });
+    expect(params.bankr).toBeNull();
+  });
+
+  it("hands the update script every wallet a disconnected row has delivered", async () => {
+    const params = await webUIParamsFor(() => {
+      (getBankrWalletForInstance as jest.Mock).mockResolvedValue(
+        walletRow(USER_CONNECTED, "revoked", {
+          metadata: { custodyModel: USER_CONNECTED, priorUserConnectedAddresses: [K1_WALLET_ADDRESS] },
+        })
+      );
+    });
+
+    expect(params.bankrRuntimeReconcile).toEqual({
+      action: "clear_user_disconnected",
+      walletAddresses: [USER_WALLET_ADDRESS, K1_WALLET_ADDRESS],
+    });
+  });
+
+  it("asks for the yaml strip when a user-connected key is delivered", async () => {
+    const params = await webUIParamsFor(() => {
+      (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(USER_CONNECTED, "active"));
+      (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(bankrConfig);
+    });
+
+    expect(params.bankrRuntimeReconcile).toEqual({ action: "replace_user_connected", walletAddresses: [USER_WALLET_ADDRESS] });
+    expect(params.bankr).toBe(bankrConfig);
+  });
+
+  it("hands a connect every wallet the row has delivered, so profile copies of any of them are replaced", async () => {
+    const params = await webUIParamsFor(() => {
+      (getBankrWalletForInstance as jest.Mock).mockResolvedValue(
+        walletRow(USER_CONNECTED, "active", {
+          metadata: {
+            custodyModel: USER_CONNECTED,
+            priorUserConnectedAddresses: [K1_WALLET_ADDRESS],
+            replacedProvisionedWallet: { evmAddress: HIVRA_WALLET_ADDRESS },
+          },
+        })
+      );
+      (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(bankrConfig);
+    });
+
+    expect(params.bankrRuntimeReconcile).toEqual({
+      action: "replace_user_connected",
+      walletAddresses: [USER_WALLET_ADDRESS, K1_WALLET_ADDRESS, HIVRA_WALLET_ADDRESS],
+    });
+  });
+
+  it.each([
+    ["the wallet lookup fails", () => (getBankrWalletForInstance as jest.Mock).mockRejectedValue(new Error("timeout"))],
+    ["there is no wallet", () => (getBankrWalletForInstance as jest.Mock).mockResolvedValue(null)],
+    [
+      "the key can't be decrypted",
+      () => {
+        (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(USER_CONNECTED, "active"));
+        (buildInstanceBankrAgentConfig as jest.Mock).mockRejectedValue(new Error("bad ciphertext"));
+      },
+    ],
+    [
+      "an active Hivra-provisioned wallet is delivered",
+      () => {
+        (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(HIVRA_PROVISIONED, "active"));
+        (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(bankrConfig);
+      },
+    ],
+    ["a Hivra-provisioned wallet is revoked", () => (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(HIVRA_PROVISIONED, "revoked"))],
+    ["a Hivra-provisioned wallet is pending", () => (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(HIVRA_PROVISIONED, "pending"))],
+    [
+      "a disconnected user wallet has no usable address",
+      () => (getBankrWalletForInstance as jest.Mock).mockResolvedValue(walletRow(USER_CONNECTED, "revoked", { evmAddress: "", normalizedEvmAddress: null })),
+    ],
+  ])("passes no flag (today's script) when %s", async (_label, setup) => {
+    const warnSpy = jest.spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const params = await webUIParamsFor(setup);
+      expect("bankrRuntimeReconcile" in params).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

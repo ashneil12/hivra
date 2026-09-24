@@ -23,6 +23,7 @@ import type { ProviderResizeStage } from "@/lib/hivra/provider-agent-resize-cont
 import { randomUUID } from "node:crypto";
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
@@ -838,6 +839,22 @@ fi` : ""}`;
               throw new Error("Could not reload the completed provision result");
             }
             current = updated;
+            // A wallet connected or disconnected while the box was stopped, or
+            // a restored snapshot's old bankr.env, is applied before the poll
+            // reports running. Best effort: it never fails convergence.
+            if (current.status === "running") {
+              try {
+                await reconcileBankrEnvAfterHivraBoot({ userId, agent: current, executionContext: context, trigger: "poll" });
+              } catch (walletError) {
+                log.warn("hivra agent wallet boot sync threw", {
+                  source: "hivra/agents/[id]",
+                  failureType: "hivra_agent_wallet_boot_env_sync_failed",
+                  userId,
+                  agentId: current.id,
+                  errorMessage: walletError instanceof Error ? walletError.message : String(walletError),
+                });
+              }
+            }
           } else if (j.ready === false) {
             const reportedError = typeof j.error === "string"
               ? j.error.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 240)

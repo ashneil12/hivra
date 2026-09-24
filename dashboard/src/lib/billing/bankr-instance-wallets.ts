@@ -336,6 +336,93 @@ export function agentWalletCustody(record: Pick<InstanceBankrWalletRecord, "meta
 }
 
 /**
+ * True when the row holds (or held) a key from the user's own Bankr account.
+ * Unlike agentWalletCustody this never throws: a row without metadata, or
+ * with a missing or unknown custodyModel, is simply not user-connected.
+ */
+export function isUserConnectedWalletRecord(record: InstanceBankrWalletRecord | null | undefined): boolean {
+  return !!record && asRecord((record as { metadata?: unknown }).metadata).custodyModel === USER_CONNECTED_CUSTODY_MODEL;
+}
+
+/**
+ * True only for a user-connected row the user disconnected. That state is
+ * written by disconnectUserBankrWalletForOwner (and the agent-delete trigger
+ * that mirrors it), so it is a definite "remove this key from the runtime",
+ * which live updates act on. Hivra-provisioned rows are never matched, in any
+ * state.
+ */
+export function isRevokedUserConnectedWallet(record: InstanceBankrWalletRecord | null | undefined): boolean {
+  return isUserConnectedWalletRecord(record) && record!.status === "revoked";
+}
+
+/** How many earlier wallets from the user's own Bankr account a row remembers. */
+export const PRIOR_USER_CONNECTED_ADDRESSES_LIMIT = 20;
+
+/** A lower-cased wallet address, or null for anything else, including the pending placeholder. */
+function runtimeWalletAddress(value: unknown): string | null {
+  if (!isEvmAddress(value)) return null;
+  const address = normalizeEvmAddress(value);
+  return address === PENDING_EVM_ADDRESS ? null : address;
+}
+
+/** metadata.priorUserConnectedAddresses as stored (oldest first), keeping only valid unique addresses. */
+function readPriorUserConnectedAddresses(metadata: unknown): string[] {
+  const stored = asRecord(metadata).priorUserConnectedAddresses;
+  const addresses: string[] = [];
+  for (const entry of Array.isArray(stored) ? stored : []) {
+    const address = runtimeWalletAddress(entry);
+    if (address && !addresses.includes(address)) addresses.push(address);
+  }
+  return addresses;
+}
+
+/**
+ * metadata.priorUserConnectedAddresses once a connect writes `nextAddress`
+ * over `existing`. The connect replaces the row's address, but a box keeps
+ * whatever it was last delivered until an update runs there (a connect or
+ * disconnect can skip the restart), so the row remembers every earlier wallet
+ * from the user's own Bankr account it held, active or disconnected. Oldest
+ * first, unique, the most recent PRIOR_USER_CONNECTED_ADDRESSES_LIMIT kept; an
+ * address that comes back moves to the end.
+ */
+function nextPriorUserConnectedAddresses(
+  existing: InstanceBankrWalletRecord | null,
+  nextAddress: string
+): string[] {
+  if (!existing) return [];
+  const prior = readPriorUserConnectedAddresses(existing.metadata);
+  const replaced = isUserConnectedWalletRecord(existing)
+    ? runtimeWalletAddress(existing.normalizedEvmAddress) ?? runtimeWalletAddress(existing.evmAddress)
+    : null;
+  const next =
+    replaced && replaced !== normalizeEvmAddress(nextAddress)
+      ? [...prior.filter((address) => address !== replaced), replaced]
+      : prior;
+  return next.slice(-PRIOR_USER_CONNECTED_ADDRESSES_LIMIT);
+}
+
+/**
+ * Every wallet address this row has delivered to an agent runtime, lower-cased
+ * and unique, current first: the row's own address (a disconnect keeps it),
+ * each earlier wallet from the user's own Bankr account a reconnect replaced
+ * (most recent first), and the Hivra-created wallet a switch replaced. A live
+ * update of a user-connected row removes BANKR_* only from runtime files
+ * holding one of these addresses, so no key the row has dropped outlives it on
+ * the box, and a file holding any other address is never touched.
+ */
+export function bankrRuntimeWalletAddressHistory(record: InstanceBankrWalletRecord): string[] {
+  const metadata = asRecord((record as { metadata?: unknown }).metadata);
+  const addresses: string[] = [];
+  const add = (address: string | null) => {
+    if (address && !addresses.includes(address)) addresses.push(address);
+  };
+  add(runtimeWalletAddress(record.normalizedEvmAddress) ?? runtimeWalletAddress(record.evmAddress));
+  for (const address of readPriorUserConnectedAddresses(metadata).reverse()) add(address);
+  add(runtimeWalletAddress(asRecord(metadata.replacedProvisionedWallet).evmAddress));
+  return addresses;
+}
+
+/**
  * True when the row points at a real wallet Hivra created through its Bankr
  * partner account. Rows whose partner call never succeeded carry a
  * `pending:` placeholder id and the zero address: no Bankr wallet exists for
@@ -1214,6 +1301,11 @@ export interface ConnectUserBankrWalletResult {
  * and a wallet Bankr reports as empty on every chain, so no funds are left
  * behind. The old wallet stays recorded on the row for good, and every API key
  * on it is then revoked at Bankr; the caller reports a failed revocation.
+ *
+ * Connecting over a wallet from the user's own account (active or
+ * disconnected) at a different address keeps that address in
+ * metadata.priorUserConnectedAddresses, so a later live update can still find
+ * and remove its key on a box that was never restarted in between.
  */
 export async function connectUserBankrWalletForOwner(params: {
   owner: BankrWalletOwner;
@@ -1279,6 +1371,7 @@ export async function connectUserBankrWalletForOwner(params: {
       ignoredZeroValueTokens,
     };
   }
+  const priorUserConnectedAddresses = nextPriorUserConnectedAddresses(existing, evmAddress);
 
   const record = await writeWalletRow({
     db: admin,
@@ -1303,6 +1396,7 @@ export async function connectUserBankrWalletForOwner(params: {
           ? { bankrSuiteSeeded: true, bankrSuiteSeededAt: existing.metadata.bankrSuiteSeededAt ?? null }
           : {}),
         ...(replacedProvisionedWallet ? { replacedProvisionedWallet } : {}),
+        ...(priorUserConnectedAddresses.length > 0 ? { priorUserConnectedAddresses } : {}),
       },
       updated_at: now.toISOString(),
     },
@@ -1368,6 +1462,8 @@ export async function disconnectUserBankrWalletForOwner(params: {
       api_key_preview: null,
       api_key_status: "revoked",
       status: "revoked",
+      // Keeps every other metadata field, priorUserConnectedAddresses included:
+      // the next live update clears BANKR_* for all of them.
       metadata: { ...existing.metadata, disconnectedAt: now.toISOString() },
       updated_at: now.toISOString(),
     },

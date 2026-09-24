@@ -21,6 +21,7 @@ jest.mock("@/lib/hivra/bankr-skills-seed", () => ({
 }));
 
 jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
+  isPinnableHivraWalletBox: jest.requireActual("@/lib/agent-wallets/hivra-lane").isPinnableHivraWalletBox,
   loadOwnedHivraWalletAgent: jest.fn(),
   syncBankrEnvToRunningHivraAgent: jest.fn(),
 }));
@@ -55,6 +56,7 @@ const agent = {
   ip: "10.250.20.42",
   vmid: 1100,
   proxmox_host: "test-proxmox-host",
+  infrastructure_binding_token_enforced: true,
   infrastructure_connection_id: null,
   deployment_target_id: null,
   infrastructure_connection_revision: null,
@@ -127,6 +129,15 @@ describe("/api/hivra/agents/[id]/bankr-wallet/connect", () => {
     expect(JSON.stringify(body)).not.toContain(USER_KEY);
   });
 
+  it("reports a box that can't be pinned distinctly, so the user isn't told to retry", async () => {
+    mockedSync.mockResolvedValueOnce({ status: "failed", error: "identity can't be verified", reason: "identity_unverifiable" });
+    const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ envSync: "failed", envSyncReason: "identity_unverifiable" });
+  });
+
   it("refuses agent types that don't take a wallet", async () => {
     mockedLoad.mockResolvedValueOnce({ ...agent, type: "aeon" });
     const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
@@ -146,5 +157,113 @@ describe("/api/hivra/agents/[id]/bankr-wallet/connect", () => {
       executionContext,
     });
     expect(body.data.envSync).toBe("synced");
+  });
+
+  it("re-reads nothing when the box was already running", async () => {
+    await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+
+    expect(mockedLoad).toHaveBeenCalledTimes(1);
+    expect(mockedContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a sync that throws as failed without failing the response", async () => {
+    mockedSync.mockRejectedValueOnce(new Error("Unsupported state or unable to authenticate data"));
+
+    const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ envSync: "failed", wallet: { custody: "user_connected" } });
+  });
+
+  /**
+   * Regression: a box that finished starting while the wallet row was being
+   * written was left without the change. The route resolved no context for
+   * the stopped box and skipped the sync, and the boot reconcile could have
+   * read the row before the write landed.
+   */
+  describe("when the box finishes starting during the request", () => {
+    const stopped = { ...agent, status: "stopped" };
+    const started = { ...agent, ip: "10.250.20.43" };
+
+    beforeEach(() => {
+      mockedLoad.mockReset().mockResolvedValueOnce(stopped).mockResolvedValueOnce(started);
+      // Mirror the real helper: a box without a running status or context is skipped.
+      mockedSync.mockImplementation(async ({ agent: box, executionContext: context }) =>
+        box.status === "running" && box.ip && context ? { status: "synced" } : { status: "skipped" }
+      );
+    });
+
+    it("writes a connected key to the box once it is up", async () => {
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedLoad).toHaveBeenCalledTimes(2);
+      expect(mockedLoad).toHaveBeenLastCalledWith("agent_1", "user_123");
+      expect(mockedLoad.mock.invocationCallOrder[1]).toBeGreaterThan(mockedConnect.mock.invocationCallOrder[0]);
+      expect(mockedContext).toHaveBeenCalledTimes(1);
+      expect(mockedContext).toHaveBeenCalledWith("user_123", started);
+      expect(mockedSync).toHaveBeenCalledWith({
+        agent: started,
+        record: expect.objectContaining({ status: "active" }),
+        executionContext,
+      });
+      expect(body.data.envSync).toBe("synced");
+    });
+
+    it("removes a disconnected key from the box once it is up", async () => {
+      const response = await DELETE(request("DELETE"), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedLoad.mock.invocationCallOrder[1]).toBeGreaterThan(mockedDisconnect.mock.invocationCallOrder[0]);
+      expect(mockedSync).toHaveBeenCalledWith({
+        agent: started,
+        record: expect.objectContaining({ status: "revoked" }),
+        executionContext,
+      });
+      expect(body.data.envSync).toBe("synced");
+    });
+
+    it("leaves a box that is still stopped to its boot reconcile", async () => {
+      mockedLoad.mockReset().mockResolvedValue(stopped);
+
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedLoad).toHaveBeenCalledTimes(2);
+      expect(mockedContext).not.toHaveBeenCalled();
+      expect(mockedSync).not.toHaveBeenCalled();
+      expect(body.data.envSync).toBe("skipped");
+    });
+
+    it("tells the user now that a stopped box which can't be pinned will never get the key", async () => {
+      const legacyStopped = { ...agent, status: "stopped", infrastructure_binding_token_enforced: false };
+      mockedLoad.mockReset().mockResolvedValue(legacyStopped);
+
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedSync).not.toHaveBeenCalled();
+      expect(body.data).toMatchObject({ envSync: "failed", envSyncReason: "identity_unverifiable" });
+    });
+
+    it.each([
+      ["the context can't be resolved", () => mockedContext.mockRejectedValueOnce(new Error("binding_invalid"))],
+      ["the re-read fails", () => mockedLoad.mockReset().mockResolvedValueOnce(stopped).mockRejectedValueOnce(new Error("db down"))],
+    ])("still returns the saved wallet when %s", async (_label, arrange) => {
+      arrange();
+
+      const response = await POST(request("POST", { apiKey: USER_KEY, consent: true }), params);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedConnect).toHaveBeenCalledTimes(1);
+      expect(mockedSync).not.toHaveBeenCalled();
+      expect(body.data).toMatchObject({ envSync: "failed", wallet: { custody: "user_connected", evmAddress: USER_WALLET } });
+    });
   });
 });
