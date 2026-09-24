@@ -122,7 +122,7 @@ function runHelper(options: {
     }
     for (const asset of RUNTIME_ASSETS) copyFileSync(path.join(bundleRoot, "hivra-chat", asset), path.join(bundle, "hivra-chat", asset));
     for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
-      "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
+      "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
       copyFileSync(path.join(bundleRoot, file), path.join(bundle, file));
     }
     // The real helper, with only its fixed root paths moved under the sandbox.
@@ -271,7 +271,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     expect(guest.indexOf("agent_cli_report || true")).toBeLessThan(guest.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
     // Every terminal unit must keep the vendor self-updater off, or the update rolls back.
     expect(guest).toContain("grep -Fxq DISABLE_AUTOUPDATER=1");
-    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py\)/);
+    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\)/);
   });
 
   it("prints only the receipt for a computer without a staged credential", () => {

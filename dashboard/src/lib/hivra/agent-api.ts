@@ -667,11 +667,56 @@ function boxBase(boxUrl: string): string {
   return boxUrl.replace(/\/$/, "");
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null }> {
+/** An Aeon computer's last sync with the user's GitHub fork, as recorded by
+ *  the computer (~/.hivra/aeon-connect.json). `pushReady` means dashboard
+ *  saves reach the fork; `workflows` maps each Aeon workflow file to its
+ *  GitHub state after the computer enabled the ones GitHub disabled itself.
+ *  - auth_failed: GitHub rejected the computer's sign-in (401/403).
+ *  - unreachable: GitHub could not be reached; retried until `retryAt`.
+ *  - fetch_failed: the fork could not be read; also retried.
+ *  - credentials_failed: git could not be given the GitHub sign-in.
+ *  - push_denied: GitHub refused the push (token permissions).
+ *  - push_failed: the push failed for another reason; `detail` carries what
+ *    GitHub said (a repository rule, push protection, a protected branch).
+ *  - on_other_branch: the owner checked out another branch by hand; nothing
+ *    was changed and saves are not pushed until the default branch is back.
+ *  - operation_in_progress: a git rebase, merge or other operation the sync
+ *    did not start is unfinished in the clone; nothing was changed and saves
+ *    are not pushed until it is finished or cancelled.
+ *  GitHub connect fails (HTTP 400) for every status other than syncing, ok,
+ *  unreachable and fetch_failed. */
+export interface AeonConnectStatus {
+  status:
+    | "syncing"
+    | "ok"
+    | "auth_failed"
+    | "unreachable"
+    | "fetch_failed"
+    | "credentials_failed"
+    | "push_denied"
+    | "push_failed"
+    | "on_other_branch"
+    | "operation_in_progress"
+    | "error";
+  repo: string;
+  branch: string | null;
+  pushReady: boolean;
+  workflows: Record<string, string>;
+  /** Local branches holding edits that could not be applied to the fork. */
+  parkedBranches: string[];
+  detail?: string;
+  /** How many syncs have run in this series (1 for the first). */
+  attempt?: number;
+  /** When the computer will try again, for the retried statuses. */
+  retryAt?: string;
+  at: string;
+}
+
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
   } catch {
     return { loggedIn: false };
   }

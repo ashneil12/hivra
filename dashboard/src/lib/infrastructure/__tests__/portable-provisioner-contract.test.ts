@@ -437,6 +437,64 @@ describe("portable provisioner source contract", () => {
     expect(updater).toContain('"$(systemctl show -p KillMode --value bux-hivra-chat.service)" != process');
   });
 
+  it("refreshes the root-owned Telegram helper on running guests with backup and rollback", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    // New guests and updated guests end up with the same root-owned helper.
+    expect(installer).toContain('install -o root -g root -m 0755 "$SRC_DIR/hivra-tg-apply" /usr/local/bin/hivra-tg-apply');
+    expect(updater).toMatch(/TERMINAL_ASSETS=\([^)]*\bhivra-tg-apply\)/);
+    expect(updater).toContain('tar -czf "$ARCHIVE" -C "$PROVISIONER_DIR/hivra-chat" "${ASSETS[@]}" -C "$PROVISIONER_DIR" "${TERMINAL_ASSETS[@]}"');
+    expect(updater).toContain("TG_APPLY=/usr/local/bin/hivra-tg-apply");
+    expect(updater).toContain('install -o root -g root -m 0600 "$TG_APPLY" "$BACKUP/hivra-tg-apply"');
+    expect(updater).toContain(': > "$BACKUP/hivra-tg-apply.absent"');
+    expect(updater).toContain('bash -n "$WORK/hivra-tg-apply"');
+    const rollback = shellFunction(updater, "rollback", "\n}\n");
+    expect(rollback).toContain('install -o root -g root -m 0755 "$BACKUP/hivra-tg-apply" "$TG_APPLY"');
+    expect(rollback).toContain('elif [ -f "$BACKUP/hivra-tg-apply.absent" ]; then rm -f -- "$TG_APPLY"; fi');
+    expect(rollback).toContain('"$TG_APPLY.next"');
+    // Checked before it is installed; installed before the gateway restart
+    // whose failure rolls everything back.
+    const install = updater.indexOf('install -o root -g root -m 0755 "$WORK/hivra-tg-apply" "$TG_APPLY.next"');
+    expect(install).toBeGreaterThan(updater.indexOf('bash -n "$WORK/hivra-tg-apply"'));
+    expect(install).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain('mv -f -- "$TG_APPLY.next" "$TG_APPLY"');
+    // It never rewrites the bot token or the sudoers grant.
+    expect(updater).not.toMatch(/tg\.env|>\s*\/etc\/sudoers/);
+  });
+
+  it("gives Agent Zero a stop grace that fits inside every host shutdown budget", () => {
+    const installer = source("provision-claude-code-box.sh");
+    const unit = installer.slice(
+      installer.indexOf("cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT"),
+      installer.indexOf("chmod 0644 /etc/systemd/system/hivra-agent-zero.service"),
+    );
+    const grace = Number((unit.match(/^ExecStop=\/usr\/bin\/docker stop -t (\d+) hivra-agent-zero$/m) || [])[1]);
+    const unitTimeout = Number((unit.match(/^TimeoutStopSec=(\d+)$/m) || [])[1]);
+    // Every way the dashboard shuts a Hivra computer down gracefully before
+    // it hard-stops the VM (`qm stop`): lifecycle stop/restart/update/resize,
+    // idle parking, snapshot restore and the prepared canary computers.
+    const dashboard = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), "utf8");
+    const lifecycle = dashboard("src/app/api/hivra/agents/[id]/action/route.ts");
+    const lifecycleBudgets = [...lifecycle.matchAll(/verifiedStop(?:VmBody|VmScript)\(vmid, (\d+)[,)]/g)].map((m) => Number(m[1]));
+    const otherBudgets = [
+      "src/lib/hivra/park-idle-agents.ts",
+      "src/lib/hivra/agent-snapshots.ts",
+      "src/lib/hivra/prepared-canary-computers.ts",
+    ].flatMap((file) => [...dashboard(file).matchAll(/qm shutdown \S+ --timeout (\d+)/g)].map((m) => Number(m[1])));
+    // stop, restart and resize at least; the other three files one or more each.
+    expect(lifecycleBudgets.length).toBeGreaterThanOrEqual(3);
+    expect(otherBudgets.length).toBeGreaterThanOrEqual(3);
+    const shortestHostBudget = Math.min(...lifecycleBudgets, ...otherBudgets);
+
+    // More than docker's 10 s default, which kills Agent Zero mid-save.
+    expect(grace).toBeGreaterThan(10);
+    // systemd never kills `docker stop` before the container's grace ends...
+    expect(unitTimeout).toBeGreaterThanOrEqual(grace + 5);
+    // ...and the whole guest still powers off (10 s for everything else)
+    // before the host gives up on its graceful shutdown and hard-stops the VM.
+    expect(unitTimeout + 10).toBeLessThanOrEqual(shortestHostBudget);
+  });
+
   it("does not default installer dependencies to a moving main/latest reference", () => {
     const installerSource = [
       source("prepare-proxmox-host.sh"),
