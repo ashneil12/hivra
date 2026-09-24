@@ -44,6 +44,39 @@ check that needs other capacity or a credential says so.
 
 ---
 
+## 0. Slice 14 implementation status
+
+**Built on branch `claude/agent-computer`, not yet merged or on Canary.** No
+live check in 8.3 has run. Everything here is source- and test-verified only.
+
+What is implemented, and where it differs from the design below:
+
+| Area | Implemented | Difference from this document |
+|---|---|---|
+| Renderer and input | `renderComputerContract()`, `contractLabel()`, `computerContractPlanFor()`, `agentSurfacesFor()`; parity test T19 | The browser is stated as a switch the owner controls plus a concrete live check (`systemctl is-active bux-local-browser`), and the other stable facts point at `nproc`, `free -h` and `~/.hivra/computer.json`. There is no status program yet (see below) |
+| Delivery to agent-owned computers | Hivra Cloud and My server: the Proxmox host-to-guest seed lane. My cloud (Hetzner provider VMs): the original enrolled SSH pin with the administrator key Hivra generated, the same lane the guest installer runs on (`provider-guest-seed.ts`). Both run one fixed guest program that replaces exactly one block by compare-and-swap, reads the file back and reports its digest | **Refinement of 4.5.** The gateway protocol `hivra-computer-contract-v1` is not built. It needs a provisioner release and reaches only computers prepared after it; the seed lanes reach every existing computer now. The trust class is the same: the agent has sudo on its own computer, so Manage names the computer as the reporter (T34) and never says "checked by Hivra" |
+| Receipts and Manage | `hivra_computer_contracts` (service role only, RLS on). Manage → Computer shows "rev N · Delivered <time>" only after a read-back of that revision's exact digest, "Update pending" before, "Changed on the computer" with Restore as an owner click. "Who confirmed this" says it was reported by software on the computer | Every delivered revision says "applies to new chats" until spike S3 runs |
+| DigitalOcean | A visible first "Hivra setup" message at launch, recorded with `source = hivra-setup`, drawn as a collapsed Hivra card. The launch form says it uses a little usage. Later updates are the owner's "Send update" click. Shown only as "Sent in chat" | Never exercised against the real DigitalOcean API |
+| Launch seeds on provider VMs (ATT-05) | The identity files, the Bankr skills and a template's skills reach Claude Code and Codex on My cloud over the same enrolled pin, each stamped once only after the computer confirmed it | Model settings are not re-sent; the provider launch document already carries them |
+
+**Next, not built:**
+
+- `hivra computer status --json`. It is a root-owned program in the
+  provisioner bundle, so it needs its own provisioner release (VERSION,
+  `PORTABLE_HIVRA_PROVISIONER_VERSION` and every compatibility list, the
+  release manifest and its digest-bound admission migration, bundle tests),
+  and it reaches existing computers only as their hosts are prepared again.
+  Writing it from a seed lane would be a new class of change to every
+  computer and is not reviewed. Until it ships the contract names the
+  concrete checks above.
+- The gateway protocol of 4.5, if a lane with an HMAC receipt is still
+  wanted once the status program ships.
+- Acceptance AC-C1 to AC-C5 on Canary. AC-C4 needs purchase approval or an
+  existing Canary provider VM; AC-C5 needs an approved DigitalOcean preview
+  team.
+
+---
+
 ## 1. Decisions in one page
 
 **Computer Contract**
