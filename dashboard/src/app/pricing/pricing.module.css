@@ -3,3 +3,10 @@
    outranks that grid wherever the two stylesheets load. */
 .sizes.sizes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 900px) { .sizes.sizes { grid-template-columns: 1fr; } }
+
+/* The page's main column already has the gutter; the homepage section adds its
+   own, which would indent the cards past the masthead and the questions. */
+.section.section { width: 100%; padding-inline: 0; }
+
+/* The size always sits on its own line under the price. */
+.priceFor { flex-basis: 100%; }

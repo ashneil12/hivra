@@ -70,10 +70,10 @@ export default function PricingPage() {
           <p>The platform is free to self-host. Pay only if you want Hivra to run the computer for you.</p>
         </header>
         <div className={homeStyles.pricingWrap}>
-          <section className={cardStyles.pricing} aria-labelledby="pricing-today-heading">
+          <section className={`${cardStyles.pricing} ${pageStyles.section}`} aria-labelledby="pricing-today-heading">
             <header className={cardStyles.heading}>
               <h2 id="pricing-today-heading">What you can buy today.</h2>
-              <p>Prices are in US dollars, per computer, per month.</p>
+              <p>Prices are in US dollars, per month. Each plan is a pool of CPU and memory for your agents&apos; computers.</p>
             </header>
             <div className={`${cardStyles.ladder} ${pageStyles.sizes}`}>
               <article className={`${cardStyles.machine} ${cardStyles.freeMachine}`} aria-labelledby="size-self-host">
@@ -105,7 +105,7 @@ export default function PricingPage() {
                   </div>
                   <p className={cardStyles.machinePrice}>
                     <strong>{size.price}</strong>
-                    <span>
+                    <span className={pageStyles.priceFor}>
                       a month for {size.cpu} vCPU and {size.ramGb} GB of RAM
                     </span>
                   </p>
