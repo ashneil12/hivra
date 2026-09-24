@@ -1351,7 +1351,8 @@ function handleChat(req, res) {
         preface: { type: "_run", runId: run.runId, detached: run.detached },
         // Callers that did not opt into detached runs keep the historical
         // contract: their disconnect stops the turn. Older dashboards abort the
-        // fetch as their Stop button, and the box's own page expects it too.
+        // fetch as their Stop button. The computer's own chat page (app.js)
+        // sends detach and stops a run through POST /api/chat/runs/<id>/stop.
         onClientClose: run.detached ? undefined : () => CHAT_RUNS.stop(run.runId, "disconnect"),
         onError: logChatStreamError,
       });

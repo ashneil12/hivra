@@ -7,12 +7,19 @@
 // finish is rebuilt from the run's event log when the page comes back. Only
 // Stop ends a run early.
 //
+// GET / and this script are public, so nothing saved on this device is shown
+// until the computer has accepted this page's session. Tabs of this page share
+// the saved conversation: every save merges by run id, other tabs' saves arrive
+// as `storage` events, and a Web Lock per run keeps two tabs from following the
+// same run.
+//
 // Stream lines (one JSON object each):
 //   claude   `claude -p --output-format stream-json --include-partial-messages`
 //   codex    `codex exec --json`: thread.started, item.*, turn.failed, error
 //   generic  {type:"_text"} lines wrapping a plain CLI's stdout
 // plus the computer's own: _run (preface), _ping (heartbeat), _stderr, and
-// _done (the run's outcome, always the last line).
+// _done (the run's outcome, always the last line). All but _run and _ping are
+// the run's log, which `/events?offset=` counts in bytes.
 "use strict";
 
 const STORE_KEY = "hivra-chat:conversation:v1";
@@ -21,21 +28,30 @@ const MAX_STORED_CHARS = 1500000;
 // Starting a run is idempotent per runId, so a start whose connection failed is
 // repeated: it attaches to the run if the first request did reach the computer.
 const START_DELAYS_MS = [0, 1000, 3000];
-// Re-attach attempts after a stream drops. After that the page waits for focus,
-// the network coming back, or the periodic check below.
+// Re-attach attempts in a row that bring nothing new from the run's log. After
+// that the page waits for focus, the network coming back, or the periodic check.
 const RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000];
 const REATTACH_INTERVAL_MS = 20000;
+// A stream carries at least a `_ping` line every 15s. This much silence means
+// the connection died without an error (a laptop asleep, a proxy or NAT that
+// dropped it): the page cuts it and re-attaches. Focus and the network coming
+// back use the shorter limit.
+const STALL_MS = 45000;
+const WAKE_STALL_MS = 30000;
 const SESSION_ID_RE = /^[0-9a-f-]{8,}$/i;
 const CURSOR = '<span class="cursor"></span>';
+const UNREACHABLE = "Can't reach this computer right now. This page keeps trying.";
+const SIGNED_OUT = "Your session on this computer has ended. Reopen this page from your Hivra dashboard to see your conversation; the agent keeps working in the meantime.";
 const SIGNED_OUT_SEND = "Your session on this computer has ended, so the message was not sent. Reopen this page from your Hivra dashboard and send it again.";
-const SIGNED_OUT_FOLLOW = "Your session on this computer has ended. Reopen this page from your Hivra dashboard to see the reply; the agent keeps working in the meantime.";
 const OFFLINE = "Lost the connection to the computer. The agent keeps working; the reply continues here when the computer is reachable again.";
 const UNSENT = "Couldn't reach the computer. This page checks again when the connection is back and tells you if the message needs sending again.";
+const ELSEWHERE = "This reply is showing live in another tab of this page.";
+const SESSION_LOST = "The agent couldn't reopen this conversation on the computer (it may have been cleaned up), so it did not get your message. Send it again to start a new conversation with the agent, or press New chat.";
 
 // `warn` picks the stderr lines worth showing, as the dashboard's chat does.
 const AGENTS = {
-  claude: { name: "Claude Code", avatar: "C", runs: "Runs the official <code>claude</code> CLI on your own login", warn: /error|invalid|denied|expired|unauthor/i },
-  codex: { name: "Codex", avatar: "C", runs: "Runs the official <code>codex</code> CLI on your own login", warn: /error|invalid|denied|expired|unauthor/i },
+  claude: { name: "Claude Code", avatar: "C", runs: "Runs the official <code>claude</code> CLI on your own login", warn: /error|invalid|denied|expired|unauthor|not found|no conversation found/i },
+  codex: { name: "Codex", avatar: "C", runs: "Runs the official <code>codex</code> CLI on your own login", warn: /error|invalid|denied|expired|unauthor|not found|no conversation found/i },
   generic: { name: "Agent", avatar: "A", runs: "Runs your agent's own command on this computer", warn: /error|invalid|denied|expired|unauthor|fatal|traceback/i },
 };
 let agent = AGENTS.claude;
@@ -48,18 +64,43 @@ const stopBtn = $("stop");
 const newBtn = $("new");
 const statusEl = $("status");
 const emptyEl = $("empty");
+const gate = $("gate");
+const gateText = $("gate-text");
 const modelEl = $("model");
+const noop = () => {};
 
-// The run this page is showing live, or null. At most one at a time.
+// The run this page is following live, or null. At most one at a time.
 let active = null;
-let resuming = false;
+let refreshing = false;
+// "open" once the computer accepted this page's session; "checking",
+// "signed-out" or "unreachable" keep the saved conversation off the screen.
+let access = "checking";
 let saveTimer = null;
-const views = new Map(); // turn -> { body, tools, note, transient }
+const views = new Map(); // turn -> { body, tools, note, offer, transient }
+const dirty = new Map(); // turn -> { text, tools } waiting for the next frame
+let frame = 0;
+// How far this page got through the log of a run it stopped showing live
+// (offline, signed out): { offset, parse }. Picking the run back up in this
+// page continues from there instead of reading the whole log again. Dropped
+// when another tab saves a newer copy of the turn, which this page's offset
+// no longer matches.
+const positions = new WeakMap();
 
 // ---- the conversation, kept on this device ----------------------------------
+//
+// One conversation per device, its turns keyed by run id. Tabs merge their
+// copies of a turn, keeping the one further along, and a New chat in any tab
+// drops every turn created before it (`clearedAt`). The agent session the next
+// message continues is the newest one a turn reported.
 
-function emptyState() {
-  return { sessionId: null, turns: [] };
+function emptyState(clearedAt) {
+  return { clearedAt: clearedAt || 0, turns: [] };
+}
+function timeOf(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function sessionOf(value) {
+  return typeof value === "string" && SESSION_ID_RE.test(value) ? value : null;
 }
 function normalizeTurn(raw) {
   const t = raw && typeof raw === "object" ? raw : {};
@@ -68,35 +109,96 @@ function normalizeTurn(raw) {
     assistant: String(t.assistant || ""),
     tools: Array.isArray(t.tools) ? t.tools.filter((x) => x && typeof x === "object").map((x) => ({ id: String(x.id || ""), name: String(x.name || "tool"), detail: String(x.detail || "") })) : [],
     warnings: Array.isArray(t.warnings) ? t.warnings.map(String) : [],
-    runId: typeof t.runId === "string" ? t.runId : null,
+    runId: typeof t.runId === "string" && t.runId ? t.runId : null,
     done: t.done === true,
     outcome: typeof t.outcome === "string" ? t.outcome : null,
+    // The agent session this run reported, and the one it was asked to continue.
+    sessionId: sessionOf(t.sessionId),
+    resumes: sessionOf(t.resumes),
+    sessionLost: t.sessionLost === true,
+    stopRequested: t.stopRequested === true,
+    createdAt: timeOf(t.createdAt),
+    updatedAt: timeOf(t.updatedAt),
   };
 }
-function loadState() {
+function byCreation(a, b) {
+  return a.createdAt - b.createdAt;
+}
+function readStored() {
   let raw = null;
-  try { raw = window.localStorage.getItem(STORE_KEY); } catch { return emptyState(); }
-  if (!raw) return emptyState();
+  try { raw = window.localStorage.getItem(STORE_KEY); } catch { return null; }
+  if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return {
-      sessionId: typeof parsed.sessionId === "string" && SESSION_ID_RE.test(parsed.sessionId) ? parsed.sessionId : null,
-      turns: Array.isArray(parsed.turns) ? parsed.turns.map(normalizeTurn).filter((t) => t.user) : [],
-    };
+    const turns = Array.isArray(parsed.turns) ? parsed.turns.map(normalizeTurn).filter((t) => t.user && t.runId) : [];
+    return { clearedAt: timeOf(parsed.clearedAt), turns: turns.sort(byCreation) };
   } catch (e) {
     console.warn("hivra-chat: ignoring an unreadable saved conversation", e);
-    return emptyState();
+    return null;
   }
 }
+let state = readStored() || emptyState(0);
+
+function currentSessionId() {
+  for (let i = state.turns.length - 1; i >= 0; i--) {
+    const turn = state.turns[i];
+    if (turn.sessionId) return turn.sessionId;
+    if (turn.sessionLost) return null;
+  }
+  return null;
+}
+
+// Copy `a` of a run's turn is further along than copy `b`.
+function isNewer(a, b) {
+  if (a.done !== b.done) return a.done;
+  return a.updatedAt > b.updatedAt;
+}
+function driving(turn) {
+  return Boolean(active && active.turn === turn);
+}
+
+// Fold in what other tabs of this page saved: turns they added, newer copies of
+// turns this tab is not following itself, and a New chat pressed there.
+function sync() {
+  const stored = readStored();
+  if (!stored) return;
+  let reshaped = false;
+  if (stored.clearedAt > state.clearedAt) state.clearedAt = stored.clearedAt;
+  const mine = new Map(state.turns.map((turn) => [turn.runId, turn]));
+  for (const theirs of stored.turns) {
+    const turn = mine.get(theirs.runId);
+    if (!turn) {
+      if (theirs.createdAt >= state.clearedAt) {
+        state.turns.push(theirs);
+        reshaped = true;
+      }
+    } else if (!driving(turn) && isNewer(theirs, turn)) {
+      Object.assign(turn, theirs);
+      positions.delete(turn);
+      schedulePaint(turn, "all");
+    }
+  }
+  const kept = state.turns.filter((turn) => turn.createdAt >= state.clearedAt || driving(turn));
+  if (kept.length !== state.turns.length) {
+    state.turns = kept;
+    reshaped = true;
+  }
+  if (reshaped) {
+    state.turns.sort(byCreation);
+    if (access === "open") renderAll();
+  }
+}
+
 function saveSoon() {
   if (!saveTimer) saveTimer = setTimeout(saveNow, 400);
 }
 function saveNow() {
   clearTimeout(saveTimer);
   saveTimer = null;
+  sync(); // never write over turns another tab saved
   const turns = state.turns.slice(-MAX_TURNS);
   for (;;) {
-    const json = JSON.stringify({ v: 1, sessionId: state.sessionId, turns });
+    const json = JSON.stringify({ v: 1, clearedAt: state.clearedAt, turns });
     if (json.length > MAX_STORED_CHARS && turns.length > 1) { turns.shift(); continue; }
     try {
       window.localStorage.setItem(STORE_KEY, json);
@@ -109,11 +211,19 @@ function saveNow() {
     }
   }
 }
-let state = loadState();
 
-function adoptSession(id) {
-  if (typeof id !== "string" || !SESSION_ID_RE.test(id) || state.sessionId === id) return;
-  state.sessionId = id;
+// A run event changed the turn: repaint it on the next frame and save it soon.
+function changed(turn, part) {
+  turn.updatedAt = Date.now();
+  schedulePaint(turn, part);
+  saveSoon();
+}
+
+function adoptSession(run, id) {
+  const session = sessionOf(id);
+  if (!session || run.turn.sessionId === session) return;
+  run.turn.sessionId = session;
+  run.turn.updatedAt = Date.now();
   saveSoon();
 }
 
@@ -141,7 +251,7 @@ function renderMarkdown(text) {
 }
 
 function addMessage(role) {
-  if (emptyEl) emptyEl.style.display = "none";
+  if (emptyEl) emptyEl.hidden = true;
   const msg = document.createElement("div");
   msg.className = "msg " + role;
   const av = document.createElement("div");
@@ -165,11 +275,21 @@ function addMessage(role) {
   col.appendChild(tools);
   col.appendChild(body);
   col.appendChild(note);
+  let offer = null;
+  if (role === "assistant") {
+    // Shown under a reply whose agent conversation is gone (see finishRun).
+    offer = document.createElement("button");
+    offer.type = "button";
+    offer.className = "badge offer";
+    offer.textContent = "Start a new chat";
+    offer.hidden = true;
+    offer.addEventListener("click", () => newChat());
+    col.appendChild(offer);
+  }
   msg.appendChild(av);
   msg.appendChild(col);
   log.appendChild(msg);
-  scrollDown();
-  return { body, tools, note, transient: "" };
+  return { body, tools, note, offer, transient: "" };
 }
 
 function toolChip(tool) {
@@ -181,17 +301,29 @@ function toolChip(tool) {
   return chip;
 }
 
-function renderTurn(turn) {
+function renderTurn(turn, transient) {
   addMessage("user").body.textContent = turn.user;
-  views.set(turn, addMessage("assistant"));
-  paintTools(turn);
-  paintText(turn);
+  const view = addMessage("assistant");
+  view.transient = transient || "";
+  views.set(turn, view);
+  paintTurn(turn);
+}
+
+// The whole conversation, again: once the page opens, and when another tab
+// added turns or started a new chat.
+function renderAll() {
+  const transients = new Map(Array.from(views, ([turn, view]) => [turn, view.transient]));
+  views.clear();
+  dirty.clear();
+  log.textContent = "";
+  for (const turn of state.turns) renderTurn(turn, transients.get(turn));
+  if (emptyEl) emptyEl.hidden = state.turns.length > 0;
 }
 
 function paintText(turn) {
   const view = views.get(turn);
   if (!view) return;
-  const live = Boolean(active && active.turn === turn);
+  const live = driving(turn);
   let text = turn.assistant;
   for (const warning of turn.warnings) text += (text ? "\n\n" : "") + "⚠ " + warning;
   if (text) view.body.innerHTML = renderMarkdown(text) + (live ? CURSOR : "");
@@ -201,7 +333,7 @@ function paintText(turn) {
   const note = view.transient || (turn.outcome === "stopped" ? "Stopped." : "");
   view.note.textContent = note;
   view.note.style.display = note ? "" : "none";
-  scrollDown();
+  if (view.offer) view.offer.hidden = !(turn.sessionLost && !active && state.turns[state.turns.length - 1] === turn);
 }
 
 function paintTools(turn) {
@@ -210,10 +342,42 @@ function paintTools(turn) {
   view.tools.textContent = "";
   view.tools.style.display = turn.tools.length ? "flex" : "none";
   for (const tool of turn.tools) view.tools.appendChild(toolChip(tool));
+}
+
+function paintTurn(turn) {
+  dirty.delete(turn);
+  paintTools(turn);
+  paintText(turn);
+  scrollSoon();
+}
+
+// Stream events only mark the turn; it is painted, and the log scrolled, at
+// most once a frame. A replayed run log can be thousands of lines that arrive
+// at once, and repainting the whole reply for each of them froze the page.
+const nextFrame = typeof window.requestAnimationFrame === "function"
+  ? (fn) => window.requestAnimationFrame(fn)
+  : (fn) => setTimeout(fn, 16);
+function schedulePaint(turn, part) {
+  const marks = dirty.get(turn) || { text: false, tools: false };
+  if (part !== "tools") marks.text = true;
+  if (part !== "text") marks.tools = true;
+  dirty.set(turn, marks);
+  scrollSoon();
+}
+function scrollSoon() {
+  if (!frame) frame = nextFrame(flushPaints);
+}
+function flushPaints() {
+  frame = 0;
+  for (const [turn, marks] of dirty) {
+    if (marks.tools) paintTools(turn);
+    if (marks.text) paintText(turn);
+  }
+  dirty.clear();
   scrollDown();
 }
 
-// A transient line under a reply (reconnecting, signed out). Not persisted.
+// A transient line under a reply (reconnecting, another tab). Not persisted.
 function note(turn, text) {
   const view = views.get(turn);
   if (!view) return;
@@ -230,13 +394,31 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-function setBusy(busy, status) {
-  sendBtn.disabled = busy;
+function syncControls() {
+  const busy = Boolean(active);
+  const open = access === "open";
+  sendBtn.disabled = busy || !open;
   sendBtn.hidden = busy;
   stopBtn.hidden = !busy;
-  stopBtn.disabled = false;
-  if (newBtn) newBtn.disabled = busy;
-  setStatus(status || (busy ? "thinking…" : "ready"));
+  stopBtn.disabled = Boolean(active && active.stopping);
+  if (newBtn) newBtn.disabled = busy || !open;
+}
+
+function setAccess(next, message) {
+  const wasOpen = access === "open";
+  access = next;
+  const open = next === "open";
+  if (gate) gate.hidden = open;
+  if (gateText) gateText.textContent = open ? "" : message || "";
+  log.hidden = !open;
+  if (open && !wasOpen) renderAll();
+  if (!open && wasOpen) {
+    views.clear();
+    dirty.clear();
+    log.textContent = "";
+  }
+  if (!open && emptyEl) emptyEl.hidden = true;
+  syncControls();
 }
 
 function showModel(model) {
@@ -272,20 +454,18 @@ async function loadMeta() {
 // ---- stream parsing (claude, codex and generic share one page) ----------------
 
 function newParse() {
-  return { seenText: false, segments: new Map(), done: null };
+  return { seenText: false, sawSession: false, segments: new Map(), done: null, badLine: false };
 }
 
 function appendText(turn, text) {
   turn.assistant += text;
-  paintText(turn);
-  saveSoon();
+  changed(turn, "text");
 }
 function addWarning(turn, text) {
   const warning = String(text || "").trim();
   if (!warning || turn.warnings.includes(warning)) return;
   turn.warnings.push(warning);
-  paintText(turn);
-  saveSoon();
+  changed(turn, "text");
 }
 function upsertTool(turn, id, name, detail) {
   const key = id ? String(id) : "";
@@ -297,8 +477,7 @@ function upsertTool(turn, id, name, detail) {
   } else {
     turn.tools.push({ id: key, name: name || "tool", detail: clean });
   }
-  paintTools(turn);
-  saveSoon();
+  changed(turn, "tools");
 }
 function toolDetail(input) {
   const i = input && typeof input === "object" ? input : {};
@@ -327,8 +506,7 @@ function codexItem(run, item) {
     if (!text) return;
     run.parse.segments.set(id, text);
     turn.assistant = Array.from(run.parse.segments.values()).join("\n\n");
-    paintText(turn);
-    saveSoon();
+    changed(turn, "text");
   } else if (kind === "command_execution") {
     upsertTool(turn, id, "Bash", String(item.command || ""));
   } else if (kind === "file_change" || kind === "patch" || kind === "patch_apply") {
@@ -361,7 +539,8 @@ function applyEvent(run, ev) {
     }
     case "system":
       if (ev.subtype === "init") {
-        adoptSession(ev.session_id);
+        run.parse.sawSession = true;
+        adoptSession(run, ev.session_id);
         if (ev.model) showModel(ev.model);
       }
       return;
@@ -388,13 +567,19 @@ function applyEvent(run, ev) {
       }
       return;
     }
-    case "result":
-      adoptSession(ev.session_id);
+    case "result": {
+      adoptSession(run, ev.session_id);
       // API failures (an invalid model, an expired login) end the turn here.
-      if (ev.is_error) addWarning(turn, typeof ev.result === "string" && ev.result ? ev.result : "The request failed.");
+      // A failed resume names what it could not find in `errors`.
+      if (ev.is_error) {
+        const errors = Array.isArray(ev.errors) ? ev.errors.map(String).filter(Boolean).join("\n") : "";
+        addWarning(turn, typeof ev.result === "string" && ev.result ? ev.result : errors || "The request failed.");
+      }
       return;
+    }
     case "thread.started":
-      adoptSession(ev.thread_id);
+      run.parse.sawSession = true;
+      adoptSession(run, ev.thread_id);
       return;
     case "item.started":
     case "item.updated":
@@ -430,21 +615,95 @@ function newRunId() {
   const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
   return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
 }
+function newAbort() {
+  return typeof AbortController === "function" ? new AbortController() : null;
+}
 
-function beginRun(turn, starting) {
+// One tab at a time follows a run: it holds the run's Web Lock, which the
+// browser releases when the tab goes away. Resolves to a release function, or
+// null when another tab of this page holds the run. Without Web Locks every
+// tab may follow it.
+function lockName(runId) {
+  return "hivra-chat:run:" + runId;
+}
+function claimRun(runId) {
+  const locks = navigator.locks;
+  if (!locks || typeof locks.request !== "function") return Promise.resolve(noop);
+  return new Promise((resolve) => {
+    let answered = false;
+    const unavailable = (e) => {
+      console.warn("hivra-chat: could not coordinate this reply with other tabs of this page", e);
+      if (!answered) resolve(noop);
+    };
+    try {
+      locks.request(lockName(runId), { ifAvailable: true }, (lock) => {
+        answered = true;
+        if (!lock) { resolve(null); return null; }
+        return new Promise((release) => resolve(() => release()));
+      }).catch(unavailable);
+    } catch (e) {
+      unavailable(e);
+    }
+  });
+}
+async function replyRunningElsewhere() {
+  const locks = navigator.locks;
+  if (!locks || typeof locks.query !== "function") return false;
+  try {
+    const snapshot = await locks.query();
+    const held = new Set((snapshot && Array.isArray(snapshot.held) ? snapshot.held : []).map((lock) => lock.name));
+    return state.turns.some((turn) => !turn.done && held.has(lockName(turn.runId)));
+  } catch (e) {
+    console.warn("hivra-chat: could not ask the other tabs of this page what they are showing", e);
+    return false;
+  }
+}
+
+function beginRun(turn, starting, release) {
   const view = views.get(turn);
   if (view) view.transient = "";
-  active = { turn, runId: turn.runId, parse: newParse(), starting, stopping: false, stopRequested: false };
-  setBusy(true);
-  paintText(turn);
+  const position = positions.get(turn);
+  positions.delete(turn);
+  active = {
+    turn, runId: turn.runId, parse: position ? position.parse : newParse(),
+    // Bytes of the run's log applied to the reply, for `/events?offset=`.
+    offset: position ? position.offset : 0,
+    starting, stopping: turn.stopRequested, stopSent: false,
+    release: release || noop,
+    reader: null, abort: null, heardAt: Date.now(), stalled: false,
+  };
+  syncControls();
+  setStatus(active.stopping ? "stopping…" : "thinking…");
+  paintTurn(turn);
   return active;
 }
 // The page stops showing the run live. `turn.done` says whether it finished.
 function endRun(run, status) {
   if (active === run) active = null;
-  setBusy(false, status);
-  paintText(run.turn);
+  run.release();
+  run.release = noop;
+  if (!run.turn.done && run.offset > 0) positions.set(run.turn, { offset: run.offset, parse: run.parse });
+  run.turn.updatedAt = Date.now();
+  syncControls();
+  setStatus(status);
+  paintTurn(run.turn);
   saveNow();
+}
+
+function stopReading(run) {
+  if (run.abort) {
+    try { run.abort.abort(); } catch { /* already aborted */ }
+  }
+  if (run.reader) run.reader.cancel().catch(noop);
+}
+// Heartbeats keep an open stream talking; one that went quiet is cut and the
+// run re-attached from what the page already has.
+function cutIfStalled(run, limitMs) {
+  const quiet = Date.now() - run.heardAt;
+  if ((!run.reader && !run.abort) || quiet <= limitMs) return;
+  console.warn("hivra-chat: nothing from the computer for " + Math.round(quiet / 1000) + "s; re-attaching to the run");
+  run.stalled = true;
+  stopReading(run);
 }
 
 function finishRun(run) {
@@ -456,9 +715,24 @@ function finishRun(run) {
     addWarning(turn, "The run was interrupted before it finished because the computer restarted.");
   } else if (done.stopped) {
     turn.outcome = "stopped";
-  } else if (typeof done.code === "number" && done.code !== 0) {
+  } else if (done.code !== 0) {
+    // A non-zero exit, a signal (code null), or an agent that never started.
     turn.outcome = "error";
-    if (!turn.assistant && !turn.warnings.length) addWarning(turn, "The agent exited with an error (code " + done.code + ").");
+    const exited = typeof done.code === "number";
+    if (exited && turn.resumes && !run.parse.sawSession && !turn.assistant && !turn.tools.length) {
+      // Asked to continue a conversation, the agent failed before opening it
+      // (Claude Code: "No conversation found", after its transcript cleanup).
+      // Continuing it again would fail the same way, so the next message
+      // starts a new conversation with the agent.
+      turn.sessionLost = true;
+      turn.sessionId = null; // its error result echoes the id it could not find
+      addWarning(turn, SESSION_LOST);
+      if (!input.value) { input.value = turn.user; autoGrow(); }
+    } else if (!turn.assistant && !turn.warnings.length) {
+      addWarning(turn, exited
+        ? "The agent exited with an error (code " + done.code + ")."
+        : "The agent ended before it finished" + (done.signal ? " (" + String(done.signal) + ")" : "") + ".");
+    }
   } else {
     turn.outcome = "complete";
   }
@@ -479,11 +753,15 @@ function suspendRun(run, message, status) {
 function missingRun(run) {
   const turn = run.turn;
   turn.done = true;
-  turn.outcome = "error";
-  if (!turn.assistant && !turn.tools.length) {
+  if (turn.stopRequested && !turn.assistant && !turn.tools.length) {
+    // Stopped before it ever reached the computer.
+    turn.outcome = "stopped";
+  } else if (!turn.assistant && !turn.tools.length) {
+    turn.outcome = "error";
     addWarning(turn, "This message didn't reach the computer. Send it again.");
     if (!input.value) { input.value = turn.user; autoGrow(); }
   } else {
+    turn.outcome = "error";
     addWarning(turn, "This reply is no longer available on the computer.");
   }
   endRun(run, "ready");
@@ -515,103 +793,177 @@ async function startFailure(resp) {
   return detail || "The computer returned an error (HTTP " + resp.status + "). Try again.";
 }
 
+function joinBytes(parts) {
+  if (parts.length === 1) return parts[0];
+  let size = 0;
+  for (const part of parts) size += part.length;
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
+
+// One line from the computer. Everything but the `_run` preface and `_ping`
+// heartbeats (added to each response) is the run's own log and counts toward
+// the offset a re-attach continues from.
+function takeLine(run, decoder, bytes, terminated) {
+  const text = decoder.decode(bytes);
+  let parsed = null;
+  if (text.trim()) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      if (!run.parse.badLine) {
+        run.parse.badLine = true;
+        console.warn("hivra-chat: skipped a line from the computer that is not JSON", text.slice(0, 120));
+      }
+    }
+  }
+  const ev = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  if (!ev || (ev.type !== "_run" && ev.type !== "_ping")) run.offset += bytes.length + (terminated ? 1 : 0);
+  if (ev) applyEvent(run, ev);
+}
+
 // Read one NDJSON stream into the run's reply. "done" once the run's `_done`
 // line arrived; "ended" when the stream stopped first (network drop, proxy
-// timeout, a restarted chat service) while the run keeps working.
+// timeout, a restarted chat service, or cut by this page as silent) while the
+// run keeps working. Lines are split as bytes so `run.offset` stays exact.
 async function readStream(run, body) {
   if (!body) return "ended";
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  let buf = "";
-  const dispatch = (line) => {
-    if (!line.trim()) return;
-    let ev;
-    try { ev = JSON.parse(line); } catch { return; }
-    if (ev && typeof ev === "object") applyEvent(run, ev);
-  };
+  run.reader = reader;
+  run.heardAt = Date.now();
+  let parts = [];
+  let complete = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (active !== run) {
-        reader.cancel().catch(() => { /* already closed */ });
+        reader.cancel().catch(noop);
         return "superseded";
       }
-      buf += done ? decoder.decode() : decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, idx);
-        buf = buf.slice(idx + 1);
-        dispatch(line);
+      if (run.stalled) break;
+      if (done) { complete = true; break; }
+      run.heardAt = Date.now();
+      let start = 0;
+      for (let end = value.indexOf(10); end >= 0; end = value.indexOf(10, start)) {
+        parts.push(value.subarray(start, end));
+        takeLine(run, decoder, joinBytes(parts), true);
+        parts = [];
+        start = end + 1;
       }
-      if (done) break;
+      if (start < value.length) parts.push(value.slice(start));
     }
-    dispatch(buf);
+    // A finished run's stream ends on a whole line. A cut stream's partial line
+    // is not applied: the re-attach reads it again from the log.
+    if (complete && parts.length) takeLine(run, decoder, joinBytes(parts), false);
   } catch (e) {
     if (active !== run) return "superseded";
-    console.warn("hivra-chat: the reply stream dropped; re-attaching to the run", e);
+    if (!run.stalled) console.warn("hivra-chat: the reply stream dropped; re-attaching to the run", e);
+  } finally {
+    if (run.reader === reader) {
+      run.reader = null;
+      run.abort = null;
+    }
   }
+  run.stalled = false;
   saveSoon();
   return run.parse.done ? "done" : "ended";
 }
 
-// Re-read a run from the start of its log, rebuilding the reply, and follow it
-// live until it finishes.
+// Rebuilding from the start of the run's log: the replay replaces the reply.
+function restartReply(run) {
+  run.parse = newParse();
+  run.turn.assistant = "";
+  run.turn.tools = [];
+  run.turn.warnings = [];
+  schedulePaint(run.turn, "all");
+}
+
+// Follow a run live until it finishes. A page that has part of the run's log
+// continues from there; a new one (after a reload) rebuilds the reply from the
+// start of the log.
 async function follow(run) {
-  for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
-    if (RETRY_DELAYS_MS[attempt]) {
+  let misses = 0;
+  while (misses < RETRY_DELAYS_MS.length) {
+    const delay = RETRY_DELAYS_MS[misses];
+    if (delay) {
       note(run.turn, "Reconnecting to the computer…");
-      await sleep(RETRY_DELAYS_MS[attempt]);
+      await sleep(delay);
     }
     if (active !== run) return;
+    const from = run.offset;
     let resp;
     try {
-      resp = await fetch(runUrl(run.runId, "/events"), { credentials: "same-origin", cache: "no-store" });
+      run.stalled = false;
+      run.abort = newAbort();
+      run.heardAt = Date.now();
+      resp = await fetch(runUrl(run.runId, "/events") + (from ? "?offset=" + from : ""), {
+        credentials: "same-origin", cache: "no-store", signal: run.abort ? run.abort.signal : undefined,
+      });
     } catch (e) {
+      if (active !== run) return;
       console.warn("hivra-chat: re-attaching to the run failed", e);
+      misses += 1;
       continue;
     }
     if (active !== run) return;
-    if (resp.status === 401) return suspendRun(run, SIGNED_OUT_FOLLOW, "signed out");
+    if (resp.status === 401) return signedOut();
     if (resp.status === 404) return missingRun(run);
     if (!resp.ok) {
       console.warn("hivra-chat: the run's log could not be read (HTTP " + resp.status + ")");
+      misses += 1;
       continue;
     }
     note(run.turn, "");
-    run.parse = newParse();
-    run.turn.assistant = "";
-    run.turn.tools = [];
-    run.turn.warnings = [];
-    paintTools(run.turn);
-    paintText(run.turn);
+    if (!from) restartReply(run);
+    if (run.turn.stopRequested && !run.stopSent) void sendStop(run);
     const result = await readStream(run, resp.body);
     if (result === "done") return finishRun(run);
     if (result === "superseded") return;
+    // A stream that brought more of the log was a working connection: the
+    // retries start over.
+    misses = run.offset > from ? 0 : misses + 1;
   }
   suspendRun(run, OFFLINE, "offline");
 }
 
 async function send(raw) {
-  if (active) return;
+  if (active || access !== "open") return;
   const text = String(raw != null ? raw : input.value).trim();
   if (!text) return;
   input.value = "";
   autoGrow();
-  const turn = normalizeTurn({ user: text, runId: newRunId() });
+  const now = Date.now();
+  const turn = normalizeTurn({ user: text, runId: newRunId(), resumes: currentSessionId(), createdAt: now, updatedAt: now });
+  const previous = state.turns[state.turns.length - 1];
   state.turns.push(turn);
+  if (previous) schedulePaint(previous, "text"); // its "Start a new chat" offer goes
   renderTurn(turn);
-  const run = beginRun(turn, true);
+  const run = beginRun(turn, true, noop);
   saveNow(); // a reload from here on finds the turn and its run
-  const body = JSON.stringify({ message: text, sessionId: state.sessionId, detach: true, runId: turn.runId });
+  const release = await claimRun(turn.runId); // a new run id: no other tab has it
+  if (active !== run) {
+    if (release) release();
+    return;
+  }
+  run.release = release || noop;
+  const body = JSON.stringify({ message: text, sessionId: turn.resumes, detach: true, runId: turn.runId });
   let resp = null;
   for (let attempt = 0; attempt < START_DELAYS_MS.length && !resp; attempt++) {
     if (START_DELAYS_MS[attempt]) await sleep(START_DELAYS_MS[attempt]);
+    if (active !== run) return;
     try {
+      run.stalled = false;
+      run.abort = newAbort();
+      run.heardAt = Date.now();
       resp = await fetch("/api/chat", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body,
+        signal: run.abort ? run.abort.signal : undefined,
       });
     } catch (e) {
       console.warn("hivra-chat: sending the message failed (attempt " + (attempt + 1) + ")", e);
@@ -619,17 +971,21 @@ async function send(raw) {
   }
   if (active !== run) return;
   // No answer at all: the message may or may not have reached the computer.
-  // Keep the turn open; resuming it finds the run or asks to send again.
+  // Keep the turn open; picking it up later finds the run or asks to send again.
   if (!resp) return suspendRun(run, UNSENT, "offline");
   if (!resp.ok) {
     const reason = await startFailure(resp);
-    failStart(run, reason, text, resp.status === 401 ? "signed out" : "ready");
+    if (resp.status === 401) {
+      failStart(run, reason, text, "signed out");
+      return signedOut();
+    }
+    failStart(run, reason, text, "ready");
     // "Still working on the previous message": pick that reply back up.
-    if (resp.status === 409) void resume();
+    if (resp.status === 409) void refresh();
     return;
   }
   run.starting = false;
-  if (run.stopRequested) void requestStop(run).then((ok) => { if (!ok) stopFailed(run); });
+  if (turn.stopRequested && !run.stopSent) void sendStop(run);
   const result = await readStream(run, resp.body);
   if (result === "done") return finishRun(run);
   if (result === "ended") return follow(run);
@@ -638,6 +994,7 @@ async function send(raw) {
 // Ask the computer to end the run. The run's stream then ends with its
 // `_done` line (stopped: "user"), which finishes the reply here.
 async function requestStop(run) {
+  const beforeStart = run.starting;
   let resp;
   try {
     resp = await fetch(runUrl(run.runId, "/stop"), { method: "POST", credentials: "same-origin" });
@@ -646,81 +1003,132 @@ async function requestStop(run) {
     note(run.turn, "Couldn't reach the computer to stop the reply. Try again.");
     return false;
   }
-  if (resp.ok) return true;
-  // Stop pressed before the start reached the computer: stop right after it does.
-  if (resp.status === 404 && run.starting) { run.stopRequested = true; return true; }
+  if (resp.ok) {
+    run.stopSent = true;
+    return true;
+  }
+  // Stop pressed before the start reached the computer. The turn keeps the
+  // request, and it is sent once the run is found (this start, or a later pick-up).
+  if (resp.status === 404 && beforeStart) return true;
+  if (resp.status === 401) {
+    signedOut();
+    return false;
+  }
   console.warn("hivra-chat: the computer did not stop the run (HTTP " + resp.status + ")");
-  note(run.turn, resp.status === 401 ? SIGNED_OUT_FOLLOW : "The computer couldn't stop the reply (HTTP " + resp.status + "). Try again.");
+  note(run.turn, "The computer couldn't stop the reply (HTTP " + resp.status + "). Try again.");
   return false;
+}
+async function sendStop(run) {
+  if (!(await requestStop(run))) stopFailed(run);
 }
 
 async function stopActive() {
   const run = active;
   if (!run || run.stopping) return;
   run.stopping = true;
-  stopBtn.disabled = true;
+  run.turn.stopRequested = true;
+  run.turn.updatedAt = Date.now();
+  saveNow(); // a reload, or a start that never got an answer, still stops it
+  syncControls();
   setStatus("stopping…");
-  if (!(await requestStop(run))) stopFailed(run);
+  await sendStop(run);
 }
 // The run is still going: offer Stop again.
 function stopFailed(run) {
   if (active !== run) return;
   run.stopping = false;
-  stopBtn.disabled = false;
+  syncControls();
   setStatus("thinking…");
 }
 
-// Pick up a reply this page did not see finish: still running on the computer,
-// or finished while the page was closed. Its run log rebuilds it either way.
-async function resume() {
-  if (active || resuming) return;
-  const turn = state.turns.find((t) => !t.done && t.runId);
-  if (!turn) return;
-  resuming = true;
-  let runs = null;
+// The computer no longer accepts this page's session: it expired, or the chat
+// service restarted and forgot it. The conversation leaves the screen until the
+// session is back (the page reopened from the dashboard, in any tab); the agent
+// keeps working in the meantime.
+function signedOut() {
+  if (active) {
+    const run = active;
+    stopReading(run);
+    suspendRun(run, "", "signed out");
+  }
+  setAccess("signed-out", SIGNED_OUT);
+  setStatus("signed out");
+}
+
+// Check in with the computer: on load, focus, the network coming back and every
+// 20s. The first answer opens the page. Then a reply this page did not see
+// finish (still running, or finished while the page was closed) is picked back
+// up from its run log, oldest first, unless another tab is already showing it.
+async function refresh() {
+  if (active || refreshing) return;
+  const pending = () => state.turns.filter((turn) => !turn.done && turn.runId);
+  if (access === "open" && !pending().length) return;
+  refreshing = true;
+  let run = null;
   try {
     let resp;
     try {
       resp = await fetch("/api/chat/runs", { credentials: "same-origin", cache: "no-store" });
     } catch (e) {
-      console.warn("hivra-chat: could not reach the computer to resume the reply", e);
-      note(turn, OFFLINE);
-      setStatus("offline");
+      console.warn("hivra-chat: could not reach the computer", e);
+      if (access !== "open") {
+        setAccess("unreachable", UNREACHABLE);
+        setStatus("offline");
+      } else if (!active && pending().length) {
+        for (const turn of pending()) note(turn, OFFLINE);
+        setStatus("offline");
+      }
       return;
     }
-    if (resp.status === 401) {
-      note(turn, SIGNED_OUT_FOLLOW);
-      setStatus("signed out");
-      return;
-    }
+    if (resp.status === 401) return signedOut();
     if (!resp.ok) {
       console.warn("hivra-chat: the computer's runs could not be listed (HTTP " + resp.status + ")");
-      note(turn, "The computer couldn't report on this reply (HTTP " + resp.status + "). This page tries again shortly.");
+      if (access !== "open") {
+        setAccess("unreachable", UNREACHABLE);
+        setStatus("offline");
+      } else if (!active) {
+        const message = "The computer couldn't report on this reply (HTTP " + resp.status + "). This page tries again shortly.";
+        for (const turn of pending()) note(turn, message);
+      }
       return;
     }
-    try {
-      const data = await resp.json();
-      runs = data && Array.isArray(data.runs) ? data.runs : null;
-    } catch (e) {
-      console.warn("hivra-chat: the computer's run list was unreadable", e);
+    if (access !== "open") {
+      setAccess("open");
+      for (const turn of pending()) note(turn, "Picking the reply back up from the computer…");
+      if (!active) setStatus(pending().length ? "reconnecting…" : "ready");
+    }
+    // Re-read after every wait: New chat, a send or another tab may have
+    // changed the conversation meanwhile.
+    if (active) return;
+    for (const turn of pending()) {
+      const release = await claimRun(turn.runId);
+      if (active || turn.done || !state.turns.includes(turn) || access !== "open") {
+        if (release) release();
+        return;
+      }
+      if (!release) {
+        note(turn, ELSEWHERE);
+        setStatus("ready");
+        continue;
+      }
+      run = beginRun(turn, false, release);
+      break;
     }
   } finally {
-    resuming = false;
+    refreshing = false;
   }
-  if (active || turn.done) return;
-  const known = runs && runs.find((r) => r && r.runId === turn.runId);
-  if (known && known.agentSessionId && !state.sessionId) adoptSession(known.agentSessionId);
-  // Follow even a run missing from the recent list: its own log is
-  // authoritative and answers 404 once the run is gone.
-  await follow(beginRun(turn, false));
+  if (run) await follow(run);
 }
 
-function newChat() {
-  if (active) return;
-  state = emptyState();
-  views.clear();
-  log.textContent = "";
-  if (emptyEl) emptyEl.style.display = "";
+async function newChat() {
+  if (active || access !== "open") return;
+  if (await replyRunningElsewhere()) {
+    setStatus("a reply is running in another tab");
+    return;
+  }
+  if (active || access !== "open") return;
+  state = emptyState(Date.now());
+  renderAll();
   saveNow();
   setStatus("ready");
   input.focus();
@@ -743,21 +1151,27 @@ document.querySelectorAll(".ex").forEach((el) =>
   el.addEventListener("click", () => send(el.textContent))
 );
 
-const wake = () => {
-  if (document.visibilityState !== "hidden") void resume();
-};
-window.addEventListener("focus", wake);
-window.addEventListener("online", wake);
-document.addEventListener("visibilitychange", wake);
-setInterval(wake, REATTACH_INTERVAL_MS);
-window.addEventListener("pagehide", saveNow);
-
-for (const turn of state.turns) renderTurn(turn);
-for (const turn of state.turns) {
-  if (!turn.done && turn.runId) {
-    note(turn, "Picking the reply back up from the computer…");
-    setStatus("reconnecting…");
-  }
+// Focus, the network coming back and the periodic check: open the page once
+// the computer answers, pick up unfinished replies, and cut a silent stream.
+// A hidden tab still cuts a silent stream: it holds the run's lock, so other
+// tabs of this page leave the reply to it.
+function wake(limitMs) {
+  if (active) cutIfStalled(active, limitMs);
+  else if (document.visibilityState !== "hidden") void refresh();
 }
+const onWake = () => wake(WAKE_STALL_MS);
+window.addEventListener("focus", onWake);
+window.addEventListener("online", onWake);
+// Back from the back-forward cache: other tabs may have saved meanwhile.
+window.addEventListener("pageshow", () => { sync(); onWake(); });
+document.addEventListener("visibilitychange", onWake);
+setInterval(() => wake(STALL_MS), REATTACH_INTERVAL_MS);
+window.addEventListener("pagehide", saveNow);
+// Another tab of this page saved the conversation.
+window.addEventListener("storage", (event) => {
+  if (event.key === STORE_KEY) sync();
+});
+
+syncControls();
 void loadMeta();
-void resume();
+void refresh();

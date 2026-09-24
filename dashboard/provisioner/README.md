@@ -232,10 +232,16 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   `~/.hivra/chat-runs/<runId>/events.ndjson`; the HTTP response only tails that
   log. With `{detach: true, runId, clientRef}` a closed tab or dropped network
   no longer ends the turn: `GET /api/chat/runs` lists recent runs,
-  `GET /api/chat/runs/<id>/events` replays one from the start (live until it
-  finishes) and `POST /api/chat/runs/<id>/stop` is the only way to end it early.
+  `GET /api/chat/runs/<id>/events[?offset=<bytes>]` replays one from the start
+  of its log, or from a byte offset into it (live until it finishes), and
+  `POST /api/chat/runs/<id>/stop` is the only way to end it early.
   Requests without `detach` keep the historical contract (their disconnect
-  stops the turn). The `10-hivra-detached-runs.conf` drop-in sets
+  stops the turn). The computer's own chat page (`index.html` + `app.js`,
+  served at `GET /`) uses detached runs: it keeps the conversation in the
+  browser's localStorage, shows it only after an authenticated
+  `GET /api/chat/runs` succeeds, rebuilds an unfinished reply from the run's
+  log after a reload, and within one page re-attaches from the bytes it has
+  already applied. The `10-hivra-detached-runs.conf` drop-in sets
   `KillMode=process` on `bux-hivra-chat.service`, so a gateway restart (runtime
   update, crash) leaves in-flight runs working; permission flags are unchanged.
 - **Agent terminal.** For Claude Code and Codex, `hivra-agent-shell` runs the

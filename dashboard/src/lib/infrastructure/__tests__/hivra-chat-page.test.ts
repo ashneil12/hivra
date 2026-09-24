@@ -17,8 +17,9 @@ import { TextDecoder, TextEncoder } from "node:util";
 // in a same-origin jsdom frame against a fake gateway that speaks the detached
 // chat run API: POST /api/chat, GET /api/chat/runs, GET /api/chat/runs/<id>/events
 // and POST /api/chat/runs/<id>/stop. A reload is a fresh frame on the same
-// origin, so it keeps the origin's localStorage exactly as a browser does. The
-// last block drives the same page over HTTP against the real gateway
+// origin, so it keeps the origin's localStorage exactly as a browser does, and
+// two open frames are two tabs (jsdom sends each the other's `storage` events).
+// The last block drives the same page over HTTP against the real gateway
 // (server.js), its detached runner (chat-runs.cjs) and a fake agent CLI.
 
 const DIR = path.join(process.cwd(), "provisioner/hivra-chat");
@@ -30,13 +31,23 @@ const STORE_KEY = "hivra-chat:conversation:v1";
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const RUN_1 = "00000000-0000-4000-8000-000000000002";
 const RUN_2 = "00000000-0000-4000-8000-000000000003";
+const RUN_3 = "00000000-0000-4000-8000-000000000004";
+const OTHER_SESSION = "00000000-0000-4000-8000-000000000005";
+const ELSEWHERE = "This reply is showing live in another tab of this page.";
+const eventsPath = (runId: string) => `/api/chat/runs/${runId}/events`;
+const stopPath = (runId: string) => `/api/chat/runs/${runId}/stop`;
 
 type Event = Record<string, unknown>;
-type Call = { method: string; path: string; body: unknown; credentials: string | undefined };
+type Init = { method?: string; body?: string; credentials?: string; signal?: unknown };
+type Call = { method: string; path: string; query: string; body: unknown; credentials: string | undefined };
 type FakeResponse = { ok: boolean; status: number; body: ReadableStream<Uint8Array> | null; text(): Promise<string>; json(): Promise<unknown> };
-type Handler = (call: Call) => FakeResponse;
+type Handler = (call: Call) => FakeResponse | Promise<FakeResponse>;
 
 const encoder = new TextEncoder();
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const delta = (text: string): Event => ({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
+// Bytes the events carry in the run's log, which `?offset=` counts.
+const logBytes = (...events: Event[]) => events.reduce((total, event) => total + Buffer.byteLength(JSON.stringify(event) + "\n"), 0);
 
 // Just the Response surface the page uses. A JSON answer also has a readable
 // body, as a real fetch Response does.
@@ -62,13 +73,20 @@ class LiveStream {
   push(...events: Event[]) {
     for (const event of events) this.controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
   }
+  // The computer writes a replayed log in large reads, cut anywhere: inside a
+  // line and inside a multi-byte character.
+  pushInChunks(events: Event[], count: number) {
+    const bytes = encoder.encode(events.map((event) => JSON.stringify(event) + "\n").join(""));
+    const size = Math.ceil(bytes.length / count);
+    for (let at = 0; at < bytes.length; at += size) this.controller.enqueue(bytes.slice(at, at + size));
+  }
   end() { this.controller.close(); }
   drop() { this.controller.error(new TypeError("network connection lost")); }
   response() { return reply(200, this.body); }
 }
 
 // What the page's `fetch` talks to. `detach` runs when the page goes away.
-type Transport = { fetch: (input: unknown, init?: { method?: string; body?: string; credentials?: string }) => Promise<FakeResponse>; detach?: () => void };
+type Transport = { fetch: (input: unknown, init?: Init) => Promise<FakeResponse>; detach?: () => void };
 
 class FakeComputer implements Transport {
   readonly calls: Call[] = [];
@@ -81,19 +99,61 @@ class FakeComputer implements Transport {
     this.routes.set(method + " " + pathname, handler);
     return this;
   }
-  fetch = async (input: unknown, init: { method?: string; body?: string; credentials?: string } = {}) => {
+  fetch = async (input: unknown, init: Init = {}) => {
     const url = new URL(String(input), ORIGIN + "/");
     if (url.origin !== ORIGIN || !String(input).startsWith("/")) throw new Error("the page fetched another origin: " + String(input));
     const call: Call = {
-      method: (init.method || "GET").toUpperCase(), path: url.pathname,
+      method: (init.method || "GET").toUpperCase(), path: url.pathname, query: url.search,
       body: typeof init.body === "string" ? JSON.parse(init.body) : undefined, credentials: init.credentials,
     };
     this.calls.push(call);
     const handler = this.routes.get(call.method + " " + call.path);
-    return handler ? handler(call) : json(404, { error: "run not found" });
+    return handler ? await handler(call) : json(404, { error: "run not found" });
   };
   callsTo(method: string, pathname: string) {
     return this.calls.filter((call) => call.method === method && call.path === pathname);
+  }
+}
+
+// navigator.locks for the tabs of one origin: exclusive locks, `ifAvailable`
+// requests (all the page makes) and query(). A closed tab's locks are
+// released, as a browser does.
+class FakeLocks {
+  private readonly held = new Map<string, string>();
+  private paused: Promise<void> | null = null;
+  waiting = 0;
+  forTab(owner: string) {
+    return {
+      request: async (name: string, options: { ifAvailable?: boolean }, callback: (lock: unknown) => unknown) => {
+        // A browser answers a lock request in a later task, not at once.
+        if (this.paused) {
+          this.waiting += 1;
+          await this.paused;
+          this.waiting -= 1;
+        }
+        if (this.held.has(name)) {
+          if (!options?.ifAvailable) throw new Error("the fake lock manager only answers ifAvailable requests");
+          return callback(null);
+        }
+        this.held.set(name, owner);
+        try {
+          return await callback({ name, mode: "exclusive" });
+        } finally {
+          if (this.held.get(name) === owner) this.held.delete(name);
+        }
+      },
+      query: async () => ({ held: Array.from(this.held, ([name, clientId]) => ({ name, mode: "exclusive", clientId })), pending: [] }),
+    };
+  }
+  pauseGrants() {
+    let resume = () => undefined as void;
+    this.paused = new Promise<void>((resolve) => { resume = resolve; });
+    return () => { this.paused = null; resume(); };
+  }
+  hold(runId: string, owner: string) { this.held.set("hivra-chat:run:" + runId, owner); }
+  holder(runId: string) { return this.held.get("hivra-chat:run:" + runId); }
+  releaseAll(owner: string) {
+    for (const [name, holder] of Array.from(this.held)) if (holder === owner) this.held.delete(name);
   }
 }
 
@@ -111,6 +171,18 @@ function waitFor<T>(probe: () => T | undefined | null | false, label: string, ti
   });
 }
 
+type StoredTurn = Record<string, unknown>;
+function storedTurn(fields: StoredTurn): StoredTurn {
+  return {
+    user: "", assistant: "", tools: [], warnings: [], runId: null, done: false, outcome: null,
+    sessionId: null, resumes: null, sessionLost: false, stopRequested: false, createdAt: 1, updatedAt: 1,
+    ...fields,
+  };
+}
+function seed(turns: StoredTurn[], clearedAt = 0) {
+  window.localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, clearedAt, turns }));
+}
+
 const pages: Array<{ close(): void }> = [];
 afterEach(() => {
   while (pages.length) pages.pop()!.close();
@@ -118,10 +190,12 @@ afterEach(() => {
 });
 
 type PageWindow = Window & typeof globalThis & { eval(source: string): unknown };
+type PageOptions = { locks?: FakeLocks; owner?: string };
 
 // Load the page into a new same-origin frame: the frame shares this origin's
-// localStorage, so a second frame is what the same page is after a reload.
-function openPage(computer: Transport, runIds: string[] = []) {
+// localStorage, so a second frame is what the same page is after a reload, or
+// the page in another tab.
+function openPage(computer: Transport, runIds: string[] = [], options: PageOptions = {}) {
   expect(HTML_SOURCE).toContain(SCRIPT_TAG);
   const frame = document.createElement("iframe");
   document.body.appendChild(frame);
@@ -136,9 +210,15 @@ function openPage(computer: Transport, runIds: string[] = []) {
   const ids = [...runIds];
   let closed = false;
   Object.defineProperty(w.crypto, "randomUUID", { configurable: true, value: () => ids.shift() || "00000000-0000-4000-8000-0000000000ff" });
+  const owner = options.owner || "tab";
+  if (options.locks) Object.defineProperty(w.navigator, "locks", { configurable: true, value: options.locks.forTab(owner) });
+  // The page's clock, which the test can move forward.
+  const realNow = w.Date.now.bind(w.Date);
+  let skew = 0;
+  w.Date.now = () => realNow() + skew;
   Object.assign(w, {
     // A page that went away never hears back from its requests.
-    fetch: (input: unknown, init?: { method?: string; body?: string; credentials?: string }) => (closed ? new Promise(() => undefined) : computer.fetch(input, init)),
+    fetch: (input: unknown, init?: Init) => (closed ? new Promise(() => undefined) : computer.fetch(input, init)),
     TextDecoder,
     console: { ...console, warn: (...args: unknown[]) => warnings.push(args.map(String).join(" ")), error: (...args: unknown[]) => errors.push(args.map(String).join(" ")) },
   });
@@ -147,17 +227,22 @@ function openPage(computer: Transport, runIds: string[] = []) {
     if (closed) return;
     closed = true;
     computer.detach?.();
+    options.locks?.releaseAll(owner);
     w.close();
     frame.remove();
   };
   pages.push({ close });
   const el = <T extends Element>(selector: string) => doc.querySelector(selector) as T;
   const page = {
-    w, doc, errors, warnings,
+    w, doc, errors, warnings, close,
     input: () => el<HTMLTextAreaElement>("#input"),
     sendButton: () => el<HTMLButtonElement>("#send"),
     stopButton: () => el<HTMLButtonElement>("#stop"),
+    newChatButton: () => el<HTMLButtonElement>("#new"),
     status: () => el<HTMLElement>("#status").textContent,
+    gate: () => (el<HTMLElement>("#gate").hidden ? "" : el<HTMLElement>("#gate").textContent),
+    // The computer accepted the page's session and the conversation is shown.
+    opened: () => waitFor(() => !el<HTMLElement>("#log").hidden, "the page to open"),
     send(text: string) {
       page.input().value = text;
       page.sendButton().click();
@@ -166,12 +251,36 @@ function openPage(computer: Transport, runIds: string[] = []) {
     replies: () => Array.from(doc.querySelectorAll(".msg.assistant .body"), (node) => node.textContent),
     notes: () => Array.from(doc.querySelectorAll(".msg.assistant .note"), (node) => node.textContent),
     chips: () => Array.from(doc.querySelectorAll(".msg.assistant .chip"), (node) => node.textContent),
+    offers: () => Array.from(doc.querySelectorAll<HTMLElement>(".msg.assistant .offer"), (node) => (node.hidden ? "" : node.textContent)).filter(Boolean),
     stored: () => JSON.parse(w.localStorage.getItem(STORE_KEY) || "null"),
+    skewClock(ms: number) { skew = ms; },
+    // How many times a reply's body is rewritten from here on.
+    countPaints() {
+      let count = 0;
+      const tally = (records: MutationRecord[]) => {
+        for (const record of records) {
+          const target = record.target as Element;
+          if (target.classList?.contains("body") && target.closest(".msg.assistant")) count += 1;
+        }
+      };
+      const observer = new w.MutationObserver(tally);
+      observer.observe(el("#log"), { childList: true, subtree: true });
+      return () => { tally(observer.takeRecords()); return count; };
+    },
+    // How many times the log's height is read (each read forces a layout).
+    countScrolls() {
+      let reads = 0;
+      Object.defineProperty(el("#main"), "scrollHeight", { configurable: true, get: () => { reads += 1; return 0; } });
+      return () => reads;
+    },
     // A reload: the page hides, goes away, and loads again on the same origin.
-    reload(nextComputer: Transport, nextRunIds: string[] = []) {
+    reload(nextComputer: Transport, nextRunIds: string[] = [], nextOptions: PageOptions = options) {
+      page.closeTab();
+      return openPage(nextComputer, nextRunIds, nextOptions);
+    },
+    closeTab() {
       w.dispatchEvent(new w.Event("pagehide"));
       close();
-      return openPage(nextComputer, nextRunIds);
     },
   };
   return page;
@@ -182,7 +291,7 @@ function claudeTurn(text: string): Event[] {
     { type: "system", subtype: "init", session_id: SESSION_ID, model: "claude-opus-4-8[1m]" },
     { type: "stream_event", event: { type: "content_block_start", content_block: { type: "tool_use", id: "tool_1", name: "Bash", input: {} } } },
     { type: "assistant", message: { content: [{ type: "tool_use", id: "tool_1", name: "Bash", input: { command: "ls" } }] } },
-    { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } },
+    delta(text),
     { type: "assistant", message: { content: [{ type: "text", text }] } },
     { type: "result", subtype: "success", session_id: SESSION_ID, is_error: false },
   ];
@@ -195,6 +304,8 @@ describe("the computer's own chat page", () => {
     const streams = [first, second];
     const computer = new FakeComputer().on("POST", "/api/chat", () => streams.shift()!.response());
     const page = openPage(computer, [RUN_1, RUN_2]);
+    await page.opened();
+    expect(computer.callsTo("GET", "/api/chat/runs")[0].credentials).toBe("same-origin");
 
     page.send("List the files");
     const [start] = await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1 && computer.callsTo("POST", "/api/chat"), "the first start");
@@ -214,8 +325,12 @@ describe("the computer's own chat page", () => {
     expect(page.stopButton().hidden).toBe(true);
     expect(page.doc.querySelector("#model")!.textContent).toBe("opus-4-8");
     expect(page.stored()).toEqual({
-      v: 1, sessionId: SESSION_ID,
-      turns: [{ user: "List the files", assistant: "Here are the files.", tools: [{ id: "tool_1", name: "Bash", detail: "ls" }], warnings: [], runId: RUN_1, done: true, outcome: "complete" }],
+      v: 1, clearedAt: 0,
+      turns: [{
+        user: "List the files", assistant: "Here are the files.", tools: [{ id: "tool_1", name: "Bash", detail: "ls" }], warnings: [],
+        runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID, resumes: null, sessionLost: false, stopRequested: false,
+        createdAt: expect.any(Number), updatedAt: expect.any(Number),
+      }],
     });
 
     page.send("And the hidden ones?");
@@ -231,32 +346,36 @@ describe("the computer's own chat page", () => {
     const live = new LiveStream();
     const before = new FakeComputer().on("POST", "/api/chat", () => live.response());
     const first = openPage(before, [RUN_1]);
+    await first.opened();
     first.send("Research the market");
     await waitFor(() => before.callsTo("POST", "/api/chat").length === 1, "the start");
     live.push({ type: "_run", runId: RUN_1, detached: true });
     live.push({ type: "system", subtype: "init", session_id: SESSION_ID });
-    live.push({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Working on it." } } });
+    live.push(delta("Working on it."));
     await waitFor(() => first.replies()[0] === "Working on it.", "the partial reply");
 
     const replay = new LiveStream();
     const after = new FakeComputer()
       .on("GET", "/api/chat/runs", () => json(200, { runs: [{ runId: RUN_1, state, agentSessionId: SESSION_ID, clientRef: null }] }))
-      .on("GET", `/api/chat/runs/${RUN_1}/events`, () => replay.response());
+      .on("GET", eventsPath(RUN_1), () => replay.response());
     const second = first.reload(after);
-    // The conversation is back before the computer answers.
+    // The conversation comes back once the computer accepts the page's session.
+    expect(second.userMessages()).toEqual([]);
+    await second.opened();
     expect(second.userMessages()).toEqual(["Research the market"]);
     expect(second.replies()).toEqual(["Working on it."]);
-    expect(second.status()).toBe("reconnecting…");
-    await waitFor(() => after.callsTo("GET", `/api/chat/runs/${RUN_1}/events`).length === 1, "the page to follow the run");
+    const [pickUp] = await waitFor(() => after.callsTo("GET", eventsPath(RUN_1)).length === 1 && after.callsTo("GET", eventsPath(RUN_1)), "the page to follow the run");
+    // A new page has none of the log yet: it reads it from the start.
+    expect(pickUp.query).toBe("");
     expect(after.callsTo("GET", "/api/chat/runs")[0].credentials).toBe("same-origin");
     expect(second.stopButton().hidden).toBe(false);
 
     // The run's log replays from the start, then continues live.
     replay.push(
       { type: "system", subtype: "init", session_id: SESSION_ID },
-      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Working on it." } } },
+      delta("Working on it."),
       { type: "_ping" },
-      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: " Done: three findings." } } },
+      delta(" Done: three findings."),
       { type: "result", subtype: "success", session_id: SESSION_ID, is_error: false },
       { type: "_done", code: 0 },
     );
@@ -264,41 +383,176 @@ describe("the computer's own chat page", () => {
     await waitFor(() => second.status() === "ready", "the rebuilt reply to finish");
     expect(second.replies()).toEqual(["Working on it. Done: three findings."]);
     expect(after.callsTo("POST", "/api/chat")).toEqual([]);
-    expect(second.stored()).toMatchObject({ sessionId: SESSION_ID, turns: [{ runId: RUN_1, assistant: "Working on it. Done: three findings.", done: true, outcome: "complete" }] });
+    expect(second.stored()).toMatchObject({ turns: [{ runId: RUN_1, assistant: "Working on it. Done: three findings.", done: true, outcome: "complete", sessionId: SESSION_ID }] });
 
     // A finished reply is not fetched again on the next load.
     const idle = new FakeComputer();
     const third = second.reload(idle);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await third.opened();
+    await sleep(50);
     expect(third.replies()).toEqual(["Working on it. Done: three findings."]);
-    expect(idle.calls.map((call) => call.path)).toEqual(["/api/meta"]);
+    expect(idle.calls.map((call) => call.path)).toEqual(["/api/meta", "/api/chat/runs"]);
     expect([...first.errors, ...second.errors, ...third.errors]).toEqual([]);
   });
 
-  it("re-attaches to the run's log after the stream drops, without doubling the reply or resending", async () => {
+  it("re-attaches from the byte offset it has after the stream drops, without doubling the reply or resending", async () => {
     const live = new LiveStream();
     const replay = new LiveStream();
     const computer = new FakeComputer()
       .on("POST", "/api/chat", () => live.response())
-      .on("GET", `/api/chat/runs/${RUN_1}/events`, () => replay.response());
+      .on("GET", eventsPath(RUN_1), () => replay.response());
     const page = openPage(computer, [RUN_1]);
+    await page.opened();
     page.send("Write the report");
     await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
-    live.push({ type: "_run", runId: RUN_1, detached: true }, { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Part one." } } });
-    await waitFor(() => page.replies()[0] === "Part one.", "the first part");
+    const partOne = delta("Part one — ✓.");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, partOne, { type: "_ping" });
+    await waitFor(() => page.replies()[0] === "Part one — ✓.", "the first part");
     live.drop();
 
-    await waitFor(() => computer.callsTo("GET", `/api/chat/runs/${RUN_1}/events`).length === 1, "the re-attach");
-    replay.push(
-      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Part one." } } },
-      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: " Part two." } } },
-      { type: "_done", code: 0 },
-    );
+    const [reattach] = await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1 && computer.callsTo("GET", eventsPath(RUN_1)), "the re-attach");
+    // Only the log counts: not the `_run` preface or the heartbeat, and bytes, not characters.
+    expect(reattach.query).toBe("?offset=" + logBytes(partOne));
+    replay.push(delta(" Part two."), { type: "_done", code: 0 });
     replay.end();
     await waitFor(() => page.status() === "ready", "the reply to finish");
-    expect(page.replies()).toEqual(["Part one. Part two."]);
+    expect(page.replies()).toEqual(["Part one — ✓. Part two."]);
     expect(computer.callsTo("POST", "/api/chat")).toHaveLength(1);
     expect(page.warnings.some((line) => line.includes("the reply stream dropped"))).toBe(true);
+    expect(page.errors).toEqual([]);
+  });
+
+  it("replays a long run log without repainting the reply for every line", async () => {
+    seed([storedTurn({ user: "Write the long report", runId: RUN_1 })]);
+    const replay = new LiveStream();
+    const computer = new FakeComputer().on("GET", eventsPath(RUN_1), () => replay.response());
+    const page = openPage(computer);
+    await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1, "the page to follow the run");
+    const paints = page.countPaints();
+    const scrolls = page.countScrolls();
+    const words = Array.from({ length: 1500 }, (_, i) => `wörd${i} ✓ `);
+    replay.pushInChunks([
+      { type: "system", subtype: "init", session_id: SESSION_ID },
+      ...words.map(delta),
+      { type: "result", subtype: "success", session_id: SESSION_ID, is_error: false },
+      { type: "_done", code: 0 },
+    ], 7);
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the replayed reply", 20_000);
+    expect(page.replies()).toEqual([words.join("")]);
+    // Before: every one of the 1,500 lines rewrote the whole reply and forced
+    // a layout, so a long run's replay froze the page.
+    expect(paints()).toBeLessThanOrEqual(5);
+    expect(scrolls()).toBeLessThanOrEqual(5);
+    expect(page.stored().turns[0]).toMatchObject({ assistant: words.join(""), done: true, outcome: "complete", sessionId: SESSION_ID });
+    expect(page.errors).toEqual([]);
+  });
+
+  it("cuts a stream that went silent and re-attaches from where it was; heartbeats keep a stream open", async () => {
+    const live = new LiveStream();
+    const replay = new LiveStream();
+    const computer = new FakeComputer()
+      .on("POST", "/api/chat", () => live.response())
+      .on("GET", eventsPath(RUN_1), () => replay.response());
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Watch the build");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    const building = delta("Building…");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, building);
+    await waitFor(() => page.replies()[0] === "Building…", "the reply to stream");
+
+    // 31s pass with only a heartbeat: the stream is alive, and focus leaves it be.
+    page.skewClock(31_000);
+    live.push({ type: "_ping" });
+    await sleep(50);
+    page.w.dispatchEvent(new page.w.Event("focus"));
+    await sleep(50);
+    expect(computer.callsTo("GET", eventsPath(RUN_1))).toEqual([]);
+
+    // Then 31s of nothing, not even a heartbeat: the connection died without an error.
+    page.skewClock(62_000);
+    page.w.dispatchEvent(new page.w.Event("online"));
+    const [reattach] = await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1 && computer.callsTo("GET", eventsPath(RUN_1)), "the re-attach");
+    expect(reattach.query).toBe("?offset=" + logBytes(building));
+    replay.push(delta(" Built."), { type: "_done", code: 0 });
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the reply to finish");
+    expect(page.replies()).toEqual(["Building… Built."]);
+    expect(computer.callsTo("POST", "/api/chat")).toHaveLength(1);
+    expect(page.warnings.some((line) => line.includes("nothing from the computer for 31s"))).toBe(true);
+    expect(page.errors).toEqual([]);
+  });
+
+  it("a tab in the background also cuts a silent stream, since it holds the reply for every tab", async () => {
+    const live = new LiveStream();
+    const replay = new LiveStream();
+    const computer = new FakeComputer()
+      .on("POST", "/api/chat", () => live.response())
+      .on("GET", eventsPath(RUN_1), () => replay.response());
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Watch the build");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    const building = delta("Building…");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, building);
+    await waitFor(() => page.replies()[0] === "Building…", "the reply to stream");
+
+    // The tab goes to the background; its connection dies without an error,
+    // and the network comes back 46s later.
+    Object.defineProperty(page.doc, "visibilityState", { configurable: true, get: () => "hidden" });
+    page.doc.dispatchEvent(new page.w.Event("visibilitychange"));
+    page.skewClock(46_000);
+    page.w.dispatchEvent(new page.w.Event("online"));
+    const [reattach] = await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1 && computer.callsTo("GET", eventsPath(RUN_1)), "the re-attach");
+    expect(reattach.query).toBe("?offset=" + logBytes(building));
+    replay.push(delta(" Built."), { type: "_done", code: 0 });
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the reply to finish");
+    expect(page.replies()).toEqual(["Building… Built."]);
+    expect(page.errors).toEqual([]);
+  });
+
+  it("when its session ends mid-reply and later works again, the page opens by itself and continues from the bytes it has", async () => {
+    let signedIn = true;
+    const live = new LiveStream();
+    const replay = new LiveStream();
+    const unauthorized = () => json(401, { error: "unauthorized" });
+    const computer = new FakeComputer()
+      .on("GET", "/api/chat/runs", () => (signedIn ? json(200, { runs: [] }) : unauthorized()))
+      .on("POST", "/api/chat", () => live.response())
+      .on("GET", eventsPath(RUN_1), () => (signedIn ? replay.response() : unauthorized()));
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Audit the repo");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    const init = { type: "system", subtype: "init", session_id: SESSION_ID };
+    const partOne = delta("Checked 40 files — ✓.");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, init, partOne, { type: "_ping" });
+    await waitFor(() => page.replies()[0] === "Checked 40 files — ✓.", "the first part");
+
+    // The chat service restarts: the stream drops, and the page's session is no longer accepted.
+    signedIn = false;
+    live.drop();
+    await waitFor(() => page.status() === "signed out", "the signed-out state");
+    expect(page.userMessages()).toEqual([]);
+    expect(page.gate()).toContain("Reopen this page from your Hivra dashboard");
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: false, assistant: "Checked 40 files — ✓." });
+
+    // The session works again: the page's own checks open it, and it asks only for the rest of the log.
+    signedIn = true;
+    page.w.dispatchEvent(new page.w.Event("online"));
+    await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 2, "the pick-up");
+    const [refused, pickUp] = computer.callsTo("GET", eventsPath(RUN_1));
+    expect(refused.query).toBe("?offset=" + logBytes(init, partOne));
+    expect(pickUp.query).toBe("?offset=" + logBytes(init, partOne));
+    expect(page.userMessages()).toEqual(["Audit the repo"]);
+    replay.push(delta(" No issues."), { type: "result", subtype: "success", session_id: SESSION_ID, is_error: false }, { type: "_done", code: 0 });
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the reply to finish");
+    expect(page.replies()).toEqual(["Checked 40 files — ✓. No issues."]);
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID });
+    expect(computer.callsTo("POST", "/api/chat")).toHaveLength(1);
     expect(page.errors).toEqual([]);
   });
 
@@ -311,6 +565,7 @@ describe("the computer's own chat page", () => {
       return live.response();
     });
     const page = openPage(computer, [RUN_1, RUN_2]);
+    await page.opened();
     page.send("Book the table");
     await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the repeated start");
     const [first, second] = computer.callsTo("POST", "/api/chat");
@@ -326,6 +581,7 @@ describe("the computer's own chat page", () => {
   it("keeps a start with no answer open, then asks to send again once the computer says it never arrived", async () => {
     const computer = new FakeComputer().on("POST", "/api/chat", () => { throw new TypeError("Failed to fetch"); });
     const page = openPage(computer, [RUN_1]);
+    await page.opened();
     page.send("Order the parts");
     await waitFor(() => page.status() === "offline", "the start to give up", 10_000);
     expect(computer.callsTo("POST", "/api/chat")).toHaveLength(3);
@@ -337,7 +593,7 @@ describe("the computer's own chat page", () => {
 
     page.w.dispatchEvent(new page.w.Event("online"));
     await waitFor(() => page.status() === "ready", "the resume check");
-    expect(computer.callsTo("GET", `/api/chat/runs/${RUN_1}/events`)).toHaveLength(1);
+    expect(computer.callsTo("GET", eventsPath(RUN_1))).toHaveLength(1);
     expect(page.replies()[0]).toBe("⚠ This message didn't reach the computer. Send it again.");
     expect(page.input().value).toBe("Order the parts");
     expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "error" });
@@ -348,15 +604,16 @@ describe("the computer's own chat page", () => {
     const live = new LiveStream();
     const computer = new FakeComputer()
       .on("POST", "/api/chat", () => live.response())
-      .on("POST", `/api/chat/runs/${RUN_1}/stop`, () => json(200, { ok: true, run: { runId: RUN_1, state: "running" } }));
+      .on("POST", stopPath(RUN_1), () => json(200, { ok: true, run: { runId: RUN_1, state: "running" } }));
     const page = openPage(computer, [RUN_1]);
+    await page.opened();
     page.send("Crawl every page");
     await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
     live.push({ type: "_run", runId: RUN_1, detached: true }, { type: "_text", text: "Crawling…" });
     await waitFor(() => page.replies()[0] === "Crawling…", "the reply to stream");
 
     page.stopButton().click();
-    const [stop] = await waitFor(() => computer.callsTo("POST", `/api/chat/runs/${RUN_1}/stop`).length === 1 && computer.callsTo("POST", `/api/chat/runs/${RUN_1}/stop`), "the stop request");
+    const [stop] = await waitFor(() => computer.callsTo("POST", stopPath(RUN_1)).length === 1 && computer.callsTo("POST", stopPath(RUN_1)), "the stop request");
     expect(stop.credentials).toBe("same-origin");
     expect(page.status()).toBe("stopping…");
     // Stopping is the computer's job: the run ends through its own stream.
@@ -371,6 +628,56 @@ describe("the computer's own chat page", () => {
     expect(page.errors).toEqual([]);
   });
 
+  it("a Stop pressed before the start was answered still stops the run once the page finds it", async () => {
+    let stops = 0;
+    const replay = new LiveStream();
+    const computer = new FakeComputer()
+      .on("POST", "/api/chat", () => { throw new TypeError("Failed to fetch"); })
+      .on("POST", stopPath(RUN_1), () => (++stops === 1 ? json(404, { error: "run not found" }) : json(200, { ok: true })))
+      .on("GET", eventsPath(RUN_1), () => replay.response());
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Crawl every page");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    page.stopButton().click();
+    await waitFor(() => stops === 1, "the first stop");
+    expect(page.status()).toBe("stopping…");
+    await waitFor(() => page.status() === "offline", "the start to give up", 10_000);
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: false, stopRequested: true });
+
+    // The first start had reached the computer after all: the page finds the run and stops it.
+    page.w.dispatchEvent(new page.w.Event("online"));
+    await waitFor(() => stops === 2, "the stop to be sent again");
+    expect(page.status()).toBe("stopping…");
+    replay.push({ type: "_text", text: "Crawling…" }, { type: "_done", code: 143, signal: null, stopped: "user" });
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the stopped reply");
+    expect(page.notes()).toEqual(["Stopped."]);
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "stopped" });
+    expect(page.errors).toEqual([]);
+  }, 20_000);
+
+  it("a Stop pressed before a start that never reached the computer ends the turn as stopped", async () => {
+    const computer = new FakeComputer()
+      .on("POST", "/api/chat", () => { throw new TypeError("Failed to fetch"); })
+      .on("POST", stopPath(RUN_1), () => json(404, { error: "run not found" }));
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Crawl every page");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    page.stopButton().click();
+    await waitFor(() => page.status() === "offline", "the start to give up", 10_000);
+
+    page.w.dispatchEvent(new page.w.Event("online"));
+    await waitFor(() => page.status() === "ready", "the resume check");
+    expect(page.notes()).toEqual(["Stopped."]);
+    expect(page.replies()).toEqual([""]);
+    // Stopped on purpose: nothing is put back to send again.
+    expect(page.input().value).toBe("");
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "stopped" });
+    expect(page.errors).toEqual([]);
+  }, 20_000);
+
   it("renders Codex runs: agent messages, commands and the thread id to resume", async () => {
     const live = new LiveStream();
     const next = new LiveStream();
@@ -378,6 +685,7 @@ describe("the computer's own chat page", () => {
     const computer = new FakeComputer({ agentKind: "codex", model: "gpt-5-codex" })
       .on("POST", "/api/chat", () => streams.shift()!.response());
     const page = openPage(computer, [RUN_1, RUN_2]);
+    await page.opened();
     page.send("What is in this folder?");
     await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
     live.push(
@@ -400,7 +708,7 @@ describe("the computer's own chat page", () => {
     expect(Array.from(page.doc.querySelectorAll(".msg.assistant .who"), (node) => node.textContent)).toEqual(["Codex"]);
     expect(page.doc.querySelector("#model")!.textContent).toBe("gpt-5-codex");
     expect(page.input().placeholder).toBe("Message Codex…");
-    expect(page.stored().sessionId).toBe(SESSION_ID);
+    expect(page.stored().turns[0].sessionId).toBe(SESSION_ID);
 
     page.send("Yes");
     await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the follow-up start");
@@ -412,6 +720,7 @@ describe("the computer's own chat page", () => {
     const live = new LiveStream();
     const computer = new FakeComputer({ agentKind: "generic", model: null }).on("POST", "/api/chat", () => live.response());
     const page = openPage(computer, [RUN_1]);
+    await page.opened();
     page.send("hello");
     await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
     live.push(
@@ -431,15 +740,14 @@ describe("the computer's own chat page", () => {
   });
 
   it.each([
-    [409, { error: "This conversation is still working on the previous message.", code: "conversation_busy" }, "This conversation is still working on the previous message.", "ready"],
-    [401, { error: "unauthorized" }, "Reopen this page from your Hivra dashboard and send it again.", "signed out"],
-    [429, { error: "The agent is already working on 8 conversations. Stop one or wait for it to finish.", code: "too_many_runs" }, "already working on 8 conversations", "ready"],
-  ])("shows why the computer refused a message (HTTP %s) and puts it back in the composer", async (status, body, shown, statusText) => {
+    [409, { error: "This conversation is still working on the previous message.", code: "conversation_busy" }, "This conversation is still working on the previous message."],
+    [429, { error: "The agent is already working on 8 conversations. Stop one or wait for it to finish.", code: "too_many_runs" }, "already working on 8 conversations"],
+  ])("shows why the computer refused a message (HTTP %s) and puts it back in the composer", async (status, body, shown) => {
     const computer = new FakeComputer().on("POST", "/api/chat", () => json(status, body));
     const page = openPage(computer, [RUN_1]);
+    await page.opened();
     page.send("Summarize the inbox");
-    await waitFor(() => page.status() === statusText && page.sendButton().hidden === false, "the refusal");
-    expect(page.replies()[0]).toContain("⚠ ");
+    await waitFor(() => page.status() === "ready" && page.sendButton().hidden === false && page.replies()[0]?.includes("⚠ "), "the refusal");
     expect(page.replies()[0]).toContain(shown);
     expect(page.input().value).toBe("Summarize the inbox");
     expect(page.stopButton().hidden).toBe(true);
@@ -447,19 +755,276 @@ describe("the computer's own chat page", () => {
     expect(page.errors).toEqual([]);
   });
 
-  it("keeps an unfinished reply when its session ended, and says how to get back to it", async () => {
-    window.localStorage.setItem(STORE_KEY, JSON.stringify({
-      v: 1, sessionId: SESSION_ID,
-      turns: [{ user: "Deploy the site", assistant: "Building…", tools: [], warnings: [], runId: RUN_1, done: false, outcome: null }],
-    }));
-    const computer = new FakeComputer().on("GET", "/api/chat/runs", () => json(401, { error: "unauthorized" }));
-    const page = openPage(computer);
+  it("a message refused because the session ended goes back to the composer, and the conversation leaves the screen", async () => {
+    const computer = new FakeComputer().on("POST", "/api/chat", () => json(401, { error: "unauthorized" }));
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Summarize the inbox");
     await waitFor(() => page.status() === "signed out", "the signed-out state");
-    expect(page.replies()).toEqual(["Building…"]);
-    expect(page.notes()[0]).toContain("Reopen this page from your Hivra dashboard to see the reply");
-    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: false });
-    expect(computer.callsTo("GET", `/api/chat/runs/${RUN_1}/events`)).toEqual([]);
+    expect(page.gate()).toContain("Reopen this page from your Hivra dashboard");
+    expect(page.userMessages()).toEqual([]);
+    expect(page.sendButton().disabled).toBe(true);
+    expect(page.input().value).toBe("Summarize the inbox");
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "error", warnings: [expect.stringContaining("send it again")] });
     expect(page.errors).toEqual([]);
+  });
+
+  it("shows nothing saved on this device until the computer accepts the page's session", async () => {
+    seed([storedTurn({ user: "Deploy the site", assistant: "Building…", runId: RUN_1, sessionId: SESSION_ID })]);
+    let signedIn = false;
+    const replay = new LiveStream();
+    const computer = new FakeComputer()
+      .on("GET", "/api/chat/runs", () => (signedIn ? json(200, { runs: [] }) : json(401, { error: "unauthorized" })))
+      .on("GET", eventsPath(RUN_1), () => replay.response());
+    const page = openPage(computer);
+    // GET / is public: before and after the computer answers, nothing saved here is on the page.
+    expect(page.doc.body.textContent).not.toContain("Deploy the site");
+    await waitFor(() => page.status() === "signed out", "the signed-out state");
+    expect(page.doc.body.textContent).not.toContain("Deploy the site");
+    expect(page.doc.body.textContent).not.toContain("Building…");
+    expect(page.gate()).toContain("Reopen this page from your Hivra dashboard");
+    expect(page.sendButton().disabled).toBe(true);
+    expect(page.newChatButton().disabled).toBe(true);
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: false, assistant: "Building…" });
+    expect(computer.callsTo("GET", eventsPath(RUN_1))).toEqual([]);
+
+    // Reopened from the dashboard (in this tab or another): the next check opens the page, and the reply continues.
+    signedIn = true;
+    page.w.dispatchEvent(new page.w.Event("focus"));
+    await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1, "the pick-up");
+    expect(page.userMessages()).toEqual(["Deploy the site"]);
+    expect(page.gate()).toBe("");
+    replay.push(delta("Building… done."), { type: "_done", code: 0 });
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the reply to finish");
+    expect(page.replies()).toEqual(["Building… done."]);
+    expect(page.errors).toEqual([]);
+  });
+
+  it("drops a conversation the computer no longer has, so the next message starts a new one", async () => {
+    seed([storedTurn({ user: "Plan the trip", assistant: "Here is the plan.", runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID })]);
+    const failed = new LiveStream();
+    const fresh = new LiveStream();
+    const streams = [failed, fresh];
+    const computer = new FakeComputer().on("POST", "/api/chat", () => streams.shift()!.response());
+    const page = openPage(computer, [RUN_2, RUN_3]);
+    await page.opened();
+    page.send("Book the flights");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    expect(computer.callsTo("POST", "/api/chat")[0].body).toMatchObject({ sessionId: SESSION_ID });
+    // What Claude Code 2.1 prints when asked to resume a transcript it no longer has.
+    const missing = `No conversation found with session ID: ${SESSION_ID}`;
+    failed.push(
+      { type: "_run", runId: RUN_2, detached: true },
+      { type: "result", subtype: "error_during_execution", is_error: true, num_turns: 0, session_id: SESSION_ID, errors: [missing] },
+      { type: "_stderr", text: missing + "\n" },
+      { type: "_done", code: 1 },
+    );
+    failed.end();
+    await waitFor(() => page.status() === "ready", "the failed reply");
+    expect(page.replies()[1]).toContain(missing);
+    expect(page.replies()[1]).toContain("start a new conversation with the agent");
+    expect(page.input().value).toBe("Book the flights");
+    expect(page.stored().turns[1]).toMatchObject({ runId: RUN_2, done: true, outcome: "error", sessionId: null, sessionLost: true });
+    expect(page.offers()).toEqual(["Start a new chat"]);
+
+    page.sendButton().click();
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the new conversation");
+    expect(computer.callsTo("POST", "/api/chat")[1].body).toEqual({ message: "Book the flights", sessionId: null, detach: true, runId: RUN_3 });
+    await waitFor(() => page.offers().length === 0, "the offer to go once the next message is on its way");
+    expect(page.errors).toEqual([]);
+  });
+
+  it("offers a new chat right under a reply whose agent conversation is gone, keeping the unsent message", async () => {
+    seed([storedTurn({ user: "Plan the trip", assistant: "Here is the plan.", runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID })]);
+    const failed = new LiveStream();
+    const fresh = new LiveStream();
+    const streams = [failed, fresh];
+    const computer = new FakeComputer().on("POST", "/api/chat", () => streams.shift()!.response());
+    const page = openPage(computer, [RUN_2, RUN_3]);
+    await page.opened();
+    expect(page.offers()).toEqual([]);
+    page.send("Book the flights");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    failed.push({ type: "_run", runId: RUN_2, detached: true }, { type: "_stderr", text: `No conversation found with session ID: ${SESSION_ID}\n` }, { type: "_done", code: 1 });
+    failed.end();
+    await waitFor(() => page.offers().length === 1, "the offer");
+    // The agent's own words for it are shown too, not just the page's.
+    expect(page.replies()[1]).toContain("No conversation found with session ID");
+
+    page.doc.querySelector<HTMLButtonElement>(".msg.assistant .offer")!.click();
+    await waitFor(() => page.userMessages().length === 0, "the new chat");
+    expect(page.input().value).toBe("Book the flights");
+    expect(page.stored()).toEqual({ v: 1, clearedAt: expect.any(Number), turns: [] });
+    page.sendButton().click();
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the first message of the new chat");
+    expect(computer.callsTo("POST", "/api/chat")[1].body).toEqual({ message: "Book the flights", sessionId: null, detach: true, runId: RUN_3 });
+    expect(page.errors).toEqual([]);
+  });
+
+  it("a run that ended without an exit code (killed, or never started) closes as failed, not complete", async () => {
+    const live = new LiveStream();
+    const computer = new FakeComputer().on("POST", "/api/chat", () => live.response());
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Index the documents");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, { type: "_done", code: null, signal: "SIGKILL" });
+    live.end();
+    await waitFor(() => page.status() === "ready", "the reply to close");
+    expect(page.replies()).toEqual(["⚠ The agent ended before it finished (SIGKILL)."]);
+    expect(page.stored().turns[0]).toMatchObject({ runId: RUN_1, done: true, outcome: "error" });
+    expect(page.errors).toEqual([]);
+  });
+
+  it("continues the newest turn's session, even when an older reply is rebuilt after it", async () => {
+    seed([
+      // Its start got no answer; it did reach the computer, in a conversation of its own.
+      storedTurn({ user: "First message", runId: RUN_1, createdAt: 1 }),
+      storedTurn({ user: "Second message", assistant: "Second reply.", runId: RUN_2, done: true, outcome: "complete", sessionId: SESSION_ID, createdAt: 2 }),
+    ]);
+    const replay = new LiveStream();
+    const live = new LiveStream();
+    const computer = new FakeComputer()
+      .on("GET", eventsPath(RUN_1), () => replay.response())
+      .on("POST", "/api/chat", () => live.response());
+    const page = openPage(computer, [RUN_3]);
+    await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1, "the pick-up");
+    replay.push({ type: "system", subtype: "init", session_id: OTHER_SESSION }, delta("First reply."), { type: "_done", code: 0 });
+    replay.end();
+    await waitFor(() => page.status() === "ready", "the rebuilt reply");
+    expect(page.replies()).toEqual(["First reply.", "Second reply."]);
+
+    page.send("Third message");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    expect(computer.callsTo("POST", "/api/chat")[0].body).toMatchObject({ sessionId: SESSION_ID, runId: RUN_3 });
+    expect(page.errors).toEqual([]);
+  });
+
+  it.each(["the computer's answer", "the run's lock"])("New chat while a reply is being picked up (waiting on %s) leaves that run, and its session, out of the new chat", async (waitingOn) => {
+    const locks = new FakeLocks();
+    seed([
+      storedTurn({ user: "Plan the trip", assistant: "Here is the plan.", runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID, createdAt: 1 }),
+      storedTurn({ user: "Book the flights", runId: RUN_2, resumes: SESSION_ID, createdAt: 2 }),
+    ]);
+    // Another tab is showing the unfinished reply, so this one leaves it be for now.
+    locks.hold(RUN_2, "other-tab");
+    const computer = new FakeComputer();
+    const page = openPage(computer, [RUN_3], { locks, owner: "this-tab" });
+    await page.opened();
+    await waitFor(() => page.notes()[1] === ELSEWHERE, "the reply to be left to the other tab");
+    expect(computer.callsTo("GET", eventsPath(RUN_2))).toEqual([]);
+
+    // That tab closes. This one checks again, and New chat is pressed while
+    // the check waits on the computer, or on the run's lock.
+    locks.releaseAll("other-tab");
+    let proceed: (() => void) | null = null;
+    if (waitingOn === "the run's lock") {
+      proceed = locks.pauseGrants();
+    } else {
+      let answer: (() => void) | null = null;
+      computer.on("GET", "/api/chat/runs", () => new Promise<FakeResponse>((resolve) => { answer = () => resolve(json(200, { runs: [] })); }));
+      proceed = () => answer!();
+    }
+    page.w.dispatchEvent(new page.w.Event("focus"));
+    await waitFor(() => (waitingOn === "the run's lock" ? locks.waiting === 1 : computer.callsTo("GET", "/api/chat/runs").length === 2), "the check to wait");
+    expect(page.newChatButton().disabled).toBe(false);
+    page.newChatButton().click();
+    await waitFor(() => page.userMessages().length === 0, "the new chat");
+    proceed();
+    await sleep(100);
+    expect(computer.callsTo("GET", eventsPath(RUN_2))).toEqual([]);
+    expect(page.status()).toBe("ready");
+    expect(page.sendButton().hidden).toBe(false);
+    expect(page.stopButton().hidden).toBe(true);
+    expect(page.stored()).toEqual({ v: 1, clearedAt: expect.any(Number), turns: [] });
+
+    const live = new LiveStream();
+    computer.on("POST", "/api/chat", () => live.response());
+    page.send("Hello");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    expect(computer.callsTo("POST", "/api/chat")[0].body).toEqual({ message: "Hello", sessionId: null, detach: true, runId: RUN_3 });
+    expect(page.errors).toEqual([]);
+  });
+
+  it("two tabs of the page keep one conversation: each shows and saves the other's turns", async () => {
+    const first = new LiveStream();
+    const second = new LiveStream();
+    const streams = [first, second];
+    const computer = new FakeComputer().on("POST", "/api/chat", () => streams.shift()!.response());
+    const tabA = openPage(computer, [RUN_1]);
+    const tabB = openPage(computer, [RUN_2]);
+    await tabA.opened();
+    await tabB.opened();
+
+    tabA.send("First question");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the first start");
+    first.push({ type: "_run", runId: RUN_1, detached: true }, ...claudeTurn("First answer."), { type: "_done", code: 0 });
+    first.end();
+    await waitFor(() => tabA.status() === "ready", "the first reply");
+    await waitFor(() => tabB.replies()[0] === "First answer.", "the other tab to show it");
+
+    tabB.send("Second question");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the second start");
+    expect(computer.callsTo("POST", "/api/chat")[1].body).toMatchObject({ sessionId: SESSION_ID, runId: RUN_2 });
+    second.push({ type: "_run", runId: RUN_2, detached: true }, delta("Second answer."), { type: "_done", code: 0 });
+    second.end();
+    await waitFor(() => tabB.status() === "ready", "the second reply");
+    // Painted on the next frame after the other tab's save arrives.
+    await waitFor(() => tabA.replies()[1] === "Second answer.", "the first tab to show it");
+    expect(tabA.userMessages()).toEqual(["First question", "Second question"]);
+    expect(tabA.replies()).toEqual(["First answer.", "Second answer."]);
+    expect(tabA.stored().turns.map((turn: StoredTurn) => turn.runId)).toEqual([RUN_1, RUN_2]);
+
+    // Either tab saving again keeps both turns, and a reload finds them.
+    const again = tabA.reload(new FakeComputer());
+    await again.opened();
+    expect(again.userMessages()).toEqual(["First question", "Second question"]);
+
+    // New chat in one tab starts over in the other too.
+    tabB.newChatButton().click();
+    await waitFor(() => again.userMessages().length === 0, "the other tab to start over");
+    expect(again.stored().turns).toEqual([]);
+    expect([...tabA.errors, ...tabB.errors, ...again.errors]).toEqual([]);
+  });
+
+  it("a reply running in one tab is shown, not followed again, by another tab, which takes it over when that tab closes", async () => {
+    const locks = new FakeLocks();
+    const live = new LiveStream();
+    const replay = new LiveStream();
+    const computer = new FakeComputer()
+      .on("POST", "/api/chat", () => live.response())
+      .on("GET", eventsPath(RUN_1), () => replay.response());
+    const tabA = openPage(computer, [RUN_1], { locks, owner: "tab-a" });
+    const tabB = openPage(computer, [], { locks, owner: "tab-b" });
+    await tabA.opened();
+    await tabB.opened();
+    tabA.send("Migrate the database");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    expect(locks.holder(RUN_1)).toBe("tab-a");
+    live.push({ type: "_run", runId: RUN_1, detached: true }, delta("Step one."));
+    await waitFor(() => tabB.replies()[0] === "Step one.", "the other tab to show the reply");
+
+    tabB.w.dispatchEvent(new tabB.w.Event("focus"));
+    await waitFor(() => tabB.notes()[0] === ELSEWHERE, "the other tab to leave the reply to the first");
+    expect(computer.callsTo("GET", eventsPath(RUN_1))).toEqual([]);
+    // New chat there would drop a reply that is still running.
+    tabB.newChatButton().click();
+    await waitFor(() => tabB.status() === "a reply is running in another tab", "New chat to be refused");
+    expect(tabB.userMessages()).toEqual(["Migrate the database"]);
+
+    // The first tab closes mid-reply; the other takes it over on its next check.
+    tabA.closeTab();
+    tabB.w.dispatchEvent(new tabB.w.Event("focus"));
+    await waitFor(() => computer.callsTo("GET", eventsPath(RUN_1)).length === 1, "the take-over");
+    expect(locks.holder(RUN_1)).toBe("tab-b");
+    replay.push(delta("Step one."), delta(" Step two."), { type: "_done", code: 0 });
+    replay.end();
+    await waitFor(() => tabB.status() === "ready", "the reply to finish");
+    expect(tabB.replies()).toEqual(["Step one. Step two."]);
+    expect(computer.callsTo("POST", "/api/chat")).toHaveLength(1);
+    expect(locks.holder(RUN_1)).toBeUndefined();
+    expect([...tabA.errors, ...tabB.errors]).toEqual([]);
   });
 });
 
@@ -483,7 +1048,7 @@ const wait = Number((prompt.match(/WAIT:(\\d+)/) || [, "0"])[1]);
 process.on("SIGTERM", () => { fs.writeFileSync(path.join(dir, "term-" + tag), "1"); process.exit(143); });
 const out = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
 out({ type: "system", subtype: "init", session_id: "${SESSION_ID}", model: "claude-opus-4-8" });
-out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Working on " + tag + "." } } });
+out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Working on " + tag + " — ✓." } } });
 setTimeout(() => {
   fs.writeFileSync(path.join(dir, "done-" + tag), "1");
   out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: " Finished " + tag + "." } } });
@@ -582,14 +1147,17 @@ describe("the computer's own chat page against the real gateway", () => {
   // The browser side of one page: same-origin requests carrying the session
   // cookie (and, as browsers do for POST, the page's Origin). Going away tears
   // down its open connections, like closing the tab; the gone page's script
-  // hears nothing more.
-  function browser(port: number, cookie: string): Transport {
+  // hears nothing more. `drop` cuts the open connections while the page stays.
+  function browser(port: number, cookie: string) {
     const open = new Set<http.ClientRequest>();
+    const requested: string[] = [];
     let gone = false;
-    return {
-      fetch: (input, init = {}) => {
-        if (gone) return new Promise(() => undefined);
-        return new Promise((resolve, reject) => {
+    const transport = {
+      requested,
+      fetch: (input: unknown, init: Init = {}) => {
+        if (gone) return new Promise<FakeResponse>(() => undefined);
+        requested.push(String(input));
+        return new Promise<FakeResponse>((resolve, reject) => {
           const method = (init.method || "GET").toUpperCase();
           const req = http.request({
             hostname: "127.0.0.1", port, path: String(input), method, agent: false,
@@ -598,9 +1166,11 @@ describe("the computer's own chat page against the real gateway", () => {
             res.once("close", () => open.delete(req));
             const body = new ReadableStream<Uint8Array>({
               start(controller) {
+                const fail = () => { try { controller.error(new TypeError("network error")); } catch { /* already closed */ } };
                 res.on("data", (chunk: Buffer) => { if (!gone) controller.enqueue(new Uint8Array(chunk)); });
                 res.once("end", () => { if (!gone) controller.close(); });
-                res.once("error", () => { if (!gone) controller.error(new TypeError("network error")); });
+                res.once("error", () => { if (!gone) fail(); });
+                res.once("close", () => { if (!gone && !res.complete) fail(); });
               },
             });
             resolve({
@@ -617,12 +1187,16 @@ describe("the computer's own chat page against the real gateway", () => {
           req.end(init.body);
         });
       },
-      detach: () => {
-        gone = true;
+      drop: () => {
         for (const req of open) req.destroy();
         open.clear();
       },
+      detach: () => {
+        gone = true;
+        transport.drop();
+      },
     };
+    return transport;
   }
 
   const marker = (name: string) => fs.existsSync(path.join(home, "fake", name));
@@ -632,21 +1206,22 @@ describe("the computer's own chat page against the real gateway", () => {
     const cookie = await signIn(port);
 
     const first = openPage(browser(port, cookie), [RUN_1]);
+    await first.opened();
     first.send("TAG:one WAIT:1500 research the market");
-    await waitFor(() => first.replies()[0] === "Working on one.", "the reply to start", 10_000);
+    await waitFor(() => first.replies()[0] === "Working on one — ✓.", "the reply to start", 10_000);
 
     // Reload mid-turn: the old page's connection is torn down with it.
     const second = first.reload(browser(port, cookie), [RUN_2]);
-    expect(second.replies()).toEqual(["Working on one."]);
-    expect(second.status()).toBe("reconnecting…");
-    await waitFor(() => second.replies()[0] === "Working on one. Finished one." && second.status() === "ready", "the resumed reply to finish", 15_000);
+    await second.opened();
+    expect(second.replies()[0]).toBe("Working on one — ✓.");
+    await waitFor(() => second.replies()[0] === "Working on one — ✓. Finished one." && second.status() === "ready", "the resumed reply to finish", 15_000);
     expect(marker("done-one")).toBe(true);
     expect(marker("term-one")).toBe(false);
-    expect(second.stored()).toMatchObject({ sessionId: SESSION_ID, turns: [{ runId: RUN_1, done: true, outcome: "complete" }] });
+    expect(second.stored()).toMatchObject({ turns: [{ runId: RUN_1, done: true, outcome: "complete", sessionId: SESSION_ID }] });
 
     // The next turn resumes the same conversation; Stop really ends it.
     second.send("TAG:two WAIT:20000 crawl everything");
-    await waitFor(() => second.replies()[1] === "Working on two.", "the second reply to start", 10_000);
+    await waitFor(() => second.replies()[1] === "Working on two — ✓.", "the second reply to start", 10_000);
     second.stopButton().click();
     await waitFor(() => second.status() === "ready", "the stopped reply", 15_000);
     expect(marker("term-two")).toBe(true);
@@ -656,4 +1231,25 @@ describe("the computer's own chat page against the real gateway", () => {
     expect(fs.readdirSync(path.join(home, ".hivra", "chat-runs")).sort()).toEqual([RUN_1, RUN_2].sort());
     expect([...first.errors, ...second.errors]).toEqual([]);
   }, 45_000);
+
+  it("after a dropped connection, continues from exactly the bytes of the run's log it already has", async () => {
+    const port = await bootGateway();
+    const cookie = await signIn(port);
+    const transport = browser(port, cookie);
+    const page = openPage(transport, [RUN_1]);
+    await page.opened();
+    page.send("TAG:three WAIT:2500 research the market");
+    await waitFor(() => page.replies()[0] === "Working on three — ✓.", "the reply to start", 10_000);
+    const logFile = path.join(home, ".hivra", "chat-runs", RUN_1, "events.ndjson");
+    const received = fs.statSync(logFile).size;
+
+    // The network drops; the page stays and re-attaches on its own.
+    transport.drop();
+    await waitFor(() => page.replies()[0] === "Working on three — ✓. Finished three." && page.status() === "ready", "the reply to finish", 15_000);
+    expect(transport.requested.filter((url) => url.includes("/events"))).toEqual([`${eventsPath(RUN_1)}?offset=${received}`]);
+    expect(marker("done-three")).toBe(true);
+    expect(page.warnings.some((line) => line.includes("the reply stream dropped"))).toBe(true);
+    expect(page.warnings.some((line) => line.includes("not JSON"))).toBe(false);
+    expect(page.errors).toEqual([]);
+  }, 30_000);
 });

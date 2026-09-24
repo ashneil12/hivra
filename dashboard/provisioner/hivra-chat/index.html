@@ -49,6 +49,7 @@
   @keyframes blink{50%{opacity:0}}
   .think{color:var(--dim);font-style:italic}
   .note{color:var(--dim);font-style:italic;font-size:13px;margin-top:6px}
+  .offer{margin-top:8px}
   footer{border-top:1px solid var(--line);background:rgba(20,24,29,.7);backdrop-filter:blur(8px);padding:12px 0}
   .composer{max-width:820px;margin:0 auto;padding:0 18px;display:flex;gap:10px;align-items:flex-end}
   textarea{
@@ -77,11 +78,12 @@
   <span class="logo"><span class="h">Hivra</span> · <span class="agent-name">Claude Code</span></span>
   <span class="badge" id="model" hidden></span>
   <div class="spacer"></div>
-  <button class="badge" id="new" type="button">New chat</button>
-  <span class="badge" id="status">ready</span>
+  <button class="badge" id="new" type="button" disabled>New chat</button>
+  <span class="badge" id="status">connecting…</span>
 </header>
 <main id="main">
-  <div class="empty" id="empty">
+  <div class="empty" id="gate"><div id="gate-text">Connecting to this computer…</div></div>
+  <div class="empty" id="empty" hidden>
     <h1>Your <span class="agent-name">Claude Code</span>, in the cloud.</h1>
     <div>This computer is running the real <span class="agent-name">Claude Code</span> on your account, with a browser attached. Ask it anything.</div>
     <div class="examples">
@@ -90,12 +92,12 @@
       <div class="ex">Take a screenshot of stripe.com and describe it</div>
     </div>
   </div>
-  <div class="wrap" id="log"></div>
+  <div class="wrap" id="log" hidden></div>
 </main>
 <footer>
   <div class="composer">
     <textarea id="input" placeholder="Message Claude Code…" rows="1"></textarea>
-    <button class="send" id="send" type="button">Send</button>
+    <button class="send" id="send" type="button" disabled>Send</button>
     <button class="send stop" id="stop" type="button" hidden>Stop</button>
   </div>
   <div class="hint"><span id="hint-runtime">Runs the official <code>claude</code> CLI on your own login</span> · Replies keep going if you close this page · Enter to send, Shift+Enter for newline</div>
