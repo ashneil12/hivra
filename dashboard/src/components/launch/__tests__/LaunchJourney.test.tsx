@@ -182,15 +182,21 @@ describe("LaunchJourney", () => {
     useAuth.mockRestore();
   });
 
-  it("links agents that still set up on their own page with a way back to Launch", async () => {
+  it.each([
+    ["Claude Code", "Claude Code — here's the plan"],
+    ["Hermes", "Hermes — here's the plan"],
+    ["OpenClaw", "OpenClaw — here's the plan"],
+    ["Agent Zero", "Agent Zero — here's the plan"],
+    ["Aeon", "Aeon — here's the plan"],
+  ])("launches %s in this journey instead of sending it to the welcome page", async (tile, heading) => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
-    expect(screen.getByRole("link", { name: /^Claude Code/ })).toHaveAttribute(
-      "href",
-      "/dashboard/welcome?step=deploy&agentType=claude-code&from=launch",
-    );
+    expect(screen.queryByRole("link", { name: new RegExp(`^${tile}`) })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Browse every agent/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${tile}`) }));
+    expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
   });
 
   it("closes the keyboard when return is pressed in the name field", async () => {
