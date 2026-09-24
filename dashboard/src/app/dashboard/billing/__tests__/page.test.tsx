@@ -738,6 +738,17 @@ describe("BillingPage", () => {
       expect(screen.getByRole("heading", { name: "Choose a plan" })).toBeInTheDocument();
     });
 
+    // Live review on Canary: "vCPU 0.5 −7.5" beside the figure read as a range.
+    it("says how each plan differs from yours in words, not as a bare signed number", async () => {
+      render(<BillingPage />);
+      fireEvent.click(await screen.findByRole("tab", { name: "Plans" }));
+      const free = (await screen.findByRole("heading", { name: "Free" })).closest("article") as HTMLElement;
+      expect(within(free).getByText("(−3.5 vs yours)")).toBeInTheDocument();
+      expect(within(free).getByText("(−7 GB vs yours)")).toBeInTheDocument();
+      const pro = screen.getByRole("heading", { name: "Pro" }).closest("article") as HTMLElement;
+      expect(within(pro).getByText("(−4 GB vs yours)")).toBeInTheDocument();
+    });
+
     it("opens Overview on a paid plan on hold, with the way to settle it", async () => {
       notSubscribed();
       usageData = {
