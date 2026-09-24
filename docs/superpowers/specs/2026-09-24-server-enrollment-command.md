@@ -1,9 +1,12 @@
 # My server: one-command enrollment, design and threat model
 
 Date: 2026-09-24
-Status: Proposed design and threat model, written before implementation. Nothing
-in this document is implemented. No route, table, script or UI described below
-exists yet. Merging slice 13 needs this document reviewed first.
+Status: Design and threat model for slice 13. Revision 4 is implemented on
+branch `claude/capacity-connect` (code, migration `20260924213000`, script
+`2026.09.24.1`) and was checked on disposable Ubuntu 22.04 and 24.04 servers
+(section 21). It is not merged, deployed or accepted on Canary: section 18
+lists what the Canary run must still show, and until it passes nothing here
+claims a working enrollment for users.
 Revision 2 (2026-09-24) fixes the first review: the gVisor authority rule no
 longer depends on a discovery snapshot for existing computers (9.5), the
 terminal prompt can't be skipped with `--yes` when a terminal exists (6.1),
@@ -21,6 +24,27 @@ enrollment row (12); the advanced wizard keeps the pasted fingerprint as its
 default (8.2); the background-work claim is scoped per lane (9.3); the words are
 chosen in the app (7); a download-limit refusal has its own copy (6.2); and the
 sudo transport's failure and `use_pty` cases are named and tested (9.2).
+Revision 4 (2026-09-24) fixes the third review and what the disposable-server
+runs found. The Hetzner provider lane keeps its own version 1 discovery
+contract, script and protocol, byte for byte (9.4). While release gate T43 is
+off, every Proxmox-lane host change refuses a sudo connection before any SSH,
+discovery offers no Proxmox path through sudo, and the script sends a Proxmox
+VE server to the advanced root login instead of enrolling it (3, 6.1, 9.6). A
+Proxmox-provider connection has its own Replace row (8.1), and the Replace
+probe itself detects Proxmox VE (8.1). The receipts guard covers TRUNCATE, the
+service role's table and sequence grants start from nothing, and Disconnect
+of an enrolled connection is tested through the foreign key (12). gVisor
+Prepare, which changes packages, runs without the remote TERM/KILL limit
+(9.2). A byte-identical report replay is acknowledged after Yes too, until
+`confirm_by` (5). The real key lifetime is stated and `expiry-time=` is
+declined with its reason (14). Refusals on `/enroll` are HTTP 200 lines, and
+the readiness probe checks `/enroll` itself (6.2, 10.6). The deploy order and
+N-1 rollback are written down (20). The account-code test uses fixed vectors
+(14, T5). sudo's incident mail and sshd's `Match Group` ordering are handled
+(6.1, 9.4). The disposable-server runs also found two defects, now fixed: the
+sudo transport's `PATH` hid `/usr/local/bin` (where Prepare installs `runsc`)
+from the gVisor check, and the uninstall's `userdel` raced the systemd user
+manager on Ubuntu 24.04 (9.2, 6.7).
 Scope: redesign proposal C7 / slice 13 (INF-03), plus the privilege change it
 depends on (INF-04) and the trust-on-first-use rule it shares with the advanced
 SSH wizard (INF-14).
@@ -103,6 +127,11 @@ Not in scope, and not claimed:
   user who can run `sudo` (or a root shell).
 - Non-x86 and non-supported operating systems enroll no user. With consent, the
   script reports what it found so Hivra can say why (6.1, step 6).
+- **Proxmox VE through the command**, while release gate T43 (9.2) is off. The
+  script refuses a Proxmox VE server locally (`/etc/pve` or `pveversion`
+  present), sends nothing and leaves the code valid; the copy points to the
+  advanced wizard with a root login. Hivra's report check treats a Proxmox VE
+  report as unsupported, so a modified script can't enroll one either.
 - Windows, macOS and containers without sshd.
 - Key rotation for an enrolled connection, beyond what a new command does.
   Running a new command on a connected server offers to replace that server's
@@ -120,10 +149,18 @@ Not in scope, and not claimed:
 >
 > Your terminal will ask you to check your account code: **K7QM-2XRA**
 >
-> Signed in as root (Proxmox usually is)? Leave out `sudo`.
-> Works with Ubuntu 22.04 or 24.04 on x86, or Proxmox VE 8 or 9. The server
-> needs a public IPv4 address and must accept SSH from the internet. Home or
-> office machine? Hosted Hivra can't reach private networks yet.
+> Signed in as root? Leave out `sudo`.
+> Works with Ubuntu 22.04 or 24.04 on x86. The server needs a public IPv4
+> address and must accept SSH from the internet. Home or office machine? Hosted
+> Hivra can't reach private networks yet.
+> Proxmox VE connects with a root login for now: use **Connect with SSH details
+> instead**.
+
+(Revision 4: while release gate T43 is off, 9.2, the command does not connect
+Proxmox VE. A Proxmox VE server enrolled through sudo would reach a dead end,
+"Proxmox launches need a root login for now", after the owner had already
+answered Yes. The version that opens the gate adds Proxmox VE 8 and 9 back to
+the script and to this copy.)
 >
 > *Waiting for your server… no contact yet · 0:41* — check your terminal if nothing happens.
 > [Connect with SSH details instead (advanced)]
@@ -225,7 +262,7 @@ sudo bash`."
 | Owner-bound | The row carries the issuing `user_id`. The machine endpoints never take an account from the request. Confirm, replace, cancel and status need that owner's Clerk session. |
 | Account code | What the terminal names the receiving account by. `accountCode(userId)` is the first 40 bits of `sha256("hivra/account-code/v1" ‖ 0x00 ‖ userId)` in Crockford base32 (no I, L, O or U), shown as `XXXX-XXXX`. It is derived, not stored, and it is the same wherever it appears: next to the command, in the account menu and on the settings page, and in the final line of the script. It is not a secret and grants nothing. Nobody chooses it, because Clerk assigns user ids: an attacker who wants a victim's code must create about 2^40 (a trillion) accounts, and even matching the first four characters takes about 2^20 (a million). A code holder learns this pseudonymous value, not the owner's email. |
 | Lifetime | 15 minutes from issue to report (`expires_at`, checked at SQL commit with `clock_timestamp()`). After a report, the owner has 30 minutes to answer (`confirm_by`). |
-| Redemption | Fetching the script does not use the code (so `--dry-run` and "view first" keep it valid). The code is spent by exactly one accepted report: `issued → reported` or `issued → unsupported`, in one conditional `UPDATE … WHERE phase = 'issued' AND expires_at > clock_timestamp()`. A byte-identical repeat of the accepted report gets the same acknowledgement and changes nothing (network retries and lost responses, 6.1 step 13). Anything else after that is refused. |
+| Redemption | Fetching the script does not use the code (so `--dry-run` and "view first" keep it valid). The code is spent by exactly one accepted report: `issued → reported` or `issued → unsupported`, in one conditional `UPDATE … WHERE phase = 'issued' AND expires_at > clock_timestamp()`. A byte-identical repeat of the accepted report gets the same acknowledgement and changes nothing (network retries and lost responses, 6.1 step 13), while the row is `reported` **or `confirmed`** and `confirm_by` has not passed. Acknowledging it after Yes matters: if the first acknowledgement was lost and the owner said Yes while the script was still retrying, a refusal would make the server roll back the setup Hivra had just connected. After No, cancellation or expiry the repeat is refused, so a retrying server rolls back. Anything else after that is refused. |
 | Active limit | At most 3 unexpired, unanswered codes per user. |
 | Account checks | Every account-level condition that could refuse the connection at Yes also runs when the code is issued and again at report, so a server is never changed for a connection Hivra already knew it would refuse. Today that is the account's access to host connections and the active-code limit; no per-plan server limit exists (section 2). If one is added later, unanswered codes count as pending connections and it is checked at issue, report and Yes. |
 
@@ -271,7 +308,8 @@ changed:
    and the effective sshd settings for user `hivra` from `sshd -T -C
    user=hivra,host=hivra-check,addr=192.0.2.1` (port, `authorizedkeysfile`,
    `pubkeyauthentication`, `allowusers`/`allowgroups`/`denyusers`/`denygroups`,
-   and the Ed25519 `hostkey` path). The address is a documentation address, not
+   and the Ed25519 `hostkey` path; asked again after step 10, because `Match
+   Group` rules apply only to a user that exists). The address is a documentation address, not
    loopback, because loopback often has its own permissive `Match Address`
    block. Hivra's real source addresses change, so no single address evaluates
    the rules Hivra will meet. The script therefore also reads the `Match` lines
@@ -293,8 +331,13 @@ changed:
    terminal to ask you first. Run it in a terminal, or add `-s -- --yes` if you
    are automating it." `--dry-run` never asks, because it changes and sends
    nothing.
-6. **Unsupported servers.** If the server is not Ubuntu 22.04/24.04 x86_64 or
-   Proxmox VE 8/9 x86_64, it prints what it found and the rebuild instruction
+6. **Proxmox VE, then unsupported servers.** While gate T43 is off, a server
+   with `/etc/pve` or `pveversion` gets "This server runs Proxmox VE 8.2. The
+   setup command does not connect Proxmox VE yet: Proxmox VE servers connect
+   with a root login for now. In Hivra, choose Connect with SSH details instead
+   (advanced) and sign in as root. Nothing was sent or changed." It asks
+   nothing, sends nothing and the code stays valid. If the server is not Ubuntu
+   22.04/24.04 x86_64, it prints what it found and the rebuild instruction
    (INF-05 copy) locally, then asks on the terminal: "Send these facts to the
    Hivra account with code K7QM-2XRA so it shows the same instructions? [y/N]".
    Only a yes (or `--yes` with no terminal) sends an `unsupported` report
@@ -322,7 +365,11 @@ changed:
    Hivra hivra`, then `usermod -p '*' hivra`. That makes password sign-in
    impossible while keeping key sign-in valid when sshd has `UsePAM no`; a `!`
    lock would block keys there. This is the same shape as the Hetzner cloud-init
-   user (`lock_passwd: true` there).
+   user (`lock_passwd: true` there). After the key is in place (step 10), the
+   script asks `sshd -T` again: `sshd` evaluates `Match Group` rules only for a
+   user that exists, so the check in step 3 couldn't see a `Match Group hivra`
+   or `DenyGroups hivra` rule. If sshd would now refuse hivra, the run rolls
+   back with the same sentence step 7 would have printed.
 10. **Key.** Writes exactly one line to hivra's authorized keys file (mode 0600,
     owner hivra): `restrict ssh-ed25519 <Hivra's public key> hivra-enrollment`.
     `restrict` turns off port, agent and X11 forwarding and PTYs. The Hivra
@@ -379,6 +426,14 @@ them, and a sentinel last:
 | --- | --- |
 | `/enroll` with a usable code in `Authorization` and fewer than 20 fetches | `{ hivra_enroll_entry …; }` as above |
 | `/enroll` with no code, or an unknown, expired, used or cancelled code | `{ hivra_refuse 'expired_or_used'; }` (or `'missing_code'` when no header was sent), which prints one sentence and exits 1. The body and line are byte-identical for every unusable code. |
+
+Every row above is served as **HTTP 200** `text/plain`, refusals included:
+`curl -f` pipes only a 2xx body, so a refusal sent as 401 would reach bash as
+nothing and the person would see only curl's own error. As 200 lines,
+`hivra_refuse` prints its sentence (checked on the disposable servers with a
+missing and an unknown code). Only load shedding (429 with `Retry-After`) and a
+script that fails its pinned sha256 (503) are HTTP errors, which curl reports
+itself; bash then receives nothing and runs nothing.
 | `/enroll` with a usable code that has already been fetched 20 times | `{ hivra_refuse 'fetch_limit'; }`: "This command was downloaded 20 times, which is Hivra's limit. Get a new command in Hivra." The code stays valid for a report from a run already under way. This tells nothing to anyone who has not already fetched the script with that code, because each of the first 20 fetches served the real script. |
 | `/enroll/uninstall` | `{ hivra_uninstall_entry "$@" HIVRA_END_V1; }` |
 | `/enroll/script` | none: the bare body, `text/plain`, to read |
@@ -546,7 +601,10 @@ serves the same pinned body with the uninstall entry. It needs no code and
 contacts no one. It supports `--dry-run` and asks before changing anything
 (the same terminal rule as 6.1 step 5). It refuses to act unless the marker is
 present. It ends hivra's sessions (`loginctl terminate-user`, then `pkill -u
-hivra`), runs `userdel -r hivra`, removes `/etc/sudoers.d/hivra-enrollment` only
+hivra`), waits up to ten seconds for hivra's processes to end (on Ubuntu 24.04
+`terminate-user` returns before systemd has stopped hivra's user manager, and
+`userdel` refuses a user with processes; the disposable-server run hit this),
+sends `KILL` to any that remain and waits again, then runs `userdel -r hivra`, removes `/etc/sudoers.d/hivra-enrollment` only
 if it is byte-identical to what Hivra writes, and removes the marker. It leaves
 `/etc/hivra` in place, because Prepare may have put other files there. It then
 says plainly what it left: "Software that Prepare installed (Docker, gVisor,
@@ -689,6 +747,7 @@ What the card offers depends on the connection it matched:
 | A `login` connection that agents use | No Replace: "web-1 is already connected as root, and its agents use that connection. Hivra didn't change it. To remove the hivra user this command added, run the uninstall command." (The copy names web-1's actual user.) Only No. |
 | A `login` connection on Proxmox VE while the T43 gate is off | No Replace: "web-1 runs Proxmox VE, which needs a root login for now. Hivra didn't change it. To remove the hivra user this command added, run the uninstall command." Only No. |
 | A connection of another provider (a Hetzner server Hivra created) | No Replace: "This SSH identity belongs to web-1, a server Hivra created on Hetzner. Manage it from its card." Only No. The script refuses to run on such a server (6.1 step 7), so a report like this is forged or comes from a copy of that server. |
+| A Proxmox-provider connection (the Proxmox wizard's root login), with or without agents | No Replace: "This SSH identity belongs to web-1, a Proxmox server connected as root. Proxmox connections keep their root login, so Hivra didn't change it. To remove the hivra user this command added, run the uninstall command." Only No. That lane has no sudo privilege at all (only `host` connections may record `sudo`, a check constraint), so neither a key-only Replace nor a switch applies. (Revision 4, review finding 3.) |
 | More than one connection | No Replace: "More than one of your connections uses this SSH identity. Remove the extra ones first." Only No. |
 
 **Replace, step by step.**
@@ -708,11 +767,17 @@ What the card offers depends on the connection it matched:
    key-only change the address can't move, as in credential recovery today. The
    sign-in requires web-1's pinned Ed25519 key, uses user `hivra` and the
    enrollment's private key, and runs one fixed, read-only probe through the
-   sudo transport (9.2) that prints the effective UID. Success shows three
-   things at once: the server presented web-1's pinned key, which only web-1
-   holds; it accepted this enrollment's key, which only a run of this
+   sudo transport (9.2) that prints the effective UID and whether the server
+   runs Proxmox VE (`/etc/pve` exists or `pveversion` is on `PATH`). Success
+   shows three things at once: the server presented web-1's pinned key, which
+   only web-1 holds; it accepted this enrollment's key, which only a run of this
    enrollment's script installs; and sudo ran without a password as UID 0.
-   Nothing on the server changes. Its auth log records one sudo line.
+   Nothing on the server changes. Its auth log records one sudo line. A switch
+   is refused with `proxmox_needs_root` when the probe finds Proxmox VE while
+   gate T43 is off, whatever the latest inspection said (it may be missing or
+   stale). A key-only Replace keeps the privilege the connection already has,
+   so it makes Proxmox no less available and is not refused. (Revision 4,
+   review finding 4.)
 4. On success, `complete_server_enrollment_replacement` locks both rows again,
    checks the lease and the expected revision, and changes the connection the
    way today's functions do: a key-only change like credential recovery (new
@@ -724,7 +789,8 @@ What the card offers depends on the connection it matched:
    `replaced_from_revision`. Its sealed key is wiped, and `replacement_verified`
    and `access_replaced` events are appended. Inspection, then preflight, start.
 5. On failure (a different host key, no connection, authentication refused, no
-   sudo sentinel, or a UID other than 0), `fail_server_enrollment_replacement`
+   sudo sentinel, a UID other than 0, or Proxmox VE met by a switch while the
+   gate is off), `fail_server_enrollment_replacement`
    records the failure class, appends `replacement_refused` and ends the lease.
    The connection, its secret, its revision and its targets are untouched, so
    web-1 and its computers are exactly as they were before the check. (If the
@@ -831,8 +897,29 @@ send one command, the same for every operation except the whole-second limit
 `<N>`:
 
 ```
-/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/root /usr/bin/timeout --signal=TERM --kill-after=1s <N>s /bin/bash --noprofile --norc -c '<LOADER>'
+/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin LC_ALL=C HOME=/root /usr/bin/timeout --signal=TERM --kill-after=1s <N>s /bin/bash --noprofile --norc -c '<LOADER>'
 ```
+
+Revision 4 changes two things in this command, both from evidence:
+
+- **`PATH`** is root's `PATH` under sudo on Ubuntu (its `secure_path`), not the
+  first-boot runner's narrower one. The disposable-server run found that the
+  narrower `PATH` hid `/usr/local/bin`, where gVisor Prepare installs `runsc`,
+  so the strict gVisor check (`command -v runsc`) failed through sudo while it
+  passed over a root login. Host scripts find tools by name as they do over a
+  root login; the fixed value still means nothing is inherited.
+- **Scripts that change packages run without the remote limit.** gVisor
+  Prepare (apt and dpkg) is sent with the same command minus `/usr/bin/timeout
+  …` (`remoteLimit: "none"`). A TERM, then KILL, inside dpkg leaves "dpkg was
+  interrupted, you must manually run dpkg --configure -a", which is worse than
+  a script that finishes after Hivra stopped waiting, and it is exactly what a
+  root login does today: closing the channel at Hivra's deadline doesn't stop
+  the remote script. On the disposable servers, with `use_pty` on and off, a
+  script under the unbounded command ran to its end after the channel closed,
+  the same script under a 5-second limit was stopped, and a real `apt-get
+  install` whose channel was closed half a second in finished, with `dpkg
+  --audit` clean afterwards. Every other operation keeps the limit. (Review
+  finding 6.)
 
 `<LOADER>` is a fixed string of about 150 bytes. It sits inside single quotes
 in the command above, so it contains no single quote (a test pins that):
@@ -862,6 +949,7 @@ it differs:
 | --- | --- | --- |
 | `sudo -n`, `env -i`, fixed `PATH`, `LC_ALL=C`, `bash --noprofile --norc` | Same | Same reasons: no password prompt, no inherited environment, no profile |
 | No `HOME` | `HOME=/root` | Host scripts run today in root's login environment, where `HOME=/root`. Docker and Proxmox tools read it. Keeping it avoids a behaviour difference between `login` and `sudo`. |
+| `PATH=/usr/sbin:/usr/bin:/sbin:/bin` | root's `secure_path`, with `/usr/local/*` and `/snap/bin` | Prepare installs `runsc` in `/usr/local/bin`; the gVisor check finds it by name (Revision 4, from the disposable-server run). |
 | `timeout … 8s` under a 10 s local deadline | `<N>` = local timeout in whole seconds minus 2, at least 1 | The remote process never outlives Hivra's own deadline, as in first boot. Host scripts run from 60 s to 20 minutes, so the limit follows the call. |
 | `bash -s`, recipe on stdin | `bash -c '<LOADER>'`, script and data on stdin | The stdin form needs a data stream after the script. A length prefix keeps both on stdin and keeps every script out of argv. |
 | Any failure maps to `command_failed` | `HIVRA_SUDO_V1` on stderr means bash started as root and any later failure is the script's. No sentinel plus a non-zero exit means the command never reached the script, and a diagnosis follows (below) | One sudo call per successful operation still tells a transport failure apart from a script failure. The earlier draft's separate `sudo -n true` pre-check logged a second line on every operation; the diagnosis runs only after a failure. |
@@ -914,6 +1002,16 @@ the enrollment's sudoers file adds `Defaults:hivra !use_pty` before release,
 and the advanced sudo-user option is not offered until its instructions include
 the same rule. This is a release gate for the sudo transport, alongside T43.
 
+**Result (Revision 4, section 21).** On Ubuntu 22.04 (sudo 1.9.9) and 24.04
+(sudo 1.9.15p5), with `use_pty` on and off, 1 MB of random stdin including
+NUL, CR, ^C and ^D arrived byte for byte; errexit, the `ERR` trap, a heredoc
+and `exit 3` matched the login form (the script in argv, the data on stdin);
+a 96 KB script ran; the auth log held one constant command line and no script
+byte. Nothing differed, so the sudoers file stays as it is and the advanced
+sudo-user option is offered. The comparison is with the login form rather than
+plain `bash -s` because under `bash -s` a command that reads stdin would read
+the rest of the script itself.
+
 **Early finish under sudo.** Proxmox provisioning resolves on a marker and
 leaves a `nohup … &` child running in the same session (section 2). Under
 `timeout`, the child survives as long as the script itself exits before the
@@ -928,6 +1026,15 @@ the channel after the marker, with `use_pty` on and off. If it does not,
 Proxmox preflight refuses `sudo` connections ("Proxmox launches need a root
 login for now") until the provisioner detaches its child with `setsid`, which is
 a provisioner version change. gVisor and discovery do not use early finish.
+
+**Result (Revision 4).** On both disposable servers, with `use_pty` on and
+off, a `nohup … &` child started inside the exact command survived the client
+closing the channel at the marker, and so did it through the real runner's
+`earlyFinishMarker`. The gate stays closed all the same
+(`PROXMOX_SUDO_TRANSPORT_READY = false`): opening it also needs a Proxmox VE
+host through sudo (these servers can't run Proxmox VE: no nested KVM on
+Hetzner Cloud) and the hour-long count of sudo log lines from the Proxmox-lane
+callers (9.3), neither of which was done.
 
 ### 9.3 Sudo logging and what other users can see
 
@@ -998,6 +1105,22 @@ connection. These fields make `HOST_DISCOVERY_CONTRACT_VERSION` 2:
 - The Hetzner provider-lane snapshot (connection provider `hetzner-cloud`,
   checked in `20260828030000_provider_computer_preparation.sql:67`) is a
   different contract. It always runs through sudo and is not changed.
+  **Revision 4 (review finding 1)** makes that literal. Revision 3 bumped the
+  one shared `HOST_DISCOVERY_CONTRACT_VERSION`, but
+  `ProviderGuestDiscoverySnapshotSchema` extended the shared fields with
+  `contractVersion: z.literal(HOST_DISCOVERY_CONTRACT_VERSION)`, the first-boot
+  recipe ran the shared script, and `publish_prepared_provider_computer`
+  refuses anything but `contractVersion` 1: a v2 bump would have stopped every
+  Hetzner server from publishing. Now the provider lane has its own constants
+  (`PROVIDER_GUEST_DISCOVERY_CONTRACT_VERSION = 1`, script protocol 1), its own
+  schema literal, and `buildReadOnlyHostDiscoveryScript(id, "provider-guest")`
+  emits the version 1 script byte for byte (a test pins its sha256 against the
+  pre-change script). Its parser refuses the host lane's version 2 output and
+  the host parser refuses version 1 output. `FIRST_BOOT_RECIPE_VERSION` and
+  the provider SQL are unchanged, and
+  `scripts/test-provider-computer-ownership.cjs` still publishes the provider
+  parser's snapshot through the actual SQL with every migration applied,
+  including this slice's.
 
 **Outcome copy** (privilege stays the first blocker, INF-04):
 
@@ -1007,7 +1130,12 @@ connection. These fields make `HOST_DISCOVERY_CONTRACT_VERSION` 2:
   refused while agents use the connection, and while the T43 gate is off it is
   not offered on Proxmox VE;
 - without: "Signed in as ubuntu without passwordless sudo. Run the setup command
-  with sudo, or connect as a user who has it."
+  with sudo, or connect as a user who has it. Hivra asked sudo once, without a
+  password; the server's log records that check." For a user sudo doesn't know
+  at all, sudo also reports the check as an incident and, where the server has
+  mail set up, emails it to root (`mail_no_user`, on by default). The copy
+  says Hivra asked, so the owner isn't surprised by that mail. (Review finding
+  12.)
 
 The nested-KVM message never appears when privilege is the blocker.
 
@@ -1048,7 +1176,21 @@ or passwordless sudo on this server."
 
 Preflight's `id -u` check is unchanged (0 through the transport). The
 `PROXMOX_PERMISSION_UNAVAILABLE` remediation becomes "connect as root, or as a
-user with passwordless sudo", subject to the early-finish gate in 9.2. Enrolling
+user with passwordless sudo", subject to the early-finish gate in 9.2.
+
+**While gate T43 is off (Revision 4, review finding 2).** `prepare-proxmox-host.sh`
+checks only `id -u`, which a sudo connection passes, so the refusal must come
+from Hivra and before any SSH. Every Proxmox-lane host path refuses a
+connection whose privilege is `sudo`: preflight (`PROXMOX_PERMISSION_UNAVAILABLE`,
+"Proxmox launches need a root login for now"), Prepare (`root_required`, before
+the bundle is read or the address resolved), and the execution context that
+every agent operation, teardown, cron and observer goes through
+(`connection_not_ready`, before the target is read). Discovery never offers the
+Proxmox check, Proxmox setup or "install Proxmox VE" through sudo: a Proxmox VE
+server inspected through sudo reads "pve-1 runs Proxmox VE 8.2.4. Proxmox
+launches need a root login for now. Through sudo, Hivra sets up only Linux
+Sandbox for now, and that needs Ubuntu 22.04 or 24.04. Connect as root instead,
+then check again." with the Change SSH user action. Tests cover each path. Enrolling
 a PVE node uses a local `hivra` user, not a key for root. On PVE,
 `/root/.ssh/authorized_keys` usually links to the cluster-shared
 `/etc/pve/priv/authorized_keys`, so a root key would grant every node in the
@@ -1136,10 +1278,13 @@ allow hivra from any address, then check again."
 
 ### 10.6 Before showing a command
 
-The panel checks that the report endpoint answers the constant 401 JSON. That is
-the `isFirstBootCallbackReachable` pattern, so a preview behind deployment
-protection shows "Setup commands aren't available on this deployment" instead
-of a command that can't work.
+The panel checks that the report endpoint answers its constant 401 text, and
+(Revision 4, review finding 9) that `GET /enroll` without a code answers HTTP
+200 `text/plain` ending in the missing-code refusal line, with redirects not
+followed. That is the `isFirstBootCallbackReachable` pattern, so a preview
+behind deployment protection (a login redirect or a protection page on either
+path) shows "Setup commands aren't available on this deployment" instead of a
+command that can't work.
 
 ## 11. Rate limits
 
@@ -1195,6 +1340,19 @@ How immutability is enforced:
   when `pg_trigger_depth() > 1`, which is the case when the foreign-key cascade
   from a deleted enrollment runs it; a direct `DELETE` runs it at depth 1 and is
   refused. The retention sweep and account deletion therefore keep working.
+- **A TRUNCATE guard** (Revision 4, review finding 5), `BEFORE TRUNCATE ... FOR
+  EACH STATEMENT` on events. TRUNCATE skips row triggers and cascades, so
+  without it the owner could empty the receipts; `TRUNCATE` of enrollments
+  `CASCADE` fires it too. The identity sequence behind event ids is revoked
+  from every API role, and each table's grants start from `REVOKE ALL ... FROM
+  public, anon, authenticated, service_role` before the explicit service-role
+  grants, so Supabase's default privileges never leave a write behind.
+- **The enrollment guard lets the connection's foreign key through.** When a
+  connection is deleted (Disconnect, `delete_infrastructure_connection`), the
+  `on delete set null` update of `connection_id` is the one change the
+  enrollment guard accepts without a phase transition, so Disconnect works for
+  a connection the command created and its receipts stay (then retention
+  applies). The PGlite suite runs Disconnect on such a connection.
 
 Both were checked in PGlite while writing this: as `service_role` with only
 `SELECT` on events and `SELECT, DELETE` on enrollments, updating, deleting or
@@ -1282,9 +1440,9 @@ Test files are named for the implementation; §15 lists them.
 | --- | --- | --- | --- |
 | T1 | Guessing a code online | 160-bit code; pattern check before any read; memory and durable limits; 15-minute life | Generator emits `^hse1_[a-z2-7]{32}$` from 20 random bytes; pattern-invalid codes never reach the store (spy); the 21st fetch gets the `fetch_limit` refusal and the 11th refused report cancels the code (PGlite) |
 | T2 | Code leaks before use (screen share, chat paste, clipboard manager, shell history) and an attacker reports first | One report spends the code, so the owner's own run then fails with "already used"; nothing is trusted before Yes; the card shows observed address, words and fingerprint, with "No" guidance | Second report with a different body → 401, row unchanged (PGlite and route); no SSH or connection row before confirm (spy on runner and RPC); card copy snapshot |
-| T3 | Code leaks after use | Spent; only a byte-identical replay is acknowledged, with no state change | Replay after `reported` → same acknowledgement, one event; replay after `confirmed` → 401 |
+| T3 | Code leaks after use | Spent; only a byte-identical replay is acknowledged, with no state change, while the row is `reported` or `confirmed` and `confirm_by` hasn't passed (Revision 4: a server retrying a lost acknowledgement after Yes keeps its setup) | Replay after `reported` → same acknowledgement, one event; replay after `confirmed` → the same acknowledgement and the row unchanged, until `confirm_by`, then 401; a different body after `confirmed` → 401; replay after `rejected` → 401 (PGlite) |
 | T4 | Database or log read exposes codes or keys | Only `code_sha256` stored; private key sealed with a purpose tag and wiped in terminal phases; allowlisted logging | Store never receives the raw code (spy); check constraint rejects a key in terminal phases (PGlite); route logger calls contain only allowlisted keys |
-| T5 | Someone is tricked into running an attacker's command (consent phishing for root) | Terminal prompt names the receiving account by its account code (section 5), which nobody can choose, instead of a masked email that collides trivially; Hivra shows the same code next to the command and in the account menu; the prompt says to continue only if the code is theirs and they copied the command themselves; default is No; **always asked when `/dev/tty` opens, whatever the flags**; `--yes` counts only with no terminal; the plan and uninstall command are printed even then; `consent` reported to the card. It protects a victim who has a Hivra account and compares the code. It is not a full defence (remaining risks) | Harness under a pseudo-terminal: `--yes` still prompts, and `n` → no side effects; the prompt contains the account code from the final line and no `@`; no terminal and no `--yes` → exit, nothing sent, no side effects; no terminal (`setsid`) with `--yes` → proceeds and reports `consent:"no_terminal"`. Unit: `accountCode` fixed vectors; the same user id gives the same code in the final line, the command panel and the account menu; 100,000 random user ids give no two equal codes (about 0.005 collisions expected at 40 bits); the final-line renderer refuses any account value that is not a code (an email, an empty string) |
+| T5 | Someone is tricked into running an attacker's command (consent phishing for root) | Terminal prompt names the receiving account by its account code (section 5), which nobody can choose, instead of a masked email that collides trivially; Hivra shows the same code next to the command and in the account menu; the prompt says to continue only if the code is theirs and they copied the command themselves; default is No; **always asked when `/dev/tty` opens, whatever the flags**; `--yes` counts only with no terminal; the plan and uninstall command are printed even then; `consent` reported to the card. It protects a victim who has a Hivra account and compares the code. It is not a full defence (remaining risks) | Harness under a pseudo-terminal: `--yes` still prompts, and `n` → no side effects; the prompt contains the account code from the final line and no `@`; no terminal and no `--yes` → exit, nothing sent, no side effects; no terminal (`setsid`) with `--yes` → proceeds and reports `consent:"no_terminal"`. Unit: `accountCode` fixed vectors; the same user id gives the same code in the final line, the command panel and the account menu; 100,000 fixed, Clerk-shaped user ids (from a seed, not random: review finding 11) give no two equal codes (about 0.005 collisions expected at 40 bits), and a digest of all 100,000 codes, computed independently, is pinned; the final-line renderer refuses any account value that is not a code (an email, an empty string) |
 | T6 | Tampered script (TLS interception, swapped file, varying content for `curl \| bash`) | HTTPS with normal certificate checks and `--proto '=https'`; body is a pinned file refused if its sha256 differs; identical for every requester; body sha256 published in the repo, the UI and `/enroll/script.sha256`; verify recipe | Route test: body identical across User-Agents, headers and codes; a changed file → 503, nothing served; version and sha256 constants change together |
 | T7 | A truncated download runs part of the script, or drops `--dry-run` | Body is only function definitions ending in a newline; the final line is one brace group, so every proper prefix is an unclosed compound command that bash refuses to run; caller arguments before the fixed values; `HIVRA_ARGS_V1` and `HIVRA_END_V1` sentinels; exact argument count and patterns checked before any fact is read; no body function name is a prefix of an entry name (6.2) | Harness runs every line prefix of the body and **every byte prefix of each final line** (enroll, both refusals and uninstall; with and without a newline), for no arguments, `--dry-run` and `--yes`, with side-effect commands stubbed **and a stub command on `PATH` for every proper prefix of each entry name**: no stub called, no plan printed, every non-empty proper prefix of a final line exits non-zero; only the complete script reaches the plan. Separately, with the braces removed from a test copy of the line, the entry function refuses every short argument list (second layer). Test that no body function name is a proper prefix of an entry function name |
 | T8 | Injection through server-rendered values | Four values (origin, code, key, account code) checked against strict patterns, never escaped, always single-quoted; rendering throws otherwise; the entry function re-checks them | Render refuses quotes, `$(`, backticks, `}`, `;`, newlines, NUL and Unicode in each field; property test over random strings |
@@ -1322,13 +1480,31 @@ Test files are named for the implementation; §15 lists them.
 | T40 | The server claims a state Hivra never confirmed | Marker states `pending` and `reported` only; re-run copy says only what the server knows; lost-acknowledgement copy on both sides (6.6) | Harness: after `accepted` the marker says `reported`, never `connected`; re-run copy for each marker state; all attempts lost → rollback and the no-answer text; card copy for the lost-acknowledgement Yes path |
 | T41 | Observed addresses kept forever | Retention in §12; events cascade with their enrollment; account deletion covers enrollments | PGlite: the sweep deletes ended rows after 30 days and removed-connection receipts after 90, with their events; account deletion leaves no enrollment or event for the user |
 | T42 | The script leaves `/etc/hivra` unusable for Prepare or the DeepSeek gateway | Explicit `install -d -m 0755 -o root -g root`; umask never decides a mode | Harness under `umask 077`: `/etc/hivra` is 0755 root:root, marker 0644, sudoers 0440, key file 0600 |
-| T43 | Proxmox provisioning under sudo loses its background provisioner when the channel closes | Gate in 9.2: the disposable-runner test must pass before Proxmox preflight accepts `sudo` | Disposable-runner test: a `nohup … &` child started inside the exact sudo command survives an early channel close, with `use_pty` on and off; preflight test: `sudo` refused while the gate constant is off |
+| T43 | Proxmox provisioning under sudo loses its background provisioner when the channel closes | Gate in 9.2: the disposable-runner test must pass before Proxmox preflight accepts `sudo`; while it is off, every Proxmox-lane path refuses a sudo connection before SSH and discovery offers no Proxmox path through sudo (9.6) | Disposable-runner test: a `nohup … &` child started inside the exact sudo command survives an early channel close, with `use_pty` on and off (passed on Ubuntu 22.04 and 24.04, section 21; the gate stays off, 9.2); preflight, Prepare and execution-context tests: `sudo` refused before any SSH while the gate constant is off; outcome tests: no Proxmox check or setup through sudo |
 | T44 | Advanced wizard fallback: an attacker on the path between Hivra and the server answers the key capture with their own key, and Hivra pins it | The pasted fingerprint stays the default, and the setup command is offered next to it; capture is a fallback that says the key could be an interceptor's and asks the owner to compare it with the provider's console; Hivra pins only after the owner confirms; the verifier refuses after recording the key, so nothing is authenticated or sent at capture | Wizard test: the fingerprint field is shown and required by default, capture only after "Read it from the server"; the capture screen shows the warning and the console links; no connection is created until the owner confirms; runner test: the capture connection sends no authentication and no command |
 | T45 | Advanced key capture used as a port probe against arbitrary public hosts | Only destinations that pass `resolveValidatedSshDestination`; one failure text for closed, filtered, slow, non-SSH and no-Ed25519 answers, sent at a fixed 10 s; 5/min per user, as discover and preflight already allow for saved connections (8.2) | Route test: refused, timed-out, non-SSH and RSA-only fakes give byte-identical bodies and no response before 10 s; a reserved or metadata address never reaches the socket; the 6th capture in a minute → 429 with `Retry-After` |
 | T46 | Replacing access disrupts running computers, or leaves a working connection worse | A key-only Replace keeps address, user, privilege and identity and follows credential recovery: bound computers keep running, allow status and delete (gVisor) or teardown (Proxmox) until preflight passes, then rebind in one transaction; a switch from a `login` connection is offered only when no agent uses it and, while the T43 gate is off, not on Proxmox VE; connections of other providers and multiple matches get no Replace (8.1) | Service: a `login` connection with a bound agent → no Replace offered and the route refuses before any SSH; Proxmox VE snapshot with the gate off → refused; a `hetzner-cloud` match → only No; after a key-only Replace, a bound gVisor computer's status and delete work and exec is refused until preflight passes, then exec works; PGlite: preflight at the new revision rebinds every bound agent |
 
 Remaining risks, accepted:
 
+- **How long an enrollment key can sign in** (Revision 4, review finding 8).
+  The key line on the server has no expiry of its own. What limits it is the
+  sealed private key in Hivra's database, which is wiped at No, cancel, Yes
+  (moved into the connection) and expiry. Expiry is a fact at read time, so no
+  code path can use an expired row's key, but the bytes stay in the row until
+  the daily sweep nulls them, so up to about a day after `confirm_by` (or
+  `expires_at`), and in database backups for the backup retention period
+  (point-in-time recovery). Anyone who could read a backup and the secret key
+  could sign in to a server that answered but was never confirmed, until its
+  owner runs the uninstall. OpenSSH's `expiry-time=` on the key line was
+  considered and not adopted: it would let a key expire on the server by
+  itself, but the owner can answer Yes up to 30 minutes after the report and
+  Hivra's first sign-in may come later still (a firewall to open, a server to
+  start), so the key would have to be rewritten after Yes, which is a server
+  change outside any consent step, and if that rewrite ever failed, the
+  connection would break for good at the expiry time with no way back but a new
+  command. The uninstall, Disconnect (which deletes the key) and the sweep are
+  the controls instead.
 - The code sits in the user's shell history and briefly in `ps` until it is
   spent. The view-first recipe writes it to a file until the user deletes it.
 - The account code protects only a person who has a Hivra account and compares
@@ -1406,10 +1582,14 @@ New (jest unless noted):
   `visudo`, `curl`, `userdel`, `loginctl`, `pkill`, `mv`, `rm`), and uses
   Python's `pty` for terminal cases. Covers T5, T7 (line and byte prefixes,
   with a stub on `PATH` for every prefix of each entry name), T9-T14, T28, T30,
-  T35, T38-T40, T42, dry-run, re-enrollment and uninstall.
-- `dashboard/scripts/test-server-enroll-host.py`: runs under `sudo` on the
-  disposable CI runner (`HIVRA_DISPOSABLE_CI`, like the DeepSeek install tests in
-  `public-release-safety.yml`). Real `useradd`, `visudo`, `sshd -T` and an
+  T35, T38-T40, T42, dry-run, re-enrollment and uninstall. Revision 4: 49
+  tests; jest runs it (`server-enrollment-script.test.ts`), and it passed on
+  macOS (bash 3.2) and in a Debian 12 container (bash 5.2).
+- `dashboard/scripts/test-server-enroll-host.py`: runs as root on a disposable
+  server (`HIVRA_DISPOSABLE_CI=1`, like the DeepSeek install tests in
+  `public-release-safety.yml`). Revision 4: run by hand on two disposable
+  Hetzner servers (section 21); it is not in a CI workflow yet, because
+  whether GitHub's runners have a running sshd was not checked. Real `useradd`, `visudo`, `sshd -T` and an
   actual key sign-in plus the exact sudo transport command against a local sshd
   where the runner has one, against a local fake report endpoint. With
   `use_pty` on and off: the T43 early-close check, and the T29 check that
@@ -1417,10 +1597,25 @@ New (jest unless noted):
   The diagnosis paths of T28 against real sudo (a password-only user, a user
   whose rule allows only other commands). Then uninstall, and a check that
   nothing remains.
-- Runner (`src/lib/services/__tests__/proxmox-host-script-runner.test.ts`,
-  `proxmox-host-script-stdin.test.ts`): sudo transport command and framing,
-  sentinel, the no-sentinel diagnosis, managed fleet and `login` unchanged,
-  local-mode round trip (T12, T28, T29).
+- Runner (`src/lib/services/__tests__/proxmox-sudo-transport.test.ts`, with
+  `proxmox-host-script-runner.test.ts` and `proxmox-host-script-stdin.test.ts`
+  unchanged): sudo transport command and framing, sentinel, the no-sentinel
+  diagnosis, managed fleet and `login` unchanged, the unbounded command only for
+  package-changing scripts, the command identical to the one
+  `test-server-enroll-host.py` sends, local-mode round trip (T12, T28, T29).
+- `src/lib/services/__tests__/sudo-transport-disposable-server.test.ts`
+  (Revision 4, opt-in with `HIVRA_DISPOSABLE_SUDO_SERVER`): the real runner
+  against a disposable server that `test-server-enroll-host.py
+  --enroll-for-runner` enrolled: discovery through sudo, the password and
+  sudoers-rule diagnoses, a wrong pinned key, binary stdin, the Replace probe,
+  early finish (T43) and gVisor Prepare plus the strict check through sudo.
+- `src/lib/infrastructure/__tests__/server-enrollment-store.test.ts` (Revision
+  4): every row of the Replace table (8.1), including the Proxmox-provider
+  row, and that another account is never searched.
+- `src/lib/infrastructure/__tests__/server-enrollment-readiness.test.ts`
+  (Revision 4): the readiness probe checks `/enroll` and the report endpoint.
+- `src/components/infrastructure/__tests__/ServerEnrollment.test.tsx`
+  (Revision 4): the UI items below.
 - Discovery (`host-discovery.test.ts`, `host-discovery-contracts.test.ts`,
   `host-discovery-outcome.test.ts`): sudo probe parsing, contract v2, v1 read as
   `login`, outcome copy (T27).
@@ -1546,13 +1741,15 @@ at the merge SHA:
   redirect.
 - An IPv6-only server gets the `ipv4_required` text in the terminal and on the
   panel, and nothing is kept.
-- Proxmox VE 8 via sudo: preflight, and a Proxmox launch through the transport
-  only if the T43 gate passed.
+- Proxmox VE while the T43 gate is off (it is, in this revision): the command on
+  a Proxmox VE 8 host prints the Proxmox line and sends nothing; the advanced
+  wizard with a root login reaches preflight as today. Proxmox through sudo is
+  for the release that opens the gate.
 - Script behaviour in at least one provider web console (paste support,
   `/dev/tty`).
 
-Until then the capability is unimplemented. Nothing in this document claims a
-working enrollment command.
+Until then the capability is not accepted. Nothing in this document claims a
+working enrollment command for users. Section 22 is the run to do after merge.
 
 ## 19. Implementation order
 
@@ -1574,3 +1771,156 @@ working enrollment command.
    advanced wizard passphrase, sudo option and the key-capture fallback.
 8. Account deletion list and retention cron.
 9. Canary acceptance (section 18).
+
+## 20. Deploy order and rollback (Revision 4, review finding 10)
+
+Migration `20260924213000_server_enrollment_command.sql` is **additive with
+three compatible function replacements**: it adds two columns with defaults
+(`ssh_privilege 'login'`, `ssh_host_key_type null`), widens one check
+(`contract_version in (1, 2)`), adds two private tables and their functions,
+and replaces `create_host_infrastructure_connection` (two new trailing
+parameters with defaults), `update_infrastructure_connection` (same
+signature, two more patchable fields) and `complete_infrastructure_host_discovery`
+(same signature, accepts v2). Nothing is dropped that current code reads, and
+no row is rewritten. It is rerun-safe (the PGlite suite applies it twice). It
+is not blocking or destructive, so it lives in `supabase/migrations/`.
+
+Order:
+
+1. Apply the migration to the target database (Canary first, then production
+   as part of that release's catch-up). The code that is serving at that
+   moment keeps working: it calls the replaced functions with its old named
+   arguments (the new ones have defaults), writes only v1 snapshots (still
+   accepted, and v1 must not carry the new fields, which old code never
+   writes) and never reads the new columns.
+2. Deploy the code. It needs the migration: without it, creating a sudo
+   connection fails (PostgREST has no function with `p_ssh_privilege`), every
+   host inspection fails (SQL refuses `contractVersion` 2), and every
+   enrollment route fails (no tables). Nothing half-happens: each is refused
+   before any server is touched.
+3. Enable nothing else: the retention cron is in `vercel.json` and runs with
+   the deploy; the T43 gate is a code constant (off).
+
+**Rolling the code back to N-1 after the migration** is safe and needs no
+database change: N-1 ignores the new columns and tables. What users see: an
+enrolled connection (`hivra` through sudo) reads to N-1 as a non-root login,
+so its inspection says it isn't root and Linux Sandbox operations on it are
+refused (N-1 requires the user `root`); nothing on the server changes. v2
+snapshots written before the rollback fail N-1's `contractVersion: 1` parse,
+which N-1 already treats as "inspect again", and they expire within 15
+minutes anyway. Outstanding setup commands stop working (`/enroll` doesn't
+exist in N-1, so `curl -f` fails and bash runs nothing). The daily sweep
+doesn't run in N-1, so sealed enrollment keys stay in their rows until the
+code rolls forward and the sweep runs; the rows are unreadable to anything in
+N-1. Rolling the migration itself back is not planned; if it were ever needed,
+every enrolled connection would first have to be disconnected, because
+dropping `ssh_privilege` would turn them back into plain `hivra` logins.
+
+## 21. Disposable-server evidence (Revision 4)
+
+Run on 2026-09-24 against two Hetzner Cloud servers made for it and deleted
+afterwards (the live ledger has the rows): `hivra-spike-c1-1` (cx23, fsn1,
+image `ubuntu-22.04`: Ubuntu 22.04.5 LTS, kernel 5.15.0-190-generic, sudo
+1.9.9, OpenSSH 8.9p1, bash 5.1.16) and `hivra-spike-c1-2` (cx23, fsn1, image
+`ubuntu-24.04`: Ubuntu 24.04.4 LTS, kernel 6.8.0-138-generic, sudo 1.9.15p5,
+OpenSSH 9.6p1, bash 5.2.21). Both are KVM guests with systemd as PID 1 and
+`Defaults use_pty` in `/etc/sudoers`. They are stock provider images, not the
+pinned Hivra computer image, and they have no nested KVM, so they can't run
+Proxmox VE. A local fake origin (`https://hivra-enroll.test` on the server
+itself, a test CA installed for curl) stood in for `/enroll` and the report
+endpoint, because the real endpoints exist only after merge; the served bytes
+were the repository body plus the final line in the format the TypeScript
+renderer pins.
+
+`dashboard/scripts/test-server-enroll-host.py` (39 checks, all passed on both
+servers, script `2026.09.24.1` sha256 `e1ec492a…`): the command end to end as
+root and as a passwordless-sudo user under a real terminal (exact modes and
+owners, `visudo`-checked rule, key line, marker, report, words); `--yes` on a
+terminal still asks; no terminal without `--yes` stops; no terminal with
+`--yes` reports `no_terminal`; a password-sudo user can't run it (three wrong
+passwords, and `sudo -n`, change and send nothing); refused (401, 422) and
+unanswered reports roll everything back with their copy; 262 network cuts
+(every byte prefix of the final line and every 25th body line) ran nothing,
+with a stub on `PATH` for every prefix of every entry name; the missing-code
+and unknown-code refusals print through `curl -f`; the re-run prompt; the
+uninstall, and nothing left behind. The sudo transport over the real sshd as
+`hivra`, with `use_pty` on and off: the T29 checks, the constant auth-log line,
+T43, the finding 6 checks with a real `apt-get install`, and the T28 diagnosis
+against a password-only user, a rule for `/usr/bin/true` only, and a
+temporarily moved `/usr/bin/timeout`.
+
+`src/lib/services/__tests__/sudo-transport-disposable-server.test.ts` (10
+checks, all passed on both servers): the real runner from outside the server:
+discovery through sudo (`effectivePrivilege: root`, `privilegeVia: sudo`),
+the same user without the transport (`passwordlessSudo: true`, "Use sudo for
+setup"), the password and sudoers-rule copies, a wrong pinned key refused
+before authentication with both fingerprints, binary stdin, the Replace
+probe (the enrollment key accepted, another key refused), early finish, and
+gVisor Prepare through sudo followed by the strict readiness check.
+
+What the runs found and this revision fixed: the transport's `PATH` (9.2) and
+the uninstall's race with the user manager on 24.04 (6.7). One observation
+not resolved: on 22.04, in two of four Prepare-then-check runs through sudo
+(after the `PATH` fix), the strict gVisor check failed right after a repeat
+Prepare had re-registered the runtime and restarted Docker, and passed when run
+again; one root-login run of the same sequence passed, and the one run on
+24.04 passed. It was not reproduced with output captured, so whether it is a race in
+Prepare itself (and so in the root lane too) is unverified.
+
+## 22. Canary acceptance run (after merge)
+
+Prerequisites: the migration applied to the Canary database; Canary serving a
+Git deployment at the merge SHA (check the served SHA first); a Canary test
+account; the owner's approval for the exact paid AWS instance (section 18
+needs one) and for one disposable Hetzner server for the IPv6-only and
+forged-report steps.
+
+1. `curl -sS -o /dev/null -w '%{http_code} %{content_type} %{redirect_url}\n' https://canary.hermesos.cloud/enroll`
+   → `200 text/plain; charset=utf-8` and no redirect; the body ends in
+   `{ hivra_refuse 'missing_code'; }`. `curl -sS https://canary.hermesos.cloud/enroll/script.sha256`
+   → `e1ec492a…` (the pinned value). Capacity → Add capacity → My server shows a
+   command, not "Setup commands aren't available on this deployment".
+2. Record whether the Canary origin is proxied by Cloudflare
+   (`dig +short canary.hermesos.cloud`, and whether the answer is in the
+   Cloudflare ranges in `trusted-client-address.ts`).
+3. AWS Ubuntu 24.04, signed in as `ubuntu`: paste the command. The terminal
+   shows the plan and the account code, which matches the account menu; answer
+   `y`; the words print. In Hivra, "Is this your server?" shows the instance's
+   public IPv4 under "Connected from" (or "Hivra couldn't see this server's
+   address" if step 2 found Cloudflare), the same words and the identity.
+   Yes → inspection → "can run Linux Sandbox after a short setup" → Review
+   setup → Prepare → ready → Launch on this server → an agent → chat.
+4. Same instance: `… | sudo bash -s -- --yes` still asks on the terminal
+   (answer `n`, nothing changes).
+5. Spoof check: from the instance, `curl` the report endpoint with a made-up
+   code and `cf-connecting-ip`, `x-real-ip` and `x-forwarded-for` set: the
+   refusal is the constant 401. With a real second command's code, a report
+   carrying the same spoofed headers shows the instance's real address as
+   "Connected from"; then choose No.
+6. Wait more than 15 minutes without inspecting; the agent's computer still
+   opens and runs a command (T36).
+7. On the instance, `sudo journalctl -t sudo` (or `/var/log/auth.log`) shows
+   one constant Hivra command line per operation and no script body.
+8. Replace drill: run a new command on the instance; the card offers
+   "Replace <name>'s access", not Yes; Replace; the computer opens again after
+   the check. Forged report: from a second machine, post a hand-made report
+   with a third code that claims the instance's host key (`ssh-keyscan -t
+   ed25519`); Replace fails at the sign-in and the instance's connection,
+   revision and computer are unchanged.
+9. Leaked-code drill with two Canary accounts: account B's machine reports
+   first with account A's code; A's own run then says the command was
+   already used; A's card shows words A's terminal doesn't; No leaves nothing
+   trusted. Each terminal shows the account code of the account that issued
+   its command.
+10. IPv6-only Hetzner server: the command gets the `ipv4_required` text in the
+    terminal and on the panel; nothing is kept on the server.
+11. A Proxmox VE 8 host (if one is available): the command prints the Proxmox
+    line and sends nothing; the advanced wizard with a root login reaches
+    preflight as before.
+12. Uninstall on the AWS instance; Hivra's next check says it can't sign in as
+    hivra; Disconnect removes the connection and shows the uninstall command.
+13. Paste the command in one provider web console (AWS EC2 Instance Connect or
+    the Hetzner console): paste works and the `/dev/tty` prompt appears.
+14. Clean up: delete the agent, disconnect, terminate the AWS instance and the
+    Hetzner server, verify each is gone at the provider, and record each in
+    the live ledger.
