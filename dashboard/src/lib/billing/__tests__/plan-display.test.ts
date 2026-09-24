@@ -266,7 +266,7 @@ describe("planCardCta", () => {
       planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null })
     ).toEqual({
       kind: "hold_token",
-      label: "See how much to hold",
+      label: "Verify a wallet to hold",
       href: "/dashboard/wallet?from=billing&plan=power",
       tier: "power",
     });

@@ -1,4 +1,5 @@
 import { SignUp } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { FunnelHeader } from "@/components/layout/LandingHeader";
@@ -23,21 +24,24 @@ export default async function SignUpPage({
   const resolvedParams = await searchParams;
   const rawPlan = typeof resolvedParams?.plan === "string" ? resolvedParams.plan : undefined;
   const plan = rawPlan && PAID_SIGNUP_PLANS.has(rawPlan) ? rawPlan : undefined;
-  const fromReserve = resolvedParams?.from === "reserve";
 
   if (plan) {
     redirect(`/get-started?plan=${plan}`);
   }
 
-  if (fromReserve) {
-    redirect("/get-started?plan=free");
-  }
-
   // A new account goes straight to Launch, where the Free plan is turned on
-  // with its own button and every agent and computer is on offer. An agent a
-  // link asked for opens its plan there.
+  // with its own button, and only for a launch on Hivra Cloud. Every agent and
+  // computer is on offer there, and an agent a link asked for opens its plan.
+  // The older reservation links (from=reserve) land here the same way.
   const agentType = typeof resolvedParams?.agentType === "string" ? resolvedParams.agentType : null;
   const redirectUrl = buildAgentLaunchHref(agentType);
+
+  // Public "start" links come here whether or not the visitor has an account;
+  // one who is already signed in goes on to Launch.
+  const { userId } = await auth();
+  if (userId) {
+    redirect(redirectUrl);
+  }
 
   return (
     <>

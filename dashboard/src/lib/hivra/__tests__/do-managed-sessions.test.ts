@@ -258,6 +258,79 @@ describe("launchDigitalOceanSession", () => {
   });
 });
 
+// INF-16: every DigitalOcean launch asked for the provider key again, because
+// only a pasted key was accepted. A launch can now name a key the owner saved
+// in their Vault, which is read here for that owner only.
+describe("launchDigitalOceanSession with a saved Vault key", () => {
+  const VAULT_KEY_ID = "44444444-4444-4444-8444-444444444444";
+  const SAVED_OPENAI_KEY = "sk-" + "v".repeat(40);
+  let readSavedModelKey: jest.Mock;
+
+  beforeEach(() => {
+    readSavedModelKey = jest.fn(async () => ({ provider: "openai", apiKey: SAVED_OPENAI_KEY }));
+    restore();
+    restore = setManagedSessionDependenciesForTest({
+      client: fake.client, sleep: async () => undefined, fetch: vendorFetch as unknown as typeof fetch, readSavedModelKey,
+    });
+  });
+
+  const vaultLaunch = (overrides: Record<string, unknown> = {}) => launchInput({
+    harness: "codex", model: { mode: "vendor", vaultKeyId: VAULT_KEY_ID }, ...overrides,
+  });
+
+  it("sends the owner's saved key to DigitalOcean as the session secret, and stores neither it nor the reference", async () => {
+    await launchDigitalOceanSession(userId, vaultLaunch());
+
+    expect(readSavedModelKey).toHaveBeenCalledWith(userId, VAULT_KEY_ID);
+    expect(fake.manifests).toHaveLength(1);
+    expect(fake.manifests[0]).toMatchObject({ agent: "codex", secrets: { OPENAI_API_KEY: SAVED_OPENAI_KEY } });
+    // Checked with the vendor like a pasted key, before anything is created.
+    expect(vendorFetch).toHaveBeenCalledWith("https://api.openai.com/v1/models", expect.objectContaining({
+      headers: { Authorization: `Bearer ${SAVED_OPENAI_KEY}` },
+    }));
+    expect(JSON.stringify(tables.hivra_agents)).not.toContain(SAVED_OPENAI_KEY);
+    expect(JSON.stringify(tables.hivra_agents)).not.toContain(VAULT_KEY_ID);
+  });
+
+  it.each([
+    ["isn't the owner's", null],
+    ["is saved for another provider", { provider: "anthropic", apiKey: "sk-ant-" + "a".repeat(40) }],
+    ["is a ChatGPT sign-in, not an API key", { provider: "codex", apiKey: "x".repeat(40) }],
+    ["has no stored key", { provider: "openai", apiKey: null }],
+  ])("launches nothing when the saved key %s", async (_label, saved) => {
+    readSavedModelKey.mockResolvedValueOnce(saved);
+    await expect(launchDigitalOceanSession(userId, vaultLaunch())).rejects.toMatchObject({
+      code: "not_found",
+      message: "That saved OpenAI API key is no longer in your Vault. Paste the key, or choose another option.",
+    });
+    expect(fake.manifests).toHaveLength(0);
+    expect(tables.hivra_agents).toHaveLength(0);
+  });
+
+  it("reports an unreadable Vault as a retry, and launches nothing", async () => {
+    readSavedModelKey.mockRejectedValueOnce(new Error("db down"));
+    await expect(launchDigitalOceanSession(userId, vaultLaunch())).rejects.toMatchObject({ code: "database_failed" });
+    expect(fake.manifests).toHaveLength(0);
+    expect(tables.hivra_agents).toHaveLength(0);
+  });
+
+  it("refuses a saved key that isn't a complete key before DigitalOcean sees it", async () => {
+    readSavedModelKey.mockResolvedValueOnce({ provider: "openai", apiKey: "sk short" });
+    await expect(launchDigitalOceanSession(userId, vaultLaunch())).rejects.toMatchObject({ code: "invalid_request" });
+    expect(vendorFetch).not.toHaveBeenCalled();
+    expect(fake.manifests).toHaveLength(0);
+  });
+
+  it("answers a replay with the agent the first request created, without reading the Vault again", async () => {
+    const input = vaultLaunch();
+    await launchDigitalOceanSession(userId, input);
+    readSavedModelKey.mockClear();
+    await launchDigitalOceanSession(userId, input);
+    expect(readSavedModelKey).not.toHaveBeenCalled();
+    expect(fake.manifests).toHaveLength(1);
+  });
+});
+
 describe("session lifecycle", () => {
   async function launched() {
     await launchDigitalOceanSession(userId, launchInput());
