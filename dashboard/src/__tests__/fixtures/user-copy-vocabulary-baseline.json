@@ -1,7 +1,7 @@
 {
   "app/compare/[slug]/page.tsx": {
     "the box": 1,
-    "instance": 3,
+    "instance": 2,
     "runtime": 1
   },
   "app/dashboard/agent/[id]/page.tsx": {
@@ -42,11 +42,8 @@
   },
   "app/features/[slug]/page.tsx": {
     "the box": 1,
-    "instance": 8,
-    "runtime": 3
-  },
-  "app/features/page.tsx": {
-    "instance": 2
+    "instance": 2,
+    "runtime": 1
   },
   "app/privacy/page.tsx": {
     "instance": 5,
