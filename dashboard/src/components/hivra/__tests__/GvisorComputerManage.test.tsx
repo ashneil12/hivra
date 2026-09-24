@@ -1,55 +1,93 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { GvisorComputerManage } from "../GvisorComputerManage";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
+import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 
-const agent: HivraAgent = { id: "sandbox-1", name: "SANDBOX", type: "linux-desktop", status: "running", cpu: 1, ram: 2, computer_substrate: "gvisor" };
+const row = {
+  id: "11111111-2222-4333-8444-555555555555", name: "SANDBOX", type: "linux-desktop", status: "running", cpu: 1, ram: 2,
+  computer_substrate: "gvisor", computer_profile: "linux-terminal", deployment_mode: "self-managed",
+} as const;
+const agent: HivraAgent = { ...row, manage: manageCapabilitiesFor(row, { preparedMatch: false }) };
 const mockFetch = jest.fn();
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/dashboard/agent/sandbox?tab=manage");
   mockFetch.mockReset();
   mockFetch.mockImplementation(async (url: string) => String(url).endsWith("/gvisor")
     ? jsonResponse({ success: true, data: { observation: { state: "running" } } })
-    : jsonResponse({ success: true, data: {} }));
+    : String(url).endsWith("/events")
+      ? jsonResponse({ success: true, data: { events: [] } })
+      : jsonResponse({ success: true, data: {} }));
   global.fetch = mockFetch;
 });
 afterEach(() => jest.restoreAllMocks());
 
-const deleteCalls = () => mockFetch.mock.calls.filter(([, init]) => init?.body && JSON.parse(init.body).action === "delete");
+const actionCalls = (action: string) => mockFetch.mock.calls.filter(([, init]) => init?.body && JSON.parse(init.body).action === action);
+const openSection = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
 
-it("puts Cancel in the Delete position and ignores a confirm tap that arrives with the reveal", async () => {
+function armDestroy() {
+  openSection("Advanced");
+  fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I understand this is irreversible/ }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Type SANDBOX to confirm" }), { target: { value: "SANDBOX" } });
+}
+
+it("uses the shared Manage sections for a Linux Sandbox", async () => {
+  render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Resources", "Run a command", "Advanced"]);
+  expect(screen.getByText("Linux Sandbox · My server")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled());
+});
+
+it("puts Cancel in the Destroy position and ignores a confirm tap that arrives with the reveal", async () => {
   let now = 10_000;
   jest.spyOn(Date, "now").mockImplementation(() => now);
   const onDestroyed = jest.fn();
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={onDestroyed} />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Delete sandbox" })).toBeEnabled());
+  await waitFor(() => expect(mockFetch).toHaveBeenCalled());
 
-  fireEvent.click(screen.getByRole("button", { name: "Delete sandbox" }));
+  armDestroy();
   const cancel = screen.getByRole("button", { name: "Cancel" });
-  const confirm = screen.getByRole("button", { name: "Confirm permanent deletion" });
+  const confirm = screen.getByRole("button", { name: "Permanently destroy" });
   expect(cancel.compareDocumentPosition(confirm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
   now += 150;
   fireEvent.click(confirm);
-  expect(deleteCalls()).toHaveLength(0);
+  expect(actionCalls("delete")).toHaveLength(0);
 
   now += 600;
   fireEvent.click(confirm);
   await waitFor(() => expect(onDestroyed).toHaveBeenCalledTimes(1));
-  expect(deleteCalls()).toHaveLength(1);
+  expect(actionCalls("delete")).toHaveLength(1);
 });
 
-it("keeps the delete controls intact after Cancel", async () => {
+it("needs the typed name before it deletes a sandbox", async () => {
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Delete sandbox" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Delete sandbox" }));
+  openSection("Advanced");
+  fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /I understand this is irreversible/ }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Type SANDBOX to confirm" }), { target: { value: "sandbox" } });
+  expect(screen.getByRole("button", { name: "Permanently destroy" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(screen.getByRole("button", { name: "Delete sandbox" })).toBeInTheDocument();
-  expect(deleteCalls()).toHaveLength(0);
+  expect(screen.getByRole("button", { name: "Destroy" })).toBeInTheDocument();
+  expect(actionCalls("delete")).toHaveLength(0);
+});
+
+it("renames a sandbox in place with action=rename", async () => {
+  const onChanged = jest.fn();
+  render(<GvisorComputerManage agent={agent} onChanged={onChanged} onDestroyed={jest.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: /Rename/ }));
+  const name = screen.getByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "Scratchpad" } });
+  fireEvent.keyDown(name, { key: "Enter" });
+  await waitFor(() => expect(actionCalls("rename")).toHaveLength(1));
+  expect(JSON.parse(actionCalls("rename")[0][1].body)).toEqual({ action: "rename", name: "Scratchpad" });
+  await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
 });
 
 it("shows a failed Apply under the Apply button and scrolls it into view without covering the fields", async () => {
@@ -57,8 +95,11 @@ it("shows a failed Apply under the Apply button and scrolls it into view without
   Element.prototype.scrollIntoView = scrollIntoView;
   mockFetch.mockImplementation(async (url: string) => String(url).endsWith("/gvisor")
     ? jsonResponse({ success: true, data: { observation: { state: "running" } } })
-    : jsonResponse({ success: false, error: "The host refused the new limits." }, 409));
+    : String(url).endsWith("/events")
+      ? jsonResponse({ success: true, data: { events: [] } })
+      : jsonResponse({ success: false, error: "The host refused the new limits." }, 409));
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+  openSection("Resources");
   fireEvent.change(await screen.findByLabelText("CPU limit"), { target: { value: "2" } });
   const apply = screen.getByRole("button", { name: "Apply limits" });
   fireEvent.click(apply);
@@ -76,19 +117,21 @@ it("shows a failed command under Run, not in the Resources section", async () =>
     ? jsonResponse({ success: true, data: { observation: { state: "running" } } })
     : jsonResponse({ success: false, error: "Command timed out." }, 504));
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+  openSection("Run a command");
   const run = screen.getByRole("button", { name: "Run in /workspace" });
   await waitFor(() => expect(run).toBeEnabled());
   fireEvent.click(run);
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Command timed out.");
   expect(alert.closest("section")).toBe(run.closest("section"));
-  expect(alert.closest("section")).not.toBe(screen.getByRole("button", { name: "Apply limits" }).closest("section"));
+  expect(alert.closest("section")).not.toBe(screen.getByText("Apply limits").closest("section"));
 });
 
-it("gives a Linux Sandbox an honest Agent slot until an agent can be added to it", async () => {
+it("gives a Linux Sandbox an honest Agent slot in Overview until an agent can be added to it", async () => {
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Delete sandbox" })).toBeEnabled());
-  expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
-  expect(screen.getByText(/Adding an agent to a computer you already have isn't available yet/)).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
+  const overview = screen.getByRole("tabpanel", { name: "Overview" });
+  expect(within(overview).getByRole("heading", { name: "Agent" })).toBeInTheDocument();
+  expect(within(overview).getByText(/Adding an agent to a computer you already have isn't available yet/)).toBeInTheDocument();
+  expect(within(overview).getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
+  await waitFor(() => expect(mockFetch).toHaveBeenCalled());
 });

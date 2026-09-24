@@ -1296,7 +1296,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     );
     expect(within(cloudCard).getByRole("link", { name: "Manage resources for Codex One" })).toHaveAttribute(
       "href",
-      "/dashboard/agent/codex-one?tab=manage#resources",
+      "/dashboard/agent/codex-one?tab=manage&section=resources",
     );
     expect(within(cloudCard).getByRole("link", { name: "Open Codex One" })).toHaveAttribute(
       "href",

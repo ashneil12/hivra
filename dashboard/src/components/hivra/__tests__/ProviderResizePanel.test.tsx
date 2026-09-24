@@ -104,14 +104,48 @@ describe("ProviderResizePanel", () => {
     });
   });
 
-  it("renders only after the server confirms the allocated Hetzner resize capability", async () => {
+  it("offers resize controls only after the server confirms the allocated Hetzner resize capability", async () => {
     const { ProviderResizeApiError } = jest.requireMock("@/lib/hivra/agent-api") as {
       ProviderResizeApiError: new (code: string, message: string) => Error;
     };
-    mockGetState.mockRejectedValue(new ProviderResizeApiError("not_supported", "Not supported"));
+    mockGetState.mockRejectedValue(new ProviderResizeApiError("not_supported", "This computer does not have a verified Hetzner resize capability."));
     render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
     await waitFor(() => expect(mockGetState).toHaveBeenCalledWith(AGENT_ID));
     expect(screen.queryByTestId("provider-resize-panel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Review price/ })).not.toBeInTheDocument();
+  });
+
+  // Regression: an unsupported Hetzner server left Manage's Resources section
+  // empty (the panel rendered nothing), with nothing saying why.
+  it("shows the fixed size and the server's reason when this server type can't change", async () => {
+    const { ProviderResizeApiError } = jest.requireMock("@/lib/hivra/agent-api") as {
+      ProviderResizeApiError: new (code: string, message: string) => Error;
+    };
+    mockGetState.mockRejectedValue(new ProviderResizeApiError("not_supported", "This computer does not have a verified Hetzner resize capability."));
+    render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
+    const fixed = await screen.findByTestId("provider-resize-fixed");
+    expect(fixed).toHaveTextContent("Fixed size · 2 CPU / 4 GB");
+    expect(fixed).toHaveTextContent("Hivra can't change this Hetzner server type from here.");
+    expect(fixed).toHaveTextContent("does not have a verified Hetzner resize capability");
+  });
+
+  it("reports a saved resize in progress, and a failure, so Manage can show it outside Resources", async () => {
+    const waiting = { operationId: OPERATION_ID, stage: "provider_pending", quote: quote(),
+      providerActionId: 701, providerActionStatus: "success", observedProviderState: "running",
+      observedServerType: "cpx32", completedAt: null, shutdownRequired: false,
+      message: "Waiting for Hetzner to finish the resize." };
+    mockGetState.mockResolvedValue({ catalog: null, operation: waiting });
+    const onFeedbackChange = jest.fn();
+    const view = render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} onFeedbackChange={onFeedbackChange} />);
+    await waitFor(() => expect(onFeedbackChange).toHaveBeenLastCalledWith({ kind: "status", message: "Waiting for Hetzner to finish the resize." }));
+    view.unmount();
+    expect(onFeedbackChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("says it is checking while the server is asked, instead of rendering nothing", () => {
+    mockGetState.mockImplementation(() => new Promise(() => undefined));
+    render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Checking Hetzner resize options");
   });
 
   it("continues an already-confirmed shutdown once and never automatically repeats an uncertain POST", async () => {
@@ -141,7 +175,8 @@ describe("ProviderResizePanel", () => {
       shutdownReadinessWaiting: true, message: "Waiting for the enrolled shutdown listener." };
     mockGetState.mockResolvedValue({ catalog: null, operation: waiting });
     render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Waiting for the enrolled shutdown listener");
+    // The status line says it is checking first, then shows the saved resize's state.
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Waiting for the enrolled shutdown listener"));
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Continue saved resize" })).not.toBeInTheDocument();
     mockGetState.mockResolvedValue({ catalog: null, operation: { ...waiting, shutdownRequired: true, shutdownReadinessWaiting: false } });

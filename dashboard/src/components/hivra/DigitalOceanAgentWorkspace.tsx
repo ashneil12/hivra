@@ -2,14 +2,23 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CalendarClock, Info, KeyRound, Loader2, Unlink } from "lucide-react";
+import { AlertTriangle, CalendarClock, Info, KeyRound, Loader2, Pause, Play, Unlink } from "lucide-react";
 
 import { ComputerContractPanel, type ComputerContractPanelAgent } from "@/components/hivra/ComputerContractPanel";
 import { ManagedSessionChat } from "@/components/hivra/ManagedSessionChat";
 import { ManagedSessionFiles } from "@/components/hivra/ManagedSessionFiles";
+import { ManageLayout, ManageNotice, ManagePanel } from "@/components/hivra/ManageLayout";
+import { useManageSection } from "@/components/hivra/useManageSection";
+import { ManageHeader } from "@/components/hivra/manage/ManageHeader";
+import { ManageDangerZone } from "@/components/hivra/manage/ManageDangerZone";
+import { ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "@/components/hivra/manage/ManageAdvancedParts";
+import { manageButtonGhost, manageCard, manageError, manageLabel, manageMuted, manageValue } from "@/components/hivra/manage/manage-styles";
 import type { ComputerContractStatus } from "@/lib/agent-computers/computer-contract-status";
 import type { ComputerContractAction } from "@/lib/hivra/computer-contract-client";
+import { renameAgent } from "@/lib/hivra/agent-api";
+import type { ManageCapabilities, ManageSectionId } from "@/lib/hivra/manage-sections";
 import {
+  changeManagedSession,
   forgetManagedSession,
   getManagedSessionWithExpiry,
   isManagedSessionCredentialProblem,
@@ -161,14 +170,165 @@ function contractAgentFor(session: ManagedSessionDto): ComputerContractPanelAgen
   };
 }
 
+const SESSION_STATUS_LABEL: Record<ManagedSessionDto["status"], string> = {
+  ready: "Ready", paused: "Paused", provisioning: "Starting", deleting: "Deleting", deleted: "Deleted", error: "Needs attention",
+};
+const DO_FALLBACK_SECTIONS: ManageSectionId[] = ["overview", "resources", "advanced"];
+type DoSlot = "header" | "power" | "danger";
+const DO_SLOT_SECTION: Record<DoSlot, ManageSectionId | null> = { header: null, power: "overview", danger: "advanced" };
+
+/**
+ * Manage for a DigitalOcean session, on the same sections as every other
+ * computer: Overview (status, Pause or Resume, and Hivra's setup note),
+ * Resources (DigitalOcean fixes the size) and Advanced (details, history and
+ * deleting it). The chat's own header keeps its Pause, Resume and Delete.
+ */
+function DigitalOceanManage({
+  session,
+  manage,
+  onSessionChange,
+  onDeleted,
+  onContractStatus,
+  onCredentialProblem,
+}: {
+  session: ManagedSessionDto;
+  manage?: ManageCapabilities;
+  onSessionChange: (session: ManagedSessionDto) => void;
+  onDeleted: () => void;
+  onContractStatus: (status: ComputerContractStatus, cause: "load" | ComputerContractAction) => void;
+  onCredentialProblem: (error: ManagedSessionApiError) => void;
+}) {
+  const sections = manage?.sections ?? DO_FALLBACK_SECTIONS;
+  const { selected, select } = useManageSection(sections, Boolean(manage));
+  const [busy, setBusy] = useState<"pause" | "resume" | "delete" | "rename" | null>(null);
+  const [error, setError] = useState<{ slot: DoSlot; message: string } | null>(null);
+  const harness = DIGITALOCEAN_HARNESS_LABELS[session.harness];
+  const resources = digitalOceanSandboxResources(session.size);
+  const size = resources ? `${resources.cpu} CPU / ${resources.ram} GB` : session.size;
+  const placement = manage?.placement.label ?? "My cloud · DigitalOcean";
+
+  const lifecycle = async (action: "pause" | "resume" | "delete") => {
+    setBusy(action);
+    setError(null);
+    try {
+      const next = await changeManagedSession(session.agentId, action);
+      onSessionChange(next);
+      if (next.status === "deleted") onDeleted();
+    } catch (cause) {
+      if (isManagedSessionCredentialProblem(cause)) onCredentialProblem(cause);
+      setError({ slot: action === "delete" ? "danger" : "power", message: cause instanceof Error ? cause.message : `The ${action} was not confirmed.` });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const rename = async (name: string) => {
+    setBusy("rename");
+    setError(null);
+    try {
+      await renameAgent(session.agentId, name);
+      onSessionChange({ ...session, name });
+    } catch (cause) {
+      setError({ slot: "header", message: cause instanceof Error ? cause.message : "The name could not be changed." });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const errorFor = (slot: DoSlot) => error?.slot === slot ? <div role="alert" style={manageError}>{error.message}</div> : null;
+  const errorSection = error ? DO_SLOT_SECTION[error.slot] : null;
+  const details = manage?.details ?? [{ id: "hivra-id", label: "Hivra ID", value: session.agentId, copy: true }];
+
+  return (
+    <ManageLayout
+      label="Agent settings"
+      sections={sections.map((id) => ({ id }))}
+      selected={selected}
+      onSelect={select}
+      notice={error && errorSection && errorSection !== selected
+        ? <ManageNotice kind="alert" message={error.message} section={errorSection} onOpen={select} /> : null}
+      header={
+        <ManageHeader
+          eyebrow="Agent settings"
+          name={session.name}
+          status={session.status}
+          statusLabel={SESSION_STATUS_LABEL[session.status]}
+          subtitle={`${harness.name} · ${placement}`}
+          renaming={busy === "rename"}
+          disabled={busy !== null}
+          onRename={(name) => void rename(name)}
+          error={errorFor("header")}
+        />
+      }
+    >
+      <ManagePanel id="overview" selected={selected}>
+        <div style={{ display: "grid", gap: 20 }}>
+          <div style={manageCard}>
+            <div style={{ display: "grid", gap: 9 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><span className="mono" style={{ ...manageLabel, width: 104 }}>Agent</span><span style={manageValue}>{harness.name}</span></div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><span className="mono" style={{ ...manageLabel, width: 104 }}>Size</span><span style={manageValue}>{size}</span></div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><span className="mono" style={{ ...manageLabel, width: 104 }}>Where it runs</span><span style={manageValue}>{placement}</span></div>
+            </div>
+            {session.status === "ready" || session.status === "paused" ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {session.status === "paused" ? (
+                  <button type="button" disabled={busy !== null} onClick={() => void lifecycle("resume")} style={manageButtonGhost}>
+                    {busy === "resume" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Play size={13} />} Resume
+                  </button>
+                ) : (
+                  <button type="button" disabled={busy !== null} onClick={() => void lifecycle("pause")} style={manageButtonGhost}>
+                    {busy === "pause" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Pause size={13} />} Pause
+                  </button>
+                )}
+              </div>
+            ) : null}
+            {errorFor("power")}
+            <div style={{ ...manageMuted, fontSize: 11.5 }}>Pausing stops DigitalOcean running the session until you resume it or send a message. Your conversation and /workspace are kept.</div>
+          </div>
+          <ComputerContractPanel agent={contractAgentFor(session)} runtimeName={harness.name} onStatus={onContractStatus} />
+        </div>
+      </ManagePanel>
+      <ManagePanel id="resources" selected={selected}>
+        <ManageFixedSize size={size} reason={manage?.resize.cap.state === "unavailable" ? manage.resize.cap.reason : "DigitalOcean set this session's size when it was created, and it can't be changed."} />
+      </ManagePanel>
+      <ManagePanel id="advanced" selected={selected}>
+        <div style={{ display: "grid", gap: 20 }}>
+          <div style={manageCard}>
+            <ManageDetails details={details} />
+            {session.sessionId ? (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><span className="mono" style={{ ...manageLabel, flex: "0 0 160px" }}>DigitalOcean session</span><span style={{ ...manageValue, overflowWrap: "anywhere" }}>{session.sessionId}</span></div>
+            ) : null}
+            {session.error ? <div style={{ ...manageMuted, overflowWrap: "anywhere" }}>Last error: {session.error}</div> : null}
+          </div>
+          <ManageHistory agentId={session.agentId} />
+          <ManageNotAvailable items={manage?.notAvailable ?? []} />
+          {session.status !== "deleted" ? (
+            <ManageDangerZone
+              name={session.name}
+              title="Delete this agent"
+              description="Deletes its DigitalOcean session and /workspace, and removes the agent from Hivra. This cannot be undone."
+              busy={busy !== null || session.status === "deleting"}
+              deleting={busy === "delete" || session.status === "deleting"}
+              progress={session.status === "deleting" ? "Deleting in DigitalOcean…" : null}
+              onConfirm={() => void lifecycle("delete")}
+              error={errorFor("danger")}
+            />
+          ) : null}
+        </div>
+      </ManagePanel>
+    </ManageLayout>
+  );
+}
+
 /** Agent page body for a DigitalOcean Managed Agents session. */
 export function DigitalOceanAgentWorkspace({
   agentId,
   onDeleted,
   firstTask,
+  manage,
 }: {
   agentId: string;
   onDeleted: () => void;
+  /** The server's capability map for this session (sections, details, reasons). */
+  manage?: ManageCapabilities;
   /** The task chosen at launch, offered back in the composer if it was never sent. */
   firstTask?: string | null;
 }) {
@@ -264,7 +424,8 @@ export function DigitalOceanAgentWorkspace({
         </div>
       ) : null}
       <div style={{ flex: 1, minHeight: 0, display: view === "chat" ? "flex" : "none", flexDirection: "column" }}>
-        <ManagedSessionChat initialSession={session} onDeleted={() => onDeletedRef.current()} onCredentialProblem={reportProblem}
+        <ManagedSessionChat initialSession={session} session={session} onSessionChange={setSession}
+          onDeleted={() => onDeletedRef.current()} onCredentialProblem={reportProblem}
           firstTask={firstTask} historyVersion={historyVersion} />
       </div>
       {view === "files" ? (
@@ -272,10 +433,8 @@ export function DigitalOceanAgentWorkspace({
       ) : null}
       {/* Kept mounted so the chat's reminder and Manage share one status. */}
       <div className={styles.manage} hidden={view !== "manage"}>
-        <div className={styles.manageInner}>
-          <ComputerContractPanel agent={contractAgentFor(session)} runtimeName={DIGITALOCEAN_HARNESS_LABELS[session.harness].name}
-            onStatus={onContractStatus} />
-        </div>
+        <DigitalOceanManage session={session} manage={manage} onSessionChange={setSession}
+          onDeleted={() => onDeletedRef.current()} onContractStatus={onContractStatus} onCredentialProblem={reportProblem} />
       </div>
     </div>
   );

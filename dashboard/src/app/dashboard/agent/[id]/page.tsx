@@ -763,6 +763,10 @@ export default function AgentPage() {
   // every running conversation. Once opened, keep it mounted (hidden) while the
   // owner works in other surfaces so parallel chats keep doing their work.
   const [chatOpened, setChatOpened] = useState(false);
+  // Manage keeps unsaved edits (a resize selection, a model id, a destroy
+  // confirmation) while the owner looks at another surface: once opened for
+  // this agent, it stays mounted and hidden.
+  const [manageOpenedFor, setManageOpenedFor] = useState<string | null>(null);
   const [browserOn, setBrowserOn] = useState<boolean | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
@@ -979,7 +983,7 @@ export default function AgentPage() {
     // (Terminal, Browser, Git) and Skills do not apply.
     return (
       <SurfaceCodeBoundary>
-        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => { listChanged(); go("/dashboard"); }} />
+        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onDeleted={() => { listChanged(); go("/dashboard"); }} />
       </SurfaceCodeBoundary>
     );
   }
@@ -1040,6 +1044,12 @@ export default function AgentPage() {
   const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
     && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
   if (effectiveTab === "chat" && chatSurfaceReady && !chatOpened) setChatOpened(true);
+  // While a computer is being set up it lands on its setup progress, but
+  // choosing Manage (the tab, Open Manage, or a ?tab=manage link) opens Manage,
+  // so its owner can always reach Delete.
+  const showManage = effectiveTab === "manage" && (!provisioning || tab === "manage");
+  if (showManage && manageOpenedFor !== agent.id) setManageOpenedFor(agent.id);
+  const manageMounted = manageOpenedFor === agent.id;
   const activity = agentActivityPresentation(agent, def?.name || "the agent");
   // Every surface verifies the running gateway's auth capability, then POSTs
   // its bearer in the body for an opaque HttpOnly cookie and clean URL.
@@ -1048,9 +1058,11 @@ export default function AgentPage() {
   const isFreePlan = agent.deployment_mode !== "self-managed" && Boolean(plan && (!plan.subscribed || plan.key === "free"));
   const managePanel = (
     <HivraManage
+      key={agent.id}
       agent={agent}
       def={def}
       plan={plan}
+      chatReadiness={chatReadiness}
       onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
       onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
       onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
@@ -1167,7 +1179,15 @@ export default function AgentPage() {
             />}
           </>
         ) : null}
-        {provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
+        {/* Manage stays mounted once opened, and is reachable in every state,
+            including while the computer is still being set up, so its owner
+            can always find Delete. */}
+        {manageMounted ? (
+          <div hidden={!showManage} inert={!showManage} style={{ height: "100%", minHeight: 0 }}>
+            {managePanel}
+          </div>
+        ) : null}
+        {showManage ? null : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
               <div className="serif" style={{ fontSize: 24, color: "var(--ink-black)", marginBottom: 10 }}>Finish Windows setup on your Proxmox host</div>
@@ -1178,8 +1198,13 @@ export default function AgentPage() {
                 Automatic guest readiness and customer-host RDP enrolment are not implemented yet. The fast Guacamole/RDP button remains unavailable until that exact guest is separately prepared and verified.
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => selectTab("manage")}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 18, padding: "10px 16px", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", fontSize: 13, cursor: "pointer" }}
+            ><Settings2 size={14} /> Open Manage</button>
           </div>
-        ) : provisioning && agent.computer_substrate === "provider-vm" && effectiveTab === "manage" ? managePanel : provisioning ? (
+        ) : provisioning ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
               <Loader2 aria-hidden="true" size={20} style={{ display: "block", margin: "0 auto", animation: "spin 1s linear infinite", color: "var(--gold-leaf)" }} />
@@ -1206,15 +1231,13 @@ export default function AgentPage() {
                 style={{ fontSize: 13, maxWidth: 480, margin: "18px auto 0", padding: "14px 16px", border: "1px solid var(--etched-border)", lineHeight: 1.6 }}
               >{providerPowerMessage(agent.power_stage)}</p> : null}
             </div>
-            {agent.computer_substrate === "provider-vm" ? <button
+            <button
               type="button"
               onClick={() => selectTab("manage")}
               style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 18, padding: "10px 16px", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", fontSize: 13, cursor: "pointer" }}
-            ><Settings2 size={14} /> Open Manage</button> : null}
+            ><Settings2 size={14} /> Open Manage</button>
             {activity.freshLaunch && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
           </div>
-        ) : effectiveTab === "manage" ? (
-          managePanel
         ) : agent.status === "error" ? (
           <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
         ) : effectiveTab === "aeon" ? (
@@ -1293,7 +1316,7 @@ export default function AgentPage() {
           ) : (
             <Stub title="Not ready" body="The computer isn't reachable yet." />
           )
-        ) : managePanel}
+        ) : null}
       </div>
 
       {paywallOpen ? (

@@ -621,7 +621,7 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
   // A Codex model key is delivered after the computer is ready; its Settings
   // show that delivery and anything it needs.
   if (draft.profileId === "codex" && accessOf(draft).mode !== "native") {
-    return `/dashboard/agent/${id}?welcome=1&tab=manage#model-settings`;
+    return `/dashboard/agent/${id}?welcome=1&tab=manage&section=model#model-settings`;
   }
   // Dashboard agents open their own dashboard; CLI agents their terminal.
   const surface = draft.profileId ? getCatalogAgent(PROFILE_DETAILS[draft.profileId].runtimeId)?.surface : undefined;

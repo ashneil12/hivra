@@ -104,14 +104,18 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ plan, onChanged, onDestroyed, onConnectionServiceRestarted }: {
+  HivraManage: ({ plan, onChanged, onDestroyed, onConnectionServiceRestarted, chatReadiness }: {
     plan?: { usage?: { usedCpu: number } } | null;
     onChanged: () => void;
     onDestroyed: () => void;
     onConnectionServiceRestarted?: () => void;
+    chatReadiness?: string | null;
   }) => <>
     <div>Manage panel</div>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
+    <output data-testid="manage-sign-in">{chatReadiness ?? "unknown"}</output>
+    {/* Uncontrolled: it keeps what was typed only while Manage stays mounted. */}
+    <input aria-label="Manage draft" />
     <button onClick={onChanged}>Refresh capacity</button>
     <button onClick={onDestroyed}>Agent deleted</button>
     {/* Stands in for a finished in-place connection-service update. */}
@@ -290,6 +294,62 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: button }));
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+  });
+
+  it("keeps Manage mounted, with its drafts, while the owner uses Chat", async () => {
+    render(<AgentPage />);
+    expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Manage draft" }), { target: { value: "unsaved size" } });
+    await waitFor(() => expect(screen.getByTestId("manage-sign-in")).toHaveTextContent("native_connected"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^agent$/i }));
+    expect(screen.getByText("Manage panel")).not.toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Manage draft" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    expect(screen.getByRole("textbox", { name: "Manage draft" })).toHaveValue("unsaved size");
+    expect(screen.getByText("Manage panel")).toBeVisible();
+  });
+
+  // Regression: while a Proxmox computer was being set up, every tab showed the
+  // setup progress, so Manage (and Delete) could not be reached.
+  it("opens Manage while a Proxmox computer is still being set up, after landing on its progress", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "ubuntu-desktop", name: "NEW_UBUNTU",
+      status: "provisioning", activity: "provision", provisioned_at: null, cpu: 2, ram: 4,
+      computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    });
+    render(<AgentPage />);
+    expect(await screen.findByText(/Setting up NEW_UBUNTU/)).toBeVisible();
+    expect(screen.queryByText("Manage panel")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(screen.getByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText(/Setting up NEW_UBUNTU/)).not.toBeInTheDocument();
+  });
+
+  it("opens Manage straight away from an ?tab=manage link to a computer being set up (Open it to delete)", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "ubuntu-desktop", name: "NEW_UBUNTU",
+      status: "provisioning", activity: "provision", provisioned_at: null, cpu: 2, ram: 4,
+      computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    });
+    mockSearchGet.mockImplementation((key: string) => key === "tab" ? "manage" : null);
+    render(<AgentPage />);
+    expect(await screen.findByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText(/Setting up NEW_UBUNTU/)).not.toBeInTheDocument();
+  });
+
+  it("opens Manage from the Windows setup handoff on the owner's own server", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "windows", deployment_mode: "self-managed",
+      computer_substrate: "proxmox-kvm", name: "MY_WINDOWS_DESKTOP", status: "provisioning", vmid: 208, cpu: 4, ram: 8,
+    });
+    render(<AgentPage />);
+    expect(await screen.findByText("Finish Windows setup on your Proxmox host")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(screen.getByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText("Finish Windows setup on your Proxmox host")).not.toBeInTheDocument();
   });
 
   it("opens a DigitalOcean agent in its session workspace, never the box chat or login", async () => {
