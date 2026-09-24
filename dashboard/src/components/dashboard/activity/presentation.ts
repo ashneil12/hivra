@@ -350,14 +350,15 @@ export function capabilityStateLabel(
   );
 }
 
-// The closed failure codes the launch installer and start helper emit.
+// The closed failure codes the launch installer, start helper and in-place
+// connection-service update emit.
 const installFailures: Record<string, string> = {
   timeout: "it timed out",
   transfer_failed: "it could not be copied to the computer",
   install_failed: "the installer reported an error",
   invalid_input: "its setup details were refused",
   source_missing: "its files were not available on the host",
-  not_attempted: "the start did not reach the install step",
+  not_attempted: "the start or update did not reach the install step",
 };
 /** Plain-language cause of a failed reporter install, from its failure code. */
 export function installFailureText(code?: string): string | undefined {

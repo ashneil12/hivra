@@ -88,10 +88,16 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ plan, onChanged }: { plan?: { usage?: { usedCpu: number } } | null; onChanged: () => void }) => <>
+  HivraManage: ({ plan, onChanged, onConnectionServiceRestarted }: {
+    plan?: { usage?: { usedCpu: number } } | null;
+    onChanged: () => void;
+    onConnectionServiceRestarted?: () => void;
+  }) => <>
     <div>Manage panel</div>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
     <button onClick={onChanged}>Refresh capacity</button>
+    {/* Stands in for a finished in-place connection-service update. */}
+    <button onClick={() => { onConnectionServiceRestarted?.(); onChanged(); }}>Finish connection update</button>
   </>,
 }));
 
@@ -294,7 +300,7 @@ describe("AgentPage", () => {
     mockChatReadiness.mockResolvedValue("upgrade_required");
     render(<AgentPage />);
     expect(await screen.findByText("This computer needs a Chat update")).toBeInTheDocument();
-    expect(screen.getByText(/Open Manage and choose Update & restart/)).toBeInTheDocument();
+    expect(screen.getByText(/Open Manage and choose Update connection service \(the computer keeps running\)/)).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
   });
@@ -671,7 +677,8 @@ describe("AgentPage", () => {
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Connection update needed")).toBeInTheDocument();
-    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update & restart");
+    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update connection service");
+    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("without restarting the computer");
     expect(screen.queryByRole("link", { name: /update the connection service/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open in new tab/i })).toBeDisabled();
     expect(document.querySelector("iframe, form")).toBeNull();
@@ -808,6 +815,40 @@ describe("AgentPage", () => {
     expect(screen.getByTitle("Terminal")).toBe(boxFrame);
     expect(boxFrame).toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("signs retained terminals in again, in place, after Manage reports a connection-service restart", async () => {
+    render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    await screen.findByTitle("Claude Code session");
+    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    await screen.findByTitle("Claude Code session · 2");
+    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+    fireEvent.click(getSurfaceButton("Terminal"));
+    await screen.findByTitle("Terminal");
+    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
+    const metaProbes = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
+    expect(metaProbes()).toBe(3);
+
+    // The update restarted the gateway: every cookie those frames hold is dead.
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish connection update" }));
+
+    // Each retained surface probes again and re-submits its own bootstrap form,
+    // while hidden, before the owner returns to it.
+    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(6));
+    expect(metaProbes()).toBe(6);
+    const targets = requestSubmit.mock.instances.map((form) => (form as HTMLFormElement).getAttribute("target"));
+    expect(new Set(targets.slice(3))).toEqual(new Set(targets.slice(0, 3)));
+
+    // Nothing else was torn down: both agent sessions are still there, and the
+    // one the owner left selected is the one shown.
+    fireEvent.click(getSurfaceButton(/claude code session/i));
+    expect(screen.getByRole("tab", { name: "Session 2" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByTitle("Claude Code session · 2")).toBeVisible();
+    expect(screen.getByTitle("Claude Code session")).toBeInTheDocument();
+    expect(requestSubmit).toHaveBeenCalledTimes(6);
   });
 
   it("opens parallel terminal sessions that each keep their own shell", async () => {
@@ -1583,7 +1624,7 @@ describe("AgentPage", () => {
     expect(await screen.findByText("Files panel")).toHaveAttribute("data-workspace-root", "true");
   });
 
-  it("tells a computer with missing box credentials to update and restart instead of a false connection error", async () => {
+  it("tells a computer with missing box credentials to contact support instead of a false connection error", async () => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123",
       type: "linux-desktop",
@@ -1599,7 +1640,10 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     await screen.findByRole("navigation", { name: "Resource surfaces" });
     fireEvent.click(getSurfaceButton(/^Terminal$/));
-    expect(await screen.findByText(/Secure access credentials for this computer/)).toBeInTheDocument();
+    const guidance = await screen.findByText(/Secure access credentials for this computer/);
+    expect(guidance).toHaveTextContent("Contact support to restore access.");
+    // No Manage action restores the dashboard credential, so none is named.
+    expect(guidance).not.toHaveTextContent(/Update connection service|Update & restart|Restart/);
     expect(screen.queryByText(/connection service isn’t reachable yet/)).not.toBeInTheDocument();
     expect(document.documentElement.outerHTML).not.toContain("box-token");
   });

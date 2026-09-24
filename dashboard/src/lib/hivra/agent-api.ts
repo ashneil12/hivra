@@ -530,6 +530,16 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return (await fetchPlanStrict()) ?? FREE_PLAN;
 }
 
+/** A lifecycle action the server refused or could not verify, with its HTTP status. */
+export class AgentActionError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AgentActionError";
+    this.status = status;
+  }
+}
+
 async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
   const r = await fetch(`/api/hivra/agents/${id}/action`, {
     method: "POST",
@@ -537,7 +547,7 @@ async function agentAction(id: string, action: string, extra?: Record<string, un
     body: JSON.stringify({ action, ...(extra || {}) }),
   });
   const j = await readJson(r);
-  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Action failed");
+  if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
 }
 export const stopAgent = (id: string) => agentAction(id, "stop");
 export const startAgent = (id: string) => agentAction(id, "start");
@@ -755,10 +765,10 @@ export interface BoxChatRun {
   createdAt: string;
   finishedAt: string | null;
 }
-/** Recent runs, newest first; null when the box predates detached runs or is unreachable. */
-export async function listBoxChatRuns(boxUrl: string, token?: string | null): Promise<BoxChatRun[] | null> {
+/** Recent runs, newest first; null when the box predates detached runs, is unreachable, or the signal aborts. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatRun[] | null> {
   try {
-    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token) });
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token), signal });
     if (!r.ok) return null;
     const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
     return Array.isArray(runs) ? runs : null;

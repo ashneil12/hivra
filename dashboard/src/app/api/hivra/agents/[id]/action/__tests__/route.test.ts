@@ -918,34 +918,119 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
-  it("updates only the bound Proxmox guest runtime before a durable restart", async () => {
-    const request = new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
-      method: "POST",
-      headers: {
-        Host: "hivra.cloud",
-        Origin: "https://hivra.cloud",
-        "Sec-Fetch-Site": "same-origin",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ action: "update_runtime" }),
+  describe("in-place runtime update", () => {
+    const RECEIPT = "HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n";
+    const params = () => ({ params: Promise.resolve({ id: "agent-1" }) });
+    function updateRequest() {
+      return new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
+        method: "POST",
+        headers: {
+          Host: "hivra.cloud",
+          Origin: "https://hivra.cloud",
+          "Sec-Fetch-Site": "same-origin",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "update_runtime" }),
+      }) as never;
+    }
+    const rpcNames = () => mockSupabaseRpc.mock.calls.map((call) => call[0]);
+
+    it("updates the bound guest runtime without powering the computer off and completes it as running", async () => {
+      mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: RECEIPT, stderr: "" });
+      const response = await POST(updateRequest(), params());
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ success: true, data: { status: "running" } });
+      expect(mockCheckManagedHivraHostReadiness).toHaveBeenCalledWith({
+        targetId: "fixturenode21",
+        env: expect.objectContaining({ PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21" }),
+        channel: "default",
+        purpose: "runtime-update",
+      });
+      // Fenced exactly as before: the same lease kind and desired state.
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("claim_hivra_agent_operation", expect.objectContaining({
+        p_operation_kind: "restart",
+        p_desired_state: "running",
+      }));
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(1);
+      const [script, , options] = mockRunProxmoxHostScript.mock.calls[0];
+      expect(script).toContain("flock -w 60 8");
+      expect(script).toContain("HIVRA_VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
+      expect(script).toContain("bash '/root/hivra-provisioner/hivra-update-guest-runtime.sh' 1090 '10.250.21.90'");
+      expect(script.indexOf("flock -w 60 8")).toBeLessThan(script.indexOf("hivra-update-guest-runtime.sh"));
+      // The helper inherits FD8 and releases it before its guest steps, and gets
+      // a host-side deadline started before the lock wait, inside the request.
+      expect(script).toContain("HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_RUNTIME_UPDATE_DEADLINE=\"$HIVRA_RUNTIME_UPDATE_DEADLINE\" bash '/root/hivra-provisioner/hivra-update-guest-runtime.sh'");
+      expect(script.startsWith("HIVRA_RUNTIME_UPDATE_DEADLINE=\"$(( $(date +%s) + 220 ))\"\n")).toBe(true);
+      expect(script.indexOf("HIVRA_RUNTIME_UPDATE_DEADLINE=")).toBeLessThan(script.indexOf("flock -w 60 8"));
+      expect(spawnSync("bash", ["-n"], { input: script, encoding: "utf8" })).toMatchObject({ status: 0, stderr: "" });
+      // No reboot: nothing may stop, shut down, start or re-run the start helper.
+      expect(script).not.toMatch(/qm (shutdown|stop|start|reboot|reset)\b/);
+      expect(script).not.toContain("hivra-start-on-host.sh");
+      expect(script).not.toContain("nohup");
+      expect(options).toEqual({ timeoutMs: expect.any(Number) });
+      expect(options.timeoutMs).toBeLessThan(300_000);
+      // A real completed operation: running, lease released; never "provisioning".
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("complete_hivra_agent_operation", expect.objectContaining({
+        p_agent_id: "agent-1",
+        p_expected_desired_state: "running",
+        p_status: "running",
+      }));
+      expect(rpcNames()).not.toContain("continue_hivra_agent_operation");
+      expect(rpcNames()).not.toContain("record_hivra_agent_operation_failure");
+      const { logHivraAgentEvent } = jest.requireMock("@/lib/hivra/agent-events") as { logHivraAgentEvent: jest.Mock };
+      expect(logHivraAgentEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "runtime_updated", detail: { inPlace: true } }));
+      expect(logHivraAgentEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event: "restarted" }));
     });
-    const response = await POST(request as never, { params: Promise.resolve({ id: "agent-1" }) });
-    expect(response.status).toBe(200);
-    expect(mockCheckManagedHivraHostReadiness).toHaveBeenCalledWith({
-      targetId: "fixturenode21",
-      env: expect.objectContaining({ PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21" }),
-      channel: "default",
-      purpose: "runtime-update",
+
+    it.each([
+      ["the host script fails", { ok: false, stdout: "", stderr: "guest runtime update ended without its commit receipt\n", error: "Remote bash exited with code 1" }],
+      ["the host times out after the receipt", { ok: false, stdout: RECEIPT, stderr: "", error: "Proxmox SSH operation timed out" }],
+      ["the host exits cleanly without a receipt", { ok: true, stdout: "", stderr: "" }],
+      ["only the guest's own line is present", { ok: true, stdout: "HIVRA_GUEST_RUNTIME_UPDATED\n", stderr: "" }],
+      ["the receipt names another VM", { ok: true, stdout: "HIVRA_GUEST_RUNTIME_UPDATED vmid=1091\n", stderr: "" }],
+    ])("keeps the operation for reconciliation when %s", async (_case, result) => {
+      mockRunProxmoxHostScript.mockResolvedValue(result);
+      const response = await POST(updateRequest(), params());
+
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/could not be verified/i) });
+      expect(rpcNames()).toContain("record_hivra_agent_operation_failure");
+      expect(rpcNames()).not.toContain("complete_hivra_agent_operation");
+      expect(rpcNames()).not.toContain("continue_hivra_agent_operation");
+      expect(rpcNames()).not.toContain("release_hivra_agent_operation");
     });
-    expect(mockSupabaseRpc).toHaveBeenCalledWith("claim_hivra_agent_operation", expect.objectContaining({
-      p_operation_kind: "restart",
-      p_desired_state: "running",
-    }));
-    const script = String(mockRunProxmoxHostScript.mock.calls[0][0]);
-    expect(script).toContain("HIVRA_VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
-    expect(script).toContain("bash '/root/hivra-provisioner/hivra-update-guest-runtime.sh' 1090 '10.250.21.90'");
-    expect(script.indexOf("hivra-update-guest-runtime.sh")).toBeLessThan(script.indexOf('qm shutdown "$VMID"'));
-    expect(script).toContain("bash '/root/hivra-provisioner/hivra-start-on-host.sh' 1090 90");
+
+    it("releases a verified update whose completion was superseded instead of claiming it", async () => {
+      mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: RECEIPT, stderr: "" });
+      mockLifecycleUpdateError = new Error("superseded");
+      const response = await POST(updateRequest(), params());
+
+      expect(response.status).toBe(409);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("release_hivra_agent_operation", expect.objectContaining({
+        p_mark_error: false,
+      }));
+    });
+
+    it("refuses a computer that is not running before taking the lease", async () => {
+      mockAgent = { ...mockAgent, status: "stopped" };
+      const response = await POST(updateRequest(), params());
+
+      expect(response.status).toBe(409);
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("refuses a DeepSeek computer before any host call or lease, so nothing is locked", async () => {
+      mockAgent = { ...mockAgent, type: "deepseek-harness" };
+      const response = await POST(updateRequest(), params());
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/DeepSeek computers can’t update their connection service/) });
+      expect(mockCheckManagedHivraHostReadiness).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
   });
 
   it("fails a self-managed runtime update before claiming authority when its exact bundle is not ready", async () => {
@@ -978,7 +1063,7 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockSupabaseRpc).not.toHaveBeenCalledWith("claim_hivra_agent_operation", expect.anything());
   });
 
-  it("uses the prepared self-managed target's own paths for the verified update and restart", async () => {
+  it("uses the prepared self-managed target's own paths for the verified in-place update", async () => {
     mockAgent = {
       ...mockAgent,
       deployment_mode: "self-managed",
@@ -992,7 +1077,7 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     };
     mockRunProxmoxHostScript
       .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_RUNTIME_UPDATE_READY\n" })
-      .mockResolvedValueOnce({ ok: true, stdout: "kicked\n" });
+      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_GUEST_RUNTIME_UPDATED vmid=420\n" });
     const response = await POST(new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
       method: "POST",
       headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
@@ -1004,7 +1089,9 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     const mutation = String(mockRunProxmoxHostScript.mock.calls[1][0]);
     expect(mutation).toContain("HIVRA_VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
     expect(mutation).toContain("bash '/opt/hivra/provisioner/hivra-update-guest-runtime.sh' 420 '10.251.20.70'");
-    expect(mutation).toContain("bash '/opt/hivra/provisioner/hivra-start-on-host.sh' 420 70");
+    expect(mutation).not.toContain("hivra-start-on-host.sh");
+    expect(mutation).not.toMatch(/qm (shutdown|stop|start)\b/);
+    expect(mockSupabaseRpc).toHaveBeenCalledWith("complete_hivra_agent_operation", expect.objectContaining({ p_status: "running" }));
   });
 
   it("serializes managed cold restore under FD8 and re-verifies the stable VM binding", async () => {
@@ -1355,7 +1442,6 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     it.each([
       ["start", "claude-code", { action: "start" }],
       ["restart", "codex", { action: "restart" }],
-      ["update_runtime", "claude-code", { action: "update_runtime" }],
       ["resize", "codex", { action: "resize", cpu: 2, ram: 4 }],
     ] as const)("stages a fresh credential scoped to exactly this computer on %s of a %s computer", async (_action, type, body) => {
       mockAgent = { ...mockAgent, type };
@@ -1393,6 +1479,128 @@ describe("POST /api/hivra/agents/[id]/action", () => {
         credential_expires_at: credential.expiresAt,
         issue_reason: "start",
       }), { onConflict: "agent_id" });
+    });
+
+    describe("on an in-place runtime update", () => {
+      const UPDATE_HELPER = "/root/hivra-provisioner/hivra-update-guest-runtime.sh";
+      function hostResult(stdout: string) {
+        mockRunProxmoxHostScript.mockImplementation(async (script: string) => ({
+          ok: true,
+          stdout: `${script.includes("HIVRA_ACTIVITY_TELEMETRY_B64=") ? "HIVRA_ACTIVITY_CREDENTIAL_STAGED\n" : ""}${stdout}`,
+          stderr: "",
+        }));
+      }
+
+      it.each(["claude-code", "codex"])("re-issues a %s credential to the update helper and records its install outcome", async (type) => {
+        mockAgent = { ...mockAgent, type };
+        hostResult("HIVRA_ACTIVITY_COLLECTOR status=installed\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+        const issuedNoEarlierThan = Math.floor(Date.now() / 1000);
+
+        const response = await POST(lifecycleRequest({ action: "update_runtime" }), routeParams());
+
+        expect(response.status).toBe(200);
+        const script = lastHostScript();
+        const credential = stagedCredential(script);
+        expect(credential).toMatchObject({ endpoint: `${ORIGIN}/api/activity/ingest`, resourceId: AGENT_ID });
+        const claims = verifyActivityCollectorToken(`Bearer ${credential.token}`);
+        expect(claims).toMatchObject({ userId: "user-free", resourceIds: [AGENT_ID] });
+        expect(claims!.iat).toBeGreaterThanOrEqual(issuedNoEarlierThan);
+        expect(script).not.toContain(credential.token);
+        // The probe and the consumer are the update helper that actually runs.
+        const probeAt = script.indexOf(`grep -Fq HIVRA_ACTIVITY_TELEMETRY_FILE '${UPDATE_HELPER}'`);
+        const writeAt = script.indexOf(`'HIVRA_ACTIVITY_TELEMETRY_B64=`);
+        const helperAt = script.indexOf(`bash '${UPDATE_HELPER}' 1090 '10.250.21.90'`);
+        expect(probeAt).toBeGreaterThan(-1);
+        expect(probeAt).toBeLessThan(writeAt);
+        expect(writeAt).toBeLessThan(helperAt);
+        expect(script).toContain(`HIVRA_ACTIVITY_TELEMETRY_FILE="$HIVRA_ACTIVITY_FILE" bash '${UPDATE_HELPER}' 1090 '10.250.21.90'`);
+        expect(script).not.toContain(START_HELPER);
+        // A file staged for a helper that never ran is removed on exit.
+        const trapAt = script.search(/^trap '.*\/run\/hivra-lifecycle\/1090\.activity\.env.*' EXIT$/m);
+        expect(trapAt).toBeGreaterThan(-1);
+        expect(trapAt).toBeLessThan(writeAt);
+        const upserts = mockCollectorUpsert.mock.calls.map((call) => call[0]);
+        expect(upserts).toEqual([
+          expect.objectContaining({ agent_id: AGENT_ID, user_id: "user-free", credential_expires_at: credential.expiresAt, issue_reason: "start" }),
+          expect.objectContaining({ agent_id: AGENT_ID, user_id: "user-free", last_install_status: "installed", last_install_reason: null }),
+        ]);
+      });
+
+      it("records a failed reporter install without failing the update", async () => {
+        hostResult("HIVRA_ACTIVITY_COLLECTOR status=failed reason=timeout\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+        const response = await POST(lifecycleRequest({ action: "update_runtime" }), routeParams());
+
+        expect(response.status).toBe(200);
+        expect(mockCollectorUpsert).toHaveBeenCalledWith(
+          expect.objectContaining({ last_install_status: "failed", last_install_reason: "timeout" }),
+          { onConflict: "agent_id" },
+        );
+        expect(mockSupabaseRpc).toHaveBeenCalledWith("complete_hivra_agent_operation", expect.objectContaining({ p_status: "running" }));
+      });
+
+      it("records neither issuance nor an install result when the update is not verified", async () => {
+        mockRunProxmoxHostScript.mockImplementation(async () => ({
+          ok: false,
+          stdout: "HIVRA_ACTIVITY_CREDENTIAL_STAGED\nHIVRA_ACTIVITY_COLLECTOR status=installed\n",
+          stderr: "",
+          error: "Remote bash exited with code 1",
+        }));
+        const response = await POST(lifecycleRequest({ action: "update_runtime" }), routeParams());
+
+        expect(response.status).toBe(502);
+        expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      });
+
+      it.each(["openclaw", "agent-zero", "linux-desktop"])("updates a %s computer without staging any credential", async (type) => {
+        mockAgent = { ...mockAgent, type };
+        hostResult("HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+        const response = await POST(lifecycleRequest({ action: "update_runtime" }), routeParams());
+
+        expect(response.status).toBe(200);
+        const script = lastHostScript();
+        expect(script).toContain(`bash '${UPDATE_HELPER}' 1090 '10.250.21.90'`);
+        expect(script).not.toContain("HIVRA_ACTIVITY");
+        expect(script).not.toContain("/run/hivra-lifecycle");
+        expect(script).not.toContain("trap ");
+        expect(mockCollectorUpsert).not.toHaveBeenCalled();
+      });
+
+      it("writes the file only for an update helper that consumes it", async () => {
+        hostResult("HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+        expect((await POST(lifecycleRequest({ action: "update_runtime" }), routeParams())).status).toBe(200);
+        const script = lastHostScript();
+        const stage = script.slice(script.indexOf("HIVRA_ACTIVITY_FILE='';"), script.indexOf("HIVRA_VM_SSH_KEY_PATH="));
+        expect(stage.length).toBeGreaterThan(0);
+        const work = mkdtempSync(path.join(tmpdir(), "hivra-activity-update-stage-"));
+        try {
+          const runtimeDirectory = path.join(work, "run", "hivra-lifecycle");
+          const helper = path.join(work, "hivra-update-guest-runtime.sh");
+          const stagedFile = path.join(runtimeDirectory, "1090.activity.env");
+          const localStage = stage
+            .replaceAll("/run/hivra-lifecycle", runtimeDirectory)
+            .replaceAll(UPDATE_HELPER, helper);
+          const kickoff = () => spawnSync("bash", [
+            "-c",
+            `set -euo pipefail; umask 077; ${localStage}printf 'FILE=%s\\n' "$HIVRA_ACTIVITY_FILE"`,
+          ], { encoding: "utf8" });
+
+          // An update helper from an older bundle never receives a file.
+          writeFileSync(helper, "#!/usr/bin/env bash\necho legacy update helper\n");
+          const legacy = kickoff();
+          expect({ status: legacy.status, stdout: legacy.stdout }).toEqual({ status: 0, stdout: "FILE=\n" });
+          expect(() => statSync(stagedFile)).toThrow();
+
+          writeFileSync(helper, readFileSync(path.join(process.cwd(), "provisioner/hivra-update-guest-runtime.sh"), "utf8"));
+          const current = kickoff();
+          expect({ status: current.status, stdout: current.stdout }).toEqual({
+            status: 0,
+            stdout: `HIVRA_ACTIVITY_CREDENTIAL_STAGED\nFILE=${stagedFile}\n`,
+          });
+          expect(statSync(stagedFile).mode & 0o777).toBe(0o600);
+        } finally {
+          rmSync(work, { recursive: true, force: true });
+        }
+      });
     });
 
     it("writes the file only for a helper that consumes it, in exactly the format that helper reads", async () => {

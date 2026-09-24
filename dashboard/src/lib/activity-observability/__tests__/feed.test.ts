@@ -8,6 +8,12 @@ describe("activity feed normalization",()=>{
     expect(snapshot.sources.find(s=>s.id==="hivra-lifecycle")?.state).toBe("active");
     expect(snapshot.sources.find(s=>s.id==="otlp-logs")?.state).toBe("missing");
   });
+  it("titles an in-place connection-service update in glossary words, not as a restart",()=>{
+    const snapshot=buildActivitySnapshot({now:new Date("2026-09-24T20:00:00Z"),limit:20,agentRows:[],sessionRows:[],eventRows:[{id:"u1",agent_id:"00000000-0000-4000-8000-000000000001",event:"runtime_updated",agent_type:"codex",detail:{inPlace:true},created_at:"2026-09-24T19:00:00Z"}]});
+    expect(snapshot.events[0]).toMatchObject({kind:"lifecycle",title:"Connection service updated",outcome:"unknown",needsAttention:false});
+    // User-facing Activity copy follows the glossary ("runtime" is not a user word).
+    expect(snapshot.events[0].title).not.toMatch(/\bruntimes?\b/i);
+  });
   it("preserves pre-agent launch events with a stable unattributed identity",()=>{
     const snapshot=buildActivitySnapshot({now:new Date("2026-09-21T20:00:00Z"),limit:20,agentRows:[],sessionRows:[],eventRows:[{id:"launch-1",agent_id:null,event:"launch_requested",agent_type:"codex",detail:{},created_at:"2026-09-21T19:00:00Z"}]});
     expect(snapshot.events[0]).toMatchObject({agentId:"unattributed:launch-1",agentName:"Unattributed launch",title:"Launch requested"});
