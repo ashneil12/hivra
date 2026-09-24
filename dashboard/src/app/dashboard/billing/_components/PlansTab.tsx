@@ -153,7 +153,7 @@ export function MachineCard({
 }) {
   const plan = PLANS[planKey];
   const badge = planCardBadge(planKey, currentPlanKey);
-  const price = planPriceDisplay(planKey, { path, cadence, tokenMode });
+  const price = planPriceDisplay(planKey, { path, cadence, tokenMode, holdAmounts: c.holdAmounts });
   const diff = currentPlanKey && currentPlanKey !== planKey ? getPlanDiff(currentPlanKey, planKey) : null;
   const isPopular = "popular" in plan && plan.popular === true;
   const isCurrent = planKey === currentPlanKey;
