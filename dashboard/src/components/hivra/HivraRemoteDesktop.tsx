@@ -106,6 +106,9 @@ const CONTROLLER_CONFLICT_GRACE_MS = 10_000;
 const CONTROLLER_CONFLICT_RETRY_INTERVAL_MS = 2_000;
 const ACTIVE_CONTROLLER_RETRY_WINDOW_MS = 20_000;
 const RELEASING_CONTROLLER_RETRY_WINDOW_MS = 40_000;
+// A re-sent revoke normally answers in well under a second. On a link that
+// hangs it, the open goes ahead after this and the conflict wait covers it.
+const UNRELEASED_REVOKE_WAIT_MS = 5_000;
 // Losing the stream does not stop the desktop or the apps open on it. While
 // this page is visible and online, reconnect on our own a few times, spaced out
 // so a restarting desktop gateway or a network change can settle; after that,
@@ -122,6 +125,60 @@ const STREAM_DROP_REASONS: ReadonlySet<string> = new Set([
   "document-closed",
 ]);
 const STREAM_DROPPED_MESSAGE = "Stream disconnected. Your desktop and its apps are still running.";
+/**
+ * Runtime-proof failures that a restarting desktop gateway produces for a few
+ * seconds (its broker and chat units restart on their own), as opposed to a
+ * blocked computer, a required update or a rate limit. Server errors count too.
+ */
+const TRANSIENT_PROOF_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "capability_refresh_failed",
+  "provider_desktop_unverified",
+]);
+
+type StreamRecovery = {
+  armed: boolean;
+  immediate: boolean;
+  attempts: number;
+  /** When the pending attempt is due, so a re-render or nudge keeps its place. */
+  dueAt: number | null;
+  connectedAt: number | null;
+  dropReason: string | null;
+};
+
+/** A stream that stayed up for a minute earns a fresh reconnect budget. */
+function settleRecoveryBudget(recovery: StreamRecovery): void {
+  if (recovery.connectedAt !== null && Date.now() - recovery.connectedAt >= STREAM_RECONNECT_STABLE_MS) {
+    recovery.attempts = 0;
+  }
+  recovery.connectedAt = null;
+}
+
+/**
+ * Update and repair re-run desktop preparation ({ action: "prepare" }). When
+ * that reinstalls the desktop, the installer restarts the desktop container
+ * (closing its apps) and the agent's chat service, which interrupts a reply in
+ * flight on computers whose chat runs are not yet detached. ~/Hivra is a
+ * mounted folder and is kept. A healthy desktop may only be re-proved, hence
+ * "can".
+ */
+type InstallKind = "update-runtime" | "update-desktop" | "repair";
+const INSTALL_CONFIRMATIONS: Record<InstallKind, { label: string; action: string; note: string }> = {
+  "update-runtime": {
+    label: "Confirm update",
+    action: "Update",
+    note: "Updating ends this stream and can restart the desktop and the agent’s chat service. That closes the desktop’s open apps and can interrupt a chat reply the agent is writing. Files in ~/Hivra are kept.",
+  },
+  "update-desktop": {
+    label: "Confirm update",
+    action: "Update",
+    note: "Updating can restart the desktop and the agent’s chat service. That closes the desktop’s open apps and can interrupt a chat reply the agent is writing. Files in ~/Hivra are kept.",
+  },
+  repair: {
+    label: "Confirm repair",
+    action: "Repair",
+    note: "Repairing can reinstall the desktop and restart the agent’s chat service. That closes the desktop’s open apps and can interrupt a chat reply the agent is writing. Files in ~/Hivra are kept.",
+  },
+};
 const VIEWPORT_UPDATE_DEBOUNCE_MS = 100;
 const MAX_BROWSER_TIMING_SAMPLES = 200;
 type BrowserTimingSample = { durationMs: number; outcome: "changed" | "timeout" };
@@ -163,17 +220,38 @@ async function newPkce(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: base64Url(new Uint8Array(digest)) };
 }
 
-async function revokeSession(sessionId: string): Promise<void> {
+/**
+ * Revoke one owner session. True once the server has answered for it; false
+ * when the request never arrived or hit a rate limit or server error, so that
+ * sending it again can still help.
+ */
+async function revokeSession(sessionId: string): Promise<boolean> {
   try {
-    await fetch(`/api/remote-desktop/sessions/${encodeURIComponent(sessionId)}`, {
+    const response = await fetch(`/api/remote-desktop/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
       credentials: "same-origin",
       keepalive: true,
     });
+    return response.status < 500 && response.status !== 429;
   } catch {
     // The guest broker also terminates and releases input when its media lane
     // closes. Owner revocation is an eager second fence, not the only cleanup.
+    return false;
   }
+}
+
+/**
+ * Revoke a session this page ended, remembering it in `unreleased` until the
+ * server has answered. A stream that drops while the device is offline cannot
+ * send its revoke, and the guest broker keeps renewing that controller lease
+ * until it notices the dead socket, so the next open would wait on this page's
+ * own old stream and end on "Take over here". Every issue sends these again
+ * first; the server then treats the old lease as releasing and the open waits
+ * for it instead.
+ */
+async function releaseSession(sessionId: string, unreleased: Set<string>): Promise<void> {
+  if (await revokeSession(sessionId)) unreleased.delete(sessionId);
+  else unreleased.add(sessionId);
 }
 
 /** Speculative TLS/document warm for the handoff origin. Never mounts the iframe. */
@@ -245,9 +323,29 @@ export function HivraRemoteDesktop({
   useWorkspaceModalLayer("surface", immersive);
   useInertOutside(fullscreenRef, immersive);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Update runtime asks first: it can restart the desktop and close its apps.
-  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
-  if (!menuOpen && confirmingUpdate) setConfirmingUpdate(false);
+  // Every click that can run the installer asks first: it can restart the
+  // desktop, closing its apps, and the agent's chat service.
+  const [confirmInstall, setConfirmInstall] = useState<InstallKind | null>(null);
+  if (!menuOpen && confirmInstall === "update-runtime") setConfirmInstall(null);
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
+  const updateRuntimeRef = useRef<HTMLButtonElement>(null);
+  const updateDesktopRef = useRef<HTMLButtonElement>(null);
+  const repairDesktopRef = useRef<HTMLButtonElement>(null);
+  const cancelledInstallRef = useRef<InstallKind | null>(null);
+  // Keyboard focus follows the question: onto Cancel when it opens, and back
+  // to the control that asked when it is cancelled.
+  useEffect(() => {
+    if (confirmInstall) {
+      confirmCancelRef.current?.focus();
+      return;
+    }
+    const cancelled = cancelledInstallRef.current;
+    cancelledInstallRef.current = null;
+    const trigger = cancelled === "update-runtime" ? updateRuntimeRef
+      : cancelled === "update-desktop" ? updateDesktopRef
+        : cancelled === "repair" ? repairDesktopRef : null;
+    trigger?.current?.focus();
+  }, [confirmInstall]);
   const menuRef = useRef<HTMLDetailsElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const [fitDesktop, setFitDesktop] = useState(true);
@@ -336,22 +434,43 @@ export function HivraRemoteDesktop({
   // Automatic reconnection after the stream dropped. `armed` lasts until a
   // stream connects again, the budget runs out, or the user acts; `attempts`
   // survives a reconnect that drops again before it proved stable.
-  const recoveryRef = useRef<{ armed: boolean; immediate: boolean; attempts: number; connectedAt: number | null }>({
-    armed: false, immediate: false, attempts: 0, connectedAt: null,
+  const recoveryRef = useRef<StreamRecovery>({
+    armed: false, immediate: false, attempts: 0, dueAt: null, connectedAt: null, dropReason: null,
   });
   const [recoveryTick, setRecoveryTick] = useState(0);
+  // Whether the last runtime-proof failure may pass on a retry seconds later,
+  // and the last failure's code, for the automatic reconnect's decisions and logs.
+  const transientProofFailureRef = useRef(false);
+  const lastFailureRef = useRef<{ code: string | null; status: number | null }>({ code: null, status: null });
+  const unreleasedSessionsRef = useRef<Set<string>>(new Set());
+  // Once this page has shown the desktop, it has told the user the desktop and
+  // its apps keep running when the stream drops.
+  const desktopShownRef = useRef(false);
   /** The user's own action (or a repair) replaces any pending automatic reconnect. */
   const cancelStreamRecovery = useCallback(() => {
     const recovery = recoveryRef.current;
     recovery.armed = false;
     recovery.immediate = false;
     recovery.attempts = 0;
+    recovery.dueAt = null;
   }, []);
 
-  const connect = useCallback(async (options: { allowPrepare?: boolean; ownerHandoff?: boolean } = {}) => {
+  /**
+   * `allowPrepare: false` never installs or repairs anything. Such an open
+   * also proves the runtime before asking for authority unless `proveFirst`
+   * is false: the automatic reconnect proves first, the user's Reconnect after
+   * a drop goes straight to the session like any other click.
+   */
+  const connect = useCallback(async (options: { allowPrepare?: boolean; proveFirst?: boolean; ownerHandoff?: boolean } = {}) => {
     allowAutomaticPrepareRef.current = options.allowPrepare !== false;
     if (options.allowPrepare !== false) hiddenEpisodeRef.current = null;
     const attempt = ++attemptRef.current;
+    transientProofFailureRef.current = false;
+    lastFailureRef.current = { code: null, status: null };
+    const fail = (code: string | null | undefined, status?: number) => {
+      lastFailureRef.current = { code: code ?? null, status: status ?? null };
+    };
+    const unreleased = unreleasedSessionsRef.current;
     conflictWaitRef.current?.finish();
     const previous = sessionIdRef.current;
     sessionIdRef.current = null;
@@ -369,14 +488,14 @@ export function HivraRemoteDesktop({
     repairableUnavailableRef.current = false;
     setMessage("Proving this computer’s secure desktop capability…");
     // Do not block session issue on previous-session revoke.
-    if (previous) void revokeSession(previous);
+    if (previous) void releaseSession(previous, unreleased);
     // Speculative warm of a known chat/broker origin in parallel with issue.
     // The iframe still mounts only after the message listener is ready.
     warmHandoffOrigin(handoffWarmOrigin);
 
     try {
       if (!("VideoDecoder" in window)) throw new Error("webcodecs_unavailable");
-      if (options.allowPrepare === false) {
+      if (options.allowPrepare === false && options.proveFirst !== false) {
         // A foreground recovery proves current owner/runtime readiness BEFORE
         // requesting any new authority. It never installs or resumes a repair.
         const response = await fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
@@ -386,7 +505,11 @@ export function HivraRemoteDesktop({
         const proof = await response.json().catch(() => null) as { success?: boolean; code?: string; error?: string; data?: { prepared?: boolean } } | null;
         if (attempt !== attemptRef.current) return;
         if (!response.ok || !proof?.success || proof.data?.prepared !== true) {
-          setState(isLifecycleBlocked(proof?.code) ? "blocked" : "unavailable");
+          const blocked = isLifecycleBlocked(proof?.code);
+          fail(proof?.code, response.status);
+          transientProofFailureRef.current = !blocked
+            && (response.status >= 500 || TRANSIENT_PROOF_FAILURE_CODES.has(proof?.code ?? ""));
+          setState(blocked ? "blocked" : "unavailable");
           setMessage(scrubDesktopUserMessage(proof?.error || "The desktop's current runtime proof could not be verified."));
           return;
         }
@@ -395,6 +518,15 @@ export function HivraRemoteDesktop({
       // opening, retries and foreground recovery must never revoke another tab.
       let ownerHandoff = options.ownerHandoff === true;
       const issue = async () => {
+        // Leases this page ended but could not revoke go first (see releaseSession).
+        if (unreleased.size) {
+          let wait = 0;
+          await Promise.race([
+            Promise.all([...unreleased].map(id => releaseSession(id, unreleased))),
+            new Promise<void>(resolve => { wait = window.setTimeout(resolve, UNRELEASED_REVOKE_WAIT_MS); }),
+          ]);
+          window.clearTimeout(wait);
+        }
         const requestOwnerHandoff = ownerHandoff;
         ownerHandoff = false;
         const { verifier, challenge } = await newPkce();
@@ -421,10 +553,11 @@ export function HivraRemoteDesktop({
 
       let issued = await issue();
       if (attempt !== attemptRef.current) {
-        if (issued.payload?.data?.id) void revokeSession(issued.payload.data.id);
+        if (issued.payload?.data?.id) void releaseSession(issued.payload.data.id, unreleased);
         return;
       }
       if (isLifecycleBlocked(issued.payload?.code)) {
+        fail(issued.payload?.code, issued.response.status);
         setState("blocked");
         setMessage(issued.payload?.error || "Check this computer's status in Manage before opening Desktop.");
         return;
@@ -463,7 +596,7 @@ export function HivraRemoteDesktop({
         if (attempt !== attemptRef.current) return;
         issued = await issue();
         if (attempt !== attemptRef.current) {
-          if (issued.payload?.data?.id) await revokeSession(issued.payload.data.id);
+          if (issued.payload?.data?.id) await releaseSession(issued.payload.data.id, unreleased);
           return;
         }
         conflictDelay = CONTROLLER_CONFLICT_RETRY_INTERVAL_MS;
@@ -489,7 +622,9 @@ export function HivraRemoteDesktop({
           data?: { prepared?: boolean };
         } | null;
         if (attempt !== attemptRef.current) return;
-        if (refreshResponse.ok && refreshPayload?.success && refreshPayload.data?.prepared === true) {
+        const refreshed = refreshResponse.ok && refreshPayload?.success && refreshPayload.data?.prepared === true;
+        if (!refreshed) fail(refreshPayload?.code, refreshResponse.status);
+        if (refreshed) {
           issued = await issue();
         } else if (isLifecycleBlocked(refreshPayload?.code)) {
           setState("blocked");
@@ -603,6 +738,7 @@ export function HivraRemoteDesktop({
               setMessage("Repairing desktop runtime…");
             }
             if (!prepareOk) {
+              fail(preparePayload?.code);
               if (isLifecycleBlocked(preparePayload?.code)) {
                 setState("blocked");
               } else if (preparePayload?.code === "legacy_identity_unbound" || preparePayload?.code === "unsupported_computer") {
@@ -625,6 +761,7 @@ export function HivraRemoteDesktop({
             issued = await issue();
           } catch {
             if (attempt !== attemptRef.current) return;
+            fail("prepare_request_failed");
             setState("prepare-failed");
             setMessage("Desktop couldn’t open. Retry to repair the runtime and try again.");
             return;
@@ -635,10 +772,11 @@ export function HivraRemoteDesktop({
       }
       const { response, payload, verifier } = issued;
       if (attempt !== attemptRef.current) {
-        if (payload?.data?.id) void revokeSession(payload.data.id);
+        if (payload?.data?.id) void releaseSession(payload.data.id, unreleased);
         return;
       }
       if (!response.ok || !payload?.success || !payload.data) {
+        fail(payload?.code, response.status);
         if (isLifecycleBlocked(payload?.code)) {
           setState("blocked");
           setMessage(payload?.error || "Check this computer's status in Manage before opening Desktop.");
@@ -667,7 +805,7 @@ export function HivraRemoteDesktop({
         && parsedOrigin.origin === session.brokerOrigin
         && session.streamingMode === streamModeRef.current;
       if (!validHandoff) {
-        if (CANONICAL_UUID.test(session.id)) void revokeSession(session.id);
+        if (CANONICAL_UUID.test(session.id)) void releaseSession(session.id, unreleased);
         throw new Error("invalid_handoff");
       }
       sessionIdRef.current = session.id;
@@ -686,6 +824,9 @@ export function HivraRemoteDesktop({
       setMessage("Opening the low-latency desktop stream…");
     } catch (error) {
       if (attempt !== attemptRef.current) return;
+      fail(error instanceof Error
+        && ["webcodecs_unavailable", "secure_browser_required", "invalid_handoff"].includes(error.message)
+        ? error.message : "request_failed");
       setState("failed");
       setMessage(error instanceof Error && error.message === "webcodecs_unavailable"
         ? "This browser does not expose the video decoding surface required by the desktop preview."
@@ -700,14 +841,19 @@ export function HivraRemoteDesktop({
       const sessionId = sessionIdRef.current;
       sessionIdRef.current = null;
       handoffRef.current = null;
-      if (sessionId) void revokeSession(sessionId);
+      if (sessionId) void releaseSession(sessionId, unreleasedSessionsRef.current);
       setHandoffListenerReady(false);
     };
     const closePersistedPage = (event: PageTransitionEvent) => {
       const wasStreaming = stateRef.current === "connected";
+      const recovery = recoveryRef.current;
       if (event.persisted && wasStreaming) {
         hiddenEpisodeRef.current ??= { startedAt: Date.now(), ended: false, consumed: false };
         hiddenEpisodeRef.current.ended = true;
+        // The return from the back-forward cache reconnects this stream, with
+        // the budget a drop here would have had.
+        settleRecoveryBudget(recovery);
+        recovery.dropReason = "page-hidden";
       } else if (!event.persisted) {
         hiddenEpisodeRef.current = null;
         cancelStreamRecovery();
@@ -754,6 +900,7 @@ export function HivraRemoteDesktop({
         const recovery = recoveryRef.current;
         recovery.armed = true;
         recovery.immediate = true;
+        recovery.dueAt = null;
         recovery.attempts = Math.min(recovery.attempts, STREAM_RECONNECT_DELAYS_MS.length - 1);
         setRecoveryTick(tick => tick + 1);
       } else if (stateRef.current === "connected" && !episode.refreshed && Date.now() - episode.startedAt >= CAPABILITY_REFRESH_INTERVAL_MS) {
@@ -813,33 +960,48 @@ export function HivraRemoteDesktop({
         if (offline) setMessage(`${STREAM_DROPPED_MESSAGE} Reconnecting when this device is back online.`);
         return;
       }
-      const delay = recovery.immediate ? 0 : STREAM_RECONNECT_DELAYS_MS[recovery.attempts] ?? 0;
+      // The attempt keeps the time it was first due. A nudge or re-render
+      // (an `online` event mid-wait, say) must not restart its backoff, and a
+      // wait that ran out while the page was hidden or offline is over.
+      recovery.dueAt ??= Date.now() + (recovery.immediate ? 0 : STREAM_RECONNECT_DELAYS_MS[recovery.attempts] ?? 0);
       const timer = window.setTimeout(() => {
         if (!recovery.armed) return;
         recovery.immediate = false;
+        recovery.dueAt = null;
         recovery.attempts += 1;
         // The same read-only foreground proof as a return from a hidden tab:
         // it never installs or repairs, and never displaces another controller.
         void connect({ allowPrepare: false });
-      }, delay);
+      }, Math.max(0, recovery.dueAt - Date.now()));
       return () => window.clearTimeout(timer);
     }
     // An attempt is in flight until it settles into one of the states below.
     if (state === "connecting" || state === "preparing" || state === "connected") return;
-    const retryable = state === "disconnected" || (state === "failed" && !controllerConflict);
+    // A proof that failed while the desktop's services restart is retried;
+    // a blocked computer, a required update, a rate limit or another tab's
+    // live controller is not.
+    const retryable = state === "disconnected"
+      || (state === "failed" && !controllerConflict)
+      || (state === "unavailable" && transientProofFailureRef.current);
     if (!retryable || recovery.attempts >= STREAM_RECONNECT_DELAYS_MS.length) {
       recovery.armed = false;
       recovery.immediate = false;
+      recovery.dueAt = null;
       if (state === "disconnected") setMessage(`${STREAM_DROPPED_MESSAGE} Reconnect when you are ready.`);
-      if (retryable) {
-        clientLog.warn("remote desktop stream did not reconnect automatically", {
-          source: "hivra-remote-desktop",
-          failureType: "hivra_remote_desktop_reconnect_exhausted",
-          computerId,
-          attempts: recovery.attempts,
-          finalState: state,
-        });
-      }
+      // Drops themselves are routine and stay in the console. A recovery that
+      // ends without a stream is reported once, with why it ended.
+      clientLog.warn(retryable
+        ? "remote desktop stream did not reconnect automatically"
+        : "remote desktop automatic reconnect stopped", {
+        source: "hivra-remote-desktop",
+        failureType: retryable ? "hivra_remote_desktop_reconnect_exhausted" : "hivra_remote_desktop_reconnect_stopped",
+        computerId,
+        attempts: recovery.attempts,
+        finalState: state,
+        code: lastFailureRef.current.code,
+        httpStatus: lastFailureRef.current.status,
+        dropReason: recovery.dropReason,
+      });
       return;
     }
     if (!pageLive) {
@@ -858,10 +1020,12 @@ export function HivraRemoteDesktop({
       const handoff = handoffRef.current;
       return sessionId && handoff?.sessionId === sessionId ? { sessionId, handoff } : null;
     };
-    const endSession = (nextState: "unavailable" | "failed" | "disconnected", nextMessage: string) => {
+    const endSession = (nextState: "unavailable" | "failed" | "disconnected", nextMessage: string, reason: string) => {
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
       if (nextState === "disconnected" && hiddenEpisodeRef.current && !hiddenEpisodeRef.current.consumed) hiddenEpisodeRef.current.ended = true;
+      lastFailureRef.current = { code: reason, status: null };
+      settleRecoveryBudget(recoveryRef.current);
       window.clearTimeout(timeout);
       attemptRef.current += 1;
       sessionIdRef.current = null;
@@ -875,10 +1039,10 @@ export function HivraRemoteDesktop({
       lastTelemetrySequenceRef.current = 0;
       setState(nextState);
       setMessage(nextMessage);
-      void revokeSession(sessionId);
+      void releaseSession(sessionId, unreleasedSessionsRef.current);
     };
     timeout = window.setTimeout(() => {
-      if (liveHandoff()) endSession("failed", "The computer answered, but its desktop stream did not finish opening.");
+      if (liveHandoff()) endSession("failed", "The computer answered, but its desktop stream did not finish opening.", "stream-open-timeout");
     }, 30_000);
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== brokerOrigin || event.source !== frameRef.current?.contentWindow) return;
@@ -910,7 +1074,10 @@ export function HivraRemoteDesktop({
         const recovery = recoveryRef.current;
         recovery.armed = false;
         recovery.immediate = false;
+        recovery.dueAt = null;
+        recovery.dropReason = null;
         recovery.connectedAt = Date.now();
+        desktopShownRef.current = true;
         setState("connected");
         setMessage("Human input is isolated from the agent while this desktop is open.");
       } else if (type === "hivra.remote-desktop.disconnected.v1") {
@@ -924,21 +1091,20 @@ export function HivraRemoteDesktop({
         // open the user's Reconnect stays the next step.
         const streamDropped = stateRef.current === "connected" && STREAM_DROP_REASONS.has(reason);
         if (streamDropped) {
-          if (recovery.connectedAt !== null && Date.now() - recovery.connectedAt >= STREAM_RECONNECT_STABLE_MS) {
-            recovery.attempts = 0;
-          }
           recovery.armed = true;
+          recovery.dueAt = null;
+          recovery.dropReason = reason;
         }
-        recovery.connectedAt = null;
         clientLog.info("remote desktop stream ended", {
           source: "hivra-remote-desktop",
           reason,
           wasStreaming: streamDropped,
           reconnecting: recovery.armed,
         });
+        // endSession also refills the budget of a stream that stayed up a minute.
         endSession("disconnected", streamDropped || recovery.armed
           ? STREAM_DROPPED_MESSAGE
-          : "The desktop stream stopped before it finished opening. Reconnect when you are ready.");
+          : "The desktop stream stopped before it finished opening. Reconnect when you are ready.", reason);
       } else if (type === "hivra.remote-desktop.failed.v1") {
         const failure = event.data as { type?: unknown; reason?: unknown };
         const keys = Object.keys(failure);
@@ -954,9 +1120,10 @@ export function HivraRemoteDesktop({
           endSession(
             "unavailable",
             "The desktop broker could not reach this Hivra control plane. Its agent, chat, terminal, and files are unchanged.",
+            failure.reason,
           );
         } else {
-          endSession("failed", "The secure desktop handoff was rejected.");
+          endSession("failed", "The secure desktop handoff was rejected.", failure.reason);
         }
       } else if (type === "hivra.remote-desktop.telemetry.v1") {
         const telemetry = event.data as {
@@ -1107,7 +1274,7 @@ export function HivraRemoteDesktop({
     setExpiresAt(null);
     setState("preparing");
     setMessage("Repairing desktop runtime…");
-    if (previous) void revokeSession(previous);
+    if (previous) void releaseSession(previous, unreleasedSessionsRef.current);
 
     try {
       let payload: {
@@ -1198,9 +1365,22 @@ export function HivraRemoteDesktop({
   }, [cancelStreamRecovery, computerId, connect]);
 
   /** Every connect the user asks for supersedes an automatic one. */
-  const connectByUser = (options?: { allowPrepare?: boolean; ownerHandoff?: boolean }) => {
+  const connectByUser = (options?: { allowPrepare?: boolean; proveFirst?: boolean; ownerHandoff?: boolean }) => {
     cancelStreamRecovery();
+    hiddenEpisodeRef.current = null;
     void connect(options);
+  };
+  // After a drop the page has said the desktop and its apps are still running.
+  // A click from there, or after an automatic reconnect failed, reconnects to
+  // that desktop and never reinstalls it; repair is its own, confirmed, choice.
+  const reconnectKeepingDesktop = () => connectByUser({ allowPrepare: false, proveFirst: false });
+  const readOnlyUnavailable = state === "unavailable" && !allowAutomaticPrepareRef.current;
+  if (confirmInstall === "update-desktop" && state !== "desktop-upgrade-required") setConfirmInstall(null);
+  if (confirmInstall === "repair" && !readOnlyUnavailable) setConfirmInstall(null);
+  const askToInstall = (kind: InstallKind) => setConfirmInstall(kind);
+  const cancelInstall = () => {
+    cancelledInstallRef.current = confirmInstall;
+    setConfirmInstall(null);
   };
 
   const retryDesktop = useCallback(() => {
@@ -1213,6 +1393,7 @@ export function HivraRemoteDesktop({
   useEffect(() => {
     autoPrepareAttemptedRef.current = false;
     repairableUnavailableRef.current = false;
+    desktopShownRef.current = false;
   }, [computerId]);
 
   useEffect(() => {
@@ -1223,6 +1404,29 @@ export function HivraRemoteDesktop({
     autoPrepareAttemptedRef.current = true;
     void prepareDesktop();
   }, [active, autoPrepare, prepareDesktop, state]);
+
+  const runInstall = (kind: InstallKind) => {
+    setConfirmInstall(null);
+    if (kind === "update-runtime") setMenuOpen(false);
+    if (kind === "repair") retryDesktop();
+    else void prepareDesktop();
+  };
+  const renderInstallConfirm = (kind: InstallKind, className: string) => {
+    const copy = INSTALL_CONFIRMATIONS[kind];
+    return (
+      <div role="group" aria-label={copy.label} className={className}>
+        <p className={styles.stripMenuNote}>{copy.note}</p>
+        <div className={styles.stripMenuConfirmActions}>
+          <button type="button" onClick={() => runInstall(kind)} className={styles.stripMenuAction}>
+            <RefreshCw size={12} /> {copy.action}
+          </button>
+          <button ref={confirmCancelRef} type="button" onClick={cancelInstall} className={styles.stripMenuAction}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const enterFullscreen = async () => {
     const frame = frameRef.current;
@@ -1328,13 +1532,20 @@ export function HivraRemoteDesktop({
         {/* The recovery action is the only thing allowed to sit outside the
             menu: when the desktop fails, the fix must be one click. */}
         {state === "desktop-upgrade-required" ? (
-          <button type="button" onClick={() => void prepareDesktop()} className={styles.stripAction}>
-            Update desktop <RefreshCw size={11} />
+          <button
+            ref={updateDesktopRef}
+            type="button"
+            onClick={() => askToInstall("update-desktop")}
+            aria-expanded={confirmInstall === "update-desktop"}
+            className={styles.stripAction}
+          >
+            Update desktop… <RefreshCw size={11} />
           </button>
-        ) : state === "unavailable" && !allowAutomaticPrepareRef.current ? (
+        ) : readOnlyUnavailable ? (
           // An automatic reconnect whose runtime proof failed must not leave
-          // the user without the Reconnect they had before it ran.
-          <button type="button" onClick={() => connectByUser()} className={styles.stripAction}>
+          // the user without the Reconnect they had before it ran. Repair,
+          // which can close the desktop's apps, sits below the message.
+          <button type="button" onClick={reconnectKeepingDesktop} className={styles.stripAction}>
             Reconnect <RefreshCw size={11} />
           </button>
         ) : state === "unavailable" && autoPrepareAttemptedRef.current ? (
@@ -1349,9 +1560,21 @@ export function HivraRemoteDesktop({
           <button type="button" onClick={() => connectByUser({ allowPrepare: false, ownerHandoff: true })} className={styles.stripAction}>
             Take over here <RefreshCw size={11} />
           </button>
-        ) : state === "failed" || state === "disconnected" || state === "reconnecting" ? (
-          <button type="button" onClick={() => connectByUser()} className={styles.stripAction}>
-            {state === "failed" ? "Try again" : "Reconnect"} <RefreshCw size={11} />
+        ) : state === "failed" ? (
+          <button
+            type="button"
+            onClick={() => allowAutomaticPrepareRef.current ? connectByUser() : reconnectKeepingDesktop()}
+            className={styles.stripAction}
+          >
+            Try again <RefreshCw size={11} />
+          </button>
+        ) : state === "disconnected" || state === "reconnecting" ? (
+          <button
+            type="button"
+            onClick={() => desktopShownRef.current ? reconnectKeepingDesktop() : connectByUser()}
+            className={styles.stripAction}
+          >
+            Reconnect <RefreshCw size={11} />
           </button>
         ) : null}
         {state === "connected" || expanded ? (
@@ -1382,34 +1605,9 @@ export function HivraRemoteDesktop({
                   <small>Off shows it at exact size — larger text, scrolls.</small>
                 </span>
               </label>
-              {confirmingUpdate ? (
-                // Update re-runs desktop preparation ({ action: "prepare" }).
-                // When that reinstalls an Ubuntu desktop, its container
-                // restarts and its apps close; ~/Hivra is a mounted folder and
-                // is kept. A healthy desktop may only be re-proved, hence "can".
-                <div role="group" aria-label="Confirm update" className={styles.stripMenuConfirm}>
-                  <p className={styles.stripMenuNote}>
-                    Updating ends this stream and can restart the desktop, which closes its open apps. Files in ~/Hivra are kept.
-                  </p>
-                  <div className={styles.stripMenuConfirmActions}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        void prepareDesktop();
-                      }}
-                      className={styles.stripMenuAction}
-                    >
-                      <RefreshCw size={12} /> Update
-                    </button>
-                    <button type="button" onClick={() => setConfirmingUpdate(false)} className={styles.stripMenuAction}>
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
+              {confirmInstall === "update-runtime" ? renderInstallConfirm("update-runtime", styles.stripMenuConfirm) : (
                 <>
-                  <button type="button" onClick={() => setConfirmingUpdate(true)} className={styles.stripMenuAction}>
+                  <button ref={updateRuntimeRef} type="button" onClick={() => askToInstall("update-runtime")} className={styles.stripMenuAction}>
                     <RefreshCw size={12} /> Update runtime…
                   </button>
                   <p className={styles.stripMenuNote}>
@@ -1458,23 +1656,34 @@ export function HivraRemoteDesktop({
       ) : state === "connecting" || state === "preparing" ? (
         <LoadingState dark label="Opening your computer…" detail={message} />
       ) : (
-        <div role="status" style={{ flex: 1, display: "grid", placeItems: "center", padding: 24, textAlign: "center", color: "var(--text-muted)" }}>
+        <div style={{ flex: 1, display: "grid", placeItems: "center", padding: 24, textAlign: "center", color: "var(--text-muted)" }}>
           <div style={{ maxWidth: 520 }}>
-            <Monitor size={24} style={{ margin: "0 auto 14px" }} />
-            <h2 className="serif" style={{ color: "var(--ink-black)", fontWeight: 400, fontSize: 24, marginBottom: 8 }}>
-              {state === "disconnected" || state === "reconnecting" ? "Stream disconnected"
-                  : state === "prepare-paused" ? "Desktop couldn’t open right now"
-                    : state === "prepare-pending" ? "Desktop is still opening"
-                    : state === "prepare-failed" ? "Desktop couldn’t open"
-                    : state === "desktop-upgrade-required" ? "This desktop needs an update"
-                  : state === "upgrade-required"
-                    ? "This computer needs a current launch"
-                    : "Remote desktop isn’t ready on this computer"}
-            </h2>
-            <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0 }}>
-              {/* The heading already says the stream disconnected. */}
-              {state === "disconnected" || state === "reconnecting" ? message.replace(/^Stream disconnected\. /, "") : message}
-            </p>
+            <div role="status">
+              <Monitor size={24} style={{ margin: "0 auto 14px" }} />
+              <h2 className="serif" style={{ color: "var(--ink-black)", fontWeight: 400, fontSize: 24, marginBottom: 8 }}>
+                {state === "disconnected" || state === "reconnecting" ? "Stream disconnected"
+                    : state === "prepare-paused" ? "Desktop couldn’t open right now"
+                      : state === "prepare-pending" ? "Desktop is still opening"
+                      : state === "prepare-failed" ? "Desktop couldn’t open"
+                      : state === "desktop-upgrade-required" ? "This desktop needs an update"
+                    : state === "upgrade-required"
+                      ? "This computer needs a current launch"
+                      : "Remote desktop isn’t ready on this computer"}
+              </h2>
+              <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0 }}>
+                {/* The heading already says the stream disconnected. */}
+                {state === "disconnected" || state === "reconnecting" ? message.replace(/^Stream disconnected\. /, "") : message}
+              </p>
+            </div>
+            {/* Outside the live region: the question and its buttons are not
+                status to announce. */}
+            {confirmInstall === "update-desktop" || confirmInstall === "repair" ? (
+              renderInstallConfirm(confirmInstall, styles.panelConfirm)
+            ) : readOnlyUnavailable ? (
+              <button ref={repairDesktopRef} type="button" onClick={() => askToInstall("repair")} className={`${styles.stripMenuAction} ${styles.panelAction}`}>
+                <RefreshCw size={12} /> Repair desktop…
+              </button>
+            ) : null}
           </div>
         </div>
       )}
