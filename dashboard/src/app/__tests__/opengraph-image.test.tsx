@@ -10,7 +10,7 @@
 
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { renderOgCard } from "@/lib/og-card";
-import { OG_IMAGE, OG_SIZE, OG_CONTENT_TYPE } from "@/lib/og-meta";
+import { OG_IMAGE, OG_IMAGE_BY_PATH, OG_SIZE, OG_CONTENT_TYPE } from "@/lib/og-meta";
 
 import * as rootSegment from "../opengraph-image";
 import RootOg, {
@@ -26,6 +26,16 @@ import StatusOg, {
   size as statusSize,
   contentType as statusContentType,
 } from "../status/opengraph-image";
+import TokenOg, {
+  size as tokenSize,
+  contentType as tokenContentType,
+  alt as tokenAlt,
+} from "../token/opengraph-image";
+import TokenomicsOg, {
+  size as tokenomicsSize,
+  contentType as tokenomicsContentType,
+  alt as tokenomicsAlt,
+} from "../tokenomics/opengraph-image";
 
 describe("public OG image cards", () => {
   it("returns a 200 image/png response from the shared renderer", async () => {
@@ -46,6 +56,8 @@ describe("public OG image cards", () => {
       [rootSize, rootContentType],
       [changelogSize, changelogContentType],
       [statusSize, statusContentType],
+      [tokenSize, tokenContentType],
+      [tokenomicsSize, tokenomicsContentType],
     ] as const) {
       expect(size).toEqual({ width: 1200, height: 630 });
       expect(contentType).toBe("image/png");
@@ -55,10 +67,12 @@ describe("public OG image cards", () => {
     // runtime (prerendered at build); the apex card advertises descriptive alt text.
     expect(rootSegment).not.toHaveProperty("runtime");
     expect(rootAlt).toBe(OG_IMAGE.home.alt);
+    expect(tokenAlt).toBe(OG_IMAGE.token.alt);
+    expect(tokenomicsAlt).toBe(OG_IMAGE.tokenomics.alt);
   });
 
   it("each segment default export returns an image/png response", async () => {
-    for (const handler of [RootOg, ChangelogOg, StatusOg]) {
+    for (const handler of [RootOg, ChangelogOg, StatusOg, TokenOg, TokenomicsOg]) {
       const res = await handler();
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("image/png");
@@ -70,6 +84,8 @@ describe("public OG image cards", () => {
       { path: "/", image: OG_IMAGE.home },
       { path: "/changelog", image: OG_IMAGE.changelog },
       { path: "/status", image: OG_IMAGE.status },
+      { path: "/token", image: OG_IMAGE.token },
+      { path: "/tokenomics", image: OG_IMAGE.tokenomics },
     ];
 
     for (const { path, image } of cases) {
@@ -97,9 +113,30 @@ describe("public OG image cards", () => {
     }
   });
 
+  it("gives /token and /tokenomics their own card when the page passes no images", () => {
+    // Both pages call buildWebsiteMetadata without `images`, and Next.js ignores a
+    // segment's opengraph-image file once the page sets openGraph.images, so the
+    // path-aware default is what puts these cards on shared links.
+    expect(OG_IMAGE_BY_PATH).toEqual({ "/token": OG_IMAGE.token, "/tokenomics": OG_IMAGE.tokenomics });
+    for (const [path, image] of [
+      ["/token", OG_IMAGE.token],
+      ["/tokenomics", OG_IMAGE.tokenomics],
+    ] as const) {
+      const meta = buildWebsiteMetadata({ path, title: "t", description: "d" });
+      const ogImages = meta.openGraph?.images as Array<{ url: string }>;
+      expect(ogImages.map((i) => i.url)).toEqual([`https://hivra.cloud${image.url}`]);
+      expect(meta.twitter?.images).toEqual([`https://hivra.cloud${image.url}`]);
+    }
+    // Every other page without explicit images keeps the generic apex card.
+    const other = buildWebsiteMetadata({ path: "/ecosystem", title: "t", description: "d" });
+    expect((other.openGraph?.images as Array<{ url: string }>).map((i) => i.url)).toEqual([
+      `https://hivra.cloud${OG_IMAGE.home.url}`,
+    ]);
+  });
+
   it("every OG descriptor points at a distinct public 1200x630 card route", () => {
     const urls = Object.values(OG_IMAGE).map((i) => i.url);
-    // /opengraph-image, /changelog/opengraph-image, /status/opengraph-image
+    // /opengraph-image plus one card route per page that has its own card
     expect(new Set(urls).size).toBe(urls.length);
     for (const img of Object.values(OG_IMAGE)) {
       expect(img.url).toMatch(/opengraph-image$/);

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
+import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
 import styles from "../public-site/public-site.module.css";
 
 const COLUMNS = [
@@ -15,6 +16,7 @@ const COLUMNS = [
   { title: "Explore", links: [
     { label: "Open source", href: "/#open-source" },
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
+    { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
     { label: "Litepaper", href: "/docs/litepaper/" },
     { label: "Blog", href: "/blog" },
     { label: "Free tools", href: "/tools" },
