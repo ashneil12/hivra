@@ -4,6 +4,9 @@ import Link from "next/link";
 
 import StructuredData from "@/components/StructuredData";
 import PublicSite from "@/components/public-site/PublicSite";
+import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
+import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
+import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { buildAbsoluteSiteUrl, buildWebsiteMetadata } from "@/lib/metadata";
 
@@ -136,6 +139,19 @@ function SectionShell({
 }
 
 export default function WhyHivraPage() {
+  // Token geo-policy dormant: render exactly as before, without reading the request country.
+  if (!isTokenGeoPolicyActive()) return <WhyHivraContent geoNotice={null} />;
+  // A country is listed: render per request; a blocked viewer doesn't see the
+  // token payment discount.
+  return renderForViewer();
+}
+
+async function renderForViewer() {
+  const geo = await resolveTokenGeoBlockForPage();
+  return <WhyHivraContent geoNotice={geo.blocked ? geo.message : null} />;
+}
+
+function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
   return (
     <PublicSite className={styles.page} data-page="why-hivra">
       <StructuredData schema={pageSchema} />
@@ -178,16 +194,26 @@ export default function WhyHivraPage() {
           <SectionShell number="03" title="What happens to $HermesOS?">
             <p>Existing $HermesOS holders are grandfathered.</p>
             <p>You keep your access, and you can keep using $HermesOS.</p>
-            <p>On Hivra today, $HermesOS is used to:</p>
-            <ul className={styles.bulletList}>
-              <li>Hold for a compute tier</li>
-              <li>Pay for a plan, with the discount for paying in the token</li>
-            </ul>
+            {geoNotice ? (
+              <TokenGeoNotice notice={geoNotice} />
+            ) : (
+              <>
+                <p>On Hivra today, $HermesOS is used to:</p>
+                <ul className={styles.bulletList}>
+                  <li>Hold for a compute tier</li>
+                  <li>Pay for a plan, with the discount for paying in the token</li>
+                </ul>
+              </>
+            )}
             <div className={styles.sameTokenBox}>
               <p>$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.</p>
-              <p>Under the proposal, new users would use $HIVRA once it launches.</p>
-              <p>Under the proposal, converting your $HermesOS would be optional, and the terms would be published before claims open.</p>
-              <p>Under the proposal, paying in the token keeps its discount.</p>
+              {geoNotice ? null : (
+                <>
+                  <p>Under the proposal, new users would use $HIVRA once it launches.</p>
+                  <p>Under the proposal, converting your $HermesOS would be optional, and the terms would be published before claims open.</p>
+                  <p>Under the proposal, paying in the token keeps its discount.</p>
+                </>
+              )}
             </div>
             <p>
               Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the{" "}
