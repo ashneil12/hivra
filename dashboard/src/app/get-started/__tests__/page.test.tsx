@@ -450,4 +450,15 @@ describe("GetStartedPage", () => {
     expect(screen.getByText(/Power 适合多 Agent 工作流/)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "语言" })[0]).toHaveTextContent("简体中文");
   });
+
+  it("themes the Clerk card from tokens, so it stays legible in dark mode", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+    render(<GetStartedPage />);
+
+    const { elements, variables } = mockSignUp.mock.calls[0][0].appearance;
+    expect(variables).toMatchObject({ colorBackground: "var(--bg-surface)", colorPrimaryForeground: "var(--vellum-bg)" });
+    expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
+  });
 });
+

@@ -17,6 +17,7 @@ import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-a
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { LanguageSwitcher, LocaleProvider, useLocale } from "@/components/i18n/LocaleProvider";
 import { FunnelHeader } from "@/components/layout/LandingHeader";
+import { authCardAppearance } from "@/components/auth/auth-card-appearance";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
@@ -247,37 +248,9 @@ function GetStartedPageContent() {
               forceRedirectUrl={activationUrl}
               fallbackRedirectUrl={activationUrl}
               signInUrl={signInUrl}
-              appearance={{
-                elements: {
-                  rootBox: "w-full",
-                  cardBox: "w-full max-w-full",
-                  card: "rounded-none border border-[var(--etched-border)] shadow-[0_24px_80px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-xl p-8 pb-10",
-                  headerTitle: "serif text-[2rem] font-light text-[var(--ink-black)] leading-none mb-2",
-                  headerSubtitle: "mono text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)] mt-0",
-                  formButtonPrimary: "rounded-none bg-[var(--ink-black)] text-white hover:bg-black font-mono uppercase tracking-[0.15em] text-[11px] font-bold py-3.5 transition-all mt-2",
-                  formFieldInput: "rounded-none border-[var(--etched-border)] focus:border-[var(--ink-black)] focus:ring-1 focus:ring-[var(--ink-black)] text-sm py-2.5 bg-transparent",
-                  formFieldLabel: "mono text-[9px] uppercase tracking-[0.15em] font-bold text-[var(--text-secondary)] mb-1.5",
-                  footerActionLink: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] font-bold transition-colors",
-                  identityPreview: "rounded-none border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-4 py-3",
-                  identityPreviewEditButton: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] transition-colors",
-                  dividerLine: "bg-[var(--etched-border)]",
-                  dividerText: "mono text-[9px] uppercase tracking-[0.15em] text-[var(--text-muted)] bg-transparent",
-                  socialButtonsBlockButton: "rounded-none border border-[var(--etched-border)] hover:bg-[var(--bg-elevated)] hover:border-[var(--ink-black)] text-[var(--ink-black)] transition-all",
-                  socialButtonsBlockButtonText: "mono text-[11px] font-semibold tracking-wider uppercase",
-                  footer: "!bg-transparent !bg-none border-none rounded-none mt-2",
-                  footerActionText: "text-xs text-[var(--text-secondary)]",
-                  main: "gap-6",
-                },
-                variables: {
-                  borderRadius: 0,
-                  colorPrimary: "var(--ink-black)",
-                  colorBackground: "transparent",
-                  colorText: "var(--ink-black)",
-                  colorInputBackground: "transparent",
-                  colorInputText: "var(--ink-black)",
-                  fontFamily: "inherit",
-                },
-              }}
+              appearance={authCardAppearance({
+                headerTitle: "serif text-[2rem] font-light text-[var(--ink-black)] leading-none mb-2",
+              })}
             />
 
             <div className="mt-6 text-center text-[var(--text-muted)] font-mono text-[9px] uppercase tracking-wider">

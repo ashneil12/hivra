@@ -164,6 +164,18 @@ describe("AuthClerkProvider", () => {
     expect(String(mockClerkProviderProps[0].__internal_clerkUIUrl)).not.toContain("clerk.hermesos.cloud");
   });
 
+  it("names the product Hivra in Clerk's copy, whatever the Clerk instance is called", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_example";
+
+    render(await AuthClerkProvider({ children: <div>real auth content</div> }));
+
+    expect(mockClerkProviderProps[0].localization).toMatchObject({
+      signIn: { start: { title: "Sign in to Hivra" }, emailCode: { subtitle: "to continue to Hivra" } },
+      signUp: { start: { title: "Create your Hivra account" } },
+    });
+    expect(JSON.stringify(mockClerkProviderProps[0].localization)).not.toContain("{{applicationName}}");
+  });
+
   it("lets the NEXT_PUBLIC_CLERK_*_URL env overrides win over the same-origin defaults", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_example";
     process.env.NEXT_PUBLIC_CLERK_JS_URL =

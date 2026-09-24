@@ -3,6 +3,8 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import type { ComponentProps, ComponentType, ReactNode } from 'react';
 
+import { HIVRA_CLERK_LOCALIZATION } from './clerk-localization';
+
 const DEFAULT_CLERK_JS_VERSION = '6.8.0';
 const DEFAULT_CLERK_UI_VERSION = '1.7.0';
 
@@ -52,6 +54,7 @@ export function AuthClerkProviderClient({
       __internal_clerkJSVersion={clerkJSVersion}
       __internal_clerkUIUrl={clerkUIUrl}
       __internal_clerkUIVersion={clerkUIVersion}
+      localization={HIVRA_CLERK_LOCALIZATION}
     >
       {children}
     </InternalClerkProvider>
