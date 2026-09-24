@@ -57,14 +57,14 @@ export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
 ]);
 /** Launch history stages, and the names used before Choose merged its steps
  * (LaunchJourney parseHistoryStage). The launch step itself is never history. */
-const LAUNCH_STAGES = everyMember<Exclude<LaunchStage, "launch">>()(["choose", "plan", "review"]);
+export const LAUNCH_STAGES = everyMember<Exclude<LaunchStage, "launch">>()(["choose", "plan", "review"]);
 const LAUNCH_STAGE = mapped({
   ...Object.fromEntries(LAUNCH_STAGES.map((stage) => [stage, stage])),
   type: "choose", profile: "choose", capacity: "plan",
 });
 /** The paid plans an upgrade can return with (PLAN_ORDER without free). */
 export const NATIVE_UPGRADE_PLANS = ["operator", "fleet", "command"] as const satisfies readonly PlanKey[];
-const PORTABLE_LAUNCH_RESOURCES = everyMember<PortableLaunchResourceId>()([
+export const PORTABLE_LAUNCH_RESOURCES = everyMember<PortableLaunchResourceId>()([
   "claude-code", "codex", "aeon", "openclaw", "agent-zero", "linux-desktop", "linux-terminal", "windows",
 ]);
 

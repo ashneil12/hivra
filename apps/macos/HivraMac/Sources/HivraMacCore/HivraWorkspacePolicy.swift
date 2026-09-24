@@ -54,13 +54,12 @@ public enum HivraWorkspacePolicy {
     /// so an expired handoff is renewed instead of being retained indefinitely.
     /// A page still on the resource's own route is live work (a chat, terminal or
     /// desktop) whatever its query says, so it is selected rather than reloaded.
+    /// That includes an inventory href carrying `open=`: a Windows computer's href
+    /// always asks for the fast desktop, which only matters when the tab first opens
+    /// or after it has left the resource; reloading would tear down the live session.
     public static func shouldReloadResourceOnReselection(currentURL: URL?, trustedURL: URL,
                                                          requestedPath: String? = nil) -> Bool {
         let requested = requestedPath.flatMap(HivraWorkspaceRoute.normalizedPath)
-        if let requested, let components = URLComponents(string: requested),
-           components.queryItems?.contains(where: { $0.name == "open" }) == true {
-            return true
-        }
         guard let currentURL,
               HivraWorkspaceBridgeTrust.accepts(trustedURL: trustedURL, frameURL: currentURL, isMainFrame: true) else { return true }
         // A tab that moved to another page of the dashboard returns to its resource.

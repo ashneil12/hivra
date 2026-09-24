@@ -24,7 +24,8 @@ fragment), and launch URLs keep their validated stage, profile and target.
 Choosing an open resource again selects its retained page, whatever query its
 own route carries. It returns to the resource's route only when the tab has left
 that resource (another origin such as an expired guest transport, or another
-dashboard page) or the request asks for a new desktop transport (`open=`).
+dashboard page). A Windows computer's `open=fast` link only picks the transport
+when its tab first opens or returns, so choosing it again keeps the live desktop.
 
 ## Build and open
 

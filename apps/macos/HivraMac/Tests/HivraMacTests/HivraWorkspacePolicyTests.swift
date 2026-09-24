@@ -112,7 +112,7 @@ struct HivraWorkspacePolicyTests {
         #expect(HivraWorkspacePolicy.relativePath(url: URL(string: "https://example.test/dashboard?token=private")!, trustedURL: trusted) == nil)
         #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
             currentURL: URL(string: "https://example.test/dashboard/agent/a?tab=desktop&open=fast"), trustedURL: trusted))
-        #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+        #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
             currentURL: URL(string: "https://example.test/dashboard/agent/a?tab=desktop"), trustedURL: trusted,
             requestedPath: "/dashboard/agent/a?tab=desktop&open=native"))
         #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
@@ -167,8 +167,18 @@ struct HivraWorkspacePolicyTests {
             #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
                 currentURL: URL(string: current), trustedURL: trusted, requestedPath: a.href), Comment(rawValue: current))
         }
-        #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
-            currentURL: URL(string: "https://example.test/dashboard/agent/b?tab=desktop"), trustedURL: trusted,
-            requestedPath: "/dashboard/agent/b?tab=desktop&open=fast"))
+        // A Windows computer's inventory href always asks for the fast desktop. Choosing
+        // its open tab again keeps the embedded session; only a tab that left it renews.
+        for current in ["https://example.test/dashboard/agent/b?tab=desktop",
+                        "https://example.test/dashboard/agent/b?tab=manage"] {
+            #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+                currentURL: URL(string: current), trustedURL: trusted,
+                requestedPath: "/dashboard/agent/b?tab=desktop&open=fast"), Comment(rawValue: current))
+        }
+        for current in ["https://guest.test/guacamole/#/client/expired", "https://example.test/dashboard/agent/a"] {
+            #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+                currentURL: URL(string: current), trustedURL: trusted,
+                requestedPath: "/dashboard/agent/b?tab=desktop&open=fast"), Comment(rawValue: current))
+        }
     }
 }

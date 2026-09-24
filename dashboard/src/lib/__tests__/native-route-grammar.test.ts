@@ -11,7 +11,13 @@ import { launchResultHref } from "@/lib/launch/launch-adapter";
 import { launchReturnPath } from "@/lib/launch/launch-plan";
 import { PLAN_ORDER } from "@/lib/subscription/plans";
 import { buildPostDeployDestination } from "@/lib/welcome-deploy";
-import { NATIVE_LAUNCH_PROFILES, NATIVE_ROUTE_GRAMMAR_VERSION, NATIVE_UPGRADE_PLANS } from "../native-route-grammar";
+import {
+  LAUNCH_STAGES,
+  NATIVE_LAUNCH_PROFILES,
+  NATIVE_ROUTE_GRAMMAR_VERSION,
+  NATIVE_UPGRADE_PLANS,
+  PORTABLE_LAUNCH_RESOURCES,
+} from "../native-route-grammar";
 import { nativeDashboardHref } from "../native-workspace";
 
 jest.mock("@/lib/abuse/client-fingerprint", () => ({ getFingerprintRequestId: async () => "fp-request-1" }));
@@ -111,6 +117,18 @@ describe("value sets the grammar mirrors", () => {
   it("names every launch profile and paid upgrade", () => {
     expect([...NATIVE_LAUNCH_PROFILES].sort()).toEqual([...LAUNCH_PROFILE_IDS].sort());
     expect([...NATIVE_UPGRADE_PLANS]).toEqual(PLAN_ORDER.filter((plan) => plan !== "free"));
+  });
+
+  // Native shells hard-code these sets, so the shared file must accept every
+  // member; a shell that drifts then fails its own run of the same cases.
+  const accepted = new Set(grammar.cases.filter((testCase) => testCase.expect).map((testCase) => testCase.expect));
+  it.each([
+    ...NATIVE_LAUNCH_PROFILES.map((value) => `/dashboard/launch?profile=${value}&stage=choose`),
+    ...PORTABLE_LAUNCH_RESOURCES.map((value) => `/dashboard/infrastructure?launch=${value}`),
+    ...NATIVE_UPGRADE_PLANS.map((value) => `/dashboard/launch?upgraded=${value}`),
+    ...LAUNCH_STAGES.map((value) => `/dashboard/launch?stage=${value}`),
+  ])("the shared cases accept %s", (href) => {
+    expect(accepted.has(href)).toBe(true);
   });
 });
 

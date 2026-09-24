@@ -177,6 +177,31 @@
     { "family": "security", "input": "/dashboard?=files", "expect": null },
     { "family": "security", "input": "/dashboard?1tab=files", "expect": null },
     { "family": "security", "input": "/dashboard?tab=files&tab=manage", "expect": null },
-    { "family": "security", "input": "/dashboard?tab=https://guest.invalid", "expect": null }
+    { "family": "security", "input": "/dashboard?tab=https://guest.invalid", "expect": null },
+
+    { "family": "value-set", "input": "/dashboard/launch?profile=claude-code&stage=choose", "expect": "/dashboard/launch?profile=claude-code&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=codex&stage=choose", "expect": "/dashboard/launch?profile=codex&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=hermes&stage=choose", "expect": "/dashboard/launch?profile=hermes&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=openclaw&stage=choose", "expect": "/dashboard/launch?profile=openclaw&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=agent-zero&stage=choose", "expect": "/dashboard/launch?profile=agent-zero&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=aeon&stage=choose", "expect": "/dashboard/launch?profile=aeon&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=ubuntu-desktop&stage=choose", "expect": "/dashboard/launch?profile=ubuntu-desktop&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=linux-terminal&stage=choose", "expect": "/dashboard/launch?profile=linux-terminal&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=omarchy&stage=choose", "expect": "/dashboard/launch?profile=omarchy&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=windows&stage=choose", "expect": "/dashboard/launch?profile=windows&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=claude-code", "expect": "/dashboard/infrastructure?launch=claude-code" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=codex", "expect": "/dashboard/infrastructure?launch=codex" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=aeon", "expect": "/dashboard/infrastructure?launch=aeon" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=openclaw", "expect": "/dashboard/infrastructure?launch=openclaw" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=agent-zero", "expect": "/dashboard/infrastructure?launch=agent-zero" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=linux-desktop", "expect": "/dashboard/infrastructure?launch=linux-desktop" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=linux-terminal", "expect": "/dashboard/infrastructure?launch=linux-terminal" },
+    { "family": "value-set", "input": "/dashboard/infrastructure?launch=windows", "expect": "/dashboard/infrastructure?launch=windows" },
+    { "family": "value-set", "input": "/dashboard/launch?upgraded=operator", "expect": "/dashboard/launch?upgraded=operator" },
+    { "family": "value-set", "input": "/dashboard/launch?upgraded=fleet", "expect": "/dashboard/launch?upgraded=fleet" },
+    { "family": "value-set", "input": "/dashboard/launch?upgraded=command", "expect": "/dashboard/launch?upgraded=command" },
+    { "family": "value-set", "input": "/dashboard/launch?stage=choose", "expect": "/dashboard/launch?stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?stage=plan", "expect": "/dashboard/launch?stage=plan" },
+    { "family": "value-set", "input": "/dashboard/launch?stage=review", "expect": "/dashboard/launch?stage=review" }
   ]
 }
