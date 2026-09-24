@@ -1890,6 +1890,24 @@ describe("AgentPage", () => {
       expect(await screen.findByTestId("attached-chat")).toHaveTextContent(`Codex ${INSTALLATION} via https://box.example.com`);
     });
 
+    it("opens its Chat deep link without first showing the computer's Desktop", async () => {
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "chat" : null);
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      let answer!: (value: unknown) => void;
+      mockFetchAttachGate.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+      render(<AgentPage />);
+      await waitFor(() => expect(mockFetchAttachGate).toHaveBeenCalledWith("agent_123"));
+      // While the computer's attach read is out, the Desktop stays closed: it is
+      // never opened (and a session started) only to be replaced by Chat.
+      expect(await screen.findByText("Checking this computer…")).toBeInTheDocument();
+      const desktop = screen.queryByTestId("remote-desktop");
+      if (desktop) expect(desktop).not.toBeVisible();
+      await act(async () => { answer(gateWith({ phase: "attached", installationId: INSTALLATION, agentName: "Codex" })); });
+      expect(await screen.findByTestId("attached-chat")).toHaveTextContent(`Codex ${INSTALLATION} via https://box.example.com`);
+      const after = screen.queryByTestId("remote-desktop");
+      if (after) expect(after).not.toBeVisible();
+    });
+
     it("has no Chat tab while the agent is still being added", async () => {
       mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
       mockFetchAttachGate.mockResolvedValue(gateWith({ phase: "dispatched", installationId: null, agentName: "Codex" }));

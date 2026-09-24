@@ -55,7 +55,7 @@ import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
-import { AttachedAgentChat, useAttachedAgentChat } from "@/components/hivra/AttachedAgentChat";
+import { AttachedAgentChat, useAttachedAgentChatRead } from "@/components/hivra/AttachedAgentChat";
 import { withAttachedAgentChat } from "@/lib/agent-computers/attached-agent-surface";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
 import {
@@ -912,7 +912,8 @@ export default function AgentPage() {
 
   // An agent added to this computer (design 5.8): the computer gains a Chat
   // tab that reaches it through the computer's gateway.
-  const attachedAgent = useAttachedAgentChat(agent, id);
+  const attachedRead = useAttachedAgentChatRead(agent, id);
+  const attachedAgent = attachedRead.target;
 
   // Read-only capability refresh once per computer id/session.
   // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).
@@ -1032,9 +1033,11 @@ export default function AgentPage() {
     surfaceKind: def?.surface,
     resourceKind: def?.resourceKind,
   });
-  // The attached agent's Chat (design 5.8) is one of this computer's tabs,
-  // though not one of its own surfaces.
-  const attachedChatShown = isComputer && tab === "chat" && computerTabs.includes("chat");
+  // The attached agent's Chat (design 5.8). Its deep link waits for the
+  // computer's attach read rather than open the landing surface (and start a
+  // Desktop session) only to replace it a moment later.
+  const attachedChatShown = isComputer && tab === "chat"
+    && (computerTabs.includes("chat") || (requestedTab === "chat" && attachedRead.checking));
   const effectiveTab: Tab = attachedChatShown ? "chat" : shownTab(agent, tab);
   const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
   const unavailableTab = isComputer
@@ -1243,7 +1246,8 @@ export default function AgentPage() {
           attachedAgent && agent.chat_url ? (
             <AttachedAgentChat computerId={agent.id} computerName={agent.name} chatUrl={agent.chat_url}
               installationId={attachedAgent.installationId} token={agent.api_token} agentName={attachedAgent.agentName} />
-          ) : <Stub title="No agent here yet" body="Add an agent to this computer in Manage." />
+          ) : attachedRead.checking ? <LoadingState compact label="Checking this computer…" />
+            : <Stub title="No agent here yet" body="Add an agent to this computer in Manage." />
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
             <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />

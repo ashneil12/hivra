@@ -19,11 +19,14 @@ import { ATTACHED_AGENTS_CHANGED_EVENT, type AttachedAgentChatTarget } from "@/l
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 
 /**
- * The agent added to this computer, once it is ready to chat, or null. Read
- * from the computer's attach gate (where attach is not offered the gate is a
- * 404 and this stays null), and again whenever Manage announces a change.
+ * The agent added to this computer, once it is ready to chat, or null, and
+ * whether that is still being read (so a Chat deep link can wait for it
+ * instead of opening the computer's landing surface first). Read from the
+ * computer's attach gate (where attach is not offered the gate is a 404 and
+ * the target stays null), and again whenever Manage announces a change.
  */
-export function useAttachedAgentChat(agent: Pick<HivraAgent, "id" | "type" | "status"> | null, id: string): AttachedAgentChatTarget | null {
+export function useAttachedAgentChatRead(agent: Pick<HivraAgent, "id" | "type" | "status"> | null, id: string):
+{ target: AttachedAgentChatTarget | null; checking: boolean } {
   const eligible = Boolean(agent && agent.id === id && agent.type === "linux-desktop" && agent.status === "running");
   const [version, setVersion] = useState(0);
   const [read, setRead] = useState<{ id: string; value: AttachedAgentChatTarget | null } | null>(null);
@@ -45,7 +48,12 @@ export function useAttachedAgentChat(agent: Pick<HivraAgent, "id" | "type" | "st
     });
     return () => { alive = false; };
   }, [eligible, id, version]);
-  return eligible && read?.id === id ? read.value : null;
+  return { target: eligible && read?.id === id ? read.value : null, checking: eligible && read?.id !== id };
+}
+
+/** The agent added to this computer, once it is ready to chat, or null. */
+export function useAttachedAgentChat(agent: Pick<HivraAgent, "id" | "type" | "status"> | null, id: string): AttachedAgentChatTarget | null {
+  return useAttachedAgentChatRead(agent, id).target;
 }
 
 /** The attached agent's chat, under its computer's gateway origin. */
