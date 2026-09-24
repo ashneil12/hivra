@@ -1,6 +1,12 @@
 import { gzipSync } from "zlib";
 import { deploymentScopedDefault } from "@/lib/deployment-channel";
 import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime-env";
+import {
+  DASHBOARD_STATE_INSPECT_FORMAT,
+  TURN_MARKER_FRESH_SECONDS,
+  TURN_MARKER_PROBE_PYTHON_FUNCTIONS,
+  WEBFREE_HERMES_HOME,
+} from "@/lib/services/turn-marker-probe";
 
 /**
  * Idle-gated update stack provisioner.
@@ -12,7 +18,9 @@ import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime
  *
  * Three units (all proven in production):
  *   1. idle-sampler (every 3 min): stamps /run/hermes-last-active-<INST> whenever
- *      the agent is processing a turn. Fail-safe: unknown/stale => BUSY.
+ *      the agent is processing a turn: a messaging turn (gateway_state.json
+ *      active_agents) or a web-chat turn running in official-dashboard (a fresh
+ *      turn marker, see turn-marker-probe.ts). Fail-safe: unknown/stale => BUSY.
  *   2. roll (hourly): idle-gated recreate of gateway+official-dashboard onto the
  *      latest :stable — only when idle >= 45 min and a new image exists. A
  *      20-hour cooldown suppresses repeat work for the same image, but never
@@ -59,9 +67,14 @@ function renderEmbeddedFileWrite(
   const encoded = (shouldCompress ? compressed : raw).toString("base64");
   const decodePipeline = shouldCompress ? "base64 -d | gunzip" : "base64 -d";
 
-  return `printf '%s' '${encoded}' | ${decodePipeline} > ${path}${
-    options?.chmod ? `\nchmod ${options.chmod} ${path}` : ""
-  }`;
+  // Write-then-rename: the update path rewrites these files on live boxes, and a
+  // running bash reads its script incrementally, so truncating a script mid-run
+  // (the hourly roll, or the 3-minute sampler) would execute garbage. The rename
+  // leaves a running process on the old inode.
+  const staged = `${path}.hermes-new`;
+  return `printf '%s' '${encoded}' | ${decodePipeline} > ${staged}${
+    options?.chmod ? `\nchmod ${options.chmod} ${staged}` : ""
+  }\nmv -f ${staged} ${path}`;
 }
 
 /**
@@ -139,18 +152,30 @@ export function buildIdleGatedUpdateProvisioningScript(params: {
   // hermes-idle-sampler-<INST> — stamp the "last active" marker whenever the
   // agent is processing a turn. Fail-safe: stale/unreadable => ACTIVE so the
   // roller never rolls into an in-flight turn.
+  //
+  // Two sources of "a turn is running": the gateway's messaging agents
+  // (gateway_state.json active_agents) and web-chat turns, which run inside the
+  // official-dashboard container and are invisible to gateway_state.json. The
+  // latter come from the agent's durable turn markers on the shared webui-state
+  // volume, read from the gateway container (same volume) with the dashboard's
+  // docker-inspect state passed in, so a marker left by a dashboard process that
+  // has since restarted does not count (turn-marker-probe.ts).
   const samplerScript = `#!/usr/bin/env bash
 # hermes-idle-sampler — stamp the "last active" marker whenever the agent is
-# processing a turn. Fail-safe: stale/unreadable => ACTIVE so the roller never
+# processing a turn (messaging agents in the gateway, or a web-chat turn in
+# official-dashboard). Fail-safe: stale/unreadable => ACTIVE so the roller never
 # rolls into an in-flight turn.
 set -uo pipefail
 INST="${INST}"
 G="agent-\${INST}-gateway"
+D="agent-\${INST}-official-dashboard"
 MARK="/run/hermes-last-active-\${INST}"
 PYV="/home/hermes/.hermes/hermes-agent/.venv/bin/python3"
-verdict="$(docker exec -i "$G" "$PYV" - <<'PY' 2>/dev/null
+DASH_STATE="$(docker inspect "$D" -f '${DASHBOARD_STATE_INSPECT_FORMAT}' 2>/dev/null || true)"
+verdict="$(docker exec -i "$G" "$PYV" - "$DASH_STATE" <<'PY' 2>/dev/null
 import json, glob, sys
 from datetime import datetime, timezone
+${TURN_MARKER_PROBE_PYTHON_FUNCTIONS}
 now = datetime.now(timezone.utc).timestamp()
 busy = 0
 stale = 0
@@ -169,7 +194,16 @@ for f in files:
         busy += int(d.get("active_agents", 0) or 0)
     except Exception:
         stale += 1
-print("BUSY" if (busy > 0 or stale > 0) else "IDLE")
+# Web-chat turns: a fresh marker newer than the running dashboard process, or a
+# fresh marker file that cannot be read, counts as BUSY. Bounded by
+# TURN_MARKER_FRESH_SECONDS so a crash-left marker cannot pin BUSY forever.
+live, unreadable = hivra_live_turn_markers(
+    "${WEBFREE_HERMES_HOME}",
+    now,
+    ${TURN_MARKER_FRESH_SECONDS},
+    hivra_dashboard_not_before(sys.argv[1] if len(sys.argv) > 1 else ""),
+)
+print("BUSY" if (busy > 0 or stale > 0 or live > 0 or unreadable > 0) else "IDLE")
 PY
 )" || verdict="BUSY"
 if [ "$verdict" != "IDLE" ]; then
@@ -467,6 +501,11 @@ fi
 if [ ! -f "$MARK" ]; then date +%s > "$MARK"; log "no idle marker yet - starting clock, skip"; exit 0; fi
 idle_min=$(( ( $(date +%s) - $(stat -c %Y "$MARK") ) / 60 ))
 [ "$idle_min" -lt "$IDLE_MIN" ] && { log "active \${idle_min}m ago (<\${IDLE_MIN}m idle) - defer"; exit 0; }
+# The sampler runs every 3 minutes, so a turn may have started since its last
+# sample. Take one more sample right before stopping anything.
+/usr/local/bin/hermes-idle-sampler-"\${INST}" >/dev/null 2>&1 || date +%s > "$MARK"
+idle_min=$(( ( $(date +%s) - $(stat -c %Y "$MARK") ) / 60 ))
+[ "$idle_min" -lt "$IDLE_MIN" ] && { log "turn started since the last idle sample - defer"; exit 0; }
 if ! repair_runtime_env_files; then
   log "managed runtime env migration failed - aborting before service stop + PAUSING auto-roll"
   echo "auto-roll paused $(ts): managed runtime env migration failed; cleared by removing this file after repair" > "$PAUSE"

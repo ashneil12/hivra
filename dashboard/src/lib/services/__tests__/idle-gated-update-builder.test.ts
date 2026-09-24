@@ -1,9 +1,20 @@
 import { gunzipSync } from "zlib";
 import { spawnSync } from "child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
+import { TURN_MARKER_FRESH_SECONDS } from "@/lib/services/turn-marker-probe";
 
 /**
  * Decode every base64(+gzip) embedded-file payload in a provisioning snippet,
@@ -14,7 +25,10 @@ function decodeEmbeddedFiles(script: string): Record<string, string> {
   const re = /printf '%s' '([^']+)' \| (base64 -d \| gunzip|base64 -d) > (\S+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
-    const [, encoded, pipeline, path] = m;
+    const [, encoded, pipeline, stagedPath] = m;
+    // Files are staged next to their destination and renamed into place (so a
+    // refresh never truncates a script a running process is reading).
+    const path = stagedPath.replace(/\.hermes-new$/, "");
     const raw = Buffer.from(encoded, "base64");
     out[path] =
       pipeline === "base64 -d | gunzip"
@@ -132,7 +146,9 @@ describe("buildIdleGatedUpdateProvisioningScript", () => {
       expect(sampler).toContain('G="agent-${INST}-gateway"');
       // The fail-safe heredoc must survive verbatim (no TS interpolation).
       expect(sampler).toContain("<<'PY'");
-      expect(sampler).toContain('print("BUSY" if (busy > 0 or stale > 0) else "IDLE")');
+      expect(sampler).toContain(
+        'print("BUSY" if (busy > 0 or stale > 0 or live > 0 or unreadable > 0) else "IDLE")'
+      );
 
       expect(roll).toContain(`INST="${INST}"`);
       expect(roll).toContain(
@@ -612,6 +628,29 @@ describe("buildIdleGatedUpdateProvisioningScript", () => {
       expect(roll).toContain("CRITICAL: rollback compose recreate failed");
     });
 
+    it("stages every file beside its destination and renames it into place", () => {
+      // The update path rewrites these on live boxes; truncating a script that a
+      // running roll or sampler is reading would execute garbage.
+      for (const kind of ["idle-sampler", "roll", "refresh"]) {
+        const path = `/usr/local/bin/hermes-${kind}-${INST}`;
+        expect(script).toContain(`> ${path}.hermes-new\nchmod +x ${path}.hermes-new\nmv -f ${path}.hermes-new ${path}`);
+      }
+      expect(script).not.toMatch(/base64 -d(?: \| gunzip)? > \/usr\/local\/bin\/hermes-[a-z-]+-inst_idle_42\n/);
+    });
+
+    it("takes one more idle sample right before a roll stops anything", () => {
+      const roll = decodeEmbeddedFiles(script)[`/usr/local/bin/hermes-roll-${INST}`];
+      const firstGateIdx = roll.indexOf('[ "$idle_min" -lt "$IDLE_MIN" ]');
+      const resampleIdx = roll.indexOf(`/usr/local/bin/hermes-idle-sampler-"\${INST}"`);
+      const secondGateIdx = roll.indexOf('[ "$idle_min" -lt "$IDLE_MIN" ]', resampleIdx);
+      const stopIdx = roll.indexOf("docker compose stop official-dashboard gateway");
+      expect(firstGateIdx).toBeGreaterThan(-1);
+      expect(resampleIdx).toBeGreaterThan(firstGateIdx);
+      expect(secondGateIdx).toBeGreaterThan(resampleIdx);
+      expect(stopIdx).toBeGreaterThan(secondGateIdx);
+      expect(roll).toContain("turn started since the last idle sample - defer");
+    });
+
     it("emits shell scripts that pass bash syntax validation", () => {
       const files = decodeEmbeddedFiles(script);
       for (const [path, content] of Object.entries(files)) {
@@ -623,6 +662,173 @@ describe("buildIdleGatedUpdateProvisioningScript", () => {
         expect(result.stderr).toBe("");
         expect(result.status).toBe(0);
       }
+    });
+  });
+
+  // Web-chat turns run inside official-dashboard, invisible to the gateway's
+  // gateway_state.json. The sampler must see them through the agent's turn
+  // markers, or the hourly roll recreates official-dashboard mid-turn. These run
+  // the real sampler (bash + its embedded Python) against fixture state with a
+  // stand-in `docker` on PATH.
+  describe("idle sampler counts web-chat turns", () => {
+    const python = process.env.HERMES_CONFIG_TEST_PYTHON || "python3";
+    const sampler = decodeEmbeddedFiles(buildProdGatewayScript())[
+      `/usr/local/bin/hermes-idle-sampler-${INST}`
+    ];
+    let dir: string;
+    let root: string;
+    let mark: string;
+    let fakeBin: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "hermes-idle-sampler-"));
+      root = join(dir, "hermes-home");
+      mark = join(dir, "last-active");
+      fakeBin = join(dir, "bin");
+      mkdirSync(root, { recursive: true });
+      mkdirSync(fakeBin, { recursive: true });
+      // docker inspect <dashboard> -> $FAKE_DASH_STATE (fails when unset);
+      // docker exec -i <gateway> <python> - <args> -> local python, with the
+      // container's HERMES_HOME mapped onto the fixture directory.
+      writeFileSync(
+        join(fakeBin, "docker"),
+        [
+          "#!/bin/sh",
+          'case "$1" in',
+          '  inspect) [ -n "${FAKE_DASH_STATE:-}" ] || exit 1; printf "%s\\n" "$FAKE_DASH_STATE" ;;',
+          '  exec) shift 4; sed "s#/home/hermes/.hermes#$FAKE_ROOT#g" | "$FAKE_PYTHON" "$@" ;;',
+          "  *) exit 1 ;;",
+          "esac",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(join(fakeBin, "docker"), 0o755);
+    });
+
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const iso = (epochSeconds: number) => new Date(epochSeconds * 1000).toISOString();
+    const nowS = () => Math.floor(Date.now() / 1000);
+
+    function gatewayState(activeAgents = 0) {
+      writeFileSync(
+        join(root, "gateway_state.json"),
+        JSON.stringify({
+          updated_at: new Date().toISOString().replace("Z", "+00:00"),
+          active_agents: activeAgents,
+        }),
+      );
+    }
+
+    function marker(relativeDir: string, startedAt: number, body?: string) {
+      const path = join(root, relativeDir, "desktop", "interrupted_turns.json");
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        body ??
+          JSON.stringify({
+            "agent:web:session-1": { attempts: 0, prompt: "do the long task", started_at: startedAt },
+          }),
+      );
+      return path;
+    }
+
+    function sample(dashState: string | null) {
+      const scriptPath = join(dir, "sampler.sh");
+      writeFileSync(
+        scriptPath,
+        sampler.replace(/^MARK=.*$/m, `MARK="${mark}"`),
+      );
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          FAKE_ROOT: root,
+          FAKE_PYTHON: python,
+          ...(dashState === null ? {} : { FAKE_DASH_STATE: dashState }),
+        },
+      });
+      expect(result.status).toBe(0);
+      return result;
+    }
+
+    // The sampler stamps MARK on BUSY. Seed an old MARK so a stamp is visible.
+    function busyAfter(dashState: string | null): boolean {
+      writeFileSync(mark, "0\n");
+      utimesSync(mark, 1_000_000, 1_000_000);
+      sample(dashState);
+      return statSync(mark).mtimeMs > 1_000_000 * 1000 + 1;
+    }
+
+    const dashboardUpSince = (epochSeconds: number) => `true ${iso(epochSeconds)}`;
+
+    it("stays IDLE with no turn markers and an idle gateway", () => {
+      gatewayState(0);
+      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(false);
+    });
+
+    it("goes BUSY while a web-chat turn marker is fresh", () => {
+      gatewayState(0);
+      marker("", nowS() - 120);
+      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+    });
+
+    it("goes BUSY for a profile's web-chat turn too", () => {
+      gatewayState(0);
+      marker(join("profiles", "research"), nowS() - 120);
+      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+    });
+
+    it("ignores a marker older than the freshness bound (crash-left)", () => {
+      gatewayState(0);
+      const old = nowS() - TURN_MARKER_FRESH_SECONDS - 600;
+      const path = marker("", old);
+      utimesSync(path, old, old);
+      expect(busyAfter(dashboardUpSince(nowS() - 30 * 3600))).toBe(false);
+    });
+
+    it("ignores a marker from before the dashboard process started (the turn died with it)", () => {
+      gatewayState(0);
+      marker("", nowS() - 1800);
+      expect(busyAfter(dashboardUpSince(nowS() - 60))).toBe(false);
+    });
+
+    it("ignores markers while the dashboard is not running", () => {
+      gatewayState(0);
+      marker("", nowS() - 60);
+      expect(busyAfter("false 0001-01-01T00:00:00Z")).toBe(false);
+    });
+
+    it("counts every fresh marker when the dashboard state is unknown (fail safe)", () => {
+      gatewayState(0);
+      marker("", nowS() - 1800);
+      expect(busyAfter(null)).toBe(true);
+    });
+
+    it("treats a fresh unreadable marker file as BUSY, but not a stale one", () => {
+      gatewayState(0);
+      const path = marker("", 0, "{not json");
+      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+
+      const old = nowS() - TURN_MARKER_FRESH_SECONDS - 600;
+      utimesSync(path, old, old);
+      expect(busyAfter(dashboardUpSince(nowS() - 30 * 3600))).toBe(false);
+    });
+
+    it("still goes BUSY for an active messaging agent in the gateway", () => {
+      gatewayState(1);
+      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+    });
+
+    it("never prints the marker's prompt", () => {
+      gatewayState(0);
+      marker("", nowS() - 120);
+      const result = sample(dashboardUpSince(nowS() - 3600));
+      expect(`${result.stdout}${result.stderr}`).not.toContain("do the long task");
+      expect(existsSync(mark)).toBe(true);
     });
   });
 
