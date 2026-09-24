@@ -220,6 +220,9 @@ interface ChatMessage {
   runId?: string;
   /** The computer confirmed it started the run (its `_run` line arrived). */
   started?: boolean;
+  /** The first-contact welcome's reply, whose prompt never shows: a failed
+   * one offers Retry, one that never reached the computer starts again. */
+  welcome?: boolean;
 }
 
 interface Session {
@@ -275,9 +278,10 @@ function boxHistoryToChat(messages: BoxMessage[]): ChatMessage[] {
 }
 
 // What a conversation shows before a reply adopted from a run that is still
-// going: its history from the box up to and including that turn's prompt. The
-// box may already hold the turn's output so far, which the reply replays in
-// full. A welcome is its conversation's first turn, and its prompt is hidden.
+// going: its history (from the box, or this device's copy) up to and including
+// that turn's prompt. The box may already hold the turn's output so far, which
+// the reply replays in full. A welcome is its conversation's first turn, and
+// its prompt is hidden.
 function historyBeforeRunningTurn(history: ChatMessage[], prompt: string | null, welcome: boolean): ChatMessage[] {
  if (welcome) return [];
  const asked: ChatMessage[] = prompt ? [{ role: "user", text: prompt, tools: [] }] : [];
@@ -288,14 +292,18 @@ function historyBeforeRunningTurn(history: ChatMessage[], prompt: string | null,
  return [...history, ...asked];
 }
 
-// A pending reply whose run the computer no longer lists. Finished runs are kept
-// for a week, and the list holds only the newest ones, so a run that started
-// and then aged out finished while no page watched it: keep what arrived and
-// say so, not that it failed. A reply with no sign its run ever started may
-// never have reached the computer, and keeps the failure state.
+// Any sign the computer took up the reply's run: its `_run` line, text or a tool.
+function replyStarted(m: ChatMessage): boolean {
+ return Boolean(m.started || m.text.trim() || m.tools.length);
+}
+
+// A pending reply whose run log the computer no longer keeps. Finished runs are
+// kept for a week, so a run that started and then aged out finished while no
+// page watched it: keep what arrived and say so, not that it failed. A reply
+// with no sign its run ever started may never have reached the computer, and
+// keeps the failure state.
 function settleMissingRun(m: ChatMessage): ChatMessage {
- const started = Boolean(m.started || m.text.trim() || m.tools.length);
- return { ...m, streaming: false, outcome: started ? "unknown" : "error" };
+ return { ...m, streaming: false, outcome: replyStarted(m) ? "unknown" : "error" };
 }
 
 // A box-history stub for this conversation that has not been opened yet: the
@@ -323,6 +331,35 @@ function draftKey(sk: string, sessionId: string): string {
 
 function keyFor(boxUrl: string): string {
  return "hivra_sessions_" + boxUrl.replace(/[^a-z0-9]/gi, "").slice(-32);
+}
+
+// Set once a computer's first-contact welcome has started (here, on another
+// device or in another view), so no view of that computer starts another. It
+// is keyed like keyFor: the agent page and the workspace name the same
+// computer differently but share its chats, and must share this too.
+function welcomeFlagKey(sk: string): string {
+ return "hivra:first-welcome:" + sk.replace(/[^a-z0-9]/gi, "").slice(-32);
+}
+function readWelcomed(sk: string): boolean {
+ try {
+ // Each view kept its own flag, under its raw key, before the two shared one.
+ return window.localStorage.getItem(welcomeFlagKey(sk)) === "1" || window.localStorage.getItem("hivra:first-welcome:" + sk) === "1";
+ } catch {
+ // Storage is only a duplicate guard; the chat still works without it.
+ return false;
+ }
+}
+function writeWelcomed(sk: string, welcomed: boolean) {
+ try {
+ if (welcomed) {
+ window.localStorage.setItem(welcomeFlagKey(sk), "1");
+ } else {
+ window.localStorage.removeItem(welcomeFlagKey(sk));
+ window.localStorage.removeItem("hivra:first-welcome:" + sk);
+ }
+ } catch {
+ // Best-effort duplicate guard only.
+ }
 }
 function newId(): string {
  return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -362,6 +399,13 @@ type TurnEnd =
  | { kind: "aborted" }
  | { kind: "unreachable" }
  | { kind: "refused"; status: number; reason: string };
+
+// What a reply says when its turn could not start (null: say nothing more).
+function turnFailureNote(end: TurnEnd): string | null {
+ if (end.kind === "unreachable") return "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.";
+ if (end.kind === "refused") return end.reason ? "⚠ " + end.reason : "⚠ Your agent hit an error (HTTP " + end.status + "). Try again.";
+ return null;
+}
 
 function parseNdjsonLine(line: string): Record<string, unknown> | null {
  const trimmed = line.trim();
@@ -547,6 +591,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }, []);
  const [boxHistoryChecked, setBoxHistoryChecked] = useState(false);
  const [hasBoxHistory, setHasBoxHistory] = useState(false);
+ const hasBoxHistoryRef = useRef(false);
+ useEffect(() => { hasBoxHistoryRef.current = hasBoxHistory; }, [hasBoxHistory]);
+ // What the computer's run list says about the first-contact welcome: nothing
+ // yet ("pending"), no welcome run ("none"), or one started elsewhere ("seen").
+ const [welcomeOnBox, setWelcomeOnBox] = useState<"pending" | "none" | "seen">("pending");
  const activeIdRef = useRef<string>("");
  const scrollRef = useRef<HTMLDivElement>(null);
  const autoWelcomeAttemptedRef = useRef(false);
@@ -655,6 +704,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  };
  abortAll();
  autoWelcomeAttemptedRef.current = false;
+ setWelcomeOnBox("pending");
  setBusyIds(new Set());
  setFailedBySession({});
 
@@ -1177,8 +1227,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (end.kind === "aborted") {
  updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
  } else if (end.kind !== "settled") {
- const note = end.kind === "unreachable" ? "⚠ Couldn't reach your agent. It may be starting up — try again in a moment."
- : end.reason ? "⚠ " + end.reason : "⚠ Your agent hit an error (HTTP " + end.status + "). Try again.";
+ const note = turnFailureNote(end) ?? "";
  updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note, streaming: false, outcome: "error" }));
  setLastFailed(sessionId, text);
  }
@@ -1188,58 +1237,37 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [agentKind, beginTurn, boxUrl, driveTurn, scrollDown, sessions, setLastFailed, updateSession, updateRunMessage, token, skey],
  );
 
+ // Take back a welcome reply that never got going: the chat falls back to the
+ // starter suggestions, and the welcome may start again.
+ const retractWelcome = useCallback((sessionId: string, runId: string) => {
+ writeWelcomed(skey, false);
+ updateSession(sessionId, (s) => {
+ const messages = s.messages.filter((m) => m.runId !== runId);
+ return { ...s, messages, title: messages.length === 0 && s.title === "Welcome" ? "New chat" : s.title };
+ });
+ }, [skey, updateSession]);
+
  // The agent opens a new computer's first chat on its own: a hidden prompt
  // asks it to introduce itself or, when the owner gave a first task at launch,
  // to DO that task and return the result ("do, don't show"). It is a detached
  // run like any send: a reload, a closed tab or a dropped network re-attaches
  // to it (resumeDetachedRuns), Stop ends it, and the conversation it starts is
- // the owner's to continue. Only the reply shows; the prompt never does.
- useEffect(() => {
- if (!boxHistoryChecked || hasBoxHistory || anyBusy || autoWelcomeAttemptedRef.current) return;
- if (!active || active.messages.length > 0) return;
- const welcomeSessionId = active.id;
- const flagKey = `hivra:first-welcome:${skey}`;
- try {
- if (window.localStorage.getItem(flagKey) === "1") return;
- } catch {
- // Storage is only a duplicate guard; the chat still works without it.
- }
+ // the owner's to continue. Only the reply shows; the prompt never does, so a
+ // welcome that fails keeps its reply with Retry, which carries on the failed
+ // attempt's conversation (`resumeSessionId`) as Retry does for a message.
+ const startWelcome = useCallback((sessionId: string, retry: boolean) => {
+ if (abortRef.current.has(sessionId)) return;
+ const resumeSessionId = retry ? sessionsRef.current.find((s) => s.id === sessionId)?.claudeSessionId ?? null : null;
  // Marked before the turn starts, not when it ends: the run outlives this
  // page, so a reload must re-attach to it instead of starting another.
- const markWelcomed = (welcomed: boolean) => {
- try {
- if (welcomed) window.localStorage.setItem(flagKey, "1");
- else window.localStorage.removeItem(flagKey);
- } catch {
- // Best-effort duplicate guard only.
- }
- };
-
- autoWelcomeAttemptedRef.current = true;
- markWelcomed(true);
- const hasFirstTask = Boolean((firstTask || "").trim());
+ writeWelcomed(skey, true);
  const runId = newRunId();
- const turn = beginTurn(welcomeSessionId, runId);
- updateSession(welcomeSessionId, (s) => ({
+ const turn = beginTurn(sessionId, runId);
+ updateSession(sessionId, (s) => ({
  ...s,
  title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text: "", tools: [], streaming: true, runId }],
+ messages: [...s.messages.filter((m) => !m.welcome), { role: "assistant", text: "", tools: [], streaming: true, runId, welcome: true }],
  }));
-
- // Fire the activation event once per box (the localStorage guard above
- // makes this run at most once). Analytics must never break the chat.
- try {
- captureClient("agent_initiated_message_sent", {
- agent_id: skey,
- agent_kind: agentKind,
- lane: "hivra",
- has_first_task: hasFirstTask,
- $insert_id: `auto_first_task_${skey}`,
- });
- } catch {
- // Best-effort analytics only.
- }
-
  const post = (signal: AbortSignal) => startAgentWelcomeRun({
  boxUrl,
  token,
@@ -1249,10 +1277,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  firstTask,
  channel: "chat",
  runId,
- clientRef: welcomeSessionId,
+ clientRef: sessionId,
+ resumeSessionId,
  signal,
  });
- void driveTurn(welcomeSessionId, runId, turn, post).then((end) => {
+ void driveTurn(sessionId, runId, turn, post).then((end) => {
  if (end.kind === "superseded") return;
  if (end.kind !== "settled") {
  clientLog.warn("agent first message generation failed", {
@@ -1261,24 +1290,54 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  agentKind,
  agentName,
  reason: end.kind,
+ retry,
  ...(end.kind === "refused" ? { status: end.status } : {}),
  });
+ if (retry) {
+ // The owner asked for this one: say why it failed, and keep Retry.
+ const note = turnFailureNote(end);
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note ?? m.text, streaming: false, outcome: "error" }));
+ } else {
  // The turn never got going: fall back to the starter suggestions, and
  // let the next visit try the welcome again.
- markWelcomed(false);
- updateSession(welcomeSessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.runId !== runId) }));
+ retractWelcome(sessionId, runId);
+ }
  } else {
- // A turn that finished without a word (an older runtime's empty
- // stream) falls back to the starter suggestions, as it always has.
- updateSession(welcomeSessionId, (s) => ({
- ...s,
- messages: s.messages.filter((m) => !(m.runId === runId && m.outcome === "complete" && !m.text.trim() && m.tools.length === 0)),
- }));
+ // A welcome that ends without a word failed as surely as one that
+ // errored, and its reply is the only place left to try it again.
+ updateRunMessage(sessionId, runId, (m) => (m.outcome === "complete" && !m.text.trim() && m.tools.length === 0
+ ? { ...m, text: "⚠ Your agent finished without replying.", outcome: "error" }
+ : m));
  }
  turn.finish();
- if (activeIdRef.current === welcomeSessionId) scrollDown();
+ if (activeIdRef.current === sessionId) scrollDown();
  });
- }, [agentKind, agentName, active, anyBusy, beginTurn, boxHistoryChecked, boxUrl, context, driveTurn, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateSession]);
+ }, [agentKind, agentName, beginTurn, boxUrl, context, driveTurn, firstTask, goal, retractWelcome, scrollDown, skey, token, updateRunMessage, updateSession]);
+
+ // The welcome starts once per computer, only once the chat knows it is new:
+ // no conversation on the computer or in this browser, and no welcome in the
+ // computer's run list (started on another device or in another view).
+ const anyChatStarted = useMemo(() => sessions.some((s) => s.messages.length > 0 || Boolean(s.claudeSessionId)), [sessions]);
+ useEffect(() => {
+ if (loadedKey !== skey || !boxHistoryChecked || hasBoxHistory || welcomeOnBox !== "none") return;
+ if (anyBusy || autoWelcomeAttemptedRef.current || anyChatStarted || !active) return;
+ if (readWelcomed(skey)) return;
+ autoWelcomeAttemptedRef.current = true;
+ // Fire the activation event once per box (the flag above makes this run at
+ // most once). Analytics must never break the chat.
+ try {
+ captureClient("agent_initiated_message_sent", {
+ agent_id: skey,
+ agent_kind: agentKind,
+ lane: "hivra",
+ has_first_task: Boolean((firstTask || "").trim()),
+ $insert_id: `auto_first_task_${skey}`,
+ });
+ } catch {
+ // Best-effort analytics only.
+ }
+ startWelcome(active.id, false);
+ }, [active, agentKind, anyBusy, anyChatStarted, boxHistoryChecked, firstTask, hasBoxHistory, loadedKey, skey, startWelcome, welcomeOnBox]);
 
  // Stop a session's in-flight turn. The box keeps a detached run going without
  // this page, so Stop asks the box to end it; aborting the fetch also stops
@@ -1306,6 +1365,26 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setSessionBusy(sessionId, false);
  }, [agentKind, boxUrl, setSessionBusy, token, updateSession]);
 
+ // A reply whose run the computer has no log of. A welcome with no sign it
+ // ever started never reached the computer (a reload while the computer was
+ // still starting). While nothing else has happened on the computer, take it
+ // back and let the welcome start again, as if it never began. Otherwise it
+ // cannot start on its own any more, so it settles as a failed welcome, which
+ // keeps Retry; so does any other reply, as settleMissingRun says.
+ const settleMissingReply = useCallback((sessionId: string, runId: string) => {
+ const reply = sessionsRef.current.find((s) => s.id === sessionId)?.messages.find((m) => m.runId === runId);
+ const untouched = !hasBoxHistoryRef.current && !sessionsRef.current.some((s) => Boolean(s.claudeSessionId) || s.messages.some((m) => m.runId !== runId));
+ if (reply?.welcome && !replyStarted(reply)) {
+ clientLog.warn("agent first message never reached the computer", { source: "hivra-chat", failureType: "hivra_chat_welcome_lost", agentKind, restarting: untouched });
+ if (untouched) {
+ retractWelcome(sessionId, runId);
+ autoWelcomeAttemptedRef.current = false;
+ return;
+ }
+ }
+ updateRunMessage(sessionId, runId, settleMissingRun);
+ }, [agentKind, retractWelcome, updateRunMessage]);
+
  // Pick a reply back up from the box: follow it live if it is still running,
  // or rebuild it from the run's log if it finished while this page was away.
  const resumeRun = useCallback(async (sessionId: string, runId: string) => {
@@ -1314,10 +1393,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const result = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, 3);
  if (result.kind === "superseded") return;
  if (result.kind === "done") finalizeRun(sessionId, runId, result.done);
- else if (result.kind === "missing") updateRunMessage(sessionId, runId, settleMissingRun);
+ else if (result.kind === "missing") settleMissingReply(sessionId, runId);
  else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "disconnected" }));
  turn.finish();
- }, [beginTurn, finalizeRun, followRun, updateRunMessage]);
+ }, [beginTurn, finalizeRun, followRun, settleMissingReply, updateRunMessage]);
 
  // Runs adopted from the box's list since this chat opened, so a wake-up that
  // lands before an adopted reply is in state never follows it twice.
@@ -1332,14 +1411,18 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const adoptRun = useCallback(async (run: BoxChatRun) => {
  adoptedRunsRef.current.add(run.runId);
  const generation = requestGenerationRef.current;
- const findTarget = () => sessionsRef.current.find((s) => s.id === run.clientRef)
- ?? (run.agentSessionId ? sessionsRef.current.find((s) => s.claudeSessionId === run.agentSessionId) : undefined);
- const unloaded = (s: Session | undefined) => !s || (s.loaded === false && s.messages.length === 0);
  // A welcome turn's title is its hidden prompt, which never shows.
  const welcome = isHiddenWelcomeTitle(run.title);
+ // A welcome opens in the chat on screen while that chat is still blank, so
+ // a device that opens a new computer mid-welcome watches the first task land.
+ const blankOpenChat = () => sessionsRef.current.find((s) => s.id === activeIdRef.current && s.messages.length === 0 && !s.claudeSessionId && s.loaded !== false);
+ const findTarget = () => sessionsRef.current.find((s) => s.id === run.clientRef)
+ ?? (run.agentSessionId ? sessionsRef.current.find((s) => s.claudeSessionId === run.agentSessionId) : undefined)
+ ?? (welcome ? blankOpenChat() : undefined);
+ const unloaded = (s: Session | undefined) => !s || (s.loaded === false && s.messages.length === 0);
  const prompt = welcome ? null : promptFromRunTitle(run.title);
  const asked: ChatMessage[] = prompt ? [{ role: "user", text: prompt, tools: [] }] : [];
- const reply: ChatMessage = { role: "assistant", text: "", tools: [], streaming: true, runId: run.runId, started: true };
+ const reply: ChatMessage = { role: "assistant", text: "", tools: [], streaming: true, runId: run.runId, started: true, ...(welcome ? { welcome: true } : {}) };
  // A conversation this page has not loaded shows its earlier turns too.
  let before = welcome ? [] : asked;
  if (run.agentSessionId && unloaded(findTarget())) {
@@ -1358,10 +1441,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  sessionId = target.id;
  updateSession(target.id, (s) => {
  if (unloaded(s)) return { ...s, messages: [...before, reply], loaded: true };
- // A chat that already shows the prompt keeps one copy.
- const last = s.messages[s.messages.length - 1];
- const shown = last?.role === "user" && Boolean(prompt) && last.text.startsWith((prompt || "").replace(/…$/, ""));
- return { ...s, messages: [...s.messages, ...(shown ? [] : asked), reply] };
+ // A chat that already holds this conversation (its history opened
+ // meanwhile, or this device's own copy) keeps its turns up to this one's
+ // prompt, shown once: the reply replays the turn's output in full.
+ return {
+ ...s,
+ title: welcome && s.title === "New chat" ? "Welcome" : s.title,
+ claudeSessionId: s.claudeSessionId ?? run.agentSessionId,
+ messages: [...historyBeforeRunningTurn(s.messages, prompt, welcome), reply],
+ };
  });
  } else {
  const created: Session = {
@@ -1384,33 +1472,43 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // this page last saw unfinished (tab closed, laptop asleep, network lost) are
  // resumed, and turns still running that this page does not know about (started
  // on another device) are adopted.
- const resumingRef = useRef(false);
+ // The generation (box and chat identity) whose catch-up is in flight: a
+ // wake-up joins it, and a new box or chat identity starts its own.
+ const resumingRef = useRef<number | null>(null);
  const resumeDetachedRuns = useCallback(async () => {
- if (resumingRef.current) return;
- resumingRef.current = true;
  const generation = requestGenerationRef.current;
+ if (resumingRef.current === generation) return;
+ resumingRef.current = generation;
  try {
  const runs = await listBoxChatRuns(boxUrl, token);
+ if (requestGenerationRef.current !== generation) return;
+ // The first-contact welcome waits for this answer, so it never starts
+ // while the computer runs, or has run, one begun elsewhere.
+ if (runs?.some((run) => isHiddenWelcomeTitle(run.title))) {
+ writeWelcomed(skey, true);
+ setWelcomeOnBox("seen");
+ } else {
+ setWelcomeOnBox((prev) => (prev === "pending" ? "none" : prev));
+ }
  // An older runtime or an unreachable box: try again on the next wake-up.
- if (!runs || requestGenerationRef.current !== generation) return;
+ if (!runs) return;
  runsSupportedRef.current = true;
- const known = new Set(runs.map((run) => run.runId));
  const tracked = new Set<string>([...runRef.current.values(), ...adoptedRunsRef.current]);
  for (const s of sessionsRef.current) {
  for (const m of s.messages) if (m.runId) tracked.add(m.runId);
  if (abortRef.current.has(s.id)) continue;
  const m = s.messages.find((msg) => msg.role === "assistant" && msg.runId && !msg.streaming && (msg.outcome === undefined || msg.outcome === "disconnected"));
- if (!m?.runId) continue;
- if (known.has(m.runId)) void resumeRun(s.id, m.runId);
- else updateRunMessage(s.id, m.runId, settleMissingRun);
+ // The list holds only the newest runs, and the computer keeps logs for
+ // more: ask for the run's log whether or not it is listed.
+ if (m?.runId) void resumeRun(s.id, m.runId);
  }
  for (const run of runs) {
  if (run.state === "running" && !tracked.has(run.runId)) void adoptRun(run);
  }
  } finally {
- resumingRef.current = false;
+ if (resumingRef.current === generation) resumingRef.current = null;
  }
- }, [adoptRun, boxUrl, resumeRun, token, updateRunMessage]);
+ }, [adoptRun, boxUrl, resumeRun, skey, token]);
 
  // A reply whose run log aged out ("unknown") is complete in the box's own
  // history of the conversation: show that history in place of this chat's copy.
@@ -1541,6 +1639,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }, [active?.messages, scrollDown]);
 
  const messages = active?.messages || [];
+ // A first-contact welcome that failed: its prompt is hidden, so Retry on its
+ // reply is the only way to ask again. It lasts across reloads.
+ const lastMessage = messages[messages.length - 1];
+ const welcomeFailed = Boolean(lastMessage?.welcome && !lastMessage.streaming && lastMessage.outcome === "error");
  // The open chat's conversation on the box, when it has one to reload from.
  const historySessionId = active?.claudeSessionId ? active.id : null;
  // Welcome suggestions: the chosen goal's three concrete starters (falls back to
@@ -1790,11 +1892,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <ChevronDown size={14} aria-hidden /> Return to latest
  </button>
  ) : null}
- {lastFailed && !busy ? (
+ {(lastFailed || welcomeFailed) && !busy ? (
  <div className="mx-auto mb-2 w-full max-w-[760px]">
  <button
  type="button"
  onClick={() => {
+ if (!lastFailed) {
+ startWelcome(activeId, true);
+ return;
+ }
  const t = lastFailed;
  setLastFailed(activeId, null);
  void send(t);

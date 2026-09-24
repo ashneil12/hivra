@@ -15,13 +15,14 @@ export interface AgentWelcomeInput {
 
 // First line of the hidden welcome-generation prompt. The box persists every
 // `claude -p` turn as a session, so the welcome turn surfaces in /api/sessions
-// titled with this line. Kept as a shared constant so the prompt and the
-// session-rail filter (isHiddenWelcomeTitle) can never drift apart.
+// and in the run list titled with this line. Kept as a shared constant so the
+// prompt and its detector (isHiddenWelcomeTitle) can never drift apart.
 const HIDDEN_WELCOME_PROMPT_PREFIX = "This is a hidden Hivra first-contact setup message.";
 
-// True for a box session whose title is the hidden welcome-generation turn, so
-// callers can keep it out of the visible chat rail. Matches on a prefix because
-// the box truncates titles to the first ~70 chars of the first user message.
+// True for a box session, run or message whose title is the hidden
+// welcome-generation prompt, so callers never show that prompt and can tell a
+// welcome apart. Matches on a prefix because the box truncates titles to the
+// first ~70 chars of the first user message.
 export function isHiddenWelcomeTitle(title: string | null | undefined): boolean {
   return Boolean(title && title.trim().startsWith("This is a hidden Hivra first-contact setup"));
 }
@@ -72,13 +73,15 @@ function boxBase(boxUrl: string): string {
 }
 
 /**
- * Start the first-contact turn: the hidden prompt above, as a new conversation
- * (no resume id). It runs detached on the computer like any chat turn, keyed by
+ * Start the first-contact turn: the hidden prompt above, as a new conversation.
+ * It runs detached on the computer like any chat turn, keyed by
  * the caller's run id, so a reload, a closed tab or a dropped network does not
  * end it and the chat can re-attach to it. The caller reads the response with
  * the same stream reader as a normal send, which also records the agent's
- * session id so the user can carry on the conversation. A computer on an older
- * runtime ignores detach/runId/clientRef and streams the turn directly.
+ * session id so the user can carry on the conversation. A retry of a welcome
+ * that failed carries on that attempt's conversation (resumeSessionId), as
+ * Retry does for a message. A computer on an older runtime ignores
+ * detach/runId/clientRef and streams the turn directly.
  */
 export function startAgentWelcomeRun(params: AgentWelcomeInput & {
   boxUrl: string;
@@ -86,6 +89,8 @@ export function startAgentWelcomeRun(params: AgentWelcomeInput & {
   runId: string;
   /** The chat session the reply belongs to, echoed in the computer's run list. */
   clientRef: string;
+  /** The failed attempt's conversation to carry on; a first attempt starts one. */
+  resumeSessionId?: string | null;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 }): Promise<Response> {
@@ -98,7 +103,7 @@ export function startAgentWelcomeRun(params: AgentWelcomeInput & {
     },
     body: JSON.stringify({
       message: buildAgentWelcomePrompt(params),
-      sessionId: null,
+      sessionId: params.resumeSessionId ?? null,
       detach: true,
       runId: params.runId,
       clientRef: params.clientRef,

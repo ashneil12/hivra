@@ -250,7 +250,7 @@ describe("HivraChat against the real guest chat gateway", () => {
     const first = render(chat());
     // The agent is working on the first task on its computer.
     await pollUntil(() => calls("welcome").length === 1, 15_000, "welcome turn to start");
-    expect(window.localStorage.getItem("hivra:first-welcome:e2e-welcome")).toBe("1");
+    expect(window.localStorage.getItem("hivra:first-welcome:e2ewelcome")).toBe("1");
 
     // The owner closes the tab mid-task.
     closeTab(first.unmount);
@@ -279,6 +279,66 @@ describe("HivraChat against the real guest chat gateway", () => {
     fireEvent.click(screen.getByLabelText("Send message"));
     expect(await screen.findByText("Working on follow. Finished follow.", undefined, { timeout: 15_000 })).toBeInTheDocument();
     expect(calls("follow")[0].argv).toEqual(expect.arrayContaining(["--resume", SESSION_ID]));
+  });
+
+  it("shows a welcome still working on another device instead of starting a second one", async () => {
+    const gateway = await boot();
+    const boxUrl = `http://127.0.0.1:${gateway.port}`;
+    const chat = () => (
+      <HivraChat boxUrl={boxUrl} storageKey="e2e-welcome-devices" token={TOKEN} agentName="Atlas" agentKind="claude" goal="research" firstTask="TAG:welcome WAIT:3000 compare three CRMs" />
+    );
+
+    // The laptop opens the new computer, the first task starts, the tab closes.
+    const laptop = render(chat());
+    await pollUntil(() => calls("welcome").length === 1, 15_000, "welcome turn to start");
+    closeTab(laptop.unmount);
+
+    // A phone with none of the laptop's local state opens it mid-task.
+    window.localStorage.clear();
+    render(chat());
+    expect(await screen.findByText("Working on welcome. Finished welcome.", undefined, { timeout: 15_000 })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    // Idle again, the phone still does not start a welcome of its own.
+    await act(async () => { await new Promise((done) => timers.setTimeout(done, 750)); });
+    expect(calls("welcome")).toHaveLength(1);
+    expect(await listRuns(gateway.port)).toHaveLength(1);
+    await pollUntil(() => {
+      const saved = JSON.parse(window.localStorage.getItem("hivra_sessions_e2ewelcomedevices") || "[]") as Array<{ title: string; messages: unknown[] }>;
+      return saved.length === 1 && saved[0].title === "Welcome" && saved[0].messages.length === 1;
+    }, 5_000, "the phone to keep one Welcome chat");
+  });
+
+  it("starts the welcome again after a reload when a computer still starting never took its request", async () => {
+    // A computer that answers the chat's reads but holds the welcome's request
+    // without starting it, as one does while its agent runtime comes up.
+    let welcomeRequested = false;
+    const stalledSockets = new Set<net.Socket>();
+    const stalled = http.createServer((req, res) => {
+      if (req.method === "GET" && req.url === "/api/sessions") return res.end(JSON.stringify({ sessions: [] }));
+      if (req.method === "GET" && req.url === "/api/chat/runs") return res.end(JSON.stringify({ runs: [] }));
+      if (req.method === "POST" && req.url === "/api/chat") { welcomeRequested = true; return; }
+      res.statusCode = 404;
+      res.end();
+    });
+    stalled.on("connection", (socket) => { stalledSockets.add(socket); socket.once("close", () => stalledSockets.delete(socket)); });
+    await new Promise<void>((done) => stalled.listen(0, "127.0.0.1", done));
+    const port = (stalled.address() as net.AddressInfo).port;
+    const chat = () => (
+      <HivraChat boxUrl={`http://127.0.0.1:${port}`} storageKey="e2e-welcome-stalled" token={TOKEN} agentName="Atlas" agentKind="claude" goal="research" firstTask="TAG:stalled WAIT:0 compare three CRMs" />
+    );
+
+    const first = render(chat());
+    await pollUntil(() => welcomeRequested, 15_000, "the welcome request to arrive");
+    closeTab(first.unmount);
+    for (const socket of stalledSockets) socket.destroy();
+    await new Promise<void>((done) => stalled.close(() => done()));
+
+    // The computer finishes starting on the same address; the owner reloads.
+    await boot(port);
+    render(chat());
+    expect(await screen.findByText("Working on stalled. Finished stalled.", undefined, { timeout: 15_000 })).toBeInTheDocument();
+    expect(calls("stalled")).toHaveLength(1);
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
   });
 
   it("shows a reply another device started, live, on a device that never saw it", async () => {
