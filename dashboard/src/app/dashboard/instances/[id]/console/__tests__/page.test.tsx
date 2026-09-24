@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 
 let mockSearchParams = new URLSearchParams();
 const mockPush = jest.fn();
@@ -309,6 +310,41 @@ describe("AdvancedConsolePage", () => {
         body: JSON.stringify({ action: "redeploy" }),
       }));
     });
+  });
+
+  // The sidebar, ⌘K and Home reuse a list of agents read in the last few
+  // seconds. An action here changes it, so it is read again.
+  it("reads the agents list again after an action on the agent", async () => {
+    const consoleFetch = createConsoleFetchMock({ postResponse: { success: true } });
+    let listReads = 0;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/instances?summary=true") {
+        listReads += 1;
+        return Promise.resolve(buildJsonResponse({ success: true, data: [] }));
+      }
+      return consoleFetch(input, init);
+    }) as jest.Mock;
+    resetResourceInventory();
+    await act(async () => { await resourceInventory.load("hermes"); });
+    // The sidebar is showing the list.
+    const stopShowing = resourceInventory.subscribe(() => undefined);
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+      expect(listReads).toBe(1);
+      fireEvent.click(screen.getByRole("button", { name: /redeploy config/i }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm redeploy/i }));
+      });
+      await waitFor(() => expect(listReads).toBe(2));
+    } finally {
+      stopShowing();
+      resetResourceInventory();
+    }
   });
 
   it("offers agent repair from the advanced console and posts the repair action", async () => {

@@ -47,11 +47,10 @@ import {
   useSurfaceAction,
   useSurfaceActionStoreInstance,
 } from "@/components/hivra/SurfaceActionContext";
-import {
-  agentTabSurface,
-  hivraRuntimeUid,
-} from "@/lib/workspace/runtime-selection";
-import { persistWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import { hivraRuntimeUid } from "@/lib/workspace/runtime-selection";
+import { lastTabFor } from "@/lib/workspace/recents";
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
+import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
 import { TasksPanel } from "@/components/scheduled-tasks/TasksPanel";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
@@ -106,9 +105,62 @@ const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
 const WORK_PANE_ID = "agent-work-pane";
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-// The chat/terminal pick is remembered (global) — whichever the user looked at
-// last sticks across refreshes and navigating away. Other tabs don't persist.
-const LAST_VIEW_KEY = "hivra:agent-last-view";
+/**
+ * The sidebar, ⌘K and Home reuse a list of agents read moments ago. After a
+ * change made here (a delete, a stop, a rename) that list is out of date, and
+ * Home would offer to continue in an agent just deleted.
+ */
+function listChanged(): void {
+  resourceInventory.invalidate("hivra");
+}
+
+/**
+ * The surface a page opens on: a ?tab= deep link (e.g. the dashboard
+ * checklist's "connect Telegram" item), then a fresh launch's conversation,
+ * then the surface you last left THIS agent on. Never another agent's: a
+ * remembered view used to be shared by every agent, so using one agent's
+ * command line opened the next agent on its command line too, which on an
+ * older computer can start a session nobody asked for. Anything else lands on
+ * Chat, which `shownTab` turns into the resource's own landing view.
+ */
+function openingTab(id: string, requested: string | null | undefined, welcome: boolean): Tab {
+  if (requested && TABS.some((t) => t.id === requested)) return requested as Tab;
+  if (welcome) return "chat";
+  return lastTabFor(hivraRuntimeUid(id)) ?? "chat";
+}
+
+/**
+ * The surface actually shown for `tab`. A tab the resource does not have (a
+ * stale link, a surface removed since) falls back to its landing view: a
+ * computer's desktop (Manage for a terminal-only sandbox or one with no
+ * desktop yet), a dashboard agent's dashboard, and everyone else's Chat.
+ */
+function shownTab(agent: HivraAgent, tab: Tab): Tab {
+  const def = catalogAgent(agent.type);
+  const surfaces = agentSurfacesFor(agent);
+  if (def?.surface === "computer") {
+    // gVisor sandboxes are terminal-only: they have no desktop to land on, so
+    // they open on Manage. Every other computer defers to the shared landing
+    // decision rather than hardcoding "desktop" a second time.
+    if (agent.computer_substrate === "gvisor") return "manage";
+    if (surfaces.includes(tab)) return tab;
+    const landing = resolveResourceLanding({
+      source: "hivra",
+      type: agent.type,
+      computerProfile: agent.computer_profile,
+      status: agent.status,
+      chatUrl: agent.chat_url,
+      surfaceKind: def.surface,
+      resourceKind: def.resourceKind,
+    });
+    return landing.landing === "desktop" ? "desktop" : "manage";
+  }
+  if (surfaces.includes(tab)) return tab;
+  // Dashboard agents have no "chat" tab, so the default falls back to the
+  // dashboard surface. A stale or shared link can name a surface a CLI agent
+  // lacks (Desktop, Dashboard); land on Chat rather than an empty pane.
+  return def?.surface === "dashboard" ? "aeon" : "chat";
+}
 
 function Stub({ title, body }: { title: string; body: string }) {
   return (
@@ -567,27 +619,17 @@ export default function AgentPage() {
     receivedAt: number;
     unavailable: boolean;
   } | null>(null);
-  // Start on whichever of chat/terminal the user looked at last (sticks across
-  // refreshes and navigating away). Lazy initializer keeps it SSR-safe — the tab
+  // Lazy initializer keeps it SSR-safe: the server has no recents and the tab
   // value doesn't affect the loading render, so there's no hydration flash.
-  // A ?tab= deep link (e.g. the dashboard checklist's "connect Telegram" item)
-  // wins over both the welcome default and the remembered view.
-  const [tab, setTab] = useState<Tab>(() => {
-    const requested = searchParams?.get("tab");
-    if (requested && TABS.some((t) => t.id === requested)) return requested as Tab;
-    try {
-      if (launchWelcome) {
-        window.localStorage.setItem(LAST_VIEW_KEY, "chat");
-        return "chat";
-      }
-      const saved = window.localStorage.getItem(LAST_VIEW_KEY);
-      if (saved === "chat" || saved === "terminal") return saved;
-    } catch {
-      /* SSR / storage disabled */
-    }
-    return "chat";
-  });
+  const [tab, setTab] = useState<Tab>(() => openingTab(id, searchParams?.get("tab"), launchWelcome));
   const requestedTab = searchParams?.get("tab");
+  // Another agent in the same page instance starts from its own opening tab,
+  // not from the surface the previous agent was left on.
+  const [tabAgentId, setTabAgentId] = useState(id);
+  if (tabAgentId !== id) {
+    setTabAgentId(id);
+    setTab(openingTab(id, requestedTab, launchWelcome));
+  }
   const [lastRequestedTab, setLastRequestedTab] = useState(requestedTab);
   // Reconcile a changed deep link before committing a stale surface.
   if (requestedTab !== lastRequestedTab) {
@@ -733,36 +775,23 @@ export default function AgentPage() {
 
   // Keep the current surface in the shareable URL without reloading its
   // retained sessions or adding a Back entry for every local tab click.
-  // Chat/terminal also retain their cross-computer sticky preference.
   const selectTab = useCallback((t: Tab) => {
     setTab(t);
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("tab", t);
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
-    if (t === "chat" || t === "terminal") {
-      try {
-        window.localStorage.setItem(LAST_VIEW_KEY, t);
-      } catch {
-        /* ignore */
-      }
-    }
   }, []);
 
-  // Remember this runtime, so Home can offer it back as "Continue <name>".
-  //
-  // The reader for this lived on the fleet pane from the start and never had a
-  // writer once the workspace route became a door — the only one was
-  // `UnifiedWorkspace`, which stopped being imported. This route is where the
-  // visit actually happens, so it is where the record belongs. Recording is
-  // fire-and-forget and cannot navigate: Home offers the stored selection as
-  // "Continue", and follows it only when the app itself is opened at Home.
-  useEffect(() => {
-    if (!id) return;
-    persistWorkspaceSelection({
-      uid: hivraRuntimeUid(id),
-      surface: agentTabSurface(tab),
-    });
-  }, [id, tab]);
+  // Remember this agent and the surface actually on screen, so Home can offer
+  // it back ("Pick up where you left off") and the switchers can list it under
+  // Recent and reopen it where you were. Only once the agent has loaded here:
+  // an unknown or unavailable page is not somewhere to return to. A
+  // DigitalOcean session keeps its own views and opens on its chat. Recording
+  // cannot navigate: Home follows it only when the app itself opens at Home.
+  const visitTab: Tab | null = flagOn && agent && agent.id === id
+    ? agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
+    : null;
+  useRecordVisit(id ? hivraRuntimeUid(id) : null, visitTab);
 
   // Read-only capability refresh once per computer id/session.
   // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).
@@ -808,7 +837,7 @@ export default function AgentPage() {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
     // surface, with its own Chat, Files and Manage views. The computer tabs
     // (Terminal, Browser, Git) and Skills do not apply.
-    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => go("/dashboard")} />;
+    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => { listChanged(); go("/dashboard"); }} />;
   }
 
   const def = catalogAgent(agent.type);
@@ -816,7 +845,6 @@ export default function AgentPage() {
   const cliKind = def?.cliKind ?? "claude";
   const isDashboard = def?.surface === "dashboard";
   const isComputer = def?.surface === "computer";
-  const isGvisorComputer = isComputer && agent.computer_substrate === "gvisor";
   const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
     && agent.computer_profile === "ubuntu-desktop";
   // For a computer, a running lifecycle record plus its provisioned chat_url
@@ -845,8 +873,6 @@ export default function AgentPage() {
   // bar already opens with an Agent button, so there it keeps only the status.
   const switcherKind = isComputer ? "computer" : "agent";
   const kindInBar = Boolean(surfaceGroups?.some((group) => group.label === resourceKindLabel(switcherKind)));
-  // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
-  // falls back to the dashboard surface.
   // One shared decision with the workspace: resource-landing owns "what does
   // this resource open on", so the two routes cannot drift apart again.
   const landing = resolveResourceLanding({
@@ -858,20 +884,7 @@ export default function AgentPage() {
     surfaceKind: def?.surface,
     resourceKind: def?.resourceKind,
   });
-  const effectiveTab: Tab = isComputer
-    // gVisor sandboxes are terminal-only: they have no desktop to land on, so
-    // they open on Manage. Every other computer defers to the shared landing
-    // decision rather than hardcoding "desktop" a second time.
-    ? isGvisorComputer
-      ? "manage"
-      : computerTabs.includes(tab)
-        ? tab
-        : landing.landing === "desktop" ? "desktop" : "manage"
-    : isDashboard
-      ? (tabs.some((t) => t.id === tab) ? tab : "aeon")
-      // A stale or shared link can name a surface this agent lacks (Desktop,
-      // Dashboard); land on Chat rather than an empty pane.
-      : tabs.some((t) => t.id === tab) ? tab : "chat";
+  const effectiveTab: Tab = shownTab(agent, tab);
   const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
   const unavailableTab = isComputer
     ? COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
@@ -894,8 +907,8 @@ export default function AgentPage() {
       agent={agent}
       def={def}
       plan={plan}
-      onChanged={() => setReloadKey((k) => k + 1)}
-      onDestroyed={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}
+      onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+      onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
       browserOn={browserOn}
       onBrowserChange={(e) => setBrowserOn(e)}
     />
