@@ -419,6 +419,30 @@ describe("portable provisioner source contract", () => {
     expect(updater).toContain('"$(systemctl show -p KillMode --value bux-hivra-chat.service)" != process');
   });
 
+  it("refreshes the root-owned Telegram helper on running guests with backup and rollback", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    // New guests and updated guests end up with the same root-owned helper.
+    expect(installer).toContain('install -o root -g root -m 0755 "$SRC_DIR/hivra-tg-apply" /usr/local/bin/hivra-tg-apply');
+    expect(updater).toContain('tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell hivra-tg-apply');
+    expect(updater).toContain("TG_APPLY=/usr/local/bin/hivra-tg-apply");
+    expect(updater).toContain('install -o root -g root -m 0600 "$TG_APPLY" "$BACKUP/hivra-tg-apply"');
+    expect(updater).toContain(': > "$BACKUP/hivra-tg-apply.absent"');
+    expect(updater).toContain('bash -n "$WORK/hivra-tg-apply"');
+    const rollback = shellFunction(updater, "rollback", "\n}\n");
+    expect(rollback).toContain('install -o root -g root -m 0755 "$BACKUP/hivra-tg-apply" "$TG_APPLY"');
+    expect(rollback).toContain('elif [ -f "$BACKUP/hivra-tg-apply.absent" ]; then rm -f -- "$TG_APPLY"; fi');
+    expect(rollback).toContain('"$TG_APPLY.next"');
+    // Checked before it is installed; installed before the gateway restart
+    // whose failure rolls everything back.
+    const install = updater.indexOf('install -o root -g root -m 0755 "$WORK/hivra-tg-apply" "$TG_APPLY.next"');
+    expect(install).toBeGreaterThan(updater.indexOf('bash -n "$WORK/hivra-tg-apply"'));
+    expect(install).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain('mv -f -- "$TG_APPLY.next" "$TG_APPLY"');
+    // It never rewrites the bot token or the sudoers grant.
+    expect(updater).not.toMatch(/tg\.env|>\s*\/etc\/sudoers/);
+  });
+
   it("does not default installer dependencies to a moving main/latest reference", () => {
     const installerSource = [
       source("prepare-proxmox-host.sh"),

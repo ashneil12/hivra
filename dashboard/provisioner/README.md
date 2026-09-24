@@ -209,10 +209,12 @@ is the alternative long-lived-token path.
    process environments, and they never claim release approval.
 
 For an already-running Proxmox computer, `hivra-update-guest-runtime.sh VMID IP`
-updates only the Hivra Chat connection-service assets and then verifies secure
-surface authentication plus unchanged agent identity/API-token metadata. The
-dashboard owns the lifecycle lock and performs the reboot after this helper
-returns a verified receipt; the helper never powers the VM on or off itself.
+updates only the Hivra Chat connection-service assets (plus the root-owned
+`hivra-agent-shell` and `hivra-tg-apply` helpers, backed up and rolled back with
+them) and then verifies secure surface authentication plus unchanged agent
+identity/API-token metadata. The dashboard owns the lifecycle lock and performs
+the reboot after this helper returns a verified receipt; the helper never
+powers the VM on or off itself.
 
 ## Architecture notes
 
@@ -264,6 +266,9 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   are enabled; a manual disable is left alone. The outcome is written to
   `~/.hivra/aeon-connect.json` and returned as `connect` by
   `GET /api/login/status`.
+- **Telegram connect.** `hivra-tg-apply apply` writes `/etc/bux/tg.env` and then
+  enables and restarts `bux-tg`, so a new bot token or pairing link takes
+  effect even when the bot is already running.
 
 ## Gotchas (do NOT reintroduce these)
 

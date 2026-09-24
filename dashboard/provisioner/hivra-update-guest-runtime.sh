@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Refresh the Hivra-owned guest gateway assets for one already-running Proxmox
-# VM: the chat gateway, its detached-run supervisor and unit drop-in, and the
-# agent terminal entrypoint. The caller owns the provider-operation lease and
-# FD8 host lock; this helper never powers the VM on/off and never touches agent
-# files, native CLI credentials, model credentials, or the box API token.
+# VM: the chat gateway, its detached-run supervisor and unit drop-in, the agent
+# terminal entrypoint, and the root-owned Telegram connect helper the gateway
+# runs through its scoped sudoers rule. The caller owns the provider-operation
+# lease and FD8 host lock; this helper never powers the VM on/off and never
+# touches agent files, native CLI credentials, model credentials, the Telegram
+# bot token, sudoers, or the box API token.
 set -euo pipefail
 umask 077
 
@@ -38,9 +40,11 @@ for asset in "${ASSETS[@]}"; do
   [ -f "$source" ] && [ ! -L "$source" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
 done
-[ -f "$SRC_DIR/hivra-agent-shell" ] && [ ! -L "$SRC_DIR/hivra-agent-shell" ] \
-  || { echo "runtime source asset is missing or unsafe: hivra-agent-shell" >&2; exit 1; }
-tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell
+for helper in hivra-agent-shell hivra-tg-apply; do
+  [ -f "$SRC_DIR/$helper" ] && [ ! -L "$SRC_DIR/$helper" ] \
+    || { echo "runtime source asset is missing or unsafe: $helper" >&2; exit 1; }
+done
+tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell hivra-tg-apply
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 
 GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
@@ -64,6 +68,8 @@ DEST=/opt/bux/hivra-chat
 TOKEN=/home/bux/.hivra/api-token
 KIND=/home/bux/.hivra/agent-kind
 AGENT_SHELL=/usr/local/bin/hivra-agent-shell
+# Root-owned; bux may run it only through /etc/sudoers.d/hivra-tg (unchanged here).
+TG_APPLY=/usr/local/bin/hivra-tg-apply
 # Chat turns run in detached runners; a gateway restart must leave them alone.
 DROPIN_DIR=/etc/systemd/system/bux-hivra-chat.service.d
 DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
@@ -107,10 +113,14 @@ for asset in "${ASSETS[@]}"; do
     : > "$BACKUP/$asset.absent"
   fi
 done
-[ -f "$WORK/hivra-agent-shell" ] && [ ! -L "$WORK/hivra-agent-shell" ] \
-  || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+for helper in hivra-agent-shell hivra-tg-apply; do
+  [ -f "$WORK/$helper" ] && [ ! -L "$WORK/$helper" ] \
+    || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+done
 if [ -f "$AGENT_SHELL" ] && [ ! -L "$AGENT_SHELL" ]; then install -o root -g root -m 0600 "$AGENT_SHELL" "$BACKUP/hivra-agent-shell"
 else : > "$BACKUP/hivra-agent-shell.absent"; fi
+if [ -f "$TG_APPLY" ] && [ ! -L "$TG_APPLY" ]; then install -o root -g root -m 0600 "$TG_APPLY" "$BACKUP/hivra-tg-apply"
+else : > "$BACKUP/hivra-tg-apply.absent"; fi
 if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
 else : > "$BACKUP/detached-runs.conf.absent"; fi
 
@@ -120,6 +130,7 @@ node --check "$WORK/guarded-files.cjs" >/dev/null
 node --check "$WORK/agent-zero-editor.cjs" >/dev/null
 node --check "$WORK/chat-runs.cjs" >/dev/null
 bash -n "$WORK/hivra-agent-shell"
+bash -n "$WORK/hivra-tg-apply"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -132,9 +143,11 @@ rollback() {
       rm -f -- "$DEST/$asset"
     fi
   done
-  rm -f -- "$AGENT_SHELL.next" "$DROPIN.next"
+  rm -f -- "$AGENT_SHELL.next" "$TG_APPLY.next" "$DROPIN.next"
   if [ -f "$BACKUP/hivra-agent-shell" ]; then install -o root -g root -m 0755 "$BACKUP/hivra-agent-shell" "$AGENT_SHELL"
   elif [ -f "$BACKUP/hivra-agent-shell.absent" ]; then rm -f -- "$AGENT_SHELL"; fi
+  if [ -f "$BACKUP/hivra-tg-apply" ]; then install -o root -g root -m 0755 "$BACKUP/hivra-tg-apply" "$TG_APPLY"
+  elif [ -f "$BACKUP/hivra-tg-apply.absent" ]; then rm -f -- "$TG_APPLY"; fi
   if [ -f "$BACKUP/detached-runs.conf" ]; then install -o root -g root -m 0644 "$BACKUP/detached-runs.conf" "$DROPIN"
   elif [ -f "$BACKUP/detached-runs.conf.absent" ]; then rm -f -- "$DROPIN"; fi
   systemctl daemon-reload >/dev/null 2>&1 || true
@@ -148,6 +161,9 @@ for asset in "${ASSETS[@]}"; do mv -f -- "$DEST/$asset.next" "$DEST/$asset"; don
 # ttyd starts the agent shell per connection, so the terminal needs no restart.
 install -o root -g root -m 0755 "$WORK/hivra-agent-shell" "$AGENT_SHELL.next"
 mv -f -- "$AGENT_SHELL.next" "$AGENT_SHELL"
+# The gateway runs this per Telegram connect, so no service needs a restart.
+install -o root -g root -m 0755 "$WORK/hivra-tg-apply" "$TG_APPLY.next"
+mv -f -- "$TG_APPLY.next" "$TG_APPLY"
 case "$KIND_BEFORE" in
   claude|codex|generic)
     install -d -o root -g root -m 0755 "$DROPIN_DIR"
