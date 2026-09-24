@@ -11,9 +11,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Send, Loader2, Check, X, Plus, MessageSquare, Trash2, ChevronRight, ChevronDown, Square, RotateCcw, Copy, Paperclip, PanelLeft, Brain, Cpu, ThumbsUp, ThumbsDown } from "lucide-react";
 
-import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxMessage } from "@/lib/hivra/agent-api";
+import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
-import { requestAgentWelcomeMessage, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
+import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import { getAdapter, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
@@ -212,10 +212,14 @@ interface ChatMessage {
   tools: ToolChip[];
   streaming?: boolean;
   /** "disconnected": this page lost the reply's stream, but the agent keeps
-   * working on its computer and the reply fills in once it is reachable. */
-  outcome?: "complete" | "error" | "stopped" | "disconnected";
+   * working on its computer and the reply fills in once it is reachable.
+   * "unknown": the run finished while no page was watching and the computer
+   * no longer keeps its log, so only the text that arrived here is shown. */
+  outcome?: "complete" | "error" | "stopped" | "disconnected" | "unknown";
   /** The box run producing this reply: the key for Stop and for re-attaching. */
   runId?: string;
+  /** The computer confirmed it started the run (its `_run` line arrived). */
+  started?: boolean;
 }
 
 interface Session {
@@ -264,6 +268,52 @@ function boxMsgToChat(m: BoxMessage): ChatMessage {
  };
 }
 
+// A conversation's history from the computer. A conversation the agent opened
+// itself starts with the hidden first-contact prompt, which never shows.
+function boxHistoryToChat(messages: BoxMessage[]): ChatMessage[] {
+ return messages.filter((m) => !(m.role === "user" && isHiddenWelcomeTitle(m.text))).map(boxMsgToChat);
+}
+
+// What a conversation shows before a reply adopted from a run that is still
+// going: its history from the box up to and including that turn's prompt. The
+// box may already hold the turn's output so far, which the reply replays in
+// full. A welcome is its conversation's first turn, and its prompt is hidden.
+function historyBeforeRunningTurn(history: ChatMessage[], prompt: string | null, welcome: boolean): ChatMessage[] {
+ if (welcome) return [];
+ const asked: ChatMessage[] = prompt ? [{ role: "user", text: prompt, tools: [] }] : [];
+ const lastUser = history.map((m) => m.role).lastIndexOf("user");
+ const head = (prompt || "").replace(/…$/, "");
+ if (lastUser >= 0 && head && history[lastUser].text.startsWith(head)) return history.slice(0, lastUser + 1);
+ // The box has not recorded this turn's prompt yet.
+ return [...history, ...asked];
+}
+
+// A pending reply whose run the computer no longer lists. Finished runs are kept
+// for a week, and the list holds only the newest ones, so a run that started
+// and then aged out finished while no page watched it: keep what arrived and
+// say so, not that it failed. A reply with no sign its run ever started may
+// never have reached the computer, and keeps the failure state.
+function settleMissingRun(m: ChatMessage): ChatMessage {
+ const started = Boolean(m.started || m.text.trim() || m.tools.length);
+ return { ...m, streaming: false, outcome: started ? "unknown" : "error" };
+}
+
+// A box-history stub for this conversation that has not been opened yet: the
+// placeholder a chat that learns the conversation's id (a reply adopted from
+// another device) replaces.
+function isUnopenedStubOf(s: Session, conversationId: string | null): boolean {
+ return Boolean(conversationId) && s.claudeSessionId === conversationId && s.loaded === false && s.messages.length === 0;
+}
+
+// The user's message as another device's run list names it: the computer keeps
+// the first 120 characters as the run's title.
+const RUN_TITLE_LIMIT = 120;
+function promptFromRunTitle(title: string): string | null {
+ const text = title.trim();
+ if (!text) return null;
+ return title.length >= RUN_TITLE_LIMIT ? text + "…" : text;
+}
+
 const MAX_SESSIONS = 30;
 
 // Per-session draft key — the half-typed message survives reloads + session switches.
@@ -295,6 +345,23 @@ type RunStreamResult =
  | { kind: "superseded" };
 type RunFollowResult = RunStreamResult | { kind: "missing" } | { kind: "unreachable" };
 const RUN_RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 15000];
+
+/** A session's in-flight turn, as registered for Stop and re-attach. */
+interface TurnHandle {
+ controller: AbortController;
+ /** False once the turn was stopped or the chat moved to another computer. */
+ isCurrent: () => boolean;
+ /** Unregister the turn and clear the session's busy state. */
+ finish: () => void;
+}
+/** How a turn's POST ended. "settled": the reply was closed. The rest are
+ * failures to start the turn, which each caller words for itself. */
+type TurnEnd =
+ | { kind: "settled" }
+ | { kind: "superseded" }
+ | { kind: "aborted" }
+ | { kind: "unreachable" }
+ | { kind: "refused"; status: number; reason: string };
 
 function parseNdjsonLine(line: string): Record<string, unknown> | null {
  const trimmed = line.trim();
@@ -408,11 +475,12 @@ function AssistantActivity({ tools, streaming, outcome, text }: { tools: ToolChi
   const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
   const summary = streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
     : outcome === "disconnected" ? "Still working"
+    : outcome === "unknown" ? "Finished while you were away"
     : outcome === "stopped" ? "Activity stopped"
     : outcome === "error" ? "Response failed"
     : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
   const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? `${tools.length} action${tools.length === 1 ? "" : "s"}` : "";
-  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "disconnected" ? "is-muted" : "is-done";
+  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "disconnected" || outcome === "unknown" ? "is-muted" : "is-done";
   return (
     <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
       <span className={`hivra-chat-activity-dot ${dot}`} aria-hidden />
@@ -695,31 +763,45 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // Persist on a short debounce (avoid thrashing localStorage on every token).
  // With parallel chats some session is often streaming, so waiting for idle
  // could postpone saving indefinitely; loadSessions clears stale streaming.
+ // Nothing is saved until this box's sessions are in state: saving the
+ // placeholder chat (or the previous box's chats) would overwrite its history.
  useEffect(() => {
+ if (loadedKey !== skey) return;
  const timer = window.setTimeout(() => saveSessions(skey, sessions), anyBusy ? 1000 : 0);
  return () => window.clearTimeout(timer);
- }, [sessions, anyBusy, skey]);
- // Closing the tab must not lose a reply's run id inside the save debounce:
- // the next visit uses it to pick the still-running reply back up.
+ }, [sessions, anyBusy, loadedKey, skey]);
+ // Leaving must not lose a reply's run id inside the save debounce: the next
+ // visit uses it to pick the still-running reply back up. Closing the tab fires
+ // pagehide; in-app navigation only unmounts the chat.
  const sessionsRef = useRef<Session[]>(sessions);
- useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+ const sessionsKeyRef = useRef<string | null>(null);
  useEffect(() => {
- const flush = () => saveSessions(skey, sessionsRef.current);
+ sessionsRef.current = sessions;
+ sessionsKeyRef.current = loadedKey;
+ }, [sessions, loadedKey]);
+ useEffect(() => {
+ const flush = () => {
+ if (sessionsKeyRef.current === skey) saveSessions(skey, sessionsRef.current);
+ };
  window.addEventListener("pagehide", flush);
- return () => window.removeEventListener("pagehide", flush);
+ return () => {
+ window.removeEventListener("pagehide", flush);
+ flush();
+ };
  }, [skey]);
 
  const active = useMemo(() => sessions.find((s) => s.id === activeId) || sessions[0], [sessions, activeId]);
 
  // Activate a session; if it's an unloaded box-backed stub, fetch its messages
- // from the VM first so history shows up.
+ // from the VM first so history shows up. A stub that loaded meanwhile (a
+ // running reply was adopted into it) keeps what it has.
  const selectSession = useCallback(
  (s: Session) => {
  setActiveId(s.id);
  if (matchesMedia(NARROW_QUERY)) setShowRail(false);
  if (s.claudeSessionId && !s.loaded && s.messages.length === 0) {
  void readBoxSession(boxUrl, s.claudeSessionId, token).then((msgs) => {
- setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, messages: msgs.map(boxMsgToChat), loaded: true } : x)));
+ setSessions((prev) => prev.map((x) => (x.id === s.id && !x.loaded ? { ...x, messages: boxHistoryToChat(msgs), loaded: true } : x)));
  });
  }
  },
@@ -791,84 +873,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setSessions((prev) => prev.map((s) => (s.id === sessionId ? fn(s) : s)));
  }, []);
 
- useEffect(() => {
- if (!boxHistoryChecked || hasBoxHistory || anyBusy || autoWelcomeAttemptedRef.current) return;
- if (!active || active.messages.length > 0) return;
- const welcomeSessionId = active.id;
- const flagKey = `hivra:first-welcome:${skey}`;
- try {
- if (window.localStorage.getItem(flagKey) === "1") return;
- } catch {
- // Storage is only a duplicate guard; the chat still works without it.
- }
-
- autoWelcomeAttemptedRef.current = true;
- const welcomeGeneration = requestGenerationRef.current;
- const isCurrentWelcome = () => requestGenerationRef.current === welcomeGeneration;
- setSessionBusy(welcomeSessionId, true);
- const hasFirstTask = Boolean((firstTask || "").trim());
- updateSession(welcomeSessionId, (s) => ({
- ...s,
- title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text: "", tools: [], streaming: true }],
- }));
-
- // The agent opens the conversation on its own — and when a first task was
- // captured at launch, this turn DOES it and returns the result ("do, don't
- // show"). Fire the activation event once per box (the localStorage guard
- // above makes this run at most once). Analytics must never break the chat.
- try {
- captureClient("agent_initiated_message_sent", {
- agent_id: skey,
- agent_kind: agentKind,
- lane: "hivra",
- has_first_task: hasFirstTask,
- $insert_id: `auto_first_task_${skey}`,
- });
- } catch {
- // Best-effort analytics only.
- }
-
- void requestAgentWelcomeMessage({
- boxUrl,
- token,
- agentKind,
- agentName,
- goal,
- context,
- firstTask,
- channel: "chat",
- })
- .then((text) => {
- if (!isCurrentWelcome()) return;
- updateSession(welcomeSessionId, (s) => ({
- ...s,
- title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text, tools: [], streaming: false }],
- }));
- try {
- window.localStorage.setItem(flagKey, "1");
- } catch {
- // Best-effort duplicate guard only.
- }
- })
- .catch((err) => {
- if (!isCurrentWelcome()) return;
- clientLog.warn("agent first message generation failed", {
- source: "hivra-chat",
- failureType: "hivra_chat_welcome_generation_failed",
- agentKind,
- agentName,
- }, err);
- updateSession(welcomeSessionId, (s) => ({ ...s, messages: [] }));
- })
- .finally(() => {
- if (!isCurrentWelcome()) return;
- setSessionBusy(welcomeSessionId, false);
- scrollDown();
- });
- }, [agentKind, agentName, active, anyBusy, boxHistoryChecked, boxUrl, context, firstTask, goal, hasBoxHistory, scrollDown, setSessionBusy, skey, token, updateSession]);
-
  const updateAssistant = useCallback(
  (sessionId: string, fn: (msg: ChatMessage) => ChatMessage) => {
  updateSession(sessionId, (s) => {
@@ -917,7 +921,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const handleEvent = useCallback(
  (sessionId: string, ev: Record<string, unknown>, runId?: string) => {
  const sink: ChatSink = {
- setSessionId: (id) => updateSession(sessionId, (s) => ({ ...s, claudeSessionId: id })),
+ // A box-history stub listed for this conversation before this chat knew
+ // its id (a reply adopted from another device) is the same chat: drop it.
+ setSessionId: (id) => setSessions((prev) => prev
+ .filter((s) => s.id === sessionId || s.id === activeIdRef.current || !isUnopenedStubOf(s, id))
+ .map((s) => (s.id === sessionId ? { ...s, claudeSessionId: id } : s))),
  appendText: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: m.text + t })),
  setText: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: t })),
  upsertTool: (id, patch) => upsertTool(sessionId, runId, id, patch),
@@ -927,7 +935,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (!turnState) { turnState = {}; turnStateRef.current.set(sessionId, turnState); }
  getAdapter(agentKind).parseEvent(ev, sink, turnState);
  },
- [agentKind, updateSession, updateRunMessage, upsertTool],
+ [agentKind, updateRunMessage, upsertTool],
  );
 
  // Read one NDJSON chat stream into a reply. `_done` means the run finished; a
@@ -943,7 +951,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (!isCurrent()) return false;
  const event = parseNdjsonLine(line);
  if (!event) return true;
- if (event.type === "_run") { seen.run = true; runsSupportedRef.current = true; }
+ if (event.type === "_run" && !seen.run) {
+ seen.run = true;
+ runsSupportedRef.current = true;
+ updateRunMessage(sessionId, runId, (m) => (m.started ? m : { ...m, started: true }));
+ }
  if (event.type === "_done") seen.done = event;
  try {
  handleEvent(sessionId, event, runId);
@@ -974,7 +986,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }
  return seen.done ? { kind: "done", done: seen.done } : { kind: "ended", sawRun: seen.run };
  },
- [handleEvent, scrollDown],
+ [handleEvent, scrollDown, updateRunMessage],
  );
 
  // Re-read a run from the box, rebuilding its reply from the start, and keep
@@ -997,7 +1009,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (resp.status === 404) return { kind: "missing" };
  if (!resp.ok || !resp.body) continue;
  turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState());
- updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], outcome: undefined, streaming: true }));
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], outcome: undefined, streaming: true, started: true }));
  const result = await readRunStream(resp.body, sessionId, runId, isCurrent);
  if (result.kind === "done" || result.kind === "superseded") return result;
  }
@@ -1021,6 +1033,74 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [updateRunMessage],
  );
 
+ // Register a session's in-flight turn so Stop finds its controller and run id,
+ // and every async step can tell it is still that session's current turn.
+ const beginTurn = useCallback(
+ (sessionId: string, runId: string): TurnHandle => {
+ const controller = new AbortController();
+ const generation = requestGenerationRef.current;
+ const isCurrent = () => requestGenerationRef.current === generation && abortRef.current.get(sessionId) === controller;
+ abortRef.current.set(sessionId, controller);
+ runRef.current.set(sessionId, runId);
+ turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState()); // fresh per-turn parser state
+ setSessionBusy(sessionId, true);
+ const finish = () => {
+ if (abortRef.current.get(sessionId) === controller) abortRef.current.delete(sessionId);
+ if (runRef.current.get(sessionId) === runId) runRef.current.delete(sessionId);
+ turnStateRef.current.delete(sessionId);
+ setSessionBusy(sessionId, false);
+ };
+ return { controller, isCurrent, finish };
+ },
+ [agentKind, setSessionBusy],
+ );
+
+ // Carry a turn from its POST to its end, writing into the reply `runId` names.
+ // The box runs the turn detached, so a stream that drops mid-turn re-attaches
+ // through the run's log. A normal send and the first-contact welcome share
+ // this path; each words its own failure to start.
+ const driveTurn = useCallback(
+ async (sessionId: string, runId: string, turn: TurnHandle, post: (signal: AbortSignal) => Promise<Response>, onAccepted?: () => void): Promise<TurnEnd> => {
+ let resp: Response;
+ try {
+ resp = await post(turn.controller.signal);
+ } catch (e) {
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ // User stops invalidate the turn before aborting. Any current failure
+ // here is an unexpected transport error.
+ if ((e as Error).name === "AbortError") return { kind: "aborted" };
+ // The request may have reached the box before the connection failed.
+ const recovered = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, 2);
+ if (recovered.kind === "superseded") return recovered;
+ if (recovered.kind !== "done") return { kind: "unreachable" };
+ finalizeRun(sessionId, runId, recovered.done);
+ return { kind: "settled" };
+ }
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (!resp.ok || !resp.body) {
+ // 409 (this conversation is still working) and 429 (too many runs) carry a
+ // reason worth showing as-is.
+ const detail = resp.status === 409 || resp.status === 429 ? (await resp.json().catch(() => null)) as { error?: unknown } | null : null;
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ return { kind: "refused", status: resp.status, reason: typeof detail?.error === "string" ? detail.error : "" };
+ }
+ onAccepted?.();
+ let result: RunFollowResult = await readRunStream(resp.body, sessionId, runId, turn.isCurrent);
+ if (result.kind === "superseded") return result;
+ if (result.kind !== "done" && result.sawRun) {
+ // The run keeps going on the box when the stream drops; pick it back up.
+ result = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, RUN_RETRY_DELAYS_MS.length);
+ if (result.kind === "superseded") return result;
+ }
+ if (result.kind === "done") finalizeRun(sessionId, runId, result.done);
+ else if (result.kind === "ended") finalizeRun(sessionId, runId, null);
+ else if (result.kind === "unreachable") updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "disconnected" }));
+ else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
+ return { kind: "settled" };
+ },
+ [finalizeRun, followRun, readRunStream, updateRunMessage],
+ );
+
  const send = useCallback(
  async (raw: string) => {
  const sessionId = activeIdRef.current;
@@ -1034,22 +1114,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setAttachments([]);
  setAttachError(null);
  try { window.localStorage.removeItem(draftKey(skey, sessionId)); } catch { /* ignore */ }
- setSessionBusy(sessionId, true);
  setLastFailed(sessionId, null);
  const runId = newRunId();
- const controller = new AbortController();
- const requestGeneration = requestGenerationRef.current;
- const isCurrentRequest = () =>
- requestGenerationRef.current === requestGeneration && abortRef.current.get(sessionId) === controller;
- abortRef.current.set(sessionId, controller);
- runRef.current.set(sessionId, runId);
- turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState()); // fresh per-turn parser state
- const finishTurn = () => {
- if (abortRef.current.get(sessionId) === controller) abortRef.current.delete(sessionId);
- if (runRef.current.get(sessionId) === runId) runRef.current.delete(sessionId);
- turnStateRef.current.delete(sessionId);
- setSessionBusy(sessionId, false);
- };
+ const turn = beginTurn(sessionId, runId);
  const shownText = images.length ? text + "\n\n📎 " + images.map((p) => p.split("/").pop()).join(", ") : text;
  updateSession(sessionId, (s) => ({
  ...s,
@@ -1066,9 +1133,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  stickToBottomRef.current = true; // a fresh send re-engages following
  followIfOpen(true);
 
- let resp: Response;
- try {
- resp = await fetch(`${boxUrl.replace(/\/$/, "")}/api/chat`, {
+ const post = (signal: AbortSignal) => fetch(`${boxUrl.replace(/\/$/, "")}/api/chat`, {
  method: "POST",
  headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
  // `reasoning` carries the composer's "Think" toggle. The box's /api/chat
@@ -1083,45 +1148,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // `detach` asks the box to keep the run going when this page goes away
  // (closed tab, sleeping laptop, dropped network). Only Stop ends it.
  body: JSON.stringify({ message: text, sessionId: resumeId, detach: true, runId, clientRef: sessionId, ...(images.length ? { images } : {}), ...(thinkRef.current ? { reasoning: true } : {}) }),
- signal: controller.signal,
+ signal,
  });
- } catch (e) {
- if (!isCurrentRequest()) return;
- // User stops invalidate this request before aborting. Any current failure
- // here is an unexpected transport error.
- if ((e as Error).name === "AbortError") {
- updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
- } else {
- // The request may have reached the box before the connection failed.
- const recovered = await followRun(sessionId, runId, isCurrentRequest, controller.signal, 2);
- if (recovered.kind === "superseded") return;
- if (recovered.kind === "done") {
- finalizeRun(sessionId, runId, recovered.done);
- finishTurn();
- return;
- }
- updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
- setLastFailed(sessionId, text);
- }
- finishTurn();
- return;
- }
- if (!isCurrentRequest()) return;
- if (!resp.ok || !resp.body) {
- // 409 (this conversation is still working) and 429 (too many runs) carry a
- // reason worth showing as-is.
- const detail = resp.status === 409 || resp.status === 429 ? (await resp.json().catch(() => null)) as { error?: unknown } | null : null;
- const reason = typeof detail?.error === "string" ? detail.error : "";
- updateRunMessage(sessionId, runId, (m) => ({ ...m, text: reason ? "⚠ " + reason : "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
- setLastFailed(sessionId, text);
- finishTurn();
- return;
- }
-
  // agent_first_message_sent — the funnel's Hivra-lane activation event.
  // Fires once per box (localStorage guard keyed on the stable storage
  // key); the $insert_id makes PostHog dedupe any double-fire across
  // devices/reinstalls best-effort. Analytics must never break the chat.
+ const onAccepted = () => {
  try {
  const firstMessageKey = "hermes:first_message_sent:" + skey;
  if (!window.localStorage.getItem(firstMessageKey)) {
@@ -1137,23 +1170,115 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  } catch {
  // localStorage unavailable (private mode) — skip the once-guard.
  }
+ };
 
- let result: RunFollowResult = await readRunStream(resp.body, sessionId, runId, isCurrentRequest);
- if (result.kind === "superseded") return;
- if (result.kind !== "done" && result.sawRun) {
- // The run keeps going on the box when the stream drops; pick it back up.
- result = await followRun(sessionId, runId, isCurrentRequest, controller.signal, RUN_RETRY_DELAYS_MS.length);
- if (result.kind === "superseded") return;
+ const end = await driveTurn(sessionId, runId, turn, post, onAccepted);
+ if (end.kind === "superseded") return;
+ if (end.kind === "aborted") {
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
+ } else if (end.kind !== "settled") {
+ const note = end.kind === "unreachable" ? "⚠ Couldn't reach your agent. It may be starting up — try again in a moment."
+ : end.reason ? "⚠ " + end.reason : "⚠ Your agent hit an error (HTTP " + end.status + "). Try again.";
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note, streaming: false, outcome: "error" }));
+ setLastFailed(sessionId, text);
  }
- if (result.kind === "done") finalizeRun(sessionId, runId, result.done);
- else if (result.kind === "ended") finalizeRun(sessionId, runId, null);
- else if (result.kind === "unreachable") updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "disconnected" }));
- else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
- finishTurn();
- followIfOpen();
+ turn.finish();
+ if (end.kind === "settled") followIfOpen();
  },
- [agentKind, boxUrl, finalizeRun, followRun, readRunStream, scrollDown, sessions, setLastFailed, setSessionBusy, updateSession, updateRunMessage, token, skey],
+ [agentKind, beginTurn, boxUrl, driveTurn, scrollDown, sessions, setLastFailed, updateSession, updateRunMessage, token, skey],
  );
+
+ // The agent opens a new computer's first chat on its own: a hidden prompt
+ // asks it to introduce itself or, when the owner gave a first task at launch,
+ // to DO that task and return the result ("do, don't show"). It is a detached
+ // run like any send: a reload, a closed tab or a dropped network re-attaches
+ // to it (resumeDetachedRuns), Stop ends it, and the conversation it starts is
+ // the owner's to continue. Only the reply shows; the prompt never does.
+ useEffect(() => {
+ if (!boxHistoryChecked || hasBoxHistory || anyBusy || autoWelcomeAttemptedRef.current) return;
+ if (!active || active.messages.length > 0) return;
+ const welcomeSessionId = active.id;
+ const flagKey = `hivra:first-welcome:${skey}`;
+ try {
+ if (window.localStorage.getItem(flagKey) === "1") return;
+ } catch {
+ // Storage is only a duplicate guard; the chat still works without it.
+ }
+ // Marked before the turn starts, not when it ends: the run outlives this
+ // page, so a reload must re-attach to it instead of starting another.
+ const markWelcomed = (welcomed: boolean) => {
+ try {
+ if (welcomed) window.localStorage.setItem(flagKey, "1");
+ else window.localStorage.removeItem(flagKey);
+ } catch {
+ // Best-effort duplicate guard only.
+ }
+ };
+
+ autoWelcomeAttemptedRef.current = true;
+ markWelcomed(true);
+ const hasFirstTask = Boolean((firstTask || "").trim());
+ const runId = newRunId();
+ const turn = beginTurn(welcomeSessionId, runId);
+ updateSession(welcomeSessionId, (s) => ({
+ ...s,
+ title: s.title === "New chat" ? "Welcome" : s.title,
+ messages: [{ role: "assistant", text: "", tools: [], streaming: true, runId }],
+ }));
+
+ // Fire the activation event once per box (the localStorage guard above
+ // makes this run at most once). Analytics must never break the chat.
+ try {
+ captureClient("agent_initiated_message_sent", {
+ agent_id: skey,
+ agent_kind: agentKind,
+ lane: "hivra",
+ has_first_task: hasFirstTask,
+ $insert_id: `auto_first_task_${skey}`,
+ });
+ } catch {
+ // Best-effort analytics only.
+ }
+
+ const post = (signal: AbortSignal) => startAgentWelcomeRun({
+ boxUrl,
+ token,
+ agentName,
+ goal,
+ context,
+ firstTask,
+ channel: "chat",
+ runId,
+ clientRef: welcomeSessionId,
+ signal,
+ });
+ void driveTurn(welcomeSessionId, runId, turn, post).then((end) => {
+ if (end.kind === "superseded") return;
+ if (end.kind !== "settled") {
+ clientLog.warn("agent first message generation failed", {
+ source: "hivra-chat",
+ failureType: "hivra_chat_welcome_generation_failed",
+ agentKind,
+ agentName,
+ reason: end.kind,
+ ...(end.kind === "refused" ? { status: end.status } : {}),
+ });
+ // The turn never got going: fall back to the starter suggestions, and
+ // let the next visit try the welcome again.
+ markWelcomed(false);
+ updateSession(welcomeSessionId, (s) => ({ ...s, messages: s.messages.filter((m) => m.runId !== runId) }));
+ } else {
+ // A turn that finished without a word (an older runtime's empty
+ // stream) falls back to the starter suggestions, as it always has.
+ updateSession(welcomeSessionId, (s) => ({
+ ...s,
+ messages: s.messages.filter((m) => !(m.runId === runId && m.outcome === "complete" && !m.text.trim() && m.tools.length === 0)),
+ }));
+ }
+ turn.finish();
+ if (activeIdRef.current === welcomeSessionId) scrollDown();
+ });
+ }, [agentKind, agentName, active, anyBusy, beginTurn, boxHistoryChecked, boxUrl, context, driveTurn, firstTask, goal, hasBoxHistory, scrollDown, skey, token, updateSession]);
 
  // Stop a session's in-flight turn. The box keeps a detached run going without
  // this page, so Stop asks the box to end it; aborting the fetch also stops
@@ -1185,49 +1310,125 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // or rebuild it from the run's log if it finished while this page was away.
  const resumeRun = useCallback(async (sessionId: string, runId: string) => {
  if (abortRef.current.has(sessionId)) return;
- const controller = new AbortController();
- const generation = requestGenerationRef.current;
- const isCurrent = () => requestGenerationRef.current === generation && abortRef.current.get(sessionId) === controller;
- abortRef.current.set(sessionId, controller);
- runRef.current.set(sessionId, runId);
- setSessionBusy(sessionId, true);
- const result = await followRun(sessionId, runId, isCurrent, controller.signal, 3);
+ const turn = beginTurn(sessionId, runId);
+ const result = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, 3);
  if (result.kind === "superseded") return;
  if (result.kind === "done") finalizeRun(sessionId, runId, result.done);
- else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: result.kind === "missing" ? "error" : "disconnected" }));
- if (abortRef.current.get(sessionId) === controller) abortRef.current.delete(sessionId);
- if (runRef.current.get(sessionId) === runId) runRef.current.delete(sessionId);
- turnStateRef.current.delete(sessionId);
- setSessionBusy(sessionId, false);
- }, [finalizeRun, followRun, setSessionBusy, updateRunMessage]);
+ else if (result.kind === "missing") updateRunMessage(sessionId, runId, settleMissingRun);
+ else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "disconnected" }));
+ turn.finish();
+ }, [beginTurn, finalizeRun, followRun, updateRunMessage]);
 
- // Replies this page last saw unfinished (tab closed, laptop asleep, network
- // lost) are resumed from the box when the chat opens or comes back into view.
+ // Runs adopted from the box's list since this chat opened, so a wake-up that
+ // lands before an adopted reply is in state never follows it twice.
+ const adoptedRunsRef = useRef(new Set<string>());
+ useEffect(() => {
+ adoptedRunsRef.current = new Set();
+ }, [boxUrl, skey]);
+
+ // Show a turn this page did not start (another device, or a save that never
+ // landed): attach its reply to the conversation it belongs to, or open it as a
+ // chat of its own, and follow it live.
+ const adoptRun = useCallback(async (run: BoxChatRun) => {
+ adoptedRunsRef.current.add(run.runId);
+ const generation = requestGenerationRef.current;
+ const findTarget = () => sessionsRef.current.find((s) => s.id === run.clientRef)
+ ?? (run.agentSessionId ? sessionsRef.current.find((s) => s.claudeSessionId === run.agentSessionId) : undefined);
+ const unloaded = (s: Session | undefined) => !s || (s.loaded === false && s.messages.length === 0);
+ // A welcome turn's title is its hidden prompt, which never shows.
+ const welcome = isHiddenWelcomeTitle(run.title);
+ const prompt = welcome ? null : promptFromRunTitle(run.title);
+ const asked: ChatMessage[] = prompt ? [{ role: "user", text: prompt, tools: [] }] : [];
+ const reply: ChatMessage = { role: "assistant", text: "", tools: [], streaming: true, runId: run.runId, started: true };
+ // A conversation this page has not loaded shows its earlier turns too.
+ let before = welcome ? [] : asked;
+ if (run.agentSessionId && unloaded(findTarget())) {
+ const history = boxHistoryToChat(await readBoxSession(boxUrl, run.agentSessionId, token));
+ if (requestGenerationRef.current !== generation) return;
+ before = historyBeforeRunningTurn(history, prompt, welcome);
+ }
+ const target = findTarget();
+ if (target && abortRef.current.has(target.id)) {
+ // That chat is busy with a turn of its own: look again on the next wake-up.
+ adoptedRunsRef.current.delete(run.runId);
+ return;
+ }
+ let sessionId: string;
+ if (target) {
+ sessionId = target.id;
+ updateSession(target.id, (s) => {
+ if (unloaded(s)) return { ...s, messages: [...before, reply], loaded: true };
+ // A chat that already shows the prompt keeps one copy.
+ const last = s.messages[s.messages.length - 1];
+ const shown = last?.role === "user" && Boolean(prompt) && last.text.startsWith((prompt || "").replace(/…$/, ""));
+ return { ...s, messages: [...s.messages, ...(shown ? [] : asked), reply] };
+ });
+ } else {
+ const created: Session = {
+ id: newId(),
+ title: welcome ? "Welcome" : (prompt || "Chat").slice(0, 42),
+ claudeSessionId: run.agentSessionId,
+ createdAt: Date.parse(run.createdAt) || Date.now(),
+ messages: [...before, reply],
+ ...(run.agentSessionId ? { loaded: true } : {}),
+ };
+ sessionId = created.id;
+ // The box-history pull runs alongside this and may have listed the
+ // conversation meanwhile; this chat, with its history loaded, replaces it.
+ setSessions((prev) => [created, ...prev.filter((s) => s.id === activeIdRef.current || !isUnopenedStubOf(s, run.agentSessionId))]);
+ }
+ void resumeRun(sessionId, run.runId);
+ }, [boxUrl, resumeRun, token, updateSession]);
+
+ // When the chat opens or comes back into view, catch up with the box: replies
+ // this page last saw unfinished (tab closed, laptop asleep, network lost) are
+ // resumed, and turns still running that this page does not know about (started
+ // on another device) are adopted.
  const resumingRef = useRef(false);
  const resumeDetachedRuns = useCallback(async () => {
  if (resumingRef.current) return;
- const pending: Array<{ sessionId: string; runId: string }> = [];
- for (const s of sessionsRef.current) {
- if (abortRef.current.has(s.id)) continue;
- const m = s.messages.find((msg) => msg.role === "assistant" && msg.runId && !msg.streaming && (msg.outcome === undefined || msg.outcome === "disconnected"));
- if (m?.runId) pending.push({ sessionId: s.id, runId: m.runId });
- }
- if (pending.length === 0) return;
  resumingRef.current = true;
+ const generation = requestGenerationRef.current;
  try {
  const runs = await listBoxChatRuns(boxUrl, token);
  // An older runtime or an unreachable box: try again on the next wake-up.
- if (!runs) return;
+ if (!runs || requestGenerationRef.current !== generation) return;
  runsSupportedRef.current = true;
  const known = new Set(runs.map((run) => run.runId));
- for (const { sessionId, runId } of pending) {
- if (known.has(runId)) void resumeRun(sessionId, runId);
- else updateRunMessage(sessionId, runId, (m) => ({ ...m, outcome: "error" }));
+ const tracked = new Set<string>([...runRef.current.values(), ...adoptedRunsRef.current]);
+ for (const s of sessionsRef.current) {
+ for (const m of s.messages) if (m.runId) tracked.add(m.runId);
+ if (abortRef.current.has(s.id)) continue;
+ const m = s.messages.find((msg) => msg.role === "assistant" && msg.runId && !msg.streaming && (msg.outcome === undefined || msg.outcome === "disconnected"));
+ if (!m?.runId) continue;
+ if (known.has(m.runId)) void resumeRun(s.id, m.runId);
+ else updateRunMessage(s.id, m.runId, settleMissingRun);
+ }
+ for (const run of runs) {
+ if (run.state === "running" && !tracked.has(run.runId)) void adoptRun(run);
  }
  } finally {
  resumingRef.current = false;
  }
- }, [boxUrl, resumeRun, token, updateRunMessage]);
+ }, [adoptRun, boxUrl, resumeRun, token, updateRunMessage]);
+
+ // A reply whose run log aged out ("unknown") is complete in the box's own
+ // history of the conversation: show that history in place of this chat's copy.
+ const showBoxHistory = useCallback((sessionId: string) => {
+ const session = sessionsRef.current.find((s) => s.id === sessionId);
+ if (!session?.claudeSessionId || abortRef.current.has(sessionId)) return;
+ const generation = requestGenerationRef.current;
+ void readBoxSession(boxUrl, session.claudeSessionId, token).then((msgs) => {
+ if (requestGenerationRef.current !== generation) return;
+ if (msgs.length === 0) {
+ clientLog.warn("chat history could not be read from the computer", { source: "hivra-chat", failureType: "hivra_chat_history_read_failed", agentKind });
+ return;
+ }
+ // A turn started meanwhile keeps its live reply; try again once it ends.
+ if (abortRef.current.has(sessionId)) return;
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, messages: boxHistoryToChat(msgs), loaded: true } : s)));
+ });
+ }, [agentKind, boxUrl, token]);
  useEffect(() => {
  if (loadedKey !== skey) return;
  void resumeDetachedRuns();
@@ -1331,6 +1532,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }, [active?.messages, scrollDown]);
 
  const messages = active?.messages || [];
+ // The open chat's conversation on the box, when it has one to reload from.
+ const historySessionId = active?.claudeSessionId ? active.id : null;
  // Welcome suggestions: the chosen goal's three concrete starters (falls back to
  // the general-purpose goal so there's always something to tap). Tapping one
  // sends it as the first message — the seeded agent answers in character.
@@ -1539,6 +1742,21 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  )}
  </div>
  {m.role === "assistant" ? <ToolHistory message={m} /> : null}
+ {m.role === "assistant" && !m.streaming && m.outcome === "unknown" ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label="Finished while you were away">
+ {historySessionId ? "Finished while you were away — open the history to see the full reply" : "Finished while you were away"}
+ </div>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && m.outcome === "unknown" && historySessionId ? (
+ <button
+ type="button"
+ onClick={() => showBoxHistory(historySessionId)}
+ className={`mono ${styles.msgAction}`}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
+ >
+ <MessageSquare size={11} /> Open the history
+ </button>
+ ) : null}
  {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error" || m.outcome === "disconnected") ? (
  <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : m.outcome === "disconnected" ? "Reconnecting to the agent" : "Response failed"}>
  {m.outcome === "stopped" ? "Stopped" : m.outcome === "disconnected" ? "Connection lost. Your agent keeps working; this reply fills in when it reconnects." : "Could not complete response"}

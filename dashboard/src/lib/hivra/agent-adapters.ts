@@ -1,9 +1,10 @@
 // One place that knows how each CLI agent's event stream maps to chat-UI ops.
 //
 // Adding a new CLI agent = add one AgentAdapter to ADAPTERS (and a matching
-// adapter on the box). The SAME parseEvent drives BOTH the live chat
-// (HivraChat) and the welcome extraction (agent-welcome), so those two can never
-// diverge — that divergence was the "welcome rendered twice" bug.
+// adapter on the box). The SAME parseEvent drives every chat turn in HivraChat,
+// the first-contact welcome included, and extractAssistantText for
+// non-interactive turns, so those can never diverge — that divergence was the
+// "welcome rendered twice" bug.
 //
 // Agents fall in two shapes:
 //   - structured   (claude `--output-format stream-json`, codex `--json`): rich
@@ -26,7 +27,7 @@ export interface ToolPatch {
 }
 
 // The UI operations a parser may perform. HivraChat wires these to React state;
-// the welcome extractor wires them to an in-memory buffer. A parser never
+// extractAssistantText wires them to an in-memory buffer. A parser never
 // touches React or the DOM directly — it only emits these intents.
 export interface ChatSink {
   /** Record the agent's resume id (claude session_id / codex thread_id). */
@@ -265,7 +266,7 @@ export function getAdapter(kind: string | null | undefined): AgentAdapter {
 
 /**
  * Run an agent's parser over a list of stream events and return the assistant
- * text it produced — used for non-interactive turns (e.g. the welcome message).
+ * text it produced — for non-interactive turns that need only the final text.
  * Shares the exact parser the live chat uses, so the two never diverge.
  */
 export function extractAssistantText(events: Record<string, unknown>[], kind: string): string {
