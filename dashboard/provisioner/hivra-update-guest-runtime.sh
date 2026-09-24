@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Refresh the Hivra-owned guest gateway assets for one already-running Proxmox
-# VM. The caller owns the provider-operation lease and FD8 host lock; this
-# helper never powers the VM on/off and never touches agent files, native CLI
-# credentials, model credentials, or the box API token.
+# VM: the chat gateway, its detached-run supervisor and unit drop-in, and the
+# agent terminal entrypoint. The caller owns the provider-operation lease and
+# FD8 host lock; this helper never powers the VM on/off and never touches agent
+# files, native CLI credentials, model credentials, or the box API token.
 set -euo pipefail
 umask 077
 
@@ -31,13 +32,15 @@ trap cleanup EXIT
 [ "$(qm status "$VMID" 2>/dev/null | awk '{print $2}')" = "running" ] \
   || { echo "VMID $VMID must be running before its runtime can be updated" >&2; exit 1; }
 
-ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js)
+ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
 for asset in "${ASSETS[@]}"; do
   source="$SRC_DIR/hivra-chat/$asset"
   [ -f "$source" ] && [ ! -L "$source" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
 done
-tar -C "$SRC_DIR/hivra-chat" -czf "$ARCHIVE" -- "${ASSETS[@]}"
+[ -f "$SRC_DIR/hivra-agent-shell" ] && [ ! -L "$SRC_DIR/hivra-agent-shell" ] \
+  || { echo "runtime source asset is missing or unsafe: hivra-agent-shell" >&2; exit 1; }
+tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 
 GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
@@ -60,7 +63,11 @@ CHAT_PORT="${HIVRA_CHAT_PORT:?}"
 DEST=/opt/bux/hivra-chat
 TOKEN=/home/bux/.hivra/api-token
 KIND=/home/bux/.hivra/agent-kind
-ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js)
+AGENT_SHELL=/usr/local/bin/hivra-agent-shell
+# Chat turns run in detached runners; a gateway restart must leave them alone.
+DROPIN_DIR=/etc/systemd/system/bux-hivra-chat.service.d
+DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
+ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
 WORK="$(mktemp -d /opt/bux/.hivra-runtime-update.XXXXXX)"
 ROOT_ARCHIVE="$WORK/runtime.tar.gz"
 BACKUP_ROOT=/var/lib/hivra/runtime-backups
@@ -100,11 +107,19 @@ for asset in "${ASSETS[@]}"; do
     : > "$BACKUP/$asset.absent"
   fi
 done
+[ -f "$WORK/hivra-agent-shell" ] && [ ! -L "$WORK/hivra-agent-shell" ] \
+  || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+if [ -f "$AGENT_SHELL" ] && [ ! -L "$AGENT_SHELL" ]; then install -o root -g root -m 0600 "$AGENT_SHELL" "$BACKUP/hivra-agent-shell"
+else : > "$BACKUP/hivra-agent-shell.absent"; fi
+if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
+else : > "$BACKUP/detached-runs.conf.absent"; fi
 
 node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null
 node --check "$WORK/guarded-files.cjs" >/dev/null
 node --check "$WORK/agent-zero-editor.cjs" >/dev/null
+node --check "$WORK/chat-runs.cjs" >/dev/null
+bash -n "$WORK/hivra-agent-shell"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -117,6 +132,12 @@ rollback() {
       rm -f -- "$DEST/$asset"
     fi
   done
+  rm -f -- "$AGENT_SHELL.next" "$DROPIN.next"
+  if [ -f "$BACKUP/hivra-agent-shell" ]; then install -o root -g root -m 0755 "$BACKUP/hivra-agent-shell" "$AGENT_SHELL"
+  elif [ -f "$BACKUP/hivra-agent-shell.absent" ]; then rm -f -- "$AGENT_SHELL"; fi
+  if [ -f "$BACKUP/detached-runs.conf" ]; then install -o root -g root -m 0644 "$BACKUP/detached-runs.conf" "$DROPIN"
+  elif [ -f "$BACKUP/detached-runs.conf.absent" ]; then rm -f -- "$DROPIN"; fi
+  systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl restart bux-hivra-chat.service >/dev/null 2>&1 || true
 }
 
@@ -124,6 +145,18 @@ for asset in "${ASSETS[@]}"; do
   install -o bux -g bux -m 0644 "$WORK/$asset" "$DEST/$asset.next"
 done
 for asset in "${ASSETS[@]}"; do mv -f -- "$DEST/$asset.next" "$DEST/$asset"; done
+# ttyd starts the agent shell per connection, so the terminal needs no restart.
+install -o root -g root -m 0755 "$WORK/hivra-agent-shell" "$AGENT_SHELL.next"
+mv -f -- "$AGENT_SHELL.next" "$AGENT_SHELL"
+case "$KIND_BEFORE" in
+  claude|codex|generic)
+    install -d -o root -g root -m 0755 "$DROPIN_DIR"
+    printf '%s\n' '[Service]' 'KillMode=process' > "$DROPIN.next"
+    chmod 0644 "$DROPIN.next"
+    mv -f -- "$DROPIN.next" "$DROPIN"
+    ;;
+esac
+if ! systemctl daemon-reload; then rollback; exit 1; fi
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
 READY=0
@@ -139,6 +172,13 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [ "$READY" != 1 ]; then rollback; echo "updated runtime did not advertise secure surface authentication" >&2; exit 1; fi
+case "$KIND_BEFORE" in
+  claude|codex|generic)
+    if [ "$(systemctl show -p KillMode --value bux-hivra-chat.service)" != process ]; then
+      rollback; echo "chat gateway would still end in-flight runs on restart" >&2; exit 1
+    fi
+    ;;
+esac
 
 TOKEN_HASH_AFTER="$(sha256sum "$TOKEN" | awk '{print $1}')"
 TOKEN_INODE_AFTER="$(stat -c '%d:%i:%u:%g:%a' "$TOKEN")"

@@ -1127,3 +1127,26 @@ export async function listDigitalOceanModelsForConnection(userId: string, connec
     throw providerError(error, "model list");
   }
 }
+
+export type DigitalOceanBalanceView =
+  | { state: "unreadable" }
+  | { state: "ok" | "empty" | "blocked"; balance: string | null; autoPrepay: boolean; checkedAt: string };
+
+/**
+ * The team's Harness Runtime prepaid balance, observed now. A token without
+ * billing access is reported as unreadable rather than as an error, because
+ * it can still launch; DigitalOcean then enforces the balance at launch.
+ */
+export async function readDigitalOceanBalance(userId: string, connectionId: string): Promise<DigitalOceanBalanceView> {
+  const loaded = await loadDigitalOceanConnectionSecret(userId, connectionId).catch((error) => { throw providerError(error, "balance check"); });
+  let status: Awaited<ReturnType<DigitalOceanManagedAgentsClient["getPrepaymentStatus"]>>;
+  try {
+    status = await deps.client(loaded.apiToken).getPrepaymentStatus();
+  } catch (error) {
+    throw providerError(error, "balance check");
+  }
+  if (!status) return { state: "unreadable" };
+  const amount = status.balance === null ? null : Number(status.balance);
+  const state = status.blocked ? "blocked" : amount !== null && amount <= 0 ? "empty" : "ok";
+  return { state, balance: status.balance, autoPrepay: status.autoPrepay, checkedAt: deps.now().toISOString() };
+}

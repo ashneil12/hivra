@@ -55,6 +55,14 @@ describe("ComputerCatalogPage", () => {
       "href",
       "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop",
     );
+    // Linux Sandbox is launchable from the catalog, not only from Launch.
+    expect(
+      screen.getByRole("link", { name: /Launch Linux Sandbox/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/launch?kind=computer&start=1&profile=linux-terminal",
+    );
+    expect(screen.getByText(/Add one in Capacity first/i, { selector: "article#linux-sandbox p" })).toBeInTheDocument();
   });
 
   it("brings an opened OS catalog below the fold to the top under its heading", async () => {
@@ -112,7 +120,7 @@ describe("ComputerCatalogPage", () => {
     }
   });
 
-  it("keeps Omarchy's prepared path while presenting Windows as customer capacity", async () => {
+  it("keeps Omarchy's prepared path while presenting Windows as needing your own server", async () => {
     render(<ComputerCatalogPage />);
 
     await screen.findByText("No computers yet");
@@ -131,10 +139,10 @@ describe("ComputerCatalogPage", () => {
       within(omarchyCard).getByText("Full Linux desktop in your browser"),
     ).toBeInTheDocument();
     // Substrate details stay available, but behind a collapsed disclosure.
-    expect(screen.getAllByText(/prepared Canary computer/i)).toHaveLength(1);
-    expect(screen.getByText(/prepared Canary computer/i)).not.toBeVisible();
+    expect(screen.getAllByText(/^Prepared computer\.$/i)).toHaveLength(1);
+    expect(screen.getByText(/^Prepared computer\.$/i)).not.toBeVisible();
     fireEvent.click(within(omarchyCard).getByText("Technical details"));
-    expect(screen.getByText(/prepared Canary computer/i)).toBeVisible();
+    expect(screen.getByText(/^Prepared computer\.$/i)).toBeVisible();
     expect(omarchyCard).not.toHaveTextContent(/Canary ready/);
     expect(
       screen.getByRole("link", { name: /Launch Omarchy/i }),
@@ -146,7 +154,7 @@ describe("ComputerCatalogPage", () => {
       screen.getByRole("heading", { name: "Windows" }),
     ).toBeInTheDocument();
     const windowsCard = screen.getByRole("heading", { name: "Windows" }).closest("article");
-    expect(windowsCard).toHaveTextContent("Connect compatible customer-owned or self-hosted capacity to continue.");
+    expect(windowsCard).toHaveTextContent("Needs your own server that can run Windows. Add one in Capacity first.");
     expect(windowsCard).not.toHaveTextContent(/Canary ready|prepared Canary|evaluation/i);
     expect(
       screen.getByRole("link", { name: /Launch Windows/i }),

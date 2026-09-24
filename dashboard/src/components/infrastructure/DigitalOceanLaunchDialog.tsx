@@ -4,7 +4,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowLeft, ArrowRight, Bot, CheckCircle2, LockKeyhole, Loader2, Play, ShieldCheck, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 
-import { launchManagedSession, listDigitalOceanModels } from "@/lib/hivra/managed-session-client";
+import { formatDigitalOceanBalance, launchManagedSession, listDigitalOceanModels } from "@/lib/hivra/managed-session-client";
 import {
   DIGITALOCEAN_HARNESS_LABELS,
   ManagedSessionLaunchSchema,
@@ -19,6 +19,7 @@ import {
 } from "@/lib/infrastructure/contracts";
 
 import styles from "./Infrastructure.module.css";
+import { DIGITALOCEAN_BILLING_URL, useDigitalOceanBalance } from "./useDigitalOceanBalance";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
 const DEFAULT_SIZE: DigitalOceanSandboxSize = "mars-2vcpu-4gb";
@@ -64,6 +65,8 @@ export function DigitalOceanLaunchDialog({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const ids = { name: useId(), key: useId(), model: useId(), task: useId(), size: useId() };
   const dialogRef = useInfrastructureDialog({ onClose, closeOnEscape: !launching, initialFocusRef: closeButtonRef, returnFocusRef });
+  const prepaid = useDigitalOceanBalance(connection.id, true);
+  const lowBalance = prepaid.balance?.state === "empty" || prepaid.balance?.state === "blocked";
   const vendorKey = DIGITALOCEAN_HARNESS_LABELS[harness].vendorKey;
   const effectiveMode = vendorKey ? modelMode : "digitalocean-inference";
   const wantModels = effectiveMode === "digitalocean-inference";
@@ -158,6 +161,22 @@ export function DigitalOceanLaunchDialog({
             </div>
           ) : (
           <form onSubmit={handleSubmit} noValidate>
+            {lowBalance ? (
+              <div className={styles.formError} role="status">
+                <AlertTriangle size={16} aria-hidden="true" />
+                <span>
+                  {prepaid.balance?.state === "blocked"
+                    ? `DigitalOcean is blocking new sessions for this team (prepaid balance ${formatDigitalOceanBalance(prepaid.balance?.balance ?? null)}).`
+                    : "This team’s prepaid Managed Agents balance is empty."}{" "}
+                  DigitalOcean won’t start this agent until you add funds.{" "}
+                  <a href={DIGITALOCEAN_BILLING_URL} target="_blank" rel="noreferrer">Add funds in DigitalOcean<span className={styles.srOnly}> (opens in a new tab)</span></a>
+                  {" · "}
+                  <button type="button" className={styles.tertiaryButton} onClick={prepaid.recheck} disabled={prepaid.checking}>
+                    {prepaid.checking ? "Checking…" : "Check again"}
+                  </button>
+                </span>
+              </div>
+            ) : null}
             <div className={styles.formSection}>
               <div className={styles.formSectionHeading}>
                 <span className={styles.sectionNumber}>01</span>

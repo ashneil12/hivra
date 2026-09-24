@@ -56,6 +56,52 @@ describe("portable native terminal setup", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("agent runtime");
   });
+  // ttyd starts the shell on a pseudo-terminal with no arguments. Drive it the
+  // same way (python's pty) with only fixture commands on PATH.
+  function runInTerminal(kind: string, commands: string[]) {
+    writeFileSync(path.join(root, ".hivra/agent-kind"), kind + "\n");
+    for (const name of commands) {
+      const file = path.join(root, "bin", name);
+      writeFileSync(file, `#!/bin/sh\nprintf '${name.toUpperCase()}\\n'\nprintf '<%s>\\n' "$@"\n`);
+      chmodSync(file, 0o700);
+    }
+    const python = spawnSync("/bin/sh", ["-c", "command -v python3"], { encoding: "utf8" }).stdout.trim();
+    const driver = [
+      "import os, sys",
+      "pid, fd = os.forkpty()",
+      "if pid == 0: os.execv(sys.argv[1], sys.argv[1:])",
+      "out = b''",
+      "while True:",
+      "  try: chunk = os.read(fd, 4096)",
+      "  except OSError: break",
+      "  if not chunk: break",
+      "  out += chunk",
+      "sys.stdout.write(out.decode())",
+      "sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))",
+    ].join("\n");
+    const result = spawnSync(python, ["-c", driver, "/bin/bash", "--noprofile", "--norc", "-c", shell(), "hivra-agent-shell"], {
+      encoding: "utf8", timeout: 5_000, env: { HOME: root, PATH: path.join(root, "bin"), NODE_ENV: "test" },
+    });
+    return { status: result.status, lines: result.stdout.replace(/\r/g, "").split("\n").filter(Boolean) };
+  }
+  it.each(["claude", "codex"])("keeps the interactive %s terminal in a persistent tmux session that a closed tab only detaches", kind => {
+    const { status, lines } = runInTerminal(kind, ["claude", "codex", "tmux"]);
+    expect(status).toBe(0);
+    expect(lines[0]).toBe("TMUX");
+    const argv = lines.slice(1).map(line => line.slice(1, -1));
+    // Private socket, no user config, and attach-or-create the one agent session.
+    expect(argv.slice(0, 5)).toEqual(["-L", "hivra-agent", "-f", "/dev/null", "start-server"]);
+    expect(argv.slice(-5)).toEqual(["new-session", "-A", "-s", kind, kind]);
+    for (const option of [["status", "off"], ["mouse", "on"], ["escape-time", "10"]]) {
+      expect(argv.join(" ")).toContain(`set-option -g ${option.join(" ")} ;`);
+    }
+  });
+  it("runs the CLI directly when tmux is not installed", () => {
+    const { status, lines } = runInTerminal("claude", ["claude", "codex"]);
+    expect(status).toBe(0);
+    // The fixture prints "<>" once when it receives no arguments.
+    expect(lines).toEqual(["CLAUDE", "<>"]);
+  });
   it("owns native setup in the shared guest installer, with no Proxmox-only second pass", () => {
     expect(installer()).toContain("install_native_terminals()");
     expect(installer()).toContain("start_native_terminals()");

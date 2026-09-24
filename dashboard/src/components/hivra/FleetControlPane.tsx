@@ -9,6 +9,7 @@ import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import {
   duplicateFleetNames,
   fleetEntryHref,
+  fleetEntryOpenLabel,
   fleetSections,
 } from "@/lib/hivra/fleet-sections";
 import { attentionLabel } from "@/lib/hivra/resource-attention";
@@ -268,7 +269,7 @@ function FleetEntry({
           </span>
         ) : null}
         <span className="mt-3 block text-[12px] font-medium text-[var(--text-secondary)] group-hover:text-[var(--ink-black)]">
-          {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : agent.state !== "running" ? "View details" : agent.resourceKind === "computer" ? "Open desktop" : "Open agent"} <span aria-hidden="true">→</span>
+          {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : agent.state !== "running" ? "View details" : fleetEntryOpenLabel(agent)} <span aria-hidden="true">→</span>
         </span>
       </span>
     </Link>
