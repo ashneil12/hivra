@@ -40,15 +40,14 @@ export const PLANS_INTRO =
 export const IN_PLACE_CHANGE_NOTE =
   "Plan changes apply right away and move your subscription to monthly billing. On a monthly plan, the price difference for the rest of this billing period is added to your next invoice. A yearly plan is invoiced today instead, with credit for its unused time.";
 
+/** How a plan's figure differs from the owner's plan. Said in words: a bare
+ * "0.5 −7.5" beside the figure read as a range. */
 function Delta({ value, unit = "" }: { value: number; unit?: string }) {
   if (!value) return null;
   const up = value > 0;
   return (
     <span className={`${styles.delta} ${up ? styles.deltaUp : styles.deltaDown}`}>
-      {up ? "+" : "−"}
-      {Math.abs(value)}
-      {unit}
-      <span className={styles.srOnly}> compared with your plan</span>
+      ({up ? "+" : "−"}{Math.abs(value)}{unit} vs yours)
     </span>
   );
 }
