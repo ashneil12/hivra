@@ -73,11 +73,11 @@ async function main() {
     await db.exec(migration('20260905140000_managed_provisioner_channels.sql'));
     await db.exec(migration('20260915150000_hivra_resource_envelopes.sql'));
     // Launch reserves through v3, which counts the owner's plan slots
-    // (20260924220000). This fixture holds no Hermes instances or attachments,
+    // (20260925100000). This fixture holds no Hermes instances or attachments,
     // so empty tables with the columns that count reads stand in for them.
     await db.exec(`create table public.hermes_instances (id uuid primary key, user_id text not null, status text, lifecycle_state text);
       create table public.hivra_agent_attachments (id uuid primary key, user_id text not null, source_id uuid, phase text)`);
-    await db.exec(migration('20260924220000_hivra_agent_slot_limit.sql'));
+    await db.exec(migration('20260925100000_hivra_agent_slot_limit.sql'));
     const id = randomUUID(), token = 'a'.repeat(64), accountId = randomUUID();
     await db.query("insert into public.managed_venice_wallet_accounts(id,user_id) values($1,'owner')", [accountId]);
     await db.query(`insert into public.hivra_agents(id,user_id,type,name,status,desired_state,vmid,api_token,cf_hostname,cf_tunnel_id,chat_url)
@@ -110,7 +110,7 @@ async function main() {
           admit_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_binding', 'p_request'],
           claim_hivra_model_key_delivery: ['p_user_id', 'p_agent_id', 'p_operation_id'],
           settle_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_lease_id', 'p_receipt'],
-          // v3 counts the owner's plan slots under the slot lock (migration 20260924220000).
+          // v3 counts the owner's plan slots under the slot lock (migration 20260925100000).
           reserve_hivra_launch_model_request_v3: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key','p_agent_limit'],
           claim_hivra_launch_model_attempt: ['p_user_id','p_agent_id','p_request_id','p_automatic'],
           promote_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id','p_attempt_id','p_binding','p_request'],

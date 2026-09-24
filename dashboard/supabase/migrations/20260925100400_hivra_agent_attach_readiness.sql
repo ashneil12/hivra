@@ -13,7 +13,7 @@
 -- - The worker's state read carries the claim's createdAt, so how long a guest
 --   has not answered is measured from the database.
 --
--- Rollout: additive. Apply after 20260925000000 and 20260925000100 and before
+-- Rollout: additive. Apply after 20260925100200 and 20260925100300 and before
 -- the code that calls refuse_hivra_agent_attachment serves. The replaced
 -- checks only widen what a failed row may look like, so every row the earlier
 -- files allow still passes. Preflight on each environment and keep the

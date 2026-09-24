@@ -159,7 +159,7 @@ it("pins the service policy the database accepts to this renderer's bytes, and t
   expect(createHash("sha256").update(renderer).digest("hex")).toBe(ATTACHED_SERVICE_POLICY_V2_SHA256);
   const program = readFileSync(path.join(process.cwd(), "provisioner/attached-agent.py"));
   expect(createHash("sha256").update(program).digest("hex")).toBe(ATTACHED_AGENT_PROGRAM_SHA256);
-  const migration = readFileSync(path.join(process.cwd(), "supabase/migrations/20260925000000_hivra_agent_attachment_lifecycle.sql"), "utf8");
+  const migration = readFileSync(path.join(process.cwd(), "supabase/migrations/20260925100200_hivra_agent_attachment_lifecycle.sql"), "utf8");
   expect(migration).toContain(`p_service_policy_sha256 is distinct from '${ATTACHED_SERVICE_POLICY_V2_SHA256}'`);
   expect(migration).toContain(`p_program_sha256 is distinct from '${ATTACHED_AGENT_PROGRAM_SHA256}'`);
   expect(migration).toContain(`p_intent->>'grantPolicySha256' is distinct from '${ATTACH_GRANT_POLICY_SHA256}'`);

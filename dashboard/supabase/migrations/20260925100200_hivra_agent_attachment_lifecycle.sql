@@ -6,7 +6,7 @@
 -- First release: Codex on an Ubuntu Desktop proxmox-kvm computer, one agent
 -- per computer, always a new agent identity, one grant ({ workspace }). This
 -- migration grants nothing to any application role; the final grants follow in
--- 20260925000100_hivra_agent_attachment_grants.sql, and the application keeps
+-- 20260925100300_hivra_agent_attachment_grants.sql, and the application keeps
 -- the routes and the worker behind a Canary-only switch.
 --
 -- Rollout: additive. Apply before the code that calls these functions serves.

@@ -27,10 +27,10 @@
 const assert = require("node:assert/strict");
 const { openMigratedDatabase, readMigration } = require("./lib/pglite-all-migrations.cjs");
 
-const LIFECYCLE = "20260925000000_hivra_agent_attachment_lifecycle.sql";
-const GRANTS = "20260925000100_hivra_agent_attachment_grants.sql";
-const READINESS = "20260925000200_hivra_agent_attach_readiness.sql";
-const INTERRUPT = "20260925000300_hivra_agent_attach_interrupt.sql";
+const LIFECYCLE = "20260925100200_hivra_agent_attachment_lifecycle.sql";
+const GRANTS = "20260925100300_hivra_agent_attachment_grants.sql";
+const READINESS = "20260925100400_hivra_agent_attach_readiness.sql";
+const INTERRUPT = "20260925100500_hivra_agent_attach_interrupt.sql";
 const OWNER = "owner";
 const INSTALLER = "77d72e2e8346cc19ef74264e8458bbca8802772d1c668c3fdffa653c4273d375";
 const WORKER = "2a0aee3e5e3fc0d4403d41a93dbece648648c8a84ab4349a71d7fe87243121ab";

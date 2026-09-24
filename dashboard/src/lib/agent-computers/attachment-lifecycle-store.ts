@@ -3,7 +3,7 @@ import "server-only";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 
-// The attach lifecycle's database calls (migration 20260925000000), each
+// The attach lifecycle's database calls (migration 20260925100200), each
 // owner-bound and parsed strictly. Every write is one compare-and-swap in the
 // database; a lost answer is read back, never replayed as a new step.
 
@@ -15,10 +15,10 @@ export class AttachmentLifecycleStoreError extends Error {
 const Id = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const Grants = z.object({ workspace: z.boolean() }).strict();
 const Stamp = z.string().nullable();
-/** Why a step sent to the computer let the computer go (migration 20260925000300). */
+/** Why a step sent to the computer let the computer go (migration 20260925100500). */
 const InterruptReason = z.enum(["computer_not_running", "pending_delete"]);
 export type AttachmentInterruptReason = z.infer<typeof InterruptReason>;
-// Absent from a read before 20260925000300: never interrupted.
+// Absent from a read before 20260925100500: never interrupted.
 const Interruption = { leaseReleased: z.boolean().optional(), interruptReason: InterruptReason.nullable().optional() };
 
 const Target = z.object({
@@ -73,9 +73,9 @@ const State = z.object({
   bootId: Id.nullable(), staged: z.unknown().nullable(), activation: z.record(z.string(), z.unknown()).nullable(),
   readyObservationId: Id.nullable(), contractRevision: z.number().int().nullable(),
   desiredState: z.string().nullable(), computerStatus: z.string().nullable(),
-  /** When the claim was made (migration 20260925000200); absent from an older read. */
+  /** When the claim was made (migration 20260925100400); absent from an older read. */
   createdAt: z.string().optional(),
-  /** Whether another step holds the computer (20260925000300). */
+  /** Whether another step holds the computer (20260925100500). */
   computerOperationId: Id.nullable().optional(),
   ...Interruption,
 });
@@ -137,11 +137,11 @@ export function createAttachmentLifecycleStore(db: Database | null = supabaseAdm
         p_agent_limit: input.agentLimit }, ClaimResult) as Promise<ClaimResult>,
     cancel: (ownerId: string, operationId: string, reason: "cancelled" | "computer_not_running" | "pending_delete") =>
       boolean("cancel_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
-    /** Before any dispatch: ends the claim as failed with a precondition reason, never held (20260925000200). */
+    /** Before any dispatch: ends the claim as failed with a precondition reason, never held (20260925100400). */
     refuse: (ownerId: string, operationId: string, reason: "computer_not_running" | "computer_not_ready") =>
       boolean("refuse_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
     /** A step sent to the computer lets the computer go: the host saw the VM not
-     * running, or a delete is pending. The step stays open (20260925000300). */
+     * running, or a delete is pending. The step stays open (20260925100500). */
     interrupt: (ownerId: string, kind: AttachmentWorkItem["kind"], stepId: string, reason: AttachmentInterruptReason) =>
       boolean("interrupt_hivra_agent_attachment_step", { p_owner: ownerId, p_kind: kind, p_step_id: stepId, p_reason: reason }),
     /** Takes the computer back for an interrupted step once it runs again, free and unchanged. */

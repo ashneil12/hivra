@@ -90,18 +90,56 @@ async function main() {
         "20260924180000_provider_release_admission_2026_09_24.sql",
         // Legacy (2026.08.27.1) computers must keep every check after arm-at-start.
         "20260924190000_hetzner_first_boot_arm_at_start.sql",
-        "20260924230000_provider_release_admission_2026_09_24_2.sql",
       ].includes(name)).sort()) {
       await db.exec(migration(file));
     }
-    // The 2026.09.24.2 admission is idempotent: applied again, nothing grows.
+    const ADMISSION = "20260925100100_provider_release_admission_2026_09_24_3.sql";
     const admissionFunctions = ["public.admit_prepared_provider_computer(text,uuid,bigint,uuid,uuid,text,uuid,uuid,jsonb)",
       "public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)", "public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)"];
     const admissionDefinitions = async () => Promise.all(admissionFunctions.map(async (fn) =>
       (await db.query("select pg_get_functiondef($1::regprocedure) as result", [fn])).rows[0].result));
+    // 2026.09.24.2 is a sibling release (persistent sessions, not in this tree)
+    // whose admission anchors on the 2026.09.24.1 entry the same way. Its shape
+    // is copied here with a fixture digest: whichever of the two applies first,
+    // both releases must end up admitted exactly once.
+    const clause = (digest, version) =>
+      `(p_identity->''bundle''->>''bundleSha256''=''${digest}'' and p_identity->''bundle''->>''provisionerVersion''=''${version}'')`;
+    const detachedRuns = clause("23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04", "2026.09.24.1");
+    const sibling = `${detachedRuns} or ${clause("e".repeat(64), "2026.09.24.2")}`;
+    const siblingAdmission = `do $m$ declare signature text; definition text; anchor text; addition text; begin
+      for signature, anchor, addition in select * from (values
+        ('${admissionFunctions[0]}', '''2026.09.22.2'',''2026.09.24.1''', '''2026.09.22.2'',''2026.09.24.1'',''2026.09.24.2'''),
+        ('${admissionFunctions[1]}', '${detachedRuns}', '${sibling}'),
+        ('${admissionFunctions[2]}', '${detachedRuns}', '${sibling}')
+      ) as patches(signature, anchor, addition) loop
+        definition := pg_get_functiondef(signature::regprocedure);
+        if (length(definition) - length(replace(definition, anchor, ''))) / length(anchor) <> 1 then
+          raise exception 'sibling anchor mismatch: %', signature; end if;
+        execute replace(definition, anchor, addition);
+      end loop; end; $m$;`;
+    const occurrences = (text, needle) => text.split(needle).length - 1;
+    const beforeAdmission = await admissionDefinitions();
+    for (const [order, steps] of [["sibling first", [siblingAdmission, migration(ADMISSION)]],
+      ["2026.09.24.3 first", [migration(ADMISSION), siblingAdmission]]]) {
+      for (const step of steps) await db.exec(step);
+      const admitted = await admissionDefinitions();
+      admitted.forEach((definition, index) => {
+        for (const version of ["2026.09.24.1", "2026.09.24.2", "2026.09.24.3"]) {
+          assert.equal(occurrences(definition, `'${version}'`), 1, `${order}: ${admissionFunctions[index]} admits ${version} once`);
+        }
+      });
+      await db.exec(migration(ADMISSION));
+      assert.deepEqual(await admissionDefinitions(), admitted, `${order}: re-applying the 2026.09.24.3 admission changes nothing`);
+      for (const definition of beforeAdmission) await db.exec(definition);
+    }
+    assert.deepEqual(await admissionDefinitions(), beforeAdmission, "the admission functions are restored");
+    // The 2026.09.24.3 admission alone, and idempotent: applied again, nothing grows.
+    await db.exec(migration(ADMISSION));
     const admittedOnce = await admissionDefinitions();
-    await db.exec(migration("20260924230000_provider_release_admission_2026_09_24_2.sql"));
-    assert.deepEqual(await admissionDefinitions(), admittedOnce, "re-applying the 2026.09.24.2 admission changes nothing");
+    admittedOnce.forEach((definition, index) =>
+      assert.equal(occurrences(definition, "'2026.09.24.3'"), 1, `${admissionFunctions[index]} admits 2026.09.24.3`));
+    await db.exec(migration(ADMISSION));
+    assert.deepEqual(await admissionDefinitions(), admittedOnce, "re-applying the 2026.09.24.3 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

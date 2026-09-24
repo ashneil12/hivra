@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "2026.09.24.2",
+  "version": "2026.09.24.3",
   "files": [
     {
       "path": ".gitignore",
@@ -20,7 +20,7 @@
     {
       "path": "VERSION",
       "bytes": 13,
-      "sha256": "09d7b8c97469b12a174b698640e54b13859fee1e9f4769ab4c8ea1599f55b099"
+      "sha256": "b0358d25b1388c676bcaa8fab4ab20ccc265d717cc475b9a4231ba0b34a25aac"
     },
     {
       "path": "bux-hivra-chat.service",
@@ -120,7 +120,7 @@
     {
       "path": "hivra-provider-worker.py",
       "bytes": 45185,
-      "sha256": "c0ae874587a3ebb4d0957e3dd95ece96654e561990c96f495074f05072b71f83"
+      "sha256": "f1dded06ac1c7660d29e51552112dad37cc9ba0d89442ecdc4cfbf5452c76273"
     },
     {
       "path": "hivra-copy-desktop-image.py",

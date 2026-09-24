@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.09.24.2.json";
+import release from "../../../../provisioner-releases/2026.09.24.3.json";
 import detachedRunsRelease from "../../../../provisioner-releases/2026.09.24.1.json";
 import desktopPlannerRelease from "../../../../provisioner-releases/2026.09.22.2.json";
 import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json";
@@ -83,7 +83,7 @@ it("ships the detached chat-run supervisor with the gateway, never into the seal
 it("ships the computer hardening (git routes off, ttyd on owner-only sockets) as a new release", () => {
   // The current release's gateway answers /api/git/* with 404 on a computer,
   // and its terminal units listen on unix sockets, not loopback ports.
-  expect(release.version).toBe("2026.09.24.2");
+  expect(release.version).toBe("2026.09.24.3");
   const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
   expect(server).toContain("git_unavailable_on_computer");
   for (const [file, socket] of [["bux-ttyd-base-path.conf", "/run/hivra-terminal/ttyd.sock"], ["bux-box-ttyd.service", "/run/hivra-box-terminal/ttyd.sock"]]) {
@@ -116,7 +116,7 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   // SQL admission stopped at 2026.09.08.3, so their provider computers could
   // never be admitted or keep a valid identity.
   const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
-    "20260924230000_provider_release_admission_2026_09_24_2.sql"]
+    "20260925100100_provider_release_admission_2026_09_24_3.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
   for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;

@@ -5,7 +5,7 @@
  * Keep this module free of filesystem and credential access so importing the
  * contract cannot accidentally pull server secrets into a client bundle.
  */
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.24.2";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.24.3";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -169,7 +169,7 @@ export function supportsModelSettingsProvisionerVersion(version: unknown): versi
 /** Releases whose host script and guest installer carry the agent-run
  * reporter (launch document v4). A predecessor ignores the credential, so the
  * control plane does not issue one to a host known to run an older bundle. */
-export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2"] as const;
+export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.3"] as const;
 export function provisionerSupportsActivityTelemetry(version: unknown): version is string {
   return (PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS as readonly unknown[]).includes(version);
 }

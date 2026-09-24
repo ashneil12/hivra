@@ -20,7 +20,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { openMigratedDatabase, readMigration, MIGRATIONS } = require("./lib/pglite-all-migrations.cjs");
 
-const MIGRATION_A = "20260924220000_hivra_agent_slot_limit.sql";
+const MIGRATION_A = "20260925100000_hivra_agent_slot_limit.sql";
 // Migration B is queued outside the migrations folder until the code serves.
 const MIGRATION_B = path.resolve(__dirname, "../supabase/_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql");
 const readQueued = (file) => fs.readFileSync(file, "utf8");

@@ -25,7 +25,7 @@
 --   stay held never starve a newer one. An interrupted step is listed only
 --   while its computer is running and free, and then at most every ten minutes.
 --
--- Rollout: additive. Apply after 20260925000200 and before the code that calls
+-- Rollout: additive. Apply after 20260925100400 and before the code that calls
 -- these functions serves. Existing rows get lease_released=false and no
 -- interruption, which every earlier file already implies. Idempotent: columns
 -- "if not exists", constraints dropped before they are created again,
