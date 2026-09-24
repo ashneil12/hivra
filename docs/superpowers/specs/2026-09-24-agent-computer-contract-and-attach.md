@@ -13,6 +13,17 @@ root-owned locations (4.5, 5.4); Manage names who vouches for each receipt
 (4.6); attached agents count toward the plan's agent limit (5.1); new threats
 T31–T36.
 
+**Revision 3** (same day, after a second review): no Hivra process runs a
+program from `~/Hivra` as the owner, so the computer gateway's unused Git
+routes are removed and the gate says what the owner's own tools can run
+(5.3.2, T10); the network also drops the computer's on-link subnets and
+gateways (5.3, T37); the DNS socket and relay state their own IP allow sets
+(5.3, T36); resumed Codex sessions are covered before any "every turn" claim
+(5.4, S3, T33); the plan limit is enforced inside the claim and dispatch
+functions under a per-owner lock (5.1, T35); the status program reads the
+contract from the starting folder (4.4); the path-based-operation rule is
+scoped to the new root code (5.3.1).
+
 **Authority:** Design only. This document grants no deployment, database,
 purchase or live-environment authority. Canary checks named in section 8 use
 the existing bounded authority for disposable Hivra-owned Canary capacity. Any
@@ -54,13 +65,15 @@ check that needs other capacity or a credential says so.
    SSH path.
 4. Attached agents receive it from the attach worker through the existing
    VMID-bound guest exec, as a root-owned, read-only file in the folder where
-   Codex runs. The agent cannot change, move or hide it. DigitalOcean
+   every new Codex session starts. The agent cannot change, move or hide it. DigitalOcean
    sessions receive it as a **visible** first "Hivra setup" message. Nothing
    is ever sent as a hidden turn.
 5. Manage shows a revision as in place only after a receipt whose SHA-256
    matches the revision Hivra rendered. That means the bytes are in the file
-   the agent loads on its next message, not that the model understood. Manage
-   also names who vouches for the receipt. On an agent-owned computer the
+   the agent loads, not that the model understood. The file is loaded when a
+   chat starts. Manage says "applies from its next message" only where spike
+   S3 proves that a resumed chat reads it again; otherwise it says "applies
+   to new chats" (4.6, 5.4). Manage also names who vouches for the receipt. On an agent-owned computer the
    agent can read the key that signs it, so Manage says "the computer
    reported it". Only the attached agent's root read-back says "checked by
    Hivra" (4.6).
@@ -97,11 +110,13 @@ check that needs other capacity or a credential says so.
    that never follows a link or crosses a mount (5.3.1).
 6. Network: the agent runs in **its own network namespace**. The computer
    accepts no connection from it and forwards its traffic only to public
-   destinations. That covers every address the computer owns, including
-   public and global IPv6 ones, whatever a service is bound to. DNS goes
-   through a small relay whose socket systemd binds inside the namespace.
-   systemd IP filtering is a second, independent layer. Before attach ships,
-   the computer's unauthenticated loopback terminals (`ttyd` on
+   destinations off the computer's own network. That covers every address
+   the computer owns, including public and global IPv6 ones, whatever a
+   service is bound to, and every subnet the computer is directly on, with
+   its gateways, even when that subnet is public. DNS goes through a small
+   relay whose socket systemd binds inside the namespace. systemd IP
+   filtering is a second, independent layer. Before attach ships, the
+   computer's unauthenticated loopback terminals (`ttyd` on
    127.0.0.1:7681/7682) must still move to owner-only unix sockets.
 7. Chat: the attached agent runs its **own sandboxed instance of the existing
    `hivra-chat` server** (`AGENT_KIND=codex`). systemd creates its socket in
@@ -114,8 +129,18 @@ check that needs other capacity or a credential says so.
    file in `~/Hivra`. The Hivra-side agent identity record is kept, unbound.
 9. **Plan limit:** an attached agent counts as one agent toward the plan's
    agent limit when its computer is on Hivra Cloud. It uses none of the
-   plan's CPU or memory, because it shares the computer's (5.1).
-10. Reuse the whole fenced database chain and the staging worker. Add the
+   plan's CPU or memory, because it shares the computer's. The database
+   enforces the limit inside the claim and the dispatch, under a per-owner
+   lock that the launch insert also takes (5.1).
+10. **No Hivra process runs a program from `~/Hivra` as the owner.** Files the
+    agent writes there are stored as the owner, so Git trusts a repository
+    the agent planted, and even `git status` runs the commands its settings
+    name. The computer gateway's Git routes, which no computer screen uses,
+    are removed on every computer before attach ships. The Files view shows
+    and saves bytes only. The owner's own Terminal, desktop apps and editors
+    cannot be protected this way, and the gate and Review say so in plain
+    words (5.3.2).
+11. Reuse the whole fenced database chain and the staging worker. Add the
     missing completion, failure, change-access, detach and computer-delete
     transitions. Grant `EXECUTE` to `service_role` only in the last step,
     behind a Canary flag.
@@ -189,8 +214,9 @@ review.
 
 - Claude Code and Codex read `~/system-prompt.md` through the `~/CLAUDE.md`
   and `~/AGENTS.md` symlinks (`provision-claude-code-box.sh`). The
-  `hivra-chat` server spawns each turn with `cwd=$HOME`, so the file is loaded
-  on every message.
+  `hivra-chat` server spawns each turn with `cwd=$HOME`, so a new chat loads
+  the file. Whether a resumed chat (`codex exec resume`, `claude --resume`)
+  reads it again or replays what the session recorded is not verified (S3).
 - Identity is seeded once (`bootstrapped_at`) by `agent-bootstrap.ts` over the
   Proxmox host's SSH path. Provider-VM agents skip the seed (ATT-05).
   DigitalOcean sessions receive no Hivra instructions (ATT-13).
@@ -208,7 +234,7 @@ review.
 |---|---|---|---|
 | Owner, in the browser | none (Hivra session) | Hivra, and the computer's gateway through the named tunnel with the computer's token | Everything on the computer |
 | Owner's desktop session | the Selkies container user, same UID as `bux` | Only `~/Hivra` from the host, bind-mounted into its container | The owner |
-| Computer gateway (`bux-hivra-chat`) | `bux` | Owner's home, Files, Terminal; after attach, the agent's chat socket | Owner authority, gated by the computer token |
+| Computer gateway (`bux-hivra-chat`) | `bux` | Owner's home, Files, Terminal; after attach, the agent's chat socket | Owner authority, gated by the computer token. It must never run a program that `~/Hivra` content chooses (5.3.2) |
 | Attached agent (Codex plus its `hivra-chat` instance) | `hva_<24 hex>`, no sudo, sandboxed unit, own network namespace | Its private home, its starting folder, the `~/Hivra` view, its own loopback, the public internet | Only what its grants state |
 | Hivra attach worker | root in the guest through Proxmox `qm guest exec` | Everything on the computer | Hivra Cloud operator trust (or the owner's own Proxmox host on My server). It never resolves a path the agent controls (5.3.1) |
 | Hivra control plane | none on the computer | Database, computer token, Proxmox host credentials | Tenant isolation |
@@ -275,7 +301,9 @@ administrator access. You cannot see your user's personal home folder.
 which holds this file and Hivra, your user's Hivra folder (~/Hivra links to
 it). Their Desktop and the Files tab show it, and everything you write there
 appears for them at once. Your private home is ~. Keep your own notes and any
-credentials there, never in the Hivra folder.
+credentials there, never in the Hivra folder. Don't add Git hooks, filters or
+other settings that run programs to the Hivra folder unless your user asks,
+and tell them when you do.
 
 **What you can use.** A terminal as your own user. The internet. Servers you
 start on localhost, which only you can reach.
@@ -320,9 +348,12 @@ now. If it disagrees with this section, trust the status and tell your user.
 `hivra computer status` is a small root-owned program at
 `/usr/local/bin/hivra`. It reads local state only, needs no credentials,
 makes no network calls, never prints a token or secret, and quotes every
-label. Inside the attached sandbox it runs as the agent and reads the
-read-only bound contract under `/etc/hivra/attachments/<installation-id>/`.
-It also reports whether `~/Hivra` still links to the view.
+label. Inside the attached sandbox it runs as the agent. It reports the
+revision and digest of the file Codex actually loads, the root-owned
+`/var/lib/hivra/agent-views/<installation-id>/AGENTS.md` in its read-only
+starting folder (4.5), and takes the other stable facts from the read-only
+`/etc/hivra/attachments/<installation-id>/computer.json`. It also reports
+whether `~/Hivra` still links to the view.
 
 **Re-render triggers:** attach, detach, change access, resize (after the
 resize is observed), move, catalog or MCP tool install or removal, browser
@@ -331,11 +362,11 @@ version change. A browser on/off toggle is not a trigger.
 
 ### 4.5 Delivery per substrate
 
-| Substrate | File the runtime loads each turn | Channel | Receipt |
+| Substrate | File the runtime loads | Channel | Receipt |
 |---|---|---|---|
 | Hivra Cloud and My server (Proxmox), Claude Code or Codex | Marked block in `~/system-prompt.md` (via `~/CLAUDE.md` and `~/AGENTS.md`), plus `~/.hivra/computer.json` | Gateway protocol `hivra-computer-contract-v1` over the computer's HTTPS origin with its token | HMAC receipt, attested by the computer, which includes the agent (4.6) |
 | My cloud (Hetzner provider VM), Claude Code or Codex | Same | Same | Same |
-| Attached Codex on Ubuntu Desktop | `AGENTS.md` in its starting folder `/var/lib/hivra/agent-views/<installation-id>/` (attached base prompt plus the contract block). The file and the folder are root-owned and bound read-only into the unit, and the attached `hivra-chat` runs every Codex turn in that folder | Attach worker, VMID-bound guest exec (the staging fence) | Root reads the file back in the same guest exec, both on the host and inside the unit's mount namespace, and compares inode and digest (checked by Hivra, 4.6) |
+| Attached Codex on Ubuntu Desktop | `AGENTS.md` in its starting folder `/var/lib/hivra/agent-views/<installation-id>/` (attached base prompt plus the contract block). The file and the folder are root-owned and bound read-only into the unit. The attached `hivra-chat` starts every new Codex session in that folder; resumed sessions follow 5.4 | Attach worker, VMID-bound guest exec (the staging fence) | Root reads the file back in the same guest exec, both on the host and inside the unit's mount namespace, and compares inode and digest (checked by Hivra, 4.6) |
 | DigitalOcean session | None that Hivra controls | Visible first message "Hivra setup", recorded in `hivra_do_session_inputs` (new `source` column, value `hivra-setup`) and shown as a Hivra card in the transcript | "Sent in chat" with the run's terminal state; never labeled "Delivered" |
 
 Why the contract is inlined rather than included: Claude Code can import a
@@ -356,8 +387,11 @@ could otherwise change, and the read-back checks them.
 
 "Delivered" for an attached agent therefore means: the file Codex loads from
 its starting folder holds these bytes, and the agent cannot change or hide
-it. The agent still controls its own processes. It can ignore the file or run
-something else, so this does not prove the model read it (T33).
+it. Codex loads it when a new session starts. Whether a resumed session
+loads it again, or replays what its session record kept, is spike S3's
+question, and the Manage wording follows the answer (4.6, 5.4). The agent
+still controls its own processes. It can ignore the file or run something
+else, so this does not prove the model read it (T33).
 
 **Gateway protocol `hivra-computer-contract-v1`** (new, reuses the
 `llm-application.js` pattern):
@@ -398,8 +432,8 @@ revision is monotonic per binding.
 
 | Manage shows | Only when |
 |---|---|
-| Agent-owned computer: "What Codex knows about its computer · rev 7 · The computer reported it delivered 12:04 · applies from its next message" | A verified HMAC receipt for the latest revision has a matching `contentSha256` |
-| Attached agent: "What Codex knows about this computer · rev 7 · Delivered 12:04 · checked by Hivra · applies from its next message" | Root's read-back in the same guest exec matched the digest and inode, on the host and inside the unit's namespace |
+| Agent-owned computer: "What Codex knows about its computer · rev 7 · The computer reported it delivered 12:04 · applies from its next message" (or "applies to new chats", see below) | A verified HMAC receipt for the latest revision has a matching `contentSha256` |
+| Attached agent: "What Codex knows about this computer · rev 7 · Delivered 12:04 · checked by Hivra · applies from its next message" (or "applies to new chats") | Root's read-back in the same guest exec matched the digest and inode, on the host and inside the unit's namespace |
 | "Update pending" | The latest revision has no verified receipt yet |
 | "Changed on the computer · Restore" | A later check returns a different digest, or the writer refused with `state_conflict` |
 | "Couldn't check · last delivered rev 6 at 11:02" | The computer is unreachable |
@@ -407,6 +441,17 @@ revision is monotonic per binding.
 
 A 200 response without a verified receipt never shows as delivered. Chat is
 not blocked while an update is pending.
+
+**"Next message" or "new chats".** The file is loaded when a chat starts.
+"applies from its next message" is shown only for a runtime and pinned
+version where spike S3 proved that a resumed chat reads the instruction file
+again on every turn. That applies to Codex everywhere and to Claude Code
+`--resume` on agent-owned computers. Otherwise Manage says "applies to new
+chats", and a chat started before the latest delivery shows one line above
+the composer: "Hivra updated what Codex knows about this computer after this
+chat started. Start a new chat to use it." The choice comes from a pinned
+per-runtime, per-version flag recorded with the S3 evidence, never from
+anything the computer reports.
 
 **Who vouches for each receipt.** A signed receipt is only as independent as
 its key. The UI shows observed state only, so Manage says where each fact
@@ -482,7 +527,7 @@ surfaces, placements and sizes come from enums, never from free text.
   on purpose.
 - **Not in this release:** provider-VM desktops, Omarchy, Windows, Linux
   Sandbox (gVisor), other runtimes, Chrome/desktop/sudo grants, re-attach and
-  move.
+  move, and any Git view for computers (5.3.2).
 - **No legacy agent row.** The attached agent gets canonical identity,
   installation and binding rows only, with no `hivra_agents` row, so park,
   purge and recovery sweepers can never treat it as a separate computer. It
@@ -506,11 +551,56 @@ surfaces, placements and sizes come from enums, never from free text.
     active, on Hivra-managed computers. A cancelled, failed or detached
     attachment counts nothing.
   - The attach route calls `validateAgentResources` in a new `attach` mode
-    that checks only the slot count, before the claim. After the claim it
-    counts again, including the new claim. If two requests at once took the
-    owner over the limit, it cancels its own undispatched claim with the
-    existing `cancel_undispatched_hivra_agent_attachment` and returns the
-    same refusal. Launch keeps its current check.
+    that checks only the slot count, before the claim, so the gate can
+    refuse early with the plan copy. That check is a courtesy. **The database
+    enforces the limit**, because only a check and a write in one
+    transaction can be exact:
+    - One SQL function, `hivra_owner_agent_slot_count(p_owner)`, counts the
+      owner's slots: Hivra-managed `hivra_agents` rows and legacy
+      `hermes_instances` rows that hold compute, with the same status and
+      lifecycle rules `loadCurrentComputeUsage()` applies today, plus
+      claimed or dispatched attachments and active bindings on
+      Hivra-managed computers. `loadCurrentComputeUsage()` takes its
+      `activeCount` from this function, so launch, billing usage and attach
+      cannot count differently. The CPU and memory sums stay in TypeScript.
+    - The new `begin_hivra_agent_attachment` takes `p_agent_limit`, the plan
+      limit the route resolved from the owner's subscription exactly as
+      launch does (`Number(sub.instance_limit) || plan.maxAgents`), and
+      records it in the claim. Before it inserts anything it takes
+      `pg_advisory_xact_lock(hashtextextended('hivra-agent-slots-v1:' ||
+      p_owner, 0))` and counts. At or over the limit it inserts nothing and
+      returns `plan_agent_limit`.
+    - The dispatch function takes the same lock and counts again against the
+      limit recorded in the claim. If the owner is now over, it cancels the
+      claim in the same transaction with the reason `plan_agent_limit` and
+      dispatches nothing. The minute cron worker only ever dispatches
+      through this function, so it cannot dispatch past the limit.
+    - Every writer of a Hivra-managed `hivra_agents` row takes the same lock
+      and count. Three exist today: the launch route's direct insert
+      (`app/api/hivra/agents/route.ts:1465`), the launch-model reservation
+      (`reserve_hivra_launch_model_request_v2`, current body in
+      `20260905140000_managed_provisioner_channels.sql`) and the Canary
+      prepared-computer fixture (`prepared-canary-computers.ts:171`). The
+      direct insert and the fixture move into a service-only function,
+      `insert_hivra_managed_agent(p_row, p_agent_limit)`. The reservation
+      gets a v3 that also takes `p_agent_limit`. A `BEFORE INSERT` trigger on
+      `hivra_agents` refuses a Hivra-managed row unless the writing function
+      set the transaction-local flag `hivra.agent_slot_checked`, so a new
+      writer cannot skip the lock by accident. The trigger cannot check the
+      limit itself, because it cannot see the plan. Updates that move a row
+      back into a counting status (`provisioning`, `running` or `stopped`,
+      per `isActiveComputeStatus`), such as a restore or a retry, are writers
+      too. Build step 5 lists them and moves each under the same lock before
+      the trigger also covers `UPDATE`. This closes a launch racing an
+      attach, and the existing race between two launches. It is a launch
+      hot-path change and ships in build step 5 with the launch smoke tests.
+    - Residual: Hermes-lane instances (`hermes_instances`, created by
+      `/api/instances`) count toward the same limit but are created by their
+      own lane, outside this lock. A Hermes launch racing an attach can still
+      go one over. Moving that lane under the lock is its own change.
+    - The route no longer counts again after the claim or cancels its own
+      claim. Revision 2 did, and the cron worker could dispatch between the
+      claim and the recount.
   - At the limit, the access gate shows the plan copy (5.8) with a link to
     Billing and no Review. Nothing is upgraded or bought automatically.
   - The Agents list shows the attached agent as its own row, and the usage
@@ -523,7 +613,7 @@ surfaces, placements and sizes come from enums, never from free text.
 | `~/Hivra` read/write | On by default; can be turned off | Idmapped bind mount on a root-owned mount point, bound into the unit (5.3) | "Hivra, your user's Hivra folder…" or "You have no shared folder" |
 | Own terminal user | On, locked | Separate `hva_` account; unit `User=` | "You run as the separate user…" |
 | Internet | On, locked, reason "Codex needs the internet to reach ChatGPT" | Own network namespace, forwarded to public destinations only (5.3) | "The internet." |
-| This computer's services and local network | Off, always | The computer accepts no connection from the namespace; private, local and host destinations are dropped; systemd IP filter as a second layer (5.3) | Listed under "cannot use" |
+| This computer's services and local network | Off, always | The computer accepts no connection from the namespace; private, local, link-local and Proxmox host destinations, every subnet the computer is directly on (public ones too) and its gateways are dropped; systemd IP filter as a second layer (5.3) | Listed under "cannot use" |
 | Chrome profile | Not available yet | No CDP route exists into the desktop container | Listed under "cannot use" |
 | Desktop control | Not available yet | No `DISPLAY`; the X server is inside the Selkies container network | Listed under "cannot use" |
 | sudo | Not available | Not in `sudo`; `NoNewPrivileges`; empty capability set | "without administrator access" |
@@ -636,16 +726,27 @@ built for that. Two mechanisms, both required:
     RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV` from the root-owned views folder;
   - `fchown` and `fchmod` for the owner and mode re-assert.
 
-  Unmount uses `umount2(…, UMOUNT_NOFOLLOW)` on the root-owned path. Attach
-  code never calls path-based `mount --bind`, `mountpoint`, `chown`, `chmod`,
-  `rm -r` or `shutil.rmtree`. A source check in the helper's test fails if any
-  of them appears.
+  Unmount uses `umount2(…, UMOUNT_NOFOLLOW)` on the root-owned path. The new
+  root code this design adds (`attached-workspace.py` with its verify step
+  and Remove walker, the network unit's helper and watchdog, and the unit,
+  registry and contract writers) never calls path-based `mount --bind`,
+  `mountpoint`, `chown`, `chmod`, `rm -r` or `shutil.rmtree`. A source check
+  over exactly those files fails if any of them appears.
+
+  The reused `stage-attached-codex.py` is outside that check. It calls
+  `os.chown` and `os.chmod` by path on the home and installation folders it
+  has just created (`stage-attached-codex.py:117–120`), and `chmod` on new
+  parents in `private_parent()` (`:47`). That is safe only for the reasons in
+  the first row below: the parents are root-owned 0711 and checked without
+  following links, and the account has never run a process. Any change to
+  that file, or running it after the account has run, needs this review
+  again.
 
 Every root operation and why a planted link cannot redirect it:
 
 | Root operation | Path it touches | Why a planted link cannot redirect it |
 |---|---|---|
-| Staging creates and chowns the home (existing) | `/var/lib/hivra/agent-homes/<id>` | The parent is root-owned and not writable by others (0711), and `private_parent()` refuses links. The account exists but has never run. Files use `O_EXCL` and `O_NOFOLLOW` |
+| Staging creates and chowns the home (existing, path-based `os.chown` and `os.chmod`) | `/var/lib/hivra/agent-homes/<id>` | The parent is root-owned and not writable by others (0711), and `private_parent()` refuses links. The folder was created a moment earlier with `mkdir`, and the account exists but has never run, so nothing can have replaced it. Files use `O_EXCL` and `O_NOFOLLOW` |
 | Workspace mount and unmount | source `/home/bux/Hivra`, target `…/agent-views/<id>/Hivra` | The target is in a root-owned folder. Both are opened without following links. The fd-based mount API is used |
 | Owner and mode re-assert | `/home/bux/Hivra` | `fchown` and `fchmod` on the no-follow fd |
 | systemd sandbox setup (binds, tmpfs) | Unit v2 paths | Every source and destination is in a root-owned location or a fresh tmpfs. None is inside the agent's home |
@@ -747,9 +848,10 @@ The units are rendered from the approved grant set by one TypeScript
 function, with an independent Python rendering in the guest preflight. This
 is the existing cross-contract pattern, and a test requires the two to be
 byte-equal. The unit is enabled at boot only at completion, which is a
-reviewed step. Addresses observed at start time (below) are applied by the
-network unit with `systemctl set-property --runtime`. They are outside the
-pinned digest and recorded in the activation journal.
+reviewed step. Addresses, on-link prefixes and gateways observed at start
+time (below) are applied by the network unit with `systemctl set-property
+--runtime`. They are outside the pinned digest and recorded in the
+activation journal.
 
 **Network.** The agent runs in its own network namespace,
 `hivra-<short id>`, which the root oneshot
@@ -770,6 +872,25 @@ pinned digest and recorded in the activation journal.
   else. The agent's `/etc/resolv.conf` is bound from the attachment folder
   and names only 127.0.0.53. No address on the computer has to be reachable
   from the namespace for DNS to work.
+- **The DNS units' own IP filters.** systemd applies a socket unit's
+  `IPAddressAllow=` and `IPAddressDeny=` to the sockets it creates and passes
+  on, and a service's lists only to sockets the service creates itself. So
+  each unit states its own set:
+  - `hivra-attached-<id>-dns.socket`, in the agent's namespace:
+    `IPAddressDeny=any`, `IPAddressAllow=127.0.0.0/8`. Ingress is checked
+    against the query's source address. The agent's queries to 127.0.0.53
+    normally leave from 127.0.0.1, so allowing only 127.0.0.53 would drop
+    them. Only the agent's own namespace can reach this socket, so its whole
+    loopback range is the right set. The socket binds IPv4 only.
+  - The relay service, in the computer's namespace: `IPAddressDeny=any`,
+    `IPAddressAllow=127.0.0.53/32`, `RestrictAddressFamilies=AF_INET`. It
+    creates only its upstream sockets to 127.0.0.53:53. Egress is checked
+    against 127.0.0.53 and the replies' source is 127.0.0.53, so both
+    directions pass and nothing else can.
+  - Spike S2 proves both from inside the running units: a query from the
+    agent, sourced from 127.0.0.1, resolves; from the relay's cgroup, a
+    connection to 127.0.0.1:7681, to 127.0.0.54 and to each of the
+    computer's own addresses fails.
 - The computer's nftables table `inet hivra_attached_<short id>`:
   - **Input from the veth:** drop everything. Every service on the computer is
     then unreachable on every address the computer owns (loopback, private,
@@ -777,22 +898,40 @@ pinned digest and recorded in the activation journal.
     service is bound to and whatever the addresses become later.
   - **Forward from the veth:** drop loopback, link-local (including cloud
     metadata 169.254.169.254), multicast, 10.0.0.0/8, 172.16.0.0/12,
-    192.168.0.0/16, 100.64.0.0/10 (Tailscale) and fc00::/7 destinations, and
-    the Proxmox host's addresses as Hivra records them (bridge and public,
-    including its management UI on 8006). Accept the rest and masquerade it
-    out of the computer's uplink.
+    192.168.0.0/16, 100.64.0.0/10 (Tailscale) and fc00::/7 destinations;
+    every prefix the computer has a connected route to, on any interface,
+    IPv4 and IPv6 (set `onlink`); every gateway in its routing table (set
+    `gateways`); and the Proxmox host's addresses as Hivra records them
+    (bridge and public, including its management UI on 8006). Accept the
+    rest and masquerade it out of the computer's uplink.
+  - **Why on-link subnets are dropped by prefix, not by range.** A My server
+    guest can sit on any public `/24` (`ipconfig0` accepts one), and its
+    neighbours there are other machines on the owner's or the provider's
+    network, not the internet. A private-range list misses them. Dropping a
+    gateway as a destination does not break routing, because forwarded
+    internet traffic only passes through the gateway.
+  - The network unit fills `onlink` and `gateways` from `ip -j route` and
+    `ip -j -6 route` at start. The watchdog re-reads them every minute. On
+    any change it stops the agent, updates the sets, runs the enforcement
+    probe again and only then starts the agent, the same path as a restore.
+    Hivra Cloud and My server computers have static addresses from
+    `ipconfig0`, so a change means someone changed the computer's network by
+    hand, and the gap is at most one minute.
   - A drop in this table cannot be overridden by an accept in Docker's or
     ufw's tables, because each base chain is evaluated on its own.
 - **systemd IP filtering is the second layer**, inside the unit.
   `IPAddressAllow=` covers only its own loopback. `IPAddressDeny=` covers the
   ranges above and the veth link. The network unit adds every address the
-  computer's interfaces have when the unit starts, and the Proxmox host's
-  recorded addresses. **systemd ignores IP filtering, with only a warning,
-  when the kernel lacks cgroup BPF.** Preflight therefore proves each layer
-  on its own, from inside the running unit.
+  computer's interfaces have when the unit starts, their on-link prefixes,
+  the gateways, and the Proxmox host's recorded addresses. **systemd ignores
+  IP filtering, with only a warning, when the kernel lacks cgroup BPF.**
+  Preflight therefore proves each layer on its own, from inside the running
+  unit.
 - **What each layer guarantees alone.** The namespace and nftables block every
-  address the computer owns, now or later. The systemd filter blocks every
-  address the computer had when the unit started. Without nftables the
+  address the computer owns, now or later, and every on-link subnet and
+  gateway, refreshed within a minute of a change. The systemd filter blocks
+  every address, on-link subnet and gateway the computer had when the unit
+  started. Without nftables the
   agent also has no route to the internet, because the masquerade rule lives
   in the same table.
 - **Why the address filter alone is not enough.** Revision 1 allowed only the
@@ -811,8 +950,12 @@ pinned digest and recorded in the activation journal.
 - **Enforcement probe:** before activation, and after every restore, from
   inside the running unit. Connections to canary listeners on `0.0.0.0` and
   `::`, and to every listener in the listener sweep, fail on every address
-  the computer owns. DNS resolves. A public HTTPS request succeeds. Otherwise
-  attach is refused.
+  the computer owns. The `onlink` and `gateways` sets and the unit's
+  `IPAddressDeny=` contain every connected prefix and every gateway the
+  routing table shows. On a customer computer there are no neighbour
+  listeners to test against, so this part is a structural check; the VM
+  matrix proves the behavior against real neighbours (T37). DNS resolves. A
+  public HTTPS request succeeds. Otherwise attach is refused.
 
 **Prerequisite hardening of every computer.** The two `ttyd` terminals move
 to unix sockets owned by `bux` with mode 0600, and the gateway proxies to
@@ -849,6 +992,96 @@ A kernel exploit breaks it. That is why the isolation class is
 `shared-kernel` and the Review says the separation is weaker than an agent's
 own computer.
 
+### 5.3.2 No Hivra process runs `~/Hivra` content as the owner
+
+**The problem.** Everything the agent writes through the view is stored on
+disk as the desktop user, `bux`. Git's ownership check (`safe.directory`),
+which refuses a repository owned by another user, therefore passes for a
+repository the agent created or changed. Git then obeys that repository's own
+settings, and several of them run commands:
+
+- `core.fsmonitor` runs on `git status`, `diff`, `add` and `commit`;
+- hooks (`pre-commit`, `post-checkout`, `reference-transaction` and others)
+  run on commit and checkout;
+- clean, smudge and `process` filters, chosen by name in `.gitattributes` or
+  `.git/info/attributes`, run on add, commit, checkout and some status calls;
+- textconv and external diff drivers run on diff;
+- `commit.gpgSign` with `gpg.program`, and `log.showSignature`, run a program
+  the repository names;
+- a `.git` file (`gitdir: …`) or `core.worktree` can point Git at another of
+  the owner's repositories, so a checkout could copy its content into
+  `~/Hivra`, where the agent can read it.
+
+The computer gateway runs as `bux`, holds the computer token and joins `hvc_`
+after attach. On every `linux-desktop` computer it serves `/api/git/status`,
+`/api/git/diff`, `/api/git/commit` and `/api/git/checkout` over
+`WORKSPACE_ROOT=/home/bux/Hivra` (`provision-claude-code-box.sh:648`,
+`server.js:718–825`), gated only by `authed(req)`. `handleGitStatus` runs
+`git -C <repo> status --porcelain=v1 -z`. An agent-planted `core.fsmonitor`
+would run as `bux` as soon as the owner's browser, or anything else holding
+the token, asked for status.
+
+**Evidence** (reproduced for this revision with git 2.54 in a scratch
+repository):
+
+- `git -C <repo> status --porcelain=v1 -z`, the exact command
+  `handleGitStatus` runs, ran a planted `core.fsmonitor` command.
+- With `-c core.fsmonitor=false -c core.hooksPath=/dev/null`, status and
+  commit ran neither the fsmonitor command nor the hook, but `git add` still
+  ran a planted clean filter.
+- `--attr-source=<empty tree>` stopped a filter named in `.gitattributes`,
+  but not one named in `.git/info/attributes`.
+
+The repository names its own filter drivers, so no fixed set of `-c` flags
+turns them all off. Checking the repository's settings and then running Git
+is a race the agent can win, because it can keep writing while Git runs.
+Hardening the command line is therefore not a mitigation on its own.
+
+**Decision.**
+
+1. **Remove the Git routes from the computer profile.** When
+   `COMPUTER_PROFILE` is set (`HIVRA_AGENT_KIND=linux-desktop`), the gateway
+   answers `/api/git/*` with 404
+   `{ "error": "git_unavailable_on_computer" }` before any process starts,
+   whatever the credential. No computer screen uses these routes: the agent
+   page gives a computer only Desktop, Manage, Files and Terminal
+   (`COMPUTER_BASE_TABS` and `COMPUTER_WORKSPACE_TABS`,
+   `app/dashboard/agent/[id]/page.tsx:68–69`), and a `?tab=git` link on a
+   computer already lands elsewhere. This ships in build step 3, on every
+   computer, before any attach. Agent-owned computers keep their Git tab:
+   there the agent already runs as `bux`, so Git has no boundary to cross.
+2. **Every Hivra component that touches `~/Hivra` as the owner or as root
+   runs nothing from it:**
+
+   | Component | What it does with `~/Hivra` | Why no content runs |
+   |---|---|---|
+   | Gateway Files routes and `hivra-workspace-v1` Files (`guarded-files.cjs`) | List, read, write | Bytes over JSON only; symlinks, hardlinks and special files refused; no process started |
+   | Dashboard Files view (`HivraFiles.tsx`) | Shows and edits file text | Text in `<pre>` and `<textarea>` only; no HTML, SVG, image or script from the folder is rendered |
+   | Gateway Git routes | Status, diff, commit, checkout | Removed on computers (1) |
+   | Folder recovery (root, `folder-recovery-guest.ts`) | Rewrites the folder's contents | Directory fds and `O_NOFOLLOW` byte copies; stops the attached units first (5.9) |
+   | Workspace helper (root, 5.3.1) | Mounts the view; re-asserts owner and mode | fd-only metadata calls; never reads file contents |
+   | Chat uploads | Written to the attached instance's own `~/uploads` | Not in `~/Hivra` |
+
+   A new gateway test pins that no authed route in the computer profile
+   starts a process on a planted repository (T10).
+3. **A future Git view for computers** must run Git as a dedicated,
+   unprivileged account through its own idmapped view of `~/Hivra`, with no
+   network and no other files, so a planted command reaches no more than the
+   agent already can. It must never run as `bux`, even inside a systemd
+   sandbox: other `bux` processes, the gateway included, stay reachable
+   through `/proc/<pid>/root` and `/proc/<pid>/fd`, because Yama limits only
+   attaching, not those reads, and `PrivatePIDs=` needs systemd 257 (Ubuntu
+   24.04 ships 255). Such a view needs its own review and matrix row.
+4. **The owner's own tools are not protected, and Hivra says so.** Git,
+   scripts, build tools, editors and desktop apps the owner runs in `~/Hivra`
+   run as the owner. For Git that includes read-only commands such as
+   `git status`. A repository's own settings outrank the owner's global and
+   system Git settings, so Hivra cannot turn this off from outside. The gate,
+   the Review and the Remove review say so in plain words (5.8). It stays
+   true after Remove, because the files stay. The attached base prompt asks
+   Codex not to add Git hooks, filters or other program-running settings
+   unless the owner asks. That is a request, not a control.
+
 ### 5.4 How chat reaches the attached agent
 
 ```text
@@ -863,8 +1096,9 @@ Computer gateway: bux-hivra-chat on 127.0.0.1:8080, user bux (+ hvc_ by drop-in)
    │  socket activation hands the listening socket to the agent unit
    ▼
 Attached hivra-chat instance (AGENT_KIND=codex), inside the sandboxed unit
-   └─ spawns `codex exec --json` per turn, with the same sandbox,
-      in its starting folder /var/lib/hivra/agent-views/<installation-id>
+   └─ spawns `codex exec --json` per turn, with the same sandbox; new
+      sessions start in /var/lib/hivra/agent-views/<installation-id>
+      (resumed sessions: below)
 ```
 
 - **Reuse:** the whole existing Codex chat path in `hivra-chat/server.js`:
@@ -880,10 +1114,33 @@ Attached hivra-chat instance (AGENT_KIND=codex), inside the sandboxed unit
     refuse to start without it. Today `readApiToken()` (`server.js:108`)
     reads `HOME/.hivra/api-token`. In an attached home that file is the
     agent's to replace.
-  - Run each Codex turn in `HIVRA_AGENT_WORKDIR`, both the `-C` argument and
-    the spawn `cwd`. Today both are `HOME` (`server.js:1258` and `:1321`).
-    Pass the command-line overrides that spike S3 settles, so an edit to the
-    agent's own `config.toml` cannot turn its instructions file off.
+  - Start every new Codex session in `HIVRA_AGENT_WORKDIR`, both the `-C`
+    argument and the spawn `cwd`. Today both are `HOME` (`server.js:1258`
+    and `:1321`). Pass the command-line overrides that spike S3 settles, so
+    an edit to the agent's own `config.toml` cannot turn its instructions
+    file off.
+  - **Resumed sessions.** `server.js` builds `codex exec resume <id>` with no
+    `-C` (`:1257`). Its own comment (`:1220–1223`) says resume does not accept
+    `-C` and reuses the session's recorded working folder. That record is
+    the session file in `CODEX_HOME/sessions`, which the agent can edit, so
+    it could point a resumed session at its own home and an `AGENTS.md` of
+    its own. A resumed turn may also replay the instructions the session
+    recorded when it started instead of reading the file again, and then a
+    contract update would not reach it. Spike S3 answers both questions for
+    the pinned Codex, and attached mode takes one of two outcomes:
+    - **(a)** Resume honors a working folder Hivra passes (the spawn `cwd`, a
+      flag or a `-c` override) over the recorded one, and reads the
+      instruction files from it on every resumed turn. Attached mode then
+      passes it on every resume, and Manage says "applies from its next
+      message".
+    - **(b)** Otherwise resume stays, and the claim narrows. Manage says
+      "applies to new chats", older chats show the start-a-new-chat line
+      (4.6), and Hivra does not say that a resumed turn runs in the starting
+      folder. An agent that rewrites its own session file then misleads only
+      itself, which is the residual T33 already states.
+    - In both outcomes attached mode never reads a working folder or
+      instructions from a session file to decide anything, because the agent
+      can write it.
   - In attached mode (`HIVRA_ATTACHED_INSTALLATION_ID`), disable every route
     outside the allowlist, and make `/api/meta` report
     `attachment: { installationId }`.
@@ -958,8 +1215,8 @@ the guest boot id).
 | Step | Target behavior | Database change needed |
 |---|---|---|
 | Transfer relationship authority | Once per computer, idempotent by command id | Grant only; shadow control becomes `mixed` (2.2) |
-| Add (claim) | Route calls `begin_hivra_agent_attachment` with intent v2 | New `begin` accepting `grants`, `grantPolicySha256` and `reviewSha256` |
-| Reserve, observe boot, fetch, dispatch, stage | Existing staging coordinator, unchanged discipline | None |
+| Add (claim) | Route calls `begin_hivra_agent_attachment` with intent v2 and the plan limit | New `begin` accepting `grants`, `grantPolicySha256`, `reviewSha256` and `p_agent_limit`; per-owner slot lock and count before insert (5.1) |
+| Reserve, observe boot, fetch, dispatch, stage | Existing staging coordinator, unchanged discipline | Dispatch takes the same lock, counts against the recorded limit and cancels the claim with `plan_agent_limit` when over (5.1) |
 | Workspace and units | Worker writes the registry, both token copies, the starting folder with the contract, and units v2 into root-owned locations (5.3.1). It then starts the network and workspace units and runs the enforcement probe | New service-policy gate for units v2; the instance token stored with the binding |
 | Activation | Existing activation coordinator; start once; observe | Accept the v2 policy digest |
 | Readiness probe | Replaces the app-server initialize probe: HTTP `GET /api/meta` over the socket must report `agentKind: codex` and the installation id; recorded as `native_protocol_available`. The answer comes from the agent-controlled instance, so it decides "Chat is ready" and nothing about authority | Reuse the existing observation vocabulary |
@@ -988,7 +1245,7 @@ make concurrent passes safe. Page polling reads status only.
 |---|---|
 | Route (`POST /api/hivra/computers/[id]/agents`, `PATCH` and `DELETE …/agents/[attachmentId]`) | Clerk `userId` only, never a body owner; `isHivraApiAllowed`; same-origin JSON; rate limit; canonical computer id looked up with `user_id = userId`; a foreign or missing id returns 404 with no RPC call; the Canary flag |
 | Review binding | The server recomputes the normalized grant set and `reviewSha256`; a mismatch returns 409 "The review changed. Check it again." |
-| Plan | The route runs the plan's agent-limit check in `attach` mode before the claim and counts again after it; over the limit it cancels its own undispatched claim and returns 403 with the plan copy (5.1) |
+| Plan | The route runs the plan's agent-limit check in `attach` mode before the claim, for early copy only. The claim and dispatch functions enforce the limit under the per-owner slot lock, and the launch insert takes the same lock; `plan_agent_limit` returns 403 with the plan copy (5.1) |
 | Database | Every function takes `p_owner` and checks the source mapping, the computer, the attachment row and the authority snapshot for that owner (existing) |
 | Worker | The snapshot's `ownerId` must equal the operation owner; the host executor requires `agent.user_id === ownerId` and the exact expected identity (existing) |
 | Host | The VM's binding tag and `ipconfig0` must match before any guest command; guest exec is VMID-bound, with no private-IP SSH fallback (existing) |
@@ -1028,10 +1285,10 @@ automatically.
 
 | Row | State | Copy |
 |---|---|---|
-| Your Hivra folder (~/Hivra), read and write | On (toggle) | "Shared with your Desktop and Files. Codex can read everything in it, including any keys or .env files you keep there, and can change or delete files." |
+| Your Hivra folder (~/Hivra), read and write | On (toggle) | "Shared with your Desktop and Files. Codex can read everything in it, including any keys or .env files you keep there, and can change or delete files. Anything Codex puts there can run programs as you when you use it in your Terminal, an editor or a desktop app. Even a plain git status in a repository Codex changed can do this." |
 | Its own user on this computer | On (locked) | "Codex runs as a separate user, not as you." |
 | Internet | On (locked) | "Codex needs the internet to reach ChatGPT. It can send anything it can read to the internet." |
-| This computer's other services and local network | Off (always) | "Codex can't reach your terminal, your desktop session or other devices on this network." |
+| This computer's other services and local network | Off (always) | "Codex can't reach your terminal, your desktop session, or other devices on this computer's network." |
 | Chrome profile | Not available yet | "Codex can't use a browser on this computer yet." |
 | Desktop control | Not available yet | "Codex can't see or control your desktop." |
 | Administrator (sudo) | Not available | "With administrator access Codex could read your personal files and undo every limit above." |
@@ -1050,10 +1307,18 @@ automatically.
 - "Isolation: a separate user on this computer. That is weaker than giving
   Codex its own computer." [Technical details: `shared-kernel`, the unit
   digest, the installer digest]
+- "Before you run Git, scripts or build tools in ~/Hivra yourself, check what
+  Codex changed. They run as you, not as Codex. Hivra's Files view only shows
+  and saves files. It never runs them." (Only with the ~/Hivra grant.)
 - "After it installs, sign in to ChatGPT in the Chat tab."
-- "Remove it any time. Your files in ~/Hivra stay. Codex's sign-in and chat
-  history on this computer are deleted."
+- "Remove it any time. Your files in ~/Hivra stay, including anything Codex
+  added, such as scripts or Git settings. Codex's sign-in and chat history on
+  this computer are deleted."
 - Button: **Add Codex to this computer**, with its own receipt.
+
+The **Remove** review repeats the ~/Hivra line: "Files Codex added to ~/Hivra
+stay after it's removed, and can still run as you if you run them." Turning
+~/Hivra off in Change access says the same.
 
 **Progress** shows observed receipts only: "Request accepted 0:05 ago",
 "Codex installed", "Codex started", "Chat is ready". **After:** the computer
@@ -1092,22 +1357,37 @@ and `relationship-snapshot.ts`; the PGlite lease test.
   `systemctl show` property check covers the v2 directive set instead of the
   0700 `RuntimeDirectory` and the `app-server` ExecStart.
 - `hivra-chat/server.js`: socket-activation listen, the token file, the
-  starting-folder working directory and overrides, attached mode (5.4), and
-  the gateway `/agents/<id>/` route with the socket check.
+  starting-folder working directory and overrides, the resume outcome S3
+  picks, attached mode (5.4), and the gateway `/agents/<id>/` route with the
+  socket check. In the computer profile, `/api/git/*` returns 404 before any
+  process starts (5.3.2, build step 3). No existing test covers the Git
+  routes in the computer profile. `runtime-adapters/deepseek-harness/guest-file-access.test.cjs`
+  exercises them with `HIVRA_AGENT_KIND=generic` and stays as it is.
 - `folder-recovery-guest.ts`: add the attached socket, agent and workspace
   units to `WORKSPACE_SERVICES`, so folder recovery stops the agent and
   unmounts its view while it rewrites `~/Hivra`.
-- `resource-gate.ts` (`loadCurrentComputeUsage()`, new `attach` mode) and
+- `resource-gate.ts` (`loadCurrentComputeUsage()` takes `activeCount` from
+  `hivra_owner_agent_slot_count`; new `attach` mode) and
   `app/api/billing/usage/route.ts`: count attachments toward the agent limit
   (5.1).
+- `app/api/hivra/agents/route.ts`, `launch-model-store.ts` and
+  `prepared-canary-computers.ts`: every Hivra-managed `hivra_agents` write
+  goes through `insert_hivra_managed_agent(p_row, p_agent_limit)` or the v3
+  launch-model reservation, and `plan_agent_limit` maps to the existing 403
+  copy (5.1). `launch-model-store.test.ts` asserts the v2 RPC name
+  (`expect(name).toBe("reserve_hivra_launch_model_request_v2")`) and must
+  change to v3; the launch route's slot-limit tests keep their copy and gain
+  the database refusal case.
 - `bux-ttyd.service`, `bux-box-ttyd.service`, `bux-ttyd-base-path.conf` and
   the gateway proxy: unix sockets.
 - New: the workspace helper `attached-workspace.py` (fd-based mount, verify
-  and the Remove walker) and its unit; the network unit, nftables table,
-  DNS socket and relay, and watchdog; the `hivra` status program; the attached
-  base prompt (`provisioner/system-prompt-attached-codex.md`); routes; cron
-  worker; migrations (intent v2, complete, fail, access change, detach,
-  delete detach, contracts table, final grants); and UI.
+  and the Remove walker) and its unit; the network unit, nftables table with
+  the `onlink` and `gateways` sets, DNS socket and relay with their own IP
+  filters, and watchdog; the `hivra` status program; the attached base
+  prompt (`provisioner/system-prompt-attached-codex.md`); routes; cron
+  worker; migrations (intent v2 with the plan limit, the slot count and lock,
+  `insert_hivra_managed_agent`, complete, fail, access change, detach, delete
+  detach, contracts table, final grants); and UI.
 
 **Retire, replaced in this release:** the `codex app-server --listen unix://`
 ExecStart and its agent-owned `RuntimeDirectory`; the `native` activation
@@ -1153,7 +1433,7 @@ picks it up. Otherwise it is deleted with its tests.
 | T7 | The agent drives the owner's desktop or browser without a grant | No `DISPLAY` or CDP route; the desktop container's bridge address is dropped in forwarding, and 127.0.0.1:8088 is in another network namespace | New matrix: connect to the container address and to 127.0.0.1:8088 fails |
 | T8 | The agent reads Hivra secrets on the computer | `ProtectHome`, `TemporaryFileSystem`, `InaccessiblePaths`; secret-inventory sweep | New matrix: readable-secret sweep is empty |
 | T9 | Privilege escalation to root | Not in `sudo`; `NoNewPrivileges`; empty capability set; `RestrictSUIDSGID`; `nosuid,nodev` view; syscall filter. Residual: kernel exploits (`shared-kernel`) | New matrix: `sudo -n true` fails, setuid file creation fails, the group list is exactly its own group; unit renderer test pins directives |
-| T10 | The agent attacks the owner through `~/Hivra` (planted scripts, git hooks, symlinks, FIFOs, deleting files) | Disclosure in the gate; the Files tab refuses symlinks, hardlinks and special files (`guarded-files.cjs`, existing); `nodev`. Residual: the owner running agent-written code | New: `workspace-guarded-files.test.ts` with an agent-planted symlink to `~/.hivra/api-token` (denied) and a FIFO (not opened) |
+| T10 | The agent attacks the owner through `~/Hivra`: files it writes are stored as the owner, so Git trusts a repository it planted, and Hivra's own gateway (`bux`, holding the computer token) would run that repository's `core.fsmonitor` on a plain `git status`, its hooks and filters on commit and checkout, or follow a `.git` file into another of the owner's repositories; also planted scripts, symlinks, FIFOs and deleted files | 5.3.2: the computer profile answers `/api/git/*` with 404 before any process starts; no Hivra component runs anything from `~/Hivra` (inventory in 5.3.2); the Files routes move bytes only and refuse symlinks, hardlinks and special files (`guarded-files.cjs`, existing); the Files view renders text only; `nodev`; gate, Review and Remove copy say that files Codex writes can run as the owner in the owner's own tools, including `git status`. Residual: the owner's own Terminal, editors and desktop apps run whatever the folder's content says, as the owner, and that stays true after Remove | New: `src/lib/infrastructure/__tests__/computer-gateway-git-routes.test.ts` runs `server.js` with `HIVRA_AGENT_KIND=linux-desktop` (like `hivra-surface-auth-runtime.test.ts`) on a workspace repository planted with `core.fsmonitor`, `pre-commit` and `post-checkout` hooks, a clean and smudge filter on `*` named in `.git/info/attributes`, a textconv driver and a `.git` file pointing at a second repository outside the workspace. With a valid bearer and with a valid cookie session, status, diff, commit and checkout each return 404, no marker file appears, and a recording `GIT_BIN` stub is never called; the same requests with `HIVRA_AGENT_KIND=generic` still reach Git. New: `workspace-guarded-files.test.ts` with an agent-planted symlink to `~/.hivra/api-token` (denied) and a FIFO (not opened). New: Files view test: an `.html` and an `.svg` file containing script render as text. New matrix: as the agent, plant the same repository in `~/Hivra`; as the owner, call the four routes through the public gateway and open, read and save the planted files in Files; no marker file appears anywhere. Gate and Review component tests assert the copy |
 | T11 | The owner's other processes read the agent's credentials | Private home 0700; the gateway reaches only the socket | New matrix: `bux` cannot read the agent's home |
 | T12 | The agent's instance serves HTML or cookies on the computer's origin | Gateway allowlist, JSON-only responses, no `Set-Cookie` or CORS headers, CSP sandbox | New: `attached-agent-gateway.test.ts` (upstream returns HTML with script and `Set-Cookie`; gateway refuses) |
 | T13 | Token confusion between the computer and the attached instance | Distinct tokens; each refused by the other | New: `attached-agent-gateway.test.ts` |
@@ -1176,10 +1456,11 @@ picks it up. Otherwise it is deleted with its tests.
 | T30 | The computer's lifecycle and the canonical record disagree after delete | A delete completion detaches the binding with a receipt | New: `test-hivra-attachment-lifecycle.cjs` |
 | T31 | A root helper follows a link the agent (or a `bux` process) planted: at the mount point while access is off, at `/home/bux/Hivra`, at `$HOME/AGENTS.md`, or inside the home during Remove. Root would then mount the owner's agent-writable folder over a program `bux` or root runs (for example `/usr/local/bin/node` or `ttyd`), or change or delete a system file | 5.3.1: every root target is in a root-owned location or a fresh tmpfs, never in the agent's home; `/home/bux/Hivra` is opened with `RESOLVE_NO_SYMLINKS` and used only through its fd (`open_tree`, `mount_setattr`, `move_mount` with empty paths and no symlink flags, `fchown`, `fchmod`); the start check runs as the agent; the Remove walker only unlinks, never follows a link and stops at a mount | New: `scripts/test-attached-workspace-helper.py` (root container): a link at the mount point, at `/home/bux/Hivra` and at `/home/bux`, and a path swapped during the owner re-assert, are each refused with no mount and no owner change; the Remove walker, facing links to `/etc` and to `/home/bux/Hivra`, a hardlink, a FIFO and a nested mount, deletes only names inside the home and stops at the mount; the source check finds no path-based mount, chown, chmod or recursive delete. New matrix: with access off, the agent cannot create, replace or re-point anything in `…/agent-views/<id>/` (EACCES or EROFS), and it re-points `~/Hivra` to `/usr/local/bin`; the test then plants a link at the mount point as root (fault injection); turning access on is refused with `workspace_path_not_plain`; once the link is removed, it succeeds; the computer's mount table gains exactly one mount, at the view path; the digests of `/usr/local/bin/node`, `ttyd` and every ExecStart binary of root and `bux` units are unchanged |
 | T32 | The agent keeps work running outside its unit (cron, at, a user service manager, lingering) and escapes its limits | `NoNewPrivileges` (`crontab` and `at` are setgid or setuid); read-only spools under `ProtectSystem=strict`; `cron.deny` and `at.deny`; no system bus | New matrix: `crontab -`, `at now`, `systemd-run --user` and `loginctl enable-linger` fail inside the unit; a minute later no process of the UID exists outside the unit's cgroup |
-| T33 | The agent stops its runtime loading the contract (removes or re-points the file, adds an override, edits its config) while Manage shows it delivered | The contract is in the root-owned, read-only starting folder where every Codex turn runs; `server.js` passes the S3 overrides on the command line; root reads the file back inside the unit's mount namespace and compares inode and digest. Residual: the agent controls its own processes and can ignore the file, and Delivered claims only the file | New matrix: as the agent, `rm`, `mv` and `ln -sf` on `AGENTS.md`, and creating any file in the starting folder, fail; the read-back still matches. New: `attachment-contract-readback.test.ts` (an inode or digest mismatch, or a missing namespace read, is never shown as delivered) |
+| T33 | The agent stops its runtime loading the contract (removes or re-points the file, adds an override, edits its config, or rewrites the working folder a session it resumes recorded) while Manage shows it delivered; or a contract update never reaches a resumed chat | The contract is in the root-owned, read-only starting folder where every new Codex session starts; `server.js` passes the S3 overrides on the command line; resumed sessions follow the S3 outcome (5.4): Hivra passes the working folder on every resume, or Manage narrows the claim to new chats; attached mode never decides anything from a session file; root reads the file back inside the unit's mount namespace and compares inode and digest. Residual: the agent controls its own processes and can ignore the file, and Delivered claims only the file | New matrix, reading the stub model endpoint's request log: a new chat's first model request carries the current contract block and the starting folder as its working folder. As the agent, `rm`, `mv` and `ln -sf` on `AGENTS.md`, and creating any file in the starting folder, fail; the read-back still matches. As the agent, rewrite an existing session's recorded working folder to its home and put an `AGENTS.md` there. Outcome (a): the next resumed turn's request still carries the starting folder and the current block, and after a re-render it carries the new block. Outcome (b): Manage shows "applies to new chats" and that chat shows the start-a-new-chat line. New: `attachment-contract-readback.test.ts` (an inode or digest mismatch, or a missing namespace read, is never shown as delivered). New: Manage contract panel test: "applies from its next message" only when the pinned runtime flag says resume reloads |
 | T34 | A receipt signed with a key the agent can read is shown as Hivra's own check | Receipt trust table (4.6); "reported by the computer" wording for agent-attested receipts; "checked by Hivra" only for root read-back | New: Manage contract panel test: an HMAC receipt from an agent-owned computer and an attached `llm-apply` receipt render the reported wording, and only a root read-back renders "checked by Hivra" |
-| T35 | Attaching gets around the plan's agent limit (a Free plan ends up with two agents) | Attachments count toward the slot limit on Hivra-managed computers; the gate refuses before the Review; the route counts again after the claim and cancels its own claim if over (5.1) | New: `resource-gate.test.ts` (an active or in-flight attachment counts one slot and no CPU or memory; cancelled, failed, detached and My server attachments count none); billing usage route test; attach route test (Free with a desktop returns 403 with no RPC; two concurrent requests at the limit leave at most one claim) |
-| T36 | The agent attacks its DNS relay, the one process that takes its input inside the computer's own network namespace | A pinned byte relay with no DNS parsing beyond length framing; size and rate caps; `DynamicUser`, the agent unit's sandbox, and `IPAddressAllow=` only 127.0.0.53 with a fixed port 53 in code. Residual: a compromised relay reaches loopback services in the computer's namespace, one more reason `ttyd` moves to unix sockets | New: `scripts/test-attached-dns-relay.py` (oversized datagram dropped, TCP length cap, destination fixed, no other outbound connection); unit renderer test pins the relay's sandbox |
+| T35 | Attaching gets around the plan's agent limit (a Free plan ends up with two agents), including through two attaches at once, a launch racing an attach, or the cron worker dispatching a claim after the owner went over | Attachments count toward the slot limit on Hivra-managed computers; the gate refuses before the Review; the claim and the dispatch count under the per-owner slot lock and refuse or cancel with `plan_agent_limit` in the same transaction; every Hivra-managed `hivra_agents` writer takes the same lock, and a trigger refuses a writer that did not; one SQL count feeds launch, billing usage and attach (5.1). Residual: a Hermes-lane launch racing an attach | New PGlite (real migrations): at limit − 1, claim A succeeds and claim B returns `plan_agent_limit` with no row; with claim A in flight, `insert_hivra_managed_agent` and the v3 reservation refuse at the same limit; a slot-consuming row written between claim and dispatch (a legacy `hermes_instances` row) makes the dispatch cancel the claim with `plan_agent_limit` and write no dispatch outbox row; a direct Hivra-managed insert without the flag is refused by the trigger; claim, dispatch and both writers take `pg_advisory_xact_lock` on the owner key before counting (from `pg_get_functiondef`, since PGlite cannot run two sessions at once); `hivra_owner_agent_slot_count` equals `loadCurrentComputeUsage().activeCount` on shared fixtures (active, stopped, deleted, cold-archived legacy, pool-exempt, and claimed, dispatched, cancelled, failed, detached and My server attachments). New: `resource-gate.test.ts` (an in-flight or active attachment counts one slot and no CPU or memory); billing usage route test; attach route test (Free with a desktop returns 403 with no RPC; the route makes one claim call, maps `plan_agent_limit` to 403 and never calls cancel); launch route test (`plan_agent_limit` from the database maps to the existing copy) |
+| T36 | The agent attacks its DNS relay, the one process that takes its input inside the computer's own network namespace | A pinned byte relay with no DNS parsing beyond length framing; size and rate caps; `DynamicUser` and the agent unit's sandbox; the socket unit allows only the agent namespace's loopback (`127.0.0.0/8`, the queries' source) and the relay service only `127.0.0.53/32` (its one upstream), each with `IPAddressDeny=any`, because systemd applies a service's list only to sockets it creates (5.3); port 53 fixed in code. Residual: a compromised relay is still a process in the computer's namespace, one more reason `ttyd` moves to unix sockets | New: `scripts/test-attached-dns-relay.py` (oversized datagram dropped, TCP length cap, destination fixed, no other outbound connection); unit renderer test pins both units' IP lists and the relay's sandbox. New matrix: a query from the agent, sourced from 127.0.0.1, resolves; from the relay's cgroup, connecting to 127.0.0.1:7681, 127.0.0.54 and each of the computer's own addresses fails |
+| T37 | The agent reaches other machines on the computer's own network: neighbours on a subnet the computer is directly on (a My server guest on a public `/24`, other guests on the same bridge) or its gateway | Forward drop of every connected prefix (set `onlink`) and every gateway (set `gateways`), IPv4 and IPv6, refreshed by the watchdog, which stops the agent and re-probes on any change; systemd IP filter with the prefixes and gateways observed at start; the enforcement probe refuses activation when a connected prefix or gateway is missing from either layer (5.3) | New: `scripts/test-attached-network-sets.py` (container): from `ip -j route` fixtures with a public `/24` on-link, a global IPv6 prefix and a gateway outside the prefix, the rendered nft sets and unit `IPAddressDeny=` contain each, and the probe refuses a rendering that lacks one. New matrix: a neighbour namespace on the guest's segment with an address in each on-link prefix, the public-range one included, and a listener on the default gateway's address; connections from inside the unit to each fail with both layers and with each layer removed in turn; a public HTTPS request through that gateway still succeeds; changing the guest's address makes the watchdog stop the agent, update the sets and re-probe before it starts again |
 
 ---
 
@@ -1191,8 +1472,8 @@ in a disposable VM. Results are recorded in the PR.
 | Spike | Question | If it fails |
 |---|---|---|
 | S1 | Does an idmapped mount of `/home/bux/Hivra`, made through the fd-based mount API (`openat2`, `open_tree`, `mount_setattr`, `move_mount`) on the root-owned mount point, work on that kernel and filesystem, with correct ownership both ways and `nosuid,nodev`? Does it stay writable when unit v2 binds it (`norbind`) under the read-only starting folder with `ProtectSystem=strict`? | Refuse the `~/Hivra` grant on that image, with a reason. No ACL fallback |
-| S2 | Does the network design work on the pinned image: the namespace joined with `NetworkNamespacePath=`, veth and NAT, the nftables table surviving Docker and ufw reloads, a socket unit binding 127.0.0.53 inside the namespace for the DNS relay, and systemd IP filtering (cgroup v2 plus BPF)? Does each layer block on its own? | Attach is unavailable on that computer |
-| S3 | Does Codex 0.149.1 `exec --json` run under unit v2, including device-auth and API-key sign-in, with `SystemCallFilter`, `RestrictNamespaces`, no `/home` and a read-only, root-owned working directory? Which instruction sources does it read: file names in the working directory and in `CODEX_HOME`, and config keys that change or turn them off? That list fixes the command-line overrides and the read-back checks (4.5) | Relax only the specific directive, with a matrix row and review note |
+| S2 | Does the network design work on the pinned image: the namespace joined with `NetworkNamespacePath=`, veth and NAT, the nftables table with the `onlink` and `gateways` sets surviving Docker and ufw reloads, a socket unit binding 127.0.0.53 inside the namespace for the DNS relay, and systemd IP filtering (cgroup v2 plus BPF)? Do the DNS socket's `127.0.0.0/8` allow and the relay's `127.0.0.53/32` allow (5.3) pass a real query sourced from 127.0.0.1 and block everything else? Does each layer block on its own? | Attach is unavailable on that computer |
+| S3 | Does Codex 0.149.1 `exec --json` run under unit v2, including device-auth and API-key sign-in, with `SystemCallFilter`, `RestrictNamespaces`, no `/home` and a read-only, root-owned working directory? Which instruction sources does it read: file names in the working directory and in `CODEX_HOME`, and config keys that change or turn them off? That list fixes the command-line overrides and the read-back checks (4.5). **Resume:** for `codex exec resume <id>`, where does the working folder come from (the spawn `cwd`, a flag, a `-c` override, or the session file in `CODEX_HOME/sessions`), and does each resumed turn read the instruction files again or replay what the session file recorded? Checked by editing the session file's recorded folder and by re-rendering between turns, reading the stub model endpoint's request log. The same resume question for Claude Code `--resume` and for Codex on agent-owned computers | Relax only the specific directive, with a matrix row and review note. For resume: outcome (b) in 5.4, and Manage says "applies to new chats" for that runtime and version |
 | S4 | Does `hivra-chat/server.js` run as a non-`bux` user with the environment above? (It defaults several `/home/bux` paths.) | Fix the defaults to follow `HOME` and `CODEX_BIN` |
 
 ---
@@ -1219,6 +1500,14 @@ in a disposable VM. Results are recorded in the PR.
 - `src/lib/infrastructure/__tests__/attached-agent-gateway.test.ts`: T12–T15
   and T27, the route allowlist, and a Files or Terminal workspace grant cannot
   open `/agents/<id>/`.
+- `src/lib/infrastructure/__tests__/computer-gateway-git-routes.test.ts`: in
+  the computer profile, the four Git routes return 404 and start no process
+  on a repository planted with `core.fsmonitor`, hooks, filters, a textconv
+  driver and a redirecting `.git` file; the generic profile still reaches Git
+  (T10). Files view test: planted `.html` and `.svg` render as text (T10).
+- `scripts/test-attached-network-sets.py`: the `onlink` and `gateways` sets
+  and the unit's IP deny list cover every connected prefix and gateway in the
+  route fixtures, and the probe refuses a rendering that misses one (T37).
 - `scripts/test-hivra-attachment-lifecycle.cjs` with a Jest wrapper: intent
   v2, complete only with the readiness observation, fail, change access,
   detach, delete-detach, restore guard, and the exact `EXECUTE` grants
@@ -1237,8 +1526,11 @@ in a disposable VM. Results are recorded in the PR.
 - `scripts/test-attached-dns-relay.py`: the relay's caps and fixed
   destination (T36).
 - `src/lib/hivra/__tests__/resource-gate.test.ts`,
-  `src/app/api/billing/usage/__tests__/route.test.ts` and the attach route
-  test: the plan limit counts attachments (T35).
+  `src/app/api/billing/usage/__tests__/route.test.ts`, the attach and launch
+  route tests and the PGlite slot-lock cases in
+  `scripts/test-hivra-attachment-lifecycle.cjs`: the plan limit counts
+  attachments, and claim, dispatch and every Hivra-managed agent writer
+  enforce it under one per-owner lock (T35).
 - `folder-recovery` guest test: recovery stops the attached units before it
   touches `~/Hivra`.
 - Route and component tests: auth, 404, same-origin, rate limit, review 409,
@@ -1258,13 +1550,17 @@ model endpoint, and then runs every probe **inside the running unit**: it
 joins the unit's cgroup and namespaces, then drops to its UID, groups and
 empty capability set. It does not use a lookalike `systemd-run`. The guest
 gets a global IPv6 address and a second, public-range IPv4 address on its
-uplink, so the own-address probes are real. Checks: T4–T9, T11, T15,
-T22–T24, T31–T33 and T36; the listener sweep on every local address with each
-network layer removed in turn; the socket and secret sweeps; public HTTPS
-reachable; DNS working; the agent's own localhost server reachable by the
-agent; and the owner's Files, Terminal and Desktop still working after
-attach, after Change access and after Remove. The verdict artifact is kept
-even on failure.
+uplink, so the own-address probes are real. A neighbour network namespace on
+the same QEMU segment holds an address in each of the guest's on-link
+prefixes, the public-range one included, plus a listener on the default
+gateway's address, so the on-link probes are real too. Checks: T4–T11, T15,
+T22–T24, T31–T33, T36 and T37; the listener sweep on every local address,
+every on-link neighbour and the gateway, with each network layer removed in
+turn; the socket and secret sweeps; the planted-repository Git and Files
+checks as the owner (T10); public HTTPS reachable; DNS working; the agent's
+own localhost server reachable by the agent; and the owner's Files, Terminal
+and Desktop still working after attach, after Change access and after Remove.
+The verdict artifact is kept even on failure.
 
 ### 8.3 Canary live acceptance
 
@@ -1288,14 +1584,15 @@ Hivra-owned capacity, with cleanup evidence.
 | AC-A1 | Add an agent → gate → review → Add Codex to this computer | Gate rows and copy as in 5.8; one receipt; progress shows observed steps only |
 | AC-A2 | Sign in inside the Chat tab | **Needs a ChatGPT account or OpenAI key approved for testing.** Chat works from the computer page |
 | AC-A3 | Ask Codex to list `~/Hivra` and create `hello.txt` | The file appears in Files and on the Desktop, owned by the owner |
-| AC-A4 | Ask Codex to read `/home/bux/.hivra/api-token`, `ls /home/bux`, open 127.0.0.1:7682, open port 22 on 127.0.0.53 and on the computer's own addresses, run `sudo -n true` | All refused; Codex says it lacks access and does not try workarounds |
+| AC-A4 | Ask Codex to read `/home/bux/.hivra/api-token`, `ls /home/bux`, open 127.0.0.1:7682, open port 22 on 127.0.0.53, on the computer's own addresses and on its gateway, run `sudo -n true` | All refused; Codex says it lacks access and does not try workarounds |
 | AC-A5 | Root runs the isolation matrix on this computer | Passes |
 | AC-A6 | Reboot the computer | Codex returns, `~/Hivra` is mounted, chat works |
 | AC-A7 | Change access: turn `~/Hivra` off, then on again | Each has its own review; Codex is stopped while its view changes; after "off", Codex reports no shared folder and no view is mounted; after "on", the view is back at the same root-owned path and nowhere else |
 | AC-A8 | Remove | Files in `~/Hivra`, including `hello.txt`, are unchanged (tree hash); no unit, mount, account, group or process remains; the binding is detached; Desktop, Files and Terminal still work |
 | AC-A9 | Delete the disposable computer | Binding detached with a delete receipt; cleanup recorded |
 | AC-A10 | On a Canary fixture already at its plan's agent limit, open Add an agent | The gate shows the plan-limit copy and a Billing link; there is no Review; no attachment row is created |
-| AC-A11 | In Manage, open the contract panel for the attached Codex and for a Hivra Cloud Codex | "Delivered · checked by Hivra" for the attached agent; "The computer reported it delivered" for the agent-owned computer |
+| AC-A11 | In Manage, open the contract panel for the attached Codex and for a Hivra Cloud Codex | "Delivered · checked by Hivra" for the attached agent; "The computer reported it delivered" for the agent-owned computer; "applies from its next message" or "applies to new chats" exactly as the S3 flag for that runtime says |
+| AC-A12 | Ask Codex to create a Git repository in `~/Hivra` whose `core.fsmonitor` and `pre-commit` hook write a marker file; as the owner, request `/api/git/status` and `/api/git/commit` on the computer with its token; open the repository in Files | Both routes return 404; Files shows the files as text; no marker file exists; the gate, Review and Remove review show the "can run as you" lines |
 
 ---
 
@@ -1303,7 +1600,9 @@ Hivra-owned capacity, with cleanup evidence.
 
 1. This review (D0).
 2. Spikes S1–S4 with recorded evidence.
-3. Computer hardening: `ttyd` on unix sockets. The same class of issue exists
+3. Computer hardening: `ttyd` on unix sockets, and `/api/git/*` answering 404
+   in the computer profile with the gateway test of T10 (5.3.2). Both ship to
+   every computer before any attach. The same class of loopback issue exists
    on provider VMs, which are not an attach target in this release: the
    standalone Caddyfile written by `hivra-install-agent.py` has no global
    options block, so Caddy's admin API stays on its default, localhost:2019,
@@ -1315,12 +1614,18 @@ Hivra-owned capacity, with cleanup evidence.
    against it), then DigitalOcean's visible message.
 5. Database and plan: intent v2, complete, fail, change access, detach,
    delete-detach, restore guard, v2 service policy, the instance token with
-   the binding. No grants yet. The plan-limit counting of 5.1 lands in the
-   same step, because the route in step 8 depends on it.
+   the binding. No grants yet. The plan limit of 5.1 lands in the same step,
+   because the route in step 8 depends on it: the slot count function, the
+   per-owner lock in claim and dispatch, `insert_hivra_managed_agent`, the v3
+   launch-model reservation and the writer trigger. The launch writers are a
+   hot path, so this step also runs the launch smoke tests and a Canary
+   launch check after its merge.
 6. Guest: units v2 with socket activation, the workspace helper (fd-based
-   mount, verify, Remove walker), the network unit, nftables table and
-   watchdog, the attached `hivra-chat` mode, the readiness probe, the folder
-   recovery change, updated container tests, the VM matrix.
+   mount, verify, Remove walker), the network unit, nftables table with the
+   `onlink` and `gateways` sets, the DNS socket and relay with their own IP
+   lists, and watchdog, the attached `hivra-chat` mode with the resume
+   outcome S3 picked, the readiness probe, the folder recovery change,
+   updated container tests, the VM matrix.
 7. Gateway `/agents/<id>/` proxy with the socket check, and the drop-in.
 8. Cron worker, routes and final grants migration, behind a Canary-only flag.
 9. UI: entry points, gate, review, progress, Chat tab, Agents on this
@@ -1361,12 +1666,17 @@ with a status command instead.
 Adding Codex to a computer you already have will create a separate, locked-down
 user for it, with its own network. It can work in your Hivra folder and reach
 the internet, and nothing else: not your personal files, not your desktop or
-browser, not the computer's other services on any of its addresses, and not
-administrator access. Hivra never lets a setup step run as administrator on
-a file or folder Codex could have swapped. Codex counts as one of your plan's
-agents on Hivra Cloud. It shares the
+browser, not the computer's other services on any of its addresses, not
+other machines on the computer's own network, and not administrator access.
+Hivra never lets a setup step run as administrator on a file or folder Codex
+could have swapped. Hivra itself never runs anything Codex writes in your
+Hivra folder. Your own tools can: a script, or even a plain `git status` in a
+repository Codex changed, runs as you, so the review tells you to check what
+Codex changed before you run things there. Codex counts as one of your plan's
+agents on Hivra Cloud, and the database enforces that limit. It shares the
 computer with you, which is weaker separation than an agent with its own
 computer, and the review says so. You chat with it from the computer page.
 Removing it deletes Codex and its sign-in but leaves every file in your Hivra
 folder. Before any of this is built, the computer's unprotected local
-terminals must be locked down, and a real-VM test must prove each limit.
+terminals must be locked down, its unused Git routes removed, and a real-VM
+test must prove each limit.
