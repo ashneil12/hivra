@@ -9,6 +9,8 @@ import { HetznerCloudConnectionDialog } from "../HetznerCloudConnectionDialog";
 import { InfrastructureConnectionsPage } from "../InfrastructureConnectionsPage";
 import {
   advanceProviderComputerSetup,
+  checkGvisorConnection,
+  prepareGvisorConnection,
   connectHetznerCloudProject,
   createHetznerCloudCapacity,
   createInfrastructureConnection,
@@ -60,6 +62,8 @@ jest.mock("@/lib/infrastructure/client", () => ({
     }
   },
   advanceProviderComputerSetup: jest.fn(),
+  checkGvisorConnection: jest.fn(),
+  prepareGvisorConnection: jest.fn(),
   createInfrastructureConnection: jest.fn(),
   connectHetznerCloudProject: jest.fn(),
   createHetznerCloudCapacity: jest.fn(),
@@ -219,10 +223,18 @@ const READY_GVISOR_TARGET: DeploymentTargetDto = {
   },
   supportedIsolationDrivers: ["gvisor-runsc"],
   isolationClass: "application-kernel",
-  lastPreflightAt: "2026-09-15T12:00:00.000Z",
+  // A gVisor host can launch only within 15 minutes of its last strict check,
+  // so a ready fixture was checked a minute before the suite runs.
+  lastPreflightAt: new Date(Date.now() - 60_000).toISOString(),
   lastErrorCode: null,
   createdAt: "2026-09-15T12:00:00.000Z",
   updatedAt: "2026-09-15T12:00:00.000Z",
+};
+
+/** The same host, last checked long enough ago that a launch would be refused. */
+const STALE_GVISOR_TARGET: DeploymentTargetDto = {
+  ...READY_GVISOR_TARGET,
+  lastPreflightAt: "2026-09-15T12:00:00.000Z",
 };
 
 const DISCOVERED_INSTALLED_GVISOR: HostDiscoveryResult = {
@@ -541,7 +553,10 @@ function hetznerSetupView(patch: Record<string, unknown> = {}) {
     targetId: null,
     observedAt: null,
     launchReady: false,
-    enrollmentExpiresAt: new Date(Date.now() + 14 * 60_000 + 10_500).toISOString(),
+    // A newly created server: its 15 minutes start at Start setup, so the
+    // server reports no deadline before then.
+    enrollmentExpiresAt: null, enrollmentClosesAt: null,
+    enrollmentWindow: "since_start" as const,
     ...patch,
   };
 }
@@ -697,11 +712,113 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     render(<InfrastructureConnectionsPage />);
 
-    expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
+    const banner = (await screen.findByText(/Capacity is ready for Linux Sandbox/i)).closest('[role="status"]') as HTMLElement;
+    expect(within(banner).getByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
       `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
-    expect(screen.getByText(/Capacity is ready for Linux Sandbox/i)).toBeInTheDocument();
+    // The ready host's own card continues the same launch, with a truthful badge.
+    const card = screen.getByRole("heading", { name: "Linux host" }).closest("article") as HTMLElement;
+    expect(within(card).getByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).queryByText("Inspected")).not.toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Continue launch" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+  });
+
+  it("doesn't send a Linux Sandbox launch back to a gVisor host whose check is stale", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => key === "launch" ? "linux-terminal" : null);
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([STALE_GVISOR_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Needs a check")).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready for Linux Sandbox/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+  });
+
+  // INF-06: a ready gVisor host is one click from launching Linux Sandbox.
+  it("offers Launch on this server on a ready gVisor host's card", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+  });
+
+  // Review of slice 5: an owner who set up Linux Sandbox and came back an
+  // hour later got Ready and a Launch button the server then refused.
+  it("asks for a readiness check on a gVisor host whose last check is stale, then offers Launch", async () => {
+    const readyConnection: InfrastructureConnectionDto = {
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    };
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyConnection]);
+    (listInfrastructureTargets as jest.Mock)
+      .mockResolvedValueOnce([STALE_GVISOR_TARGET])
+      .mockResolvedValue([READY_GVISOR_TARGET]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Needs a check")).toBeInTheDocument();
+    expect(within(card).queryByText("Ready for Linux Sandbox")).not.toBeInTheDocument();
+    expect(within(card).queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
+
+    // One click: inspect, then the strict check, with no second button.
+    fireEvent.click(within(card).getByRole("button", { name: "Check readiness" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(discoverInfrastructureHost).toHaveBeenCalledWith(PENDING_HOST_CONNECTION.id);
+    expect(checkGvisorConnection).toHaveBeenCalledTimes(1);
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(await within(card).findByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+  });
+
+  it("offers Launch on this server on a ready Proxmox host's card", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:05:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_PROXMOX_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Ready for agents")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?start=1&targetId=${READY_PROXMOX_TARGET.id}`,
+    );
+    expect(within(card).queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 
   it("refreshes saved readiness again when a completed preparation closes", async () => {
@@ -758,9 +875,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     render(<InfrastructureConnectionsPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare recommended setup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review setup" }));
     const prepareDialog = await screen.findByRole("dialog");
-    fireEvent.click(within(prepareDialog).getByRole("button", { name: "Prepare recommended setup" }));
+    expect(within(prepareDialog).getByRole("heading", { name: "Set up Linux host for agents?" })).toBeInTheDocument();
+    fireEvent.click(within(prepareDialog).getByRole("button", { name: "Set up Linux host" }));
     expect(await screen.findByRole("heading", { name: /Linux host is ready for agents/i })).toBeInTheDocument();
     expect(listInfrastructureTargets).toHaveBeenCalledTimes(2);
 
@@ -787,37 +905,82 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValue([READY_GVISOR_TARGET]);
     (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
-    const originalFetch = global.fetch;
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true }),
-    });
-    Object.defineProperty(global, "fetch", { value: fetchMock, configurable: true });
+    (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
 
-    try {
-      render(<InfrastructureConnectionsPage />);
+    render(<InfrastructureConnectionsPage />);
 
-      fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
-      expect(await screen.findByRole("heading", {
-        name: "A supported Linux sandbox path is available.",
-      })).toBeInTheDocument();
-      await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(2));
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    expect(await screen.findByRole("heading", { name: "Linux host already has gVisor, which Linux Sandbox runs on." })).toBeInTheDocument();
+    await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(2));
 
-      fireEvent.click(screen.getByRole("button", { name: "Repair gVisor" }));
-      expect(await screen.findByText(/pinned runtime, application adapter, and exact host evidence passed/i)).toBeInTheDocument();
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/api/infrastructure/connections/${PENDING_HOST_CONNECTION.id}/gvisor/prepare`,
-        expect.objectContaining({ method: "POST" }),
-      );
+    // Repair is a host change, so it goes through the same review dialog.
+    fireEvent.click(screen.getByRole("button", { name: "Reinstall Linux Sandbox setup" }));
+    const review = await screen.findByRole("dialog", { name: "Reinstall Linux Sandbox setup on Linux host?" });
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    fireEvent.click(within(review).getByRole("button", { name: "Reinstall setup" }));
+    expect(await screen.findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(prepareGvisorConnection).toHaveBeenCalledWith(PENDING_HOST_CONNECTION.id);
+    await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(3));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("link", { name: "Continue launch" })).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
 
-      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
 
-      await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(3));
-      expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
-    } finally {
-      Object.defineProperty(global, "fetch", { value: originalFetch, configurable: true });
-    }
+    await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(4));
+    expect((await screen.findAllByRole("link", { name: /Continue launch/i }))[0]).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
+  });
+
+  it("checks an installed Linux Sandbox setup from the card's inspection and offers Launch on this server", async () => {
+    const readyConnection: InfrastructureConnectionDto = {
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:05:00.000Z",
+    };
+    (listInfrastructureConnections as jest.Mock)
+      .mockResolvedValueOnce([PENDING_HOST_CONNECTION])
+      .mockResolvedValue([readyConnection]);
+    (listInfrastructureTargets as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([READY_GVISOR_TARGET]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check readiness" }));
+    expect(await screen.findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+  });
+
+  it("closes the inspection and opens the host's settings when discovery needs a root login", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{ ...PENDING_HOST_CONNECTION, endpoint: { ...PENDING_HOST_CONNECTION.endpoint!, sshUser: "ubuntu" } }]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+      ...DISCOVERED_INSTALLED_GVISOR,
+      snapshot: {
+        ...DISCOVERED_INSTALLED_GVISOR.snapshot,
+        host: {
+          ...DISCOVERED_INSTALLED_GVISOR.snapshot.host,
+          environment: { ...DISCOVERED_INSTALLED_GVISOR.snapshot.host.environment, effectivePrivilege: "non-root" },
+        },
+        engines: DISCOVERED_INSTALLED_GVISOR.snapshot.engines.map((engine) => engine.id === "gvisor"
+          ? { ...engine, supported: false, unmetRequirements: ["ROOT_REQUIRED" as const] }
+          : engine),
+      },
+    } satisfies HostDiscoveryResult);
+
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    expect(await screen.findByRole("heading", { name: "Signed in as ubuntu without root access." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect as root" }));
+    expect(await screen.findByRole("dialog", { name: "Update Linux host" })).toBeInTheDocument();
+    expect(screen.getByLabelText("SSH user")).toHaveValue("ubuntu");
   });
 
   it("refreshes saved readiness when Edit host readiness closes the wizard", async () => {
@@ -890,7 +1053,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(wizard).getByRole("button", { name: "Save and inspect" }));
 
     expect(await within(wizard).findByRole("heading", {
-      name: "A supported isolation engine is installed.",
+      name: "Linux host runs Proxmox VE 8.4.1.",
     })).toBeInTheDocument();
     fireEvent.click(within(wizard).getByRole("button", { name: "Check Proxmox readiness" }));
     expect(await within(wizard).findByRole("heading", { name: "Ready for agents" })).toBeInTheDocument();
@@ -1080,7 +1243,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
         hetznerSetupView(),
         hetznerSetupView({ orderId: "00000000-0000-4000-8000-000000001017", providerServerId: "4815162344", serverName: "hivra-ready",
           stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
-          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null }),
+          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null }),
       ]}
       setupEvidence="loaded"
       loading={false}
@@ -1101,6 +1264,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(prepared).getByRole("link", { name: "Launch on this server" }))
       .toHaveAttribute("href", "/dashboard/launch?start=1&targetId=00000000-0000-4000-8000-000000001099");
     expect(screen.queryByText(/Open Computer setup to check agent readiness/)).not.toBeInTheDocument();
+  });
+
+  it.each([["since_start", "It didn't connect back within 15 minutes of starting setup."],
+    ["since_creation", "Its one-time setup key expired."]] as const)("explains an expired %s setup window by its own rule", (window, hint) => {
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_OFF_SERVER]}
+      setups={[hetznerSetupView({ stage: "expired", enrollmentWindow: window })]} setupEvidence="loaded" loading={false}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={jest.fn()} onConnectExistingServer={jest.fn()} />);
+    const created = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(created).getByText("Setup window expired")).toBeInTheDocument();
+    expect(within(created).getByText(new RegExp(hint.replace(/[.]/g, "\\.")))).toBeInTheDocument();
   });
 
   it("names no server as someone else's until Hivra's records have loaded", () => {
@@ -1306,7 +1479,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     ));
     expect(await within(capacityDialog).findByRole("heading", { name: "Set it up for agents" })).toBeInTheDocument();
     expect(within(capacityDialog).getByText("Server created (powered off). Billing has started.")).toBeInTheDocument();
-    expect(await within(capacityDialog).findByText(/Setup key valid for/)).toHaveTextContent(/14:(10|09)/);
+    // No countdown before Start setup: the window opens when Hivra powers it on.
+    expect(await within(capacityDialog).findByText(/Setup must finish within 15 minutes of starting/)).toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/Setup key valid for/)).not.toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/left for the server to connect back/)).not.toBeInTheDocument();
     // Start setup is the only primary action; no "Return to infrastructure" first.
     expect(within(capacityDialog).getByRole("button", { name: "Start setup" })).toBeEnabled();
     expect(within(capacityDialog).queryByRole("button", { name: /Return to infrastructure/ })).not.toBeInTheDocument();
@@ -1320,7 +1496,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
     (advanceProviderComputerSetup as jest.Mock).mockResolvedValue(hetznerSetupView({
       stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
-      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null,
+      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null,
     }));
     render(<InfrastructureConnectionsPage />);
     const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
@@ -1333,7 +1509,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create server and start billing" }));
     fireEvent.click(await within(dialog).findByRole("button", { name: "Start setup" }));
 
-    expect(await within(dialog).findByRole("link", { name: "Continue your launch" })).toHaveAttribute(
+    expect(await within(dialog).findByRole("link", { name: "Continue launch" })).toHaveAttribute(
       "href", "/dashboard/launch?kind=agent&start=1&profile=codex&targetId=00000000-0000-4000-8000-000000001099",
     );
     expect(advanceProviderComputerSetup).toHaveBeenCalledWith(HETZNER_CONNECTION.id, {

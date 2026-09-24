@@ -51,8 +51,6 @@ import type {
 import {
   HETZNER_CLOUD_CONNECTION_ERROR_CODES,
   HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION,
-  isGvisorDeploymentTarget,
-  isProxmoxDeploymentTarget,
 } from "@/lib/infrastructure/contracts";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import {
@@ -68,7 +66,7 @@ import {
   type HivraCloudCapacityDto,
 } from "@/lib/infrastructure/hivra-cloud-client";
 import { canPrepareFromPreflight } from "@/lib/infrastructure/preparation-eligibility";
-import { targetSupportsCatalogRuntime } from "@/lib/hivra/agent-placement";
+import { targetSupportsLaunchResource } from "@/lib/infrastructure/launch-on-server";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import {
   buildLaunchSetupHref,
@@ -95,6 +93,7 @@ import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
 import { DigitalOceanConnectionCard } from "./DigitalOceanConnectionCard";
 import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
 import { DigitalOceanLaunchDialog } from "./DigitalOceanLaunchDialog";
+import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -107,6 +106,16 @@ type CheckDialogState = {
   discovery?: HostDiscoveryResult;
   preflight?: ProxmoxPreflightResult;
   error?: string;
+  /** The owner asked to check Linux Sandbox readiness: after the inspection,
+   * run the strict check without a second click. */
+  checkGvisorReadiness?: boolean;
+};
+
+/** Which host setup the shared review dialog is running, and on what. */
+type PreparingState = {
+  connection: SshInfrastructureConnectionDto;
+  engine: "proxmox" | "gvisor";
+  mode: "prepare" | "repair";
 };
 
 type HetznerInventoryState = {
@@ -149,6 +158,7 @@ export function InfrastructureConnectionsPage() {
   const requestedTokenReplacement = searchParams?.get("replaceToken") ?? null;
   const unifiedLaunchReturn = searchParams?.get("returnTo") === "unified-launch";
   const selfHosted = isLocalAuthMode();
+  const pendingLaunch = usePendingLaunch();
   const [connections, setConnections] = useState<InfrastructureConnectionDto[]>([]);
   const [targets, setTargets] = useState<DeploymentTargetDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -182,7 +192,8 @@ export function InfrastructureConnectionsPage() {
   const [editingConnection, setEditingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
   const [deletingConnection, setDeletingConnection] = useState<InfrastructureConnectionDto | null>(null);
   const [forceForgetConnection, setForceForgetConnection] = useState<HetznerCloudConnectionDto | null>(null);
-  const [preparingConnection, setPreparingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
+  const [preparing, setPreparing] = useState<PreparingState | null>(null);
+  const preparingConnection = preparing?.connection ?? null;
   const [deleting, setDeleting] = useState(false);
   const [forceForgetting, setForceForgetting] = useState(false);
   const [forceForgetError, setForceForgetError] = useState<string | null>(null);
@@ -416,13 +427,13 @@ export function InfrastructureConnectionsPage() {
   const hasHivraCloudCapacity = Boolean(
     hivraCloud?.subscribed && hivraCloud.plan && hivraCloud.usage,
   );
+  // Ready now, not only once: a Linux Sandbox host's check lapses after 15
+  // minutes, and the banner goes away with it.
+  const launchReadyTargetIds = useLaunchReadyTargetIds(targets);
   const readyLaunchTarget = requestedLaunchResource
     ? targets.find((target) => (
-        target.status === "ready"
-        && target.capabilities.launchReady
-        && targetSupportsCatalogRuntime(target, requestedLaunchResource)
-        && (requestedLaunchResource !== "linux-desktop" || isProxmoxDeploymentTarget(target))
-        && (requestedLaunchResource !== "linux-terminal" || isGvisorDeploymentTarget(target))
+        launchReadyTargetIds.has(target.id)
+        && targetSupportsLaunchResource(target, requestedLaunchResource)
       )) ?? null
     : null;
   const launchReturnHref = requestedLaunchResource
@@ -542,14 +553,41 @@ export function InfrastructureConnectionsPage() {
     await loadConnections();
   }
 
-  const runDiscovery = useCallback(async (connection: SshInfrastructureConnectionDto) => {
+  // The page reloads target evidence rather than trusting the dialog's copy.
+  async function recordGvisorPreparation() {
+    await loadConnections();
+  }
+
+  /** Close whichever inspection is open and hand over to the review dialog. */
+  function requestGvisorSetup(connection: InfrastructureConnectionDto, mode: "prepare" | "repair") {
+    if (!isSshConnection(connection)) return;
+    setWizardOpen(false);
+    setEditingConnection(null);
+    setWizardPrefill(null);
+    setCheckDialog(null);
+    setPreparing({ connection, engine: "gvisor", mode });
+  }
+
+  /** Close the inspection and open the connection's settings. */
+  function requestConnectionEdit(connection: InfrastructureConnectionDto) {
+    if (!isSshConnection(connection)) return;
+    setCheckDialog(null);
+    setWizardPrefill(null);
+    openEditWizard(connection);
+  }
+
+  const runDiscovery = useCallback(async (
+    connection: SshInfrastructureConnectionDto,
+    options: { checkGvisorReadiness?: boolean } = {},
+  ) => {
+    const checkGvisorReadiness = options.checkGvisorReadiness === true;
     setCheckingIds((current) => new Set(current).add(connection.id));
-    setCheckDialog({ connection, phase: "discovering" });
+    setCheckDialog({ connection, phase: "discovering", checkGvisorReadiness });
     setActionError(null);
     setActionNotice(null);
     try {
       const discovery = await discoverInfrastructureHost(connection.id);
-      setCheckDialog({ connection, phase: "discovery", discovery });
+      setCheckDialog({ connection, phase: "discovery", discovery, checkGvisorReadiness });
     } catch (error) {
       setCheckDialog({
         connection,
@@ -674,6 +712,7 @@ export function InfrastructureConnectionsPage() {
   }
 
   return (
+    <LaunchOnServerProvider pending={pendingLaunch} targets={targets}>
     <div className={styles.page}>
       <div className={styles.pageGlow} aria-hidden="true" />
       <main className={styles.pageInner}>
@@ -897,8 +936,9 @@ export function InfrastructureConnectionsPage() {
                       savedTarget={targetsByConnection.get(connection.id)}
                       latestPreflight={latestPreflight[connection.id]}
                       checking={checkingIds.has(connection.id)}
-                      onPrepare={() => setPreparingConnection(connection)}
+                      onPrepare={() => setPreparing({ connection, engine: "proxmox", mode: "prepare" })}
                       onCheck={() => void runDiscovery(connection)}
+                      onCheckReadiness={() => void runDiscovery(connection, { checkGvisorReadiness: true })}
                       onEdit={() => openEditWizard(connection)}
                       onDelete={() => setDeletingConnection(connection)}
                     />
@@ -1060,6 +1100,9 @@ export function InfrastructureConnectionsPage() {
 
           {wizardOpen ? (
             <InfrastructureConnectionWizard
+              // A new key when the wizard switches to editing a saved host,
+              // so the edit form starts from that host rather than the draft.
+              key={editingConnection?.id ?? "new"}
               connection={editingConnection}
               prefill={editingConnection ? null : wizardPrefill}
               returnFocusRef={addCapacityButtonRef}
@@ -1075,8 +1118,11 @@ export function InfrastructureConnectionsPage() {
                 setWizardOpen(false);
                 setEditingConnection(null);
                 setWizardPrefill(null);
-                if (isSshConnection(saved)) setPreparingConnection(saved);
+                if (isSshConnection(saved)) setPreparing({ connection: saved, engine: "proxmox", mode: "prepare" });
               }}
+              onGvisorSetupRequested={requestGvisorSetup}
+              onEditRequested={requestConnectionEdit}
+              onGvisorReady={() => void loadConnections()}
             />
           ) : null}
 
@@ -1102,14 +1148,18 @@ export function InfrastructureConnectionsPage() {
             />
           ) : null}
 
-          {preparingConnection ? (
+          {preparing ? (
             <InfrastructurePrepareDialog
-              connection={preparingConnection}
+              key={`${preparing.connection.id}:${preparing.engine}:${preparing.mode}`}
+              connection={preparing.connection}
+              engine={preparing.engine}
+              mode={preparing.mode}
               onClose={() => {
-                setPreparingConnection(null);
+                setPreparing(null);
                 void loadConnections();
               }}
               onPrepared={recordPreparation}
+              onGvisorPrepared={recordGvisorPreparation}
             />
           ) : null}
 
@@ -1130,13 +1180,17 @@ export function InfrastructureConnectionsPage() {
               }}
               onPrepareRequested={() => {
                 setCheckDialog(null);
-                setPreparingConnection(checkDialog.connection);
+                setPreparing({ connection: checkDialog.connection, engine: "proxmox", mode: "prepare" });
               }}
+              onGvisorSetupRequested={(mode) => requestGvisorSetup(checkDialog.connection, mode)}
+              onEditRequested={() => requestConnectionEdit(checkDialog.connection)}
+              onGvisorReady={() => void loadConnections()}
             />
           ) : null}
         </div>
       </div>
     </div>
+    </LaunchOnServerProvider>
   );
 }
 
@@ -1376,6 +1430,9 @@ function ConnectionCheckDialog({
   onStrictPreflight,
   onRetryPreflight,
   onPrepareRequested,
+  onGvisorSetupRequested,
+  onEditRequested,
+  onGvisorReady,
 }: {
   state: CheckDialogState;
   checking: boolean;
@@ -1384,6 +1441,9 @@ function ConnectionCheckDialog({
   onStrictPreflight: (discovery: HostDiscoveryResult) => void;
   onRetryPreflight: () => void;
   onPrepareRequested: () => void;
+  onGvisorSetupRequested: (mode: "prepare" | "repair") => void;
+  onEditRequested: () => void;
+  onGvisorReady: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -1447,12 +1507,18 @@ function ConnectionCheckDialog({
           ) : state.phase === "discovery" && state.discovery ? (
             <InfrastructureHostDiscoveryResult
               result={state.discovery}
+              hostName={state.connection.name}
+              sshUser={state.connection.endpoint.sshUser}
               connectionId={state.connection.id}
               onRetry={onRetryDiscovery}
               onDone={onClose}
               onStrictPreflightRequested={supportsStrictProxmoxDiscovery(state.discovery)
                 ? () => onStrictPreflight(state.discovery as HostDiscoveryResult)
                 : undefined}
+              onGvisorSetupRequested={onGvisorSetupRequested}
+              onConnectAsRootRequested={onEditRequested}
+              onGvisorReady={onGvisorReady}
+              checkGvisorReadiness={state.checkGvisorReadiness}
               retrying={checking}
             />
           ) : state.phase === "preflighting" ? (

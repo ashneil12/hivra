@@ -32,6 +32,7 @@ import {
   PORTABLE_HIVRA_SIMPLE_BRIDGE,
   PORTABLE_HIVRA_SIMPLE_VMID_RANGE,
 } from "./portable-provisioner-contract";
+import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
 
 const MAX_PROVISIONER_BUNDLE_BYTES = 2 * 1024 * 1024;
 // Leave enough of the route's 300-second budget for the mandatory read-only
@@ -53,6 +54,21 @@ export type InfrastructurePreparationErrorCode =
   | "PREPARATION_SUPERSEDED"
   | "PREPARATION_INTERNAL_ERROR";
 
+/** Why the host script stopped, read from its own fail() lines. Only these
+ * fixed names leave the server; raw host output never does. */
+export const PREPARATION_FAILURE_CAUSES = [
+  "root_required",
+  "proxmox_version_unsupported",
+  "kvm_unavailable",
+  "storage_unavailable",
+  "host_tools_missing",
+  "network_conflict",
+  "network_setup_failed",
+  "image_download_failed",
+  "already_running",
+] as const;
+export type PreparationFailureCause = (typeof PREPARATION_FAILURE_CAUSES)[number];
+
 type PreparationFailure = {
   ok: false;
   connectionId: string;
@@ -60,6 +76,7 @@ type PreparationFailure = {
     code: InfrastructurePreparationErrorCode;
     message: string;
     remediation?: string;
+    cause?: PreparationFailureCause;
   };
 };
 
@@ -108,7 +125,7 @@ const ERROR_COPY: Record<
   },
   HOST_ADDRESS_BLOCKED: {
     message: "The SSH host resolves to an address this control plane cannot reach.",
-    remediation: "Use a permitted address or explicitly enable private networking on a self-hosted control plane.",
+    // Mode-dependent; see failure().
   },
   SSH_HOST_KEY_MISMATCH: {
     message: "The server identity did not match the pinned SSH fingerprint.",
@@ -132,15 +149,107 @@ const ERROR_COPY: Record<
   },
   PREPARATION_INTERNAL_ERROR: {
     message: "The host preparation operation could not be started safely.",
-    remediation: "Try again after the current Hivra build finishes deploying.",
+    // Mode-dependent; see failure().
   },
+};
+
+function preparationErrorCopy(code: InfrastructurePreparationErrorCode): { message: string; remediation?: string } {
+  const copy = ERROR_COPY[code];
+  if (code === "HOST_ADDRESS_BLOCKED") return { ...copy, remediation: blockedAddressRemediation() };
+  if (code === "PREPARATION_INTERNAL_ERROR") return { ...copy, remediation: internalFailureRemediation() };
+  return copy;
+}
+
+const CAUSE_MESSAGES: Record<PreparationFailureCause, string> = {
+  root_required: "Setup needs a root login on this server.",
+  proxmox_version_unsupported: "Setup needs Proxmox VE 8 or 9 on this server.",
+  kvm_unavailable: "Setup stopped because KVM isn't available on this server.",
+  storage_unavailable: "Setup couldn't find active Proxmox storage for virtual machines.",
+  host_tools_missing: "Setup couldn't find a tool it needs on this server.",
+  network_conflict: "Setup stopped so it wouldn't change a network Hivra doesn't own.",
+  network_setup_failed: "Setup couldn't finish Hivra's private network for agent computers.",
+  image_download_failed: "Setup couldn't download or verify the Ubuntu image.",
+  already_running: "Another setup is already running on this server.",
 };
 
 function failure(
   connectionId: string,
   code: InfrastructurePreparationErrorCode,
+  cause?: PreparationFailureCause,
 ): PreparationFailure {
-  return { ok: false, connectionId, error: { code, ...ERROR_COPY[code] } };
+  return {
+    ok: false,
+    connectionId,
+    error: cause
+      ? { code, ...preparationErrorCopy(code), message: CAUSE_MESSAGES[cause], cause }
+      : { code, ...preparationErrorCopy(code) },
+  };
+}
+
+const PREPARE_PREFIX = "[hivra-prepare] ";
+const NETWORK_PREFLIGHT_PREFIX = "[hivra-network-preflight] ";
+
+/** The prepare script's fail() messages, exactly as it prints them, and the
+ * cause each one names. Its log() lines share the prefix ("downloading Ubuntu
+ * cloud image", "creating host-to-guest key", "prepared Proxmox target…") and
+ * are progress, not failures, so they are deliberately absent. */
+const PREPARE_FAIL_CAUSES: ReadonlyMap<string, PreparationFailureCause> = new Map([
+  ["run as root", "root_required"],
+  ["Proxmox VE 8 or 9 is required", "proxmox_version_unsupported"],
+  ["KVM is unavailable", "kvm_unavailable"],
+  ["another Hivra host preparation is already running", "already_running"],
+  ["no active VM-capable Proxmox storage was found", "storage_unavailable"],
+  ["invalid storage name", "storage_unavailable"],
+  ["selected storage is not active and VM-capable", "storage_unavailable"],
+  ...["pveversion", "qm", "pvesm", "ip", "ssh-keygen", "curl", "qemu-img", "iptables", "ip6tables", "nft",
+    "sha256sum", "flock", "stat", "systemctl", "python3"]
+    .map((command): [string, PreparationFailureCause] => [`${command} is required`, "host_tools_missing"]),
+  ["Ubuntu cloud image checksum verification failed", "image_download_failed"],
+  ["downloaded cloud image is invalid", "image_download_failed"],
+  ["installed Ubuntu image failed checksum verification", "image_download_failed"],
+  ["Hivra network service is not active", "network_setup_failed"],
+  ["network ownership marker has unsafe ownership or mode", "network_setup_failed"],
+  ["installed network ownership contract failed validation", "network_setup_failed"],
+  ["IPv4 guest-to-host isolation is not active", "network_setup_failed"],
+  ["IPv4 guest egress isolation is not active", "network_setup_failed"],
+  ["IPv6 guest-to-host isolation is not active", "network_setup_failed"],
+  ["IPv6 guest egress isolation is not active", "network_setup_failed"],
+  ["layer-2 guest isolation is not active", "network_setup_failed"],
+]);
+/** fail "$BRIDGE exists but is not a bridge" */
+const BRIDGE_CONFLICT = /^[A-Za-z0-9_.:-]{1,15} exists but is not a bridge$/;
+/** The log() line printed just before the image download starts. */
+const IMAGE_DOWNLOAD_STARTED = "downloading Ubuntu cloud image";
+/** curl's own error line, e.g. "curl: (6) Could not resolve host: …". */
+const CURL_ERROR = /^curl: \(\d+\)/;
+
+/**
+ * Map why the host script stopped to a fixed cause. fail() prints one line and
+ * exits, and the exit traps print nothing, so a named stop is always the last
+ * line of stderr. Only an exact fail() message counts: when the script dies on
+ * a command's own error instead (set -e), the last line is that raw error and
+ * the failure stays generic rather than being pinned on whatever the script
+ * last logged. The one raw error read is curl's, and only while the image
+ * download is the step in progress.
+ */
+export function classifyPreparationFailureCause(stderr: string): PreparationFailureCause | undefined {
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const last = lines.at(-1);
+  if (!last) return undefined;
+  // The collision check exits before the script's first change, and only the
+  // first run of it is silent on success; the post-install re-run's failure
+  // is followed by the script's own fail() line.
+  if (last.startsWith(NETWORK_PREFLIGHT_PREFIX)) return "network_conflict";
+  if (last.startsWith(PREPARE_PREFIX)) {
+    const message = last.slice(PREPARE_PREFIX.length);
+    if (BRIDGE_CONFLICT.test(message)) return "network_conflict";
+    return PREPARE_FAIL_CAUSES.get(message);
+  }
+  if (CURL_ERROR.test(last)) {
+    const lastLog = lines.findLast((line) => line.startsWith(PREPARE_PREFIX));
+    if (lastLog === `${PREPARE_PREFIX}${IMAGE_DOWNLOAD_STARTED}`) return "image_download_failed";
+  }
+  return undefined;
 }
 
 function safeBundleRelativePath(relativePath: string): boolean {
@@ -431,6 +540,7 @@ export async function prepareSimpleProxmoxConnection(
 
   const failWhileLeased = async (
     code: InfrastructurePreparationErrorCode,
+    cause?: PreparationFailureCause,
   ): Promise<PreparationFailure> => {
     try {
       const completed = await deps.completePreflight(
@@ -449,7 +559,7 @@ export async function prepareSimpleProxmoxConnection(
     } catch {
       return failure(connectionId, "PREPARATION_INTERNAL_ERROR");
     }
-    return failure(connectionId, code);
+    return failure(connectionId, code, cause);
   };
 
   let execution: HostScriptResult;
@@ -462,7 +572,11 @@ export async function prepareSimpleProxmoxConnection(
     return failWhileLeased("SSH_CONNECTION_FAILED");
   }
   if (!execution.ok) {
-    return failWhileLeased(classifyTransportFailure(execution));
+    const code = classifyTransportFailure(execution);
+    return failWhileLeased(
+      code,
+      code === "PREPARATION_FAILED" ? classifyPreparationFailureCause(execution.stderr) : undefined,
+    );
   }
   if (!hasExpectedPreparationReceipt(execution.stdout)) {
     return failWhileLeased("PREPARATION_FAILED");

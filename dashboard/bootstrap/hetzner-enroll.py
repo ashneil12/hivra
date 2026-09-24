@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""One-purpose first-boot enrollment. Not an agent or a readiness authority."""
+"""One-purpose first-boot enrollment. Not an agent or a readiness authority.
+
+Recipe 2026.09.24.1: the server may be powered on long after it was created,
+so this helper measures its 15 minutes from this machine's first boot, not
+from an absolute expiry. Hivra's receiver is the authority: it accepts the
+proof only inside the window Hivra opened when it powered this server on.
+This check is a convenience that stops a late guest from calling at all.
+"""
 import base64
 import hashlib
 import http.client
@@ -11,13 +18,18 @@ import ssl
 import stat
 import sys
 import time
-from datetime import datetime
 from urllib.parse import urlsplit
 
+# cloud-init writes this file with its per-instance write_files module, into
+# /run (tmpfs), during the instance's first boot only. It is gone after any
+# reboot, so while it exists the current boot is the first boot and
+# /proc/uptime is the time since the first boot.
 CONFIG_PATH = "/run/hivra/first-boot-enrollment.json"
+UPTIME_PATH = "/proc/uptime"
 HOST_KEY_PATH = "/etc/ssh/ssh_host_ed25519_key.pub"
 CALLBACK_PATH = "/api/infrastructure/first-boot/enroll"
-RECIPE_VERSION = "2026.08.27.1"
+RECIPE_VERSION = "2026.09.24.1"
+CONFIG_VERSION = 2
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 TOKEN_RE = re.compile(r"^hbe1_[A-Za-z0-9_-]{43}$")
 ID_RE = re.compile(r"^[1-9][0-9]{0,15}$")
@@ -27,6 +39,7 @@ TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 MAX_RESPONSE = 4096
 MAX_ATTEMPTS = 6
 WINDOW_SECONDS = 90
+SETUP_WINDOW_SECONDS = 900
 
 
 class EnrollmentFailure(Exception):
@@ -39,24 +52,24 @@ def fail(code):
     raise EnrollmentFailure(code)
 
 
-def timestamp(value):
-    if not isinstance(value, str) or len(value) > 40:
-        fail("INVALID_CONFIGURATION")
+def read_uptime(path=UPTIME_PATH):
+    """Seconds since this boot, from the kernel; independent of the wall clock."""
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            fail("INVALID_CONFIGURATION")
-        return parsed.timestamp()
-    except (ValueError, OverflowError):
-        fail("INVALID_CONFIGURATION")
+        with open(path, "r", encoding="ascii") as handle:
+            raw = handle.read(128)
+        seconds = float(raw.split()[0])
+    except (OSError, ValueError, IndexError, UnicodeError):
+        fail("BOOT_CLOCK_UNAVAILABLE")
+    if seconds != seconds or seconds < 0 or seconds == float("inf"):
+        fail("BOOT_CLOCK_UNAVAILABLE")
+    return seconds
 
 
-def validate_config(value, wall_clock=time.time):
-    fields = {"version", "recipeVersion", "orderId", "attemptId",
-              "token", "issuedAt", "expiresAt", "callbackUrl"}
+def validate_config(value, uptime=read_uptime):
+    fields = {"version", "recipeVersion", "orderId", "attemptId", "token", "callbackUrl"}
     if not isinstance(value, dict) or set(value) != fields:
         fail("INVALID_CONFIGURATION")
-    if type(value["version"]) is not int or value["version"] != 1:
+    if type(value["version"]) is not int or value["version"] != CONFIG_VERSION:
         fail("INVALID_CONFIGURATION")
     if value["recipeVersion"] != RECIPE_VERSION:
         fail("INVALID_CONFIGURATION")
@@ -78,9 +91,8 @@ def validate_config(value, wall_clock=time.time):
         valid = False
     if not valid:
         fail("INVALID_CONFIGURATION")
-    issued, expires = timestamp(value["issuedAt"]), timestamp(value["expiresAt"])
-    current = wall_clock()
-    if expires - issued != 900 or current < issued or current >= expires:
+    # Within 15 minutes of this machine's first boot (see CONFIG_PATH).
+    if uptime() >= SETUP_WINDOW_SECONDS:
         fail("ENROLLMENT_EXPIRED")
     return value
 
@@ -178,8 +190,8 @@ def metadata_server_id():
 
 
 def enroll(config, host_key, provider_id, request=request_registration,
-           monotonic=time.monotonic, wall_clock=time.time, pause=time.sleep):
-    config = validate_config(config, wall_clock)
+           monotonic=time.monotonic, uptime=read_uptime, pause=time.sleep):
+    config = validate_config(config, uptime)
     if not isinstance(provider_id, str) or not ID_RE.fullmatch(provider_id) or int(provider_id) > 9007199254740991:
         fail("METADATA_UNAVAILABLE")
     public_key, fingerprint = canonical_key(host_key)
@@ -189,7 +201,7 @@ def enroll(config, host_key, provider_id, request=request_registration,
     }, separators=(",", ":")).encode("utf-8")
     deadline = monotonic() + WINDOW_SECONDS
     for attempt in range(MAX_ATTEMPTS):
-        validate_config(config, wall_clock)
+        validate_config(config, uptime)
         remaining = deadline - monotonic()
         if remaining <= 0:
             fail("ENROLLMENT_TIMEOUT")
@@ -201,7 +213,7 @@ def enroll(config, host_key, provider_id, request=request_registration,
             status, raw = 503, b""
         if monotonic() >= deadline:
             fail("ENROLLMENT_TIMEOUT")
-        validate_config(config, wall_clock)
+        validate_config(config, uptime)
         if status == 200:
             try:
                 result = json.loads(raw)

@@ -3,7 +3,7 @@ import "server-only";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { HetznerPowerKind, parseHetznerPowerAction, type HetznerPowerAction } from "@/lib/hetzner/power-action";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
+import { loadFirstBootRecipeVersion } from "@/lib/infrastructure/first-boot-store";
 import { parseFirstBootOperationScope } from "@/lib/infrastructure/first-boot-operations";
 import { buildProviderGuestRuntimeProbe } from "@/lib/infrastructure/provider-guest-runtime";
 import { parseProviderGuestWorkerReceipt, type ProviderGuestWorkerIdentity } from "@/lib/infrastructure/provider-guest-worker";
@@ -85,11 +85,12 @@ export async function loadProviderAgentPowerOperation(input: ProviderAgentPowerO
       .eq("connection_revision", row.infrastructure_connection_revision).eq("provider_resource_id", row.provider_server_id)
       .eq("status", "created_off").maybeSingle();
     if (orderError || !order) throw new Error();
-    const scope = parseFirstBootOperationScope({ binding: {
-      userId: operation.userId, connectionId: row.infrastructure_connection_id, connectionRevision: row.infrastructure_connection_revision,
-      orderId: row.provider_capacity_order_id, attemptId: row.provider_enrollment_attempt_id,
-      quoteFingerprint: order.quote_fingerprint_sha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION,
-    }, providerServerId: row.provider_server_id });
+    const attempt = { userId: operation.userId, connectionId: row.infrastructure_connection_id,
+      connectionRevision: row.infrastructure_connection_revision, orderId: row.provider_capacity_order_id,
+      attemptId: row.provider_enrollment_attempt_id, quoteFingerprint: order.quote_fingerprint_sha256 };
+    // The attempt's own recipe, never the current one: it is part of the scope digest.
+    const scope = parseFirstBootOperationScope({ binding: { ...attempt,
+      recipeVersion: await loadFirstBootRecipeVersion(attempt) }, providerServerId: row.provider_server_id });
     const direct = readAgentProviderDirectAccess(row);
     const access = direct ?? (row.cf_tunnel_id && row.cf_hostname
       ? { mode: "cloudflare-named" as const, hostname: row.cf_hostname, tunnelId: row.cf_tunnel_id }
