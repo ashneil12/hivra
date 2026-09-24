@@ -565,7 +565,7 @@ describe("portable provisioner source contract", () => {
     expect(server).not.toContain("?token=");
     expect(server).toContain('surfaceAuth: "post-cookie-v1"');
     expect(page).toContain('method="POST"');
-    expect(page).toContain("useSurfaceBootstrap({ url, token, active })");
+    expect(page).toContain("useSurfaceBootstrap({ url, token, active, recheck: signInEpoch })");
     expect(surfaceBootstrap).toContain('/auth/bootstrap');
     expect(surfaceBootstrap).toContain('record.surfaceAuth === "post-cookie-v1"');
     expect(surfaceBootstrap).toContain('credentials: "omit"');
