@@ -394,7 +394,7 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
       <ul className={styles.footnotes}>
         <li>
           <ShieldCheck size={13} aria-hidden="true" />
-          Card payments: 48-hour refund.
+          Card payments: 7-day money-back guarantee.
         </li>
         {path === "token" && (
           <li>

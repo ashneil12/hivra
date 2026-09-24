@@ -109,7 +109,7 @@ export async function sendAgentDeletionFinalReminderEmail(
 ): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM_EMAIL ?? "noreply@hermesos.cloud";
-  const replyTo = process.env.RESEND_REPLY_TO_EMAIL ?? "info@hermesos.cloud";
+  const replyTo = process.env.RESEND_REPLY_TO_EMAIL ?? "info@hivra.cloud";
 
   if (!apiKey) {
     return { sent: false, reason: "not_configured" };

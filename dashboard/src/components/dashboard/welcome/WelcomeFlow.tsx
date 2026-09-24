@@ -5388,7 +5388,7 @@ function PlanGrid({
           <Shield size={14} style={{ opacity: 0.5 }} />
           <span className="mono" style={STYLES.guaranteeText}>
             {paidPathChoice === 'card'
-              ? '48-hour refund on card payments · cancel any time'
+              ? '7-day money-back guarantee on card payments · cancel any time'
               : 'Holding: tokens stay in your own wallet · Paying: tokens go to a Hivra deposit address and are swept to Hivra’s treasury'}
           </span>
         </div>

@@ -46,11 +46,11 @@ describe("CancelSaveFlow", () => {
   });
 
   it.each([
-    ["It's too expensive", /email us to switch to yearly/i, /^mailto:info@hermesos\.cloud\?subject=Switch%20my%20Pro%20plan%20to%20yearly%20billing$/],
-    ["I'm not using it", /email us about pausing/i, /^mailto:info@hermesos\.cloud/],
-    ["It's missing a feature I need", /email the founder/i, /^mailto:info@hermesos\.cloud/],
-    ["Something broke", /email the founder/i, /^mailto:info@hermesos\.cloud/],
-    ["Something else", /email the founder/i, /^mailto:info@hermesos\.cloud/],
+    ["It's too expensive", /email us to switch to yearly/i, /^mailto:info@hivra\.cloud\?subject=Switch%20my%20Pro%20plan%20to%20yearly%20billing$/],
+    ["I'm not using it", /email us about pausing/i, /^mailto:info@hivra\.cloud/],
+    ["It's missing a feature I need", /email the founder/i, /^mailto:info@hivra\.cloud/],
+    ["Something broke", /email the founder/i, /^mailto:info@hivra\.cloud/],
+    ["Something else", /email the founder/i, /^mailto:info@hivra\.cloud/],
   ])("shows ONE matched save offer for %s", (reasonLabel, ctaName, hrefPattern) => {
     renderFlow();
     fireEvent.click(screen.getByLabelText(reasonLabel));
@@ -83,9 +83,9 @@ describe("CancelSaveFlow", () => {
   it("shows the support address as text beside every email offer", () => {
     renderFlow();
     fireEvent.click(screen.getByLabelText(/too expensive/i));
-    expect(screen.getByTestId("save-offer-address")).toHaveTextContent("info@hermesos.cloud");
+    expect(screen.getByTestId("save-offer-address")).toHaveTextContent("info@hivra.cloud");
     fireEvent.click(screen.getByLabelText(/not using it/i));
-    expect(screen.getByTestId("save-offer-address")).toHaveTextContent("info@hermesos.cloud");
+    expect(screen.getByTestId("save-offer-address")).toHaveTextContent("info@hivra.cloud");
   });
 
   it("quotes a Power user's own yearly price, not Pro's", () => {

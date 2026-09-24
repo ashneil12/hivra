@@ -118,7 +118,7 @@ async function main() {
 
   const resendApiKey = requireEnv("RESEND_API_KEY");
   const from = requireEnv("RESEND_FROM_EMAIL");
-  const replyTo = process.env.RESEND_REPLY_TO_EMAIL?.trim() || "info@hermesos.cloud";
+  const replyTo = process.env.RESEND_REPLY_TO_EMAIL?.trim() || "info@hivra.cloud";
   const bodyPath = path.resolve(process.cwd(), options.bodyFile);
   const body = fs.readFileSync(bodyPath, "utf8").trim();
   if (!body) throw new Error(`Body file is empty: ${bodyPath}`);
