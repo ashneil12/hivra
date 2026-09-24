@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
+import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -48,6 +49,15 @@ jest.mock("@/lib/client/logger", () => ({
 
 jest.mock("@/components/instances/AgentSwitcher", () => ({
   AgentSwitcher: () => <div data-testid="agent-switcher" />,
+}));
+
+// Home's list, for the round trip from an agent back through Home.
+const mockHomeAgents = jest.fn((): unknown[] => []);
+jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
+  useWorkspaceAgents: () => ({
+    agents: mockHomeAgents(), loading: false, hermesError: null, hivraError: null, lastRefreshedAt: null,
+    retryHermes: async () => undefined, retryHivra: async () => undefined, retryAll: async () => undefined,
+  }),
 }));
 
 const mockChatMounts = jest.fn();
@@ -111,6 +121,7 @@ jest.mock("@/components/hivra/HivraConsoleDesktop", () => ({
 const previousHivraEnv = process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 const AgentPage = jest.requireActual("../page").default as typeof import("../page").default;
+const { FleetControlPane } = jest.requireActual("@/components/hivra/FleetControlPane") as typeof import("@/components/hivra/FleetControlPane");
 if (previousHivraEnv === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 else process.env.NEXT_PUBLIC_HIVRA_AGENTS = previousHivraEnv;
 
@@ -765,6 +776,9 @@ describe("AgentPage", () => {
       cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
     });
     view.rerender(<AgentPage />);
+    // The next agent opens on its own surface, so its session is opened by hand.
+    expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
     const frame = await screen.findByTitle("Claude Code session");
     expect(frame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
     await act(async () => {
@@ -914,6 +928,7 @@ describe("AgentPage", () => {
       expect(oldFrame).not.toBeInTheDocument();
       await act(async () => { jest.advanceTimersByTime(2000); });
       expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
       const nextFrame = await screen.findByTitle("Claude Code session");
       expect(nextFrame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
     } finally {
@@ -1051,14 +1066,125 @@ describe("AgentPage", () => {
     expect(frame).toHaveAttribute("allow", "clipboard-read https://box.example.com; clipboard-write https://box.example.com");
   });
 
-  it("opens a fresh welcome launch on chat even when terminal was the last remembered view", async () => {
-    window.localStorage.setItem("hivra:agent-last-view", "terminal");
+  it("opens a fresh welcome launch on chat even when this agent was last left on its session", async () => {
+    recordVisit("x-agent_123", "terminal");
     mockSearchGet.mockImplementation((key: string) => (key === "welcome" ? "1" : null));
 
     render(<AgentPage />);
 
     expect(await screen.findByText("Chat panel")).toBeInTheDocument();
-    expect(window.localStorage.getItem("hivra:agent-last-view")).toBe("chat");
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+    expect(lastTabFor("x-agent_123")).toBe("chat");
+  });
+
+  // Each agent reopens where it was left; nothing carries over to another one.
+  // A single remembered view used to be shared by every agent, so after using
+  // one agent's command line the next agent opened on its command line too,
+  // which on an older computer could start a session nobody asked for.
+  it("reopens an agent on the surface it was last left on, Computer › Terminal included", async () => {
+    recordVisit("x-agent_123", "box");
+
+    render(<AgentPage />);
+
+    expect(await screen.findByTitle("Terminal")).toBeVisible();
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+  });
+
+  it("does not open another agent on the surface the previous agent was left on", async () => {
+    const first = render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    expect(await screen.findByTitle("Claude Code session")).toBeVisible();
+    first.unmount();
+
+    mockAgentId = "agent_next";
+    mockGetAgent.mockResolvedValue({
+      id: "agent_next", type: "claude-code", name: "NEXT_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
+    });
+    render(<AgentPage />);
+
+    expect(await screen.findByText("Chat panel")).toBeVisible();
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+    expect(document.querySelector('iframe[name], form[action*="/terminal"]')).toBeNull();
+    // The first agent still reopens on its own session.
+    expect(lastTabFor("x-agent_123")).toBe("terminal");
+  });
+
+  // Computer › Terminal and the agent's session were remembered as one word,
+  // so Home's continue link reopened the agent's session instead of the shell.
+  it("sends Home's continue link back to Computer › Terminal, not the agent's session", async () => {
+    const page = render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton("Terminal"));
+    expect(await screen.findByTitle("Terminal")).toBeVisible();
+    page.unmount();
+
+    mockHomeAgents.mockReturnValue([{
+      uid: "x-agent_123", kind: "hivra", id: "agent_123", name: "CLAUDE_CODE_AGENT", statusRaw: "running",
+      state: "running", dot: "#22c55e", vendor: "Anthropic", typeLabel: "Claude Code", resourceKind: "agent", agentType: "claude-code",
+    }]);
+    render(<FleetControlPane requested />);
+    const resume = screen.getAllByRole("link").find((link) => /Continue/.test(link.textContent ?? "") && link.textContent?.includes("CLAUDE_CODE_AGENT"));
+    expect(resume).toHaveAttribute("href", "/dashboard/agent/agent_123?tab=box");
+  });
+
+  it("starts the next agent on its own surface when the page is reused for it", async () => {
+    const view = render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    expect(await screen.findByTitle("Claude Code session")).toBeVisible();
+
+    mockAgentId = "agent_next";
+    mockGetAgent.mockResolvedValue({
+      id: "agent_next", type: "claude-code", name: "NEXT_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
+    });
+    await act(async () => { view.rerender(<AgentPage />); });
+
+    expect(await screen.findByText("Chat panel")).toBeVisible();
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+  });
+
+  it("records the surface on screen: at once on open, then after a pause, and on leaving", async () => {
+    jest.useFakeTimers();
+    try {
+      const view = render(<AgentPage />);
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      expect(listRecents()).toEqual([{ uid: "x-agent_123", tab: "chat", openedAt: expect.any(Number) }]);
+
+      fireEvent.click(getSurfaceButton("Files"));
+      expect(lastTabFor("x-agent_123")).toBe("chat");
+      await act(async () => { jest.advanceTimersByTime(400); });
+      expect(lastTabFor("x-agent_123")).toBe("files");
+
+      fireEvent.click(getSurfaceButton("Terminal"));
+      view.unmount();
+      expect(lastTabFor("x-agent_123")).toBe("box");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("records a computer on the desktop it lands on, not on chat", async () => {
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+
+    render(<AgentPage />);
+
+    expect(await screen.findByTestId("remote-desktop")).toBeVisible();
+    expect(lastTabFor("x-agent_123")).toBe("desktop");
+  });
+
+  it("records nothing for an agent that cannot be found", async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetAgent.mockResolvedValue(null);
+      render(<AgentPage />);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await act(async () => { jest.advanceTimersByTime(2000); });
+      }
+      expect(await screen.findByText("Agent not found.")).toBeInTheDocument();
+      expect(listRecents()).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("shows launch personalization questions while a fresh Claude Code box is provisioning", async () => {
@@ -1331,7 +1457,8 @@ describe("AgentPage", () => {
     render(<AgentPage />);
 
     expect(await screen.findByText("Telegram panel")).toBeInTheDocument();
-    // The sticky chat/terminal memory is untouched by non-sticky deep links.
+    // What is remembered is this agent's own surface, not a shared view.
+    expect(lastTabFor("x-agent_123")).toBe("telegram");
     expect(window.localStorage.getItem("hivra:agent-last-view")).toBeNull();
   });
 

@@ -8,6 +8,7 @@ import { AgentSwitcherMenu } from "@/components/workspace/AgentSwitcherMenu";
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import styles from "./WorkspaceIdentity.module.css";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { listRecents, recentHref } from "@/lib/workspace/recents";
 
 /**
  * The fleet switcher, on the canonical resource route.
@@ -24,7 +25,8 @@ import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
  *
  * Selecting a different resource navigates rather than swapping in place,
  * because every resource is its own route. `router.push` is the honest model
- * here: the URL is the state.
+ * here: the URL is the state. Each one reopens on the surface you last left it
+ * on, and the ones you used recently are listed first.
  */
 export interface ResourceSwitcherProps {
   /** uid of the resource currently shown, so the menu can mark it. */
@@ -175,6 +177,13 @@ function ResourceSwitcherMenu({
 }) {
   // Fetches only while this component is mounted, i.e. after the first open.
   const workspaceAgents = useWorkspaceAgents();
+  // Read at each open, so the Recent group includes the resource just left.
+  const [recents, setRecents] = useState(listRecents);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setRecents(listRecents());
+  }
 
   // The route carries a raw backing id while the fleet list speaks
   // source-qualified uids (`x-<id>`), so accept either or the menu opens with
@@ -192,9 +201,10 @@ function ResourceSwitcherMenu({
       hermesError={workspaceAgents.hermesError}
       hivraError={workspaceAgents.hivraError}
       anchorRef={triggerRef}
+      recents={recents}
       onSelect={(agent) => {
         onClose();
-        router.push(agentHref(agent));
+        router.push(recentHref(agent.uid, agentHref(agent)));
       }}
       onClose={onClose}
       onRetryHermes={() => void workspaceAgents.retryHermes()}

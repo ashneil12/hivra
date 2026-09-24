@@ -13,8 +13,11 @@ import {
 } from "react";
 
 import { SafePortal } from "@/components/ui/SafePortal";
+import { matchesFleetQuery } from "@/lib/hivra/fleet-sections";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { unifiedStateLabel } from "@/lib/hivra/unified-agent";
+import { switcherGroups } from "@/lib/workspace/recent-order";
+import type { RecentVisit } from "@/lib/workspace/recents";
 
 const MENU_MIN_WIDTH = 320;
 const MENU_VIEWPORT_MARGIN = 8;
@@ -31,6 +34,12 @@ export interface AgentSwitcherMenuProps {
   hermesError: string | null;
   hivraError: string | null;
   anchorRef: RefObject<HTMLButtonElement | null>;
+  /**
+   * What this browser opened, most recent first. Listed as a Recent group
+   * ahead of the rest, without the current resource; the highlight starts on
+   * its first entry, and 1–9 open an entry while nothing is typed.
+   */
+  recents?: readonly RecentVisit[];
   onSelect: (agent: UnifiedAgent, keyboardOrigin: boolean) => void;
   /**
    * `restoreFocus: false` means focus already went somewhere the person chose
@@ -49,6 +58,12 @@ function agentMeta(agent: UnifiedAgent): string {
 
 function optionId(uid: string): string {
   return `agent-switcher-option-${uid}`;
+}
+
+const NO_RECENTS: readonly RecentVisit[] = [];
+
+function isComputer(agent: UnifiedAgent): boolean {
+  return agent.resourceKind === "computer";
 }
 
 /** On touch, focusing the search raises a keyboard that hides the list. */
@@ -88,6 +103,7 @@ function AgentSwitcherPanel({
   hermesError,
   hivraError,
   anchorRef,
+  recents = NO_RECENTS,
   onSelect,
   onClose,
   onRetryHermes,
@@ -98,11 +114,14 @@ function AgentSwitcherPanel({
   const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [query, setQuery] = useState("");
-  // Seeded from the current agent at mount. Deliberately not re-seeded when the
-  // agent list refreshes — that would move the selection out from under someone
-  // who is arrowing through it.
+  // Seeded at mount on the resource you were in before this one (the first
+  // Recent entry), else on the current one. Deliberately not re-seeded when
+  // the agent list refreshes — that would move the selection out from under
+  // someone who is arrowing through it.
   const [activeIndex, setActiveIndex] = useState(() => {
-    const index = agents.findIndex((agent) => agent.uid === selectedUid);
+    const groups = switcherGroups(agents, { recents, currentUid: selectedUid, isComputer });
+    if (groups[0]?.key === "recent") return 0;
+    const index = groups.flatMap((group) => group.items).findIndex((agent) => agent.uid === selectedUid);
     return index >= 0 ? index : 0;
   });
 
@@ -211,27 +230,16 @@ function AgentSwitcherPanel({
   }, [anchorRef, close, onClose]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const sections = useMemo(() => {
-    const matching = agents.filter(
-      (agent) =>
-        !normalizedQuery ||
-        agent.name.toLowerCase().includes(normalizedQuery) ||
-        agent.typeLabel.toLowerCase().includes(normalizedQuery) ||
-        agent.vendor.toLowerCase().includes(normalizedQuery),
-    );
-    return [
-      {
-        key: "agent",
-        label: "Agents",
-        items: matching.filter((agent) => agent.resourceKind !== "computer"),
-      },
-      {
-        key: "computer",
-        label: "Computers",
-        items: matching.filter((agent) => agent.resourceKind === "computer"),
-      },
-    ].filter((section) => section.items.length > 0);
-  }, [agents, normalizedQuery]);
+  // Recent, then Agents, then Computers: the order every switcher shares. A
+  // search narrows all three.
+  const sections = useMemo(
+    () => switcherGroups(
+      agents.filter((agent) => matchesFleetQuery(agent, normalizedQuery)),
+      { recents, currentUid: selectedUid, isComputer },
+    ),
+    [agents, normalizedQuery, recents, selectedUid],
+  );
+  const recent = sections.find((section) => section.key === "recent")?.items ?? [];
 
   // The arrow keys walk this flat order, so it has to match the DOM order the
   // sections render in — not the raw agent array, which interleaves the two.
@@ -270,6 +278,16 @@ function AgentSwitcherPanel({
     const fromSearch = target === searchRef.current;
     const fromOption = target.getAttribute("role") === "option";
     if (!fromSearch && !fromOption && target !== menuRef.current) return;
+    // Only while nothing is typed, and only for an entry that exists, so a
+    // search that starts with a digit still types.
+    if (!normalizedQuery && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const pick = recent[Number(event.key) - 1];
+      if (pick) {
+        event.preventDefault();
+        onSelect(pick, true);
+        return;
+      }
+    }
     if (flat.length === 0) return;
     const next =
       event.key === "ArrowDown" ? (clampedIndex + 1) % flat.length
@@ -335,6 +353,12 @@ function AgentSwitcherPanel({
           />
         </label>
 
+        {activeAgent && recent.includes(activeAgent) && !normalizedQuery ? (
+          <p aria-hidden="true" className="mono shrink-0 border-b border-[var(--etched-border)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)] pointer-coarse:hidden">
+            ↵ back to {activeAgent.name} · 1–{Math.min(recent.length, 9)} recent
+          </p>
+        ) : null}
+
         {hermesError || hivraError ? (
           <SourceFailure onRetry={() => {
             if (hermesError) onRetryHermes();
@@ -364,11 +388,12 @@ function AgentSwitcherPanel({
                 <p className="mono px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] max-md:text-[11px] pointer-coarse:text-[11px]">
                   {section.label}
                 </p>
-                {section.items.map((agent) => {
+                {section.items.map((agent, position) => {
                   optionIndex += 1;
                   const index = optionIndex;
                   const selected = agent.uid === selectedUid;
                   const active = index === clampedIndex;
+                  const shortcut = section.key === "recent" && !normalizedQuery && position < 9 ? String(position + 1) : undefined;
                   return (
                     <button
                       key={agent.uid}
@@ -379,6 +404,7 @@ function AgentSwitcherPanel({
                       type="button"
                       role="option"
                       aria-selected={selected}
+                      aria-keyshortcuts={shortcut}
                       title={`${agent.name} — ${agentMeta(agent)}`}
                       onMouseEnter={() => setActiveIndex(index)}
                       onFocus={() => setActiveIndex(index)}
@@ -419,6 +445,11 @@ function AgentSwitcherPanel({
                           size={14}
                           className="shrink-0 text-[var(--hivra-red)]"
                         />
+                      ) : null}
+                      {shortcut ? (
+                        <kbd aria-hidden="true" className="mono shrink-0 border border-[var(--etched-border)] px-1.5 text-[10px] text-[var(--text-muted)] pointer-coarse:hidden">
+                          {shortcut}
+                        </kbd>
                       ) : null}
                     </button>
                   );

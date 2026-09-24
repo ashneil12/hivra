@@ -1,18 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { clientLog } from "@/lib/client/logger";
-import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
+import type { HivraAgent } from "@/lib/hivra/agent-api";
 import {
   unifyAll,
   type HermesInstanceLite,
   type UnifiedAgent,
 } from "@/lib/hivra/unified-agent";
+import {
+  createResourceInventory,
+  resourceInventory,
+  type InventorySourceState,
+  type ResourceInventory,
+} from "@/lib/workspace/resource-inventory";
 
+/** Returns that source's API response body, as the route sends it. */
 type WorkspaceSourceFetcher = () => Promise<unknown>;
 
 export interface UseWorkspaceAgentsOptions {
+  /**
+   * Stand-ins for the two lists. Without them the hook reads the dashboard's
+   * shared inventory, so Home and the switchers fetch each list once.
+   */
   fetchHermes?: WorkspaceSourceFetcher;
   fetchHivra?: WorkspaceSourceFetcher;
   getNow?: () => Date;
@@ -91,13 +102,14 @@ function parseHermesEnvelope(value: unknown): HermesInstanceLite[] {
   });
 }
 
-function parseHivraResult(value: unknown): HivraAgent[] {
-  const result = asRecord(value);
-  if (!result || result.error !== null || !Array.isArray(result.agents)) {
-    throw new Error("invalid-hivra-result");
+function parseHivraEnvelope(value: unknown): HivraAgent[] {
+  const envelope = asRecord(value);
+  const data = asRecord(envelope?.data);
+  if (!envelope || envelope.success !== true || !data || !Array.isArray(data.agents)) {
+    throw new Error("invalid-hivra-envelope");
   }
 
-  return result.agents.map((candidate) => {
+  return data.agents.map((candidate) => {
     const row = asRecord(candidate);
     if (!row) throw new Error("invalid-source-record");
     const status = requiredString(row.status);
@@ -119,20 +131,6 @@ function parseHivraResult(value: unknown): HivraAgent[] {
   });
 }
 
-async function defaultFetchHermes(): Promise<unknown> {
-  const response = await fetch("/api/instances?summary=true", { cache: "no-store" });
-  if (!response.ok) throw new Error("hermes-source-unavailable");
-  return response.json();
-}
-
-async function defaultFetchHivra(): Promise<unknown> {
-  return listAgentsResult();
-}
-
-function defaultNow(): Date {
-  return new Date();
-}
-
 function logSourceFailure(agentSource: "hermes" | "hivra"): void {
   clientLog.warn("Workspace agent source unavailable", {
     source: "workspace-agents",
@@ -141,116 +139,85 @@ function logSourceFailure(agentSource: "hermes" | "hivra"): void {
   });
 }
 
+interface SourceRows<T> {
+  rows: T[];
+  settled: boolean;
+  failed: boolean;
+}
+
+/**
+ * One list's rows. A failed refresh keeps the last good rows for browsing (the
+ * caller marks them as last known); an unreadable one yields none.
+ */
+function sourceRows<T>(state: InventorySourceState, parse: (value: unknown) => T[]): SourceRows<T> {
+  let rows: T[] = [];
+  let unreadable = false;
+  if (state.hasBody) {
+    try {
+      rows = parse(state.body);
+    } catch {
+      unreadable = true;
+    }
+  }
+  return { rows, settled: state.settledAt > 0, failed: state.failed || unreadable };
+}
+
+function privateInventory(options: UseWorkspaceAgentsOptions): ResourceInventory | null {
+  if (!options.fetchHermes && !options.fetchHivra) return null;
+  const { fetchHermes, fetchHivra, getNow } = options;
+  return createResourceInventory({
+    fetchers: {
+      ...(fetchHermes ? { hermes: () => fetchHermes() } : {}),
+      ...(fetchHivra ? { hivra: () => fetchHivra() } : {}),
+    },
+    now: getNow ? () => getNow().getTime() : undefined,
+  });
+}
+
 export function useWorkspaceAgents(
   options: UseWorkspaceAgentsOptions = {},
 ): UseWorkspaceAgentsResult {
-  const fetchersRef = useRef({
-    fetchHermes: options.fetchHermes ?? defaultFetchHermes,
-    fetchHivra: options.fetchHivra ?? defaultFetchHivra,
-    getNow: options.getNow ?? defaultNow,
-  });
-  const mountedRef = useRef(false);
-  const hermesGenerationRef = useRef(0);
-  const hivraGenerationRef = useRef(0);
-  const [hermesRows, setHermesRows] = useState<HermesInstanceLite[]>([]);
-  const [hivraRows, setHivraRows] = useState<HivraAgent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hermesError, setHermesError] = useState<string | null>(null);
-  const [hivraError, setHivraError] = useState<string | null>(null);
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
-
-  const markRefreshed = useCallback(() => {
-    setLastRefreshedAt(fetchersRef.current.getNow().toISOString());
-  }, []);
-
-  const applyHermesResult = useCallback(
-    (result: PromiseSettledResult<unknown>, generation: number) => {
-      if (!mountedRef.current || generation !== hermesGenerationRef.current) return;
-      try {
-        if (result.status === "rejected") throw new Error("source-rejected");
-        setHermesRows(parseHermesEnvelope(result.value));
-        setHermesError(null);
-      } catch {
-        setHermesError(HERMES_ERROR);
-        logSourceFailure("hermes");
-      }
-    },
-    [],
+  // Fixed for the hook's lifetime: the shared inventory, or stand-ins.
+  const [inventory] = useState(() => privateInventory(options) ?? resourceInventory);
+  const snapshot = useSyncExternalStore(
+    inventory.subscribe,
+    inventory.getSnapshot,
+    inventory.getServerSnapshot,
   );
-
-  const applyHivraResult = useCallback(
-    (result: PromiseSettledResult<unknown>, generation: number) => {
-      if (!mountedRef.current || generation !== hivraGenerationRef.current) return;
-      try {
-        if (result.status === "rejected") throw new Error("source-rejected");
-        setHivraRows(parseHivraResult(result.value));
-        setHivraError(null);
-      } catch {
-        setHivraError(HIVRA_ERROR);
-        logSourceFailure("hivra");
-      }
-    },
-    [],
-  );
-
-  const loadBoth = useCallback(
-    async (initial: boolean) => {
-      const hermesGeneration = ++hermesGenerationRef.current;
-      const hivraGeneration = ++hivraGenerationRef.current;
-      if (initial && mountedRef.current) setLoading(true);
-
-      const [hermesResult, hivraResult] = await Promise.allSettled([
-        fetchersRef.current.fetchHermes(),
-        fetchersRef.current.fetchHivra(),
-      ]);
-      if (!mountedRef.current) return;
-
-      applyHermesResult(hermesResult, hermesGeneration);
-      applyHivraResult(hivraResult, hivraGeneration);
-      markRefreshed();
-      if (initial) setLoading(false);
-    },
-    [applyHermesResult, applyHivraResult, markRefreshed],
-  );
-
-  const retryHermes = useCallback(async () => {
-    const generation = ++hermesGenerationRef.current;
-    const [result] = await Promise.allSettled([fetchersRef.current.fetchHermes()]);
-    if (!mountedRef.current) return;
-    applyHermesResult(result, generation);
-    markRefreshed();
-  }, [applyHermesResult, markRefreshed]);
-
-  const retryHivra = useCallback(async () => {
-    const generation = ++hivraGenerationRef.current;
-    const [result] = await Promise.allSettled([fetchersRef.current.fetchHivra()]);
-    if (!mountedRef.current) return;
-    applyHivraResult(result, generation);
-    markRefreshed();
-  }, [applyHivraResult, markRefreshed]);
-
-  const retryAll = useCallback(async () => {
-    await loadBoth(false);
-  }, [loadBoth]);
 
   useEffect(() => {
-    mountedRef.current = true;
-    void loadBoth(true);
-    return () => {
-      mountedRef.current = false;
-      hermesGenerationRef.current += 1;
-      hivraGenerationRef.current += 1;
-    };
-  }, [loadBoth]);
+    void inventory.load("hermes");
+    void inventory.load("hivra");
+  }, [inventory]);
 
-  const agents = useMemo(() => unifyAll(hermesRows, hivraRows), [hermesRows, hivraRows]);
+  const hermes = useMemo(() => sourceRows(snapshot.hermes, parseHermesEnvelope), [snapshot.hermes]);
+  const hivra = useMemo(() => sourceRows(snapshot.hivra, parseHivraEnvelope), [snapshot.hivra]);
+
+  // Logged once per failed read this hook sees, never with the response.
+  const hermesFailedAt = hermes.failed ? snapshot.hermes.settledAt : 0;
+  const hivraFailedAt = hivra.failed ? snapshot.hivra.settledAt : 0;
+  useEffect(() => {
+    if (hermesFailedAt) logSourceFailure("hermes");
+  }, [hermesFailedAt]);
+  useEffect(() => {
+    if (hivraFailedAt) logSourceFailure("hivra");
+  }, [hivraFailedAt]);
+
+  const retryHermes = useCallback(() => inventory.load("hermes", { force: true }), [inventory]);
+  const retryHivra = useCallback(() => inventory.load("hivra", { force: true }), [inventory]);
+  const retryAll = useCallback(async () => {
+    await Promise.all([retryHermes(), retryHivra()]);
+  }, [retryHermes, retryHivra]);
+
+  const agents = useMemo(() => unifyAll(hermes.rows, hivra.rows), [hermes.rows, hivra.rows]);
+  const refreshedAt = Math.max(snapshot.hermes.settledAt, snapshot.hivra.settledAt);
 
   return {
     agents,
-    loading,
-    hermesError,
-    hivraError,
-    lastRefreshedAt,
+    loading: !hermes.settled || !hivra.settled,
+    hermesError: hermes.failed ? HERMES_ERROR : null,
+    hivraError: hivra.failed ? HIVRA_ERROR : null,
+    lastRefreshedAt: refreshedAt > 0 ? new Date(refreshedAt).toISOString() : null,
     retryHermes,
     retryHivra,
     retryAll,

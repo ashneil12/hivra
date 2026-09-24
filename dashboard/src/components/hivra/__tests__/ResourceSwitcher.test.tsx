@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { recordVisit } from "@/lib/workspace/recents";
 
 import { ResourceSwitcher } from "../ResourceSwitcher";
 
@@ -51,6 +52,7 @@ const desktop = agent("x-desktop", "My Desktop", "hivra", "computer");
 describe("ResourceSwitcher", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
     mockedUseWorkspaceAgents.mockReturnValue({
       agents: [hivra, hermes],
       loading: false,
@@ -262,6 +264,101 @@ describe("ResourceSwitcher", () => {
     }
   });
 
+});
+
+describe("ResourceSwitcher recents", () => {
+  const codexTwo = agent("x-two", "Codex Two", "hivra");
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    window.localStorage.clear();
+    mockedUseWorkspaceAgents.mockReturnValue({
+      agents: [hivra, hermes, codexTwo, desktop],
+      loading: false,
+      hermesError: null,
+      hivraError: null,
+      lastRefreshedAt: null,
+      retryHermes: jest.fn(async () => undefined),
+      retryHivra: jest.fn(async () => undefined),
+      retryAll: jest.fn(async () => undefined),
+    });
+  });
+
+  /** Oldest first: the last uid named is the most recent. */
+  function opened(...visits: Array<[string, "chat" | "box" | "terminal" | "desktop"]>) {
+    visits.forEach(([uid, tab], index) => recordVisit(uid, tab, { now: 1_000_000 + index }));
+  }
+
+  it("lists Recent first without the current resource and starts on the previous one", () => {
+    opened(["x-desktop", "desktop"], ["x-two", "box"], ["x-abc", "chat"]);
+    render(<ResourceSwitcher currentUid="abc" />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Switch agent or computer" });
+    const groups = within(dialog).getAllByRole("group");
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Recent", "Agents"]);
+    expect(within(groups[0]).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Codex Two"),
+      expect.stringContaining("My Desktop"),
+    ]);
+    // The current one keeps its place and its mark.
+    expect(within(groups[1]).getByRole("option", { name: /Codex One/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("combobox")).toHaveAttribute("aria-activedescendant", "agent-switcher-option-x-two");
+    expect(dialog).toHaveTextContent("↵ back to Codex Two");
+  });
+
+  it("goes back to the previous resource on Enter, on the surface it was left on", () => {
+    opened(["x-two", "box"], ["x-abc", "terminal"]);
+    render(<ResourceSwitcher currentUid="abc" />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(push).toHaveBeenCalledWith("/dashboard/agent/two?tab=box");
+  });
+
+  it("opens the nth Recent entry with a digit while nothing is typed", () => {
+    opened(["x-desktop", "desktop"], ["x-two", "box"], ["x-abc", "chat"]);
+    render(<ResourceSwitcher currentUid="abc" />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+    const search = screen.getByRole("combobox");
+    expect(fireEvent.keyDown(search, { key: "2" })).toBe(false);
+    expect(push).toHaveBeenCalledWith("/dashboard/agent/desktop?tab=desktop");
+  });
+
+  it("does not jump on a digit once something is typed", () => {
+    opened(["x-two", "box"]);
+    render(<ResourceSwitcher currentUid="abc" />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+    const search = screen.getByRole("combobox");
+    fireEvent.change(search, { target: { value: "c" } });
+    expect(fireEvent.keyDown(search, { key: "1" })).toBe(true);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("filters every group with the search", () => {
+    opened(["x-two", "box"], ["h-xyz", "chat"]);
+    render(<ResourceSwitcher currentUid="abc" />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "one" } });
+    const dialog = screen.getByRole("dialog", { name: "Switch agent or computer" });
+    expect(within(dialog).getAllByRole("group").map((group) => group.getAttribute("aria-label"))).toEqual(["Recent", "Agents"]);
+    expect(within(dialog).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Hermes One"),
+      expect.stringContaining("Codex One"),
+    ]);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "desktop" } });
+    expect(within(dialog).getAllByRole("group").map((group) => group.getAttribute("aria-label"))).toEqual(["Computers"]);
+  });
+
+  it("includes the resource just left when opened again", () => {
+    render(<ResourceSwitcher currentUid="abc" />);
+    const trigger = screen.getByRole("button", { name: "Switch agent or computer" });
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("group", { name: "Recent" })).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    opened(["x-two", "chat"]);
+    fireEvent.click(trigger);
+    expect(screen.getByRole("group", { name: "Recent" })).toHaveTextContent("Codex Two");
+  });
 });
 
 describe("ResourceSwitcher compact parts", () => {

@@ -1,9 +1,9 @@
 "use client";
 
-import { AlertTriangle, Bot, Link2, Monitor, Clock, Plus, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, Bot, Link2, Monitor, Plus, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import {
@@ -14,15 +14,17 @@ import {
 } from "@/lib/hivra/fleet-sections";
 import { attentionLabel } from "@/lib/hivra/resource-attention";
 import styles from "./HomeWorkspace.module.css";
-import { surfaceTab } from "@/lib/workspace/runtime-selection";
-import { restoreWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import { HomeContinue } from "./HomeContinue";
+import { inRecentOrder } from "@/lib/workspace/recent-order";
+import { listRecents, visitHref } from "@/lib/workspace/recents";
 import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
 
-/** Home lists your agents and computers, with a Continue link to the one you
- * were last in. Only opening the app at Home resumes it straight away; the
- * Home link and the logo inside the app always show the list. */
+/** Home lists your agents and computers, led by the one you were last in and
+ * the others you used recently. Only opening the app at Home resumes it
+ * straight away; the Home link and the logo inside the app always show the
+ * list. */
 export function FleetControlPane({ requested = false, attentionRequested = false }: { requested?: boolean; attentionRequested?: boolean }) {
   const router = useRouter();
   // Whether this view opened the app. Decided before paint, after the first
@@ -36,10 +38,13 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   const { agents, loading, hermesError, hivraError, retryHermes, retryHivra } =
     useWorkspaceAgents();
   const [query, setQuery] = useState("");
-  // Navigation validates this optional browser preference against the loaded fleet.
-  const [lastSelection] = useState(() =>
-    typeof window === "undefined" ? null : restoreWorkspaceSelection(),
-  );
+  // What this browser opened, most recent first, and when this view opened.
+  // Validated against the loaded fleet below: anything no longer listed is
+  // left out, never offered.
+  const [{ recents, openedAt }] = useState(() => ({
+    recents: typeof window === "undefined" ? [] : listRecents(),
+    openedAt: Date.now(),
+  }));
   // Set by the "needs attention" button: narrows the list to the broken ones.
   const [attentionOnly, setAttentionOnly] = useState(attentionRequested);
   // Failed refreshes retain inventory for browsing, but cannot validate attention or resumption.
@@ -57,29 +62,28 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   );
   const sections = useMemo(() => fleetSections(visible, query), [visible, query]);
   const duplicates = useMemo(() => duplicateFleetNames(agents), [agents]);
+  const recent = useMemo(() => inRecentOrder(agents, recents), [agents, recents]);
+  const isStale = useCallback(
+    (agent: UnifiedAgent) => Boolean(agent.kind === "hermes" ? hermesError : hivraError),
+    [hermesError, hivraError],
+  );
   const searching = query.trim().length > 0;
   const empty = !loading && agents.length === 0 && !hermesError && !hivraError;
 
   /**
-   * Two things worth surfacing above the list, both derived from the fleet we
-   * already hold — no second fetch, no separate page.
-   *
-   * The pane lists everything with its status, so neither of these is the only
-   * way to see something. What they add is *priority*: a resource that needs
-   * attention is easy to miss in a flat list, and the one you were last in is
-   * the one you most likely want back.
+   * Opening the app at Home resumes the last resource you were in, on the
+   * surface you left it on, but only while it is actually usable: resuming a
+   * stopped computer, or one whose state could not be checked, would open a
+   * dead end. Otherwise Home shows the list, led by "Pick up where you left
+   * off", which follows the same rule.
    */
   const resume = useMemo(() => {
-    if (!lastSelection) return null;
-    const agent = currentAgents.find((candidate) => candidate.uid === lastSelection.uid);
-    // Only offer it while it is actually usable — offering a stopped box as
-    // "continue" would send the user into a dead end.
+    const last = recents[0];
+    if (!last) return null;
+    const agent = currentAgents.find((candidate) => candidate.uid === last.uid);
     if (!agent || agent.state !== "running") return null;
-    // Resume the surface too, not just the runtime: coming back to a box you
-    // left on its terminal should not silently reopen its chat. Naming a tab
-    // the resource cannot show is safe — the canonical route reconciles it.
-    return { agent, href: `${fleetEntryHref(agent).split("?")[0]}?tab=${surfaceTab(lastSelection.surface)}` };
-  }, [currentAgents, lastSelection]);
+    return { agent, href: visitHref(agent.uid, last.tab, fleetEntryHref(agent)) };
+  }, [currentAgents, recents]);
 
   // Opening the app at Home resumes, once both inventory sources have
   // settled. Everywhere else the saved surface is offered, never followed.
@@ -144,38 +148,30 @@ export function FleetControlPane({ requested = false, attentionRequested = false
         </section>
       ) : null}
 
-      {/* One compact strip, not a dashboard: a resume link and a count of
-          anything broken, each of which is a single click into the thing it
-          names. It renders nothing at all when there is nothing to say. */}
-      {!loading && !attentionOnly && (resume || attention.length > 0) ? (
+      {/* Where you were, first: one click back into the resource and surface
+          you left, and the others you used recently. Hidden while searching
+          or filtering, where the list below is the answer. */}
+      {!loading && !attentionOnly && !searching ? (
+        <HomeContinue entries={recent} isStale={isStale} now={openedAt} />
+      ) : null}
+
+      {/* A count of anything broken, a single click into the filtered list.
+          It renders nothing at all when there is nothing to say. */}
+      {!loading && !attentionOnly && attention.length > 0 ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          {resume ? (
-            <Link
-              href={resume.href}
-              className="flex min-h-[32px] pointer-coarse:min-h-[44px] min-w-0 items-center gap-2 border border-[var(--etched-border)] px-2.5 text-[12px] text-[var(--text-secondary)] outline-none transition-colors hover:border-[var(--hivra-red-line)] hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
-            >
-              <Clock aria-hidden="true" size={13} className="shrink-0 text-[var(--text-muted)]" />
-              <span className="shrink-0 text-[var(--text-muted)]">Continue</span>
-              <span className="truncate font-medium text-[var(--ink-black)]">
-                {resume.agent.name}
-              </span>
-            </Link>
-          ) : null}
-          {attention.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => {
-                setQuery("");
-                // Filtering to the broken ones is the useful action here; a
-                // count alone would just be a statistic.
-                setAttentionOnly(true);
-              }}
-              className="flex min-h-[32px] pointer-coarse:min-h-[44px] items-center gap-1.5 border border-[color:var(--yellow)]/40 px-2.5 text-[12px] font-medium text-[var(--yellow)] outline-none transition-colors hover:border-[color:var(--yellow)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
-            >
-              <AlertTriangle aria-hidden="true" size={13} />
-              {attention.length} needs attention
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              // Filtering to the broken ones is the useful action here; a
+              // count alone would just be a statistic.
+              setAttentionOnly(true);
+            }}
+            className="flex min-h-[32px] pointer-coarse:min-h-[44px] items-center gap-1.5 border border-[color:var(--yellow)]/40 px-2.5 text-[12px] font-medium text-[var(--yellow)] outline-none transition-colors hover:border-[color:var(--yellow)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+          >
+            <AlertTriangle aria-hidden="true" size={13} />
+            {attention.length} needs attention
+          </button>
         </div>
       ) : null}
 

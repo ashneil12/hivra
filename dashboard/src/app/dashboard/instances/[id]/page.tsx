@@ -50,6 +50,8 @@ import { SleepWakeUpgradePrompt } from "@/components/billing/SleepWakeUpgradePro
 import { ArchiveUpgradeWall } from "@/components/billing/ArchiveUpgradeWall";
 import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hivra/archive-countdown";
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
+import { useRecordVisit } from "@/components/workspace/useRecordVisit";
+import { hermesRuntimeUid } from "@/lib/workspace/runtime-selection";
 
 interface Instance {
   id: string;
@@ -678,6 +680,12 @@ export default function InstanceDetailPage() {
     if (!instance?.id || instance.id !== id) return;
     document.cookie = `hermes_last_chat=${id}; path=/; max-age=31536000`;
   }, [id, instance?.id]);
+
+  // Remember this agent for Home's "Pick up where you left off" and the
+  // switchers' Recent group, once it has loaded here. A Hermes agent has one
+  // surface, its chat, which is also what this page opens on.
+  const visited = Boolean(id && instance?.id === id);
+  useRecordVisit(visited ? hermesRuntimeUid(id) : null, visited ? "chat" : null);
 
   useEffect(() => {
     if (!id) return;

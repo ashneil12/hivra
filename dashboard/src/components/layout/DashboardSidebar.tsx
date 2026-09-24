@@ -21,6 +21,7 @@ import {
   type DashboardNavigationItem,
 } from '@/lib/dashboard-navigation';
 import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
+import { recentHref } from '@/lib/workspace/recents';
 import { DashboardResourceSwitcher } from './DashboardResourceSwitcher';
 import { resourceMatchesPath, type DashboardResource } from './dashboard-resources';
 import { useDashboardResources } from './useDashboardResources';
@@ -174,10 +175,11 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
       aria-current={active ? 'page' : undefined} aria-label={label} title={!effectivelyExpanded ? label : undefined}
       onClick={closeNavigation}><Icon size={17} aria-hidden />{effectivelyExpanded ? <span>{label}</span> : railLabel(item, label)}</Link>;
   };
+  // Each resource reopens on the surface you last left it on.
   const openResource = (item: DashboardResource) => {
     closeSwitcher();
     closeNavigation();
-    router.push(item.href);
+    router.push(recentHref(item.uid, item.href));
   };
   const LaunchIcon = DASHBOARD_LAUNCH_NAVIGATION.icon;
   const launchLabel = localizedLabel(DASHBOARD_LAUNCH_NAVIGATION);
@@ -227,7 +229,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         </div>
       </div>
     </aside>
-    {switcherOpen && <DashboardResourceSwitcher resources={resources} loading={loading} errors={errors}
+    {switcherOpen && <DashboardResourceSwitcher resources={resources} currentUid={currentResource?.uid ?? null} loading={loading} errors={errors}
       onSelect={openResource} onClose={closeSwitcher} onBrowse={() => { closeSwitcher(); closeNavigation(); }} onRefresh={refresh} />}
   </>;
 });
