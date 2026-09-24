@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRight, Check, Cpu, KeyRound, Loader2, RadioTower, Send, Server, type LucideIcon } from "lucide-react";
 
 import { STYLES } from "@/components/dashboard/welcome/styles";
+import { useHermesWorkspaceReady } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
 import { ConfettiBurst } from "@/components/ui/ConfettiBurst";
 import {
   buildHermesEntranceVariants,
@@ -23,22 +23,6 @@ const BOOT_STEPS: Array<{ label: string; Icon: LucideIcon }> = [
   { label: "Skills", Icon: Server },
   { label: "Online", Icon: RadioTower },
 ];
-
-// Readiness poll cadence. Mirrors WebuiIframe's handoff polling: the same
-// /webui-login-url route is the source of truth for "the workspace is actually
-// connectable" (it probes the gateway + SPA shell and only mints a login URL
-// once they answer). We clamp the server's retryAfterMs into a sane window and
-// stop hammering after the deadline — the manual "open it now" escape hatch
-// stays available the whole time, so the user is never trapped.
-const POLL_MIN_MS = 2500;
-const POLL_MAX_MS = 8000;
-const POLL_DEFAULT_MS = 4000;
-const POLL_DEADLINE_MS = 12 * 60 * 1000;
-
-function clampPollDelay(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return POLL_DEFAULT_MS;
-  return Math.min(POLL_MAX_MS, Math.max(POLL_MIN_MS, Math.floor(value)));
-}
 
 /**
  * Post-Phase-1 "deploy accepted, now booting" beat — a genuine two-part screen.
@@ -100,49 +84,7 @@ export function DeployedCelebration({
 
   // ── Readiness poll ────────────────────────────────────────────────────────
   // false = still booting (Part 1); true = workspace is reachable (Part 2).
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    if (!instanceId || ready) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const deadline = Date.now() + POLL_DEADLINE_MS;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/instances/${instanceId}/webui-login-url`, {
-          cache: "no-store",
-          credentials: "same-origin",
-        });
-        if (cancelled) return;
-        const body = (await res.json().catch(() => null)) as
-          | { url?: unknown; retryAfterMs?: unknown }
-          | null;
-        if (cancelled) return;
-        // Ready only when the route minted a real login URL — that means the
-        // gateway + SPA shell answered the probes. A 202 pending, a non-ready
-        // body, or any transient error all mean "still booting" → keep polling.
-        if (res.ok && body && typeof body.url === "string") {
-          setReady(true);
-          return;
-        }
-        if (Date.now() < deadline) {
-          timer = setTimeout(poll, clampPollDelay(body?.retryAfterMs));
-        }
-      } catch {
-        if (cancelled) return;
-        if (Date.now() < deadline) {
-          timer = setTimeout(poll, POLL_MAX_MS);
-        }
-      }
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [instanceId, ready]);
+  const ready = useHermesWorkspaceReady(instanceId);
 
   const surface = buildHermesSurfaceVariants(Boolean(reduceMotion), { offset: 16 });
   const stagger = buildHermesStaggerVariants(Boolean(reduceMotion), 0.08, 0.12);

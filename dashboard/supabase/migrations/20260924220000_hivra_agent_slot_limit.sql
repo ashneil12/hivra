@@ -7,7 +7,7 @@
 -- adds a Hivra-managed agent counts under one per-owner advisory lock.
 --
 -- Rollout: apply this migration BEFORE the code that calls these functions.
--- Migration B (20260924211000) revokes the unlocked reservations and adds the
+-- Migration B (20260924221000) revokes the unlocked reservations and adds the
 -- writer trigger; apply it only once that code is serving on the environment.
 
 -- The owner's agent slots, exactly as loadCurrentComputeUsage() counted them

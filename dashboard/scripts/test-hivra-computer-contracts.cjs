@@ -1,4 +1,4 @@
-// Apply every migration up to 20260924200000 in PostgreSQL/WASM (twice for the
+// Apply every migration up to 20260924210100 in PostgreSQL/WASM (twice for the
 // two new files, proving they re-run), then check what they add:
 // - hivra_computer_contracts: one row per agent revision on a known channel
 //   (Proxmox seed, provider seed, DigitalOcean message), a delivered or sent
@@ -16,8 +16,8 @@ const path = require("node:path");
 const { PGlite } = require("@electric-sql/pglite");
 
 const MIGRATIONS = path.resolve(__dirname, "../supabase/migrations");
-const TARGET = "20260924190000_hivra_computer_contracts.sql";
-const SEED_ATTEMPTS = "20260924200000_hivra_agent_provider_seed_attempts.sql";
+const TARGET = "20260924210000_hivra_computer_contracts.sql";
+const SEED_ATTEMPTS = "20260924210100_hivra_agent_provider_seed_attempts.sql";
 const CONNECTION = "11111111-1111-4111-8111-111111111111";
 const AGENT = "22222222-2222-4222-8222-222222222222";
 const SESSION_NAME = "hivra-22222222222242228222222222222222";

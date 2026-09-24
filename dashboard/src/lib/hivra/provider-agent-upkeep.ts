@@ -140,8 +140,13 @@ export async function advanceProviderAgentUpkeep(
     }
   }
 
+  // The bootstrap seed rewrites system-prompt.md, where the contract block
+  // lives. Until the computer confirms it, another page load may be running
+  // it right now, and a contract written in between would be lost while its
+  // row says Delivered. The contract waits for the confirmed bootstrap.
+  const bootstrapDue = providerAgentSeedsDue(current as unknown as ProviderAgentSeedRow).includes("bootstrap");
   const plan = computerContractPlanFor(current as unknown as ComputerContractSubject);
-  if (current.ip && plan.status === "deliverable" && plan.channel === "provider-seed") {
+  if (!bootstrapDue && current.ip && plan.status === "deliverable" && plan.channel === "provider-seed") {
     await deps.contract(userId, current, "auto", { deadline: options.deadline, now: deps.now });
   }
 }

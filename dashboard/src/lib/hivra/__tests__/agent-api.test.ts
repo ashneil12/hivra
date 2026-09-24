@@ -269,6 +269,46 @@ describe("createAgent receipt handling", () => {
 
     await expect(createAgent(input)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
   });
+
+  it("accepts a model launch from its own admission record, which names the request but has no launch state", async () => {
+    const agent = { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 };
+    const modelInput = { ...input, llm: { provider: "venice" as const, mode: "managed" as const, model: "deepseek-v4-pro", walletType: "card" as const } };
+    for (const status of [200, 201]) {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status,
+        json: async () => ({ success: true, data: { agent, launchRequestId } }),
+      } as Response);
+      await expect(createAgent(modelInput)).resolves.toEqual(agent);
+    }
+  });
+
+  it("still needs an accepted launch state for a launch without a model key", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ success: true, data: {
+        agent: { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 },
+        launchRequestId,
+      } }),
+    } as Response);
+
+    await expect(createAgent(input)).rejects.toThrow("Provision returned an invalid receipt (201)");
+  });
+
+  it("never accepts a model launch answered for another request", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: {
+        agent: { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 },
+        launchRequestId: "22222222-2222-4222-8222-222222222222",
+      } }),
+    } as Response);
+
+    await expect(createAgent({ ...input, llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key" } }))
+      .rejects.toThrow("Provision returned an invalid receipt (200)");
+  });
 });
 
 describe("deleteAgent", () => {

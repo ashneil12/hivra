@@ -34,11 +34,30 @@ beforeEach(() => { jest.clearAllMocks(); mockRead.mockReset(); });
 
 describe("loadProviderAgentSeedContext", () => {
   it("loads only a stable running Claude Code or Codex agent with its original enrollment", async () => {
-    mockRead.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null });
+    // A server created before first boot armed at Start setup keeps its recipe,
+    // and the scope digest is computed with it (not today's recipe).
+    mockRead.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: f.binding.recipeVersion }, error: null });
     expect(await loadProviderAgentSeedContext(ref)).toEqual(context);
     expect(mockQuery.is).toHaveBeenCalledWith("operation_id", null);
     expect(mockQuery.eq).toHaveBeenCalledWith("user_id", ref.userId);
     expect(mockQuery.eq).toHaveBeenCalledWith("status", "running");
+  });
+
+  it("loads a server on the current first-boot recipe with that recipe's scope", async () => {
+    const current = receiverFixture("armed");
+    const currentScope = { binding: current.binding, providerServerId: "42" };
+    const currentIdentity = { ...identity, bundle: { ...identity.bundle, scopeSha256: providerGuestBundleScopeSha256(currentScope) } };
+    mockRead.mockResolvedValueOnce({ data: { ...row(), provider_install_identity: currentIdentity }, error: null })
+      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: current.binding.quoteFingerprint }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: current.binding.recipeVersion }, error: null });
+    expect(await loadProviderAgentSeedContext(ref)).toEqual({ ...context, identity: currentIdentity, scope: currentScope });
+  });
+
+  it("refuses when the attempt's first-boot recipe can't be read", async () => {
+    mockRead.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null })
+      .mockResolvedValueOnce({ data: null, error: null });
+    await expect(loadProviderAgentSeedContext(ref)).rejects.toThrow("Provider guest seed could not be verified");
   });
 
   it.each(["owner", "operation", "runtime", "installer", "identity", "scope", "access"])("refuses a row whose %s doesn't match", async (fault) => {
@@ -50,7 +69,8 @@ describe("loadProviderAgentSeedContext", () => {
     if (fault === "identity") value.allocation_operation_id = ref.agentId;
     if (fault === "scope") value.provider_server_id = "43";
     if (fault === "access") { value.cf_tunnel_id = null; value.cf_hostname = null; }
-    mockRead.mockResolvedValueOnce({ data: value, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null });
+    mockRead.mockResolvedValueOnce({ data: value, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: f.binding.recipeVersion }, error: null });
     await expect(loadProviderAgentSeedContext(ref)).rejects.toThrow("Provider guest seed could not be verified");
   });
 });

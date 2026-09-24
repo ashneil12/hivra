@@ -7,7 +7,6 @@ import { getInfrastructureDeploymentTarget } from "@/lib/infrastructure/connecti
 import { ProviderVmDeploymentTargetDtoSchema, type ProviderVmDeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { loadHetznerCloudConnectionMetadata, loadHetznerCloudCleanupOrder, loadHetznerCloudCapacityBootstrap } from "@/lib/infrastructure/hetzner-cloud-store";
 import { loadFirstBootOperationForOrder } from "@/lib/infrastructure/first-boot-operations";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
 import { verifyEnrolledProviderReceipt } from "@/lib/infrastructure/enrolled-provider-receipt";
 import { inspectFirstBootGuest } from "@/lib/infrastructure/first-boot-ssh";
 import { parseProviderGuestDiscoveryOutput } from "@/lib/infrastructure/host-discovery";
@@ -156,7 +155,7 @@ export async function launchProviderAgent(raw: ProviderAgentLaunchInput, depende
       || order.operation.providerServerId !== target.externalId || order.cleanup) throw new Error();
     const boot = await deps.boot({ binding: { userId: input.userId, connectionId: input.connectionId,
       connectionRevision: input.expectedConnectionRevision, orderId: order.operation.id,
-      quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION }, providerServerId: target.externalId });
+      quoteFingerprint: order.quoteFingerprintSha256 }, providerServerId: target.externalId });
     fence();
     if (!boot || boot.binding.attemptId !== target.capabilities.enrollmentAttemptId) throw new Error();
     const scope = { binding: boot.binding, providerServerId: target.externalId };

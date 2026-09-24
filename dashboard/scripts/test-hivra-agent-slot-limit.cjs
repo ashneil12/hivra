@@ -14,8 +14,8 @@
 const assert = require("node:assert/strict");
 const { openMigratedDatabase, readMigration } = require("./lib/pglite-all-migrations.cjs");
 
-const MIGRATION_A = "20260924210000_hivra_agent_slot_limit.sql";
-const MIGRATION_B = "20260924211000_hivra_agent_slot_writer_guard.sql";
+const MIGRATION_A = "20260924220000_hivra_agent_slot_limit.sql";
+const MIGRATION_B = "20260924221000_hivra_agent_slot_writer_guard.sql";
 const OWNER = "owner";
 // Placeholder ids the public-tree hygiene allows: the 00000000-0000-4xxx-8xxx- family.
 const pid = (group, n) => `00000000-0000-4${group}00-8000-${String(n).padStart(12, "0")}`;

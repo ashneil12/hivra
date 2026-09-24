@@ -3,7 +3,8 @@
 # 2026-08-31: re-reviewed the two unchanged synthetic launch-key fixtures after line moves.
 # 2026-09-23: re-pinned the two unchanged wallet page-test fixtures after line moves; the agent wallet tests now
 # name their contract-address fixtures, so they no longer need pins.
-# 2026-09-24: re-pinned the two unchanged synthetic agents-route launch-key fixtures after the plan-limit tests moved them.
+# 2026-09-24: re-pinned the two unchanged managed-Venice proxy-key fixtures in the agents route test after
+# the saved-Vault-key launch tests moved them down 57 lines, and again after the plan-limit tests moved them.
 dashboard/auth.ts:generic-api-key:40
 dashboard/src/app/api/billing/crypto/top-up/__tests__/route.test.ts:generic-api-key:63
 dashboard/src/app/api/billing/token-holding/__tests__/route.test.ts:generic-api-key:22
@@ -12,8 +13,8 @@ dashboard/src/app/api/billing/wallet/eligibility/__tests__/route.test.ts:generic
 dashboard/src/app/api/cron/purge-error-hivra-agents/__tests__/route.test.ts:generic-api-key:58
 dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generic-api-key:12
 dashboard/src/app/api/cron/refresh-token-holdings/__tests__/route.test.ts:generic-api-key:13
-dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2252
-dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2328
+dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2326
+dashboard/src/app/api/hivra/agents/__tests__/route.test.ts:generic-api-key:2402
 dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:300
 dashboard/src/app/dashboard/wallet/__tests__/page.test.tsx:generic-api-key:351
 dashboard/src/components/infrastructure/__tests__/InfrastructureConnectionsPage.test.tsx:generic-api-key:351

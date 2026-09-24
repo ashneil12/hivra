@@ -82,6 +82,9 @@ export function ComputerContractPanel({
   const [reload, setReload] = useState(0);
   const [polls, setPolls] = useState(0);
   const running = agent.status === "running";
+  // A DigitalOcean session takes a message while running or stopped (a
+  // message wakes it), never while it is starting or in an error state.
+  const doSendable = running || agent.status === "stopped";
   const onStatusRef = useRef(onStatus);
   useEffect(() => { onStatusRef.current = onStatus; }, [onStatus]);
 
@@ -148,7 +151,7 @@ export function ComputerContractPanel({
     if (status.channel === "do-setup-message") {
       meta = <StateTag state="pending">Not sent yet</StateTag>;
       body = <p className={styles.body}>{agent.name} hasn&apos;t had Hivra&apos;s setup note: where it runs, its /workspace and how you see its work. Sending it adds one visible message to the chat and uses a little of your DigitalOcean and model usage.</p>;
-      actions = running || agent.status === "stopped" ? button("send", "Send setup note", <Send size={13} aria-hidden />, true) : null;
+      actions = doSendable ? button("send", "Send setup note", <Send size={13} aria-hidden />, true) : null;
     } else {
       meta = <StateTag state="pending">Update pending</StateTag>;
       body = <p className={styles.body}>{running
@@ -195,9 +198,10 @@ export function ComputerContractPanel({
         <p className={styles.body}>{status.lastDelivered
           ? `What Hivra would tell ${agent.name} changed after the last setup note.`
           : `${agent.name} hasn't had Hivra's setup note yet.`} Sending it adds one visible message to the chat and uses a little of your DigitalOcean and model usage.</p>
+        {doSendable ? null : <p className={styles.body}>You can send it once {agent.name} is running.</p>}
         {failure}{previous}
       </>;
-      actions = button("send", status.lastDelivered ? `Send update to ${agent.name}` : "Send setup note", <Send size={13} aria-hidden />, true);
+      actions = doSendable ? button("send", status.lastDelivered ? `Send update to ${agent.name}` : "Send setup note", <Send size={13} aria-hidden />, true) : null;
     } else {
       meta = <><span>{revision}</span><span aria-hidden>·</span><StateTag state="pending">Update pending</StateTag></>;
       body = <>

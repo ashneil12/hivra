@@ -34,10 +34,11 @@ function fixture() {
     provider_server_id: "42", allocation_operation_id: allocation, original_status: "running", created_at: created,
     dispatch_not_after: "2026-08-28T01:00:45.000Z", dispatch_intent_at: null, before_boot_id: null, action_receipt: null,
     verified_at: null, verified_status: null, verified_boot_id: null, cancelled_at: null };
-  return { row, scope, journal, order: { quote_fingerprint_sha256: scope.binding.quoteFingerprint } };
+  return { row, scope, journal, order: { quote_fingerprint_sha256: scope.binding.quoteFingerprint },
+    recipe: { recipe_version: scope.binding.recipeVersion } };
 }
 function reads(f = fixture()) {
-  for (const data of [f.row, f.journal, f.order]) mockRead.mockResolvedValueOnce({ data, error: null });
+  for (const data of [f.row, f.journal, f.order, f.recipe]) mockRead.mockResolvedValueOnce({ data, error: null });
   return f;
 }
 const action = { id: 81, command: "reboot_server" as const, status: "success" as const, resources: [{ id: 42, type: "server" as const }] };
@@ -63,7 +64,7 @@ it("loads only the exact power operation, original installer and owner-computer 
   const f = reads();
   expect(await loadProviderAgentPowerOperation(input)).toMatchObject({ operation: input, kind: "restart", scope: f.scope,
     identity: { agentId: input.agentId, operationId: allocation }, action: null, dispatchIntentAt: null });
-  expect(mockFrom.mock.calls.map(call => call[0])).toEqual(["hivra_agents", "hivra_provider_power_operations", "infrastructure_capacity_orders"]);
+  expect(mockFrom.mock.calls.map(call => call[0])).toEqual(["hivra_agents", "hivra_provider_power_operations", "infrastructure_capacity_orders", "infrastructure_first_boot_enrollments"]);
   for (const pair of [["user_id", input.userId], ["agent_id", input.agentId], ["operation_id", input.operationId],
     ["connection_revision", 7], ["provider_resource_id", "42"], ["active_connection_id", f.row.infrastructure_connection_id]]) expect(mockQuery.eq).toHaveBeenCalledWith(...pair);
   expect(mockQuery.select.mock.calls.flat().join(",")).not.toMatch(/private_key|encrypted|api_token|llm_config/);
@@ -94,7 +95,7 @@ it("accepts deletion intent without inventing a new dispatch", async () => {
 it("snapshots caller identity across delayed reads", async () => {
   const f = fixture(), mutable = { ...input };
   mockRead.mockImplementationOnce(async () => { mutable.operationId = allocation; mutable.userId = "foreign"; return { data: f.row, error: null }; });
-  for (const data of [f.journal,f.order]) mockRead.mockResolvedValueOnce({ data, error: null });
+  for (const data of [f.journal,f.order,f.recipe]) mockRead.mockResolvedValueOnce({ data, error: null });
   expect((await loadProviderAgentPowerOperation(mutable)).operation).toEqual(input);
 });
 it.each(["dispatch", "observe", "rejected"])("preserves the exact one-use dispatch result %s", async result => {

@@ -4,8 +4,9 @@ import { z } from "zod";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  canonicalFirstBootHostKey, FIRST_BOOT_RECIPE_VERSION, verifyFirstBootChallengeSecret,
-  type FirstBootBinding, type FirstBootChallenge,
+  canonicalFirstBootHostKey, FIRST_BOOT_ARMED_WINDOW_MS, FIRST_BOOT_ENROLLMENT_TTL_MS, FIRST_BOOT_RECIPE_VERSION,
+  FIRST_BOOT_RECIPE_VERSIONS, firstBootWindowOpensAtStart, verifyFirstBootChallengeSecret,
+  type FirstBootBinding, type FirstBootChallenge, type FirstBootRecipeVersion,
 } from "./first-boot-enrollment";
 import { HetznerCreationReceiptSchema, type HetznerCreationReceipt } from "./hetzner-creation-receipt";
 import { FIRST_BOOT_PREPARATION_CONFIRMATION } from "./provider-computer-setup-contracts";
@@ -16,13 +17,27 @@ const UUID = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][
 const DIGEST = z.string().regex(/^[0-9a-f]{64}$/);
 const DATE = z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString());
 const SERVER = z.string().regex(/^[1-9][0-9]{0,15}$/).refine(value => Number.isSafeInteger(Number(value)));
+const OrderBindingSchema = z.object({userId:z.string().min(1).max(256),connectionId:UUID,
+  connectionRevision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),orderId:UUID,
+  quoteFingerprint:DIGEST}).strict();
+// Creation stages and renders only the current recipe.
 const OrderScopeSchema = z.object({
-  binding: z.object({userId:z.string().min(1).max(256),connectionId:UUID,
-    connectionRevision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),orderId:UUID,
-    quoteFingerprint:DIGEST,recipeVersion:z.literal(FIRST_BOOT_RECIPE_VERSION)}).strict(),
+  binding: OrderBindingSchema.extend({recipeVersion:z.literal(FIRST_BOOT_RECIPE_VERSION)}).strict(),
   capacityIdempotencyKey:UUID,
 }).strict();
 export type FirstBootCreationScope = z.infer<typeof OrderScopeSchema>;
+/** Snapshot and validate a creation scope: the current recipe only. */
+export function parseFirstBootCreationScope(input: FirstBootCreationScope): FirstBootCreationScope {
+  const parsed = OrderScopeSchema.safeParse(input);
+  if (!parsed.success) throw new FirstBootStoreError("invalid_record");
+  return parsed.data;
+}
+// Readers find the original attempt of either recipe unless they name one.
+const LookupScopeSchema = z.object({
+  binding: OrderBindingSchema.extend({recipeVersion:z.enum(FIRST_BOOT_RECIPE_VERSIONS).optional()}).strict(),
+  capacityIdempotencyKey:UUID,
+}).strict();
+export type FirstBootEnrollmentLookup = z.infer<typeof LookupScopeSchema>;
 export const FirstBootRecipeExpectationSchema = z.object({
   attemptId:UUID,verifierSha256:DIGEST,recipeVersion:z.literal(FIRST_BOOT_RECIPE_VERSION),
 }).strict();
@@ -31,11 +46,12 @@ const RowSchema = z.object({
   order_id: UUID, user_id: z.string().min(1).max(256), connection_id: UUID,
   connection_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   quote_fingerprint_sha256: DIGEST, attempt_id: UUID, capacity_idempotency_key: UUID,
-  recipe_version: z.literal(FIRST_BOOT_RECIPE_VERSION),
+  recipe_version: z.enum(FIRST_BOOT_RECIPE_VERSIONS),
   phase: z.enum(["staged","awaiting_identity","enrolled","revoked","failed"]),
   issued_at: DATE, expires_at: DATE, verifier_sha256: DIGEST,
   provider_server_id: SERVER.nullable(), host_public_key: z.string().max(256).nullable(),
   host_fingerprint_sha256: z.string().max(64).nullable(),
+  armed_at: DATE.nullable(), armed_expires_at: DATE.nullable(), enrolled_at: DATE.nullable(),
 });
 // Explicit private projection. Even enrollment reads do not select the token
 // ciphertext, the project's API token or the administrative SSH private key.
@@ -47,6 +63,10 @@ export type StoredFirstBootEnrollment = {
   providerServerId: string | null;
   enrolledHostPublicKey: string | null;
   hostFingerprintSha256: string | null;
+  /** Current recipe only: when Hivra powered this server on for setup, and
+   * when that one setup window closes. Null until then. */
+  armedAt: string | null;
+  armedExpiresAt: string | null;
 };
 
 export class FirstBootStoreError extends Error {
@@ -64,7 +84,18 @@ function record(value: unknown): StoredFirstBootEnrollment {
   const parsed = RowSchema.safeParse(value);
   if (!parsed.success) throw new FirstBootStoreError("invalid_record");
   const row = parsed.data;
-  if (Date.parse(row.expires_at) - Date.parse(row.issued_at) !== 900_000) throw new FirstBootStoreError("invalid_record");
+  if (Date.parse(row.expires_at) - Date.parse(row.issued_at) !== FIRST_BOOT_ENROLLMENT_TTL_MS) throw new FirstBootStoreError("invalid_record");
+  // Mirror the database's armed-state constraint; a read never widens it.
+  const armed = row.armed_at !== null;
+  if (armed !== (row.armed_expires_at !== null)
+    || (armed && (!firstBootWindowOpensAtStart(row.recipe_version) || row.phase === "staged"
+      || Date.parse(row.armed_expires_at!) - Date.parse(row.armed_at!) !== FIRST_BOOT_ARMED_WINDOW_MS
+      || Date.parse(row.armed_at!) < Date.parse(row.issued_at)))
+    || (firstBootWindowOpensAtStart(row.recipe_version) && row.phase === "enrolled" && (!armed
+      || row.enrolled_at === null || Date.parse(row.enrolled_at) < Date.parse(row.armed_at!)
+      || Date.parse(row.enrolled_at) >= Date.parse(row.armed_expires_at!)))) {
+    throw new FirstBootStoreError("invalid_record");
+  }
   if (row.host_public_key !== null) {
     const key = canonicalFirstBootHostKey(row.host_public_key);
     if (key.publicKey !== row.host_public_key || key.fingerprintSha256 !== row.host_fingerprint_sha256) {
@@ -84,7 +115,7 @@ function record(value: unknown): StoredFirstBootEnrollment {
     issuedAt:row.issued_at,expiresAt:row.expires_at,verifierSha256:row.verifier_sha256},
     phase:row.phase,capacityIdempotencyKey:row.capacity_idempotency_key,
     providerServerId:row.provider_server_id,enrolledHostPublicKey:row.host_public_key,
-    hostFingerprintSha256:row.host_fingerprint_sha256,
+    hostFingerprintSha256:row.host_fingerprint_sha256,armedAt:row.armed_at,armedExpiresAt:row.armed_expires_at,
   };
 }
 
@@ -101,23 +132,51 @@ export async function loadFirstBootEnrollment(orderId: string, attemptId: string
 
 /** Discover the one original preparation attempt without loading any secret.
  * The browser cannot supply an attempt or swap the confirmed order binding.
+ * Without a recipe version this finds the original attempt of either recipe,
+ * so a server created before the current recipe keeps its own rules.
  */
-export async function loadFirstBootEnrollmentForOrder(input:FirstBootCreationScope):Promise<StoredFirstBootEnrollment|null> {
-  const parsed=OrderScopeSchema.safeParse(input);
+export async function loadFirstBootEnrollmentForOrder(input:FirstBootEnrollmentLookup):Promise<StoredFirstBootEnrollment|null> {
+  const parsed=LookupScopeSchema.safeParse(input);
   if(!parsed.success) throw new FirstBootStoreError("invalid_record");
   const current=parsed.data,b=current.binding;
-  const {data,error}=await database().from("infrastructure_first_boot_enrollments").select(SELECT)
+  let query=database().from("infrastructure_first_boot_enrollments").select(SELECT)
     .eq("user_id",b.userId).eq("connection_id",b.connectionId).eq("connection_revision",b.connectionRevision)
-    .eq("order_id",b.orderId).eq("quote_fingerprint_sha256",b.quoteFingerprint)
-    .eq("recipe_version",b.recipeVersion).eq("capacity_idempotency_key",current.capacityIdempotencyKey).maybeSingle();
+    .eq("order_id",b.orderId).eq("quote_fingerprint_sha256",b.quoteFingerprint);
+  if(b.recipeVersion!==undefined) query=query.eq("recipe_version",b.recipeVersion);
+  const {data,error}=await query.eq("capacity_idempotency_key",current.capacityIdempotencyKey).maybeSingle();
   if(error) throw new FirstBootStoreError("database_error");
   if(data===null) return null;
   const stored=record(data);
   if(stored.capacityIdempotencyKey!==current.capacityIdempotencyKey
-    || Object.entries(b).some(([key,value])=>stored.challenge.binding[key as keyof FirstBootBinding]!==value)) {
+    || Object.entries(b).some(([key,value])=>value!==undefined && stored.challenge.binding[key as keyof FirstBootBinding]!==value)) {
     throw new FirstBootStoreError("invalid_record");
   }
   return stored;
+}
+
+const AttemptBindingSchema = z.object({userId:z.string().min(1).max(256),connectionId:UUID,
+  connectionRevision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),orderId:UUID,attemptId:UUID,
+  quoteFingerprint:DIGEST}).strict();
+export type FirstBootAttemptBinding = z.infer<typeof AttemptBindingSchema>;
+
+/** Which recipe this exact original attempt was created with. Callers that
+ * know an order and attempt but not the recipe (launch, power, install,
+ * cleanup) must bind the attempt's own version, never assume the current one:
+ * the provider bundle scope digest and the enrollment window both depend on it.
+ */
+export async function loadFirstBootRecipeVersion(input:FirstBootAttemptBinding):Promise<FirstBootRecipeVersion> {
+  const parsed=AttemptBindingSchema.safeParse(input);
+  if(!parsed.success) throw new FirstBootStoreError("invalid_record");
+  const b=parsed.data;
+  const {data,error}=await database().from("infrastructure_first_boot_enrollments").select("recipe_version")
+    .eq("order_id",b.orderId).eq("attempt_id",b.attemptId).eq("user_id",b.userId)
+    .eq("connection_id",b.connectionId).eq("connection_revision",b.connectionRevision)
+    .eq("quote_fingerprint_sha256",b.quoteFingerprint).maybeSingle();
+  if(error) throw new FirstBootStoreError("database_error");
+  if(data===null) throw new FirstBootStoreError("not_active");
+  const version=z.object({recipe_version:z.enum(FIRST_BOOT_RECIPE_VERSIONS)}).safeParse(data);
+  if(!version.success) throw new FirstBootStoreError("invalid_record");
+  return version.data.recipe_version;
 }
 
 /** Admission must atomically agree with the recipe that was rendered. Null
@@ -163,7 +222,8 @@ export async function stageFirstBootEnrollment(input: {
 }): Promise<{record:StoredFirstBootEnrollment;delivery:{token:string;challenge:FirstBootChallenge}} | null> {
   const now = input.now ?? new Date();
   const challenge = verifyFirstBootChallengeSecret({...input,currentBinding:input.binding,now});
-  if (input.confirmation !== FIRST_BOOT_PREPARATION_CONFIRMATION || !UUID.safeParse(input.capacityIdempotencyKey).success) {
+  if (input.confirmation !== FIRST_BOOT_PREPARATION_CONFIRMATION || !UUID.safeParse(input.capacityIdempotencyKey).success
+    || challenge.binding.recipeVersion !== FIRST_BOOT_RECIPE_VERSION) {
     throw new FirstBootStoreError("invalid_delivery");
   }
   let sealed: string;

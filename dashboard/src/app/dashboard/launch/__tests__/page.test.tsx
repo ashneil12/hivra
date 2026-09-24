@@ -331,14 +331,14 @@ describe("LaunchPage", () => {
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
     expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Preview");
 
-    // Other agents still launch from their own setup page, with a way back here.
-    expect(within(agents).getByRole("link", { name: /^Claude Code/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=claude-code&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
-    expect(within(agents).getByRole("link", { name: /^Hermes/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=general&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
-    expect(within(agents).getByRole("link", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
-    expect(within(agents).getByRole("link", { name: /^Agent Zero/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=agent-zero&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    // Every catalog agent launches here; none hands off to another page.
+    expect(within(agents).queryAllByRole("link")).toHaveLength(0);
+    expect(within(agents).getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
+    expect(within(agents).getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
+    expect(within(agents).getByRole("button", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Agent Zero/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    expect(screen.queryByText(/Sets up on its own page/i)).not.toBeInTheDocument();
 
     chooseTile("Codex");
     expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
@@ -385,7 +385,12 @@ describe("LaunchPage", () => {
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Customize" })).toHaveAttribute("aria-expanded", "false");
     expect(within(card).getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
-    expect(within(card).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
+    // Codex signs in inside itself by default; a key or Hivra credits are the
+    // other two choices, in the same control every agent uses.
+    const modelAccess = within(card).getByRole("group", { name: "Model access" });
+    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(modelAccess).getByRole("button", { name: /^Use my API key/ })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(card).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
     expect(within(card).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     expect(screen.queryByText(/balloon|opportunistic|shared scheduling/i)).not.toBeInTheDocument();
@@ -912,6 +917,25 @@ describe("LaunchPage", () => {
       type: "codex", cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1, browser: false,
       deployment: { mode: "hivra-managed" },
     }));
+  });
+
+  // Live on Canary: a Command plan with 23 of 24 CPU in use said "has 1 CPU /
+  // 16 GB left", mixing the free CPU with the per-computer memory limit.
+  it("names only the plan's shared allowance that runs short, with what is in use", async () => {
+    fetchPlanStrictMock.mockResolvedValue({
+      ...PAID_PLAN, name: "Command", maxAgents: 999, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128,
+      usage: { agentCount: 10, usedCpu: 23, usedRam: 46 },
+    });
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseTile("Codex");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    const blocker = screen.getByRole("alert");
+    expect(blocker).toHaveTextContent("Codex with a browser needs 1.5 CPU / 3 GB. Your Command plan has 1 of its 24 CPU free.");
+    expect(blocker).not.toHaveTextContent(/16 GB left/);
   });
 
   it("states the browser shortfall with real choices and lets the owner turn the browser off", async () => {
