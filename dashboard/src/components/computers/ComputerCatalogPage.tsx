@@ -37,7 +37,8 @@ import {
   unifyAll,
   type UnifiedAgent,
 } from "@/lib/hivra/unified-agent";
-import { ATTACH_NOT_AVAILABLE, attachPairLine, attachSupported } from "@/lib/agent-computers/attach-plan";
+import { ATTACH_NOT_AVAILABLE, attachPairLine } from "@/lib/agent-computers/attach-plan";
+import { fetchOwnerAttachedAgents } from "@/lib/agent-computers/attach-client";
 
 import styles from "./ComputerCatalogPage.module.css";
 
@@ -69,14 +70,16 @@ function computerTypeLabel(computer: HivraAgent): string {
   );
 }
 
-function ComputerRow({ computer, addingAgent = false }: { computer: HivraAgent; addingAgent?: boolean }) {
+function ComputerRow({ computer, addingAgent = false, canTakeAgent = false }: {
+  computer: HivraAgent; addingAgent?: boolean; canTakeAgent?: boolean;
+}) {
   const isDesktop = getCatalogAgent(computer.type)?.resourceKind === "computer";
   const desktopQuery = computer.computer_profile === "windows"
     ? "?tab=desktop&open=fast"
     : "?tab=desktop";
   // Choosing a computer for an agent (Launch's "Put an agent on a computer I
-  // already have") opens its Manage, where Add an agent has its own gate.
-  const canTakeAgent = addingAgent && attachSupported(computer);
+  // already have") opens its Manage, where Add an agent has its own gate. The
+  // server says which computers can take one.
   const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${canTakeAgent ? "?tab=manage&addAgent=1" : isDesktop ? desktopQuery : ""}`;
   const state = computerState(computer);
   return (
@@ -120,7 +123,19 @@ export function ComputerCatalogPage() {
   const [filter, setFilter] = useState<InventoryFilter>("all");
   const [catalogOpen, setCatalogOpen] = useState(false);
   const osGridRef = useRef<HTMLDivElement>(null);
-  const addingAgent = searchParams?.get("addAgent") === "1";
+  const addAgentRequested = searchParams?.get("addAgent") === "1";
+  // ?addAgent=1 changes this list only where attach is offered (Canary), and
+  // only for computers the server says can take the agent.
+  const [attachChoice, setAttachChoice] = useState<{ offered: boolean; eligible: Set<string> }>({ offered: false, eligible: new Set() });
+  useEffect(() => {
+    if (!addAgentRequested) return;
+    let alive = true;
+    void fetchOwnerAttachedAgents().then((result) => {
+      if (alive) setAttachChoice({ offered: Boolean(result?.enabled), eligible: new Set(result?.eligibleComputerIds ?? []) });
+    });
+    return () => { alive = false; };
+  }, [addAgentRequested]);
+  const addingAgent = addAgentRequested && attachChoice.offered;
 
   useEffect(() => {
     if (searchParams?.get("launch") === "1") router.replace(launchHref);
@@ -258,7 +273,8 @@ export function ComputerCatalogPage() {
         ) : null}
         <div className={styles.computerList}>
           {visibleComputers.map((computer) => (
-            <ComputerRow key={computer.id} computer={computer} addingAgent={addingAgent} />
+            <ComputerRow key={computer.id} computer={computer} addingAgent={addingAgent}
+              canTakeAgent={addingAgent && attachChoice.eligible.has(computer.id)} />
           ))}
           {!loading && !loadError && total === 0 ? (
             <div className={styles.empty}>

@@ -24,7 +24,12 @@ export interface UseWorkspaceAgentsResult {
   agents: UnifiedAgent[];
   loading: boolean;
   hermesError: string | null;
+  /** The owner's agents and computers could not be read. */
   hivraError: string | null;
+  /** Only the agents added to the owner's computers could not be read: every
+   * other row is current, and those rows keep their last known state.
+   * Optional so callers built before it (and their fixtures) still type-check. */
+  attachedError?: string | null;
   lastRefreshedAt: string | null;
   retryHermes: () => Promise<void>;
   retryHivra: () => Promise<void>;
@@ -34,6 +39,7 @@ export interface UseWorkspaceAgentsResult {
 // Shown to people: never the name of the store an agent lives in (FTUE-03).
 const HERMES_ERROR = "Some agents couldn't be loaded. Retry to check again.";
 const HIVRA_ERROR = "Some agents and computers couldn't be loaded. Retry to check again.";
+const ATTACHED_ERROR = "Agents added to your computers couldn't be loaded. Retry to check again.";
 const HIVRA_STATUSES = new Set(["provisioning", "running", "stopped", "error", "deleted"]);
 const HIVRA_SUBSTRATES = new Set(["proxmox-kvm", "provider-vm", "gvisor", "do-managed-session"]);
 const HIVRA_DEPLOYMENT_MODES = new Set(["hivra-managed", "self-managed"]);
@@ -160,8 +166,9 @@ async function defaultFetchHermes(): Promise<unknown> {
   return response.json();
 }
 
-// Agents added to the owner's computers belong to the Hivra family: they are
-// read with it, and a list that could not be read is reported as that family's.
+// Agents added to the owner's computers are read with the Hivra family, but a
+// failure of that one list (its own rate limit, or attach not deployed yet) is
+// reported on its own: the agents and computers it did not touch stay current.
 async function defaultFetchHivra(): Promise<unknown> {
   const [result, attached] = await Promise.all([listAgentsResult(), fetchOwnerAttachedAgents()]);
   return { ...result, attached };
@@ -171,7 +178,7 @@ function defaultNow(): Date {
   return new Date();
 }
 
-function logSourceFailure(agentSource: "hermes" | "hivra"): void {
+function logSourceFailure(agentSource: "hermes" | "hivra" | "attached"): void {
   clientLog.warn("Workspace agent source unavailable", {
     source: "workspace-agents",
     agentSource,
@@ -196,6 +203,7 @@ export function useWorkspaceAgents(
   const [loading, setLoading] = useState(true);
   const [hermesError, setHermesError] = useState<string | null>(null);
   const [hivraError, setHivraError] = useState<string | null>(null);
+  const [attachedError, setAttachedError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   const markRefreshed = useCallback(() => {
@@ -224,11 +232,12 @@ export function useWorkspaceAgents(
         if (result.status === "rejected") throw new Error("source-rejected");
         const parsed = parseHivraResult(result.value);
         setHivraRows(parsed.agents);
-        // The agents and computers are shown; agents added to computers that
-        // could not be read keep their last known rows, and the error says so.
+        setHivraError(null);
+        // Agents added to computers that could not be read keep their last
+        // known rows, and only their own error says so.
         if (parsed.attached) setAttachedRows(parsed.attached);
-        setHivraError(parsed.attached ? null : HIVRA_ERROR);
-        if (!parsed.attached) logSourceFailure("hivra");
+        setAttachedError(parsed.attached ? null : ATTACHED_ERROR);
+        if (!parsed.attached) logSourceFailure("attached");
       } catch {
         setHivraError(HIVRA_ERROR);
         logSourceFailure("hivra");
@@ -294,6 +303,7 @@ export function useWorkspaceAgents(
     loading,
     hermesError,
     hivraError,
+    attachedError,
     lastRefreshedAt,
     retryHermes,
     retryHivra,

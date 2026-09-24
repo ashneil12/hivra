@@ -71,7 +71,9 @@ export function attachSupported(subject: AttachComputerSubject): boolean {
   return subject.type === "linux-desktop"
     && (subject.computer_profile ?? "ubuntu-desktop") === "ubuntu-desktop"
     && subject.computer_substrate === "proxmox-kvm"
-    && subject.infrastructure_binding_token_enforced !== false;
+    // Only a computer whose binding is known to be enforced: the same rule as
+    // the database gate, so a list never offers what the gate then refuses.
+    && subject.infrastructure_binding_token_enforced === true;
 }
 
 // ── The access gate (5.8) ──────────────────────────────────────────────────
@@ -124,7 +126,7 @@ export function attachAccessRows(grants: AttachGrants, computer: AttachComputerF
     { id: "desktopControl", label: "Desktop control", state: "not-available", toggle: false, copy: "Codex can't see or control your desktop." },
     { id: "sudo", label: "Administrator (sudo)", state: "not-available", toggle: false,
       copy: "With administrator access Codex could read your personal files and undo every limit above." },
-    { id: "personalHome", label: "Your personal home folder", state: "never", toggle: false, copy: "Never offered." },
+    { id: "personalHome", label: "Your personal home folder", state: "never", toggle: false, copy: "—" },
     { id: "resources", label: "Resources", state: "shown", toggle: false,
       copy: `Codex shares this computer's ${amount(computer.cpu)} CPU and ${amount(computer.ramGb)} GB. It can use up to ${memoryMax} of memory, and your desktop has priority.` },
   ];

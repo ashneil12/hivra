@@ -8,6 +8,11 @@ jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
 jest.mock("@/lib/agent-computers/attach-flag", () => ({ isAgentAttachEnabled: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn() }));
 jest.mock("@/lib/agent-computers/attachment-lifecycle-store", () => ({ createAttachmentLifecycleStore: jest.fn() }));
+const computerRows = jest.fn();
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: () => {
+  const chain = { select: () => chain, eq: () => chain, neq: () => chain, limit: () => computerRows() };
+  return chain;
+} } }));
 jest.mock("@/lib/api-response", () => ({
   apiSuccess: (data: unknown, status = 200) => Response.json({ success: true, data }, { status }),
   apiError: (error: string, status: number) => Response.json({ success: false, error }, { status }),
@@ -34,7 +39,7 @@ beforeEach(() => {
 
 it("is empty where attach is not offered, without reading storage", async () => {
   jest.mocked(isAgentAttachEnabled).mockReturnValue(false);
-  expect((await (await get()).json()).data).toEqual({ enabled: false, agents: [] });
+  expect((await (await get()).json()).data).toEqual({ enabled: false, agents: [], eligibleComputerIds: [] });
   expect(readOwnerAttached).not.toHaveBeenCalled();
 });
 
@@ -51,6 +56,17 @@ it("needs a signed-in owner and reads only that owner's rows", async () => {
     computerName: "MY_UBUNTU_DESKTOP", phase: "attached" })]);
   // The browser never gets the installation id: the chat path is the computer's own.
   expect(body.agents[0]).not.toHaveProperty("installationId");
+});
+
+it("names the computers that can take Codex, with the binding column the browser never sees", async () => {
+  readOwnerAttached.mockResolvedValue([]);
+  const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+    computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, deployment_mode: "hivra-managed" };
+  computerRows.mockResolvedValue({ data: [desk, { ...desk, id: "22222222-2222-4222-8222-222222222222", infrastructure_binding_token_enforced: null },
+    { ...desk, id: "33333333-3333-4333-8333-333333333333", computer_profile: "windows" }], error: null });
+  expect((await (await get()).json()).data.eligibleComputerIds).toEqual([desk.id]);
+  computerRows.mockResolvedValue({ data: null, error: { message: "down" } });
+  expect((await (await get()).json()).data.eligibleComputerIds).toEqual([]);
 });
 
 it("says the list could not be loaded when storage fails", async () => {

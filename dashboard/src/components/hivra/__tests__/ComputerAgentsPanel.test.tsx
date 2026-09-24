@@ -59,7 +59,8 @@ it("walks the gate and the Review, sending one claim with the review the owner s
     "This computer's other services and local network", "Chrome profile", "Desktop control", "Administrator (sudo)",
     "Your personal home folder", "Resources"]) expect(within(gateGroup).getByText(label)).toBeInTheDocument();
   expect(within(gateGroup).getByText("Never offered")).toBeInTheDocument();
-  fireEvent.click(within(gateGroup).getByRole("checkbox"));
+  // A screen reader hears the row, not a bare "On, checkbox".
+  fireEvent.click(within(gateGroup).getByRole("checkbox", { name: "Your Hivra folder (~/Hivra), read and write" }));
   fireEvent.click(screen.getByRole("button", { name: "Continue to review" }));
 
   const review = screen.getByRole("group", { name: 'Add Codex to "MY_UBUNTU_DESKTOP"' });
@@ -92,7 +93,9 @@ it("at the plan's agent limit shows the plan copy and a Billing link, and no Rev
 it("says a computer that can't take Codex is not available yet", async () => {
   serve(ready(gate({ available: false, reason: "unsupported_computer", message: "Not available to add to an existing computer yet", reviews: null })));
   render(<ComputerAgentsPanel computerId={COMPUTER} computerName="Omarchy box" />);
-  expect(await screen.findByText(/Not available to add to an existing computer yet/)).toBeInTheDocument();
+  expect(await screen.findByText("Not available to add to an existing computer yet. An agent you launch gets its own computer."))
+    .toBeInTheDocument();
+  expect(screen.queryByText(/No agent works on this computer/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Add an agent/ })).not.toBeInTheDocument();
 });
 
@@ -166,6 +169,18 @@ it("shows progress only as each receipt arrives", async () => {
   expect(items[0].querySelector("time")).toHaveAttribute("dateTime", accepted);
   expect(items[3].querySelector("time")).toBeNull();
   expect(screen.queryByText(/couldn't confirm this step yet/)).not.toBeInTheDocument();
+  // The step holds the computer, and Manage says so.
+  expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted.")).toBeInTheDocument();
+});
+
+it("says how a step that never answers ends: only deleting the computer", async () => {
+  const accepted = new Date(Date.now() - 60 * 60_000).toISOString();
+  serve(ready(gate({ available: false, reason: "agent_present", reviews: null, attachments: [attachment({ phase: "dispatched", reviews: null,
+    chatPath: null, createdAt: accepted, receipts: { accepted, staged: null, started: null, chatReady: null } })] })));
+  render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+  expect(await screen.findByText(/couldn't confirm this step yet/)).toBeInTheDocument();
+  expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted. "
+    + "If the computer never answers, deleting the computer is the only way to end this step.")).toBeInTheDocument();
 });
 
 describe("an attached agent", () => {
@@ -223,5 +238,6 @@ describe("an attached agent", () => {
     expect(await screen.findByText(/Removing Codex. Your files in ~\/Hivra stay./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change access" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted.")).toBeInTheDocument();
   });
 });

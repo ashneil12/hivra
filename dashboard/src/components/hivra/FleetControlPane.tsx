@@ -3,7 +3,7 @@
 import { AlertTriangle, Bot, Link2, Monitor, Clock, Plus, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import {
@@ -33,8 +33,13 @@ export function FleetControlPane({ requested = false, attentionRequested = false
     if (isAppOpenAtHome()) setAppOpen(true);
     markHomeOpened();
   }, []);
-  const { agents, loading, hermesError, hivraError, retryHermes, retryHivra } =
+  const { agents, loading, hermesError, hivraError, attachedError, retryHermes, retryHivra } =
     useWorkspaceAgents();
+  // Which failed list a row came from: an agent added to a computer has its own.
+  const staleSource = useCallback(
+    (agent: UnifiedAgent) => agent.kind === "hermes" ? hermesError : agent.attachment ? attachedError || hivraError : hivraError,
+    [attachedError, hermesError, hivraError],
+  );
   const [query, setQuery] = useState("");
   // Navigation validates this optional browser preference against the loaded fleet.
   const [lastSelection] = useState(() =>
@@ -44,8 +49,8 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   const [attentionOnly, setAttentionOnly] = useState(attentionRequested);
   // Failed refreshes retain inventory for browsing, but cannot validate attention or resumption.
   const currentAgents = useMemo(
-    () => agents.filter((agent) => !(agent.kind === "hermes" ? hermesError : hivraError)),
-    [agents, hermesError, hivraError],
+    () => agents.filter((agent) => !staleSource(agent)),
+    [agents, staleSource],
   );
   const attention = useMemo(
     () => currentAgents.filter((agent) => (agent.attention || agent.state === "error")),
@@ -181,10 +186,10 @@ export function FleetControlPane({ requested = false, attentionRequested = false
 
       {/* One message, whichever list failed: how Hivra stores an agent is
           not something the owner should have to know (FTUE-03). */}
-      {hermesError || hivraError ? (
+      {hermesError || hivraError || attachedError ? (
         <SourceFailure onRetry={() => {
           if (hermesError) void retryHermes();
-          if (hivraError) void retryHivra();
+          if (hivraError || attachedError) void retryHivra();
         }} />
       ) : null}
 
@@ -221,7 +226,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {section.items.map((agent) => (
                   <li key={agent.uid} className="min-w-0">
-                    <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(agent.kind === "hermes" ? hermesError : hivraError)} />
+                    <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(staleSource(agent))} />
                   </li>
                 ))}
               </ul>

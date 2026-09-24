@@ -88,17 +88,23 @@ export interface OwnerAttachedAgentRow {
   computerStatus: string | null;
 }
 
-/** The owner's agents added to their computers, and whether attach is offered here at all. */
-export async function fetchOwnerAttachedAgents(fetcher?: typeof fetch): Promise<{ enabled: boolean; agents: OwnerAttachedAgentRow[] } | null> {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The owner's agents added to their computers, whether attach is offered here
+ * at all, and which of their computers can take one (the server decides). */
+export async function fetchOwnerAttachedAgents(fetcher?: typeof fetch):
+Promise<{ enabled: boolean; agents: OwnerAttachedAgentRow[]; eligibleComputerIds: string[] } | null> {
   const request = resolveFetch(fetcher);
   if (!request) return null;
   try {
     const response = await request("/api/hivra/attached-agents", { cache: "no-store" });
-    if (response.status === 404) return { enabled: false, agents: [] };
+    if (response.status === 404) return { enabled: false, agents: [], eligibleComputerIds: [] };
     const payload = await readJson(response);
-    const data = payload?.data as { enabled?: unknown; agents?: unknown } | undefined;
+    const data = payload?.data as { enabled?: unknown; agents?: unknown; eligibleComputerIds?: unknown } | undefined;
     if (!response.ok || payload?.success !== true || !Array.isArray(data?.agents)) return null;
-    return { enabled: data?.enabled === true, agents: data.agents as OwnerAttachedAgentRow[] };
+    const eligible = Array.isArray(data.eligibleComputerIds)
+      ? data.eligibleComputerIds.filter((id): id is string => typeof id === "string" && UUID.test(id)) : [];
+    return { enabled: data?.enabled === true, agents: data.agents as OwnerAttachedAgentRow[], eligibleComputerIds: eligible };
   } catch {
     return null;
   }

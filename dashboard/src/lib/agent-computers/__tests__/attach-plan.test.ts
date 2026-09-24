@@ -28,6 +28,10 @@ describe("which computers can take Codex", () => {
     ["Omarchy", { ...ubuntu, computer_profile: "omarchy" }, false],
     ["a provider VM on My cloud", { ...ubuntu, computer_substrate: "provider-vm" }, false],
     ["a computer whose binding token is not enforced", { ...ubuntu, infrastructure_binding_token_enforced: false }, false],
+    // The database gate refuses an unknown binding too; the list must agree.
+    ["a computer whose binding is unknown", { ...ubuntu, infrastructure_binding_token_enforced: null }, false],
+    ["a browser row without the private binding column", { type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm" }, false],
     ["an agent's own computer", { ...ubuntu, type: "codex" }, false],
   ])("%s", (_label, subject, expected) => {
     expect(attachSupported(subject)).toBe(expected);

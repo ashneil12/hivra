@@ -431,14 +431,35 @@ describe("ComputerCatalogPage", () => {
     const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
       computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, name: "MY_UBUNTU_DESKTOP", status: "running", cpu: 2, ram: 4 };
     const windows = { ...desk, id: "22222222-2222-4222-8222-222222222222", computer_profile: "windows", name: "WIN_BOX" };
-    global.fetch = jest.fn(async () => ({ ok: true, status: 200,
-      json: async () => ({ success: true, data: { agents: [desk, windows] } }) }) as Response);
+    // The browser's rows never carry the binding column: the server names the computers that can take Codex.
+    const unbound = { ...desk, id: "33333333-3333-4333-8333-333333333333", name: "UNBOUND_DESK" };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [desk.id] } }
+        : { success: true, data: { agents: [desk, windows, unbound] } } }) as Response);
     render(<ComputerCatalogPage />);
     const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
-    expect(row).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage&addAgent=1`);
+    await waitFor(() => expect(row).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage&addAgent=1`));
     expect(within(row).getByText("Adds a new Codex to MY_UBUNTU_DESKTOP. Your other agents stay as they are.")).toBeInTheDocument();
     const other = screen.getByRole("link", { name: /WIN_BOX/ });
     expect(within(other).getByText("Not available to add to an existing computer yet")).toBeInTheDocument();
     expect(other.getAttribute("href")).not.toContain("addAgent");
+    expect(within(screen.getByRole("link", { name: /UNBOUND_DESK/ })).getByText("Not available to add to an existing computer yet"))
+      .toBeInTheDocument();
+  });
+
+  it("ignores ?addAgent=1 where attach is not offered (production)", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm", name: "MY_UBUNTU_DESKTOP", status: "running", cpu: 2, ram: 4 };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: false, agents: [], eligibleComputerIds: [] } }
+        : { success: true, data: { agents: [desk] } } }) as Response);
+    render(<ComputerCatalogPage />);
+    const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/attached-agents", expect.anything()));
+    expect(within(row).queryByText(/Adds a new Codex|Not available to add/)).not.toBeInTheDocument();
+    expect(row.getAttribute("href")).not.toContain("addAgent");
   });
 });

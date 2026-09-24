@@ -233,6 +233,18 @@ describe("AgentActivityPanel — lane coverage", () => {
     expect(screen.getByText(/82/)).toBeInTheDocument();
   });
 
+  it("shows an agent added to a computer in the timeline in its own words, not the raw event name", async () => {
+    mockActivityFetch({ ...HIVRA_ONLY_ACTIVITY, hivra: { ...HIVRA_ONLY_ACTIVITY.hivra,
+      byEvent: [{ event: "agent_removed", count: 1 }, { event: "agent_access_changed", count: 1 }],
+      recent: [{ id: "e2", event: "agent_attached", agentType: "linux-desktop", agentId: "a1", createdAt: new Date().toISOString(),
+        summary: "Codex added to MY_UBUNTU_DESKTOP · access: ~/Hivra read and write, internet" }] } });
+    render(<AgentActivityPanel />);
+    expect(await screen.findByText("Codex added to MY_UBUNTU_DESKTOP · access: ~/Hivra read and write, internet")).toBeInTheDocument();
+    expect(screen.getByText("Agent removed · files in ~/Hivra kept")).toBeInTheDocument();
+    expect(screen.getByText("Access changed")).toBeInTheDocument();
+    expect(screen.queryByText(/agent attached|agent removed/)).not.toBeInTheDocument();
+  });
+
   it("never renders a token or dollar figure for Hivra-lane activity", async () => {
     mockActivityFetch(HIVRA_ONLY_ACTIVITY);
     const { container } = render(<AgentActivityPanel />);

@@ -60,6 +60,12 @@ function newRequestId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// While a step runs on the computer it holds the computer: Start, Stop and
+// Restart wait for it. Hivra never ends a step it has not seen finish; if the
+// computer never answers, only deleting the computer ends it.
+export const ATTACH_STEP_WAIT_NOTE = "While this step runs, this computer can't be started, stopped or restarted.";
+export const ATTACH_STEP_STUCK_NOTE = "If the computer never answers, deleting the computer is the only way to end this step.";
+
 const ACCESS_STATE: Record<string, string> = {
   on: "On", off: "Off", "locked-on": "On · locked", "always-off": "Off · always", "not-available": "Not available yet",
   never: "Never offered", shown: "",
@@ -234,7 +240,7 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
           <div className={styles.rowHead}>
             <strong>{row.label}</strong>
             {row.toggle ? <label className={styles.toggle}>
-              <input type="checkbox" checked={view.grants.workspace}
+              <input type="checkbox" checked={view.grants.workspace} aria-label={row.label}
                 onChange={(event) => setView({ step: "gate", grants: { workspace: event.target.checked } })} />
               <span>{view.grants.workspace ? "On" : "Off"}</span>
             </label> : ACCESS_STATE[row.state] ? <span className={styles.rowState}>{ACCESS_STATE[row.state]}</span> : null}
@@ -302,6 +308,7 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
         </li>)}
       </ol>
       {stale ? <p className={styles.body}>We couldn&apos;t confirm this step yet. Check again. This won&apos;t install a second copy.</p> : null}
+      <p className={styles.note}>{ATTACH_STEP_WAIT_NOTE}{stale ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p>
       <div className={styles.actions}><button type="button" className={styles.button} onClick={() => void load()}>
         <RefreshCw size={13} aria-hidden /> Check again</button></div>
     </div>;
@@ -325,6 +332,8 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
         : `Changing what ${ATTACH_RUNTIME_NAME} can use. It is stopped while its access changes.`}
         {operation.phase === "dispatched" && now - Date.parse(operation.dispatchedAt ?? operation.createdAt) > ATTACH_UNCONFIRMED_AFTER_MS
           ? " We couldn't confirm this step yet. Check again." : null}</p> : null}
+      {operation ? <p className={styles.note}>{ATTACH_STEP_WAIT_NOTE}{operation.phase === "dispatched"
+        && now - Date.parse(operation.dispatchedAt ?? operation.createdAt) > ATTACH_UNCONFIRMED_AFTER_MS ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p> : null}
       {current.operation?.phase === "failed" && current.operation.kind === "access_change" ? <p className={styles.body}>
         The last change of access didn&apos;t finish, and {ATTACH_RUNTIME_NAME} was put back as it was.</p> : null}
       <div className={styles.contract}>
@@ -356,7 +365,7 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
     </div>;
   } else if (gateView.reason === "unsupported_computer") {
     content = <div className={styles.flow}>
-      <p className={styles.body}>No agent works on this computer. {gateView.message}. An agent you launch gets its own computer.</p>
+      <p className={styles.body}>{gateView.message}. An agent you launch gets its own computer.</p>
       <div className={styles.actions}><Link className={styles.button} href="/dashboard/launch?kind=agent&start=1">Launch an agent</Link></div>
     </div>;
   } else {

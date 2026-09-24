@@ -123,12 +123,14 @@ describe("useWorkspaceAgents", () => {
     });
 
     it.each([["unreadable", null], ["malformed", { enabled: true, agents: [{ ...attachedRow(), id: "not-a-uuid" }] }]])(
-      "keeps the agents and computers and says the Hivra family couldn't all load when that list is %s", async (_label, attached) => {
+      "keeps the agents and computers current and reports only that list when it is %s", async (_label, attached) => {
         const { result } = renderHook(() => useWorkspaceAgents({ fetchHermes: async () => hermesEnvelope([]),
           fetchHivra: withAttached(attached) }));
         await waitFor(() => expect(result.current.loading).toBe(false));
         expect(result.current.agents.map(({ uid }) => uid)).toEqual(["x-other", `x-${COMPUTER}`]);
-        expect(result.current.hivraError).toBe("Some agents and computers couldn't be loaded. Retry to check again.");
+        // A 429 or 503 from the attached list must not mark every Hivra agent and computer stale.
+        expect(result.current.hivraError).toBeNull();
+        expect(result.current.attachedError).toBe("Agents added to your computers couldn't be loaded. Retry to check again.");
       });
   });
 
@@ -251,6 +253,7 @@ describe("useWorkspaceAgents", () => {
       loading: true,
       hermesError: null,
       hivraError: null,
+      attachedError: null,
       lastRefreshedAt: null,
     });
 

@@ -8,6 +8,15 @@ describe("activity feed normalization",()=>{
     expect(snapshot.sources.find(s=>s.id==="hivra-lifecycle")?.state).toBe("active");
     expect(snapshot.sources.find(s=>s.id==="otlp-logs")?.state).toBe("missing");
   });
+  it("titles an agent added to a computer from its label fields only (design 5.7)",()=>{
+    const snapshot=buildActivitySnapshot({now:new Date("2026-09-21T20:00:00Z"),limit:20,agentRows:[],sessionRows:[],eventRows:[
+      {id:"e1",agent_id:"00000000-0000-4000-8000-000000000001",event:"agent_attached",agent_type:"linux-desktop",
+        detail:{attachmentId:"x",agentName:"Codex",computerName:"MY_UBUNTU_DESKTOP",access:"~/Hivra read and write, internet"},created_at:"2026-09-21T19:00:00Z"},
+      {id:"e2",agent_id:"00000000-0000-4000-8000-000000000001",event:"agent_removed",agent_type:"linux-desktop",
+        detail:{agentName:"Codex",computerName:"MY_UBUNTU_DESKTOP",filesKept:true},created_at:"2026-09-21T19:30:00Z"}]});
+    expect(snapshot.events.map(e=>e.title)).toEqual(["Codex removed · files in ~/Hivra kept",
+      "Codex added to MY_UBUNTU_DESKTOP · access: ~/Hivra read and write, internet"]);
+  });
   it("preserves pre-agent launch events with a stable unattributed identity",()=>{
     const snapshot=buildActivitySnapshot({now:new Date("2026-09-21T20:00:00Z"),limit:20,agentRows:[],sessionRows:[],eventRows:[{id:"launch-1",agent_id:null,event:"launch_requested",agent_type:"codex",detail:{},created_at:"2026-09-21T19:00:00Z"}]});
     expect(snapshot.events[0]).toMatchObject({agentId:"unattributed:launch-1",agentName:"Unattributed launch",title:"Launch requested"});
