@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import {
@@ -129,6 +131,18 @@ export async function POST(req: NextRequest) {
     const { userId } = await auth();
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
+
+    // Token geo-policy: a new token top-up quote is a new token payment.
+    // Checking or settling a quote already issued is never refused.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/managed-venice/hermesos/quote",
+        route: "/api/billing/managed-venice/hermesos/quote",
+        method: "POST",
+        userId,
+      });
+    }
 
     let body: unknown;
     try {

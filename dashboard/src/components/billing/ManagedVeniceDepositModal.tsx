@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { clientLog } from "@/lib/client/logger";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { redirectToCheckoutUrl } from "@/lib/billing/client";
 import { ManagedVeniceDepositView } from "@/components/billing/ManagedVeniceDepositView";
 import {
@@ -50,7 +51,11 @@ export function ManagedVeniceDepositModal({
   onClose: () => void;
   onRefreshSummary?: () => void | boolean | Promise<void | boolean>;
 }) {
-  const [walletType, setWalletType] = useState<ManagedVeniceWalletType>(initialWalletType);
+  const [walletTypeChoice, setWalletType] = useState<ManagedVeniceWalletType>(initialWalletType);
+  // Token geo-policy: a viewer it blocks (or while it is still checking) gets
+  // a card-only dialog. "allowed" at once while the policy is dormant.
+  const tokenPaymentsShown = useTokenGeoAccess().status === "allowed";
+  const walletType: ManagedVeniceWalletType = tokenPaymentsShown ? walletTypeChoice : "card";
   const [amountUsd, setAmountUsd] = useState(initialAmountUsd ?? MANAGED_VENICE_DEFAULT_TOP_UP_USD);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,8 +175,12 @@ export function ManagedVeniceDepositModal({
   return (
     <ManagedVeniceDepositView
       title="Top up before launch"
-      description="Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay; $HermesOS top-ups can add launch bonus credits."
-      walletOptions={["hermesos", "card"]}
+      description={
+        tokenPaymentsShown
+          ? "Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay; $HermesOS top-ups can add launch bonus credits."
+          : "Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay."
+      }
+      walletOptions={tokenPaymentsShown ? ["hermesos", "card"] : ["card"]}
       walletType={walletType}
       onWalletTypeChange={(value) => {
         setWalletType(value);

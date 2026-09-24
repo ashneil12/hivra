@@ -7,6 +7,8 @@ import {
   RATE_LIMIT_PRESETS,
 } from "@/lib/authenticated-rate-limit";
 import { verifyWalletChallenge } from "@/lib/billing/wallet-verification";
+import { hasExistingTokenHolderAccess, resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const WalletVerifyRequestSchema = z.object({
@@ -29,6 +31,18 @@ export async function POST(req: NextRequest) {
       ...RATE_LIMIT_PRESETS.secretWrite,
     });
     if (rateLimitError) return rateLimitError;
+
+    // Same rule as /api/billing/wallet/challenge: no new wallet verification
+    // for a blocked user without existing token access.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked && !(await hasExistingTokenHolderAccess(userId))) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/wallet-verify",
+        route: "/api/billing/wallet/verify",
+        method: "POST",
+        userId,
+      });
+    }
 
     let body: unknown;
     try {
