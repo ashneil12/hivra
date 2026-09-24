@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, ArrowRight, Bot, CheckCircle2, LockKeyhole, Loader2, Play, ShieldCheck, X } from "lucide-react";
-import { useId, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 
-import { launchManagedSession } from "@/lib/hivra/managed-session-client";
+import { launchManagedSession, listDigitalOceanModels } from "@/lib/hivra/managed-session-client";
 import {
   DIGITALOCEAN_HARNESS_LABELS,
   ManagedSessionLaunchSchema,
@@ -22,6 +22,11 @@ import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
 const DEFAULT_SIZE: DigitalOceanSandboxSize = "mars-2vcpu-4gb";
+const OTHER_MODEL = "__other__";
+
+function defaultName(harness: DigitalOceanHarness): string {
+  return `${DIGITALOCEAN_HARNESS_LABELS[harness].name} 1`;
+}
 
 export function DigitalOceanLaunchDialog({
   connection,
@@ -42,10 +47,13 @@ export function DigitalOceanLaunchDialog({
   const [size, setSize] = useState<DigitalOceanSandboxSize>(
     sizes.some((option) => option.slug === DEFAULT_SIZE) ? DEFAULT_SIZE : (sizes[0]?.slug ?? DEFAULT_SIZE),
   );
-  const [name, setName] = useState("My agent");
+  const [name, setName] = useState(() => defaultName(harnesses[0] ?? "claude-code"));
+  const [nameEdited, setNameEdited] = useState(false);
   const [modelMode, setModelMode] = useState<"vendor" | "digitalocean-inference">("vendor");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
+  const [modelChoice, setModelChoice] = useState("");
+  const [models, setModels] = useState<{ state: "idle" | "loading" | "ready" | "failed"; ids: string[]; error?: string }>({ state: "idle", ids: [] });
   const [firstTask, setFirstTask] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
@@ -58,6 +66,37 @@ export function DigitalOceanLaunchDialog({
   const dialogRef = useInfrastructureDialog({ onClose, closeOnEscape: !launching, initialFocusRef: closeButtonRef, returnFocusRef });
   const vendorKey = DIGITALOCEAN_HARNESS_LABELS[harness].vendorKey;
   const effectiveMode = vendorKey ? modelMode : "digitalocean-inference";
+  const wantModels = effectiveMode === "digitalocean-inference";
+  const modelsLoaded = useRef(false);
+
+  // Fill the model list from DigitalOcean once Inference is chosen, so the
+  // owner picks a model instead of typing a slug. Switching away mid-request
+  // cancels it and a later switch back asks again.
+  useEffect(() => {
+    if (!wantModels || modelsLoaded.current) return;
+    const controller = new AbortController();
+    let settled = false;
+    setModels({ state: "loading", ids: [] });
+    listDigitalOceanModels(connection.id, controller.signal)
+      .then((ids) => {
+        settled = true;
+        modelsLoaded.current = true;
+        setModels({ state: "ready", ids });
+        setModelChoice((current) => current || ids[0] || OTHER_MODEL);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        settled = true;
+        modelsLoaded.current = true;
+        setModels({ state: "failed", ids: [], error: cause instanceof Error ? cause.message : "DigitalOcean's model list could not be loaded." });
+        setModelChoice(OTHER_MODEL);
+      });
+    return () => {
+      controller.abort();
+      if (!settled) setModels({ state: "idle", ids: [] });
+    };
+  }, [connection.id, wantModels]);
+  const chosenModel = modelChoice && modelChoice !== OTHER_MODEL ? modelChoice : model.trim();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,7 +108,7 @@ export function DigitalOceanLaunchDialog({
       harness,
       size,
       name: name.trim(),
-      model: effectiveMode === "vendor" ? { mode: "vendor", apiKey } : { mode: "digitalocean-inference", apiKey, model: model.trim() },
+      model: effectiveMode === "vendor" ? { mode: "vendor", apiKey } : { mode: "digitalocean-inference", apiKey, model: chosenModel },
       firstTask: firstTask.trim() || undefined,
     });
     if (!parsed.success) {
@@ -127,7 +166,7 @@ export function DigitalOceanLaunchDialog({
               <div className={styles.guidedChoicesTwo} role="radiogroup" aria-label="Agent">
                 {harnesses.map((option) => (
                   <label key={option} className={styles.guidedChoice} style={{ cursor: "pointer", outline: option === harness ? "2px solid var(--ink-black)" : undefined }}>
-                    <input type="radio" name="harness" value={option} checked={option === harness} onChange={() => setHarness(option)} className={styles.srOnly} />
+                    <input type="radio" name="harness" value={option} checked={option === harness} onChange={() => { setHarness(option); if (!nameEdited) setName(defaultName(option)); }} className={styles.srOnly} />
                     <Bot size={18} aria-hidden="true" />
                     <h3>{DIGITALOCEAN_HARNESS_LABELS[option].name}</h3>
                     <small>{DIGITALOCEAN_HARNESS_LABELS[option].vendorKey ? `Your ${DIGITALOCEAN_HARNESS_LABELS[option].vendorKey} or DigitalOcean Inference` : "DigitalOcean Inference"}</small>
@@ -137,7 +176,7 @@ export function DigitalOceanLaunchDialog({
               <div className={styles.formGrid}>
                 <label className={styles.field} htmlFor={ids.name}>
                   <span className={styles.fieldLabel}>Agent name</span>
-                  <input id={ids.name} value={name} onChange={(event) => setName(event.target.value)} maxLength={64} autoComplete="off" required />
+                  <input id={ids.name} value={name} onChange={(event) => { setName(event.target.value); setNameEdited(true); }} maxLength={64} autoComplete="off" required />
                 </label>
                 <label className={styles.field} htmlFor={ids.size}>
                   <span className={styles.fieldLabel}>Sandbox size</span>
@@ -176,11 +215,32 @@ export function DigitalOceanLaunchDialog({
                   </span>
                 </label>
                 {effectiveMode === "digitalocean-inference" ? (
-                  <label className={`${styles.field} ${styles.fullField}`} htmlFor={ids.model}>
-                    <span className={styles.fieldLabel}>DigitalOcean model</span>
-                    <input id={ids.model} value={model} onChange={(event) => setModel(event.target.value)} placeholder="deepseek-v4-pro" maxLength={128} autoComplete="off" required />
-                    <span className={styles.fieldHint}>The model slug from DigitalOcean Serverless Inference.</span>
-                  </label>
+                  <>
+                    <label className={`${styles.field} ${styles.fullField}`} htmlFor={`${ids.model}-choice`}>
+                      <span className={styles.fieldLabel}>DigitalOcean model</span>
+                      <select
+                        id={`${ids.model}-choice`}
+                        value={modelChoice}
+                        disabled={models.state === "loading"}
+                        onChange={(event) => setModelChoice(event.target.value)}
+                      >
+                        {models.state === "loading" ? <option value="">Loading DigitalOcean’s models…</option> : null}
+                        {models.ids.map((id) => <option key={id} value={id}>{id}</option>)}
+                        <option value={OTHER_MODEL}>Enter a model id…</option>
+                      </select>
+                      <span className={models.state === "failed" ? styles.fieldError : styles.fieldHint}>
+                        {models.state === "failed"
+                          ? `${models.error} Enter the model id instead.`
+                          : "Models DigitalOcean Serverless Inference offers your team."}
+                      </span>
+                    </label>
+                    {modelChoice === OTHER_MODEL ? (
+                      <label className={`${styles.field} ${styles.fullField}`} htmlFor={ids.model}>
+                        <span className={styles.fieldLabel}>Model id</span>
+                        <input id={ids.model} value={model} onChange={(event) => setModel(event.target.value)} placeholder="deepseek-v4-pro" maxLength={128} autoComplete="off" required />
+                      </label>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
             </div>

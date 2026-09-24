@@ -10,7 +10,10 @@ import {
   type DigitalOceanDeploymentTargetDto,
 } from "@/lib/infrastructure/contracts";
 
+import { tokenExpiryInputFor, type TokenExpiryChoice } from "@/lib/infrastructure/token-expiry";
+
 import styles from "./Infrastructure.module.css";
+import { TokenExpiryField } from "./TokenExpiryField";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
 const DIGITALOCEAN_TOKENS_URL = "https://cloud.digitalocean.com/account/api/tokens";
@@ -31,7 +34,8 @@ export function DigitalOceanConnectionDialog({
 }) {
   const [name, setName] = useState(replacing?.name ?? "My DigitalOcean team");
   const [apiToken, setApiToken] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; apiToken?: string }>({});
+  const [errors, setErrors] = useState<{ name?: string; apiToken?: string; tokenExpiry?: string }>({});
+  const [expiry, setExpiry] = useState<{ choice: TokenExpiryChoice; date: string }>({ choice: "unknown", date: "" });
   const [operationError, setOperationError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -44,18 +48,25 @@ export function DigitalOceanConnectionDialog({
     event.preventDefault();
     setErrors({});
     setOperationError(null);
+    if (expiry.choice === "date" && !expiry.date) {
+      setErrors({ tokenExpiry: "Choose the date DigitalOcean shows for this token, or pick another option." });
+      return;
+    }
+    const tokenExpiry = tokenExpiryInputFor(expiry.choice, expiry.date);
     const parsed = DigitalOceanConnectionCreateSchema.safeParse({
       name: name.trim(),
       provider: "digitalocean",
       operatingMode: "self-managed",
       setupMode: "simple",
       credentials: { apiToken },
+      ...(tokenExpiry ? { tokenExpiry } : {}),
     });
     if (!parsed.success) {
-      const next: { name?: string; apiToken?: string } = {};
+      const next: { name?: string; apiToken?: string; tokenExpiry?: string } = {};
       for (const issue of parsed.error.issues) {
         if (issue.path[0] === "name") next.name ??= issue.message;
         if (issue.path.join(".") === "credentials.apiToken") next.apiToken ??= issue.message;
+        if (issue.path[0] === "tokenExpiry") next.tokenExpiry ??= issue.message;
       }
       setErrors(next);
       return;
@@ -63,7 +74,7 @@ export function DigitalOceanConnectionDialog({
     setConnecting(true);
     try {
       const result = replacing
-        ? await replaceDigitalOceanAccountToken(replacing.id, parsed.data.credentials.apiToken)
+        ? await replaceDigitalOceanAccountToken(replacing.id, parsed.data.credentials.apiToken, parsed.data.tokenExpiry)
         : await connectDigitalOceanAccount(parsed.data);
       setApiToken("");
       onConnected(result.connection, result.target);
@@ -142,6 +153,13 @@ export function DigitalOceanConnectionDialog({
                     {errors.apiToken ?? "Encrypted before storage and never returned to this browser."}
                   </span>
                 </label>
+                <TokenExpiryField
+                  choice={expiry.choice}
+                  date={expiry.date}
+                  disabled={connecting}
+                  error={errors.tokenExpiry}
+                  onChange={(next) => { setExpiry(next); setErrors((current) => ({ ...current, tokenExpiry: undefined })); }}
+                />
                 {replacing ? null : <details className={`${styles.connectionNameDisclosure} ${styles.fullField}`}>
                   <summary>Customize connection name</summary>
                   <label className={styles.field} htmlFor={nameId}>
@@ -210,7 +228,10 @@ export function DigitalOceanConnectionDialog({
                 <span>2</span>
                 <div>
                   <strong>Generate a personal access token with write scope</strong>
-                  <p>API → Tokens → Generate New Token. DigitalOcean shows it once; you can revoke it any time.</p>
+                  <p>
+                    API → Tokens → Generate New Token. Choose <strong>No expiry</strong>, or note the date and pick it
+                    above — Hivra will remind you. DigitalOcean shows the token once; you can revoke it any time.
+                  </p>
                   <a href={DIGITALOCEAN_TOKENS_URL} target="_blank" rel="noreferrer">
                     Open API tokens <ExternalLink size={12} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span>
                   </a>

@@ -125,6 +125,9 @@ export function FleetControlPane({ requested = false, attentionRequested = false
           <Link href="/dashboard/launch?kind=computer&start=1" className={styles.startChoice}>
             <Monitor size={24} aria-hidden /><h2>Start with a computer</h2><p>Open a desktop of your own.</p><span>Launch computer <span aria-hidden>→</span></span>
           </Link>
+          <p className={styles.startAlt}>
+            Already have a cloud account or a server? <Link href="/dashboard/infrastructure">Bring your own cloud or server <span aria-hidden>→</span></Link>
+          </p>
         </section>
       ) : null}
 

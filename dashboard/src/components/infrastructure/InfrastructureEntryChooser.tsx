@@ -37,7 +37,7 @@ export function InfrastructureEntryChooser({
     <section id="infrastructure-entry-options" className={styles.entryChooser} aria-labelledby="infrastructure-entry-heading">
       <div className={styles.guidedHeading}>
         <div>
-          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add infrastructure"}</span>
+          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add capacity"}</span>
           <h2 ref={headingRef} id="infrastructure-entry-heading" tabIndex={-1}>{title}</h2>
         </div>
         {path !== "choose" && <button type="button" className={styles.tertiaryButton} onClick={back}><ArrowLeft size={14} aria-hidden="true" /> Back</button>}
@@ -58,7 +58,9 @@ export function InfrastructureEntryChooser({
             <Cloud size={22} aria-hidden="true" />
             <span className={styles.sectionLabel}>Your provider, your bill</span>
             <h3>Use my cloud account</h3>
-            <p>Connect Hetzner directly, or connect an existing Linux server from another provider.</p>
+            <p>{onConnectDigitalOcean
+              ? "Connect Hetzner or DigitalOcean Managed Agents directly, or connect a Linux server from any other provider."
+              : "Connect Hetzner directly, or connect an existing Linux server from another provider."}</p>
             <button type="button" className={styles.secondaryButton} onClick={() => setPath("cloud")}>Choose cloud provider <ArrowRight size={14} aria-hidden="true" /></button>
             <small>Connecting does not buy a server.</small>
           </article>
@@ -91,7 +93,7 @@ export function InfrastructureEntryChooser({
           ) : null}
           <article className={styles.guidedChoice}>
             <span className={styles.sectionLabel}>Connect over SSH</span><h3>Another provider or existing server</h3>
-            <p>AWS, Google Cloud, Azure, DigitalOcean, OVHcloud, and other providers: create a Linux server with your provider, then connect it here.</p>
+            <p>A Droplet, EC2 instance, or VM from AWS, Google Cloud, Azure, DigitalOcean, OVHcloud, or any other provider: create a Linux server there, then connect it here.</p>
             <button type="button" className={styles.secondaryButton} onClick={() => { setRemoteOrigin("cloud"); setPath("remote"); }}>Use an existing server <ArrowRight size={14} aria-hidden="true" /></button>
             <small>This uses SSH inspection, not a provider API. Hivra checks what the server can actually run.</small>
           </article>
@@ -128,7 +130,7 @@ export function InfrastructureEntryChooser({
           </div>
         </div>
       )}
-      <p className={styles.guidedFootnote}>Your infrastructure choice does not change who operates your Hivra control plane. Connecting, preparation, payment, and launch are separate steps.</p>
+      <p className={styles.guidedFootnote}>Where your agents run doesn’t change who operates Hivra. Connecting, setup, payment, and launch are each their own step.</p>
     </section>
   );
 }
