@@ -85,10 +85,12 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
     expect(screen.queryByText("A place of its own.")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Read the litepaper" })).not.toBeInTheDocument();
-    const nibbii = screen.getByRole("link", { name: "Nibbii" });
-    expect(nibbii).toHaveAttribute("href", "https://nibbii.pet/");
-    expect(nibbii).toHaveAttribute("target", "_blank");
-    expect(nibbii).toHaveAttribute("rel", "noopener noreferrer");
+    // Nibbii is no longer part of Hivra or a token use.
+    expect(screen.queryByRole("link", { name: "Nibbii" })).not.toBeInTheDocument();
+    const github = screen.getByRole("link", { name: "GitHub" });
+    expect(github).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
+    expect(github).toHaveAttribute("target", "_blank");
+    expect(github).toHaveAttribute("rel", "noopener noreferrer");
     screen.getAllByRole("link").filter((link) => link.getAttribute("href")?.startsWith("/")).forEach((link) => {
       expect(link).not.toHaveAttribute("target", "_blank");
     });
