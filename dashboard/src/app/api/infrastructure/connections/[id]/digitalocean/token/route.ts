@@ -9,10 +9,13 @@ import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit, RATE_LIMIT_PRESETS } from "@/lib/authenticated-rate-limit";
 import { replaceDigitalOceanToken } from "@/lib/hivra/do-managed-sessions";
-import { DigitalOceanConnectionCreateSchema } from "@/lib/infrastructure/contracts";
+import { DigitalOceanConnectionCreateSchema, ProviderTokenExpiryInputSchema } from "@/lib/infrastructure/contracts";
 import { hivraApiUnavailable, managedSessionFailure, noStore, readMutationBody, UUID } from "@/app/api/hivra/managed-sessions/route-support";
 
-const Body = z.object({ apiToken: DigitalOceanConnectionCreateSchema.shape.credentials.shape.apiToken }).strict();
+const Body = z.object({
+  apiToken: DigitalOceanConnectionCreateSchema.shape.credentials.shape.apiToken,
+  tokenExpiry: ProviderTokenExpiryInputSchema.optional(),
+}).strict();
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const unavailable = hivraApiUnavailable(request);
@@ -28,7 +31,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const parsed = Body.safeParse(body.body);
   if (!parsed.success) return noStore(apiError(parsed.error.issues[0]?.message ?? "Paste a DigitalOcean token.", 400));
   try {
-    return noStore(apiSuccess(await replaceDigitalOceanToken(userId, id.toLowerCase(), parsed.data.apiToken)));
+    return noStore(apiSuccess(await replaceDigitalOceanToken(userId, id.toLowerCase(), parsed.data.apiToken, parsed.data.tokenExpiry)));
   } catch (error) {
     return managedSessionFailure(error, "/api/infrastructure/connections/[id]/digitalocean/token");
   }

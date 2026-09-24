@@ -128,6 +128,8 @@ export function InfrastructureConnectionsPage() {
   }, []);
   const searchParams = useSearchParams();
   const requestedLaunchResource = parsePortableLaunchResourceId(searchParams?.get("launch"));
+  // Deep link from a DigitalOcean agent whose token stopped working.
+  const requestedTokenReplacement = searchParams?.get("replaceToken") ?? null;
   const unifiedLaunchReturn = searchParams?.get("returnTo") === "unified-launch";
   const selfHosted = isLocalAuthMode();
   const [connections, setConnections] = useState<InfrastructureConnectionDto[]>([]);
@@ -328,6 +330,16 @@ export function InfrastructureConnectionsPage() {
     void loadConnections(controller.signal);
     return () => controller.abort();
   }, [loadConnections]);
+
+  // Open "Replace token" once for the connection a deep link names.
+  const handledTokenReplacement = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedTokenReplacement || handledTokenReplacement.current === requestedTokenReplacement) return;
+    const connection = connections.find((candidate) => candidate.id === requestedTokenReplacement);
+    if (!connection || connection.provider !== "digitalocean") return;
+    handledTokenReplacement.current = requestedTokenReplacement;
+    setReplacingDigitalOcean(connection);
+  }, [connections, requestedTokenReplacement]);
 
   const targetsByConnection = useMemo(() => {
     const indexed = new Map<string, DeploymentTargetDto>();
@@ -782,6 +794,11 @@ export function InfrastructureConnectionsPage() {
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
                         onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
+                        onExpiryChanged={(credentialExpiry) => setConnections((current) => current.map((candidate) => (
+                          candidate.id === connection.id && candidate.provider === "digitalocean"
+                            ? { ...candidate, credentialExpiry }
+                            : candidate
+                        )))}
                       />
                     );
                   }
