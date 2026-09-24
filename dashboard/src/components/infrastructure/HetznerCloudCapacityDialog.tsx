@@ -11,7 +11,6 @@ import {
   HardDrive,
   Loader2,
   MapPin,
-  Network,
   ReceiptText,
   Server,
   ShieldCheck,
@@ -45,8 +44,16 @@ import { FIRST_BOOT_PREPARATION_CONFIRMATION, PreparedCapacityCreateRequestSchem
   type PreparedCapacityCreateRequest } from "@/lib/infrastructure/provider-computer-setup-contracts";
 import { verifyExternalCleanup } from "@/lib/infrastructure/hetzner-external-cleanup-client";
 import { HETZNER_EXTERNAL_CLEANUP_CONFIRMATION } from "@/lib/infrastructure/hetzner-external-cleanup-contracts";
+import {
+  HETZNER_GUIDED_SETUP_BASE,
+  isHetznerGuidedSetupImage,
+  isHetznerGuidedSetupServerType,
+} from "@/lib/infrastructure/hetzner-guided-setup";
+import { hetznerCapacitySlotReason, type HetznerCloudCapacitySlotDto } from "@/lib/infrastructure/hetzner-cloud-token-contracts";
+import type { PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 
 import styles from "./Infrastructure.module.css";
+import { ProviderComputerSetupPanel } from "./ProviderComputerSetupPanel";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
 type CapacityPhase = "choose" | "review" | "recovery" | "result";
@@ -56,7 +63,14 @@ type HetznerCloudCapacityDialogProps = {
   onClose: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onInventoryChanged: (inventory: HetznerCloudServerInventoryDto[]) => void;
-  onSetup?: () => void;
+  /** The account's one in-app server slot, when already observed. */
+  slot?: HetznerCloudCapacitySlotDto | null;
+  /** The launch this server is being created for, if any. */
+  launchResourceId?: PortableLaunchResourceId | null;
+  launchLabel?: string | null;
+  unifiedLaunchReturn?: boolean;
+  /** Setup or creation changed saved state the page should re-read. */
+  onChanged?: () => void;
 };
 
 type Selection = {
@@ -139,6 +153,13 @@ function readRecoveryRecord(connectionId: string): CapacityRecoveryRecord | null
   }
 }
 
+/** Whether this browser holds an unresolved creation request for the project,
+ * so its card can offer the saved-request check instead of a new purchase. */
+export function hasSavedCapacityRequest(connectionId: string): boolean {
+  if (typeof window === "undefined") return false;
+  return readRecoveryRecord(connectionId) !== null;
+}
+
 function writeRecoveryRecord(
   connectionId: string,
   request: PreparedCapacityCreateRequest,
@@ -203,50 +224,50 @@ function errorMessage(error: unknown): string {
   if (error instanceof InfrastructureApiError) {
     switch (error.code) {
       case "token_read_only":
-        return "This project token is read-only. Disconnect this project, then reconnect it with a Read & Write project token.";
+        return "This project token is read-only. Use Replace token on the project card with a Read & Write token from the same project, then try again.";
       case "quote_expired":
-        return "This price expired before creation. Request a fresh quote and confirm the current total again.";
+        return "This price expired before creation. Review current rates again and confirm the new total.";
       case "quote_changed":
-        return "Hetzner pricing or availability changed. Request a fresh quote and confirm the new configuration.";
+        return "Hetzner pricing or availability changed. Review current rates again and confirm the new configuration.";
       case "connection_changed":
-        return "This project connection changed after the quote. Request a fresh quote against the current encrypted credential.";
+        return "This project connection changed after the price review. Review current rates again.";
       case "credential_reconnect_required":
-        return "This project uses a legacy credential that is not bound for billable capacity. Disconnect and reconnect this Hetzner project with a current Read & Write token before in-app server creation. Existing read-only inventory may still work.";
+        return "This project uses an older saved token that can't create servers. Use Replace token on the project card with a current Read & Write token. The server list keeps working meanwhile.";
       case "idempotency_conflict":
-        return "This creation request no longer matches its original confirmation. Reconcile the existing request before trying again.";
+        return "This creation request no longer matches its original confirmation. Check the existing request before trying again.";
       case "canary_capacity_limit":
-        return "This Hivra account already has a non-rejected in-app Hetzner server claim. Canary allows one across all Hetzner connections. Disconnecting the project or deleting the server directly in Hetzner does not automatically free this slot. Use Remove created server on the original project to verify cleanup of a receipted, powered-off server and release its slot. Older or unresolved launches require manual review; additional simultaneous capacity is not supported in this Canary.";
+        return "Right now Hivra can create one Hetzner server per account, and this account's is in use. Deleting the server directly in Hetzner doesn't free it; use Remove created server on its project. Older or unresolved launches need manual review.";
       case "selection_invalid":
         return "Hetzner no longer offers this exact selection. Choose another size, location, or image.";
       case "access_setup_failed":
-        return "Hivra could not create the dedicated SSH access required for this server. No agent was prepared or launched.";
+        return "Hivra couldn't create the dedicated SSH access this server needs. Nothing was set up or launched.";
       case "invalid_credentials":
-        return "Hetzner no longer accepts this token. Reconnect the project with a current Read & Write project token.";
+        return "Hetzner no longer accepts this token. Use Replace token on the project card with a current Read & Write token.";
       case "provider_forbidden":
-        return "Hetzner authenticated this project token but denied the requested project change. Check project permissions and account restrictions before trying again.";
+        return "Hetzner accepted this token but refused the change. Check the project's permissions and account restrictions before trying again.";
       case "provider_resource_limit":
-        return "This Hetzner project has reached a provider resource limit. Increase the project limit or remove unused capacity before trying again.";
+        return "This Hetzner project has reached a provider limit. Raise the limit or remove unused servers in Hetzner before trying again.";
       case "provider_maintenance":
-        return "Hetzner is temporarily unavailable for maintenance. No success is assumed; retry this same request later.";
+        return "Hetzner is down for maintenance. Nothing is assumed to have happened; retry this same request later.";
       case "quote_rate_limited":
         return "Too many active price reviews; wait for one to expire or use an existing review.";
       case "provider_rate_limited":
-        return "Hetzner is rate limiting this project. No success is assumed; wait and retry this same request.";
+        return "Hetzner is rate limiting this project. Nothing is assumed to have happened; wait and retry this same request.";
       case "provider_conflict":
-        return "Hetzner reported a conflict with the selected resource or generated server identity. Request a fresh quote before trying again.";
+        return "Hetzner reported a conflict with the selected resource or generated server name. Review current rates again before trying again.";
       case "provider_action_failed":
-        return "Hetzner accepted the request but its create action failed. Hivra did not mark a powered-off server as created.";
+        return "Hetzner accepted the request but its create step failed. Hivra did not record a server as created.";
       case "provider_response_invalid":
-        return "Hetzner returned a response Hivra could not safely verify. Do not submit a different request until you sync the project inventory.";
+        return "Hetzner returned a response Hivra couldn't safely verify. Sync the project's servers before submitting a different request.";
       case "provider_unavailable":
-        return "Hetzner could not be reached. No success is assumed; retry this same request when the provider is available.";
+        return "Hetzner couldn't be reached. Nothing is assumed to have happened; retry this same request when Hetzner is available.";
       default:
         return error.message;
     }
   }
   return error instanceof Error
     ? error.message
-    : "Hivra could not complete this Hetzner request.";
+    : "Hivra couldn't complete this Hetzner request.";
 }
 
 function compareDecimal(left: string, right: string): number {
@@ -317,16 +338,20 @@ function simpleOfferMonthlyGross(
   return compareDecimal(total, currencyCap.amount) <= 0 ? total : null;
 }
 
+/** Only sizes and images Hivra's agent setup supports, so every choice on
+ * this screen can be set up after creation. */
+function guidedImages(catalog: HetznerCloudOfferCatalogDto): HetznerCloudOfferCatalogDto["images"] {
+  return catalog.images.filter((image) => isHetznerGuidedSetupImage(image));
+}
+
 function selectableServerTypes(catalog: HetznerCloudOfferCatalogDto): CatalogServerType[] {
+  const images = guidedImages(catalog);
   return catalog.serverTypes.filter((serverType) => (
-    catalog.locations.some((location) => (
+    isHetznerGuidedSetupServerType(serverType)
+    && catalog.locations.some((location) => (
       simpleOfferMonthlyGross(catalog, serverType, location.name) !== null
     ))
-    && catalog.images.some((image) => (
-      !image.deprecated
-      && image.osFlavor === "ubuntu"
-      && image.architecture === serverType.architecture
-    ))
+    && images.some((image) => image.architecture === serverType.architecture)
   ));
 }
 
@@ -342,8 +367,7 @@ function recommendedSelection(catalog: HetznerCloudOfferCatalogDto): Selection {
         : [];
     }));
   offers.sort((left, right) => (
-    Number(right.serverType.architecture === "x86") - Number(left.serverType.architecture === "x86")
-    || left.price.monthly.currency.localeCompare(right.price.monthly.currency)
+    left.price.monthly.currency.localeCompare(right.price.monthly.currency)
     || compareDecimal(left.totalMonthlyGross, right.totalMonthlyGross)
     || left.serverType.name.localeCompare(right.serverType.name)
     || left.providerLocation.name.localeCompare(right.providerLocation.name)
@@ -351,18 +375,9 @@ function recommendedSelection(catalog: HetznerCloudOfferCatalogDto): Selection {
   const offer = offers[0];
   if (!offer) return EMPTY_SELECTION;
 
-  const image = catalog.images
-    .filter((candidate) => (
-      !candidate.deprecated
-      && candidate.osFlavor === "ubuntu"
-      && candidate.architecture === offer.serverType.architecture
-    ))
-    .sort((left, right) => (
-      Number(right.osVersion === "22.04") - Number(left.osVersion === "22.04")
-      || (right.osVersion ?? "").localeCompare(left.osVersion ?? "", undefined, { numeric: true })
-      || left.name.localeCompare(right.name)
-      || left.id - right.id
-    ))[0];
+  const image = guidedImages(catalog)
+    .filter((candidate) => candidate.architecture === offer.serverType.architecture)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id)[0];
 
   return {
     ...EMPTY_SELECTION,
@@ -372,24 +387,24 @@ function recommendedSelection(catalog: HetznerCloudOfferCatalogDto): Selection {
   };
 }
 
-function resultCopy(operation: HetznerCloudCapacityOperationDto): {
+function resultCopy(operation: HetznerCloudCapacityOperationDto, prepared: boolean): {
   title: string;
   body: string;
   tone: "ready" | "warning" | "error";
 } {
   if (operation.externalCleanupResolutionId) return {
     title: "External cleanup verified.",
-    body: "The original creation outcome remains ambiguous. Fresh Hetzner checks confirmed the server and generated key absent, with no servers or Primary IPs remaining in the project. The slot is released; earlier charges still apply.",
+    body: "The original creation outcome remains ambiguous. Fresh Hetzner checks confirmed the server and generated key absent, with no servers or Primary IPs left in the project. The slot is free again; earlier charges still apply.",
     tone: "ready",
   };
   if (operation.status === "deleted") return {
     title: "Provider resources removed.",
-    body: "Hivra verified removal of the original server, both Primary IPs, and generated SSH key. The capacity slot is released; accrued provider charges still apply.",
+    body: "Hivra verified that the server, both Primary IPs and the generated SSH key are gone. You can create another server; charges already accrued still apply.",
     tone: "ready",
   };
   if (operation.status === "cleaning") return {
-    title: "Resource cleanup is in progress.",
-    body: "Reopen Remove created server from this project to inspect or resume the saved cleanup. This request cannot buy another server.",
+    title: "Server removal is in progress.",
+    body: "Open Remove created server on this project to check or resume it. This request can't buy another server.",
     tone: "warning",
   };
   if (
@@ -398,29 +413,35 @@ function resultCopy(operation: HetznerCloudCapacityOperationDto): {
     && operation.providerActionStatus === "success"
     && operation.observedServerStatus === "off"
   ) {
-    return {
-      title: "Created, powered off, not prepared.",
-      body: "Hetzner accepted the server and Hivra saved its provider identity. Starting, preparing, and launching an agent are separate later actions.",
-      tone: "ready",
-    };
+    return prepared
+      ? {
+          title: "Server created (powered off). Billing has started.",
+          body: "Next: set it up for agents. Start setup turns it on and installs Hivra's setup files.",
+          tone: "ready",
+        }
+      : {
+          title: "Server created (powered off). Billing has started.",
+          body: "You chose a plain server, so Hivra won't set it up for agents. Manage or delete it in Hetzner.",
+          tone: "ready",
+        };
   }
   if (operation.status === "creating") {
     return {
       title: "Creation is still being observed.",
-      body: "Hetzner has not produced final server evidence yet. Hivra does not treat this request as ready, prepared, or available for agent launch.",
+      body: "Hetzner hasn't produced final server evidence yet. Hivra doesn't treat this request as created or ready.",
       tone: "warning",
     };
   }
   if (operation.status === "ambiguous") {
     return {
       title: "Creation outcome needs reconciliation.",
-      body: "Hivra could not prove whether Hetzner created the server. Do not start a different request; check this same request again to reconcile it safely.",
+      body: "Hivra couldn't prove whether Hetzner created the server. Don't start a different request; check this same request again to reconcile it safely.",
       tone: "warning",
     };
   }
   return {
     title: "Hetzner rejected the request.",
-    body: "Hivra recorded the provider rejection and did not mark any server as created, prepared, or launch-ready.",
+    body: "Hivra recorded the rejection and did not record any server as created.",
     tone: "error",
   };
 }
@@ -430,7 +451,11 @@ export function HetznerCloudCapacityDialog({
   onClose,
   returnFocusRef,
   onInventoryChanged,
-  onSetup,
+  slot = null,
+  launchResourceId = null,
+  launchLabel = null,
+  unifiedLaunchReturn = false,
+  onChanged,
 }: HetznerCloudCapacityDialogProps) {
   const [phase, setPhase] = useState<CapacityPhase>("choose");
   const [catalog, setCatalog] = useState<HetznerCloudOfferCatalogDto | null>(null);
@@ -441,9 +466,12 @@ export function HetznerCloudCapacityDialog({
   const [quote, setQuote] = useState<HetznerCloudCapacityQuoteDto | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [prepare, setPrepare] = useState(false);
+  // Every Hivra-created server carries the setup recipe unless the user opts
+  // out under Advanced; a plain server can never be set up later.
+  const [prepare, setPrepare] = useState(true);
   const [creating, setCreating] = useState(false);
   const [verifyingCleanup, setVerifyingCleanup] = useState(false);
+  const [settingUp, setSettingUp] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [operation, setOperation] = useState<HetznerCloudCapacityOperationDto | null>(null);
   const [resultInventory, setResultInventory] = useState<HetznerCloudServerInventoryDto[]>([]);
@@ -460,9 +488,10 @@ export function HetznerCloudCapacityDialog({
   const locationId = useId();
   const imageId = useId();
   const confirmationId = useId();
+  const busy = creating || verifyingCleanup || settingUp;
   const dialogRef = useInfrastructureDialog({
     onClose,
-    closeOnEscape: !creating && !verifyingCleanup,
+    closeOnEscape: !busy,
     initialFocusRef: closeButtonRef,
     returnFocusRef,
   });
@@ -478,11 +507,7 @@ export function HetznerCloudCapacityDialog({
   }, [catalog, selectedType]);
   const availableImages = useMemo(() => {
     if (!catalog || !selectedType?.architecture) return [];
-    return catalog.images.filter((image) => (
-      !image.deprecated
-      && image.osFlavor === "ubuntu"
-      && image.architecture === selectedType.architecture
-    ));
+    return guidedImages(catalog).filter((image) => image.architecture === selectedType.architecture);
   }, [catalog, selectedType]);
 
   useEffect(() => {
@@ -543,11 +568,7 @@ export function HetznerCloudCapacityDialog({
     const nextLocation = catalog.locations.find(
       (location) => location.name === nextLocationCandidate?.name,
     );
-    const nextImage = catalog.images.find((image) => (
-      !image.deprecated
-      && image.osFlavor === "ubuntu"
-      && image.architecture === nextType?.architecture
-    ));
+    const nextImage = guidedImages(catalog).find((image) => image.architecture === nextType?.architecture);
     setSelection((current) => ({
       ...current,
       serverTypeId: value,
@@ -575,7 +596,7 @@ export function HetznerCloudCapacityDialog({
       const requestKey = createIdempotencyKey();
       const nextQuote = await quoteHetznerCloudCapacity(connection.id, parsed.data);
       setQuote(nextQuote);
-      setPrepare(false);
+      setPrepare(true);
       setConfirmed(false);
       setIdempotencyKey(requestKey);
       setPhase("review");
@@ -587,7 +608,7 @@ export function HetznerCloudCapacityDialog({
   }
 
   function editSelection() {
-    setPrepare(false);
+    setPrepare(true);
     setPhase("choose");
     setQuote(null);
     setConfirmed(false);
@@ -605,6 +626,7 @@ export function HetznerCloudCapacityDialog({
       setOperation(result.operation);
       setResultInventory(result.inventory);
       onInventoryChanged(result.inventory);
+      onChanged?.();
       setPhase("result");
       if (
         result.operation.status === "created_off"
@@ -654,7 +676,7 @@ export function HetznerCloudCapacityDialog({
     if (!quote || !confirmed || creating) return;
     if (!idempotencyKey) {
       setOperationError(
-        "The secure creation identifier is missing. Close this window and request a new quote.",
+        "The secure creation identifier is missing. Close this window and review current rates again.",
       );
       return;
     }
@@ -669,7 +691,7 @@ export function HetznerCloudCapacityDialog({
       persisted = writeRecoveryRecord(connection.id, request);
     } catch {
       setOperationError(
-        "Hivra could not save the non-secret recovery identifiers in this browser. No provider request was sent.",
+        "Hivra couldn't save the non-secret recovery identifiers in this browser. No provider request was sent.",
       );
       return;
     }
@@ -677,15 +699,20 @@ export function HetznerCloudCapacityDialog({
     await submitCreate(request);
   }
 
-  const copy = operation ? resultCopy(operation) : null;
+  const copy = operation ? resultCopy(operation, prepare) : null;
   const quoteFresh = Boolean(quote && Date.parse(quote.expiresAt) > quoteClock);
+  const createdForSetup = phase === "result" && operation?.status === "created_off" && prepare
+    && !operation.externalCleanupResolutionId;
   const title = phase === "choose"
     ? "Choose a Hetzner server"
     : phase === "review"
-      ? "Review price and creation"
+      ? "Review and create"
       : phase === "recovery"
         ? "Recover pending request"
-        : "Provider result";
+        : createdForSetup
+          ? "Set it up for agents"
+          : "Hetzner result";
+  const currentStep = phase === "choose" ? 0 : phase === "review" ? 1 : 2;
 
   return (
     <div className={styles.modalBackdrop}>
@@ -699,7 +726,7 @@ export function HetznerCloudCapacityDialog({
       >
         <header className={styles.wizardHeader}>
           <div>
-            <span className={styles.eyebrow}>Simple mode · {connection.name}</span>
+            <span className={styles.eyebrow}>My cloud · {connection.name}</span>
             <h1 ref={headingRef} tabIndex={-1} id="hetzner-capacity-title">{title}</h1>
           </div>
           <button
@@ -707,7 +734,7 @@ export function HetznerCloudCapacityDialog({
             type="button"
             className={styles.closeButton}
             onClick={onClose}
-            disabled={creating || verifyingCleanup}
+            disabled={busy}
             aria-label="Close Hetzner server setup"
           >
             <X size={19} aria-hidden="true" />
@@ -715,23 +742,20 @@ export function HetznerCloudCapacityDialog({
         </header>
 
         <ol className={styles.capacityProgress} aria-label="Server creation steps">
-          {(["Choose", "Review", phase === "recovery" ? "Recover" : "Result"] as const).map((label, index) => {
-            const currentIndex = phase === "choose" ? 0 : phase === "review" ? 1 : 2;
-            return (
-              <li
-                key={label}
-                className={index === currentIndex
-                  ? styles.capacityProgressActive
-                  : index < currentIndex
-                    ? styles.capacityProgressDone
-                    : undefined}
-                aria-current={index === currentIndex ? "step" : undefined}
-              >
-                <span>{index < currentIndex ? <CheckCircle2 size={12} aria-hidden="true" /> : index + 1}</span>
-                {label}
-              </li>
-            );
-          })}
+          {(["Choose", "Review", phase === "recovery" ? "Recover" : "Set up"] as const).map((label, index) => (
+            <li
+              key={label}
+              className={index === currentStep
+                ? styles.capacityProgressActive
+                : index < currentStep
+                  ? styles.capacityProgressDone
+                  : undefined}
+              aria-current={index === currentStep ? "step" : undefined}
+            >
+              <span>{index < currentStep ? <CheckCircle2 size={12} aria-hidden="true" /> : index + 1}</span>
+              {label}
+            </li>
+          ))}
         </ol>
 
         <div className={styles.wizardBody}>
@@ -750,6 +774,7 @@ export function HetznerCloudCapacityDialog({
               imageId={imageId}
               selectionError={selectionError ?? operationError}
               quoting={quoting}
+              slot={slot}
               onSelectionChange={setSelection}
               onServerTypeChange={changeServerType}
               onRetryCatalog={() => {
@@ -775,6 +800,7 @@ export function HetznerCloudCapacityDialog({
               quoteFresh={quoteFresh}
               requestReady={Boolean(idempotencyKey)}
               error={operationError}
+              launchLabel={launchLabel}
               onConfirmed={setConfirmed}
               prepare={prepare}
               onPrepare={setPrepare}
@@ -792,13 +818,19 @@ export function HetznerCloudCapacityDialog({
           ) : operation && copy ? (
             <CapacityResult
               key={operation.id}
+              connection={connection}
               operation={operation}
               inventory={resultInventory}
               copy={copy}
+              prepared={prepare}
               checking={creating}
               error={operationError}
+              launchResourceId={launchResourceId}
+              unifiedLaunchReturn={unifiedLaunchReturn}
               onCheck={() => void createServer()}
               onClose={onClose}
+              onSetupChanged={() => onChanged?.()}
+              onSettingUpChange={setSettingUp}
               verifying={verifyingCleanup}
               onVerifyingChange={setVerifyingCleanup}
               onResolved={(resolutionId) => {
@@ -806,14 +838,12 @@ export function HetznerCloudCapacityDialog({
                 const remaining = resultInventory.filter(server => server.providerResourceId !== operation.providerServerId);
                 setResultInventory(remaining);
                 onInventoryChanged(remaining);
+                onChanged?.();
                 clearRecoveryRecord(connection.id, { quoteId: operation.id, idempotencyKey: operation.idempotencyKey });
                 setRecoveryRequest(null);
               }}
             />
           ) : null}
-          {phase === "result" && operation?.status === "created_off" && prepare && onSetup && <div className={styles.resultActions}>
-            <button type="button" className={styles.primaryButton} onClick={onSetup}>Continue computer setup</button>
-          </div>}
         </div>
       </section>
     </div>
@@ -918,8 +948,8 @@ function CapacityRecovery({
         <div>
           <strong>Nothing is submitted automatically after a reload.</strong>
           <span>
-            Check this saved request to reconcile the original provider call. Do not
-            start a different request: the account-wide Canary slot may already be held.
+            Check this saved request to reconcile the original provider call. Don&apos;t
+            start a different request: this account&apos;s one Hetzner server slot may already be in use.
           </span>
         </div>
       </div>
@@ -938,7 +968,7 @@ function CapacityRecovery({
           onClick={onClose}
           disabled={checking}
         >
-          Return to infrastructure
+          Close
         </button>
         <button
           type="button"
@@ -968,6 +998,7 @@ function ChooseCapacity({
   imageId,
   selectionError,
   quoting,
+  slot,
   onSelectionChange,
   onServerTypeChange,
   onRetryCatalog,
@@ -986,6 +1017,7 @@ function ChooseCapacity({
   imageId: string;
   selectionError: string | null;
   quoting: boolean;
+  slot: HetznerCloudCapacitySlotDto | null;
   onSelectionChange: (selection: Selection) => void;
   onServerTypeChange: (value: string) => void;
   onRetryCatalog: () => void;
@@ -1020,10 +1052,11 @@ function ChooseCapacity({
     return (
       <div className={styles.capacityError} role="status">
         <Cloud size={23} aria-hidden="true" />
-        <h2>No compatible server choices are available.</h2>
+        <h2>No server Hivra can set up is available here.</h2>
         <p>
-          This project currently has no available Hetzner size, location, and Ubuntu
-          image combination that Hivra can quote safely.
+          Hivra sets up {HETZNER_GUIDED_SETUP_BASE.label} servers. This project doesn&apos;t
+          currently offer a size, location and {HETZNER_GUIDED_SETUP_BASE.label} image
+          combination within Hivra&apos;s price limits.
         </p>
         <button type="button" className={styles.secondaryButton} onClick={onRetryCatalog}>
           Refresh choices
@@ -1031,6 +1064,8 @@ function ChooseCapacity({
       </div>
     );
   }
+
+  const slotUsed = Boolean(slot?.held);
 
   return (
     <>
@@ -1046,9 +1081,8 @@ function ChooseCapacity({
         <div>
           <strong>Choose first. Nothing is created yet.</strong>
           <p>
-            These options come from your Hetzner project. The next screen requests a
-            short-lived observation of current provider rates before any billable action
-            is available.
+            These options come live from your Hetzner project. The next screen shows
+            Hetzner&apos;s current price before anything can be bought.
           </p>
         </div>
       </div>
@@ -1058,7 +1092,10 @@ function ChooseCapacity({
           <span className={styles.sectionNumber}>01</span>
           <div>
             <h2>Cloud server</h2>
-            <p>Choose one provider VM. Hivra generates a non-personal server name and creates it powered off.</p>
+            <p>
+              One server for your agents. Hivra names it and creates it powered off. Only
+              images Hivra can set up for agents are listed ({HETZNER_GUIDED_SETUP_BASE.label}).
+            </p>
           </div>
         </div>
 
@@ -1122,25 +1159,22 @@ function ChooseCapacity({
         </dl>
       ) : null}
 
-      <div className={styles.capacityBoundary}>
-        <ShieldCheck size={18} aria-hidden="true" />
-        <div>
-          <strong>Creation stops at a powered-off provider VM.</strong>
-          <span>
-            No agent is installed or launched. Starting and preparing this node require
-            separate later approval and are not part of this flow. Canary allows one
-            non-rejected in-app Hetzner server per Hivra account across all connected
-            projects.
-          </span>
+      {slotUsed ? (
+        <div className={styles.capacityBoundary} role="status">
+          <AlertTriangle size={18} aria-hidden="true" />
+          <div>
+            <strong>This account&apos;s Hetzner server slot is in use.</strong>
+            <span>{hetznerCapacitySlotReason(slot)}</span>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className={styles.wizardActions}>
         <button
           type="button"
           className={styles.primaryButton}
           onClick={onQuote}
-          disabled={quoting}
+          disabled={quoting || slotUsed}
         >
           {quoting ? <Loader2 size={15} className={styles.spin} aria-hidden="true" /> : <ReceiptText size={15} aria-hidden="true" />}
           {quoting ? "Getting current rates…" : "Review current rates"}
@@ -1158,6 +1192,7 @@ function ReviewCapacity({
   quoteFresh,
   requestReady,
   error,
+  launchLabel,
   onConfirmed,
   onBack,
   onCreate,
@@ -1171,6 +1206,7 @@ function ReviewCapacity({
   quoteFresh: boolean;
   requestReady: boolean;
   error: string | null;
+  launchLabel: string | null;
   onConfirmed: (confirmed: boolean) => void;
   onBack: () => void;
   onCreate: () => void;
@@ -1178,127 +1214,54 @@ function ReviewCapacity({
   onPrepare: (prepare: boolean) => void;
 }) {
   const currency = quote.price.currency;
-  const preparationSupported = quote.serverType.architecture === "x86" && quote.image.architecture === "x86" && quote.image.osVersion === "22.04";
-  const guidedSetupSelected = prepare && preparationSupported;
-  const confirmationLabel = `I approve this observed configuration and gross base rate of ${formatMoney(currency, quote.price.total.hourly.gross)} per hour, capped at ${formatMoney(currency, quote.price.total.monthly.gross)} per month, before variable traffic overage. Hetzner determines final billing and may reject or change the request before creation.`;
+  // The dialog lists only supported bases, but the quote is the server's truth.
+  const preparationSupported = isHetznerGuidedSetupServerType(quote.serverType) && isHetznerGuidedSetupImage(quote.image);
+  const guided = prepare && preparationSupported;
+  const hourly = formatMoney(currency, quote.price.total.hourly.gross);
+  const monthly = formatMoney(currency, quote.price.total.monthly.gross);
+  const advancedId = `${confirmationId}-plain`;
 
   return (
     <>
       <div className={styles.capacityQuoteHero}>
         <div>
-          <span className={styles.sectionLabel}>Base hourly rate</span>
-          <strong>{formatMoney(currency, quote.price.total.hourly.gross)}<small> / hour gross</small></strong>
-          <span>Partial hours are rounded up</span>
+          <span className={styles.sectionLabel}>From Hetzner now</span>
+          <strong>{hourly}<small> / hour</small></strong>
+          <span>At most {monthly} a month, before extra traffic</span>
         </div>
         <div>
-          <span className={styles.sectionLabel}>Monthly cap</span>
-          <strong>{formatMoney(currency, quote.price.total.monthly.gross)}<small> gross</small></strong>
-          <span>Variable traffic overage is not included</span>
+          <span className={styles.sectionLabel}>Server</span>
+          <strong className={styles.capacityQuoteServer}>{quote.serverType.name}<small> · {quote.serverType.cores} vCPU · {quote.serverType.memoryGb} GB</small></strong>
+          <span>{quote.location.city} · {quote.image.description}</span>
         </div>
         <span className={styles.quoteExpiry}>
-          Quote expires {new Date(quote.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          Price valid until {new Date(quote.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
 
-      <dl className={styles.capacityPriceBreakdown} aria-label="Freshly observed provider rate breakdown">
-        <div>
-          <dt>Hetzner server</dt>
-          <dd>
-            <strong>{formatMoney(currency, quote.price.server.monthly.gross)} / month cap</strong>
-            <span>{formatMoney(currency, quote.price.server.hourly.gross)} / hour gross</span>
-          </dd>
-        </div>
-        <div>
-          <dt>Primary IPv4</dt>
-          <dd>
-            <strong>{formatMoney(currency, quote.price.primaryIpv4.monthly.gross)} / month cap</strong>
-            <span>{formatMoney(currency, quote.price.primaryIpv4.hourly.gross)} / hour gross</span>
-          </dd>
-        </div>
-        <div>
-          <dt>Primary IPv6</dt>
-          <dd>
-            <strong>{formatMoney(currency, quote.price.primaryIpv6.monthly.gross)} / month cap</strong>
-            <span>{formatMoney(currency, quote.price.primaryIpv6.hourly.gross)} / hour gross</span>
-          </dd>
-        </div>
-      </dl>
-
-      <p className={styles.capacityVatNote}>
-        Gross provider prices in {currency.toUpperCase()}. Hetzner VAT rate: {displayDecimal(quote.price.vatRate)}%.
-      </p>
-
-      <section className={styles.capacityTraffic} aria-labelledby="capacity-traffic-heading">
-        <div>
-          <span className={styles.sectionLabel}>Variable usage</span>
-          <h2 id="capacity-traffic-heading">Traffic beyond {formatIncludedTraffic(quote.price.traffic.includedBytes)}</h2>
-          <p>{quote.billing.trafficOverage}</p>
-        </div>
-        <strong>
-          {formatMoney(currency, quote.price.traffic.additionalPerTb.gross)}
-          <small> / additional TB gross</small>
-        </strong>
+      <section className={styles.createTimelineSection} aria-labelledby="capacity-next-heading">
+        <h2 id="capacity-next-heading" className={styles.sectionLabel}>What happens next</h2>
+        <ol className={styles.createTimeline}>
+          <li>
+            <span aria-hidden="true">1</span>
+            <div><strong>Create</strong><p>Hetzner starts billing.</p></div>
+          </li>
+          <li className={guided ? undefined : styles.createTimelineSkipped}>
+            <span aria-hidden="true">2</span>
+            <div>
+              <strong>Set it up for agents</strong>
+              <p>{guided ? "About 5 minutes; you start it next." : "Skipped. You chose a plain server under Advanced."}</p>
+            </div>
+          </li>
+          <li className={guided ? undefined : styles.createTimelineSkipped}>
+            <span aria-hidden="true">3</span>
+            <div>
+              <strong>{launchLabel ? `Launch ${launchLabel}` : "Launch"}</strong>
+              <p>{guided ? "You review it next." : "Not available on a plain server."}</p>
+            </div>
+          </li>
+        </ol>
       </section>
-
-      <div className={styles.capacityReviewGrid}>
-        <section aria-labelledby="capacity-review-server">
-          <span className={styles.sectionNumber} aria-hidden="true"><Server size={14} /></span>
-          <div>
-            <h2 id="capacity-review-server">Server</h2>
-            <dl>
-              <div><dt>Name</dt><dd>{quote.serverName}</dd></div>
-              <div><dt>Size</dt><dd>{quote.serverType.name} · {quote.serverType.cores} vCPU · {quote.serverType.memoryGb} GB</dd></div>
-              <div><dt>Location</dt><dd>{quote.location.city}, {quote.location.country} · {quote.location.name}</dd></div>
-              <div><dt>Image</dt><dd>{quote.image.description}</dd></div>
-              <div><dt>Isolation</dt><dd>Hetzner provider VM</dd></div>
-            </dl>
-          </div>
-        </section>
-        <section aria-labelledby="capacity-review-policy">
-          <span className={styles.sectionNumber} aria-hidden="true"><Network size={14} /></span>
-          <div>
-            <h2 id="capacity-review-policy">Fixed creation policy</h2>
-            <dl>
-              <div><dt>Network</dt><dd>Public IPv4 + IPv6</dd></div>
-              <div><dt>Backups</dt><dd>Off</dd></div>
-              <div><dt>Volumes</dt><dd>None</dd></div>
-              <div><dt>Power</dt><dd>Powered off after creation</dd></div>
-              <div><dt>Canary limit</dt><dd>One non-rejected in-app Hetzner server per Hivra account</dd></div>
-            </dl>
-          </div>
-        </section>
-      </div>
-
-      <div className={styles.capacityAccessDisclosure}>
-        <ShieldCheck size={18} aria-hidden="true" />
-        <div>
-          <strong>{guidedSetupSelected
-            ? "Guided setup checks the firewall before startup."
-            : "Access policy is planned, but it does not run while powered off."}</strong>
-          <span>
-            A later approved first boot creates the <code>{quote.access.username}</code> user
-            with generated Ed25519 access and TCP 22. Password authentication and root
-            SSH login stay disabled. {guidedSetupSelected
-              ? "When you continue computer setup, Hivra applies and verifies the provider firewall before requesting power-on. Hivra does not request startup until those checks pass. Selecting this option does not apply changes."
-              : quote.access.firewallLimitation}
-          </span>
-        </div>
-      </div>
-
-      <div className={styles.capacityBoundary}>
-        <AlertTriangle size={18} aria-hidden="true" />
-        <div>
-          <strong>One in-app Hetzner server per Hivra account in Canary.</strong>
-          <span>
-            A creating, ambiguous, or created request uses the slot across all connected
-            Hetzner projects. Disconnecting a project or deleting its server directly in
-            Hetzner does not automatically free the slot. Use Remove created server on
-            the original project to verify cleanup and release an eligible server&apos;s slot.
-            Older or unresolved launches remain manual; additional simultaneous capacity
-            is not supported in this Canary.
-          </span>
-        </div>
-      </div>
 
       <label className={styles.capacityConfirmation} htmlFor={confirmationId}>
         <input
@@ -1309,41 +1272,92 @@ function ReviewCapacity({
           disabled={creating}
         />
         <span>
-          <strong>Confirm provider billing</strong>
-          <span>{confirmationLabel}</span>
+          <strong>Confirm Hetzner billing</strong>
+          <span>
+            I understand Hetzner bills this server {hourly} an hour, at most {monthly} a month,
+            from now until I delete it, and Hetzner&apos;s bill is final.
+          </span>
         </span>
       </label>
 
-      <label className={styles.capacityConfirmation} htmlFor={confirmationId + "-prepare"}>
-        <input id={confirmationId + "-prepare"} type="checkbox" checked={guidedSetupSelected}
-          disabled={creating || !preparationSupported} onChange={event => onPrepare(event.target.checked)} />
-        <span><strong>Enable guided computer setup</strong><span>{preparationSupported
-          ? "Include the one-time connection recipe. After creation, Continue computer setup will apply the firewall, start this exact server, verify its SSH identity, and install Hivra’s setup files. No agent is launched yet."
-          : "Automatic setup currently requires an x86 server and Ubuntu 22.04. Change the configuration to enable it; other choices remain capacity-only."}</span></span>
-      </label>
+      <details className={styles.capacityDisclosure}>
+        <summary>Billing details</summary>
+        <div className={styles.capacityDisclosureBody}>
+          <dl className={styles.capacityPriceBreakdown} aria-label="Hetzner price breakdown">
+            <div>
+              <dt>Hetzner server</dt>
+              <dd>
+                <strong>{formatMoney(currency, quote.price.server.monthly.gross)} / month cap</strong>
+                <span>{formatMoney(currency, quote.price.server.hourly.gross)} / hour gross</span>
+              </dd>
+            </div>
+            <div>
+              <dt>Primary IPv4</dt>
+              <dd>
+                <strong>{formatMoney(currency, quote.price.primaryIpv4.monthly.gross)} / month cap</strong>
+                <span>{formatMoney(currency, quote.price.primaryIpv4.hourly.gross)} / hour gross</span>
+              </dd>
+            </div>
+            <div>
+              <dt>Primary IPv6</dt>
+              <dd>
+                <strong>{formatMoney(currency, quote.price.primaryIpv6.monthly.gross)} / month cap</strong>
+                <span>{formatMoney(currency, quote.price.primaryIpv6.hourly.gross)} / hour gross</span>
+              </dd>
+            </div>
+            <div>
+              <dt>Traffic beyond {formatIncludedTraffic(quote.price.traffic.includedBytes)}</dt>
+              <dd>
+                <strong>{formatMoney(currency, quote.price.traffic.additionalPerTb.gross)}</strong>
+                <span>per additional TB gross</span>
+              </dd>
+            </div>
+          </dl>
+          <ul className={styles.capacityDetailList}>
+            <li>Gross prices in {currency.toUpperCase()}, including Hetzner&apos;s VAT rate of {displayDecimal(quote.price.vatRate)}%.</li>
+            <li>Hetzner rounds partial hours up and keeps billing while the server is powered off.</li>
+            <li>The two Primary IPs are billed separately while they exist. Remove created server deletes them with the server.</li>
+            <li>{quote.billing.trafficOverage}</li>
+            <li>Hivra creates the server powered off, with public IPv4 and IPv6, no backups and no volumes. In rare migration or hardware-failure cases Hetzner can power a server on by itself; check Hetzner Console if the server looks wrong.</li>
+            <li>
+              Setup adds a <code>{quote.access.username}</code> user with a generated Ed25519 key and opens SSH
+              (TCP 22). Password and root logins stay off. {guided
+                ? "Setup applies and checks a Hetzner firewall before it turns the server on."
+                : quote.access.firewallLimitation}
+            </li>
+            <li>Right now Hivra can create one Hetzner server per account. Remove created server frees it again.</li>
+          </ul>
+        </div>
+      </details>
+
+      <details className={styles.capacityDisclosure}>
+        <summary>Advanced</summary>
+        <div className={styles.capacityDisclosureBody}>
+          <label className={styles.capacityAdvancedOption} htmlFor={advancedId}>
+            <input
+              id={advancedId}
+              type="checkbox"
+              checked={!guided}
+              disabled={creating || !preparationSupported}
+              onChange={(event) => onPrepare(!event.target.checked)}
+            />
+            <span>
+              <strong>Create a plain server without agent setup</strong>
+              <span>
+                Hivra won&apos;t set it up for agents, and it can&apos;t be set up later. You
+                manage it yourself in Hetzner.
+              </span>
+            </span>
+          </label>
+        </div>
+      </details>
 
       {!quoteFresh ? (
         <div className={styles.formError} role="alert">
           <AlertTriangle size={16} aria-hidden="true" />
-          <span>This rate observation has expired. Go back and request current provider rates before creating.</span>
+          <span>This price has expired. Go back and review current rates before creating.</span>
         </div>
       ) : null}
-
-      <div className={styles.capacityBoundary}>
-        <AlertTriangle size={18} aria-hidden="true" />
-        <div>
-          <strong>“Powered off” is a point-in-time provider observation.</strong>
-          <span>
-            Hetzner bills partial hours as full hours and Primary IPs separately. The
-            result is not prepared and cannot launch an agent. Use Remove created server
-            for eligible Hivra-created resources, or inspect the server and any retained
-            Primary IPs in Hetzner Console. Hetzner
-            documents rare migration or hardware-failure cases where an off server can
-            be powered on when its prior state is unknown, so inspect or delete it there;
-            Hivra does not yet provide durable power isolation or monitoring.
-          </span>
-        </div>
-      </div>
 
       {error ? (
         <div className={styles.formError} role="alert">
@@ -1371,24 +1385,36 @@ function ReviewCapacity({
 }
 
 function CapacityResult({
+  connection,
   operation,
   inventory,
   copy,
+  prepared,
   checking,
   error,
+  launchResourceId,
+  unifiedLaunchReturn,
   onCheck,
   onClose,
+  onSetupChanged,
+  onSettingUpChange,
   onResolved,
   verifying,
   onVerifyingChange,
 }: {
+  connection: HetznerCloudConnectionDto;
   operation: HetznerCloudCapacityOperationDto;
   inventory: HetznerCloudServerInventoryDto[];
   copy: ReturnType<typeof resultCopy>;
+  prepared: boolean;
   checking: boolean;
   error: string | null;
+  launchResourceId: PortableLaunchResourceId | null;
+  unifiedLaunchReturn: boolean;
   onCheck: () => void;
   onClose: () => void;
+  onSetupChanged: () => void;
+  onSettingUpChange: (running: boolean) => void;
   onResolved: (resolutionId: string) => void;
   verifying: boolean;
   onVerifyingChange: (value: boolean) => void;
@@ -1399,6 +1425,7 @@ function CapacityResult({
   const verificationKey = useRef<string | null>(null);
   const resolved = Boolean(operation.externalCleanupResolutionId);
   const canRecheck = !resolved && (operation.status === "creating" || operation.status === "ambiguous");
+  const createdOff = operation.status === "created_off" && !resolved;
   async function verifyRemoved() {
     if (verifying || checking) return;
     onVerifyingChange(true); setVerificationError(null);
@@ -1414,73 +1441,33 @@ function CapacityResult({
   }
   const observedUnexpectedlyPowered = operation.observedServerStatus === "running"
     || operation.observedServerStatus === "starting";
+  // A server created for setup hands straight to the setup status; one status
+  // block, with the purchase as its first line.
+  const handsToSetup = createdOff && prepared;
   return (
     <div className={styles.capacityResult}>
-      <div className={`${styles.capacityResultHero} ${styles[`capacityResult_${copy.tone}`]}`}>
-        <span aria-hidden="true">
-          {copy.tone === "ready" ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
-        </span>
-        <div>
-          <span className={styles.sectionLabel}>Provider operation</span>
-          <h2>{copy.title}</h2>
-          <p>{copy.body}</p>
+      {handsToSetup ? null : (
+        <div className={`${styles.capacityResultHero} ${styles[`capacityResult_${copy.tone}`]}`}>
+          <span aria-hidden="true">
+            {copy.tone === "ready" ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
+          </span>
+          <div>
+            <span className={styles.sectionLabel}>{operation.quote.serverName}</span>
+            <h2>{copy.title}</h2>
+            <p>{copy.body}</p>
+          </div>
         </div>
-      </div>
-
-      <dl className={styles.capacityOperationFacts} aria-label="Provider operation evidence">
-        <div><dt>Hivra operation</dt><dd>{operation.id}</dd></div>
-        <div><dt>Status</dt><dd>{operation.status.replaceAll("_", " ")}</dd></div>
-        <div><dt>Provider server</dt><dd>{operation.providerServerId ?? "Not confirmed"}</dd></div>
-        <div><dt>Provider action</dt><dd>{operation.providerActionId ?? "Not confirmed"}</dd></div>
-        <div><dt>Action command</dt><dd>{operation.providerActionCommand ?? "Not confirmed"}</dd></div>
-        <div><dt>Observed power</dt><dd>{operation.observedServerStatus ?? "Not confirmed"}</dd></div>
-        <div><dt>Observed at</dt><dd>{operation.providerObservedAt ? new Date(operation.providerObservedAt).toLocaleString() : "Not confirmed"}</dd></div>
-        <div><dt>Canary slot</dt><dd>{operation.canarySlotHeld ? "Held" : "Available"}</dd></div>
-        <div><dt>Replay</dt><dd>{operation.replayed ? "Existing request" : "First response"}</dd></div>
-      </dl>
-
-      {operation.providerNextActions.length > 0 ? (
-        <div className={styles.capacityNextActions}>
-          <span className={styles.sectionLabel}>Provider follow-up actions</span>
-          <ul>
-            {operation.providerNextActions.map((action) => (
-              <li key={action.id}>
-                <span>{action.command}</span>
-                <code>{action.id}</code>
-                <strong>{action.status}</strong>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {inventory.length > 0 ? (
-        <div className={styles.capacityResultInventory}>
-          <span className={styles.sectionLabel}>Project inventory after this operation</span>
-          {inventory.map((server) => (
-            <article key={server.id}>
-              <Server size={17} aria-hidden="true" />
-              <div>
-                <strong>{server.name}</strong>
-                <span>
-                  {server.serverType.name} · {server.location.city ?? server.location.name} · {server.status}
-                </span>
-              </div>
-              <span className={styles.statusBadge}>Not prepared</span>
-            </article>
-          ))}
-        </div>
-      ) : null}
+      )}
 
       {observedUnexpectedlyPowered && !resolved ? (
         <div className={`${styles.capacityBoundary} ${styles.capacityCritical}`} role="alert">
           <AlertTriangle size={18} aria-hidden="true" />
           <div>
-            <strong>Server observed powered on — check Hetzner immediately.</strong>
+            <strong>Server observed powered on — check Hetzner now.</strong>
             <span>
               Hetzner reported this server as {operation.observedServerStatus}. Hivra did
               not authorize an agent launch and will not power the server off
-              automatically. Open Hetzner Console now, inspect the server, and power it
+              automatically. Open Hetzner Console, inspect the server, and power it
               off if it should not be running.
             </span>
             <a
@@ -1495,41 +1482,27 @@ function CapacityResult({
         </div>
       ) : null}
 
-      <div className={styles.capacityBoundary}>
-        <ShieldCheck size={18} aria-hidden="true" />
-        <div>
-          <strong>
-            {operation.createdPoweredOff
-              ? "Billing is active; agent launch remains blocked."
-              : "Agent launch remains blocked."}
-          </strong>
-          <span>
-            {operation.createdPoweredOff
-              ? `The server was off when Hivra observed it, but that is not durable power isolation. Hetzner documents rare automatic power-on during migration or hardware recovery when prior state is unknown. Billing continues while off; inspect or delete the server and any retained Primary IPs in Hetzner Console. ${operation.launchBlockedReason}`
-              : operation.launchBlockedReason}
-          </span>
+      {!createdOff ? (
+        <div className={styles.capacityBoundary}>
+          <AlertTriangle size={18} aria-hidden="true" />
+          <div>
+            <strong>
+              {operation.canarySlotHeld
+                ? "This request uses the account's one Hetzner server slot."
+                : "This request did not keep the account's Hetzner server slot."}
+            </strong>
+            <span>
+              {operation.canarySlotHeld
+                ? "The slot covers every Hetzner project you connect. Use Remove created server to verify cleanup of a created, powered-off server. Disconnecting alone doesn't stop charges or free the slot; older unresolved launches need manual review."
+                : operation.status === "deleted"
+                  ? "The original resources were confirmed gone. You can review a fresh price for another server."
+                  : resolved
+                    ? "External cleanup was checked independently. The original failure record is kept; you can review a fresh price. This is point-in-time evidence, not a guarantee against later changes in Hetzner."
+                    : "Hivra recorded no Hetzner server or project SSH key holding the slot. You can retry after fixing the reported cause."}
+            </span>
+          </div>
         </div>
-      </div>
-
-      <div className={styles.capacityBoundary}>
-        <AlertTriangle size={18} aria-hidden="true" />
-        <div>
-          <strong>
-            {operation.canarySlotHeld
-              ? "This request uses the account's one Canary capacity slot."
-              : "This request did not retain the Canary capacity slot."}
-          </strong>
-          <span>
-            {operation.canarySlotHeld
-              ? "The slot applies across all Hetzner connections. Use Remove created server to verify cleanup of a receipted, powered-off server. Disconnecting alone does not stop charges or free the slot; older unresolved launches require manual review."
-              : operation.status === "deleted"
-                ? "The original resources were confirmed absent. You can review a fresh price quote for another server."
-                : resolved
-                  ? "External cleanup was independently checked. The original failure record is retained; you can review a fresh quote. This is point-in-time evidence, not a guarantee against later changes in Hetzner."
-                  : "Hivra recorded no provider server or project SSH key holding the slot. You can retry after fixing the reported cause."}
-          </span>
-        </div>
-      </div>
+      ) : null}
 
       {operation.canarySlotHeld
       && (operation.status === "ambiguous" || operation.status === "provider_rejected") ? (
@@ -1552,7 +1525,7 @@ function CapacityResult({
           <ShieldCheck size={18} aria-hidden="true" />
           <div>
             <strong>Already removed these resources in Hetzner?</strong>
-            <span>Verify external cleanup to release this request&apos;s slot. Hivra checks the original server and generated key, and requires this project to have no servers or Primary IPs. This action deletes nothing and does not retry the purchase.</span>
+            <span>Verify external cleanup to free this request&apos;s slot. Hivra checks the original server and generated key, and requires this project to have no servers or Primary IPs. This deletes nothing and does not retry the purchase.</span>
             <button type="button" className={styles.secondaryButton} onClick={() => void verifyRemoved()} disabled={verifying || checking}>
               {verifying ? "Verifying external cleanup…" : HETZNER_EXTERNAL_CLEANUP_CONFIRMATION}
             </button>
@@ -1568,27 +1541,86 @@ function CapacityResult({
         </div>
       ) : null}
 
-      <div className={styles.resultActions}>
-        <button
-          type="button"
-          className={canRecheck ? styles.secondaryButton : styles.primaryButton}
-          onClick={onClose}
-          disabled={checking || verifying}
-        >
-          Return to infrastructure
-        </button>
-        {canRecheck ? (
+      {handsToSetup ? (
+        <ProviderComputerSetupPanel
+          note={copy.title}
+          connection={connection}
+          orderId={operation.id}
+          launchResourceId={launchResourceId}
+          unifiedLaunchReturn={unifiedLaunchReturn}
+          onChanged={onSetupChanged}
+          onRunningChange={onSettingUpChange}
+        />
+      ) : (
+        <div className={styles.resultActions}>
           <button
             type="button"
-            className={styles.primaryButton}
-            onClick={onCheck}
+            className={canRecheck ? styles.secondaryButton : styles.primaryButton}
+            onClick={onClose}
             disabled={checking || verifying}
           >
-            {checking ? <Loader2 size={15} className={styles.spin} aria-hidden="true" /> : <ReceiptText size={15} aria-hidden="true" />}
-            {checking ? "Checking the same request…" : "Check this request again"}
+            {createdOff ? "Done" : "Close"}
           </button>
-        ) : null}
-      </div>
+          {canRecheck ? (
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={onCheck}
+              disabled={checking || verifying}
+            >
+              {checking ? <Loader2 size={15} className={styles.spin} aria-hidden="true" /> : <ReceiptText size={15} aria-hidden="true" />}
+              {checking ? "Checking the same request…" : "Check this request again"}
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      <details className={styles.capacityDisclosure}>
+        <summary>Technical details</summary>
+        <div className={styles.capacityDisclosureBody}>
+          <dl className={styles.capacityOperationFacts} aria-label="Provider operation evidence">
+            <div><dt>Hivra operation</dt><dd>{operation.id}</dd></div>
+            <div><dt>Status</dt><dd>{operation.status.replaceAll("_", " ")}</dd></div>
+            <div><dt>Provider server</dt><dd>{operation.providerServerId ?? "Not confirmed"}</dd></div>
+            <div><dt>Provider action</dt><dd>{operation.providerActionId ?? "Not confirmed"}</dd></div>
+            <div><dt>Action command</dt><dd>{operation.providerActionCommand ?? "Not confirmed"}</dd></div>
+            <div><dt>Observed power</dt><dd>{operation.observedServerStatus ?? "Not confirmed"}</dd></div>
+            <div><dt>Observed at</dt><dd>{operation.providerObservedAt ? new Date(operation.providerObservedAt).toLocaleString() : "Not confirmed"}</dd></div>
+            <div><dt>Server slot</dt><dd>{operation.canarySlotHeld ? "In use" : "Free"}</dd></div>
+            <div><dt>Replay</dt><dd>{operation.replayed ? "Existing request" : "First response"}</dd></div>
+          </dl>
+          {operation.providerNextActions.length > 0 ? (
+            <div className={styles.capacityNextActions}>
+              <span className={styles.sectionLabel}>Provider follow-up actions</span>
+              <ul>
+                {operation.providerNextActions.map((action) => (
+                  <li key={action.id}>
+                    <span>{action.command}</span>
+                    <code>{action.id}</code>
+                    <strong>{action.status}</strong>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {inventory.length > 0 ? (
+            <div className={styles.capacityResultInventory}>
+              <span className={styles.sectionLabel}>Project servers after this request</span>
+              {inventory.map((server) => (
+                <article key={server.id}>
+                  <Server size={17} aria-hidden="true" />
+                  <div>
+                    <strong>{server.name}</strong>
+                    <span>
+                      {server.serverType.name} · {server.location.city ?? server.location.name} · {server.status}
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </details>
     </div>
   );
 }

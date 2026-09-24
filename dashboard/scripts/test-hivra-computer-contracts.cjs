@@ -1,4 +1,4 @@
-// Apply every migration up to 20260924140000 in PostgreSQL/WASM (twice for the
+// Apply every migration up to 20260924190000 in PostgreSQL/WASM (twice for the
 // new file, proving it re-runs), then check what it adds:
 // - hivra_computer_contracts: one row per agent revision, a delivered or sent
 //   revision always carries its receipt, content is capped, and the table is
@@ -12,7 +12,7 @@ const path = require("node:path");
 const { PGlite } = require("@electric-sql/pglite");
 
 const MIGRATIONS = path.resolve(__dirname, "../supabase/migrations");
-const TARGET = "20260924140000_hivra_computer_contracts.sql";
+const TARGET = "20260924190000_hivra_computer_contracts.sql";
 const CONNECTION = "11111111-1111-4111-8111-111111111111";
 const AGENT = "22222222-2222-4222-8222-222222222222";
 const SESSION_NAME = "hivra-22222222222242228222222222222222";

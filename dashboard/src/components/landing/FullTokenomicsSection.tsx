@@ -1,5 +1,10 @@
 import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
+import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
+
+/** Set only when the token geo-policy blocks this viewer. */
+export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
 
 const USES = [
   { name: "Compute and software", text: "Hold for a compute tier, fixed when you first qualify. Metered runtime, storage, extra cores and egress. Prebuilt operator packs and reserved capacity." },
@@ -8,7 +13,38 @@ const USES = [
   { name: "Budgets with boundaries", text: "Fund missions against accepted evidence. Give an agent a capped, revocable allowance. Delegating work must never multiply the money available." },
 ] as const;
 
-export default function FullTokenomicsSection({ headingLevel = 2 }: { headingLevel?: 1 | 2 } = {}) {
+/**
+ * What a viewer the token geo-policy blocks sees instead of the economy
+ * proposal: the factual contract addresses, where to verify them, and the
+ * notice. No payment discount, bonus, migration, uses or treasury copy.
+ */
+function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLevel: 1 | 2; restriction: TokenomicsGeoRestriction }) {
+  const Heading = headingLevel === 1 ? "h1" : "h2";
+  return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
+    <header className={styles.economyHeading}>
+      <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
+      <div><p>$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra.</p></div>
+    </header>
+    <TokenGeoNotice notice={restriction.notice} />
+    <div data-testid="tokenomics-contracts">
+      {restriction.entries.map((entry) => (
+        <p key={entry.key}>
+          <strong>{entry.label} on Base: </strong>
+          {entry.contractAddress && entry.basescanUrl
+            ? <><code style={{ overflowWrap: "anywhere" }}>{entry.contractAddress}</code>{" "}<a href={entry.basescanUrl} target="_blank" rel="noopener noreferrer">View on BaseScan</a></>
+            : "Not launched yet. There is no contract yet."}
+        </p>
+      ))}
+      <p><a className={styles.textLink} href="/token">Verify the token contracts<ArrowUpRight size={20} aria-hidden="true" /></a></p>
+    </div>
+  </section>;
+}
+
+export default function FullTokenomicsSection({
+  headingLevel = 2,
+  geoRestriction = null,
+}: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null } = {}) {
+  if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} />;
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>

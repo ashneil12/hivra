@@ -25,6 +25,8 @@ on:
       - 'services/browser-sidecar/package-lock.json'
       - 'services/posthog-proxy-worker/**'
       - 'services/venice-proxy-worker/**'
+      - 'services/host-relay-worker/**'
+      - 'services/host-connector/**'
       - 'scripts/release/**'
       - '.github/workflows/worker-builds.yml'
       - '.github/workflows/public-release-safety.yml'
@@ -51,6 +53,8 @@ on:
       - 'services/browser-sidecar/package-lock.json'
       - 'services/posthog-proxy-worker/**'
       - 'services/venice-proxy-worker/**'
+      - 'services/host-relay-worker/**'
+      - 'services/host-connector/**'
       - 'scripts/release/**'
       - '.github/workflows/worker-builds.yml'
       - '.github/workflows/public-release-safety.yml'
@@ -65,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        worker: [posthog-proxy-worker, venice-proxy-worker]
+        worker: [posthog-proxy-worker, venice-proxy-worker, host-relay-worker]
     defaults:
       run:
         working-directory: services/${{ matrix.worker }}
@@ -85,6 +89,19 @@ jobs:
       # Local bundling only: no Cloudflare account, token, upload or deployment.
       - run: npm run build
       - run: npm test
+
+  host-connector:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: services/host-connector
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Standard library only: the connector runs on stock Ubuntu Python.
+      - run: python3 -m unittest -v test_hivra_connector
 
   inventory-tests:
     runs-on: ubuntu-24.04
