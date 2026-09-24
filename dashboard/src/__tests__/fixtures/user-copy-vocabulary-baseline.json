@@ -1,0 +1,251 @@
+{
+  "app/compare/[slug]/page.tsx": {
+    "the box": 1,
+    "instance": 3,
+    "runtime": 1
+  },
+  "app/dashboard/agent/[id]/page.tsx": {
+    "Box Terminal": 1,
+    "the box": 10,
+    "runtime": 5
+  },
+  "app/dashboard/instances/[id]/console/page.tsx": {
+    "instance": 1,
+    "runtime": 20
+  },
+  "app/dashboard/instances/[id]/console/tabs/ConfigurationDangerZone.tsx": {
+    "instance": 5
+  },
+  "app/dashboard/instances/[id]/console/tabs/ConfigurationTab.tsx": {
+    "the box": 2,
+    "instance": 9,
+    "runtime": 4
+  },
+  "app/dashboard/instances/[id]/console/tabs/ConfigurationTailscalePanel.tsx": {
+    "customer-owned": 1
+  },
+  "app/dashboard/instances/[id]/console/tabs/ResourcesTab.tsx": {
+    "instance": 1
+  },
+  "app/dashboard/instances/[id]/page.tsx": {
+    "the box": 1,
+    "instance": 11,
+    "runtime": 3
+  },
+  "app/dashboard/instances/[id]/tui/page.tsx": {
+    "instance": 2,
+    "runtime": 1
+  },
+  "app/dashboard/ops/page.tsx": {
+    "instance": 2,
+    "runtime": 3
+  },
+  "app/dashboard/vault/page.tsx": {
+    "instance": 14,
+    "runtime": 1
+  },
+  "app/ecosystem/page.tsx": {
+    "runtime": 2
+  },
+  "app/features/[slug]/page.tsx": {
+    "the box": 1,
+    "instance": 8,
+    "runtime": 3
+  },
+  "app/features/page.tsx": {
+    "instance": 2
+  },
+  "app/privacy/page.tsx": {
+    "instance": 5,
+    "runtime": 2
+  },
+  "app/providers/OpsTelemetryProvider.tsx": {
+    "runtime": 1
+  },
+  "app/terms/page.tsx": {
+    "instance": 1
+  },
+  "app/workspace-cloud/connect/connect-client.tsx": {
+    "instance": 1
+  },
+  "components/TerminalPanel.tsx": {
+    "instance": 1
+  },
+  "components/admin/AdminInsightsContent.client.tsx": {
+    "the box": 1,
+    "instance": 1,
+    "runtime": 3
+  },
+  "components/agents/AgentsPage.tsx": {
+    "runtime": 3
+  },
+  "components/auth/AuthLocalSetupPanel.tsx": {
+    "instance": 1
+  },
+  "components/auth/AuthRuntimeNotice.tsx": {
+    "runtime": 1
+  },
+  "components/billing/ManagedVeniceByokSwitchPanel.tsx": {
+    "instance": 1,
+    "runtime": 1
+  },
+  "components/computers/ComputerCatalogPage.tsx": {
+    "Canary": 1,
+    "customer-owned": 1,
+    "runtime": 1
+  },
+  "components/console/CodexOAuthModal.tsx": {
+    "instance": 1
+  },
+  "components/dashboard/HermesDashboardPage.tsx": {
+    "Command Center": 2
+  },
+  "components/dashboard/command-center/HivraAgentsPanel.tsx": {
+    "instance": 1
+  },
+  "components/dashboard/welcome/DeploymentDestinationControl.tsx": {
+    "self-managed": 2
+  },
+  "components/dashboard/welcome/LaunchModelControl.tsx": {
+    "runtime": 1
+  },
+  "components/dashboard/welcome/WelcomeFlow.tsx": {
+    "self-managed": 2,
+    "Command Center": 1,
+    "the box": 8,
+    "instance": 3
+  },
+  "components/explorer/FileExplorer.tsx": {
+    "instance": 3
+  },
+  "components/hivra/BuzzConnectionsPage.tsx": {
+    "runtime": 21
+  },
+  "components/hivra/ComputerFolderRecovery.tsx": {
+    "Box Terminal": 1
+  },
+  "components/hivra/FleetControlPane.tsx": {
+    "runtime": 1
+  },
+  "components/hivra/HivraChat.tsx": {
+    "the box": 1
+  },
+  "components/hivra/HivraGit.tsx": {
+    "the box": 1
+  },
+  "components/hivra/HivraGitHubConnect.tsx": {
+    "the box": 1
+  },
+  "components/hivra/HivraManage.tsx": {
+    "Box Terminal": 1,
+    "the box": 11,
+    "balloon floor": 1
+  },
+  "components/hivra/HivraProviderWorkspace.tsx": {
+    "Box Terminal": 1
+  },
+  "components/hivra/HivraRemoteDesktop.tsx": {
+    "the box": 1,
+    "runtime": 15
+  },
+  "components/hivra/HivraSkills.tsx": {
+    "the box": 3
+  },
+  "components/hivra/HivraTelegram.tsx": {
+    "the box": 1
+  },
+  "components/hivra/PoolMeter.tsx": {
+    "the box": 1
+  },
+  "components/hivra/ResourceSwitcher.tsx": {
+    "runtime": 2
+  },
+  "components/hivra/RuntimeSurfaceFrame.tsx": {
+    "runtime": 3
+  },
+  "components/hivra/SkillInstallPicker.tsx": {
+    "the box": 1
+  },
+  "components/hivra/ToolInstallPicker.tsx": {
+    "the box": 2
+  },
+  "components/infrastructure/HetznerCloudCapacityDialog.tsx": {
+    "Canary": 10
+  },
+  "components/infrastructure/InfrastructureConnectionCard.tsx": {
+    "self-managed": 1
+  },
+  "components/infrastructure/InfrastructureConnectionWizard.tsx": {
+    "runtime": 1
+  },
+  "components/infrastructure/InfrastructureConnectionsPage.tsx": {
+    "Canary": 3,
+    "self-managed": 2,
+    "escape hatch": 1
+  },
+  "components/infrastructure/InfrastructureEntryChooser.tsx": {
+    "instance": 1
+  },
+  "components/infrastructure/InfrastructureHostDiscoveryResult.tsx": {
+    "runtime": 4
+  },
+  "components/instances/AgentSwitcher.tsx": {
+    "instance": 3
+  },
+  "components/instances/AutoUpdateModal.tsx": {
+    "instance": 2,
+    "runtime": 2
+  },
+  "components/instances/ConnectDesktopModal.tsx": {
+    "instance": 5
+  },
+  "components/instances/CookieImportModal.tsx": {
+    "instance": 1
+  },
+  "components/instances/InstanceTelegramConnect.tsx": {
+    "instance": 3
+  },
+  "components/landing/FullTokenomicsSection.tsx": {
+    "runtime": 1
+  },
+  "components/launch/LaunchJourney.tsx": {
+    "Canary": 3,
+    "self-managed": 1,
+    "customer-owned": 6,
+    "New resource": 1,
+    "runtime": 3,
+    "Available alpha": 1
+  },
+  "components/runtimes/DeepSeekHarnessPreviewPage.tsx": {
+    "Canary": 2,
+    "runtime": 10
+  },
+  "components/scheduled-tasks/TaskModal.tsx": {
+    "instance": 1
+  },
+  "components/wallet/AgentWalletCards.tsx": {
+    "runtime": 4
+  },
+  "components/wallet/EligibilitySection.tsx": {
+    "instance": 1
+  },
+  "components/webui/WebuiIframe.tsx": {
+    "instance": 3
+  },
+  "components/workspace/AgentSwitcherMenu.tsx": {
+    "runtime": 8
+  },
+  "components/workspace/CanaryTestGuide.tsx": {
+    "Canary": 7,
+    "runtime": 1
+  },
+  "components/workspace/WorkspaceStateNotice.tsx": {
+    "runtime": 1
+  },
+  "components/workspace/workspace-conversation-adapters.tsx": {
+    "runtime": 1
+  },
+  "components/workspace/workspace-surface-adapters.tsx": {
+    "runtime": 1
+  }
+}
