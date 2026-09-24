@@ -162,6 +162,9 @@ const nextConfig: NextConfig = {
             "/blog/:path*",
             "/features/:path*",
             "/compare/:path*",
+            "/agents/:path*",
+            "/tools/:path*",
+            "/pricing",
             "/token",
             "/tokenomics",
             "/why-hivra/:path*",
@@ -171,6 +174,13 @@ const nextConfig: NextConfig = {
             permanent: false as const,
           }))
         : []),
+      // Legacy/intent URLs that the retired site served as permanent redirects
+      // and that search engines and old links still carry. The homepage FAQ
+      // section is id="faq".
+      { source: "/faq", destination: "/#faq", permanent: true },
+      { source: "/about", destination: "/why-hivra", permanent: true },
+      // Social cards cached from the retired site point at this static file.
+      { source: "/og-image.png", destination: "/opengraph-image", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },

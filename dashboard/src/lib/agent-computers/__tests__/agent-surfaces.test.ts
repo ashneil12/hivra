@@ -44,13 +44,24 @@ describe("agentSurfacesFor", () => {
 });
 
 describe("agent page groups", () => {
-  it("groups a chat agent as Chat · Computer (Terminal, Files, Browser, Git) · Manage", () => {
+  it("groups a chat agent as Agent (Chat, its session) · Computer (Terminal, Files, Browser, Git) · Manage", () => {
     const def = getAgent("codex");
     expect(agentSurfaceGroups(agentSurfacesFor({ type: "codex" }), def)).toEqual([
-      { id: "work", label: "Chat", surfaces: ["chat", "terminal"] },
+      { id: "work", label: "Agent", surfaces: ["chat", "terminal"] },
       { id: "computer", label: "Computer", surfaces: ["box", "files", "browser", "git"] },
       { id: "manage", label: "Manage", surfaces: ["manage", "skills", "tasks", "telegram"] },
     ]);
+  });
+
+  it("never gives a chat agent's group the name of a tab inside it", () => {
+    // "Chat" under "Chat" read as two bars for the same thing (owner feedback).
+    for (const type of ["codex", "claude-code", "hermes"]) {
+      const def = getAgent(type);
+      for (const group of agentSurfaceGroups(agentSurfacesFor({ type }), def)) {
+        if (group.id === "manage") continue; // Its own tab reads "Settings" inside the group.
+        expect(group.surfaces.map((id) => agentSurfaceLabel(id, def))).not.toContain(group.label);
+      }
+    }
   });
 
   it("leads a dashboard runtime with its dashboard and drops empty groups", () => {

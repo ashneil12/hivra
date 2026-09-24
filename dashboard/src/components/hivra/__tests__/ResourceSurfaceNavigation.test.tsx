@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ResourceSurfaceNavigation } from "../ResourceSurfaceNavigation";
 
 const surfaces = ["chat", "terminal", "desktop", "files", "git", "skills", "box", "manage"]
@@ -112,16 +112,16 @@ it("closes Tools from the tap-catcher layer without selecting anything", () => {
   expect(onSelect).not.toHaveBeenCalled();
 });
 
-describe("grouped agent surfaces: Chat · Computer · Manage", () => {
+describe("grouped agent surfaces: Agent · Computer · Manage", () => {
   const agentSurfaces = [
     { id: "chat", label: "Chat" }, { id: "terminal", label: "Codex session" },
     { id: "box", label: "Terminal" }, { id: "files", label: "Files" }, { id: "browser", label: "Browser" }, { id: "git", label: "Git" },
     { id: "manage", label: "Manage" }, { id: "skills", label: "Skills" },
   ].map(surface => ({ ...surface, icon: null }));
   const groups = [
-    { id: "work", label: "Chat", icon: null, surfaces: ["chat", "terminal"] },
+    { id: "work", label: "Agent", icon: null, surfaces: ["chat", "terminal"], home: "chat" },
     { id: "computer", label: "Computer", icon: null, surfaces: ["box", "files", "browser", "git"] },
-    { id: "manage", label: "Manage", icon: null, surfaces: ["manage", "skills"] },
+    { id: "manage", label: "Manage", icon: null, surfaces: ["manage", "skills"], home: "manage" },
   ];
 
   function Harness({ initial = "chat", exportHref }: { initial?: string; exportHref?: string }) {
@@ -133,9 +133,9 @@ describe("grouped agent surfaces: Chat · Computer · Manage", () => {
   it("shows three destinations and the active one's own views as tabs", () => {
     render(<Harness />);
     const nav = screen.getByRole("navigation", { name: "Resource surfaces" });
-    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map(button => button.textContent)).toEqual(["Chat", "Computer", "Manage"]);
-    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("tablist", { name: "Chat views" })).toBeInTheDocument();
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map(button => button.textContent)).toEqual(["Agent", "Computer", "Manage"]);
+    expect(screen.getByRole("button", { name: "Agent" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("tablist", { name: "Agent views" })).toBeInTheDocument();
     expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Chat", "Codex session"]);
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-controls", "work-pane");
     // Nothing is hidden behind an overflow menu any more.
@@ -150,17 +150,43 @@ describe("grouped agent surfaces: Chat · Computer · Manage", () => {
     expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Files" }));
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
-    expect(screen.getByRole("tab", { name: "Manage" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("always opens Chat from the Chat button, even after the agent's session was last used", () => {
+  it("always opens Chat from the Agent button, even after the agent's session was last used", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("tab", { name: "Codex session" }));
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
-    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("always opens Settings from the Manage button, even after Skills was last used", () => {
+    render(<Harness initial="skills" />);
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("calls Manage's own tab Settings inside the Manage group, while the flat computer bar keeps Manage", () => {
+    const { unmount } = render(<Harness initial="manage" />);
+    // The group is Manage and its first tab is the settings: no "Manage › Manage".
+    expect(screen.getByRole("button", { name: "Manage" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map(tab => tab.textContent))
+      .toEqual(["Settings", "Skills"]);
+    expect(screen.queryByRole("tab", { name: "Manage" })).not.toBeInTheDocument();
+    unmount();
+
+    // A computer has no groups: Manage is a destination of its own.
+    const onSelect = jest.fn();
+    render(<ResourceSurfaceNavigation surfaces={[{ id: "desktop", label: "Desktop", icon: null }, { id: "manage", label: "Manage", icon: null }]}
+      active="desktop" onSelect={onSelect} />);
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(onSelect).toHaveBeenCalledWith("manage");
+    expect(screen.getByRole("button", { name: "Manage" })).toHaveTextContent(/^Manage$/);
   });
 
   it("moves between a group's views with the arrow keys and keeps focus on the chosen tab", () => {
@@ -179,5 +205,55 @@ describe("grouped agent surfaces: Chat · Computer · Manage", () => {
       active="manage" onSelect={jest.fn()} exportHref="/api/hivra/agents/owned/export" />);
     expect(screen.queryByRole("button", { name: "Computer" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/owned/export");
+  });
+
+  describe("a dashboard agent: Dashboard · Computer · Manage", () => {
+    // Aeon, Agent Zero and OpenClaw: one dashboard, the computer's shell and
+    // files, and Manage with nothing else in it.
+    const dashboardSurfaces = [
+      { id: "aeon", label: "Dashboard" }, { id: "box", label: "Terminal" }, { id: "files", label: "Files" }, { id: "manage", label: "Manage" },
+    ].map(surface => ({ ...surface, icon: null }));
+    const dashboardGroups = [
+      { id: "work", label: "Dashboard", icon: null, surfaces: ["aeon"], home: "aeon" },
+      { id: "computer", label: "Computer", icon: null, surfaces: ["box", "files"] },
+      { id: "manage", label: "Manage", icon: null, surfaces: ["manage"], home: "manage" },
+    ];
+    function DashboardHarness({ exportHref }: { exportHref?: string }) {
+      const [active, setActive] = useState("aeon");
+      return <ResourceSurfaceNavigation surfaces={dashboardSurfaces} groups={dashboardGroups} active={active} onSelect={setActive}
+        panelId="work-pane" exportHref={exportHref} />;
+    }
+
+    it("never shows a second row for a group with a single surface", () => {
+      render(<DashboardHarness exportHref="/api/hivra/agents/owned/export" />);
+      for (const group of dashboardGroups) {
+        fireEvent.click(screen.getByRole("button", { name: group.label }));
+        expect(screen.getByRole("button", { name: group.label })).toHaveAttribute("aria-pressed", "true");
+        if (group.surfaces.length === 1) {
+          expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+          expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+        } else {
+          expect(within(screen.getByRole("tablist", { name: `${group.label} views` })).getAllByRole("tab").map(tab => tab.textContent))
+            .toEqual(["Terminal", "Files"]);
+        }
+      }
+    });
+
+    it("opens a single-surface group's surface from its button and keeps Export data in the bar", () => {
+      const onSelect = jest.fn();
+      const { rerender } = render(<ResourceSurfaceNavigation surfaces={dashboardSurfaces} groups={dashboardGroups} active="box"
+        onSelect={onSelect} exportHref="/api/hivra/agents/owned/export" />);
+      expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+      expect(onSelect).toHaveBeenLastCalledWith("manage");
+      fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
+      expect(onSelect).toHaveBeenLastCalledWith("aeon");
+
+      rerender(<ResourceSurfaceNavigation surfaces={dashboardSurfaces} groups={dashboardGroups} active="manage"
+        onSelect={onSelect} exportHref="/api/hivra/agents/owned/export" />);
+      const nav = screen.getByRole("navigation", { name: "Resource surfaces" });
+      expect(within(nav).getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/owned/export");
+      expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    });
   });
 });

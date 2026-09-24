@@ -31,7 +31,10 @@ describe("/features page", () => {
     expect(screen.getByText("Persistent memory")).toBeInTheDocument();
     expect(screen.getByText("Browser automation")).toBeInTheDocument();
     expect(screen.getByText("Scheduled tasks")).toBeInTheDocument();
-    expect(screen.getByText("Multi-agent coordination")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /see pricing/i })).toHaveAttribute("href", "/#pricing");
+    // Agents run side by side; built-in orchestration is not shipped, so the
+    // summary names "multiple agents", not coordination.
+    expect(screen.getByText("Multiple agents")).toBeInTheDocument();
+    expect(screen.queryByText(/multi-agent coordination/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /see pricing/i })).toHaveAttribute("href", "/pricing");
   });
 });
