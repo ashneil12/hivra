@@ -30,7 +30,8 @@ import {
   resolveHivraVmidStart,
   shellQuote,
 } from "../src/lib/hivra/proxmox-target";
-import { MANAGED_HIVRA_RUNTIME_PATHS } from "../src/lib/hivra/managed-provisioner-readiness";
+import { managedHivraProvisionerChannelConfiguration } from "../src/lib/hivra/managed-provisioner-channel";
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "../src/lib/infrastructure/portable-provisioner-contract";
 import {
   createBoxTunnel,
   getTunnelConfig,
@@ -38,7 +39,12 @@ import {
 } from "../src/lib/services/cloudflare-tunnel";
 import { deleteBoxTunnelVerified } from "../src/lib/services/cloudflare-tunnel-cleanup";
 
-export const DEEPSEEK_CANARY_VERSION = "2026.09.02.8";
+// Fenced to the Canary origin, so pin exactly what Canary's own managed launches
+// require (managedHivraHostReadinessScript): the canary delivery directory at
+// the current portable provisioner release. A hard-coded release goes stale at
+// the next sealed bundle and the harness then refuses every current Canary host.
+export const DEEPSEEK_CANARY_VERSION = PORTABLE_HIVRA_PROVISIONER_VERSION;
+export const DEEPSEEK_CANARY_RUNTIME_PATHS = managedHivraProvisionerChannelConfiguration("canary").runtime;
 export const DEEPSEEK_CANARY_ORIGIN = "https://canary.hermesos.cloud";
 
 type Phase = "planned" | "tunnel_intent" | "tunnel_created" | "launched" | "tunnel_clean" | "clean";
@@ -199,7 +205,7 @@ OCTET_START=${params.ipLastOctetStart}
 SUBNET_PREFIX=${shellQuote(params.subnetPrefix)}
 [ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
 for command in qm pct pvesh pvesm flock awk sed grep; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
-[ "$(tr -d '[:space:]' < ${shellQuote(`${MANAGED_HIVRA_RUNTIME_PATHS.provisionerDirectory}/VERSION`)})" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \
+[ "$(tr -d '[:space:]' < ${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/VERSION`)})" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \
   || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
 exec 8>/run/lock/hivra-allocation.lock
 flock -s -w 60 8 || { echo "HIVRA_DEEPSEEK_INVENTORY_LOCK_TIMEOUT" >&2; exit 5; }
@@ -248,7 +254,7 @@ for id in $(printf '%s\n' "$pct_inventory" | awk 'NR>1 {print $1}'); do
 done
 storage_status="$(pvesm status --content images 2>/dev/null)" \
   || { echo "HIVRA_DEEPSEEK_STORAGE_INVENTORY_UNKNOWN" >&2; exit 7; }
-storage_available_kb="$(printf '%s\n' "$storage_status" | awk '$1=="${MANAGED_HIVRA_RUNTIME_PATHS.storage}" && $3=="active" {print $6; exit}')"
+storage_available_kb="$(printf '%s\n' "$storage_status" | awk '$1=="${DEEPSEEK_CANARY_RUNTIME_PATHS.storage}" && $3=="active" {print $6; exit}')"
 [[ "$host_total_mb" =~ ^[0-9]+$ && "$storage_available_kb" =~ ^[0-9]+$ ]] \
   || { echo "HIVRA_DEEPSEEK_CAPACITY_INVENTORY_UNKNOWN" >&2; exit 7; }
 capacity_admits_4gb=false
@@ -292,7 +298,7 @@ SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
 PIDFILE="/run/hivra-provision/$VMID.pid"
 [ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
 for command in qm pct pvesm flock; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
-[ "$(tr -d '[:space:]' < ${shellQuote(`${MANAGED_HIVRA_RUNTIME_PATHS.provisionerDirectory}/VERSION`)})" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \
+[ "$(tr -d '[:space:]' < ${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/VERSION`)})" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \
   || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
 install -d -m 0700 "$CLAIM_DIR"
 install -d -m 0755 /run/lock /run/hivra-provision
@@ -306,7 +312,7 @@ if printf '%s\n' "$qm_inventory" | awk -v wanted="$VMID" 'NR > 1 && $1 == wanted
 fi
 pct_inventory="$(pct list 2>/dev/null)" \
   || { echo "HIVRA_DEEPSEEK_LXC_INVENTORY_UNKNOWN" >&2; exit 7; }
-storage_inventory="$(pvesm list ${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.storage)} 2>/dev/null)" \
+storage_inventory="$(pvesm list ${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.storage)} 2>/dev/null)" \
   || { echo "HIVRA_DEEPSEEK_STORAGE_INVENTORY_UNKNOWN" >&2; exit 7; }
 if printf '%s\n' "$storage_inventory" | awk -v prefix="vm-$VMID-" 'NR > 1 { name=$1; sub(/^.*:/, "", name); if (index(name, prefix) == 1) found=1 } END { exit found ? 0 : 1 }'; then
   echo "HIVRA_DEEPSEEK_VOLUME_EXISTS" >&2
@@ -343,7 +349,7 @@ done
   || { echo "HIVRA_DEEPSEEK_MEMORY_INVENTORY_UNKNOWN" >&2; exit 8; }
 [ $((qemu_claimed_mb + lxc_claimed_mb + ${params.memoryMb} + 2048)) -le "$host_total_mb" ] \
   || { echo "HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY" >&2; exit 8; }
-storage_available_kb="$(pvesm status --content images | awk '$1=="${MANAGED_HIVRA_RUNTIME_PATHS.storage}" && $3=="active" {print $6; exit}')"
+storage_available_kb="$(pvesm status --content images | awk '$1=="${DEEPSEEK_CANARY_RUNTIME_PATHS.storage}" && $3=="active" {print $6; exit}')"
 [[ "$storage_available_kb" =~ ^[0-9]+$ ]] || { echo "HIVRA_DEEPSEEK_STORAGE_INVENTORY_UNKNOWN" >&2; exit 8; }
 [ "$storage_available_kb" -ge $((45 * 1024 * 1024)) ] || { echo "HIVRA_DEEPSEEK_INSUFFICIENT_STORAGE" >&2; exit 8; }
 [ ! -e "$CLAIM_FILE" ] || { echo "HIVRA_DEEPSEEK_CLAIM_EXISTS" >&2; exit 9; }
@@ -364,16 +370,16 @@ exec env \
   HIVRA_OPERATION_ID="$OPERATION_ID" \
   HIVRA_BINDING_TAG="$BINDING_TAG" \
   HIVRA_ALLOCATION_LOCK_FD=8 \
-  HIVRA_PROV_DIR=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.provisionerDirectory)} \
-  HIVRA_STORAGE=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.storage)} \
-  HIVRA_BRIDGE=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.bridge)} \
-  HIVRA_UBUNTU_IMG=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.ubuntuImage)} \
-  HIVRA_VM_SSH_KEY_PATH=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.vmSshKeyPath)} \
-  HIVRA_LOG_DIR=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.logDirectory)} \
+  HIVRA_PROV_DIR=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory)} \
+  HIVRA_STORAGE=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.storage)} \
+  HIVRA_BRIDGE=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.bridge)} \
+  HIVRA_UBUNTU_IMG=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.ubuntuImage)} \
+  HIVRA_VM_SSH_KEY_PATH=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.vmSshKeyPath)} \
+  HIVRA_LOG_DIR=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.logDirectory)} \
   HIVRA_SUBNET_PREFIX=${shellQuote(params.subnetPrefix)} \
   HIVRA_GW=${shellQuote(params.gateway)} \
   HIVRA_WANT_BROWSER=0 \
-  bash ${shellQuote(`${MANAGED_HIVRA_RUNTIME_PATHS.provisionerDirectory}/hivra-provision-on-host.sh`)} \
+  bash ${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/hivra-provision-on-host.sh`)} \
   "$VMID" "$OCTET" ${params.cpu} ${params.memoryMb} deepseek-harness ${params.cpu}
 `;
 }
@@ -422,8 +428,8 @@ export function buildDeepSeekRestartScript(ledger: DeepSeekCanaryLedger): string
   return `#!/usr/bin/env bash
 set -euo pipefail
 ${ownershipPrelude(ledger)}
-VM_KEY=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.vmSshKeyPath)}
-SSH_IDENTITY_HELPER=${shellQuote(`${MANAGED_HIVRA_RUNTIME_PATHS.provisionerDirectory}/hivra-guest-ssh-known-hosts`)}
+VM_KEY=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.vmSshKeyPath)}
+SSH_IDENTITY_HELPER=${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/hivra-guest-ssh-known-hosts`)}
 [ "$(stat -Lc '%a:%u:%g' "$VM_KEY" 2>/dev/null)" = "600:0:0" ] \
   || { echo "HIVRA_DEEPSEEK_VM_KEY_INVALID" >&2; exit 5; }
 [ -f "$SSH_IDENTITY_HELPER" ] && [ ! -L "$SSH_IDENTITY_HELPER" ] && [ -x "$SSH_IDENTITY_HELPER" ] \
@@ -468,7 +474,7 @@ export function buildDeepSeekTeardownScript(ledger: DeepSeekCanaryLedger): strin
   return `#!/usr/bin/env bash
 set -euo pipefail
 ${ownershipPrelude(ledger, false)}
-STORAGE=${shellQuote(MANAGED_HIVRA_RUNTIME_PATHS.storage)}
+STORAGE=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.storage)}
 QGA_SNIPPET="/var/lib/vz/snippets/hivra-qga-$VMID-$OPERATION_ID.yaml"
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock

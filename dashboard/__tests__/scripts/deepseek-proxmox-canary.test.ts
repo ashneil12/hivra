@@ -1,5 +1,6 @@
 import {
   DEEPSEEK_CANARY_ORIGIN,
+  DEEPSEEK_CANARY_VERSION,
   assertDeepSeekCanaryAuthorized,
   buildDeepSeekInventoryScript,
   buildDeepSeekLaunchScript,
@@ -9,10 +10,14 @@ import {
   parseDeepSeekCanaryArgs,
   type DeepSeekCanaryLedger,
 } from "../../scripts/deepseek-proxmox-canary";
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "../../src/lib/infrastructure/portable-provisioner-contract";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// The release this harness was hard-pinned to before it tracked Canary.
+const STALE_CANARY_PIN = "2026.09.02.8";
 
 const env = {
   NEXT_PUBLIC_APP_URL: DEEPSEEK_CANARY_ORIGIN,
@@ -95,24 +100,37 @@ exit 74
   return { root, result, claimFile, snippet };
 }
 
-function runLaunchFixture(params: { fail?: "qm" | "pct" | "pvesm"; stoppedQemuMemoryMb?: number }) {
+function runLaunchFixture(params: {
+  fail?: "qm" | "pct" | "pvesm";
+  stoppedQemuMemoryMb?: number;
+  canaryVersion?: string;
+  defaultVersion?: string;
+}) {
   const root = mkdtempSync(join(tmpdir(), "deepseek-launch-test-"));
   const fakeBin = join(root, "bin");
+  // Canary launches run the bundle Canary delivers; the default directory
+  // belongs to the production delivery lane on a shared host.
   const paths = {
     lock: join(root, "run/lock"),
     provision: join(root, "run/hivra-provision"),
-    provisioner: join(root, "root/hivra-provisioner"),
+    canaryProvisioner: join(root, "canary-provisioner"),
+    defaultProvisioner: join(root, "default-provisioner"),
     results: join(root, "var/lib/hivra/provision-results"),
     claims: join(root, "var/lib/hivra/deepseek-canary-claims"),
     meminfo: join(root, "proc/meminfo"),
   };
-  for (const directory of [fakeBin, paths.lock, paths.provision, paths.provisioner, paths.results, paths.claims, join(root, "proc")]) {
+  for (const directory of [fakeBin, paths.lock, paths.provision, paths.canaryProvisioner, paths.defaultProvisioner,
+    paths.results, paths.claims, join(root, "proc")]) {
     mkdirSync(directory, { recursive: true });
   }
   writeFileSync(paths.meminfo, "MemTotal:        8388608 kB\n");
-  writeFileSync(join(paths.provisioner, "VERSION"), "2026.09.02.8\n");
+  writeFileSync(join(paths.canaryProvisioner, "VERSION"), `${params.canaryVersion ?? PORTABLE_HIVRA_PROVISIONER_VERSION}\n`);
+  writeFileSync(join(paths.defaultProvisioner, "VERSION"), `${params.defaultVersion ?? STALE_CANARY_PIN}\n`);
   const dispatched = join(root, "provisioner-dispatched");
-  executable(join(paths.provisioner, "hivra-provision-on-host.sh"), `#!/bin/sh\ntouch ${JSON.stringify(dispatched)}\nexit 0\n`);
+  const wrongLane = join(root, "default-provisioner-dispatched");
+  executable(join(paths.canaryProvisioner, "hivra-provision-on-host.sh"),
+    `#!/bin/sh\nprintf '%s\\n' "$HIVRA_PROV_DIR" > ${JSON.stringify(dispatched)}\nexit 0\n`);
+  executable(join(paths.defaultProvisioner, "hivra-provision-on-host.sh"), `#!/bin/sh\ntouch ${JSON.stringify(wrongLane)}\nexit 0\n`);
   executable(join(fakeBin, "hostname"), "#!/bin/sh\nprintf '%s\\n' fixture-host\n");
   executable(join(fakeBin, "flock"), "#!/bin/sh\nexit 0\n");
   executable(join(fakeBin, "pct"), `#!/bin/sh
@@ -159,7 +177,8 @@ exit 74
   })
     .replaceAll("/run/lock", paths.lock)
     .replaceAll("/run/hivra-provision", paths.provision)
-    .replaceAll("/root/hivra-provisioner", paths.provisioner)
+    .replaceAll("/root/hivra-provisioner-canary", paths.canaryProvisioner)
+    .replaceAll("/root/hivra-provisioner", paths.defaultProvisioner)
     .replaceAll("/var/lib/hivra/provision-results", paths.results)
     .replaceAll("/var/lib/hivra/deepseek-canary-claims", paths.claims)
     .replaceAll("/proc/meminfo", paths.meminfo);
@@ -180,6 +199,8 @@ exit 74
     claimFile: join(paths.claims, `${ledger.vmid}.claim`),
     secretFile: join(paths.provision, `${ledger.vmid}.env`),
     dispatched,
+    wrongLane,
+    canaryProvisioner: paths.canaryProvisioner,
   };
 }
 
@@ -208,10 +229,17 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     expect(() => assertDeepSeekCanaryAuthorized("fixturenode11", "fixturenode11", env, 1182)).not.toThrow();
   });
 
+  it("pins the current Canary provisioner release instead of a hard-coded one", () => {
+    expect(DEEPSEEK_CANARY_VERSION).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
+    expect(DEEPSEEK_CANARY_VERSION).not.toBe(STALE_CANARY_PIN);
+  });
+
   it("builds an inventory script that shares the allocation lock and pins the provisioner", () => {
     const script = buildDeepSeekInventoryScript({ expectedHostname: "fixturenode11", vmidStart: 1100, vmidEnd: 1199, ipLastOctetStart: 50, subnetPrefix: "10.252.20" });
     expect(script).toContain("flock -s -w 60 8");
-    expect(script).toContain("2026.09.02.8");
+    expect(script).toContain(`'/root/hivra-provisioner-canary/VERSION'`);
+    expect(script).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
+    expect(script).not.toContain(STALE_CANARY_PIN);
     expect(script).toContain("HIVRA_DEEPSEEK_INVENTORY");
     expect(script).toContain("capacityAdmits4Gb");
     expect(script).toContain("HIVRA_DEEPSEEK_LXC_INVENTORY_UNKNOWN");
@@ -269,6 +297,32 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     }
   });
 
+  it("dispatches from the Canary delivery directory at the current release", () => {
+    const fixture = runLaunchFixture({ defaultVersion: PORTABLE_HIVRA_PROVISIONER_VERSION });
+    try {
+      expect({ status: fixture.result.status, stderr: fixture.result.stderr }).toEqual({ status: 0, stderr: "" });
+      expect(readFileSync(fixture.dispatched, "utf8")).toBe(`${fixture.canaryProvisioner}\n`);
+      expect(existsSync(fixture.wrongLane)).toBe(false);
+      expect(existsSync(fixture.claimFile)).toBe(true);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a host whose Canary bundle is not the current release before any claim", () => {
+    const fixture = runLaunchFixture({ canaryVersion: STALE_CANARY_PIN, defaultVersion: PORTABLE_HIVRA_PROVISIONER_VERSION });
+    try {
+      expect({ status: fixture.result.status, stderr: fixture.result.stderr })
+        .toMatchObject({ status: 4, stderr: expect.stringContaining("HIVRA_DEEPSEEK_VERSION_MISMATCH") });
+      expect(existsSync(fixture.claimFile)).toBe(false);
+      expect(existsSync(fixture.secretFile)).toBe(false);
+      expect(existsSync(fixture.dispatched)).toBe(false);
+      expect(existsSync(fixture.wrongLane)).toBe(false);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("reserves stopped non-template guests before creating launch authority", () => {
     const fixture = runLaunchFixture({ stoppedQemuMemoryMb: 4096 });
     try {
@@ -300,7 +354,7 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     expect(access).toContain("HIVRA_DEEPSEEK_ACCESS_B64");
     expect(restart).toContain("qm reboot");
     expect(restart).toContain('GSSH=(ssh -n -i "$VM_KEY"');
-    expect(restart).toContain("hivra-guest-ssh-known-hosts");
+    expect(restart).toContain("'/root/hivra-provisioner-canary/hivra-guest-ssh-known-hosts'");
     expect(restart).toContain("StrictHostKeyChecking=yes");
     expect(restart).toContain('HostKeyAlias="hivra-vmid-$VMID"');
     expect(restart).not.toContain("StrictHostKeyChecking=no");
