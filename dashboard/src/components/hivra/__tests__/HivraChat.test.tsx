@@ -1379,6 +1379,38 @@ describe("HivraChat", () => {
     expect(screen.queryByText("YOU")).not.toBeInTheDocument();
   });
 
+  it("stops a reply still running unseen when its chat is deleted, and never brings it back", async () => {
+    const runId = "00000000-0000-4000-8000-00000000000e";
+    window.localStorage.setItem("hivra:first-welcome:adopt-deleted", "1");
+    window.localStorage.setItem("hivra_sessions_adoptdeleted", JSON.stringify([
+      { id: "keep", title: "Other chat", claudeSessionId: null, createdAt: 2, messages: [] },
+      { id: "gone", title: "Draft the launch post", claudeSessionId: null, createdAt: 1, messages: [
+        { role: "user", text: "Draft the launch post", tools: [] },
+        { role: "assistant", text: "Half", tools: [], runId },
+      ] },
+    ]));
+    // The computer was unreachable when the chat opened, so the reply was not re-attached.
+    (listBoxChatRuns as jest.Mock).mockResolvedValue(null);
+    global.fetch = jest.fn() as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-deleted" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show chats" }));
+    const row = screen.getByText("Draft the launch post", { selector: "span" }).closest("div")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Delete chat" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete chat" }));
+    expect(stopBoxChatRun).toHaveBeenCalledWith("https://box.example.com", runId, "box-token");
+
+    // Back online, the computer still lists it as running: it is not adopted.
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "gone", title: "Draft the launch post" })]);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(listBoxChatRuns).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Draft the launch post", { selector: "span" })).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   // ── A reply whose run the computer no longer lists ────────────────────────
 
   function storeReply(key: string, reply: Record<string, unknown>) {

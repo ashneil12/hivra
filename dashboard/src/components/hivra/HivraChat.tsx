@@ -1492,6 +1492,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const deleteChat = useCallback(
  (id: string) => {
  stopSession(id);
+ // A reply this page is not following (the connection was lost, or it never
+ // re-attached) may still be running on the box. Deleting its chat ends it
+ // too, and it is never adopted back as another device's run.
+ const session = sessionsRef.current.find((s) => s.id === id);
+ for (const m of session?.messages || []) {
+ if (!m.runId || adoptedRunsRef.current.has(m.runId)) continue;
+ adoptedRunsRef.current.add(m.runId);
+ if (m.role === "assistant" && !m.streaming && (m.outcome === undefined || m.outcome === "disconnected")) void stopBoxChatRun(boxUrl, m.runId, token);
+ }
  setLastFailed(id, null);
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
@@ -1500,7 +1509,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return final;
  });
  },
- [setLastFailed, stopSession],
+ [boxUrl, setLastFailed, stopSession, token],
  );
 
  // Deleting has no undo, so it takes two taps: the first arms a red
