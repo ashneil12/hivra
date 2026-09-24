@@ -19,7 +19,7 @@ async function loadConfig(mode: "local" | "hosted"): Promise<NextConfig> {
   return (await import("../../next.config")).default;
 }
 
-const marketingPaths = ["/", "/blog", "/blog/how-ai-agents-work", "/features", "/features/persistent-memory", "/compare/hermes", "/token", "/tokenomics", "/why-hivra/evolution"];
+const marketingPaths = ["/", "/blog", "/blog/how-ai-agents-work", "/features", "/features/persistent-memory", "/compare/hermes", "/token", "/tokenomics", "/why-hivra/evolution", "/agents", "/agents/claude-code", "/tools", "/tools/claude-code-plan-calculator", "/pricing"];
 
 describe("self-host website boundary", () => {
   it("redirects commercial pages into the local app", async () => {

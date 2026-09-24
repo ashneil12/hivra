@@ -21,6 +21,9 @@ export const LLMS_TXT_SECTIONS: readonly LlmsTxtSection[] = [
     heading: "Product",
     links: [
       { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or launch a computer and use it yourself" },
+      { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own" },
+      { label: "Pricing", path: "/pricing", note: "Self-host free, or a Hivra Cloud computer from $9.99 a month" },
+      { label: "Free tools", path: "/tools", note: "Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator" },
       { label: "Ecosystem", path: "/ecosystem", note: "What is available now, next, later and still research" },
       { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks, multi-agent" },
       { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on AI, accountability and why the limits should live outside the model" },

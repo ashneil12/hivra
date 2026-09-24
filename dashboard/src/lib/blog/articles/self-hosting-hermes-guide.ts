@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "A real guide to self-hosting Hermes Agent on a VPS. Covers the exact steps, the parts that break, what it costs in time and money, and when managed hosting is the better call.",
   publishedDate: "2026-03-13",
-  lastModified: "2026-03-13",
+  lastModified: "2026-09-24",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "Yes, you can. Here's the full picture.",
@@ -16,7 +16,7 @@ export const article: BlogArticle = {
     {
       heading: "What you need before you start",
       paragraphs: [
-        "A Linux VPS with at least 2 vCPU and 4 GB RAM. Hetzner's CX22 (~€7.49/month) or CX32 (€17.99/month, recommended for browser automation) are solid options. DigitalOcean's 4GB Droplet is $24/month. Hermes also runs on Modal or Daytona serverless infrastructure at near-zero idle cost — useful for bursty workloads, but cold-start latency makes it unsuitable for sub-minute cron tasks. Do not use a 1 GB RAM VPS — browser automation and subagent delegation crash frequently on it.",
+        "A Linux VPS with at least 2 vCPU and 4 GB RAM. Hetzner's CX23 (€5.49/month) or CX33 (€8.49/month, recommended for browser automation), both excluding VAT, are solid options. DigitalOcean's 4GB Droplet is $24/month. Hermes also runs on Modal or Daytona serverless infrastructure at near-zero idle cost — useful for bursty workloads, but cold-start latency makes it unsuitable for sub-minute cron tasks. Do not use a 1 GB RAM VPS — browser automation and subagent delegation crash frequently on it.",
         "Docker and Docker Compose installed on the server. A domain name with DNS pointed at the server is needed for the web interface (HTTPS required — use a subdomain like `hermes.yourdomain.com`). Free SSL is handled by Caddy, included in the standard setup. An API key from at least one AI provider — Anthropic, OpenAI, or an OpenRouter account for multi-model access. Budget 4-8 hours for first-time setup.",
       ],
     },
@@ -25,7 +25,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Provision the server with a fresh Ubuntu 24.04 image. Add a non-root user with sudo privileges — the Hermes security model assumes it runs under a restricted user account, not root. SSH in as that user and install Docker following the official Docker documentation for Ubuntu.",
         "The installer handles the heavy lifting: run the one-liner from the documentation and it installs uv, Python 3.11, Node.js v22, ripgrep, ffmpeg, and the virtual environment without requiring sudo. Then run `hermes setup` for the interactive wizard — it walks through model provider, terminal backend (local, Docker, SSH, Singularity, or Modal), and gateway platform connections.",
-        "Copy `.env.example` to `.env` and fill in the essentials: AI provider key, optional Firecrawl key for browser tasks, Telegram/Discord/Slack tokens for the gateway. For the terminal backend, run `hermes config set terminal.backend docker` to isolate shell commands in Docker rather than on the host. Then `docker compose up -d`. If everything is configured correctly, Caddy will provision an SSL certificate and the web interface will be accessible at your domain within a minute or two. More often, something in the networking configuration needs adjusting — DNS not propagated yet, a firewall rule blocking port 443, or a conflict between Caddy and another process on port 80.",
+        "Copy `.env.example` to `.env` and fill in the essentials: AI provider key, optional Firecrawl key for browser tasks, Telegram/Discord/Slack tokens for the gateway. The Telegram side has its own bot-token and pairing steps that are easy to get wrong the first time: [connecting Hermes Agent to Telegram](/blog/how-to-set-up-hermes-agent-telegram) covers them step by step. For the terminal backend, run `hermes config set terminal.backend docker` to isolate shell commands in Docker rather than on the host. Then `docker compose up -d`. If everything is configured correctly, Caddy will provision an SSL certificate and the web interface will be accessible at your domain within a minute or two. More often, something in the networking configuration needs adjusting — DNS not propagated yet, a firewall rule blocking port 443, or a conflict between Caddy and another process on port 80.",
       ],
     },
     {
@@ -39,7 +39,7 @@ export const article: BlogArticle = {
     {
       heading: "What it costs",
       paragraphs: [
-        "Server: Hetzner CX22 (~€7.49/month) for light-to-moderate use; CX32 (€17.99/month) for browser automation and parallel subagents. DigitalOcean equivalent: $24/month. Domain: $10-15/year. API costs: Claude Haiku 4.5 at $1/$5 per MTok is cheap for monitoring and summarization, but browser-heavy tasks with 10+ screenshots per run add 200-400k tokens/month in vision inputs alone.",
+        "Server: Hetzner CX23 (€5.49/month excluding VAT) for light-to-moderate use; CX33 (€8.49/month) for browser automation and parallel subagents. DigitalOcean equivalent: $24/month. Domain: $10-15/year. API costs: Claude Haiku 4.5 at $1/$5 per MTok is cheap for monitoring and summarization, but browser-heavy tasks with 10+ screenshots per run add 200-400k tokens/month in vision inputs alone.",
         "Time cost: initial setup takes 4-8 hours. Estimate 1-2 hours per month for maintenance — handling updates, debugging intermittent failures, reviewing logs. Any server provider outage or container crash that does not auto-restart adds debugging time on top. At $50/hour, the math for self-hosting versus managed hosting is not as clean as the raw server cost makes it look.",
       ],
     },
@@ -61,7 +61,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Can I run Hermes Agent on a $5/month VPS?",
-      a: "It will install, but browser automation tasks will crash frequently due to memory limits. You need at least 4 GB RAM for stable operation with browser use. Hetzner's CX22 at €7.49/month is the realistic minimum.",
+      a: "It will install, but browser automation tasks will crash frequently due to memory limits. You need at least 4 GB RAM for stable operation with browser use. Hetzner's CX23 at €5.49/month excluding VAT is the realistic minimum.",
     },
     {
       q: "Does self-hosting mean my data never leaves my server?",
@@ -84,6 +84,14 @@ export const article: BlogArticle = {
     { slug: "what-is-hermes-agent", title: "What is Hermes Agent? A plain-English explanation" },
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent in 2026" },
     { slug: "byo-api-key-explained", title: "BYO API key: what it means and why it saves you money" },
+    {
+      slug: "how-to-set-up-hermes-agent-telegram",
+      title: "How to connect Hermes Agent to Telegram (step by step)",
+    },
+    {
+      slug: "hermes-agent-skills-guide",
+      title: "Hermes Agent skills: how they work, how to create them, and what's on the Skills Hub",
+    },
     { slug: "best-vps-for-hermes-agent", title: "Best VPS for Hermes Agent in 2026" },
   ],
   relatedComparisons: [

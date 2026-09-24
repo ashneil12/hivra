@@ -11,7 +11,7 @@ import { SITE_URL } from "@/lib/seo-urls";
 export const metadata: Metadata = {
   title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
   description:
-    "Compare Hivra to self-hosting, Railway, Render, and OpenClaw. Find the right managed Hermes agent hosting approach for your needs.",
+    "Compare Hivra to self-hosting, Railway, Render, and OpenClaw. Find the right way to host an AI agent such as Hermes, OpenClaw, Claude Code or Codex.",
   ...buildWebsiteMetadata({
     path: "/compare",
     title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
@@ -26,7 +26,7 @@ const comparisons = [
     title: "Hivra vs Self-Hosted VPS",
     tagline: "Control vs. time. The honest tradeoff.",
     description:
-      "Self-hosting Hermes on Hetzner or DigitalOcean costs less per month — but 6–8 hours of setup, ongoing maintenance, and midnight debugging sessions add up. Hivra starts at $9.99/mo and takes 5 minutes.",
+      "Self-hosting Hermes on Hetzner or DigitalOcean costs less per month — but hours of setup, ongoing maintenance, and midnight debugging sessions add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
   },
   {
     slug: "vs-railway",
@@ -45,9 +45,9 @@ const comparisons = [
   {
     slug: "openclaw-to-hermes",
     title: "Migrating from OpenClaw to Hivra",
-    tagline: "Your setup moves over. The maintenance doesn't.",
+    tagline: "Keep your agent. Leave the maintenance.",
     description:
-      "OpenClaw is powerful open-source software. But it self-hosts, breaks on updates, and requires a terminal to operate. Hivra is the managed alternative — with a native migration path that imports your existing config.",
+      "OpenClaw is powerful open-source software, but you run and update it yourself. Hivra can host OpenClaw for you, or you can move to Hermes with Hermes' own migration command.",
   },
   {
     slug: "ai-agent-hosting-alternatives",
@@ -68,7 +68,7 @@ const breadcrumbSchema = {
 };
 
 export default function ComparePage() {
-  return (<PublicSite className={styles.page} data-page="compare"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Compare" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Honest Comparisons</span><h1>Hivra vs <strong>everything else.</strong></h1><p>We&apos;ll tell you when self-hosting makes more sense. We&apos;ll also tell you why most people regret that decision three hours in.</p></header>
+  return (<PublicSite className={styles.page} data-page="compare"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Compare" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Honest Comparisons</span><h1>Hivra vs <strong>everything else.</strong></h1><p>We&apos;ll tell you when self-hosting makes more sense, and what it costs in time when it doesn&apos;t.</p></header>
   <div className={styles.directory}>{comparisons.map(({ slug, title, tagline, description }, index) => <Link key={slug} href={`/compare/${slug}`}><span>{String(index + 1).padStart(2, "0")}</span><h2>{title}</h2><div><h3>{tagline}</h3><p>{description}</p><span className={styles.readLink}>Read comparison<ArrowUpRight size={20} aria-hidden="true" /></span></div></Link>)}</div>
-  <section className={styles.cta}><p>7-day money-back guarantee on all plans</p><Link href="/get-started?plan=operator" className={styles.button}>Deploy in 5 Min<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "All Hivra features", href: "/features" }]} /></main></PublicSite>);
+  <section className={styles.cta}><p>From $9.99/mo for 2 vCPU and 4 GB. 7-day money-back guarantee on card payments.</p><Link href="/get-started?plan=operator" className={styles.button}>Deploy My Agent<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "Pricing", href: "/pricing" }, { label: "All Hivra features", href: "/features" }]} /></main></PublicSite>);
 }

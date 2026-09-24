@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent is a persistent AI assistant you run 24/7. This covers what it can actually do: scheduling, browser automation, file management, Telegram messaging, coding tasks, and more — with real examples instead of marketing claims.",
   publishedDate: "2026-04-18",
-  lastModified: "2026-04-18",
+  lastModified: "2026-09-24",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "Not what the marketing says. What people actually use it for every day.",
@@ -98,7 +98,7 @@ export const article: BlogArticle = {
     {
       heading: "How to get started",
       paragraphs: [
-        "Two options: self-host it on a server ([full guide here](/blog/how-to-self-host-hermes-agent)) or use [Hivra](/) which handles the server, setup, and maintenance and has you running in under 5 minutes.\n\nSelf-hosting costs around $10-25/month total. Hivra starts at $9.99/month with no server to manage. [Full cost breakdown here](/blog/cost-of-running-ai-agent).",
+        "Two options: self-host it on a server ([full guide here](/blog/how-to-self-host-hermes-agent)) or use [Hivra](/), which handles the server, setup, and maintenance so there is nothing to install.\n\nSelf-hosting costs around $10-25/month total. Hivra starts at $9.99/month with no server to manage. [Full cost breakdown here](/blog/cost-of-running-ai-agent).",
       ],
     },
   ],

@@ -91,7 +91,7 @@ describe('route Open Graph metadata', () => {
     expect(getTwitterValue(compareMetadata.twitter, 'images')).toContain('https://hivra.cloud/opengraph-image');
   });
 
-  it('keeps the shared article Open Graph defaults on generated blog article metadata', async () => {
+  it('keeps the article Open Graph shape and points blog articles at their own generated card', async () => {
     const articleMetadata = buildBlogArticleMetadata('what-is-hermes-agent');
 
     expect(getOpenGraphValue(articleMetadata.openGraph, 'type')).toBe('article');
@@ -99,6 +99,6 @@ describe('route Open Graph metadata', () => {
     expect(getOpenGraphValue(articleMetadata.openGraph, 'locale')).toBe('en_US');
     expect(getOpenGraphValue(articleMetadata.openGraph, 'url')).toBe('https://hivra.cloud/blog/what-is-hermes-agent');
     expect(getTwitterValue(articleMetadata.twitter, 'card')).toBe('summary_large_image');
-    expect(getTwitterValue(articleMetadata.twitter, 'images')).toContain('https://hivra.cloud/opengraph-image');
+    expect(getTwitterValue(articleMetadata.twitter, 'images')).toEqual(['https://hivra.cloud/blog/what-is-hermes-agent/opengraph-image']);
   });
 });
