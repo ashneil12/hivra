@@ -359,7 +359,7 @@ describe("FleetControlPane", () => {
     const sandbox = agent("x-sandbox", "SANDBOX", { resourceKind: "computer", agentType: "linux-terminal" });
     const stoppedDesk = agent("x-desk", "OLD_DESK", { resourceKind: "computer", state: "stopped", statusRaw: "stopped", dot: "var(--text-muted)" });
 
-    it("shows nothing until something has been opened in this browser", () => {
+    it("shows nothing until something has been used in this browser", () => {
       render(<FleetControlPane requested />);
       expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Recent" })).not.toBeInTheDocument();
@@ -374,7 +374,7 @@ describe("FleetControlPane", () => {
       expect(card).toHaveTextContent("CODEX_AGENT");
       expect(card).toHaveTextContent("Running");
       expect(card).toHaveTextContent("Computer › Terminal");
-      expect(card).toHaveTextContent("opened 5 min ago");
+      expect(card).toHaveTextContent("used 5 min ago");
       expect(card).not.toHaveTextContent("Open to respond");
     });
 
@@ -402,7 +402,7 @@ describe("FleetControlPane", () => {
         expect.stringContaining("SANDBOX"),
       ]);
       expect(links[0]).toHaveAttribute("href", "/dashboard/agent/ubuntu?tab=files");
-      expect(links[0]).toHaveTextContent("opened 30 min ago");
+      expect(links[0]).toHaveTextContent("used 30 min ago");
       expect(links[0]).toHaveTextContent("Files");
       expect(links[1]).toHaveAttribute("href", "/dashboard/instances/one");
       expect(links[1]).toHaveTextContent("Chat");
@@ -464,7 +464,7 @@ describe("FleetControlPane", () => {
       const card = screen.getByTestId("home-continue");
       // Its "terminal" could have meant either terminal: resume the primary view.
       expect(card).toHaveAttribute("href", "/dashboard/agent/codex?tab=chat");
-      expect(card).not.toHaveTextContent("opened");
+      expect(card).not.toHaveTextContent("used");
       expect(window.localStorage.getItem("hivra.workspace.last-selection")).toBeNull();
     });
 

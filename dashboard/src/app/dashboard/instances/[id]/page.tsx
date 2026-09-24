@@ -52,6 +52,7 @@ import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hiv
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { hermesRuntimeUid } from "@/lib/workspace/runtime-selection";
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
 
 interface Instance {
   id: string;
@@ -814,6 +815,9 @@ export default function InstanceDetailPage() {
     setActionLoading(true);
     try {
       const res = await fetch(`/api/instances/${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      // Answered, so the agent's status may have changed: the sidebar, ⌘K and
+      // Home stop reusing the list of agents read before it.
+      resourceInventory.invalidate("hermes");
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "Unknown error" }));
         const startFailure = action === "start"

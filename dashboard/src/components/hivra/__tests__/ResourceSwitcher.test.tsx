@@ -324,6 +324,22 @@ describe("ResourceSwitcher recents", () => {
     expect(push).toHaveBeenCalledWith("/dashboard/agent/desktop?tab=desktop");
   });
 
+  // A touch screen shows no digit hints, and a search can start with a digit.
+  it("lets a digit type into the search on a touch screen, where no shortcut is shown", () => {
+    const original = window.matchMedia;
+    window.matchMedia = jest.fn((query: string) => ({ matches: query.includes("pointer: coarse"), media: query })) as unknown as typeof window.matchMedia;
+    try {
+      opened(["x-desktop", "desktop"], ["x-two", "box"], ["x-abc", "chat"]);
+      render(<ResourceSwitcher currentUid="abc" />);
+      fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+      expect(screen.getAllByRole("option").some((option) => option.hasAttribute("aria-keyshortcuts"))).toBe(false);
+      expect(fireEvent.keyDown(screen.getByRole("combobox"), { key: "1" })).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("does not jump on a digit once something is typed", () => {
     opened(["x-two", "box"]);
     render(<ResourceSwitcher currentUid="abc" />);

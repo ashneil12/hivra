@@ -16,7 +16,7 @@ import { SafePortal } from "@/components/ui/SafePortal";
 import { matchesFleetQuery } from "@/lib/hivra/fleet-sections";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { unifiedStateLabel } from "@/lib/hivra/unified-agent";
-import { switcherGroups } from "@/lib/workspace/recent-order";
+import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
 import type { RecentVisit } from "@/lib/workspace/recents";
 
 const MENU_MIN_WIDTH = 320;
@@ -114,6 +114,8 @@ function AgentSwitcherPanel({
   const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [query, setQuery] = useState("");
+  // The 1–9 keys work only where their hints show (not on a touch screen).
+  const [shortcuts] = useState(recentShortcutsShown);
   // Seeded at mount on the resource you were in before this one (the first
   // Recent entry), else on the current one. Deliberately not re-seeded when
   // the agent list refreshes — that would move the selection out from under
@@ -278,9 +280,9 @@ function AgentSwitcherPanel({
     const fromSearch = target === searchRef.current;
     const fromOption = target.getAttribute("role") === "option";
     if (!fromSearch && !fromOption && target !== menuRef.current) return;
-    // Only while nothing is typed, and only for an entry that exists, so a
-    // search that starts with a digit still types.
-    if (!normalizedQuery && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    // Only while nothing is typed, only for an entry that exists, and only
+    // where the hints show, so a search that starts with a digit still types.
+    if (shortcuts && !normalizedQuery && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const pick = recent[Number(event.key) - 1];
       if (pick) {
         event.preventDefault();
@@ -355,7 +357,7 @@ function AgentSwitcherPanel({
 
         {activeAgent && recent.includes(activeAgent) && !normalizedQuery ? (
           <p aria-hidden="true" className="mono shrink-0 border-b border-[var(--etched-border)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)] pointer-coarse:hidden">
-            ↵ back to {activeAgent.name} · 1–{Math.min(recent.length, 9)} recent
+            ↵ back to {activeAgent.name}{shortcuts ? ` · 1–${Math.min(recent.length, 9)} recent` : ""}
           </p>
         ) : null}
 
@@ -393,7 +395,7 @@ function AgentSwitcherPanel({
                   const index = optionIndex;
                   const selected = agent.uid === selectedUid;
                   const active = index === clampedIndex;
-                  const shortcut = section.key === "recent" && !normalizedQuery && position < 9 ? String(position + 1) : undefined;
+                  const shortcut = shortcuts && section.key === "recent" && !normalizedQuery && position < 9 ? String(position + 1) : undefined;
                   return (
                     <button
                       key={agent.uid}

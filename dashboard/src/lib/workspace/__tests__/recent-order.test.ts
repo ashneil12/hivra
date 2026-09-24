@@ -12,7 +12,7 @@ const items: Item[] = [
 ];
 
 function visits(...uids: string[]): RecentVisit[] {
-  return uids.map((uid, index) => ({ uid, tab: "chat", openedAt: 100 - index }));
+  return uids.map((uid, index) => ({ uid, tab: "chat", usedAt: 100 - index }));
 }
 
 const options = (recents: RecentVisit[], currentUid: string | null = null, limit?: number) => ({

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { fleetEntryHref } from "@/lib/hivra/fleet-sections";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import type { RecentEntry } from "@/lib/workspace/recent-order";
-import { openedAgoLabel, recentSurfaceLabel } from "@/lib/workspace/recent-presentation";
+import { recentSurfaceLabel, usedAgoLabel } from "@/lib/workspace/recent-presentation";
 import { visitHref } from "@/lib/workspace/recents";
 
 import styles from "./HomeWorkspace.module.css";
@@ -15,7 +15,7 @@ import styles from "./HomeWorkspace.module.css";
 export const HOME_RECENT_LIMIT = 5;
 
 export interface HomeContinueProps {
-  /** Listed resources you opened in this browser, most recent first. */
+  /** Listed resources you used in this browser, most recently used first. */
   entries: readonly RecentEntry<UnifiedAgent>[];
   /** Whether a resource's list failed to refresh, so its state is last known. */
   isStale: (agent: UnifiedAgent) => boolean;
@@ -47,7 +47,7 @@ function ResourceIcon({ agent, size }: { agent: UnifiedAgent; size: number }) {
  * "Pick up where you left off": the resource you were last working in, one
  * click back into the exact surface you left it on, and a Recent row of the
  * next few in the order you used them. Renders nothing until something has
- * been opened in this browser.
+ * been used in this browser.
  */
 export function HomeContinue({ entries, isStale, now }: HomeContinueProps) {
   const current = continueEntry(entries, isStale);
@@ -75,7 +75,7 @@ export function HomeContinue({ entries, isStale, now }: HomeContinueProps) {
 
 function ContinueCard({ entry, now }: { entry: RecentEntry<UnifiedAgent>; now: number }) {
   const { item: agent, visit } = entry;
-  const opened = openedAgoLabel(visit.openedAt, now);
+  const used = usedAgoLabel(visit.usedAt, now);
   return (
     <Link
       href={visitHref(agent.uid, visit.tab, fleetEntryHref(agent))}
@@ -94,7 +94,7 @@ function ContinueCard({ entry, now }: { entry: RecentEntry<UnifiedAgent>; now: n
             <span>{unifiedStateLabel(agent.state)}</span>
             <span aria-hidden="true">·</span>
             <span>{recentSurfaceLabel(visit.tab, agent)}</span>
-            {opened ? <><span aria-hidden="true">·</span><span>{opened}</span></> : null}
+            {used ? <><span aria-hidden="true">·</span><span>{used}</span></> : null}
           </span>
         </span>
         {needsResponse(agent) ? <span className={styles.respondBadge}>Open to respond</span> : null}
@@ -107,7 +107,7 @@ function ContinueCard({ entry, now }: { entry: RecentEntry<UnifiedAgent>; now: n
 function RecentItem({ entry, stale, now }: { entry: RecentEntry<UnifiedAgent>; stale: boolean; now: number }) {
   const { item: agent, visit } = entry;
   const usable = !stale && agent.state === "running";
-  const opened = openedAgoLabel(visit.openedAt, now);
+  const used = usedAgoLabel(visit.usedAt, now);
   // Only a running resource reopens on the surface you left: anything else
   // goes to its page, which explains its state.
   const href = usable ? visitHref(agent.uid, visit.tab, fleetEntryHref(agent)) : fleetEntryHref(agent);
@@ -124,7 +124,7 @@ function RecentItem({ entry, stale, now }: { entry: RecentEntry<UnifiedAgent>; s
         <span className={styles.statusDot} style={{ backgroundColor: agent.dot }} aria-hidden="true" />
         <span className="truncate">
           {stale ? `Last known: ${unifiedStateLabel(agent.state)}` : unifiedStateLabel(agent.state)}
-          {opened ? ` · ${opened}` : ""}
+          {used ? ` · ${used}` : ""}
         </span>
       </span>
       <span className={styles.recentAction}>{action} <span aria-hidden="true">→</span></span>

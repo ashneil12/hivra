@@ -2,8 +2,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useDashboardResources } from '../useDashboardResources';
 import { isHivraEnabled } from '@/lib/hivra/hivra-flag';
-import { useWorkspaceAgents } from '@/components/workspace/useWorkspaceAgents';
-import { resetResourceInventory } from '@/lib/workspace/resource-inventory';
+import { useWorkspaceAgents, WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
+import { resetResourceInventory, resourceInventory } from '@/lib/workspace/resource-inventory';
+import type { ReactNode } from 'react';
 
 jest.mock('@/lib/hivra/hivra-flag', () => ({ isHivraEnabled: jest.fn(() => true) }));
 
@@ -13,6 +14,9 @@ const hermes = [{ id: 'writer', name: 'Writer', status: 'running' }];
 const hivra = { agents: [{ id: 'desktop', name: 'Desktop', type: 'linux-desktop', status: 'stopped', cpu: 2, ram: 4 }] };
 
 afterAll(() => { global.fetch = originalFetch; });
+const ownedBy = (owner: string) => function Owner({ children }: { children: ReactNode }) {
+  return <WorkspaceOwnerContext.Provider value={owner}>{children}</WorkspaceOwnerContext.Provider>;
+};
 beforeEach(() => { (isHivraEnabled as jest.Mock).mockReturnValue(true); resetResourceInventory(); });
 
 describe('useDashboardResources', () => {
@@ -78,7 +82,7 @@ describe('useDashboardResources', () => {
     const fetchMock = jest.fn((url) => Promise.resolve(response(url === '/api/instances?summary=true' ? hermes : hivra)));
     global.fetch = fetchMock as jest.Mock;
     const sidebar = renderHook(({ route }) => useDashboardResources('one', route), { initialProps: { route: '/dashboard' } });
-    const home = renderHook(() => useWorkspaceAgents());
+    const home = renderHook(() => useWorkspaceAgents(), { wrapper: ownedBy('one') });
     await waitFor(() => expect(sidebar.result.current.loading).toBe(false));
     await waitFor(() => expect(home.result.current.loading).toBe(false));
     expect(fetchMock.mock.calls.map(([url]) => url).sort()).toEqual(['/api/hivra/agents', '/api/instances?summary=true']);
@@ -94,6 +98,32 @@ describe('useDashboardResources', () => {
     act(() => sidebar.result.current.refresh());
     await waitFor(() => expect(home.result.current.agents.map((agent) => agent.uid)).toEqual(['x-desktop']));
     expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    // Back to Home with the lists fresh: Home still reads once, as it offers
+    // to continue in an agent, and the sidebar shares that read.
+    home.unmount();
+    sidebar.rerender({ route: '/dashboard' });
+    const again = renderHook(() => useWorkspaceAgents(), { wrapper: ownedBy('one') });
+    await waitFor(() => expect(again.result.current.loading).toBe(false));
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  // A delete, stop or rename made on a page: the list the sidebar shows is read
+  // again at once, and not reused from before on the next page.
+  it('reads a list again after a change made in this browser', async () => {
+    const fetchMock = jest.fn((url) => Promise.resolve(response(url === '/api/instances?summary=true' ? hermes : hivra)));
+    global.fetch = fetchMock as jest.Mock;
+    const { result, rerender } = renderHook(({ route }) => useDashboardResources('one', route), { initialProps: { route: '/dashboard/agent/desktop' } });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockImplementation((url) => Promise.resolve(response(url === '/api/instances?summary=true' ? hermes : { agents: [] })));
+    act(() => resourceInventory.invalidate('hivra'));
+    await waitFor(() => expect(result.current.resources.map((item) => item.uid)).toEqual(['h-writer']));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    rerender({ route: '/dashboard' });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('reads the list again on arriving at a resource it does not hold yet', async () => {

@@ -44,17 +44,18 @@ export function recentSurfaceLabel(tab: AgentSurfaceId, resource: RecentSubject)
 }
 
 /**
- * "opened 5 min ago", or null when the time is not known (a visit carried over
+ * "used 5 min ago": when the resource was last on screen here, which is what
+ * Recent is ordered by. Null when the time is not known (a visit carried over
  * from before times were kept). A clock that moved backwards reads as just now.
  */
-export function openedAgoLabel(openedAt: number, now: number): string | null {
-  if (!openedAt) return null;
-  const minutes = Math.floor(Math.max(0, now - openedAt) / 60_000);
-  if (minutes < 1) return "opened just now";
-  if (minutes < 60) return `opened ${minutes} min ago`;
+export function usedAgoLabel(usedAt: number, now: number): string | null {
+  if (!usedAt) return null;
+  const minutes = Math.floor(Math.max(0, now - usedAt) / 60_000);
+  if (minutes < 1) return "used just now";
+  if (minutes < 60) return `used ${minutes} min ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `opened ${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  if (hours < 24) return `used ${hours} ${hours === 1 ? "hour" : "hours"} ago`;
   const days = Math.floor(hours / 24);
-  if (days < 30) return `opened ${days} ${days === 1 ? "day" : "days"} ago`;
-  return "opened over a month ago";
+  if (days < 30) return `used ${days} ${days === 1 ? "day" : "days"} ago`;
+  return "used over a month ago";
 }

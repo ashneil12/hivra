@@ -1,4 +1,4 @@
-import { openedAgoLabel, recentSurfaceLabel, type RecentSubject } from "../recent-presentation";
+import { usedAgoLabel, recentSurfaceLabel, type RecentSubject } from "../recent-presentation";
 
 const codex: RecentSubject = { kind: "hivra", resourceKind: "agent", agentType: "codex", surfaceKind: "chat" };
 const aeon: RecentSubject = { kind: "hivra", resourceKind: "agent", agentType: "aeon", surfaceKind: "dashboard" };
@@ -36,25 +36,25 @@ describe("recent presentation", () => {
 
   const MINUTE = 60_000;
   it.each([
-    [20_000, "opened just now"],
-    [5 * MINUTE, "opened 5 min ago"],
-    [59 * MINUTE, "opened 59 min ago"],
-    [60 * MINUTE, "opened 1 hour ago"],
-    [3 * 60 * MINUTE, "opened 3 hours ago"],
-    [24 * 60 * MINUTE, "opened 1 day ago"],
-    [47 * 60 * MINUTE, "opened 1 day ago"],
-    [48 * 60 * MINUTE, "opened 2 days ago"],
-    [40 * 24 * 60 * MINUTE, "opened over a month ago"],
-  ])("says when it was opened, %p ms ago", (elapsed, label) => {
+    [20_000, "used just now"],
+    [5 * MINUTE, "used 5 min ago"],
+    [59 * MINUTE, "used 59 min ago"],
+    [60 * MINUTE, "used 1 hour ago"],
+    [3 * 60 * MINUTE, "used 3 hours ago"],
+    [24 * 60 * MINUTE, "used 1 day ago"],
+    [47 * 60 * MINUTE, "used 1 day ago"],
+    [48 * 60 * MINUTE, "used 2 days ago"],
+    [40 * 24 * 60 * MINUTE, "used over a month ago"],
+  ])("says when it was last used, %p ms ago", (elapsed, label) => {
     const now = 1_700_000_000_000;
-    expect(openedAgoLabel(now - elapsed, now)).toBe(label);
+    expect(usedAgoLabel(now - elapsed, now)).toBe(label);
   });
 
   it("claims no time for a visit whose time was not kept", () => {
-    expect(openedAgoLabel(0, 1_700_000_000_000)).toBeNull();
+    expect(usedAgoLabel(0, 1_700_000_000_000)).toBeNull();
   });
 
   it("reads a time after now as just now", () => {
-    expect(openedAgoLabel(2_000, 1_000)).toBe("opened just now");
+    expect(usedAgoLabel(2_000, 1_000)).toBe("used just now");
   });
 });

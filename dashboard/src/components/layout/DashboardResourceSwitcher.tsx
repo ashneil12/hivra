@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "@/components/ui/NavigationLink";
 import { createPortal } from "react-dom";
 import { Bot, Monitor, Search, X } from "lucide-react";
-import { switcherGroups } from "@/lib/workspace/recent-order";
+import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
 import { listRecents } from "@/lib/workspace/recents";
 import { filterDashboardResources, resourceStatusLabel, type DashboardResource, type DashboardResourceSource } from "./dashboard-resources";
 import styles from "./DashboardSidebar.module.css";
@@ -25,7 +25,8 @@ export interface DashboardResourceSwitcherProps {
  * ⌘K: Recent first, then Agents, then Computers. The highlight starts on the
  * resource you were in before this one, so ⌘K then Enter goes back to it and
  * pressing it again returns: two agents, one shortcut. With nothing typed,
- * 1–9 open that Recent entry.
+ * 1–9 open that Recent entry, except on a touch screen, where no hint shows
+ * them and a digit types.
  */
 export function DashboardResourceSwitcher({ resources, currentUid = null, loading, errors, onSelect, onClose, onBrowse, onRefresh }: DashboardResourceSwitcherProps) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -34,6 +35,7 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
   const [activeIndex, setActiveIndex] = useState(0);
   // Read once per open: the order must not shift under the keyboard.
   const [recents] = useState(listRecents);
+  const [shortcuts] = useState(recentShortcutsShown);
   const listId = useId();
   const matches = useMemo(() => filterDashboardResources(resources, query), [resources, query]);
   const groups = useMemo(
@@ -76,7 +78,7 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
           onKeyDown={(event) => {
             // Only while nothing is typed, and only for an entry that exists,
             // so a search that starts with a digit still types.
-            if (!query && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            if (shortcuts && !query && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
               const pick = recent[Number(event.key) - 1];
               if (pick) { event.preventDefault(); onSelect(pick); return; }
             }
@@ -101,7 +103,7 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
             const Icon = item.kind === "agent" ? Bot : Monitor;
             const duplicate = resources.some((other) => other.uid !== item.uid && other.name === item.name);
             const detail = duplicate ? `${item.description} · ${item.source} · ${item.id.slice(-8)}` : `${item.description} · ${item.kind === "agent" ? "Agent" : "Computer"}`;
-            const shortcut = group.key === "recent" && !query && position < 9 ? String(position + 1) : undefined;
+            const shortcut = shortcuts && group.key === "recent" && !query && position < 9 ? String(position + 1) : undefined;
             const current = item.uid === currentUid;
             return <button type="button" id={`${listId}-${index}`} key={item.uid} role="option" aria-selected={index === active}
               aria-current={current ? "true" : undefined} aria-keyshortcuts={shortcut}
@@ -118,7 +120,7 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
       </div>
       {loading && <p className={styles.switcherEmpty} role="status">Loading resources…</p>}
       {!loading && !ordered.length && <p className={styles.switcherEmpty}>{query ? "No matching resources in the loaded sources." : hasError ? "Resource inventory is unavailable." : "No agents or computers yet."}</p>}
-      <footer className={styles.switcherFooter}><Link href="/dashboard?runtimes=1" onClick={onBrowse ?? onClose}>All agents and computers</Link><span>↑ ↓ choose · {activeItem && recent.includes(activeItem) ? `↵ back to ${activeItem.name}` : "Enter open"}{!query && recent.length > 0 ? ` · 1–${Math.min(recent.length, 9)} recent` : ""} · Esc close</span><button type="button" onClick={onRefresh} disabled={loading}>Refresh</button></footer>
+      <footer className={styles.switcherFooter}><Link href="/dashboard?runtimes=1" onClick={onBrowse ?? onClose}>All agents and computers</Link><span>↑ ↓ choose · {activeItem && recent.includes(activeItem) ? `↵ back to ${activeItem.name}` : "Enter open"}{shortcuts && !query && recent.length > 0 ? ` · 1–${Math.min(recent.length, 9)} recent` : ""} · Esc close</span><button type="button" onClick={onRefresh} disabled={loading}>Refresh</button></footer>
     </dialog>, document.body,
   );
 }

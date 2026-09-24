@@ -3,6 +3,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
 import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
+import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -70,8 +71,11 @@ jest.mock("@/components/hivra/HivraChat", () => ({
 }));
 
 jest.mock("@/components/hivra/DigitalOceanAgentWorkspace", () => ({
-  DigitalOceanAgentWorkspace: ({ agentId, firstTask }: { agentId: string; firstTask?: string | null }) => (
-    <div>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</div>
+  DigitalOceanAgentWorkspace: ({ agentId, firstTask, onDeleted }: { agentId: string; firstTask?: string | null; onDeleted: () => void }) => (
+    <div>
+      <span>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</span>
+      <button type="button" onClick={onDeleted}>Session deleted</button>
+    </div>
   ),
 }));
 
@@ -98,10 +102,11 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ plan, onChanged }: { plan?: { usage?: { usedCpu: number } } | null; onChanged: () => void }) => <>
+  HivraManage: ({ plan, onChanged, onDestroyed }: { plan?: { usage?: { usedCpu: number } } | null; onChanged: () => void; onDestroyed: () => void }) => <>
     <div>Manage panel</div>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
     <button onClick={onChanged}>Refresh capacity</button>
+    <button onClick={onDestroyed}>Agent deleted</button>
   </>,
 }));
 
@@ -1148,7 +1153,7 @@ describe("AgentPage", () => {
     try {
       const view = render(<AgentPage />);
       expect(await screen.findByText("Chat panel")).toBeInTheDocument();
-      expect(listRecents()).toEqual([{ uid: "x-agent_123", tab: "chat", openedAt: expect.any(Number) }]);
+      expect(listRecents()).toEqual([{ uid: "x-agent_123", tab: "chat", usedAt: expect.any(Number) }]);
 
       fireEvent.click(getSurfaceButton("Files"));
       expect(lastTabFor("x-agent_123")).toBe("chat");
@@ -1735,6 +1740,71 @@ describe("AgentPage", () => {
       ([url, init]) => String(url).includes("/remote-desktop") && String(init?.body || "").includes('"refresh"'),
     ).length;
     expect(refreshCallsAfter).toBe(1);
+  });
+
+  // The sidebar, ⌘K and Home reuse a list of agents read in the last few
+  // seconds. A change made here has to reach them, or Home offers to continue
+  // in an agent just deleted and the switchers keep its old name and status.
+  describe("after a change on Manage", () => {
+    const agentRow = { id: "agent_123", name: "CLAUDE_CODE_AGENT", type: "claude-code", status: "running", cpu: 2, ram: 4 };
+    let listed: unknown[];
+    let listReads: number;
+    let stopShowing: () => void;
+    const heldNames = () => {
+      const body = resourceInventory.getSnapshot().hivra.body as { data: { agents: Array<{ name: string }> } };
+      return body.data.agents.map((row) => row.name);
+    };
+
+    beforeEach(async () => {
+      resetResourceInventory();
+      listed = [agentRow];
+      listReads = 0;
+      const pageFetch = global.fetch as jest.Mock;
+      global.fetch = jest.fn((url: string, init?: RequestInit) => {
+        if (url === "/api/hivra/agents") {
+          listReads += 1;
+          return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { agents: listed } }) });
+        }
+        return pageFetch(url, init);
+      }) as unknown as typeof fetch;
+      await act(async () => { await resourceInventory.load("hivra"); });
+      // The sidebar is showing the list.
+      stopShowing = resourceInventory.subscribe(() => undefined);
+    });
+
+    afterEach(() => {
+      stopShowing();
+      resetResourceInventory();
+    });
+
+    it("reads the agents list again after deleting, so it is not offered again", async () => {
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "manage" : null);
+      render(<AgentPage />);
+      listed = [];
+      fireEvent.click(await screen.findByRole("button", { name: "Agent deleted" }));
+      expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
+      await waitFor(() => expect(heldNames()).toEqual([]));
+      expect(listReads).toBe(2);
+    });
+
+    it("reads the agents list again after a rename, stop or resize", async () => {
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "manage" : null);
+      render(<AgentPage />);
+      listed = [{ ...agentRow, name: "RENAMED_AGENT", status: "stopped" }];
+      fireEvent.click(await screen.findByRole("button", { name: "Refresh capacity" }));
+      await waitFor(() => expect(heldNames()).toEqual(["RENAMED_AGENT"]));
+      expect(listReads).toBe(2);
+    });
+
+    it("reads the agents list again when a DigitalOcean session is deleted", async () => {
+      mockGetAgent.mockResolvedValue({ ...agentRow, computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null });
+      render(<AgentPage />);
+      listed = [];
+      fireEvent.click(await screen.findByRole("button", { name: "Session deleted" }));
+      expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
+      await waitFor(() => expect(heldNames()).toEqual([]));
+      expect(listReads).toBe(2);
+    });
   });
 
 });

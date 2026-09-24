@@ -49,6 +49,7 @@ import {
 } from "@/components/hivra/SurfaceActionContext";
 import { hivraRuntimeUid } from "@/lib/workspace/runtime-selection";
 import { lastTabFor } from "@/lib/workspace/recents";
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
 import { TasksPanel } from "@/components/scheduled-tasks/TasksPanel";
@@ -103,6 +104,15 @@ const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
 };
 const WORK_PANE_ID = "agent-work-pane";
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * The sidebar, ⌘K and Home reuse a list of agents read moments ago. After a
+ * change made here (a delete, a stop, a rename) that list is out of date, and
+ * Home would offer to continue in an agent just deleted.
+ */
+function listChanged(): void {
+  resourceInventory.invalidate("hivra");
+}
 
 /**
  * The surface a page opens on: a ?tab= deep link (e.g. the dashboard
@@ -827,7 +837,7 @@ export default function AgentPage() {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
     // surface, with its own Chat, Files and Manage views. The computer tabs
     // (Terminal, Browser, Git) and Skills do not apply.
-    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => go("/dashboard")} />;
+    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => { listChanged(); go("/dashboard"); }} />;
   }
 
   const def = catalogAgent(agent.type);
@@ -890,8 +900,8 @@ export default function AgentPage() {
       agent={agent}
       def={def}
       plan={plan}
-      onChanged={() => setReloadKey((k) => k + 1)}
-      onDestroyed={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}
+      onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+      onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
       browserOn={browserOn}
       onBrowserChange={(e) => setBrowserOn(e)}
     />

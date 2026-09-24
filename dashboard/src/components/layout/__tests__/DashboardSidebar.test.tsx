@@ -28,6 +28,7 @@ const props = { userName: 'Test User', userEmail: 'test@example.com', resourceOw
 const push = jest.fn();
 const refresh = jest.fn();
 let viewportWidth = 1280;
+let coarsePointer = false;
 const mediaQueries = new Map<string, EventTarget>();
 
 function setViewportWidth(width: number) {
@@ -40,6 +41,7 @@ function setViewportWidth(width: number) {
 
 beforeEach(() => {
   viewportWidth = 1280;
+  coarsePointer = false;
   mediaQueries.clear();
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewportWidth });
   Object.defineProperty(window, 'matchMedia', {
@@ -50,6 +52,7 @@ beforeEach(() => {
         Object.defineProperties(list, {
           media: { value: query },
           matches: { get: () => {
+            if (query.includes('pointer: coarse')) return coarsePointer;
             const minimum = query.match(/min-width:\s*(\d+)px/);
             const maximum = query.match(/max-width:\s*(\d+)px/);
             return (!minimum || viewportWidth >= Number(minimum[1])) && (!maximum || viewportWidth <= Number(maximum[1]));
@@ -529,6 +532,20 @@ describe('DashboardSidebar', () => {
       expect(screen.getAllByRole('option').slice(0, 3).map((option) => option.getAttribute('aria-keyshortcuts'))).toEqual(['1', '2', '3']);
       expect(fireEvent.keyDown(input, { key: '3' })).toBe(false);
       expect(push).toHaveBeenCalledWith('/dashboard/agent/desktop?tab=desktop');
+    });
+
+    // A touch screen shows no digit hints, and a search can start with a
+    // digit (a name like "2nd brain", or part of an id).
+    it('lets a digit type into the search on a touch screen, where no shortcut is shown', () => {
+      coarsePointer = true;
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      opened(['x-desktop', 'desktop'], ['x-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(screen.getAllByRole('option').some((option) => option.hasAttribute('aria-keyshortcuts'))).toBe(false);
+      expect(fireEvent.keyDown(input, { key: '1' })).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+      expect(screen.getByText(/Esc close/).textContent).not.toMatch(/recent/);
     });
 
     it('lets a digit type into the search once something is typed, or when there is no such entry', () => {

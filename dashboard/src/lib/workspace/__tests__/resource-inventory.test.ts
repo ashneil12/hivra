@@ -93,4 +93,76 @@ describe("resource inventory", () => {
     window.dispatchEvent(new Event("focus"));
     expect(hermes).toHaveBeenCalledTimes(2);
   });
+
+  // After a delete, stop or rename made in this browser, a list read moments
+  // before is out of date however fresh it is.
+  it("does not reuse a list read before a change, and reads one being shown again at once", async () => {
+    const { inventory, hivra } = setup();
+    await inventory.load("hivra");
+    inventory.invalidate("hivra");
+    // Nobody is showing it: the next reader reads.
+    expect(hivra).toHaveBeenCalledTimes(1);
+    await inventory.load("hivra");
+    expect(hivra).toHaveBeenCalledTimes(2);
+    await inventory.load("hivra");
+    expect(hivra).toHaveBeenCalledTimes(2);
+
+    const unsubscribe = inventory.subscribe(() => undefined);
+    try {
+      hivra.mockResolvedValueOnce(hivraBody([]));
+      inventory.invalidate("hivra");
+      expect(hivra).toHaveBeenCalledTimes(3);
+      await inventory.load("hivra");
+      expect(hivra).toHaveBeenCalledTimes(3);
+      expect(inventory.getSnapshot().hivra.body).toEqual(hivraBody([]));
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("replaces a read in flight when a change makes it out of date", async () => {
+    const { inventory, hermes } = setup();
+    let finishOld!: (body: unknown) => void;
+    let oldSignal!: AbortSignal;
+    hermes.mockImplementationOnce((received) => {
+      oldSignal = received!;
+      return new Promise<unknown>((resolve) => { finishOld = resolve; });
+    });
+    const old = inventory.load("hermes");
+    hermes.mockResolvedValueOnce(hermesBody([]));
+    inventory.invalidate("hermes");
+    expect(oldSignal.aborted).toBe(true);
+    finishOld(hermesBody(["deleted"]));
+    await old;
+    await inventory.load("hermes");
+    expect(hermes).toHaveBeenCalledTimes(2);
+    expect(inventory.getSnapshot().hermes.body).toEqual(hermesBody([]));
+  });
+
+  it("never reads a list nobody has asked for when it changes", () => {
+    const { inventory, hivra } = setup();
+    const unsubscribe = inventory.subscribe(() => undefined);
+    inventory.invalidate("hivra");
+    unsubscribe();
+    expect(hivra).not.toHaveBeenCalled();
+  });
+
+  // Home offers to continue in an agent, so it trusts only a read made since
+  // it opened, and shares one already in flight rather than starting another.
+  it("marks which reads are newer than a view, counting one in flight", async () => {
+    const { inventory, hermes } = setup();
+    await inventory.load("hermes");
+    const settledMark = inventory.readMark("hermes");
+    expect(inventory.getSnapshot().hermes.read).toBe(settledMark);
+
+    await inventory.load("hermes", { revalidate: true });
+    expect(hermes).toHaveBeenCalledTimes(2);
+    expect(inventory.getSnapshot().hermes.read).toBeGreaterThan(settledMark);
+
+    const inFlight = inventory.load("hermes", { force: true });
+    const flightMark = inventory.readMark("hermes");
+    await Promise.all([inFlight, inventory.load("hermes", { revalidate: true })]);
+    expect(hermes).toHaveBeenCalledTimes(3);
+    expect(inventory.getSnapshot().hermes.read).toBeGreaterThan(flightMark);
+  });
 });

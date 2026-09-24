@@ -10,6 +10,17 @@ import type { RecentVisit } from "./recents";
 /** How many recent resources a switcher lists above the rest. */
 export const SWITCHER_RECENT_LIMIT = 5;
 
+/**
+ * Whether a switcher's 1–9 keys open Recent entries: only where their hints
+ * are shown. With a touch screen as the main pointer the hints are hidden (the
+ * same `pointer: coarse` rule), and a digit typed there is the start of a
+ * search, such as a name like "2nd brain" or part of an id.
+ */
+export function recentShortcutsShown(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
+  return !window.matchMedia("(pointer: coarse)").matches;
+}
+
 export interface RecentEntry<T> {
   item: T;
   visit: RecentVisit;

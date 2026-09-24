@@ -27,8 +27,8 @@ describe("recents", () => {
     recordVisit("x-one", "files", { now: 3_000 });
 
     expect(listRecents()).toEqual([
-      { uid: "x-one", tab: "files", openedAt: 3_000 },
-      { uid: "h-two", tab: "chat", openedAt: 2_000 },
+      { uid: "x-one", tab: "files", usedAt: 3_000 },
+      { uid: "h-two", tab: "chat", usedAt: 2_000 },
     ]);
     expect(Object.keys(JSON.parse(window.localStorage.getItem(RECENTS_STORAGE_KEY)!)).sort()).toEqual(["version", "visits"]);
   });
@@ -70,7 +70,7 @@ describe("recents", () => {
   ])("refuses to store %s and keeps the list it had", (_label, uid) => {
     recordVisit("x-safe", "chat", { now: 5 });
     expect(recordVisit(uid, "chat")).toBe(false);
-    expect(listRecents()).toEqual([{ uid: "x-safe", tab: "chat", openedAt: 5 }]);
+    expect(listRecents()).toEqual([{ uid: "x-safe", tab: "chat", usedAt: 5 }]);
   });
 
   it("refuses a surface the pages do not have", () => {
@@ -82,13 +82,13 @@ describe("recents", () => {
     ["malformed JSON", () => window.localStorage.setItem(RECENTS_STORAGE_KEY, "not-json")],
     ["another version", () => stored([], 2)],
     ["an extra top-level field", () => window.localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify({ version: 1, visits: [], token: "DO_NOT_KEEP" }))],
-    ["an extra visit field", () => stored([{ uid: "x-one", tab: "chat", openedAt: 1, token: "DO_NOT_KEEP" }])],
-    ["a token-shaped identity", () => stored([{ uid: "x-bearer-secret", tab: "chat", openedAt: 1 }])],
-    ["an unknown surface", () => stored([{ uid: "x-one", tab: "admin", openedAt: 1 }])],
-    ["a negative time", () => stored([{ uid: "x-one", tab: "chat", openedAt: -1 }])],
-    ["a fractional time", () => stored([{ uid: "x-one", tab: "chat", openedAt: 1.5 }])],
-    ["a repeated resource", () => stored([{ uid: "x-one", tab: "chat", openedAt: 2 }, { uid: "x-one", tab: "box", openedAt: 1 }])],
-    ["too many entries", () => stored(Array.from({ length: MAX_RECENTS + 1 }, (_, index) => ({ uid: `x-${index}`, tab: "chat", openedAt: index })))],
+    ["an extra visit field", () => stored([{ uid: "x-one", tab: "chat", usedAt: 1, token: "DO_NOT_KEEP" }])],
+    ["a token-shaped identity", () => stored([{ uid: "x-bearer-secret", tab: "chat", usedAt: 1 }])],
+    ["an unknown surface", () => stored([{ uid: "x-one", tab: "admin", usedAt: 1 }])],
+    ["a negative time", () => stored([{ uid: "x-one", tab: "chat", usedAt: -1 }])],
+    ["a fractional time", () => stored([{ uid: "x-one", tab: "chat", usedAt: 1.5 }])],
+    ["a repeated resource", () => stored([{ uid: "x-one", tab: "chat", usedAt: 2 }, { uid: "x-one", tab: "box", usedAt: 1 }])],
+    ["too many entries", () => stored(Array.from({ length: MAX_RECENTS + 1 }, (_, index) => ({ uid: `x-${index}`, tab: "chat", usedAt: index })))],
     ["an oversized value", () => window.localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify({ version: 1, visits: [], pad: "x".repeat(5000) }))],
   ])("clears a stored list with %s", (_label, write) => {
     write();
@@ -100,7 +100,7 @@ describe("recents", () => {
     window.localStorage.setItem(WORKSPACE_SELECTION_STORAGE_KEY, JSON.stringify({ version: 1, uid: "x-ubuntu", surface: "desktop" }));
     window.localStorage.setItem("hivra:agent-last-view", "terminal");
 
-    expect(listRecents()).toEqual([{ uid: "x-ubuntu", tab: "desktop", openedAt: 0 }]);
+    expect(listRecents()).toEqual([{ uid: "x-ubuntu", tab: "desktop", usedAt: 0 }]);
     expect(window.localStorage.getItem(WORKSPACE_SELECTION_STORAGE_KEY)).toBeNull();
     // The shared chat/terminal preference is retired with it.
     expect(window.localStorage.getItem("hivra:agent-last-view")).toBeNull();
@@ -153,7 +153,7 @@ describe("recents", () => {
     jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Quota"); });
     expect(recordVisit("x-two", "chat", { now: 2 })).toBe(false);
     jest.restoreAllMocks();
-    expect(listRecents()).toEqual([{ uid: "x-one", tab: "chat", openedAt: 1 }]);
+    expect(listRecents()).toEqual([{ uid: "x-one", tab: "chat", usedAt: 1 }]);
   });
 
   describe("recentHref", () => {

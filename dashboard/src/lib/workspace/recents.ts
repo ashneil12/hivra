@@ -9,8 +9,8 @@ import {
 } from "./workspace-persistence";
 
 /**
- * The agents and computers you opened in this browser, most recent first, and
- * the exact surface you were on in each.
+ * The agents and computers you used in this browser, most recently used first,
+ * and the exact surface you were on in each.
  *
  * This replaces two lossy memories. The single "last selection" record kept one
  * resource and folded its tab into the workspace vocabulary, where the
@@ -34,7 +34,7 @@ export const MAX_RECENTS = 12;
 const RECENTS_VERSION = 1 as const;
 const MAX_STORED_RECENTS_LENGTH = 4096;
 const LIST_KEYS = ["version", "visits"] as const;
-const VISIT_KEYS = ["openedAt", "tab", "uid"] as const;
+const VISIT_KEYS = ["tab", "uid", "usedAt"] as const;
 const SURFACE_IDS = new Set<string>(AGENT_SURFACE_IDS);
 /** The retired global chat/terminal preference, removed once on migration. */
 const LEGACY_LAST_VIEW_KEY = "hivra:agent-last-view";
@@ -44,8 +44,11 @@ export interface RecentVisit {
   uid: string;
   /** The surface that was open, in the resource page's own tab vocabulary. */
   tab: AgentSurfaceId;
-  /** When it was opened, in ms since the epoch. 0 when it is not known. */
-  openedAt: number;
+  /**
+   * When it was last on screen, in ms since the epoch: opened, moved between
+   * surfaces, left, or its browser tab hidden or shown. 0 when not known.
+   */
+  usedAt: number;
 }
 
 type RecentsStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -74,10 +77,10 @@ export function isRecentTab(value: unknown): value is AgentSurfaceId {
 
 function parseVisit(value: unknown): RecentVisit | null {
   if (!isRecord(value) || !hasExactKeys(value, VISIT_KEYS)) return null;
-  const { uid, tab, openedAt } = value;
+  const { uid, tab, usedAt } = value;
   if (!isWorkspaceAgentUid(uid) || !isRecentTab(tab)) return null;
-  if (typeof openedAt !== "number" || !Number.isSafeInteger(openedAt) || openedAt < 0) return null;
-  return { uid, tab, openedAt };
+  if (typeof usedAt !== "number" || !Number.isSafeInteger(usedAt) || usedAt < 0) return null;
+  return { uid, tab, usedAt };
 }
 
 function parseList(value: unknown): RecentVisit[] | null {
@@ -131,7 +134,7 @@ function legacyTab(surface: WorkspaceSurface): AgentSurfaceId {
 function migrate(storage: RecentsStorage): RecentVisit[] {
   const legacy = restoreWorkspaceSelection(storage);
   // Its time was never recorded, so it is not claimed.
-  const visits = legacy ? [{ uid: legacy.uid, tab: legacyTab(legacy.surface), openedAt: 0 }] : [];
+  const visits = legacy ? [{ uid: legacy.uid, tab: legacyTab(legacy.surface), usedAt: 0 }] : [];
   if (visits.length > 0 && !write(storage, visits)) return visits;
   clearWorkspaceSelection(storage);
   try {
@@ -169,16 +172,16 @@ function read(storage: RecentsStorage): RecentVisit[] {
   return visits;
 }
 
-/** Recently opened resources, most recent first. Never throws. */
+/** Recently used resources, most recent first. Never throws. */
 export function listRecents(storage?: RecentsStorage): RecentVisit[] {
   const target = storage ?? browserStorage();
   return target ? read(target) : [];
 }
 
 /**
- * Records that `uid` is open on `tab`: it moves to the front, keeping one entry
- * per resource. A value that is not a safe uid or a known tab is ignored, and
- * it never discards the list it failed to add to.
+ * Records that `uid` is in use on `tab` now: it moves to the front, keeping one
+ * entry per resource. A value that is not a safe uid or a known tab is ignored,
+ * and it never discards the list it failed to add to.
  */
 export function recordVisit(
   uid: string,
@@ -187,10 +190,10 @@ export function recordVisit(
 ): boolean {
   const target = options.storage ?? browserStorage();
   if (!target || !isWorkspaceAgentUid(uid) || !isRecentTab(tab)) return false;
-  const openedAt = options.now ?? Date.now();
-  if (!Number.isSafeInteger(openedAt) || openedAt < 0) return false;
+  const usedAt = options.now ?? Date.now();
+  if (!Number.isSafeInteger(usedAt) || usedAt < 0) return false;
   const visits = [
-    { uid, tab, openedAt },
+    { uid, tab, usedAt },
     ...read(target).filter((visit) => visit.uid !== uid),
   ].slice(0, MAX_RECENTS);
   return write(target, visits);

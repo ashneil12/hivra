@@ -16,10 +16,12 @@ import { attentionLabel } from "@/lib/hivra/resource-attention";
 import styles from "./HomeWorkspace.module.css";
 import { HomeContinue } from "./HomeContinue";
 import { inRecentOrder } from "@/lib/workspace/recent-order";
-import { listRecents, visitHref } from "@/lib/workspace/recents";
+import { listRecents, visitHref, type RecentVisit } from "@/lib/workspace/recents";
 import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
+
+const NO_RECENTS: RecentVisit[] = [];
 
 /** Home lists your agents and computers, led by the one you were last in and
  * the others you used recently. Only opening the app at Home resumes it
@@ -30,21 +32,25 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   // Whether this view opened the app. Decided before paint, after the first
   // render, so the server and the first client render agree on the list.
   const [appOpen, setAppOpen] = useState(false);
+  // What this browser used, most recently used first, and when it was read.
+  // Read after mounting, not while rendering: the page being left records its
+  // last use as it closes, which comes after this view first renders. Read
+  // before paint, and Home counts as loading until it has been.
+  const [recentView, setRecentView] = useState<{ recents: RecentVisit[]; now: number } | null>(null);
   useLayoutEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate post-hydration flip of a render-gating flag read from browser-only state.
     if (isAppOpenAtHome()) setAppOpen(true);
     markHomeOpened();
+    setRecentView({ recents: listRecents(), now: Date.now() });
   }, []);
-  const { agents, loading, hermesError, hivraError, retryHermes, retryHivra } =
+  // Home acts on this list (Continue, resuming on app open), so it waits for
+  // a read made since it opened: a held one can still list an agent deleted
+  // or stopped a moment ago.
+  const { agents, loading: listLoading, hermesError, hivraError, retryHermes, retryHivra } =
     useWorkspaceAgents();
+  const loading = listLoading || recentView === null;
+  const recents = recentView?.recents ?? NO_RECENTS;
   const [query, setQuery] = useState("");
-  // What this browser opened, most recent first, and when this view opened.
-  // Validated against the loaded fleet below: anything no longer listed is
-  // left out, never offered.
-  const [{ recents, openedAt }] = useState(() => ({
-    recents: typeof window === "undefined" ? [] : listRecents(),
-    openedAt: Date.now(),
-  }));
   // Set by the "needs attention" button: narrows the list to the broken ones.
   const [attentionOnly, setAttentionOnly] = useState(attentionRequested);
   // Failed refreshes retain inventory for browsing, but cannot validate attention or resumption.
@@ -152,7 +158,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
           you left, and the others you used recently. Hidden while searching
           or filtering, where the list below is the answer. */}
       {!loading && !attentionOnly && !searching ? (
-        <HomeContinue entries={recent} isStale={isStale} now={openedAt} />
+        <HomeContinue entries={recent} isStale={isStale} now={recentView?.now ?? 0} />
       ) : null}
 
       {/* A count of anything broken, a single click into the filtered list.

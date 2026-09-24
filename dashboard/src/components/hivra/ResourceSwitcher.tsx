@@ -176,7 +176,9 @@ function ResourceSwitcherMenu({
   onClose: (options?: { restoreFocus?: boolean }) => void;
 }) {
   // Fetches only while this component is mounted, i.e. after the first open.
-  const workspaceAgents = useWorkspaceAgents();
+  // A menu: it lists what is held at once, and reads again behind it only
+  // when that is more than a few seconds old.
+  const workspaceAgents = useWorkspaceAgents({ reuseHeldList: true });
   // Read at each open, so the Recent group includes the resource just left.
   const [recents, setRecents] = useState(listRecents);
   const [wasOpen, setWasOpen] = useState(open);

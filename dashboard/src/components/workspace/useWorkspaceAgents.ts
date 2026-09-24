@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { clientLog } from "@/lib/client/logger";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
@@ -11,10 +11,19 @@ import {
 } from "@/lib/hivra/unified-agent";
 import {
   createResourceInventory,
+  INVENTORY_SOURCES,
   resourceInventory,
+  type InventorySource,
   type InventorySourceState,
   type ResourceInventory,
 } from "@/lib/workspace/resource-inventory";
+
+/**
+ * The account the dashboard is showing, the same key the sidebar scopes its
+ * list with. The lists are held between pages, so a reader compares it with
+ * the account they were read for before showing any of them.
+ */
+export const WorkspaceOwnerContext = createContext<string | null>(null);
 
 /** Returns that source's API response body, as the route sends it. */
 type WorkspaceSourceFetcher = () => Promise<unknown>;
@@ -27,6 +36,15 @@ export interface UseWorkspaceAgentsOptions {
   fetchHermes?: WorkspaceSourceFetcher;
   fetchHivra?: WorkspaceSourceFetcher;
   getNow?: () => Date;
+  /**
+   * Show the list already held at once, instead of reporting it as loading
+   * until a read made since this view opened has answered. A held list is
+   * read again only when it is more than a few seconds old. For a menu; never
+   * for a view that acts on the list by itself, such as Home offering or
+   * resuming an agent: a held list can predate a delete or a stop made
+   * elsewhere moments ago.
+   */
+  reuseHeldList?: boolean;
 }
 
 export interface UseWorkspaceAgentsResult {
@@ -145,11 +163,15 @@ interface SourceRows<T> {
   failed: boolean;
 }
 
+const NO_ROWS: SourceRows<never> = { rows: [], settled: false, failed: false };
+
 /**
  * One list's rows. A failed refresh keeps the last good rows for browsing (the
- * caller marks them as last known); an unreadable one yields none.
+ * caller marks them as last known); an unreadable one yields none. It counts
+ * as settled only once a read newer than `mark` has answered, and only that
+ * read can report a failure.
  */
-function sourceRows<T>(state: InventorySourceState, parse: (value: unknown) => T[]): SourceRows<T> {
+function sourceRows<T>(state: InventorySourceState, parse: (value: unknown) => T[], mark: number): SourceRows<T> {
   let rows: T[] = [];
   let unreadable = false;
   if (state.hasBody) {
@@ -159,7 +181,8 @@ function sourceRows<T>(state: InventorySourceState, parse: (value: unknown) => T
       unreadable = true;
     }
   }
-  return { rows, settled: state.settledAt > 0, failed: state.failed || unreadable };
+  const settled = state.settledAt > 0 && state.read > mark;
+  return { rows, settled, failed: settled && (state.failed || unreadable) };
 }
 
 function privateInventory(options: UseWorkspaceAgentsOptions): ResourceInventory | null {
@@ -177,8 +200,15 @@ function privateInventory(options: UseWorkspaceAgentsOptions): ResourceInventory
 export function useWorkspaceAgents(
   options: UseWorkspaceAgentsOptions = {},
 ): UseWorkspaceAgentsResult {
-  // Fixed for the hook's lifetime: the shared inventory, or stand-ins.
+  const owner = useContext(WorkspaceOwnerContext);
+  // Fixed for the hook's lifetime: the shared inventory, or stand-ins, and
+  // which reads count as current. Taken while rendering, before any effect of
+  // this commit starts a read, so a read the sidebar starts alongside counts.
   const [inventory] = useState(() => privateInventory(options) ?? resourceInventory);
+  const [reuseHeld] = useState(() => options.reuseHeldList === true);
+  const [marks] = useState<Record<InventorySource, number>>(() => reuseHeld
+    ? { hermes: 0, hivra: 0 }
+    : { hermes: inventory.readMark("hermes"), hivra: inventory.readMark("hivra") });
   const snapshot = useSyncExternalStore(
     inventory.subscribe,
     inventory.getSnapshot,
@@ -186,12 +216,23 @@ export function useWorkspaceAgents(
   );
 
   useEffect(() => {
-    void inventory.load("hermes");
-    void inventory.load("hivra");
-  }, [inventory]);
+    if (owner !== null) inventory.setOwner(owner);
+    // Joins a read in flight (the sidebar's, on the same page change), so a
+    // Home load still reads each list once.
+    for (const source of INVENTORY_SOURCES) void inventory.load(source, { revalidate: !reuseHeld });
+  }, [inventory, owner, reuseHeld]);
 
-  const hermes = useMemo(() => sourceRows(snapshot.hermes, parseHermesEnvelope), [snapshot.hermes]);
-  const hivra = useMemo(() => sourceRows(snapshot.hivra, parseHivraEnvelope), [snapshot.hivra]);
+  // Lists held for another account (a sign-in without a page load) are not
+  // shown while the effect above drops them.
+  const mine = snapshot.owner === owner;
+  const hermes = useMemo(
+    () => mine ? sourceRows(snapshot.hermes, parseHermesEnvelope, marks.hermes) : NO_ROWS,
+    [mine, snapshot.hermes, marks.hermes],
+  );
+  const hivra = useMemo(
+    () => mine ? sourceRows(snapshot.hivra, parseHivraEnvelope, marks.hivra) : NO_ROWS,
+    [mine, snapshot.hivra, marks.hivra],
+  );
 
   // Logged once per failed read this hook sees, never with the response.
   const hermesFailedAt = hermes.failed ? snapshot.hermes.settledAt : 0;
@@ -210,7 +251,7 @@ export function useWorkspaceAgents(
   }, [retryHermes, retryHivra]);
 
   const agents = useMemo(() => unifyAll(hermes.rows, hivra.rows), [hermes.rows, hivra.rows]);
-  const refreshedAt = Math.max(snapshot.hermes.settledAt, snapshot.hivra.settledAt);
+  const refreshedAt = mine ? Math.max(snapshot.hermes.settledAt, snapshot.hivra.settledAt) : 0;
 
   return {
     agents,
