@@ -149,6 +149,19 @@ describe("gateway terminal transport", () => {
     for (const headers of [...terminal.seen, ...box.seen]) expect(headers.authorization).toBeUndefined();
   });
 
+  it("accepts the socket mode libwebsockets actually creates (0660, group bux), because the 0700 folder is the boundary", async () => {
+    // Found on a real Ubuntu 24.04 VM: ttyd 1.7.7 creates its socket 0660. A
+    // check that refused group bits sent every computer back to the dead
+    // loopback port after the update.
+    const terminal = await ttyd("hivra-terminal", "AGENT");
+    fs.chmodSync(terminal.socketPath, 0o660);
+    const box = await ttyd("hivra-box-terminal", "BOX");
+    fs.chmodSync(box.socketPath, 0o660);
+    const port = await boot();
+    expect((await meta(port)).terminals).toEqual({ terminal: "socket", boxTerminal: "socket" });
+    expect(await request(port, "/terminal/", { Authorization: `Bearer ${TOKEN}` })).toEqual({ status: 200, body: "AGENT /terminal/" });
+  });
+
   it("shows the transport only to a bearer (the updater and installer), never to an anonymous caller", async () => {
     await ttyd("hivra-terminal", "AGENT");
     const port = await boot();
@@ -159,7 +172,8 @@ describe("gateway terminal transport", () => {
 
   it.each([
     ["the runtime folder is readable by others", async () => { await ttyd("hivra-terminal", "AGENT", 0o755); }],
-    ["the socket is group-writable", async () => { const t = await ttyd("hivra-terminal", "AGENT"); fs.chmodSync(t.socketPath, 0o770); }],
+    ["the socket is open to other users", async () => { const t = await ttyd("hivra-terminal", "AGENT"); fs.chmodSync(t.socketPath, 0o666); }],
+    ["the runtime folder is group-accessible", async () => { await ttyd("hivra-terminal", "AGENT", 0o750); }],
     ["the socket path is a link to another socket", async () => {
       const elsewhere = await ttyd("elsewhere", "ELSEWHERE");
       fs.mkdirSync(path.join(run, "hivra-terminal"), { mode: 0o700 });

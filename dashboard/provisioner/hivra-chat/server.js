@@ -1798,9 +1798,14 @@ function gateProxy(req, res, port, strip) {
 
 // ---- terminals on owner-only unix sockets -----------------------------------
 // ttyd serves the agent terminal and the computer's shell on unix sockets owned
-// by bux, mode 0600, in bux-owned 0700 runtime folders, so no other local user
-// or service can open a shell as bux. Guests whose terminal units predate the
-// socket release still listen on loopback; the port stays their fallback.
+// by bux in bux-owned 0700 runtime folders, so no other local user or service
+// can open a shell as bux. The folder is the boundary: libwebsockets always
+// creates its socket 0660 (group bux), and nobody but bux can traverse the
+// folder to it. So the folder must be the gateway's own with no group or other
+// bits, and the socket the gateway's own and not writable by others (connecting
+// to a unix socket needs write permission on it). Guests whose
+// terminal units predate the socket release still listen on loopback; the port
+// stays their fallback.
 const TERMINAL_SOCKETS = { 7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock" };
 const GATEWAY_UID = typeof process.getuid === "function" ? process.getuid() : -1;
 function terminalUpstream(port) {
@@ -1809,7 +1814,7 @@ function terminalUpstream(port) {
     const folder = fs.lstatSync(path.dirname(socketPath));
     const info = fs.lstatSync(socketPath);
     if (folder.isDirectory() && folder.uid === GATEWAY_UID && (folder.mode & 0o077) === 0
-      && info.isSocket() && info.uid === GATEWAY_UID && (info.mode & 0o022) === 0) return { socketPath };
+      && info.isSocket() && info.uid === GATEWAY_UID && (info.mode & 0o002) === 0) return { socketPath };
   } catch {}
   return { port };
 }

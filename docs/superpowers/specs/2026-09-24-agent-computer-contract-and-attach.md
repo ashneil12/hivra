@@ -1027,8 +1027,12 @@ activation journal.
   public HTTPS request succeeds. Otherwise attach is refused.
 
 **Prerequisite hardening of every computer.** The two `ttyd` terminals move
-to unix sockets owned by `bux` with mode 0600, and the gateway proxies to
-those sockets. The namespace already puts them out of an attached agent's
+to unix sockets owned by `bux` in `bux`-owned 0700 runtime folders, and the
+gateway proxies to those sockets. **As built:** libwebsockets creates each
+socket 0660 (found on real Ubuntu 22.04 and 24.04 VMs), so the folder is the
+boundary; the gateway and the provider runtime probe require the folder to be
+their user's with no group or other bits and the socket to be their user's and
+not writable by others. The namespace already puts them out of an attached agent's
 reach, so this is defense in depth. It also removes an existing lateral path
 today, since any compromised local service, such as the internet-facing
 desktop broker, can open the loopback shell.
@@ -1257,7 +1261,7 @@ Attached hivra-chat instance (AGENT_KIND=codex), inside the sandboxed unit
   Terminal reconnect.
 - **The gateway connects only to that socket.** Revision 1 put the socket in a
   runtime folder the agent owned. The agent could then swap it for a link to
-  another socket that `bux` can open, such as the planned 0600 `ttyd`
+  another socket that `bux` can open, such as the owner-only `ttyd`
   sockets. Only the owner's JSON requests on allowlisted routes would have
   been forwarded and upgrades were already refused, so the impact was low,
   but it is closed structurally now. The socket and its folder are root's,
@@ -1497,7 +1501,7 @@ picks it up. Otherwise it is deleted with its tests.
 | T2 | A duplicate or replayed request installs twice | Operation-id idempotency, unique active indexes, at-most-once dispatch compare-and-swap, stage refuses path collisions | Existing: PGlite replay cases, `attachment-staging-coordinator.test.ts`, `test-attached-codex-stage.py` |
 | T3 | A stuck attach blocks the computer's stop or delete | Cancel before dispatch; observe-only reconciliation; a recorded delete intent is honored after terminal evidence; complete and fail transitions | New: `scripts/test-hivra-attachment-lifecycle.cjs` (complete, fail, detach, delete-while-claimed) |
 | T4 | The agent reads the owner's personal home | Separate UID; `ProtectHome=yes`; only the `~/Hivra` view, cloned without submounts; `ProtectProc=invisible` | New VM matrix (8.2): `ls /home/bux`, read `/home/bux/.hivra/api-token`, `/proc/<bux pid>/environ` all fail; a mount the owner made inside `~/Hivra` is not visible in the view |
-| T5 | The agent reaches a service on the computer (a shell as `bux` through `ttyd`, sshd, the gateway, Selkies, any wildcard listener) on any address the computer owns | Own network namespace; the computer accepts no connection from it and forwards only to public destinations; DNS through the in-namespace relay; systemd IP filter as a second layer, including the computer's observed addresses; `ttyd` on 0600 unix sockets | New matrix: from inside the unit, every listener in the sweep and canary listeners on `0.0.0.0` and `::`, on every address the computer owns (each interface's IPv4 and IPv6, including global and public ones, 127.0.0.1, 127.0.0.53, ::1, the veth host address, and the IPv4-mapped forms), all fail, first with both layers and then with each layer removed in turn; the Proxmox host's addresses on 8006 and 22 fail; opening the `bux` terminal socket fails with EACCES; the enforcement probe refuses activation when either layer is off |
+| T5 | The agent reaches a service on the computer (a shell as `bux` through `ttyd`, sshd, the gateway, Selkies, any wildcard listener) on any address the computer owns | Own network namespace; the computer accepts no connection from it and forwards only to public destinations; DNS through the in-namespace relay; systemd IP filter as a second layer, including the computer's observed addresses; `ttyd` on unix sockets in `bux`-owned 0700 folders | New matrix: from inside the unit, every listener in the sweep and canary listeners on `0.0.0.0` and `::`, on every address the computer owns (each interface's IPv4 and IPv6, including global and public ones, 127.0.0.1, 127.0.0.53, ::1, the veth host address, and the IPv4-mapped forms), all fail, first with both layers and then with each layer removed in turn; the Proxmox host's addresses on 8006 and 22 fail; opening the `bux` terminal socket fails with EACCES; the enforcement probe refuses activation when either layer is off |
 | T6 | The agent reaches D-Bus, abstract unix sockets or other path sockets | Own network namespace (abstract sockets belong to one); `InaccessiblePaths=` for the system bus; path-socket sweep with a justified allowlist | New matrix: connecting to each abstract socket listed on the computer fails; the path-socket sweep matches the allowlist |
 | T7 | The agent drives the owner's desktop or browser without a grant | No `DISPLAY` or CDP route; the desktop container's bridge address is dropped in forwarding, and 127.0.0.1:8088 is in another network namespace | New matrix: connect to the container address and to 127.0.0.1:8088 fails |
 | T8 | The agent reads Hivra secrets on the computer | `ProtectHome`, `TemporaryFileSystem`, `InaccessiblePaths`; secret-inventory sweep | New matrix: readable-secret sweep is empty |

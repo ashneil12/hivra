@@ -101,13 +101,16 @@ class UnixHTTPConnection(HTTPConnection):
 
 def terminal(port, path, owner):
     # Terminals from the socket release listen only on a bux-owned unix socket
-    # in a 0700 runtime folder; earlier releases on the loopback port.
+    # in a 0700 runtime folder; earlier releases on the loopback port. The
+    # folder is the boundary: libwebsockets creates the socket 0660, and only
+    # bux can traverse the folder, so the socket must only refuse others
+    # (connecting to a unix socket needs write permission on it).
     socket_path = {7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock"}[port]
     try:
         folder, info = os.lstat(os.path.dirname(socket_path)), os.lstat(socket_path)
     except FileNotFoundError:
         return http(port, path)[0]
-    if not stat.S_ISDIR(folder.st_mode) or folder.st_uid != owner or folder.st_mode & 0o077 or not stat.S_ISSOCK(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
+    if not stat.S_ISDIR(folder.st_mode) or folder.st_uid != owner or folder.st_mode & 0o077 or not stat.S_ISSOCK(info.st_mode) or info.st_uid != owner or info.st_mode & 0o002:
         raise ValueError()
     connection = UnixHTTPConnection(socket_path, 0.6)
     try:
