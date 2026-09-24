@@ -146,6 +146,40 @@ describe("LaunchJourney", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 20)); });
     expect(screen.getByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
+    // The history ends on the step shown, so system back and forward still
+    // step through the journey.
+    await waitFor(() => expect(historyStage()).toBe("choose"));
+    expect(window.history.state).toEqual(expect.objectContaining({ hivraLaunchStage: "choose" }));
+    await act(async () => {
+      window.history.forward();
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument());
+    expect(historyStage()).toBe("plan");
+  });
+
+  it("fits a restored Ubuntu size to a plan that loaded before the signed-in owner did", async () => {
+    const clerk = jest.requireMock("@clerk/nextjs") as { useAuth: () => unknown };
+    const signedIn = clerk.useAuth();
+    let authLoaded = false;
+    const useAuth = jest.spyOn(clerk, "useAuth").mockImplementation(() => authLoaded ? signedIn : { isLoaded: false, userId: null });
+    const draftId = "33333333-3333-4333-8333-333333333333";
+    window.localStorage.setItem("hivra.launch-draft.v1:user_123", JSON.stringify({
+      schemaVersion: 1, launchRequestId: draftId, stage: "plan", resourceKind: "computer", profileId: "ubuntu-desktop",
+      name: "Ubuntu Desktop 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
+      capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
+    }));
+    fetchPlanStrictMock.mockResolvedValue({ ...PAID_PLAN, name: "Pro", maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4 });
+    searchParamsGetMock.mockImplementation((key: string) => ({ draft: draftId, upgraded: "operator" } as Record<string, string>)[key] ?? null);
+    const view = render(<LaunchJourney />);
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    authLoaded = true;
+    view.rerender(<LaunchJourney />);
+    expect(await screen.findByText("Pro is active. Continue your Ubuntu Desktop launch.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    useAuth.mockRestore();
   });
 
   it("links agents that still set up on their own page with a way back to Launch", async () => {

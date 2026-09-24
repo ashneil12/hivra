@@ -152,6 +152,23 @@ describe("CheckoutCanceledPage", () => {
     });
   });
 
+  it("goes back to the launch with the plan it moved to when a retry activates in place", async () => {
+    mockGet.mockImplementation((key: string) => ({
+      plan: "operator",
+      returnTo: "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333",
+    } as Record<string, string>)[key] ?? null);
+    fetchMock.mockResolvedValue({
+      json: async () => ({ success: true, data: { activated: true } }),
+    } as Response);
+
+    render(<CheckoutCanceledPage />);
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+
+    await waitFor(() => {
+      expect(window.location.href).toBe("/dashboard/launch?draft=33333333-3333-4333-8333-333333333333&upgraded=operator");
+    });
+  });
+
   it("ignores a return path that leaves the dashboard", () => {
     mockGet.mockImplementation((key: string) => ({ plan: "operator", returnTo: "//evil.example/dashboard" } as Record<string, string>)[key] ?? null);
     render(<CheckoutCanceledPage />);

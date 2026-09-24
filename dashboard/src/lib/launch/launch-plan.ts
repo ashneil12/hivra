@@ -14,7 +14,13 @@ import { isProxmoxDeploymentTarget, type DeploymentTargetDto } from "@/lib/infra
 import { measuredTargetCapacity } from "@/lib/infrastructure/measured-target-capacity";
 import { ACTIVE_PLAN_KEYS, PLAN_ORDER, PLANS, type PlanKey } from "@/lib/subscription/plans";
 
-import { LAUNCH_NAME_MAX_LENGTH, PROFILE_DETAILS, type LaunchProfileId, type LaunchResources } from "./contracts";
+import {
+  LAUNCH_NAME_MAX_LENGTH,
+  PROFILE_DETAILS,
+  type LaunchDraft,
+  type LaunchProfileId,
+  type LaunchResources,
+} from "./contracts";
 import { launchResourcePolicy, type ResourceEnvelope } from "./resource-envelope";
 
 type Size = { cpu: number; ram: number };
@@ -98,9 +104,14 @@ export type LaunchFitEvidence = {
   /** Launch-ready targets of any kind, before runtime filtering. */
   targets: readonly DeploymentTargetDto[];
   targetsLoading: boolean;
+  /** The server list could not be loaded, so an empty list says nothing. */
+  targetsError: boolean;
   /** This installation has no Hivra Cloud; only connected servers count. */
   selfHosted: boolean;
 };
+
+const PLAN_UNCHECKED: LaunchFit = { label: "Couldn't check your plan", tone: "neutral" };
+const SERVERS_UNCHECKED: LaunchFit = { label: "Couldn't check your servers", tone: "neutral" };
 
 export function isPaidPlan(plan: PlanInfo | null): boolean {
   return Boolean(plan?.subscribed && plan.key !== "free");
@@ -194,16 +205,16 @@ export function ownServerHolds(subject: LaunchFitSubject, targets: readonly Depl
   });
 }
 
-/** The badge for a Choose tile, or null while its evidence is still loading
- * or the plan could not be checked. Only observed plan and target evidence
- * is used, and the badge never promises more than the launch gates allow. */
+/** The badge for a Choose tile, or null while its evidence is still loading.
+ * Only observed plan and target evidence is used: a check that failed says
+ * so instead of reading as an answer, and the badge never promises more than
+ * the launch gates allow. */
 export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence): LaunchFit | null {
   if (subject.hivraCloud === "prepared") return { label: "Preview", tone: "neutral" };
   if (evidence.selfHosted) {
     if (evidence.targetsLoading) return null;
-    return ownServerHolds(subject, evidence.targets)
-      ? { label: "Ready on your server", tone: "fits" }
-      : { label: "Needs a connected server", tone: "needs" };
+    if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
+    return evidence.targetsError ? SERVERS_UNCHECKED : { label: "Needs a connected server", tone: "needs" };
   }
   if (subject.hivraCloud === "plan") {
     if (!evidence.planChecked) return null;
@@ -213,19 +224,17 @@ export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence
     if (cloud === "without-browser") return { label: `Fits ${planName} without a browser`, tone: "fits" };
     if (subject.ownServer && evidence.targetsLoading) return null;
     if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
-    if (cloud === "unknown") return null;
+    if (cloud === "unknown") return PLAN_UNCHECKED;
     const upgrade = cheapestPlanFor(subject, evidence.plan);
     if (upgrade) {
       return { label: subject.ownServer ? `Needs ${upgrade.name} or your own server` : `Needs ${upgrade.name}`, tone: "needs" };
     }
-    return subject.ownServer
-      ? { label: "Needs your own server", tone: "needs" }
-      : { label: `No room on your ${planName} plan`, tone: "needs" };
+    if (!subject.ownServer) return { label: `No room on your ${planName} plan`, tone: "needs" };
+    return evidence.targetsError ? SERVERS_UNCHECKED : { label: "Needs your own server", tone: "needs" };
   }
   if (evidence.targetsLoading) return null;
-  return ownServerHolds(subject, evidence.targets)
-    ? { label: "Ready on your server", tone: "fits" }
-    : { label: "Needs your own server", tone: "needs" };
+  if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
+  return evidence.targetsError ? SERVERS_UNCHECKED : { label: "Needs your own server", tone: "needs" };
 }
 
 // ── Size presets ────────────────────────────────────────────────────────────
@@ -300,6 +309,139 @@ export function sizeLabel(resources: LaunchResources, options: readonly SizePres
 export function formatLaunchSize(cpu: number, ram: number): string {
   const tenth = (value: number) => Math.floor(value * 10 + 1e-9) / 10;
   return `${tenth(cpu)} CPU / ${tenth(ram)} GB`;
+}
+
+// ── Fitting a size to where it runs ─────────────────────────────────────────
+
+/** What one agent or computer may use where it runs: its reservation must
+ * fit what is still free, and its burst maximum what each one may reach. */
+export type SizeLimits = {
+  reservedCpu: number;
+  reservedRam: number;
+  maximumCpu: number;
+  maximumRam: number;
+};
+
+/** On Hivra Cloud the plan sets the limits (per-agent caps and what is left
+ * of the pool; unbounded until the plan is known). On the owner's server they
+ * come from its last measured capacity, and missing evidence counts as none. */
+export function destinationSizeLimits(
+  mode: "hivra-managed" | "self-managed",
+  target: DeploymentTargetDto | null,
+  plan: PlanInfo | null,
+): SizeLimits {
+  if (mode === "hivra-managed") {
+    return {
+      reservedCpu: plan?.usage ? Math.min(plan.maxCpuPerAgent, Math.max(0, plan.poolCpu - plan.usage.usedCpu)) : Infinity,
+      reservedRam: plan?.usage ? Math.min(plan.maxRamPerAgent, Math.max(0, plan.poolRam - plan.usage.usedRam)) : Infinity,
+      maximumCpu: plan?.maxCpuPerAgent ?? Infinity,
+      maximumRam: plan?.maxRamPerAgent ?? Infinity,
+    };
+  }
+  const capacity = measuredTargetCapacity(target);
+  const totalMemory = target?.capacity.memoryBytes.total;
+  return {
+    reservedCpu: capacity.cpu,
+    reservedRam: capacity.ramGb,
+    maximumCpu: target?.capacity.cpu.totalCores ?? capacity.cpu,
+    maximumRam: totalMemory === null || totalMemory === undefined ? capacity.ramGb : totalMemory / 1024 ** 3,
+  };
+}
+
+export function sizeWithinLimits(
+  size: { cpu: number; ram: number; maximumCpu?: number; maximumRam?: number },
+  limits: SizeLimits,
+): boolean {
+  return size.cpu <= limits.reservedCpu
+    && size.ram <= limits.reservedRam
+    && (size.maximumCpu ?? size.cpu) <= limits.maximumCpu
+    && (size.maximumRam ?? size.ram) <= limits.maximumRam;
+}
+
+/** The values a profile's size pickers offer. */
+type SizeChoices = { cpuOptions: readonly number[]; ramOptions: readonly number[] };
+
+function capMaximum(maximum: number, reserved: number, limit: number, options: readonly number[]): number | null {
+  if (maximum <= limit) return maximum;
+  if (reserved > limit) return null;
+  const allowed = options.filter(option => option >= reserved && option <= limit);
+  return allowed.length > 0 ? Math.max(...allowed) : reserved;
+}
+
+/** `size` as it can run here, or null when its reservation doesn't fit. The
+ * reservation is never changed. A maximum above what each one may reach here
+ * comes down to the largest value the pickers offer within it, never below
+ * the reservation: it is headroom used only while the host has spare room. */
+export function fitSizeToLimits(size: ResourceEnvelope, limits: SizeLimits, choices: SizeChoices): ResourceEnvelope | null {
+  if (size.cpu > limits.reservedCpu || size.ram > limits.reservedRam) return null;
+  const maximumCpu = capMaximum(size.maximumCpu, size.cpu, limits.maximumCpu, choices.cpuOptions);
+  const maximumRam = capMaximum(size.maximumRam, size.ram, limits.maximumRam, choices.ramOptions);
+  if (maximumCpu === null || maximumRam === null) return null;
+  return { cpu: size.cpu, ram: size.ram, maximumCpu, maximumRam };
+}
+
+export type FittedSizePreset = SizePreset & {
+  /** The preset's reservation fits here. */
+  fits: boolean;
+  /** Its maximum came down to what each one may reach here. */
+  capped: boolean;
+};
+
+/** Small / Medium / Large as they can run here. A preset whose reservation
+ * fits stays available even when its maximum has to come down. */
+export function fitSizePresets(options: readonly SizePreset[], limits: SizeLimits, choices: SizeChoices): FittedSizePreset[] {
+  return options.map(preset => {
+    const fitted = fitSizeToLimits(preset.resources, limits, choices);
+    if (!fitted) return { ...preset, fits: false, capped: false };
+    return {
+      ...preset,
+      resources: fitted,
+      fits: true,
+      capped: fitted.maximumCpu < preset.resources.maximumCpu || fitted.maximumRam < preset.resources.maximumRam,
+    };
+  });
+}
+
+/** The fitting preset to offer when the current size doesn't fit here: the
+ * largest one no bigger than the current reservation, else the smallest. */
+export function fittingPresetFor(options: readonly FittedSizePreset[], resources: LaunchResources): FittedSizePreset | null {
+  const fitting = options.filter(preset => preset.fits);
+  const noBigger = fitting.filter(preset => preset.resources.cpu <= resources.cpu && preset.resources.ram <= resources.ram);
+  return noBigger.at(-1) ?? fitting[0] ?? null;
+}
+
+/** Hivra's size for a profile here: its recommended size, with the maximum
+ * fitted to the destination when it is more than each one may reach. When
+ * even the reservation doesn't fit, the recommendation stays as it is and
+ * the plan step says what is short. Null limits mean nothing is known yet. */
+export function recommendedLaunchSize(
+  profileId: LaunchProfileId,
+  limits: SizeLimits | null,
+  { browser }: { browser: boolean },
+): LaunchResources {
+  const preferred = { ...launchResourcePolicy(profileId, { browser }).recommended, source: "recommended" as const };
+  if (!limits || sizeWithinLimits(preferred, limits)) return preferred;
+  const fitted = fitSizeToLimits(preferred, limits, PROFILE_DETAILS[profileId]);
+  return fitted ? { ...fitted, source: "recommended" } : preferred;
+}
+
+export function sameLaunchSize(a: LaunchResources, b: LaunchResources): boolean {
+  return a.cpu === b.cpu
+    && a.ram === b.ram
+    && (a.maximumCpu ?? a.cpu) === (b.maximumCpu ?? b.cpu)
+    && (a.maximumRam ?? a.ram) === (b.maximumRam ?? b.ram);
+}
+
+/** The size an upgrade has to hold for this launch to go ahead afterwards.
+ * A size Hivra picked is fitted again to the new plan, so only its
+ * reservation has to fit; a size the owner chose is kept exactly. */
+export function upgradeRequestSize(resources: LaunchResources): { reserved: Size; maximum: Size } {
+  const reserved = { cpu: resources.cpu, ram: resources.ram };
+  if (resources.source === "recommended") return { reserved, maximum: reserved };
+  return {
+    reserved,
+    maximum: { cpu: resources.maximumCpu ?? resources.cpu, ram: resources.maximumRam ?? resources.ram },
+  };
 }
 
 // ── Plan and review rows ────────────────────────────────────────────────────
@@ -426,4 +568,63 @@ export function launchReturnPath(launchRequestId: string): string {
 
 export function parseLaunchDraftParam(value: string | null | undefined): string | null {
   return value && LAUNCH_DRAFT_ID.test(value) ? value.toLowerCase() : null;
+}
+
+/** What the URL a detour came back on says. */
+export type LaunchArrival = {
+  /** The draft the detour started from. */
+  draftId: string | null;
+  /** Set after a plan change: the paid plan it moved to, or null when the
+   * return didn't name one ("upgraded=1"). */
+  upgrade: { target: PlanKey | null } | null;
+};
+
+function paidPlanKey(value: string | null | undefined): PlanKey | null {
+  const key = PLAN_ORDER.find(candidate => candidate === value);
+  return key && key !== "free" ? key : null;
+}
+
+export function parseLaunchArrival(draft: string | null | undefined, upgraded: string | null | undefined): LaunchArrival | null {
+  const draftId = parseLaunchDraftParam(draft);
+  const target = paidPlanKey(upgraded);
+  const upgrade = target || upgraded === "1" ? { target } : null;
+  return draftId || upgrade ? { draftId, upgrade } : null;
+}
+
+/** Whether the fetched plan shows the upgrade: the plan it moved to or a
+ * higher one, or any paid plan when the return didn't name one. */
+export function upgradeObserved(plan: PlanInfo | null, target: PlanKey | null): boolean {
+  if (!plan || !isPaidPlan(plan)) return false;
+  return !target || planKeyRank(plan) >= PLAN_ORDER.indexOf(target);
+}
+
+function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/** What the resume prompt can say about an unfinished draft, from the draft
+ * alone: it never claims more than the draft recorded. */
+export type UnfinishedLaunchNotes = {
+  summary: string;
+  /** Part of the last try was created; this opens it so it can be deleted. */
+  partialId: string | null;
+  /** A Windows ISO download was still running on the server when last seen. */
+  download: string | null;
+};
+
+export function unfinishedLaunchNotes(draft: LaunchDraft): UnfinishedLaunchNotes {
+  const name = draft.name.trim() || (draft.profileId ? PROFILE_DETAILS[draft.profileId].name : "this launch");
+  const partialId = draft.result?.status === "error" ? draft.result.id : null;
+  let summary: string;
+  if (partialId) summary = `Your last try created part of ${name} before it stopped.`;
+  else if (draft.launchState === "failed") {
+    summary = draft.error
+      ? `Your last try at launching ${name} was turned down: ${sentence(draft.error)}`
+      : `Your last try at launching ${name} was turned down.`;
+  } else if (draft.error) summary = `Your last try at launching ${name} didn't go through: ${sentence(draft.error)}`;
+  else summary = `You set up ${name} but haven't launched it yet.`;
+  const download = draft.windowsIsoDownload
+    ? `When you left, your server was still downloading ${draft.windowsIsoDownload.filename}. Starting a new launch doesn't stop that download.`
+    : null;
+  return { summary, partialId, download };
 }

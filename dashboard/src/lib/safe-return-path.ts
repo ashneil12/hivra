@@ -44,3 +44,10 @@ export function withReturnParams(path: string, params: Record<string, string>): 
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   return `${url.pathname}${url.search}`;
 }
+
+/** The query a plan change adds to the path it returns to: the plan it moved
+ * to, so that page can tell whether the new plan shows yet, or "1" when the
+ * plan isn't known. */
+export function planReturnParams(planKey: string | null): Record<string, string> {
+  return { upgraded: planKey && /^[a-z]{1,32}$/.test(planKey) ? planKey : "1" };
+}

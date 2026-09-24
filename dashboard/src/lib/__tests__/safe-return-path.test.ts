@@ -1,4 +1,4 @@
-import { MAX_RETURN_PATH_LENGTH, safeReturnPath, withReturnParams } from "../safe-return-path";
+import { MAX_RETURN_PATH_LENGTH, planReturnParams, safeReturnPath, withReturnParams } from "../safe-return-path";
 
 describe("safeReturnPath", () => {
   it("accepts same-origin relative dashboard paths and returns them canonically", () => {
@@ -38,5 +38,13 @@ describe("safeReturnPath", () => {
   it("sets query params on a safe path without changing where it points", () => {
     expect(withReturnParams("/dashboard/launch?draft=abc", { upgraded: "1" })).toBe("/dashboard/launch?draft=abc&upgraded=1");
     expect(withReturnParams("/dashboard/launch?upgraded=0", { upgraded: "1" })).toBe("/dashboard/launch?upgraded=1");
+  });
+});
+
+describe("planReturnParams", () => {
+  it("names the plan a change moved to, or 1 when it isn't known", () => {
+    expect(planReturnParams("fleet")).toEqual({ upgraded: "fleet" });
+    expect(planReturnParams(null)).toEqual({ upgraded: "1" });
+    expect(planReturnParams("../x")).toEqual({ upgraded: "1" });
   });
 });

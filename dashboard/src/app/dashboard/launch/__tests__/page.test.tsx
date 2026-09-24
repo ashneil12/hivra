@@ -1985,6 +1985,167 @@ describe("LaunchPage", () => {
     expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
   });
 
+  const PRO_PLAN = { ...PAID_PLAN, name: "Pro", maxAgents: 3, maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4 };
+
+  it("upgrades an Ubuntu Desktop launch from Free to the Pro the badge named and launches it on Pro", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    const first = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server"));
+    chooseTile("Ubuntu Desktop");
+    const blocker = await screen.findByRole("alert");
+    expect(blocker).toHaveTextContent("Ubuntu Desktop needs a paid plan on Hivra Cloud, or a server you connected.");
+    // The blocker offers the plan the badge named, not a pricier one.
+    const upgrade = within(blocker).getByRole("link", { name: "Upgrade to Pro" });
+    const saved = storedDraftJson();
+    expect(new URL(upgrade.getAttribute("href") ?? "", "https://hivra.test").searchParams.get("returnTo"))
+      .toBe(`/dashboard/launch?draft=${saved.launchRequestId}`);
+    first.unmount();
+
+    // Back from checkout: the restored draft still carries Free's 4 CPU / 8 GB
+    // maximum, which Pro's per-computer cap can't hold.
+    expect(saved.resources).toMatchObject({ cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" });
+    fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
+    linkParams({ draft: saved.launchRequestId, upgraded: "operator" });
+    render(<LaunchPage />);
+    expect(await screen.findByText("Pro is active. Continue your Ubuntu Desktop launch.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument());
+    expect(screen.getByText("Your Pro plan lets each computer use up to 2 CPU / 4 GB, so Small's maximum stops there.")).toBeInTheDocument();
+    const small = within(screen.getByRole("group", { name: "Size" })).getByRole("button", { name: /^Small/ });
+    expect(small).toHaveAttribute("aria-pressed", "true");
+    expect(small).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Upgrade to/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review launch" }));
+    fireEvent.click(screen.getByRole("button", { name: "Launch Ubuntu Desktop" }));
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "linux-desktop", cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, launchRequestId: saved.launchRequestId,
+    })));
+  });
+
+  it("offers Ubuntu's Small on Pro and one click to it when the owner's own size is over the cap", async () => {
+    fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
+    const draft = { ...createLaunchDraft(), stage: "plan", resourceKind: "computer", profileId: "ubuntu-desktop", name: "Ubuntu Desktop 1",
+      resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "custom" } };
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    render(<LaunchPage />);
+    const blocker = await screen.findByRole("alert");
+    expect(blocker).toHaveTextContent("Ubuntu Desktop is set to use up to 4 CPU / 8 GB. Your Pro plan allows up to 2 CPU / 4 GB for each computer.");
+    // The owner's size is never lowered for them, so its upgrade holds it exactly.
+    expect(within(blocker).getByRole("link", { name: "Upgrade to Power" })).toBeInTheDocument();
+    const sizes = screen.getByRole("group", { name: "Size" });
+    expect(within(sizes).getByRole("button", { name: /^Small/ })).toBeEnabled();
+    expect(within(sizes).getByRole("button", { name: /^Medium/ })).toHaveTextContent("Over your plan");
+    fireEvent.click(within(blocker).getByRole("button", { name: "Use Small (2 CPU / 4 GB)" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review launch" })).toBeEnabled();
+  });
+
+  it("names the plan a paid upgrade moved to while it hasn't shown up yet", async () => {
+    const saved = await leaveUnfinishedCodexDraft();
+    fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
+    linkParams({ draft: saved.launchRequestId, upgraded: "fleet" });
+    render(<LaunchPage />);
+    const waiting = await screen.findByText("Your Power plan isn't showing yet. It can take a moment after checkout. You're still on Pro.");
+    expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
+
+    fetchPlanStrictMock.mockResolvedValue({ ...PAID_PLAN, name: "Power", key: "fleet" });
+    fireEvent.click(within(waiting.closest("[role='status']") as HTMLElement).getByRole("button", { name: "Check again" }));
+    expect(await screen.findByText("Power is active. Continue your Codex launch.")).toBeInTheDocument();
+  });
+
+  it("drops the upgrade params from the URL so a reload doesn't announce it again", async () => {
+    const saved = await leaveUnfinishedCodexDraft();
+    fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
+    window.history.replaceState(null, "", `/dashboard/launch?draft=${saved.launchRequestId}&upgraded=operator`);
+    linkParams({ draft: saved.launchRequestId, upgraded: "operator" });
+    const returned = render(<LaunchPage />);
+    expect(await screen.findByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("stage")).toBe("plan"));
+    expect(new URLSearchParams(window.location.search).has("upgraded")).toBe(false);
+    expect(new URLSearchParams(window.location.search).has("draft")).toBe(false);
+    // The notice stays for this visit, on every step.
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    expect(screen.getByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
+    returned.unmount();
+
+    // A reload reads the URL as it now is.
+    const reloaded = new URLSearchParams(window.location.search);
+    searchParamsGetMock.mockImplementation((key: string) => reloaded.get(key));
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("says the plan couldn't be checked on every Hivra Cloud tile instead of checking forever", async () => {
+    fetchPlanStrictMock.mockRejectedValue(new Error("plan unavailable"));
+    render(<LaunchPage />);
+    await screen.findByText("We couldn't check your plan, so we can't show what fits it yet.");
+    expect(screen.queryByText("Checking fit…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Codex/ })).toHaveTextContent("Couldn't check your plan");
+    expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Couldn't check your plan");
+  });
+
+  it("never reads a server list that failed to load as having no servers", async () => {
+    const respond = (global.fetch as jest.Mock).getMockImplementation()!;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input).includes("/api/infrastructure/targets")
+      ? { ok: false, status: 503, json: async () => ({ success: false, error: "Hosts unavailable" }) } as Response
+      : respond(input, init));
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Couldn't check your servers"));
+    expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).not.toHaveTextContent("Needs your own server");
+    expect(screen.getByRole("button", { name: /^Windows/ })).toHaveTextContent("Couldn't check your servers");
+    expect(screen.getByRole("button", { name: /^Codex/ })).toHaveTextContent("Fits your Operator plan");
+  });
+
+  it("points a resume prompt at what a partial launch created, and keeps it through Back", async () => {
+    const partialId = "77777777-7777-4777-8777-777777777777";
+    createAgentMock.mockRejectedValue(new HivraLaunchCorrectableError(
+      "The browser sidecar failed to start. Delete the computer and try again.", 409, "sidecar_failed", partialId,
+    ));
+    const first = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Codex");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    fireEvent.click(launchButton());
+    expect(await screen.findByText("Part of this launch was created and can be removed.")).toBeInTheDocument();
+    // Back and forward again still shows the way to delete it.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    expect(screen.getByText("Part of this launch was created and can be removed.")).toBeInTheDocument();
+    first.unmount();
+
+    linkParams({ start: "1" });
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Continue your Codex launch, or start a new one?" })).toBeInTheDocument();
+    expect(screen.getByText("Your last try created part of Codex 1 before it stopped.")).toBeInTheDocument();
+    expect(screen.queryByText(/haven't launched/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing has started/)).not.toBeInTheDocument();
+    expect(screen.getByText("Starting a new launch doesn't delete what was created.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open it to delete" })).toHaveAttribute("href", `/dashboard/agent/${partialId}?tab=manage`);
+  });
+
+  it("mentions a Windows ISO download still running when asking to resume", async () => {
+    const draft = { ...createLaunchDraft(), stage: "plan", resourceKind: "computer", profileId: "windows", name: "Windows-1",
+      resources: { cpu: 4, ram: 8, maximumCpu: 4, maximumRam: 8, source: "recommended" },
+      capacity: { mode: "self-managed", targetId: PROXMOX_TARGET.id },
+      windowsIsoDownload: { taskId: "99999999-9999-4999-8999-999999999999", connectionId: PROXMOX_TARGET.connectionId,
+        targetId: PROXMOX_TARGET.id, expectedConnectionRevision: 7, source: "windows-11", storage: "local", filename: "Win11.iso", state: "running" } };
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    linkParams({ start: "1" });
+    render(<LaunchPage />);
+    expect(await screen.findByRole("heading", { name: "Continue your Windows launch, or start a new one?" })).toBeInTheDocument();
+    expect(screen.getByText("You set up Windows-1 but haven't launched it yet.")).toBeInTheDocument();
+    expect(screen.getByText("When you left, your server was still downloading Win11.iso. Starting a new launch doesn't stop that download.")).toBeInTheDocument();
+  });
+
   it("keeps Review closed until a Windows name is one the host accepts", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
     windowsIsoImages = [{ volume: "local:iso/Win11.iso", name: "Win11.iso", sizeBytes: 6_000_000_000,

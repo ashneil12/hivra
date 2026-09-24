@@ -973,7 +973,8 @@ describe("BillingPage", () => {
     render(<BillingPage />);
 
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith(`${launchReturn}&upgraded=1`);
+      // Named with the plan it moved to, so Launch can tell whether it shows yet.
+      expect(mockReplace).toHaveBeenCalledWith(`${launchReturn}&upgraded=operator`);
     });
     expect(mockReplace).not.toHaveBeenCalledWith(expect.stringContaining("/dashboard/welcome"));
   });
@@ -2494,7 +2495,7 @@ describe("BillingPage", () => {
       const dialog = await screen.findByRole("dialog");
       fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Upgrade" }));
 
-      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(`${launchReturn}&upgraded=1`));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(`${launchReturn}&upgraded=fleet`));
     });
 
     it("brings a plan-change result into view when it lands above the screen", async () => {

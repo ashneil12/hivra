@@ -68,6 +68,9 @@ import {
   cheapestPlanForSize,
   costSummary,
   defaultLaunchName,
+  destinationSizeLimits,
+  fitSizePresets,
+  fittingPresetFor,
   formatLaunchSize,
   isolationDetail,
   isPaidPlan,
@@ -80,15 +83,24 @@ import {
   matchingSizePreset,
   modelAccessSummary,
   ownCapacityLabel,
-  parseLaunchDraftParam,
+  parseLaunchArrival,
+  recommendedLaunchSize,
+  sameLaunchSize,
   sizeLabel,
   sizePresets,
+  sizeWithinLimits,
+  unfinishedLaunchNotes,
+  upgradeObserved,
+  upgradeRequestSize,
+  type LaunchArrival,
   type LaunchFit,
   type LaunchFitEvidence,
   type LaunchFitSubject,
+  type SizeLimits,
   type SizePreset,
 } from "@/lib/launch/launch-plan";
 import { launchResourcePolicy } from "@/lib/launch/resource-envelope";
+import { PLANS } from "@/lib/subscription/plans";
 
 import styles from "./LaunchJourney.module.css";
 
@@ -100,14 +112,44 @@ function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"]):
     && plan.poolRam - plan.usage.usedRam >= resources.ram;
 }
 
+/** What the plan lets one launch use, or null until its usage is known. */
+function planSizeLimits(plan: PlanInfo | null): SizeLimits | null {
+  return plan?.usage ? destinationSizeLimits("hivra-managed", null, plan) : null;
+}
+
+/** Hivra's size for a profile on Hivra Cloud: the recommendation, with its
+ * maximum brought down to the plan's per-agent cap when it is over it. */
 function recommendedForPlan(profileId: LaunchProfileId, plan: PlanInfo | null, browser: boolean) {
-  const preferred = { ...launchResourcePolicy(profileId, { browser }).recommended, source: "recommended" as const };
-  if (planCanFit(plan, preferred)) return preferred;
-  const pinnedFloor = { cpu: preferred.cpu, ram: preferred.ram, maximumCpu: preferred.cpu, maximumRam: preferred.ram, source: "recommended" as const };
-  if (planCanFit(plan, pinnedFloor)) {
-    return pinnedFloor;
-  }
-  return preferred;
+  return recommendedLaunchSize(profileId, planSizeLimits(plan), { browser });
+}
+
+/** Hivra's size for a profile at the chosen destination. Codex also follows
+ * its browser choice; withCodexBrowserDefault owns that. */
+function recommendedHere(
+  profileId: LaunchProfileId,
+  mode: LaunchDestinationState["mode"],
+  selectedTarget: DeploymentTargetDto | null,
+  plan: PlanInfo | null,
+) {
+  if (mode === "hivra-managed") return recommendedForPlan(profileId, plan, false);
+  return recommendedLaunchSize(profileId, destinationSizeLimits(mode, selectedTarget, plan), { browser: false });
+}
+
+/** The draft with Hivra's own size fitted to where it runs. A pure function
+ * of the draft and its destination, like the Codex browser default: a size
+ * Hivra picked follows the plan and the host (so a draft restored after an
+ * upgrade gets the new plan's size), and a size the owner chose never moves. */
+function withRecommendedSize(
+  current: LaunchDraft,
+  context: Omit<CodexBrowserDefaultContext, "browserDefault"> & { loading: boolean },
+): LaunchDraft {
+  if (!current.profileId || current.profileId === "codex") return current;
+  if (current.resources.source !== "recommended" || current.submittedDeployment || current.stage === "launch") return current;
+  // A host list that is still loading reports no host; keep the size until
+  // the evidence is back instead of flickering through the recommendation.
+  if (current.launchRequestId !== context.restoredFor || context.loading) return current;
+  const resources = recommendedHere(current.profileId, context.mode, context.selectedTarget, context.plan);
+  return sameLaunchSize(resources, current.resources) ? current : { ...current, resources };
 }
 
 const CODEX_BROWSER_FLOOR = launchResourcePolicy("codex", { browser: true }).floor;
@@ -227,11 +269,7 @@ function withCodexBrowserDefault(current: LaunchDraft, context: CodexBrowserDefa
     context.plan,
     next => destinationHolds(context.mode, context.selectedTarget, context.plan, next),
   );
-  if (
-    browser === current.browser
-    && resources.cpu === current.resources.cpu
-    && resources.ram === current.resources.ram
-  ) return current;
+  if (browser === current.browser && sameLaunchSize(resources, current.resources)) return current;
   return { ...current, browser, resources };
 }
 
@@ -295,14 +333,21 @@ function currentHistoryEntry(): { stage: HistoryStage | null; pushed: boolean } 
   };
 }
 
+/** Query params that only mean something on arrival from a detour (the
+ * draft an upgrade started from, and the plan it moved to). The journey's own
+ * history entries drop them, so a reload doesn't announce the upgrade again. */
+const ARRIVAL_PARAMS = ["draft", "upgraded"] as const;
+
 // Each forward step gets its own history entry so the Android back gesture
 // and iOS edge swipe step back through the journey instead of leaving it.
 // Next's patched pushState/replaceState keep its router state in sync.
 function writeStageHistory(stage: LaunchStage, mode: "push" | "replace") {
   if (typeof window === "undefined" || stage === "launch") return;
   const entry = currentHistoryEntry();
-  if (mode === "replace" && entry.stage === stage) return;
   const url = new URL(window.location.href);
+  const arrived = ARRIVAL_PARAMS.some(key => url.searchParams.has(key));
+  if (mode === "replace" && entry.stage === stage && !arrived) return;
+  for (const key of ARRIVAL_PARAMS) url.searchParams.delete(key);
   url.searchParams.set("stage", stage);
   const href = `${url.pathname}${url.search}${url.hash}`;
   const data = { [HISTORY_STAGE_KEY]: stage, [HISTORY_PUSHED_KEY]: mode === "push" || entry.pushed };
@@ -315,6 +360,31 @@ function reachableStage(stage: HistoryStage, draft: LaunchDraft): HistoryStage {
   if (stage === "choose" || !draft.profileId) return "choose";
   if (stage === "review" && launchNameProblem(draft.profileId, draft.name)) return "plan";
   return stage;
+}
+
+const STAGE_ORDER: Readonly<Record<HistoryStage, number>> = { choose: 0, plan: 1, review: 2 };
+
+/** Brings the current history entry in line with the step on screen after
+ * one of the journey's own Back pops lands. The owner may have pressed Back
+ * again (or taken another step) before it did: pop again past an entry the
+ * journey pushed for a step they left, push for a step they moved on to, and
+ * otherwise rewrite the entry in place. Returns true when it popped again. */
+function catchUpHistory(shown: LaunchStage | null): boolean {
+  if (!shown || shown === "launch") return false;
+  const entry = currentHistoryEntry();
+  if (entry.stage === shown) return false;
+  if (entry.stage && entry.pushed && STAGE_ORDER[entry.stage] > STAGE_ORDER[shown]) {
+    window.history.back();
+    return true;
+  }
+  writeStageHistory(shown, entry.stage && STAGE_ORDER[entry.stage] < STAGE_ORDER[shown] ? "push" : "replace");
+  return false;
+}
+
+/** A partly created launch stays on the draft through Back and history:
+ * it is the owner's way to open and delete what was created. */
+function keptResult(draft: LaunchDraft): LaunchDraft["result"] {
+  return draft.result?.status === "error" ? draft.result : null;
 }
 
 const JOURNEY_STEPS = ["Choose", "Plan", "Review"] as const;
@@ -423,6 +493,8 @@ export function LaunchJourney() {
   const autoNameRef = useRef<{ launchRequestId: string; name: string } | null>(null);
   // Set while a history pop the journey's own Back started is in flight.
   const ownBackPendingRef = useRef(false);
+  // The step on screen, for catching the history up when that pop lands.
+  const shownStageRef = useRef<LaunchStage | null>(null);
   const journeyRef = useRef<HTMLElement | null>(null);
   const activeStage = resumeChoice ? "resume" : draft?.stage;
   const activeOutcome = activeStage === "launch" ? draft?.launchState : null;
@@ -441,8 +513,21 @@ export function LaunchJourney() {
   const requestedKindParam = searchParams?.get("kind") ?? null;
   const requestedProfileParam = searchParams?.get("profile") ?? null;
   const startParam = searchParams?.get("start") ?? null;
-  const returningDraftId = parseLaunchDraftParam(searchParams?.get("draft"));
-  const upgradedParam = searchParams?.get("upgraded") === "1";
+  const draftParam = searchParams?.get("draft") ?? null;
+  const upgradedParam = searchParams?.get("upgraded") ?? null;
+  // Read on arrival and kept: the journey's own history writes drop these
+  // params, and the draft and notice they describe must not change with them.
+  const [arrival, setArrival] = useState<LaunchArrival | null>(() => parseLaunchArrival(draftParam, upgradedParam));
+  useEffect(() => {
+    const next = parseLaunchArrival(draftParam, upgradedParam);
+    if (!next) return;
+    setArrival(current => current
+      && current.draftId === next.draftId
+      && Boolean(current.upgrade) === Boolean(next.upgrade)
+      && current.upgrade?.target === next.upgrade?.target ? current : next);
+  }, [draftParam, upgradedParam]);
+  const returningDraftId = arrival?.draftId ?? null;
+  const upgradeReturn = arrival?.upgrade ?? null;
   const handoff = useMemo(
     () => parseLaunchTargetHandoff(targetValues),
     // The key represents the complete ordered query input.
@@ -637,7 +722,7 @@ export function LaunchJourney() {
       // catches the URL up. Applying it again could undo a step the owner
       // took before the pop landed (Back, then a tile, in quick succession).
       if (ownBackPendingRef.current) {
-        ownBackPendingRef.current = false;
+        ownBackPendingRef.current = catchUpHistory(shownStageRef.current);
         return;
       }
       const requested = currentHistoryEntry().stage;
@@ -646,7 +731,7 @@ export function LaunchJourney() {
         if (!current || current.stage === "launch") return current;
         const next = reachableStage(requested, current);
         if (next === current.stage) return current;
-        return { ...current, stage: next, launchState: "idle", result: null, error: null };
+        return { ...current, stage: next, launchState: "idle", result: keptResult(current), error: null };
       });
     };
     window.addEventListener("popstate", onPopState);
@@ -660,18 +745,6 @@ export function LaunchJourney() {
         if (!active) return;
         setPlan(nextPlan);
         setPlanChecked(true);
-        setDraft(current => {
-          if (
-            !current?.profileId
-            // Codex also depends on the destination; the effect below owns it.
-            || current.profileId === "codex"
-            || current.resources.source !== "recommended"
-            || current.submittedDeployment
-          ) return current;
-          const resources = recommendedForPlan(current.profileId, nextPlan, current.browser);
-          if (resources.cpu === current.resources.cpu && resources.ram === current.resources.ram) return current;
-          return { ...current, resources };
-        });
       })
       .catch(() => {
         if (!active) return;
@@ -690,6 +763,7 @@ export function LaunchJourney() {
   // launch never changes. Applied before paint so a stale default is never
   // shown or submitted.
   const destinationMode = destination.mode;
+  const destinationLoading = destination.loading;
   const selectedTarget = destination.selectedTarget;
   const codexBrowserDefault = recommendedCodexBrowser(destinationMode, selectedTarget, plan);
   useLayoutEffect(() => {
@@ -705,6 +779,19 @@ export function LaunchJourney() {
     if (!draft || withCodexBrowserDefault(draft, context) === draft) return;
     setDraft(current => current ? withCodexBrowserDefault(current, context) : current);
   }, [codexBrowserDefault, destinationMode, draft, plan, restoredDestinationFor, selectedTarget]);
+
+  // The same for every other profile's size: Hivra's own pick follows the
+  // plan and the selected host whenever either changes, including a plan
+  // that resolves after a draft is restored (back from an upgrade) or before.
+  useLayoutEffect(() => {
+    const context = { restoredFor: restoredDestinationFor, mode: destinationMode, selectedTarget, plan, loading: destinationLoading };
+    if (!draft || withRecommendedSize(draft, context) === draft) return;
+    setDraft(current => current ? withRecommendedSize(current, context) : current);
+  }, [destinationLoading, destinationMode, draft, plan, restoredDestinationFor, selectedTarget]);
+
+  useLayoutEffect(() => {
+    shownStageRef.current = draft?.stage ?? null;
+  }, [draft?.stage]);
 
   useEffect(() => {
     if (draft) writeLaunchDraft(draft, storageOwner);
@@ -742,7 +829,8 @@ export function LaunchJourney() {
   };
 
   // Back from an upgrade: say what the plan is now, from the plan itself,
-  // never from the URL that brought the owner here.
+  // never from the URL that brought the owner here. The URL only names the
+  // plan the owner moved to, so a plan that hasn't caught up says so.
   const activePlanMessage = (): string => {
     const active = `${plan?.name ?? "Your plan"} is active.`;
     if (!draft || draft.stage === "choose") return `${active} Choose what to launch.`;
@@ -750,8 +838,11 @@ export function LaunchJourney() {
       ? `${active} Continue your ${PROFILE_DETAILS[draft.profileId].name} launch.`
       : active;
   };
-  const upgradeNotice = upgradedParam && planChecked && !selfHosted ? (
-    isPaidPlan(plan) ? (
+  const upgradeTarget = upgradeReturn?.target ?? null;
+  // A plan check that failed is reported where it matters (the Choose banner
+  // and the Hivra Cloud blocker); it says nothing about the upgrade.
+  const upgradeNotice = upgradeReturn && planChecked && plan && !selfHosted ? (
+    upgradeObserved(plan, upgradeTarget) ? (
       <div className={styles.notice} role="status">
         <Check size={16} aria-hidden />
         <span>{activePlanMessage()}</span>
@@ -759,7 +850,9 @@ export function LaunchJourney() {
     ) : (
       <div className={styles.blocker} role="status">
         <AlertTriangle size={16} aria-hidden />
-        <span><strong>Your new plan isn&apos;t showing yet. It can take a moment after checkout.</strong>
+        <span><strong>{upgradeTarget
+          ? `Your ${PLANS[upgradeTarget].name} plan isn't showing yet. It can take a moment after checkout. You're still on ${plan.name}.`
+          : "Your new plan isn't showing yet. It can take a moment after checkout."}</strong>
           <span className={styles.blockerActions}><button type="button" onClick={recheckPlan}>Check again</button></span>
         </span>
       </div>
@@ -770,6 +863,7 @@ export function LaunchJourney() {
     const saved = resumeChoice.stored;
     const savedProfile = PROFILE_DETAILS[saved.profileId!];
     const freshProfile = resumeChoice.fresh.profileId ? PROFILE_DETAILS[resumeChoice.fresh.profileId] : null;
+    const notes = unfinishedLaunchNotes(saved);
     const keep = (next: LaunchDraft) => {
       setResumeChoice(null);
       writeLaunchDraft(next, storageOwner);
@@ -787,8 +881,19 @@ export function LaunchJourney() {
           <div className={styles.stageIntro}>
             <span className={styles.eyebrow}>Unfinished launch</span>
             <h1 id="launch-resume-heading">Continue your {savedProfile.name} launch, or start a new one?</h1>
-            <p>You set up {saved.name.trim() || savedProfile.name} but haven&apos;t launched it. Nothing has started for it yet.</p>
+            <p>{notes.summary}</p>
+            {notes.download ? <p>{notes.download}</p> : null}
           </div>
+          {notes.partialId ? (
+            <div className={styles.blocker}>
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>Starting a new launch doesn&apos;t delete what was created.</strong>
+                <span className={styles.blockerActions}>
+                  <Link href={`/dashboard/agent/${encodeURIComponent(notes.partialId)}?tab=manage`}>Open it to delete</Link>
+                </span>
+              </span>
+            </div>
+          ) : null}
           <div className={styles.resumeActions}>
             <button type="button" className={styles.primaryAction} data-testid="launch-primary-action" onClick={() => keep(saved)}>
               Continue {savedProfile.name} launch <ArrowRight size={15} aria-hidden />
@@ -847,28 +952,32 @@ export function LaunchJourney() {
   const capacitySetupHref = currentProfile
     ? buildInfrastructureSetupHref(currentProfile.placementRuntimeId === "windows-installer" ? "windows" : currentProfile.placementRuntimeId, { unified: true })
     : "/dashboard/infrastructure";
-  const reservedCpuLimit = destination.mode === "hivra-managed"
-    ? plan?.usage ? Math.min(plan.maxCpuPerAgent, Math.max(0, plan.poolCpu - plan.usage.usedCpu)) : Infinity
-    : targetCapacity.cpu;
-  const reservedRamLimit = destination.mode === "hivra-managed"
-    ? plan?.usage ? Math.min(plan.maxRamPerAgent, Math.max(0, plan.poolRam - plan.usage.usedRam)) : Infinity
-    : targetCapacity.ramGb;
-  const selectedTargetMaximumCpu = destination.selectedTarget?.capacity.cpu.totalCores ?? targetCapacity.cpu;
-  const selectedTargetMaximumRam = destination.selectedTarget?.capacity.memoryBytes.total === null
-    || destination.selectedTarget?.capacity.memoryBytes.total === undefined
-    ? targetCapacity.ramGb
-    : destination.selectedTarget.capacity.memoryBytes.total / 1024 ** 3;
-  const maximumCpuLimit = destination.mode === "hivra-managed" ? plan?.maxCpuPerAgent ?? Infinity : selectedTargetMaximumCpu;
-  const maximumRamLimit = destination.mode === "hivra-managed" ? plan?.maxRamPerAgent ?? Infinity : selectedTargetMaximumRam;
+  // What one launch may use here: the plan on Hivra Cloud, the selected
+  // host's measured capacity on the owner's own.
+  const sizeLimits = destinationSizeLimits(destination.mode, destination.selectedTarget, plan);
+  const reservedCpuLimit = sizeLimits.reservedCpu;
+  const reservedRamLimit = sizeLimits.reservedRam;
+  const maximumCpuLimit = sizeLimits.maximumCpu;
+  const maximumRamLimit = sizeLimits.maximumRam;
   const substrate = launchSubstrate(destination.mode, destination.selectedTarget);
-  const presetOptions = draft.profileId ? sizePresets(draft.profileId, { browser: codexBrowser }) : [];
+  // Small / Medium / Large as they run here: a preset whose reservation fits
+  // stays available with its maximum brought down to what each one may reach.
+  const presetOptions = draft.profileId && currentProfile
+    ? fitSizePresets(sizePresets(draft.profileId, { browser: codexBrowser }), sizeLimits, currentProfile)
+    : [];
   const currentPreset = matchingSizePreset(draft.resources, presetOptions);
   const currentSizeLabel = sizeLabel(draft.resources, presetOptions);
+  const currentFittedPreset = presetOptions.find(preset => preset.id === currentPreset?.id) ?? null;
+  const sizeFitsHere = sizeWithinLimits(draft.resources, sizeLimits);
+  // Offered in a size blocker: one click to a preset that runs here.
+  const fittingPreset = !sizeFitsHere && !wholeProviderComputer ? fittingPresetFor(presetOptions, draft.resources) : null;
   const nameProblem = draft.profileId ? launchNameProblem(draft.profileId, draft.name) : null;
-  // The plan that would hold this exact size, for an upgrade blocker.
+  // The plan an upgrade blocker offers: the cheapest one this launch can go
+  // ahead on afterwards. Hivra's own size is fitted again to the new plan, so
+  // it offers the plan the Choose badge named; the owner's size is kept.
+  const upgradeSize = upgradeRequestSize(draft.resources);
   const upgrade = currentProfile && plan?.usage ? cheapestPlanForSize({
-    reserved: { cpu: draft.resources.cpu, ram: draft.resources.ram },
-    maximum: { cpu: draft.resources.maximumCpu ?? draft.resources.cpu, ram: draft.resources.maximumRam ?? draft.resources.ram },
+    ...upgradeSize,
     // Browser automation is never part of a Free plan on Hivra Cloud.
     minPlan: codexBrowser ? "pro" : launchProfileFitSubject(draft.profileId!).minPlan,
     poolExempt: false,
@@ -879,6 +988,8 @@ export function LaunchJourney() {
   // The real next steps a managed blocker can offer.
   let blockerRemedy: "check-plan" | "managed-plan" | null = null;
   let offerBrowserOff = false;
+  // A size blocker can offer the preset that runs here instead.
+  let offerFittingPreset = false;
   const selectedWindowsImage = windowsImages.find(image => image.volume === draft.windowsIsoVolume
     && image.sizeBytes === draft.windowsIsoEvidence?.sizeBytes
     && image.modifiedAtSeconds === draft.windowsIsoEvidence?.modifiedAtSeconds
@@ -898,6 +1009,7 @@ export function LaunchJourney() {
       ? "The selected host does not have enough measured capacity for this size. Choose a smaller size, or choose another host."
       : "The selected host does not have enough measured capacity for this size.";
     offerBrowserOff = codexBrowser && targetFitsWithoutBrowser;
+    offerFittingPreset = true;
   }
   else if (destination.mode === "hivra-managed" && managedEntitlementRequired) capacityBlocker = "Hivra Cloud isn't available for Windows. Choose a server you connected.";
   else if (draft.profileId === "windows" && windowsImagesLoading) capacityBlocker = "Checking the Windows ISOs on this server…";
@@ -925,6 +1037,7 @@ export function LaunchJourney() {
     );
     blockerRemedy = "managed-plan";
     offerBrowserOff = codexBrowser && planCanFit(plan, resourcesWithBrowser(false));
+    offerFittingPreset = true;
   } else if (destination.mode === "hivra-managed" && codexBrowser && !isPaidPlan(plan)) {
     capacityBlocker = "Codex with a browser needs a paid plan on Hivra Cloud.";
     blockerRemedy = "managed-plan";
@@ -942,8 +1055,14 @@ export function LaunchJourney() {
       browserRaisedFrom: raised ? draft.resources : null,
     });
   };
+  // A forward step's own history entry. While a Back pop is in flight, that
+  // pop pushes it when it lands instead: pushing mid-traversal would race it.
+  const pushStage = (stage: HistoryStage) => {
+    shownStageRef.current = stage;
+    if (!ownBackPendingRef.current) writeStageHistory(stage, "push");
+  };
   const chooseProfile = (profileId: LaunchProfileId) => {
-    writeStageHistory("plan", "push");
+    pushStage("plan");
     // The same choice again keeps its draft: name, size, place and request.
     if (draft.profileId === profileId) {
       updateDraft({ stage: "plan" });
@@ -966,7 +1085,9 @@ export function LaunchJourney() {
       name,
       browser,
       browserSource: "recommended",
-      resources: recommendedForPlan(profileId, plan, browser),
+      resources: profileId === "codex"
+        ? recommendedForPlan(profileId, plan, browser)
+        : recommendedHere(profileId, destination.mode, destination.selectedTarget, plan),
       windowsIsoVolume: null,
       windowsIsoEvidence: null,
       windowsIsoSource: "unknown",
@@ -1043,12 +1164,15 @@ export function LaunchJourney() {
     }
   };
   const advanceTo = (stage: HistoryStage, change: Partial<LaunchDraft> = {}) => {
-    writeStageHistory(stage, "push");
+    pushStage(stage);
     updateDraft({ ...change, stage });
   };
   const goBack = () => {
     const previous = stepBack(draft.stage);
-    updateDraft({ stage: previous, launchState: "idle", result: null, error: null });
+    updateDraft({ stage: previous, launchState: "idle", result: keptResult(draft), error: null });
+    shownStageRef.current = previous;
+    // A Back pop still in flight catches the history up when it lands.
+    if (ownBackPendingRef.current) return;
     // Pop the entry this step pushed so the next system back keeps stepping
     // back; entries the journey did not push are rewritten in place.
     const entry = currentHistoryEntry();
@@ -1138,8 +1262,14 @@ export function LaunchJourney() {
     }
   };
 
-  const blockerActions = offerBrowserOff || destination.mode === "self-managed" || blockerRemedy ? (
+  const presetOffer = offerFittingPreset ? fittingPreset : null;
+  const blockerActions = offerBrowserOff || presetOffer || destination.mode === "self-managed" || blockerRemedy ? (
     <span className={styles.blockerActions}>
+      {presetOffer ? (
+        <button type="button" onClick={() => choosePreset(presetOffer)}>
+          Use {presetOffer.label} ({formatLaunchSize(presetOffer.resources.cpu, presetOffer.resources.ram)})
+        </button>
+      ) : null}
       {offerBrowserOff ? <button type="button" onClick={() => chooseCodexBrowser(false)}>Turn off the browser</button> : null}
       {destination.mode === "self-managed" ? <Link href={capacitySetupHref}>Set up capacity</Link>
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
@@ -1178,6 +1308,7 @@ export function LaunchJourney() {
     planChecked,
     targets: destination.launchReadyTargets,
     targetsLoading: destination.loading,
+    targetsError: Boolean(destination.error),
     selfHosted,
   };
   const renderTile = (tile: ChooseTile) => {
@@ -1242,10 +1373,12 @@ export function LaunchJourney() {
     : gvisorComputer
       ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB enforced limit`
       : `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved · up to ${draft.resources.maximumCpu ?? draft.resources.cpu} CPU / ${draft.resources.maximumRam ?? draft.resources.ram} GB`;
-  const presetFits = (preset: SizePreset) => preset.resources.cpu <= reservedCpuLimit
-    && preset.resources.ram <= reservedRamLimit
-    && preset.resources.maximumCpu <= maximumCpuLimit
-    && preset.resources.maximumRam <= maximumRamLimit;
+  // Why the chosen preset's maximum is lower here than elsewhere.
+  const cappedNote = currentFittedPreset?.capped
+    ? destination.mode === "hivra-managed" && plan
+      ? `Your ${plan.name} plan lets each ${draft.resourceKind ?? "agent"} use up to ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)}, so ${currentFittedPreset.label}'s maximum stops there.`
+      : `This server has ${formatLaunchSize(maximumCpuLimit, maximumRamLimit)} in total, so ${currentFittedPreset.label}'s maximum stops there.`
+    : null;
   const modelAccess = draft.profileId ? modelAccessSummary(draft.profileId) : null;
   const cost = draft.profileId ? costSummary({ profileId: draft.profileId, substrate, planName: plan?.name ?? null }) : "";
   const whatItCanUse = draft.profileId ? capabilitySummary(draft.profileId, { browser: codexBrowser }) : "";
@@ -1489,7 +1622,7 @@ export function LaunchJourney() {
                   <span className={styles.sizeChooser}>
                     <span className={styles.presets} role="group" aria-label="Size">
                       {presetOptions.map(preset => {
-                        const fits = presetFits(preset);
+                        const fits = preset.fits;
                         const selected = currentPreset?.id === preset.id;
                         return (
                           <button
@@ -1509,6 +1642,7 @@ export function LaunchJourney() {
                       })}
                     </span>
                     <strong className={styles.sizeSummary}>{sizeSummary}</strong>
+                    {cappedNote ? <small>{cappedNote}</small> : null}
                     <small>{gvisorComputer
                       ? "The sandbox always keeps its full CPU and memory, and never uses more."
                       : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>

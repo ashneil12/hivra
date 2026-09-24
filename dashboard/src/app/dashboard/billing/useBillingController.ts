@@ -8,9 +8,10 @@ import {
   requestCreditTopUpCheckout,
   requestSubscriptionCheckout,
 } from "@/lib/billing/client";
+import { isPlanKey } from "@/lib/billing/plan-display";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
-import { safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
+import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
 import type { BillingActivityData } from "@/components/billing/BillingActivityPanel";
 import {
   describeWalletProviderError,
@@ -173,18 +174,20 @@ function useBillingSearchParams() {
 }
 
 /** Where a plan change started from (a launch blocked on the plan) and
- * should land once the plan is confirmed, marked so that page knows to check
- * and say which plan is now active. Only a same-origin dashboard path. */
-function planReturnDestination(params: { get(key: string): string | null } | null | undefined): string | null {
+ * should land once the plan is confirmed, marked with the plan it moved to so
+ * that page can check whether it shows yet. Only a same-origin dashboard path. */
+function planReturnDestination(
+  params: { get(key: string): string | null } | null | undefined,
+  planKey: unknown,
+): string | null {
   const returnTo = safeReturnPath(params?.get("returnTo"));
-  return returnTo ? withReturnParams(returnTo, { upgraded: "1" }) : null;
+  return returnTo ? withReturnParams(returnTo, planReturnParams(isPlanKey(planKey) ? planKey : null)) : null;
 }
 
 export function useBillingController() {
   const router = useRouter();
   const searchParams = useBillingSearchParams();
   const returnTo = safeReturnPath(searchParams?.get("returnTo"));
-  const returnAfterPlanChange = planReturnDestination(searchParams);
   const billingV2Enabled = isBillingV2UiEnabled();
   const cryptoBillingEnabled = isCryptoBillingUiEnabled();
   const creditTopUpsEnabled = isCreditTopUpsUiEnabled();
@@ -495,7 +498,7 @@ export function useBillingController() {
             return;
           }
 
-          router.replace(planReturnDestination(searchParams) ?? "/dashboard/welcome?subscription=success&step=agent-type");
+          router.replace(planReturnDestination(searchParams, data?.plan) ?? "/dashboard/welcome?subscription=success&step=agent-type");
         } catch (err) {
           clientLog.error("Checkout confirmation request failed", err, {
             source: "billing-page",
@@ -660,7 +663,7 @@ export function useBillingController() {
       const result = await requestSubscriptionCheckout(planKey as PlanKey, cadence, { returnTo });
       if (result.ok) {
         if (result.activated) {
-          router.push(returnAfterPlanChange ?? "/dashboard/welcome?step=agent-type");
+          router.push(planReturnDestination(searchParams, planKey) ?? "/dashboard/welcome?step=agent-type");
           return;
         }
 
@@ -834,6 +837,7 @@ export function useBillingController() {
         // Keep the dialog busy until the new plan has loaded, so the page
         // never shows the old plan with live buttons in between.
         await fetchUsage();
+        const returnAfterPlanChange = planReturnDestination(searchParams, newPlan);
         if (returnAfterPlanChange) router.push(returnAfterPlanChange);
       } else {
         setViolation(result.error || "Failed to change plan.");

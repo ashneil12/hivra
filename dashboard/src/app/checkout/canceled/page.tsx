@@ -7,7 +7,7 @@ import { ArrowRight, CreditCard, Loader2 } from "lucide-react";
 
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
-import { safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
+import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { ACTIVE_PLAN_KEYS, PLANS, formatPrice, type PlanKey } from "@/lib/subscription";
@@ -52,7 +52,7 @@ function CheckoutCanceledContent() {
 
     if (result.ok) {
       if (result.activated) {
-        window.location.href = returnTo ? withReturnParams(returnTo, { upgraded: "1" }) : "/dashboard/welcome?step=agent-type";
+        window.location.href = returnTo ? withReturnParams(returnTo, planReturnParams(planKey)) : "/dashboard/welcome?step=agent-type";
         return;
       }
 

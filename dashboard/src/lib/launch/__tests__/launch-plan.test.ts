@@ -6,21 +6,31 @@ import {
 } from "@/lib/infrastructure/portable-provisioner-contract";
 
 import { PROFILE_DETAILS } from "../contracts";
+import { createLaunchDraft } from "../draft-store";
 import {
   capabilitySummary,
   catalogAgentFitSubject,
   cheapestPlanForSize,
   costSummary,
   defaultLaunchName,
+  destinationSizeLimits,
+  fitSizePresets,
+  fitSizeToLimits,
+  fittingPresetFor,
   launchChangesSummary,
   launchFit,
   launchNameProblem,
   launchProfileFitSubject,
   launchReturnPath,
   matchingSizePreset,
+  parseLaunchArrival,
   parseLaunchDraftParam,
+  recommendedLaunchSize,
   sizeLabel,
   sizePresets,
+  unfinishedLaunchNotes,
+  upgradeObserved,
+  upgradeRequestSize,
   type LaunchFitEvidence,
 } from "../launch-plan";
 import { validateResourceEnvelope } from "../resource-envelope";
@@ -72,7 +82,7 @@ const PROXMOX: DeploymentTargetDto = {
 };
 
 function evidence(plan: PlanInfo | null, targets: DeploymentTargetDto[] = [], overrides: Partial<LaunchFitEvidence> = {}): LaunchFitEvidence {
-  return { plan, planChecked: true, targets, targetsLoading: false, selfHosted: false, ...overrides };
+  return { plan, planChecked: true, targets, targetsLoading: false, targetsError: false, selfHosted: false, ...overrides };
 }
 
 describe("launchFit", () => {
@@ -114,11 +124,27 @@ describe("launchFit", () => {
 
   it("shows no badge until the evidence it depends on is known", () => {
     expect(launchFit(launchProfileFitSubject("codex"), evidence(null, [], { planChecked: false }))).toBeNull();
-    // A failed plan check is unknown, not Free.
-    expect(launchFit(launchProfileFitSubject("codex"), evidence(null))).toBeNull();
-    expect(launchFit(launchProfileFitSubject("codex"), evidence({ ...FREE, usage: undefined }))).toBeNull();
     expect(launchFit(launchProfileFitSubject("linux-terminal"), evidence(FREE, [], { targetsLoading: true }))).toBeNull();
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), evidence(FREE, [], { targetsLoading: true }))).toBeNull();
+  });
+
+  it("says a check failed instead of waiting forever or reading it as an answer", () => {
+    const planUnchecked = { label: "Couldn't check your plan", tone: "neutral" };
+    const serversUnchecked = { label: "Couldn't check your servers", tone: "neutral" };
+    // A failed plan check is unknown, not Free, and it is finished.
+    expect(launchFit(launchProfileFitSubject("codex"), evidence(null))).toEqual(planUnchecked);
+    expect(launchFit(catalogAgentFitSubject("hermes"), evidence(null))).toEqual(planUnchecked);
+    expect(launchFit(launchProfileFitSubject("codex"), evidence({ ...FREE, usage: undefined }))).toEqual(planUnchecked);
+    // A server the owner connected still counts when only the plan is unknown.
+    expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), evidence(null, [PROXMOX]))).toEqual({ label: "Ready on your server", tone: "fits" });
+    // A server list that failed to load is not an empty one.
+    const failed = { targetsError: true };
+    expect(launchFit(launchProfileFitSubject("linux-terminal"), evidence(FREE, [], failed))).toEqual(serversUnchecked);
+    expect(launchFit(launchProfileFitSubject("windows"), evidence(FREE, [], failed))).toEqual(serversUnchecked);
+    expect(launchFit(launchProfileFitSubject("codex"), evidence(null, [], { ...failed, selfHosted: true }))).toEqual(serversUnchecked);
+    // What the plan itself says is still observed.
+    expect(launchFit(launchProfileFitSubject("codex"), evidence(FREE, [], failed))).toEqual({ label: "Fits Free without a browser", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), evidence(FREE, [], failed))).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
   });
 
   it("judges only connected servers on a self-hosted installation", () => {
@@ -178,6 +204,64 @@ describe("size presets", () => {
   });
 });
 
+describe("fitting a size to where it runs", () => {
+  const ubuntu = PROFILE_DETAILS["ubuntu-desktop"];
+
+  it("keeps the reservation and brings a maximum over the plan's cap down to it", () => {
+    const pro = destinationSizeLimits("hivra-managed", null, PRO);
+    expect(pro).toEqual({ reservedCpu: 2, reservedRam: 4, maximumCpu: 2, maximumRam: 4 });
+    expect(fitSizeToLimits({ cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 }, pro, ubuntu))
+      .toEqual({ cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4 });
+    // A reservation over what is left never shrinks to fit.
+    expect(fitSizeToLimits({ cpu: 4, ram: 8, maximumCpu: 8, maximumRam: 16 }, pro, ubuntu)).toBeNull();
+    const used = destinationSizeLimits("hivra-managed", null, { ...PRO, usage: { agentCount: 1, usedCpu: 1, usedRam: 2 } });
+    expect(fitSizeToLimits({ cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 }, used, ubuntu)).toBeNull();
+  });
+
+  it("offers Ubuntu's Small on Pro instead of marking every preset over the plan", () => {
+    const presets = fitSizePresets(sizePresets("ubuntu-desktop"), destinationSizeLimits("hivra-managed", null, PRO), ubuntu);
+    expect(presets.map(preset => [preset.label, preset.fits, preset.capped])).toEqual([
+      ["Small", true, true], ["Medium", false, false], ["Large", false, false],
+    ]);
+    expect(presets[0].resources).toEqual({ cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4 });
+    expect(sizeLabel({ ...presets[0].resources, source: "recommended" }, presets)).toBe("Small");
+    // The offer for a size that doesn't fit is the preset that does.
+    expect(fittingPresetFor(presets, { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "custom" })?.label).toBe("Small");
+    expect(fittingPresetFor(fitSizePresets(sizePresets("ubuntu-desktop"), destinationSizeLimits("hivra-managed", null, FREE), ubuntu),
+      { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "custom" })).toBeNull();
+  });
+
+  it("fits a maximum to the selected server's total capacity", () => {
+    const host = destinationSizeLimits("self-managed", PROXMOX, null);
+    expect(host).toEqual({ reservedCpu: 6, reservedRam: 8, maximumCpu: 6, maximumRam: 16 });
+    const [small, medium, large] = fitSizePresets(sizePresets("ubuntu-desktop"), host, ubuntu);
+    expect([small.fits, small.capped]).toEqual([true, false]);
+    expect(medium.resources).toEqual({ cpu: 4, ram: 8, maximumCpu: 4, maximumRam: 16 });
+    expect(large.fits).toBe(false);
+  });
+
+  it("recommends Hivra's size fitted to the plan, or as it is while nothing fits", () => {
+    expect(recommendedLaunchSize("ubuntu-desktop", destinationSizeLimits("hivra-managed", null, PRO), { browser: false }))
+      .toEqual({ cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, source: "recommended" });
+    expect(recommendedLaunchSize("ubuntu-desktop", destinationSizeLimits("hivra-managed", null, FREE), { browser: false }))
+      .toEqual({ ...PROFILE_DETAILS["ubuntu-desktop"].recommended });
+    expect(recommendedLaunchSize("ubuntu-desktop", null, { browser: false })).toEqual({ ...PROFILE_DETAILS["ubuntu-desktop"].recommended });
+    expect(recommendedLaunchSize("codex", destinationSizeLimits("hivra-managed", null, PRO), { browser: true }))
+      .toEqual({ cpu: 1.5, ram: 3, maximumCpu: 2, maximumRam: 4, source: "recommended" });
+  });
+
+  it("offers the upgrade the Choose badge named for Hivra's own size, and an exact fit for the owner's", () => {
+    const request = (resources: Parameters<typeof upgradeRequestSize>[0]) => cheapestPlanForSize({
+      ...upgradeRequestSize(resources), minPlan: launchProfileFitSubject("ubuntu-desktop").minPlan, poolExempt: false,
+    }, FREE);
+    // Free -> the badge says Pro, and Pro holds Ubuntu once its maximum is fitted.
+    expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), evidence(FREE))?.label).toBe("Needs Pro or your own server");
+    expect(request({ ...PROFILE_DETAILS["ubuntu-desktop"].recommended })?.name).toBe("Pro");
+    // A size the owner chose is kept, so it needs a plan that holds it exactly.
+    expect(request({ cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "custom" })?.name).toBe("Power");
+  });
+});
+
 describe("plan rows", () => {
   it("describes what Codex can use, including whether it has a browser", () => {
     expect(capabilitySummary("codex", { browser: false })).toBe("Terminal, files and administrator access on its own computer. Browser: off.");
@@ -231,5 +315,62 @@ describe("launch return paths", () => {
     expect(parseLaunchDraftParam(id.toUpperCase())).toBe(id);
     expect(parseLaunchDraftParam("../../evil")).toBeNull();
     expect(parseLaunchDraftParam(null)).toBeNull();
+  });
+
+  it("reads which paid plan an upgrade moved to, and nothing else", () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    expect(parseLaunchArrival(id, "fleet")).toEqual({ draftId: id, upgrade: { target: "fleet" } });
+    expect(parseLaunchArrival(id, "1")).toEqual({ draftId: id, upgrade: { target: null } });
+    expect(parseLaunchArrival(id, null)).toEqual({ draftId: id, upgrade: null });
+    expect(parseLaunchArrival(null, "free")).toBeNull();
+    expect(parseLaunchArrival("../evil", "<script>")).toBeNull();
+  });
+
+  it("counts an upgrade as showing only once the fetched plan reaches it", () => {
+    const power = { ...PRO, name: "Power", key: "fleet" };
+    expect(upgradeObserved(PRO, "operator")).toBe(true);
+    expect(upgradeObserved(power, "operator")).toBe(true);
+    // Pro to Power that hasn't synced yet is not "Pro is active".
+    expect(upgradeObserved(PRO, "fleet")).toBe(false);
+    expect(upgradeObserved(FREE, "operator")).toBe(false);
+    expect(upgradeObserved(PRO, null)).toBe(true);
+    expect(upgradeObserved(null, null)).toBe(false);
+  });
+});
+
+describe("unfinished launch notes", () => {
+  const unfinished = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
+
+  it("says only that an unlaunched draft hasn't launched", () => {
+    expect(unfinishedLaunchNotes(unfinished)).toEqual({
+      summary: "You set up Codex 1 but haven't launched it yet.", partialId: null, download: null,
+    });
+  });
+
+  it("points at what a partial launch created instead of claiming nothing started", () => {
+    const id = "77777777-7777-4777-8777-777777777777";
+    const notes = unfinishedLaunchNotes({ ...unfinished, error: "The browser sidecar failed to start", result: { id, name: "Codex 1", status: "error" } });
+    expect(notes.summary).toBe("Your last try created part of Codex 1 before it stopped.");
+    expect(notes.partialId).toBe(id);
+  });
+
+  it("reports a turned-down launch and a refused one from what the draft recorded", () => {
+    expect(unfinishedLaunchNotes({ ...unfinished, stage: "launch", launchState: "failed", error: "Your plan has no open agent slots." }).summary)
+      .toBe("Your last try at launching Codex 1 was turned down: Your plan has no open agent slots.");
+    expect(unfinishedLaunchNotes({ ...unfinished, error: "Name already in use" }).summary)
+      .toBe("Your last try at launching Codex 1 didn't go through: Name already in use.");
+  });
+
+  it("mentions a Windows ISO download that was still running", () => {
+    const windows = {
+      ...unfinished, resourceKind: "computer" as const, profileId: "windows" as const, name: "Windows-1",
+      windowsIsoDownload: {
+        taskId: "99999999-9999-4999-8999-999999999999", connectionId: "11111111-1111-4111-8111-111111111111",
+        targetId: "22222222-2222-4222-8222-222222222222", expectedConnectionRevision: 7, source: "windows-11" as const,
+        storage: "local", filename: "Win11.iso", state: "running" as const,
+      },
+    };
+    expect(unfinishedLaunchNotes(windows).download)
+      .toBe("When you left, your server was still downloading Win11.iso. Starting a new launch doesn't stop that download.");
   });
 });
