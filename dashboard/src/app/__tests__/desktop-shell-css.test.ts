@@ -7,13 +7,37 @@ import { join } from "node:path";
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", "..", ...parts), "utf8");
 const GLOBALS = read("app", "globals.css");
 
-/** The top-level rules whose selector names `target`, exactly as written.
+/** Every style rule (innermost block) as written, comments dropped.
  * jsdom cannot parse the whole files (container queries, color-mix, nesting). */
-function rulesFor(css: string, target: string): string {
+function styleRules(css: string): { selector: string; body: string }[] {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  const rules = [...withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-    .filter(([, selector]) => selector.includes(target) && !selector.includes("@"))
-    .map(([, selector, body]) => `${selector.trim()} {${body}}`);
+  return [...withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, selector]) => !selector.includes("@"))
+    .map(([, selector, body]) => ({ selector: selector.trim(), body }));
+}
+
+/** Each comma-separated selector of every rule that styles a WebKit scrollbar. */
+function scrollbarSelectors(css: string): string[] {
+  return styleRules(css)
+    .filter(({ selector }) => selector.includes("::-webkit-scrollbar"))
+    .flatMap(({ selector }) => selector.split(",").map((part) => part.trim()));
+}
+const OUTSIDE_DESKTOP_SHELL = /^:where\(:root:not\(\[data-shell="desktop"\]\)\)/;
+
+/** One declared value of the rule with exactly this selector. */
+function declared(css: string, selector: string, property: string): string {
+  const rule = styleRules(css).find((candidate) => candidate.selector === selector);
+  expect(rule).toBeDefined();
+  const value = rule!.body.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`))?.[1]?.trim();
+  expect(value).toBeDefined();
+  return value!;
+}
+
+/** The rules whose selector names `target`, exactly as written. */
+function rulesFor(css: string, target: string): string {
+  const rules = styleRules(css)
+    .filter(({ selector }) => selector.includes(target))
+    .map(({ selector, body }) => `${selector} {${body}}`);
   expect(rules.length).toBeGreaterThan(0);
   return rules.join("\n");
 }
@@ -58,12 +82,37 @@ describe("desktop shell stylesheet", () => {
   it("shortens the hover fade and keeps the platform's overlay scrollbars in a desktop app only", () => {
     expect(GLOBALS).toMatch(/:root\[data-shell="desktop"\]\s*\{[^}]*--chrome-fade:\s*0\.12s/);
     expect(GLOBALS).toMatch(/transition: background-color var\(--chrome-fade, 0\.5s\) ease/);
-    // Every custom scrollbar rule is scoped away from the desktop app.
-    const scrollbarSelectors = GLOBALS.replace(/\/\*[\s\S]*?\*\//g, "").match(/^[^\n{]*::-webkit-scrollbar[^\n{]*$/gm) ?? [];
-    expect(scrollbarSelectors.length).toBeGreaterThan(0);
-    for (const selector of scrollbarSelectors) {
-      expect(selector).toMatch(/^:where\(:root:not\(\[data-shell="desktop"\]\)\)/);
-    }
+    // Every selector of every custom scrollbar rule is scoped away from the
+    // desktop app, whether the rule is written on one line or several.
+    const selectors = scrollbarSelectors(GLOBALS);
+    expect(selectors.length).toBeGreaterThan(0);
+    for (const selector of selectors) expect(selector).toMatch(OUTSIDE_DESKTOP_SHELL);
+  });
+
+  it("would catch an unscoped one-line scrollbar rule", () => {
+    const withUnscopedRule = `${GLOBALS}\n::-webkit-scrollbar { width: 4px; }\n`;
+    expect(scrollbarSelectors(withUnscopedRule).filter((selector) => !OUTSIDE_DESKTOP_SHELL.test(selector)))
+      .toEqual(["::-webkit-scrollbar"]);
+  });
+
+  it("fits the funnel bar and page to the window exactly in a desktop app", () => {
+    const css = read("components", "public-site", "public-site.module.css");
+    const desktop = ':global(:root[data-shell="desktop"])';
+    const px = (value: string) => {
+      expect(value).toMatch(/^\d+(?:px)?$/);
+      return Number.parseInt(value, 10);
+    };
+    // With tools (get-started's language switcher), the bar is as tall as its
+    // min-height or its padding plus the 44px switcher, whichever is more...
+    const switcher = px(declared(css, ".funnelTools>div>button", "min-height"));
+    const bar = Math.max(
+      px(declared(css, `${desktop} .funnelBar`, "min-height")),
+      px(declared(css, `${desktop} .funnelBar`, "padding-top")) + switcher,
+    );
+    // ...and the page takes exactly the rest, so nothing scrolls by the bar.
+    expect(declared(css, `${desktop} .funnelPage`, "min-height")).toBe(`calc(100dvh - ${bar}px)`);
+    // Without tools the whole bar is web chrome, hidden, and the page is the window.
+    expect(declared(css, `${desktop} .funnelBar[data-web-chrome]+.funnelPage`, "min-height")).toBe("100dvh");
   });
 
   it("drops the resource bar's native actions strip when nothing was lifted into it", () => {
