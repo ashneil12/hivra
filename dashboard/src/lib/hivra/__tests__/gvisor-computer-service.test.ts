@@ -129,6 +129,31 @@ it("reports a sanitized Docker runtime-registration timeout from preparation", a
   );
 });
 
+// Review of slice 5: one stage covered both the download and its checksum,
+// and Hivra's own adapter from an earlier release was reported as "a different
+// gVisor install". Each now stops in a stage of its own.
+it.each([
+  ["bundle-checksum", "The downloaded gVisor bundle did not match its pinned checksum."],
+  ["installed-adapter-check", "The host has Linux Sandbox setup from another Hivra release. Existing runtime files were not replaced."],
+])("reports the %s stage with its own message", async (stage, message) => {
+  mockRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: `HIVRA_GVISOR_PREPARE_FAILED_V1 ${stage}\n` });
+  await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({ code: "remote_failed", message, stage });
+});
+
+it("runs the checksum and the earlier-release adapter check in their own stages", () => {
+  const script = readFileSync(`${process.cwd()}/provisioner/gvisor/prepare-gvisor-host.sh`, "utf8");
+  const stageBody = (stage: string) => {
+    const start = script.indexOf(`prepare_stage="${stage}"\n`);
+    const end = script.indexOf("prepare_stage=", start + 1);
+    return script.slice(start, end);
+  };
+  expect(stageBody("bundle-download")).toContain("curl ");
+  expect(stageBody("bundle-download")).not.toContain("sha256sum -c");
+  expect(stageBody("bundle-checksum")).toContain(`printf '%s  %s\\n' "$BUNDLE_SHA256" "$tmp_bundle" | sha256sum -c -`);
+  expect(stageBody("installed-adapter-check")).toContain('= "$ADAPTER_SHA256" ]');
+  expect(stageBody("installed-identity-check")).not.toContain("ADAPTER_SHA256");
+});
+
 it("reports no stage when the host names one Hivra doesn't know", async () => {
   mockRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: "HIVRA_GVISOR_PREPARE_FAILED_V1 invented-stage\n" });
   await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({

@@ -16,6 +16,9 @@ import {
   reserveAuthenticatedRouteRateLimit,
 } from "@/lib/authenticated-rate-limit";
 
+/** Failed setups allowed per host in 15 minutes before the next must wait. */
+const SETUP_FAILURE_LIMIT = 5;
+
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
   if (!userId) return apiError("Unauthorized", 401);
@@ -23,12 +26,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const id = z.string().uuid().safeParse((await context.params).id);
   if (!id.success) return apiError("Infrastructure connection not found.", 404);
   // One run per host at a time, and one successful run per 15 minutes. A
-  // failed run gives its slot back so a fixed cause can be retried at once.
-  const reservation = reserveAuthenticatedRouteRateLimit(request, { routeKey: `infrastructure_gvisor_prepare:${id.data}`, userId, limit: 1, windowMs: 15 * 60_000 });
+  // failed run gives its slot back so a fixed cause can be retried at once,
+  // up to SETUP_FAILURE_LIMIT failures per 15 minutes.
+  const reservation = reserveAuthenticatedRouteRateLimit(request, { routeKey: `infrastructure_gvisor_prepare:${id.data}`, userId, limit: 1, windowMs: 15 * 60_000, failureLimit: SETUP_FAILURE_LIMIT });
   if (reservation.limited) {
     return hostOperationLimitedResponse(reservation.limited, {
       inFlight: "Linux Sandbox setup is already running on this server. Wait for it to finish, then check the result.",
       recent: "Linux Sandbox was set up on this server in the last 15 minutes.",
+      failures: `Linux Sandbox setup failed on this server ${SETUP_FAILURE_LIMIT} times in the last 15 minutes.`,
     });
   }
   try {

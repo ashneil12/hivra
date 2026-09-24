@@ -186,27 +186,69 @@ function failure(
   };
 }
 
-/** Map the prepare script's last fail() line to a fixed cause. Anything the
- * script doesn't name this way stays a generic preparation failure. */
+const PREPARE_PREFIX = "[hivra-prepare] ";
+const NETWORK_PREFLIGHT_PREFIX = "[hivra-network-preflight] ";
+
+/** The prepare script's fail() messages, exactly as it prints them, and the
+ * cause each one names. Its log() lines share the prefix ("downloading Ubuntu
+ * cloud image", "creating host-to-guest key", "prepared Proxmox target…") and
+ * are progress, not failures, so they are deliberately absent. */
+const PREPARE_FAIL_CAUSES: ReadonlyMap<string, PreparationFailureCause> = new Map([
+  ["run as root", "root_required"],
+  ["Proxmox VE 8 or 9 is required", "proxmox_version_unsupported"],
+  ["KVM is unavailable", "kvm_unavailable"],
+  ["another Hivra host preparation is already running", "already_running"],
+  ["no active VM-capable Proxmox storage was found", "storage_unavailable"],
+  ["invalid storage name", "storage_unavailable"],
+  ["selected storage is not active and VM-capable", "storage_unavailable"],
+  ...["pveversion", "qm", "pvesm", "ip", "ssh-keygen", "curl", "qemu-img", "iptables", "ip6tables", "nft",
+    "sha256sum", "flock", "stat", "systemctl", "python3"]
+    .map((command): [string, PreparationFailureCause] => [`${command} is required`, "host_tools_missing"]),
+  ["Ubuntu cloud image checksum verification failed", "image_download_failed"],
+  ["downloaded cloud image is invalid", "image_download_failed"],
+  ["installed Ubuntu image failed checksum verification", "image_download_failed"],
+  ["Hivra network service is not active", "network_setup_failed"],
+  ["network ownership marker has unsafe ownership or mode", "network_setup_failed"],
+  ["installed network ownership contract failed validation", "network_setup_failed"],
+  ["IPv4 guest-to-host isolation is not active", "network_setup_failed"],
+  ["IPv4 guest egress isolation is not active", "network_setup_failed"],
+  ["IPv6 guest-to-host isolation is not active", "network_setup_failed"],
+  ["IPv6 guest egress isolation is not active", "network_setup_failed"],
+  ["layer-2 guest isolation is not active", "network_setup_failed"],
+]);
+/** fail "$BRIDGE exists but is not a bridge" */
+const BRIDGE_CONFLICT = /^[A-Za-z0-9_.:-]{1,15} exists but is not a bridge$/;
+/** The log() line printed just before the image download starts. */
+const IMAGE_DOWNLOAD_STARTED = "downloading Ubuntu cloud image";
+/** curl's own error line, e.g. "curl: (6) Could not resolve host: …". */
+const CURL_ERROR = /^curl: \(\d+\)/;
+
+/**
+ * Map why the host script stopped to a fixed cause. fail() prints one line and
+ * exits, and the exit traps print nothing, so a named stop is always the last
+ * line of stderr. Only an exact fail() message counts: when the script dies on
+ * a command's own error instead (set -e), the last line is that raw error and
+ * the failure stays generic rather than being pinned on whatever the script
+ * last logged. The one raw error read is curl's, and only while the image
+ * download is the step in progress.
+ */
 export function classifyPreparationFailureCause(stderr: string): PreparationFailureCause | undefined {
   const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const failLines = lines.filter((line) => line.startsWith("[hivra-prepare] ") || line.startsWith("[hivra-network-preflight] "));
-  const last = failLines.at(-1);
-  if (last?.startsWith("[hivra-network-preflight] ")) return "network_conflict";
-  const message = last?.slice("[hivra-prepare] ".length) ?? "";
-  if (message === "run as root") return "root_required";
-  if (message === "Proxmox VE 8 or 9 is required") return "proxmox_version_unsupported";
-  if (message === "KVM is unavailable") return "kvm_unavailable";
-  if (message === "another Hivra host preparation is already running") return "already_running";
-  if (/storage/i.test(message)) return "storage_unavailable";
-  if (/^[a-z0-9_.+-]+ is required$/.test(message)) return "host_tools_missing";
-  if (/cloud image|Ubuntu image/i.test(message)) return "image_download_failed";
-  if (/exists but is not a bridge/.test(message)) return "network_conflict";
-  if (/network service is not active|isolation is not active|network ownership/.test(message)) {
-    return "network_setup_failed";
+  const last = lines.at(-1);
+  if (!last) return undefined;
+  // The collision check exits before the script's first change, and only the
+  // first run of it is silent on success; the post-install re-run's failure
+  // is followed by the script's own fail() line.
+  if (last.startsWith(NETWORK_PREFLIGHT_PREFIX)) return "network_conflict";
+  if (last.startsWith(PREPARE_PREFIX)) {
+    const message = last.slice(PREPARE_PREFIX.length);
+    if (BRIDGE_CONFLICT.test(message)) return "network_conflict";
+    return PREPARE_FAIL_CAUSES.get(message);
   }
-  // curl reports its own errors before set -e stops the image download.
-  if (lines.some((line) => /^curl: \(\d+\)/.test(line))) return "image_download_failed";
+  if (CURL_ERROR.test(last)) {
+    const lastLog = lines.findLast((line) => line.startsWith(PREPARE_PREFIX));
+    if (lastLog === `${PREPARE_PREFIX}${IMAGE_DOWNLOAD_STARTED}`) return "image_download_failed";
+  }
   return undefined;
 }
 

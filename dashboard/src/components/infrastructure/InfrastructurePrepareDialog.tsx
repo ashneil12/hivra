@@ -25,9 +25,10 @@ import {
   type HostPreparationEngine,
   type HostPreparationFailure,
 } from "@/lib/infrastructure/host-preparation-steps";
+import type { GvisorReadinessCheck } from "@/lib/infrastructure/launch-on-server";
 
 import styles from "./Infrastructure.module.css";
-import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
+import { LaunchOnServerLink, useGvisorCheckLaunchAction, useLaunchOnServer } from "./LaunchOnServer";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
 type PreparationPhase = "review" | "running" | "success" | "failure";
@@ -63,6 +64,9 @@ export function InfrastructurePrepareDialog({
   const [phase, setPhase] = useState<PreparationPhase>("review");
   const [preparation, setPreparation] = useState<InfrastructurePreparation | null>(null);
   const [gvisorTarget, setGvisorTarget] = useState<GvisorTargetResult | null>(null);
+  // When setup's final check passed in this browser; it authorizes a launch
+  // for 15 minutes.
+  const [gvisorCheck, setGvisorCheck] = useState<GvisorReadinessCheck | null>(null);
   const [failure, setFailure] = useState<HostPreparationFailure | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -114,8 +118,10 @@ export function InfrastructurePrepareDialog({
         setPreparation(result);
       } else {
         const result = await prepareGvisorConnection(connection.id);
+        const checkedAt = Date.now();
         await onGvisorPrepared?.(result);
         setGvisorTarget(result);
+        setGvisorCheck(result.ready ? { targetId: result.targetId, checkedAt } : null);
       }
       setPhase("success");
     } catch (error) {
@@ -126,11 +132,14 @@ export function InfrastructurePrepareDialog({
 
   const proxmoxReady = Boolean(preparation?.preflight.ok && preparation.preflight.target.launchReady);
   const ready = engine === "proxmox" ? proxmoxReady : Boolean(gvisorTarget?.ready);
+  const gvisorLaunchAction = useGvisorCheckLaunchAction(engine === "gvisor" && phase === "success" ? gvisorCheck : null);
+  // Setup passed, but its check is now more than 15 minutes old.
+  const gvisorCheckLapsed = engine === "gvisor" && phase === "success" && ready && gvisorLaunchAction === null;
   const launchAction = phase !== "success" || !ready
     ? null
-    : engine === "gvisor" && gvisorTarget
-      ? launch.forGvisorTarget(gvisorTarget.targetId)
-      : launch.forConnection(connection.id, "proxmox");
+    : engine === "gvisor"
+      ? gvisorLaunchAction
+      : launch.forProxmoxConnection(connection.id);
 
   const failedIndex = failure?.failedStepId ? steps.findIndex((step) => step.id === failure.failedStepId) : -1;
   const stepState = (index: number): StepState => {
@@ -167,9 +176,11 @@ export function InfrastructurePrepareDialog({
       : phase === "success"
         ? engine === "proxmox" && preparation
           ? preflightHeadline(preparation.preflight).detail
-          : ready
-            ? "Launch checks the server again before anything starts."
-            : "Inspect the server again to see what it needs."
+          : gvisorCheckLapsed
+            ? "This check is more than 15 minutes old. Check readiness from the server's card before you launch."
+            : ready
+              ? "Its check is good for 15 minutes. After that, check again before you launch."
+              : "Inspect the server again to see what it needs."
         : failure?.detail ?? "";
 
   return (

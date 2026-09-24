@@ -38,8 +38,12 @@ const GVISOR_STAGE_STEP: Record<(typeof HIVRA_GVISOR_PREPARE_STAGES)[number] | "
   "host-eligibility": "check",
   prerequisites: "docker",
   "bundle-download": "download",
+  "bundle-checksum": "download",
   "bundle-validation": "download",
-  "installed-identity-check": "download",
+  // Both stop before anything is installed: gVisor already on the server
+  // blocked the install step.
+  "installed-adapter-check": "install",
+  "installed-identity-check": "install",
   "asset-installation": "install",
   "runtime-registration": "install",
   "sidecar-validation": "install",
@@ -52,8 +56,10 @@ const GVISOR_STAGE_NEXT: Record<keyof typeof GVISOR_STAGE_STEP, string> = {
   "host-eligibility": "Inspect the server again to see what changed.",
   prerequisites: "The server couldn't install Docker from Ubuntu's package archive. Check that apt can reach it, then try again.",
   "bundle-download": "The server couldn't download gVisor from GitHub. Check that it can reach github.com over HTTPS, then try again.",
-  "bundle-validation": "The download didn't match Hivra's pinned release, so nothing was installed from it. Try again.",
-  "installed-identity-check": "A different gVisor install is already on the server, and Hivra left it in place. Remove it if you don't need it, then try again.",
+  "bundle-checksum": "The download didn't match the checksum of Hivra's pinned gVisor release, so nothing was installed from it. Try again. If it happens again, check for a proxy or firewall that changes downloads.",
+  "bundle-validation": "Hivra's pinned gVisor release didn't contain the files Hivra expects, so nothing was installed from it. Your server isn't the cause. Try again later.",
+  "installed-adapter-check": "This server has Linux Sandbox setup from another Hivra release. Hivra leaves it in place so Linux Sandbox computers made with it keep working, and reinstalling won't replace it. Use another server, or delete those computers and remove the old setup first.",
+  "installed-identity-check": "This server already has gVisor, installed another way or at a different release, and Hivra left it in place. Reinstalling won't replace it. If nothing on the server uses it, remove it, then try again. Otherwise, use another server.",
   "asset-installation": "Check the server's free disk space, then try again.",
   "runtime-registration": "Docker didn't pick up gVisor after its settings reloaded. Restart Docker on the server, then try again.",
   "sidecar-validation": "The installed gVisor files didn't match the pinned release. Try again.",
@@ -61,6 +67,11 @@ const GVISOR_STAGE_NEXT: Record<keyof typeof GVISOR_STAGE_STEP, string> = {
   "sandbox-smoke-test": "The test sandbox didn't start. Try again.",
   "readiness-check": "Setup finished, but its final check didn't pass. Inspect the server again, then check readiness.",
 };
+
+const GVISOR_STAGES_NEEDING_SERVER_CHANGE: ReadonlySet<string> = new Set([
+  "installed-adapter-check",
+  "installed-identity-check",
+]);
 
 const PROXMOX_CAUSE_STEP: Record<string, string> = {
   root_required: "check",
@@ -110,6 +121,16 @@ export function hostPreparationFailure(
       canRetryNow: true,
     };
   }
+  if (error.code === "PREPARATION_FAILURES_LIMITED") {
+    return {
+      title: `Setup failed on ${name} several times in the last 15 minutes.`,
+      detail: error.retryAfterSeconds !== null
+        ? `${tryAgainInMinutes(error.retryAfterSeconds)} Fix what the last attempt reported first.`
+        : "Wait a few minutes, then try again. Fix what the last attempt reported first.",
+      failedStepId: null,
+      canRetryNow: false,
+    };
+  }
   if (error.code === "PREPARATION_RATE_LIMITED" || error.status === 429) {
     return {
       title: `Setup ran on ${name} in the last 15 minutes.`,
@@ -137,7 +158,8 @@ export function hostPreparationFailure(
         title: `Setup stopped at step ${index + 1} of ${GVISOR_PREPARATION_STEPS.length}: ${GVISOR_PREPARATION_STEPS[index].label}.`,
         detail: GVISOR_STAGE_NEXT[stage],
         failedStepId: stepId,
-        canRetryNow: true,
+        // Trying again can't get past gVisor that's already on the server.
+        canRetryNow: !GVISOR_STAGES_NEEDING_SERVER_CHANGE.has(stage),
       };
     }
   } else {

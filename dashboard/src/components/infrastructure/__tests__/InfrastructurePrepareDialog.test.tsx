@@ -263,7 +263,7 @@ describe("InfrastructurePrepareDialog", () => {
 
   it("names the Linux Sandbox step a failed setup stopped in", async () => {
     (prepareGvisorConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError(
-      "The pinned gVisor bundle could not be downloaded or verified.",
+      "The pinned gVisor bundle could not be downloaded.",
       502,
       "remote_failed",
       null,
@@ -283,5 +283,85 @@ describe("InfrastructurePrepareDialog", () => {
     expect(list[2]).toHaveTextContent(/stopped here/);
     expect(list[3]).not.toHaveTextContent(/done|stopped/);
     expect(screen.getByRole("button", { name: "Review and try again" })).toBeInTheDocument();
+  });
+
+  // Review of slice 5: "bundle-download" also covered the checksum check, so a
+  // checksum mismatch was told the download from GitHub failed.
+  it("tells a checksum mismatch apart from a failed download", async () => {
+    (prepareGvisorConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError(
+      "The downloaded gVisor bundle did not match its pinned checksum.", 502, "remote_failed", null, { stage: "bundle-checksum" },
+    ));
+
+    render(withLaunch(<InfrastructurePrepareDialog connection={LINUX_HOST} engine="gvisor" onClose={jest.fn()} />));
+    fireEvent.click(screen.getByRole("button", { name: "Set up Linux Sandbox" }));
+
+    expect(await screen.findByText(/didn't match the checksum of Hivra's pinned gVisor release/)).toBeInTheDocument();
+    expect(screen.queryByText(/couldn't download gVisor from GitHub/)).not.toBeInTheDocument();
+    expect(steps()[2]).toHaveTextContent(/stopped here/);
+  });
+
+  // Review of slice 5: Hivra's own adapter from an earlier release was blamed
+  // on "a different gVisor install", with a retry that can't get past it.
+  it.each([
+    ["installed-adapter-check", /Linux Sandbox setup from another Hivra release/],
+    ["installed-identity-check", /already has gVisor, installed another way or at a different release/],
+  ])("explains gVisor already on the server (%s) without offering a retry that can't work", async (stage, copy) => {
+    (prepareGvisorConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError(
+      "Existing runtime files were not replaced.", 502, "remote_failed", null, { stage },
+    ));
+
+    render(withLaunch(<InfrastructurePrepareDialog connection={LINUX_HOST} engine="gvisor" onClose={jest.fn()} />));
+    fireEvent.click(screen.getByRole("button", { name: "Set up Linux Sandbox" }));
+
+    expect(await screen.findByRole("heading", {
+      name: "Setup stopped at step 4 of 6: Install gVisor and connect it to Docker.",
+    })).toBeInTheDocument();
+    expect(screen.getByText(copy)).toBeInTheDocument();
+    expect(screen.getByText(/won't replace it/)).toBeInTheDocument();
+    expect(steps()[2]).toHaveTextContent(/done/);
+    expect(steps()[3]).toHaveTextContent(/stopped here/);
+    expect(screen.queryByRole("button", { name: "Review and try again" })).not.toBeInTheDocument();
+  });
+
+  it("says setup failed several times when the failure cap refuses a run", async () => {
+    (prepareInfrastructureConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError(
+      "Setup failed on this server 5 times in the last 15 minutes. You can try again in 9 minutes.",
+      429,
+      "PREPARATION_FAILURES_LIMITED",
+      540,
+    ));
+
+    render(withLaunch(<InfrastructurePrepareDialog connection={CONNECTION} onClose={jest.fn()} onPrepared={jest.fn(async () => undefined)} />));
+    fireEvent.click(screen.getByRole("button", { name: "Set up Studio Proxmox" }));
+
+    expect(await screen.findByRole("heading", {
+      name: "Setup failed on Studio Proxmox several times in the last 15 minutes.",
+    })).toBeInTheDocument();
+    expect(screen.getByText("You can try again in 9 minutes. Fix what the last attempt reported first.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review and try again" })).not.toBeInTheDocument();
+  });
+
+  // Review of slice 5: the dialog promised "Launch checks the server again",
+  // but a gVisor launch only works within 15 minutes of the last check.
+  it("offers Linux Sandbox launch only while setup's check is fresh", async () => {
+    jest.useFakeTimers();
+    try {
+      (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: GVISOR_TARGET_ID, ready: true });
+      render(withLaunch(<InfrastructurePrepareDialog connection={LINUX_HOST} engine="gvisor" onClose={jest.fn()} />));
+      fireEvent.click(screen.getByRole("button", { name: "Set up Linux Sandbox" }));
+      await act(async () => { await Promise.resolve(); });
+
+      expect(screen.getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+      expect(screen.getByText("Its check is good for 15 minutes. After that, check again before you launch.")).toBeInTheDocument();
+      expect(screen.queryByText(/Launch checks the server again/)).not.toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(15 * 60_000 + 100); });
+
+      expect(screen.queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
+      expect(screen.getByText(/This check is more than 15 minutes old/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

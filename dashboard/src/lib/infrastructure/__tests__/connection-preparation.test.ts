@@ -8,7 +8,8 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 
 import { spawnSync } from "node:child_process";
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -379,49 +380,128 @@ describe("portable Proxmox host preparation", () => {
     ["[hivra-network-preflight] refusing to adopt an existing unowned bridge", "network_conflict"],
     ["[hivra-prepare] hivra0 exists but is not a bridge", "network_conflict"],
     ["[hivra-prepare] IPv4 guest egress isolation is not active", "network_setup_failed"],
+    ["[hivra-network-preflight] owned bridge has an unexpected IPv4 address: 10.251.20.9/24\n[hivra-prepare] installed network ownership contract failed validation", "network_setup_failed"],
     ["[hivra-prepare] Ubuntu cloud image checksum verification failed", "image_download_failed"],
-    ["curl: (6) Could not resolve host: cloud-images.ubuntu.com", "image_download_failed"],
+    ["[hivra-prepare] downloading Ubuntu cloud image\ncurl: (6) Could not resolve host: cloud-images.ubuntu.com", "image_download_failed"],
     ["something unexpected", undefined],
+    ["", undefined],
   ])("classifies %j as %s", (stderr, cause) => {
     expect(classifyPreparationFailureCause(stderr)).toBe(cause);
   });
 
-  it("matches the prepare script's own fail() messages", () => {
+  // Review of slice 5: log() and fail() share the "[hivra-prepare] " prefix,
+  // and the classifier read the last prefixed line. On a new host the script
+  // logs "downloading Ubuntu cloud image", so any later set -e abort in the
+  // network section was reported as a failed image download.
+  it.each([
+    ["[hivra-prepare] creating host-to-guest key\n[hivra-prepare] downloading Ubuntu cloud image\nRTNETLINK answers: Operation not permitted"],
+    ["[hivra-prepare] downloading Ubuntu cloud image\nFailed to enable unit: Unit file hivra-network.service is masked."],
+    ["[hivra-prepare] downloading Ubuntu cloud image\n/dev/stdin:3:5-45: Error: Could not process rule: No such file or directory"],
+    ["[hivra-prepare] downloading Ubuntu cloud image"],
+    ["[hivra-prepare] creating host-to-guest key"],
+    ["[hivra-prepare] prepared Proxmox target with Hivra 2026.09.22.2"],
+    // curl's error names the image download only while that download runs.
+    ["curl: (6) Could not resolve host: cloud-images.ubuntu.com"],
+  ])("never names a cause for a raw command error or a progress line: %j", (stderr) => {
+    expect(classifyPreparationFailureCause(stderr)).toBeUndefined();
+  });
+
+  it("names a cause for exactly the prepare script's own fail() messages, and never for its log() lines", () => {
     const script = readFileSync(path.join(process.cwd(), "provisioner", "prepare-proxmox-host.sh"), "utf8");
-    for (const message of [
-      "run as root",
-      "Proxmox VE 8 or 9 is required",
-      "KVM is unavailable",
-      "another Hivra host preparation is already running",
-      "no active VM-capable Proxmox storage was found",
-      "selected storage is not active and VM-capable",
-      "$command is required",
-      "exists but is not a bridge",
-      "Hivra network service is not active",
-      "IPv4 guest egress isolation is not active",
-      "Ubuntu cloud image checksum verification failed",
-    ]) {
-      const escaped = message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      expect(script).toMatch(new RegExp(`fail "[^"]*${escaped}`));
+    const fails = [...script.matchAll(/fail "([^"]+)"/g)].map((match) => match[1]);
+    const logs = [...script.matchAll(/^\s*log "([^"]+)"/gm)].map((match) => match[1]);
+    // Every fail() message the script prints, with the cause it should name.
+    // Hivra's own settings being wrong (not the owner's server) stays generic.
+    const expected: Record<string, string | undefined> = {
+      "run as root": "root_required",
+      "invalid provisioner version": undefined,
+      "invalid bridge name": undefined,
+      "bridge name is longer than Linux permits": undefined,
+      "subnet prefix must contain three valid IPv4 octets": undefined,
+      "gateway must be a valid IPv4 address": undefined,
+      "gateway must be inside the selected /24": undefined,
+      "gateway cannot be the network or broadcast address": undefined,
+      "invalid IP start": undefined,
+      "invalid VMID range": undefined,
+      "unsafe path: $path": undefined,
+      "provisioner source directory is missing": undefined,
+      "network collision preflight is missing or not executable": undefined,
+      "Ubuntu image URL must use HTTPS": undefined,
+      "Ubuntu image checksum must be a lowercase SHA-256 digest": undefined,
+      "$command is required": "host_tools_missing",
+      "Proxmox VE 8 or 9 is required": "proxmox_version_unsupported",
+      "KVM is unavailable": "kvm_unavailable",
+      "another Hivra host preparation is already running": "already_running",
+      "no active VM-capable Proxmox storage was found": "storage_unavailable",
+      "invalid storage name": "storage_unavailable",
+      "selected storage is not active and VM-capable": "storage_unavailable",
+      "unsafe staging path": undefined,
+      "unsafe previous-install path": undefined,
+      "Ubuntu cloud image checksum verification failed": "image_download_failed",
+      "downloaded cloud image is invalid": "image_download_failed",
+      "$BRIDGE exists but is not a bridge": "network_conflict",
+      "installed provisioner bundle failed checksum verification": undefined,
+      "installed Ubuntu image failed checksum verification": "image_download_failed",
+      "VM orchestrator private key has unsafe ownership or mode": undefined,
+      "VM orchestrator public key has unsafe ownership or mode": undefined,
+      "Hivra network service is not active": "network_setup_failed",
+      "network ownership marker has unsafe ownership or mode": "network_setup_failed",
+      "installed network ownership contract failed validation": "network_setup_failed",
+      "IPv4 guest-to-host isolation is not active": "network_setup_failed",
+      "IPv4 guest egress isolation is not active": "network_setup_failed",
+      "IPv6 guest-to-host isolation is not active": "network_setup_failed",
+      "IPv6 guest egress isolation is not active": "network_setup_failed",
+      "layer-2 guest isolation is not active": "network_setup_failed",
+    };
+    // A new fail() line needs a decision here before it ships.
+    expect([...new Set(fails)].sort()).toEqual(Object.keys(expected).sort());
+    const commands = script.match(/for command in ([^;]+); do/)?.[1].trim().split(/\s+/) ?? [];
+    expect(commands.length).toBeGreaterThan(10);
+    for (const [message, cause] of Object.entries(expected)) {
+      const printed = message === "$command is required" ? commands.map((command) => `${command} is required`)
+        : message === "$BRIDGE exists but is not a bridge" ? ["hivra0 exists but is not a bridge"]
+          : message === "unsafe path: $path" ? ["unsafe path: /opt/hivra/provisioner"]
+            : [message];
+      for (const line of printed) {
+        expect([line, classifyPreparationFailureCause(`[hivra-prepare] ${line}\n`)]).toEqual([line, cause]);
+      }
+    }
+    expect(logs.length).toBeGreaterThanOrEqual(3);
+    for (const line of logs) {
+      expect([line, classifyPreparationFailureCause(`[hivra-prepare] ${line.replace("${VERSION}", "2026.09.22.2")}`)])
+        .toEqual([line, undefined]);
     }
   });
 
-  it("classifies the real script's first refusal on a machine that isn't a prepared Proxmox host", () => {
-    // Runs only the script's checks: as a normal user it stops at the root
-    // check; as root off Proxmox it stops at the missing Proxmox tools. Both
-    // come before its first change.
-    const run = spawnSync("bash", [path.join(process.cwd(), "provisioner", "prepare-proxmox-host.sh")], {
-      encoding: "utf8",
-      env: {
-        PATH: "/usr/bin:/bin",
-        HIVRA_SOURCE_DIR: path.join(process.cwd(), "provisioner"),
-      } as unknown as NodeJS.ProcessEnv,
-      timeout: 20_000,
-    });
-    expect(run.status).not.toBe(0);
-    const expected = typeof process.getuid === "function" && process.getuid() === 0
-      ? "host_tools_missing"
-      : "root_required";
-    expect(classifyPreparationFailureCause(run.stderr)).toBe(expected);
-  });
+  // Runs the real script only as a normal user, where it stops at its root
+  // check before any change. Every path it could write points into a
+  // throwaway directory as well, and it never runs as root: there it would get
+  // as far as the host's own tools. Review of slice 5.
+  (typeof process.getuid === "function" && process.getuid() === 0 ? it.skip : it)(
+    "classifies the real script's first refusal as a non-root user",
+    () => {
+      const scratch = mkdtempSync(path.join(tmpdir(), "hivra-prepare-test-"));
+      try {
+        const run = spawnSync("bash", [path.join(process.cwd(), "provisioner", "prepare-proxmox-host.sh")], {
+          encoding: "utf8",
+          env: {
+            PATH: "/usr/bin:/bin",
+            HIVRA_SOURCE_DIR: path.join(process.cwd(), "provisioner"),
+            HIVRA_INSTALL_DIR: path.join(scratch, "opt", "provisioner"),
+            HIVRA_STATE_DIR: path.join(scratch, "etc"),
+            HIVRA_KEY_DIR: path.join(scratch, "etc", "keys"),
+            HIVRA_LOG_DIR: path.join(scratch, "log"),
+            HIVRA_UBUNTU_IMG: path.join(scratch, "images", "ubuntu.img"),
+            HIVRA_VM_SSH_KEY_PATH: path.join(scratch, "etc", "keys", "vm-orchestrator"),
+            HIVRA_UBUNTU_IMG_URL: "https://example.invalid/ubuntu.img",
+          } as unknown as NodeJS.ProcessEnv,
+          timeout: 20_000,
+        });
+        expect(run.status).not.toBe(0);
+        expect(classifyPreparationFailureCause(run.stderr)).toBe("root_required");
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 });

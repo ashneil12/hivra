@@ -245,6 +245,11 @@ function parseStoredDraft(raw: string | null): LaunchDraft | null {
   }
 }
 
+/** A stored draft's text, parsed without reading or changing storage, so it
+ * is safe to call while rendering. readLaunchDraft is the reader that also
+ * moves an older per-tab draft over. */
+export const parseStoredLaunchDraft = parseStoredDraft;
+
 /** The owner's saved draft in this browser. Without a known owner there is
  * nothing to read: a draft is never shown to an account that did not save it. */
 export function readLaunchDraft(ownerId: string | null): LaunchDraft | null {

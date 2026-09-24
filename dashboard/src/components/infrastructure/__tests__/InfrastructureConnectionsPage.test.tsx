@@ -223,10 +223,18 @@ const READY_GVISOR_TARGET: DeploymentTargetDto = {
   },
   supportedIsolationDrivers: ["gvisor-runsc"],
   isolationClass: "application-kernel",
-  lastPreflightAt: "2026-09-15T12:00:00.000Z",
+  // A gVisor host can launch only within 15 minutes of its last strict check,
+  // so a ready fixture was checked a minute before the suite runs.
+  lastPreflightAt: new Date(Date.now() - 60_000).toISOString(),
   lastErrorCode: null,
   createdAt: "2026-09-15T12:00:00.000Z",
   updatedAt: "2026-09-15T12:00:00.000Z",
+};
+
+/** The same host, last checked long enough ago that a launch would be refused. */
+const STALE_GVISOR_TARGET: DeploymentTargetDto = {
+  ...READY_GVISOR_TARGET,
+  lastPreflightAt: "2026-09-15T12:00:00.000Z",
 };
 
 const DISCOVERED_INSTALLED_GVISOR: HostDiscoveryResult = {
@@ -716,6 +724,23 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     );
   });
 
+  it("doesn't send a Linux Sandbox launch back to a gVisor host whose check is stale", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => key === "launch" ? "linux-terminal" : null);
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([STALE_GVISOR_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Needs a check")).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready for Linux Sandbox/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+  });
+
   // INF-06: a ready gVisor host is one click from launching Linux Sandbox.
   it("offers Launch on this server on a ready gVisor host's card", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
@@ -733,6 +758,45 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       "href",
       `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
     );
+  });
+
+  // Review of slice 5: an owner who set up Linux Sandbox and came back an
+  // hour later got Ready and a Launch button the server then refused.
+  it("asks for a readiness check on a gVisor host whose last check is stale, then offers Launch", async () => {
+    const readyConnection: InfrastructureConnectionDto = {
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    };
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyConnection]);
+    (listInfrastructureTargets as jest.Mock)
+      .mockResolvedValueOnce([STALE_GVISOR_TARGET])
+      .mockResolvedValue([READY_GVISOR_TARGET]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Needs a check")).toBeInTheDocument();
+    expect(within(card).queryByText("Ready for Linux Sandbox")).not.toBeInTheDocument();
+    expect(within(card).queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
+
+    // One click: inspect, then the strict check, with no second button.
+    fireEvent.click(within(card).getByRole("button", { name: "Check readiness" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(discoverInfrastructureHost).toHaveBeenCalledWith(PENDING_HOST_CONNECTION.id);
+    expect(checkGvisorConnection).toHaveBeenCalledTimes(1);
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(await within(card).findByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
   });
 
   it("offers Launch on this server on a ready Proxmox host's card", async () => {

@@ -75,7 +75,7 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
   // Many Requests". It now counts only a run still going or one that
   // succeeded, and says when to try again.
   it("refuses a second run within fifteen minutes of a success with a Retry-After", async () => {
-    mockReserve.mockReturnValue({ limited: { retryAfterMs: 11 * 60_000 + 5_000, inFlight: false }, settle: null });
+    mockReserve.mockReturnValue({ limited: { retryAfterMs: 11 * 60_000 + 5_000, inFlight: false, reason: "recent_success" }, settle: null });
 
     const response = await POST(request(), context());
     const body = await response.json();
@@ -94,12 +94,30 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
       userId: "user_1",
       limit: 1,
       windowMs: 900_000,
+      failureLimit: 5,
+    });
+    expect(mockPrepare).not.toHaveBeenCalled();
+  });
+
+  it("says setup failed several times when the failure cap refuses a run", async () => {
+    mockReserve.mockReturnValue({ limited: { retryAfterMs: 9 * 60_000, inFlight: false, reason: "repeated_failures" }, settle: null });
+
+    const response = await POST(request(), context());
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("540");
+    expect(body).toMatchObject({
+      success: false,
+      error: "Setup failed on this server 5 times in the last 15 minutes. You can try again in 9 minutes.",
+      code: "PREPARATION_FAILURES_LIMITED",
+      retryAfterSeconds: 540,
     });
     expect(mockPrepare).not.toHaveBeenCalled();
   });
 
   it("refuses a concurrent run as in progress rather than rate limited", async () => {
-    mockReserve.mockReturnValue({ limited: { retryAfterMs: 14 * 60_000, inFlight: true }, settle: null });
+    mockReserve.mockReturnValue({ limited: { retryAfterMs: 14 * 60_000, inFlight: true, reason: "in_flight" }, settle: null });
 
     const response = await POST(request(), context());
     const body = await response.json();

@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom";
 import { act, render, screen } from "@testing-library/react";
 
-import { createLaunchDraft, launchDraftStorageKey } from "@/lib/launch/draft-store";
+import { createLaunchDraft, LAUNCH_DRAFT_STORAGE_KEY, launchDraftStorageKey } from "@/lib/launch/draft-store";
 
 import { usePendingLaunch } from "../LaunchOnServer";
 
@@ -56,6 +56,17 @@ describe("usePendingLaunch", () => {
     mockSearchParams.set("returnTo", "unified-launch");
     render(<Probe />);
     expect(screen.getByRole("status")).toHaveTextContent(JSON.stringify({ source: "handoff", resourceId: "codex", unified: true }));
+  });
+
+  // Review of slice 5: reading the draft during render moved an older per-tab
+  // draft into localStorage and deleted it, a side effect of rendering.
+  it("reads an older per-tab draft without moving or deleting it", () => {
+    const legacy = JSON.stringify({ ...createLaunchDraft(), ...sandboxDraft });
+    window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, legacy);
+    render(<Probe />);
+    expect(screen.getByRole("status")).toHaveTextContent(JSON.stringify({ source: "journey", profileId: "linux-terminal" }));
+    expect(window.sessionStorage.getItem(LAUNCH_DRAFT_STORAGE_KEY)).toBe(legacy);
+    expect(window.localStorage.getItem(launchDraftStorageKey(OWNER))).toBeNull();
   });
 
   it("follows a draft saved in another tab", () => {

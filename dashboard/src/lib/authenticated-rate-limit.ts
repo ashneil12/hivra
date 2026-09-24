@@ -4,6 +4,8 @@ import {
   getIP,
   reserveRateLimit,
   type RateLimitConfig,
+  type RateLimitRefusalReason,
+  type ReservationRateLimitConfig,
 } from "@/lib/rate-limit";
 import { tryAgainInMinutes } from "@/lib/retry-after-copy";
 
@@ -48,43 +50,49 @@ export function enforceAuthenticatedRouteRateLimit(
     : withRetryAfter(apiError("Too Many Requests", 429), result.retryAfterMs);
 }
 
+export type HostOperationLimit = { retryAfterMs: number; inFlight: boolean; reason: RateLimitRefusalReason };
+
 export type AuthenticatedRouteReservation =
   | { limited: null; settle: (outcome: "succeeded" | "failed") => void }
-  | { limited: { retryAfterMs: number; inFlight: boolean }; settle: null };
+  | { limited: HostOperationLimit; settle: null };
 
 /**
  * Reserve one run of a slow, host-changing operation. Only runs that are still
  * going or that succeeded count against the limit: the route settles the
  * reservation as "failed" when the operation fails, which frees the slot at
- * once. The caller builds the refusal so it can explain it in plain words.
+ * once. Failures have their own cap (failureLimit per window) so a failing
+ * run can't be repeated back to back without end. The caller builds the
+ * refusal so it can explain it in plain words.
  */
 export function reserveAuthenticatedRouteRateLimit(
   request: Request,
-  options: AuthenticatedRouteRateLimitOptions,
+  options: AuthenticatedRouteRateLimitOptions & Pick<ReservationRateLimitConfig, "failureLimit">,
 ): AuthenticatedRouteReservation {
-  const { limit, windowMs } = options;
-  const result = reserveRateLimit(rateLimitKey(request, options), { limit, windowMs });
+  const { limit, windowMs, failureLimit } = options;
+  const result = reserveRateLimit(rateLimitKey(request, options), { limit, windowMs, failureLimit });
   return result.success
     ? { limited: null, settle: result.settle }
-    : { limited: { retryAfterMs: result.retryAfterMs, inFlight: result.inFlight }, settle: null };
+    : { limited: { retryAfterMs: result.retryAfterMs, inFlight: result.inFlight, reason: result.reason }, settle: null };
 }
 
 /**
  * The refusal for a reserved host operation: a run still going is a conflict
- * (try again when it ends), a recent success is a 429 with an honest
- * Retry-After.
+ * (try again when it ends); a recent success or too many recent failures is a
+ * 429 with an honest Retry-After.
  */
 export function hostOperationLimitedResponse(
-  limited: { retryAfterMs: number; inFlight: boolean },
-  copy: { inFlight: string; recent: string },
+  limited: HostOperationLimit,
+  copy: { inFlight: string; recent: string; failures: string },
 ): Response {
   if (limited.inFlight) {
     return apiError(copy.inFlight, 409, undefined, { code: "PREPARATION_IN_PROGRESS" });
   }
+  const seconds = retryAfterSeconds(limited.retryAfterMs);
+  const repeatedFailures = limited.reason === "repeated_failures";
   return withRetryAfter(
-    apiError(`${copy.recent} ${tryAgainInMinutes(retryAfterSeconds(limited.retryAfterMs))}`, 429, undefined, {
-      code: "PREPARATION_RATE_LIMITED",
-      retryAfterSeconds: retryAfterSeconds(limited.retryAfterMs),
+    apiError(`${repeatedFailures ? copy.failures : copy.recent} ${tryAgainInMinutes(seconds)}`, 429, undefined, {
+      code: repeatedFailures ? "PREPARATION_FAILURES_LIMITED" : "PREPARATION_RATE_LIMITED",
+      retryAfterSeconds: seconds,
     }),
     limited.retryAfterMs,
   );

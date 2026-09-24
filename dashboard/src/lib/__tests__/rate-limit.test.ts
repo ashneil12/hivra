@@ -117,9 +117,72 @@ describe("reserveRateLimit", () => {
       success: false,
       retryAfterMs: 14 * 60_000,
       inFlight: false,
+      reason: "recent_success",
     });
     now += 14 * 60_000 + 1;
     expect(reserveRateLimit("reserve_succeeded", config).success).toBe(true);
+  });
+
+  // Review of slice 5: the window started at the first reservation, so a run
+  // that failed at 0:00 followed by a success at 14:30 let a third run in at
+  // 15:01, 31 seconds after the success.
+  test("restarts the window when a run succeeds", () => {
+    const failed = reserveRateLimit("reserve_restart", config);
+    if (!failed.success) throw new Error("expected a reservation");
+    failed.settle("failed");
+    now += 14 * 60_000 + 30_000;
+    const succeeded = reserveRateLimit("reserve_restart", config);
+    if (!succeeded.success) throw new Error("expected a reservation");
+    succeeded.settle("succeeded");
+    now += 31_000;
+    expect(reserveRateLimit("reserve_restart", config)).toEqual({
+      success: false,
+      retryAfterMs: 15 * 60_000 - 31_000,
+      inFlight: false,
+      reason: "recent_success",
+    });
+  });
+
+  test("caps failed runs per window when asked to", () => {
+    const capped = { ...config, failureLimit: 3 };
+    const started = now;
+    for (let run = 0; run < 3; run += 1) {
+      const attempt = reserveRateLimit("reserve_failure_cap", capped);
+      if (!attempt.success) throw new Error("expected a reservation");
+      attempt.settle("failed");
+      now += 60_000;
+    }
+    expect(reserveRateLimit("reserve_failure_cap", capped)).toEqual({
+      success: false,
+      retryAfterMs: started + 15 * 60_000 - now,
+      inFlight: false,
+      reason: "repeated_failures",
+    });
+    now = started + 15 * 60_000 + 1;
+    expect(reserveRateLimit("reserve_failure_cap", capped).success).toBe(true);
+  });
+
+  test("clears the failure count when a run succeeds", () => {
+    const capped = { limit: 1, windowMs: 60_000, failureLimit: 2 };
+    for (let run = 0; run < 2; run += 1) {
+      const attempt = reserveRateLimit("reserve_failure_clear", capped);
+      if (!attempt.success) throw new Error("expected a reservation");
+      attempt.settle(run === 0 ? "failed" : "succeeded");
+    }
+    now += 60_001;
+    const failed = reserveRateLimit("reserve_failure_clear", capped);
+    if (!failed.success) throw new Error("expected a reservation");
+    failed.settle("failed");
+    // One failure since the success, under the cap of two.
+    expect(reserveRateLimit("reserve_failure_clear", capped).success).toBe(true);
+  });
+
+  test("leaves failures uncapped without a failure limit", () => {
+    for (let run = 0; run < 20; run += 1) {
+      const attempt = reserveRateLimit("reserve_uncapped", config);
+      if (!attempt.success) throw new Error("expected a reservation");
+      attempt.settle("failed");
+    }
   });
 
   test("refuses a concurrent run, even across a window rollover", () => {

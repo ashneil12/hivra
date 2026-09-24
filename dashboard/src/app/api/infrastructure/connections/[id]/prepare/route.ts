@@ -34,6 +34,9 @@ const ERROR_STATUS: Record<InfrastructurePreparationErrorCode, number> = {
   PREPARATION_INTERNAL_ERROR: 500,
 };
 
+/** Failed setups allowed per host in 15 minutes before the next must wait. */
+const SETUP_FAILURE_LIMIT = 5;
+
 function noStore(response: Response): Response {
   response.headers.set("Cache-Control", "no-store");
   return response;
@@ -52,17 +55,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Host preparation mutates a Proxmox server and may download a large base
     // image. Keep this considerably tighter than ordinary settings writes, but
     // count only a run that is still going or that succeeded: a person who
-    // fixes a failure's cause can try again at once.
+    // fixes a failure's cause can try again at once. Failures still open an
+    // SSH connection to the server, so they have their own cap.
     const reservation = reserveAuthenticatedRouteRateLimit(request, {
       routeKey: `infrastructure_connection_prepare:${parsedId.data}`,
       userId,
       limit: 1,
       windowMs: 15 * 60_000,
+      failureLimit: SETUP_FAILURE_LIMIT,
     });
     if (reservation.limited) {
       return noStore(hostOperationLimitedResponse(reservation.limited, {
         inFlight: "Setup is already running on this server. Wait for it to finish, then check the result.",
         recent: "This server was set up in the last 15 minutes.",
+        failures: `Setup failed on this server ${SETUP_FAILURE_LIMIT} times in the last 15 minutes.`,
       }));
     }
 

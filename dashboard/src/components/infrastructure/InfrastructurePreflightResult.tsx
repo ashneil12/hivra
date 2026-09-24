@@ -46,7 +46,7 @@ export function InfrastructurePreflightResult({
   // Launch appears once the saved target evidence for this connection says
   // ready; the page reloads it right after every check.
   const launchAction = result.ok && result.target.launchReady
-    ? launch.forConnection(result.connectionId, "proxmox")
+    ? launch.forProxmoxConnection(result.connectionId)
     : null;
 
   useEffect(() => {

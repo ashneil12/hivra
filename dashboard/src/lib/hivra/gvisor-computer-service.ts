@@ -78,8 +78,10 @@ function preparationFailureMessage(stage: HivraGvisorPrepareStage | null): strin
   const messages: Record<HivraGvisorPrepareStage, string> = {
     "host-eligibility": "The host no longer meets the supported gVisor preparation requirements.",
     prerequisites: "The required Docker and installation tools could not be prepared on this host.",
-    "bundle-download": "The pinned gVisor bundle could not be downloaded or verified.",
+    "bundle-download": "The pinned gVisor bundle could not be downloaded.",
+    "bundle-checksum": "The downloaded gVisor bundle did not match its pinned checksum.",
     "bundle-validation": "The pinned gVisor bundle did not contain the expected safe runtime files.",
+    "installed-adapter-check": "The host has Linux Sandbox setup from another Hivra release. Existing runtime files were not replaced.",
     "installed-identity-check": "The host has a conflicting gVisor runtime identity. Existing runtime files were not replaced.",
     "asset-installation": "The pinned gVisor runtime files could not be installed.",
     "runtime-registration": "Docker did not confirm the exact runsc runtime path within 30 seconds of its configuration reload.",

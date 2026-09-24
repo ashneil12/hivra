@@ -93,7 +93,7 @@ import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
 import { DigitalOceanConnectionCard } from "./DigitalOceanConnectionCard";
 import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
 import { DigitalOceanLaunchDialog } from "./DigitalOceanLaunchDialog";
-import { LaunchOnServerProvider, usePendingLaunch } from "./LaunchOnServer";
+import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -106,6 +106,9 @@ type CheckDialogState = {
   discovery?: HostDiscoveryResult;
   preflight?: ProxmoxPreflightResult;
   error?: string;
+  /** The owner asked to check Linux Sandbox readiness: after the inspection,
+   * run the strict check without a second click. */
+  checkGvisorReadiness?: boolean;
 };
 
 /** Which host setup the shared review dialog is running, and on what. */
@@ -424,10 +427,12 @@ export function InfrastructureConnectionsPage() {
   const hasHivraCloudCapacity = Boolean(
     hivraCloud?.subscribed && hivraCloud.plan && hivraCloud.usage,
   );
+  // Ready now, not only once: a Linux Sandbox host's check lapses after 15
+  // minutes, and the banner goes away with it.
+  const launchReadyTargetIds = useLaunchReadyTargetIds(targets);
   const readyLaunchTarget = requestedLaunchResource
     ? targets.find((target) => (
-        target.status === "ready"
-        && target.capabilities.launchReady
+        launchReadyTargetIds.has(target.id)
         && targetSupportsLaunchResource(target, requestedLaunchResource)
       )) ?? null
     : null;
@@ -571,14 +576,18 @@ export function InfrastructureConnectionsPage() {
     openEditWizard(connection);
   }
 
-  const runDiscovery = useCallback(async (connection: SshInfrastructureConnectionDto) => {
+  const runDiscovery = useCallback(async (
+    connection: SshInfrastructureConnectionDto,
+    options: { checkGvisorReadiness?: boolean } = {},
+  ) => {
+    const checkGvisorReadiness = options.checkGvisorReadiness === true;
     setCheckingIds((current) => new Set(current).add(connection.id));
-    setCheckDialog({ connection, phase: "discovering" });
+    setCheckDialog({ connection, phase: "discovering", checkGvisorReadiness });
     setActionError(null);
     setActionNotice(null);
     try {
       const discovery = await discoverInfrastructureHost(connection.id);
-      setCheckDialog({ connection, phase: "discovery", discovery });
+      setCheckDialog({ connection, phase: "discovery", discovery, checkGvisorReadiness });
     } catch (error) {
       setCheckDialog({
         connection,
@@ -929,6 +938,7 @@ export function InfrastructureConnectionsPage() {
                       checking={checkingIds.has(connection.id)}
                       onPrepare={() => setPreparing({ connection, engine: "proxmox", mode: "prepare" })}
                       onCheck={() => void runDiscovery(connection)}
+                      onCheckReadiness={() => void runDiscovery(connection, { checkGvisorReadiness: true })}
                       onEdit={() => openEditWizard(connection)}
                       onDelete={() => setDeletingConnection(connection)}
                     />
@@ -1508,6 +1518,7 @@ function ConnectionCheckDialog({
               onGvisorSetupRequested={onGvisorSetupRequested}
               onConnectAsRootRequested={onEditRequested}
               onGvisorReady={onGvisorReady}
+              checkGvisorReadiness={state.checkGvisorReadiness}
               retrying={checking}
             />
           ) : state.phase === "preflighting" ? (

@@ -8,7 +8,7 @@ jest.mock("@/lib/infrastructure/client", () => ({
 }));
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import {
   checkGvisorConnection,
@@ -208,6 +208,62 @@ describe("InfrastructureHostDiscoveryResult", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check readiness" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Hivra checked web-1 a moment ago. You can try again in 1 minute.");
     expect(screen.queryByText("Too Many Requests")).not.toBeInTheDocument();
+  });
+
+  // Review of slice 5: after a 429, Check readiness stayed disabled for good,
+  // so the owner had to inspect again even once the wait was over.
+  it("brings Check readiness back once the wait a refusal named is over", async () => {
+    jest.useFakeTimers();
+    try {
+      (checkGvisorConnection as jest.Mock).mockRejectedValueOnce(new InfrastructureApiError("Too Many Requests", 429, undefined, 42));
+      renderResult(discovered(INSTALLED_GVISOR));
+      fireEvent.click(screen.getByRole("button", { name: "Check readiness" }));
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByRole("alert")).toHaveTextContent("You can try again in 1 minute.");
+      expect(screen.getByRole("button", { name: "Check readiness" })).toBeDisabled();
+
+      act(() => { jest.advanceTimersByTime(42_000); });
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Check readiness" })).toBeEnabled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("checks readiness without a second click when the owner asked for it from the card", async () => {
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: TARGET_ID, ready: true });
+    renderResult(discovered(INSTALLED_GVISOR), { checkGvisorReadiness: true });
+
+    expect(await screen.findByRole("heading", { name: "web-1 is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(checkGvisorConnection).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+  });
+
+  it("never checks on its own when the inspection shows no installed setup", () => {
+    renderResult(discovered(), { checkGvisorReadiness: true });
+    expect(checkGvisorConnection).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Review setup" })).toBeInTheDocument();
+  });
+
+  it("takes Launch away again 15 minutes after the check passed", async () => {
+    jest.useFakeTimers();
+    try {
+      (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: TARGET_ID, ready: true });
+      renderResult(discovered(INSTALLED_GVISOR));
+      fireEvent.click(screen.getByRole("button", { name: "Check readiness" }));
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+      expect(screen.getByText(/good for 15 minutes/)).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(15 * 60_000 + 100); });
+
+      expect(screen.queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
+      expect(screen.getByText("The last check is more than 15 minutes old. Check again before you launch.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Check readiness" })).toBeEnabled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("offers the review dialog to repair a setup whose check failed", async () => {

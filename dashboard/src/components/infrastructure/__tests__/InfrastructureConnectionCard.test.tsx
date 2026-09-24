@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { InfrastructureConnectionCard } from "../InfrastructureConnectionCard";
 import { providerVmTarget } from "@/lib/infrastructure/__tests__/provider-vm-target.fixtures";
 import type { DeploymentTargetDto, InfrastructureConnectionDto, ProxmoxDeploymentTargetDto } from "@/lib/infrastructure/contracts";
@@ -74,10 +74,8 @@ it("labels the host disconnect for narrow cards while keeping the icon control",
   expect(onDelete).toHaveBeenCalledTimes(2);
 });
 
-// INF-06: a gVisor-ready host used to keep the generic "Inspected" badge and
-// offer no way to launch.
-it("labels a ready gVisor host Ready for Linux Sandbox and launches Linux Sandbox on it", () => {
-  const gvisor: DeploymentTargetDto = {
+function gvisorTarget(lastPreflightAt = "2026-09-15T12:00:00.000Z"): DeploymentTargetDto {
+  return {
     id: "66666666-6666-4666-8666-666666666666",
     connectionId: connection.id,
     evidenceConnectionRevision: 1,
@@ -99,21 +97,63 @@ it("labels a ready gVisor host Ready for Linux Sandbox and launches Linux Sandbo
     },
     supportedIsolationDrivers: ["gvisor-runsc"],
     isolationClass: "application-kernel",
-    lastPreflightAt: "2026-09-15T12:00:00.000Z",
+    lastPreflightAt,
     lastErrorCode: null,
     createdAt: "2026-09-15T12:00:00.000Z",
     updatedAt: "2026-09-15T12:00:00.000Z",
   };
-  render(<InfrastructureConnectionCard connection={connection} savedTarget={gvisor}
-    onCheck={jest.fn()} onPrepare={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} />);
+}
 
-  expect(screen.getByText("Ready for Linux Sandbox")).toBeInTheDocument();
-  expect(screen.queryByText("Inspected")).not.toBeInTheDocument();
-  expect(screen.getByText("My server")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
-    "href",
-    `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${gvisor.id}`,
-  );
+describe("a Linux Sandbox (gVisor) host", () => {
+  afterEach(() => jest.useRealTimers());
+
+  // INF-06: a gVisor-ready host used to keep the generic "Inspected" badge and
+  // offer no way to launch.
+  it("is Ready for Linux Sandbox and launches Linux Sandbox while its check is fresh", () => {
+    jest.useFakeTimers({ now: Date.parse("2026-09-15T12:05:00.000Z") });
+    const gvisor = gvisorTarget();
+    render(<InfrastructureConnectionCard connection={connection} savedTarget={gvisor}
+      onCheck={jest.fn()} onPrepare={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} />);
+
+    expect(screen.getByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(screen.queryByText("Inspected")).not.toBeInTheDocument();
+    expect(screen.getByText("My server")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${gvisor.id}`,
+    );
+    expect(screen.queryByText(/Launch checks the server again/)).not.toBeInTheDocument();
+  });
+
+  // Review of slice 5: the server accepts a new sandbox only within 15
+  // minutes of the last strict check, so an hour-old check showed Ready and a
+  // Launch button that ended in "The connected host authority changed".
+  it("asks for a readiness check instead of launching when its last check is stale", () => {
+    jest.useFakeTimers({ now: Date.parse("2026-09-15T13:00:00.000Z") });
+    const onCheckReadiness = jest.fn();
+    render(<InfrastructureConnectionCard connection={connection} savedTarget={gvisorTarget()}
+      onCheck={jest.fn()} onCheckReadiness={onCheckReadiness} onPrepare={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} />);
+
+    expect(screen.getByText("Needs a check")).toBeInTheDocument();
+    expect(screen.queryByText("Ready for Linux Sandbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Launch on this server|Continue launch/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/last check is more than 15 minutes old/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check readiness" }));
+    expect(onCheckReadiness).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the launch action the moment the check lapses while the page is open", () => {
+    jest.useFakeTimers({ now: Date.parse("2026-09-15T12:14:00.000Z") });
+    render(<InfrastructureConnectionCard connection={connection} savedTarget={gvisorTarget()}
+      onCheck={jest.fn()} onCheckReadiness={jest.fn()} onPrepare={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} />);
+    expect(screen.getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+
+    act(() => { jest.advanceTimersByTime(61_000); });
+
+    expect(screen.queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
+    expect(screen.getByText("Needs a check")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check readiness" })).toBeInTheDocument();
+  });
 });
 
 it("never offers launch while the host is being inspected", () => {

@@ -1,8 +1,9 @@
 /** @jest-environment node */
 
 // The real in-memory limiter behind host preparation, end to end through the
-// route: a failed run never locks the owner out, a successful one does for the
-// rest of the window, and the refusal says how long to wait.
+// route: a failed run gives its slot back (up to 5 failures per 15 minutes), a
+// successful one holds it for 15 minutes from the success, and the refusal
+// says how long to wait.
 
 import { NextRequest } from "next/server";
 
@@ -66,16 +67,57 @@ describe("host preparation rate limit", () => {
     now += 3 * 60_000;
     const limited = await POST(request(), context());
     expect(limited.status).toBe(429);
-    // 15 minutes from the window's first run, less the 3m02s since.
-    expect(limited.headers.get("retry-after")).toBe(String(15 * 60 - 3 * 60 - 2));
+    // 15 minutes from the success, less the 3 minutes since.
+    expect(limited.headers.get("retry-after")).toBe(String(15 * 60 - 3 * 60));
     expect((await limited.json()).error).toBe(
       "This server was set up in the last 15 minutes. You can try again in 12 minutes.",
     );
     expect(mockPrepare).toHaveBeenCalledTimes(3);
 
-    now += 13 * 60_000;
+    now += 12 * 60_000 + 1;
     mockPrepare.mockResolvedValueOnce(succeeded);
     expect((await POST(request(), context())).status).toBe(200);
+  });
+
+  // Review of slice 5: the window used to start at the first attempt, so a
+  // failure at 0:00 and a success at 14:30 let a third run in at 15:01.
+  it("holds a success for 15 minutes from the success, even after an earlier failure", async () => {
+    const connection = "00000000-0000-4000-8000-000000001038";
+    const ctx = () => ({ params: Promise.resolve({ id: connection }) });
+    mockPrepare.mockResolvedValueOnce(failed).mockResolvedValueOnce(succeeded);
+
+    expect((await POST(request(), ctx())).status).toBe(502);
+    now += 14 * 60_000 + 30_000;
+    expect((await POST(request(), ctx())).status).toBe(200);
+    now += 31_000;
+    const limited = await POST(request(), ctx());
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe(String(15 * 60 - 31));
+    expect(mockPrepare).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes a host wait after 5 failed runs in 15 minutes", async () => {
+    const connection = "00000000-0000-4000-8000-000000001039";
+    const ctx = () => ({ params: Promise.resolve({ id: connection }) });
+    mockPrepare.mockResolvedValue(failed);
+    for (let run = 0; run < 5; run += 1) {
+      expect((await POST(request(), ctx())).status).toBe(502);
+      now += 60_000;
+    }
+    const limited = await POST(request(), ctx());
+    expect(limited.status).toBe(429);
+    // 15 minutes from the first failure, less the 5 minutes since.
+    expect(limited.headers.get("retry-after")).toBe(String(10 * 60));
+    expect(await limited.json()).toMatchObject({
+      code: "PREPARATION_FAILURES_LIMITED",
+      error: "Setup failed on this server 5 times in the last 15 minutes. You can try again in 10 minutes.",
+    });
+    expect(mockPrepare).toHaveBeenCalledTimes(5);
+
+    now += 10 * 60_000 + 1;
+    expect((await POST(request(), ctx())).status).toBe(502);
+    expect(mockPrepare).toHaveBeenCalledTimes(6);
+    mockPrepare.mockReset();
   });
 
   it("refuses a second run while the first is still going", async () => {

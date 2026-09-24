@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Server,
   ServerCog,
+  ShieldCheck,
   Trash2,
   Unplug,
 } from "lucide-react";
@@ -29,10 +30,11 @@ import {
   formatInfrastructureDate,
   preflightHeadline,
 } from "@/lib/infrastructure/formatters";
+import { hasReadyEvidence } from "@/lib/infrastructure/launch-on-server";
 import { canPrepareFromSavedTarget } from "@/lib/infrastructure/preparation-eligibility";
 
 import styles from "./Infrastructure.module.css";
-import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
+import { LaunchOnServerLink, useTargetLaunchAction } from "./LaunchOnServer";
 
 
 type InfrastructureConnectionCardProps = {
@@ -41,6 +43,8 @@ type InfrastructureConnectionCardProps = {
   latestPreflight?: ProxmoxPreflightResult;
   checking?: boolean;
   onCheck: () => void;
+  /** Inspects the server, then runs the strict Linux Sandbox check. */
+  onCheckReadiness?: () => void;
   onPrepare: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -52,11 +56,11 @@ export function InfrastructureConnectionCard({
   latestPreflight,
   checking = false,
   onCheck,
+  onCheckReadiness,
   onPrepare,
   onEdit,
   onDelete,
 }: InfrastructureConnectionCardProps) {
-  const launch = useLaunchOnServer();
   const base = connectionPresentation(connection);
   const latest = latestPreflight ? preflightHeadline(latestPreflight) : null;
   // A local connection edit or in-flight check can invalidate a previously
@@ -80,23 +84,26 @@ export function InfrastructureConnectionCard({
     trustedSavedTarget?.status === "ready" &&
     trustedSavedTarget.capabilities.launchReady,
   );
-  const gvisorReady = Boolean(
-    connection.status === "ready"
-    && gvisorTarget?.status === "ready"
-    && gvisorTarget.capabilities.launchReady,
+  // Linux Sandbox was set up and passed a check. The server accepts a launch
+  // only within 15 minutes of that check, so readiness also needs it fresh.
+  const gvisorSetUp = Boolean(
+    connection.status === "ready" && gvisorTarget && hasReadyEvidence(gvisorTarget),
   );
+  // Only saved, ready evidence earns the launch action, never a local check
+  // result that the registry hasn't published yet. It lapses on its own.
+  const targetLaunch = useTargetLaunchAction(
+    savedTargetReady ? trustedSavedTarget : gvisorSetUp ? gvisorTarget : null,
+  );
+  const gvisorReady = gvisorSetUp && targetLaunch !== null;
+  const gvisorCheckLapsed = gvisorSetUp && targetLaunch === null;
   const savedTargetIncomplete = Boolean(
-    (trustedSavedTarget && !savedTargetReady) || (gvisorTarget && !gvisorReady),
+    (trustedSavedTarget && !savedTargetReady) || (gvisorTarget && !gvisorSetUp),
   );
   const discoveryOnly = Boolean(
     connection.status === "pending" && connection.lastCheckedAt && !latest && !savedTarget,
   );
   const canPrepareRecommendedSetup = canPrepareFromSavedTarget(connection, trustedSavedTarget);
-  // Only saved, ready evidence earns the launch action, never a local check
-  // result that the registry hasn't published yet.
-  const launchAction = !checking && connection.status === "ready"
-    ? launch.forTarget(savedTargetReady ? trustedSavedTarget : gvisorReady ? gvisorTarget : null)
-    : null;
+  const launchAction = !checking && connection.status === "ready" ? targetLaunch : null;
   const tone = checking
     ? "checking"
     : latest?.tone === "ready"
@@ -107,7 +114,7 @@ export function InfrastructureConnectionCard({
           ? "checking"
           : savedTargetReady || gvisorReady
             ? "connected"
-            : savedTargetIncomplete
+            : savedTargetIncomplete || gvisorCheckLapsed
               ? "checking"
               : discoveryOnly
                 ? "checking"
@@ -124,7 +131,9 @@ export function InfrastructureConnectionCard({
             ? "Ready for agents"
             : gvisorReady
               ? "Ready for Linux Sandbox"
-              : savedTargetIncomplete
+              : gvisorCheckLapsed
+                ? "Needs a check"
+                : savedTargetIncomplete
                 ? "Setup incomplete"
                 : discoveryOnly
                   ? "Needs setup"
@@ -177,8 +186,10 @@ export function InfrastructureConnectionCard({
               ?? (savedTargetReady
                 ? "Agents and computers can run here. Launch checks the server again before anything starts."
                 : gvisorReady
-                  ? "Linux Sandbox can run here. Launch checks the server again before anything starts."
-                  : gvisorTarget
+                  ? "Linux Sandbox can run here. A check is good for 15 minutes; after that, check again before you launch."
+                  : gvisorCheckLapsed
+                    ? "Linux Sandbox is set up here. Its last check is more than 15 minutes old, so check again before you launch."
+                    : gvisorTarget
                     ? "The last Linux Sandbox check didn't pass. Inspect the server again to see what it needs."
                     : savedTargetIncomplete
                       ? trustedSavedTarget?.capabilities.issues[0]?.message
@@ -270,6 +281,10 @@ export function InfrastructureConnectionCard({
       <div className={styles.cardActions}>
         {launchAction ? (
           <LaunchOnServerLink action={launchAction} />
+        ) : gvisorCheckLapsed && onCheckReadiness ? (
+          <button type="button" className={styles.primaryButton} onClick={onCheckReadiness} disabled={checking}>
+            <ShieldCheck size={14} aria-hidden="true" /> Check readiness
+          </button>
         ) : canPrepareRecommendedSetup ? (
           <button type="button" className={styles.primaryButton} onClick={onPrepare} disabled={checking}>
             <ServerCog size={14} aria-hidden="true" /> Review setup

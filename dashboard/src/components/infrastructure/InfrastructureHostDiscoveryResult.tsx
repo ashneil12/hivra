@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   UserRound,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { checkGvisorConnection, InfrastructureApiError } from "@/lib/infrastructure/client";
 import type {
@@ -27,11 +27,11 @@ import {
   type HostDiscoveryOutcome,
 } from "@/lib/infrastructure/host-discovery-outcome";
 import { formatInfrastructureBytes } from "@/lib/infrastructure/formatters";
-import type { LaunchOnServerAction } from "@/lib/infrastructure/launch-on-server";
+import type { GvisorReadinessCheck, LaunchOnServerAction } from "@/lib/infrastructure/launch-on-server";
 import { tryAgainInMinutes } from "@/lib/retry-after-copy";
 
 import styles from "./Infrastructure.module.css";
-import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
+import { LaunchOnServerLink, useGvisorCheckLaunchAction } from "./LaunchOnServer";
 
 const ENGINE_LABELS: Record<HostIsolationEngineId, string> = {
   "proxmox-kvm": "Proxmox VE",
@@ -81,7 +81,15 @@ function capacityLabel(value: number | null, suffix: string): string {
   return value === null ? "Unknown" : `${value} ${suffix}`;
 }
 
-type GvisorCheckFailure = { message: string; next: "inspect" | "repair" | "retry" | "wait" };
+type GvisorCheckFailure = {
+  message: string;
+  next: "inspect" | "repair" | "retry" | "wait";
+  /** For "wait": how long before Check readiness works again. */
+  waitSeconds?: number;
+};
+
+/** The limiter's default window when a refusal doesn't say how long. */
+const DEFAULT_CHECK_WAIT_SECONDS = 60;
 
 /** One plain sentence for a failed read-only Linux Sandbox check. */
 function gvisorCheckFailure(error: unknown, hostName: string | undefined): GvisorCheckFailure {
@@ -92,6 +100,7 @@ function gvisorCheckFailure(error: unknown, hostName: string | undefined): Gviso
       return {
         message: `Hivra checked ${named} a moment ago. ${error.retryAfterSeconds !== null ? tryAgainInMinutes(error.retryAfterSeconds) : "Wait a minute, then try again."}`,
         next: "wait",
+        waitSeconds: error.retryAfterSeconds ?? DEFAULT_CHECK_WAIT_SECONDS,
       };
     }
     if (error.code === "discovery_required") {
@@ -119,6 +128,7 @@ export function InfrastructureHostDiscoveryResult({
   onGvisorSetupRequested,
   onConnectAsRootRequested,
   onGvisorReady,
+  checkGvisorReadiness = false,
   retrying = false,
 }: {
   result: HostDiscoveryResult;
@@ -136,18 +146,62 @@ export function InfrastructureHostDiscoveryResult({
   onConnectAsRootRequested?: () => void;
   /** Called when this dialog's own readiness check came back ready. */
   onGvisorReady?: (targetId: string) => void;
+  /** The owner asked for a readiness check: run it as soon as this
+   * inspection shows an installed Linux Sandbox setup. */
+  checkGvisorReadiness?: boolean;
   retrying?: boolean;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [checking, setChecking] = useState(false);
-  const [readyTargetId, setReadyTargetId] = useState<string | null>(null);
+  const [readyCheck, setReadyCheck] = useState<GvisorReadinessCheck | null>(null);
   const [checkFailure, setCheckFailure] = useState<GvisorCheckFailure | null>(null);
-  const launch = useLaunchOnServer();
+  const autoCheckedResult = useRef<HostDiscoveryResult | null>(null);
+  // A passed check authorizes a launch for 15 minutes; after that the
+  // outcome's own action (Check readiness) comes back.
+  const launchAction = useGvisorCheckLaunchAction(readyCheck);
+  const ready = launchAction !== null;
   const name = hostName?.trim() || "This server";
+  const autoCheck = checkGvisorReadiness && result.ok && Boolean(connectionId)
+    && hostDiscoveryOutcome(result.snapshot, { hostName, sshUser }).action === "check-gvisor";
 
   useEffect(() => {
     headingRef.current?.focus();
-  }, [result, readyTargetId]);
+  }, [result, ready]);
+
+  // After a refusal to check again so soon, Check readiness comes back once
+  // the wait the server named is over.
+  const waitSeconds = checkFailure?.next === "wait" ? checkFailure.waitSeconds ?? DEFAULT_CHECK_WAIT_SECONDS : null;
+  useEffect(() => {
+    if (waitSeconds === null) return;
+    const timer = window.setTimeout(() => {
+      setCheckFailure((current) => (current?.next === "wait" ? null : current));
+    }, waitSeconds * 1_000);
+    return () => window.clearTimeout(timer);
+  }, [checkFailure, waitSeconds]);
+
+  const checkReadiness = useCallback(async () => {
+    if (!connectionId) return;
+    setChecking(true);
+    setCheckFailure(null);
+    try {
+      const target = await checkGvisorConnection(connectionId);
+      if (!target.ready) throw new InfrastructureApiError("The readiness check did not pass.", 502, "remote_failed");
+      setReadyCheck({ targetId: target.targetId, checkedAt: Date.now() });
+      onGvisorReady?.(target.targetId);
+    } catch (error) {
+      setCheckFailure(gvisorCheckFailure(error, hostName));
+    } finally {
+      setChecking(false);
+    }
+  }, [connectionId, hostName, onGvisorReady]);
+
+  // "Check readiness" on a server's card inspects first, then checks without
+  // a second click. Once per inspection result.
+  useEffect(() => {
+    if (!autoCheck || autoCheckedResult.current === result) return;
+    autoCheckedResult.current = result;
+    void checkReadiness();
+  }, [autoCheck, checkReadiness, result]);
 
   if (!result.ok) {
     return (
@@ -177,29 +231,15 @@ export function InfrastructureHostDiscoveryResult({
 
   const { snapshot } = result;
   const outcome = hostDiscoveryOutcome(snapshot, { hostName, sshUser });
-  const launchAction = readyTargetId ? launch.forGvisorTarget(readyTargetId) : null;
   const gvisorInstalled = outcome.action === "check-gvisor";
   const gvisorSetupAvailable = Boolean(onGvisorSetupRequested && connectionId);
 
-  async function checkReadiness() {
-    if (!connectionId) return;
-    setChecking(true);
-    setCheckFailure(null);
-    try {
-      const target = await checkGvisorConnection(connectionId);
-      if (!target.ready) throw new InfrastructureApiError("The readiness check did not pass.", 502, "remote_failed");
-      setReadyTargetId(target.targetId);
-      onGvisorReady?.(target.targetId);
-    } catch (error) {
-      setCheckFailure(gvisorCheckFailure(error, hostName));
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  const ready = Boolean(readyTargetId);
   const title = ready ? `${name} is ready for Linux Sandbox.` : outcome.title;
-  const detail = ready ? "Launch checks the server again before anything starts." : outcome.detail;
+  const detail = ready
+    ? "Its check is good for 15 minutes. After that, check again before you launch."
+    : readyCheck && gvisorInstalled
+      ? "The last check is more than 15 minutes old. Check again before you launch."
+      : outcome.detail;
   const toneClass = ready || outcome.ready ? styles.resultReady : styles.resultIncomplete;
 
   const primary = primaryAction({

@@ -74,20 +74,38 @@ describe("POST /api/infrastructure/connections/[id]/gvisor/prepare", () => {
 
   it("reports the stage a failed setup stopped in and lets the owner retry at once", async () => {
     const id = connectionId();
-    mockPrepare.mockRejectedValueOnce(new GvisorPreparationError("The pinned gVisor bundle could not be downloaded or verified.", "bundle-download"));
+    mockPrepare.mockRejectedValueOnce(new GvisorPreparationError("The downloaded gVisor bundle did not match its pinned checksum.", "bundle-checksum"));
 
     const failed = await POST(request(id), context(id));
     expect(failed.status).toBe(502);
     expect(await failed.json()).toEqual({
       success: false,
-      error: "The pinned gVisor bundle could not be downloaded or verified.",
+      error: "The downloaded gVisor bundle did not match its pinned checksum.",
       code: "remote_failed",
-      stage: "bundle-download",
+      stage: "bundle-checksum",
     });
 
     const retried = await POST(request(id), context(id));
     expect(retried.status).toBe(200);
     expect(mockPrepare).toHaveBeenCalledTimes(2);
+  });
+
+  // Review of slice 5: a failure gives its slot back, which left failed runs
+  // with no limit at all; each one opens an SSH connection to the server.
+  it("makes the host wait after 5 failed setups in 15 minutes", async () => {
+    const id = connectionId();
+    mockPrepare.mockRejectedValue(new GvisorPreparationError("The pinned gVisor bundle could not be downloaded.", "bundle-download"));
+    for (let run = 0; run < 5; run += 1) {
+      expect((await POST(request(id), context(id))).status).toBe(502);
+    }
+    const limited = await POST(request(id), context(id));
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(14 * 60);
+    expect(await limited.json()).toMatchObject({
+      code: "PREPARATION_FAILURES_LIMITED",
+      error: "Linux Sandbox setup failed on this server 5 times in the last 15 minutes. You can try again in 15 minutes.",
+    });
+    expect(mockPrepare).toHaveBeenCalledTimes(5);
   });
 
   it("attributes a failed final check to the readiness step", async () => {

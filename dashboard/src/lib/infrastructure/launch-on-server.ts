@@ -1,5 +1,9 @@
 import { targetSupportsCatalogRuntime } from "@/lib/hivra/agent-placement";
 import {
+  HIVRA_GVISOR_ADAPTER_VERSION,
+  HIVRA_GVISOR_PREFLIGHT_TTL_MS,
+} from "@/lib/hivra/gvisor-computer-contract";
+import {
   buildLaunchSetupHref,
   parsePortableLaunchResourceId,
   type PortableLaunchResourceId,
@@ -18,7 +22,12 @@ import { PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS } from "./port
 // launch journey with that server already chosen. When a launch is already
 // under way and can use the server, the action continues it instead of
 // starting over. This is navigation intent only; the launch journey reloads
-// the owner-scoped target and checks it again before anything starts.
+// the owner-scoped target before anything starts.
+//
+// Readiness is what the server will accept right now, not only what was saved:
+// a Linux Sandbox (gVisor) host's strict check authorizes a new sandbox for
+// HIVRA_GVISOR_PREFLIGHT_TTL_MS (gvisor-computer-service executionAuthority),
+// so its ready state and launch action end when that window does.
 
 /** A launch the owner started before coming to Infrastructure. */
 export type PendingLaunch =
@@ -94,17 +103,63 @@ function actionFor(
     : { label: "Launch on this server", href: freshLaunchHref(targetId, placement) };
 }
 
-export function isLaunchReadyTarget(target: DeploymentTargetDto): boolean {
+/** The saved evidence says ready. For a gVisor host this alone is not enough
+ * to launch; see launchReadyUntil. */
+export function hasReadyEvidence(target: DeploymentTargetDto): boolean {
   return target.status === "ready" && target.capabilities.launchReady === true;
 }
 
-/** The launch action for a saved, ready deployment target, or null when the
- * saved evidence does not say it is ready. */
-export function launchOnDeploymentTarget(
-  target: DeploymentTargetDto | null | undefined,
+/**
+ * When a saved target stops authorizing a launch, in epoch milliseconds.
+ * Proxmox and cloud-server readiness doesn't lapse with time (Infinity). A
+ * gVisor host's does: the server accepts a new sandbox only within
+ * HIVRA_GVISOR_PREFLIGHT_TTL_MS of the last strict check, and only for the
+ * adapter this Hivra release installs. A target that isn't ready has already
+ * lapsed (-Infinity).
+ *
+ * Only the deadline is compared with the browser's clock, never the check
+ * time itself, so a browser clock a little behind the server's can't make a
+ * check that just passed look like it came from the future.
+ */
+export function launchReadyUntil(target: DeploymentTargetDto): number {
+  if (!hasReadyEvidence(target)) return -Infinity;
+  if (!isGvisorDeploymentTarget(target)) return Infinity;
+  if (target.capabilities.adapter.version !== HIVRA_GVISOR_ADAPTER_VERSION) return -Infinity;
+  const checkedAt = target.lastPreflightAt ? Date.parse(target.lastPreflightAt) : Number.NaN;
+  return Number.isFinite(checkedAt) ? checkedAt + HIVRA_GVISOR_PREFLIGHT_TTL_MS : -Infinity;
+}
+
+/** When a strict gVisor check that passed in this browser stops authorizing
+ * a launch. */
+export function gvisorCheckReadyUntil(checkedAt: number): number {
+  return checkedAt + HIVRA_GVISOR_PREFLIGHT_TTL_MS;
+}
+
+export function isLaunchReadyTarget(target: DeploymentTargetDto, now: number): boolean {
+  return now < launchReadyUntil(target);
+}
+
+/** The ids of the targets that can launch at `now`, as a stable key. */
+export function launchReadyTargetKey(targets: readonly DeploymentTargetDto[], now: number): string {
+  return targets.filter((target) => isLaunchReadyTarget(target, now)).map((target) => target.id).join(",");
+}
+
+/** The next moment any of these targets' readiness lapses, or null. */
+export function nextLaunchReadinessChange(targets: readonly DeploymentTargetDto[], now: number): number | null {
+  let next: number | null = null;
+  for (const target of targets) {
+    const until = launchReadyUntil(target);
+    if (Number.isFinite(until) && until > now && (next === null || until < next)) next = until;
+  }
+  return next;
+}
+
+/** The launch action for a saved target. Offer it only while the target can
+ * launch: before launchReadyUntil(target) (useTargetLaunchAction does this). */
+export function launchActionForReadyTarget(
+  target: DeploymentTargetDto,
   pending: PendingLaunch | null,
-): LaunchOnServerAction | null {
-  if (!target || !isLaunchReadyTarget(target)) return null;
+): LaunchOnServerAction {
   return actionFor(target.id, isGvisorDeploymentTarget(target) ? "gvisor" : "other", pending, (launch) => (
     launch.source === "handoff"
       ? targetSupportsLaunchResource(target, launch.resourceId)
@@ -112,9 +167,14 @@ export function launchOnDeploymentTarget(
   ));
 }
 
+/** A strict gVisor check (or setup, which ends with one) that passed in this
+ * browser, with the browser's time when its answer arrived. */
+export type GvisorReadinessCheck = { targetId: string; checkedAt: number };
+
 /** The launch action for a Linux host whose gVisor check or setup just came
- * back ready. Only Linux Sandbox runs there. */
-export function launchOnGvisorTarget(targetId: string, pending: PendingLaunch | null): LaunchOnServerAction {
+ * back ready. Only Linux Sandbox runs there. Offer it only before
+ * gvisorCheckReadyUntil(checkedAt) (useGvisorCheckLaunchAction does this). */
+export function launchActionForGvisorCheck(targetId: string, pending: PendingLaunch | null): LaunchOnServerAction {
   return actionFor(targetId, "gvisor", pending, (launch) => (
     launch.source === "handoff" ? launch.resourceId === "linux-terminal" : launch.profileId === "linux-terminal"
   ));
