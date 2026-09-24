@@ -8,7 +8,7 @@ import type { ProviderComputerSetupView } from "@/lib/infrastructure/provider-co
 jest.mock("@/lib/infrastructure/client", () => ({ listProviderComputerSetups: jest.fn(), advanceProviderComputerSetup: jest.fn() }));
 const view: ProviderComputerSetupView = { orderId: "22222222-2222-4222-8222-222222222222", connectionId: "11111111-1111-4111-8111-111111111111",
   connectionRevision: 7, serverName: "hivra-22222222222242228222", providerServerId: "42", stage: "awaiting_setup", targetId: null, observedAt: null, launchReady: false, enrollmentExpiresAt: null,
-  enrollmentWindow: "since_creation" };
+  enrollmentClosesAt: null, enrollmentWindow: "since_creation" };
 // A server created with the current recipe: its window opens at Start setup.
 const startView: ProviderComputerSetupView = { ...view, enrollmentWindow: "since_start" };
 const connection = { id: view.connectionId, name: "My cloud" } as HetznerCloudConnectionDto;
@@ -147,18 +147,18 @@ it("does not dispatch further steps after unmount", async () => {
 });
 
 it("counts down a legacy server's setup key from the server's deadline without starting anything", async () => {
-  (listProviderComputerSetups as jest.Mock).mockResolvedValue([{
-    ...view, enrollmentExpiresAt: new Date(Date.now() + 14 * 60_000 + 10_500).toISOString(),
-  }]);
+  const deadline = new Date(Date.now() + 14 * 60_000 + 10_500).toISOString();
+  (listProviderComputerSetups as jest.Mock).mockResolvedValue([{ ...view, enrollmentExpiresAt: deadline, enrollmentClosesAt: deadline }]);
   render(<ProviderComputerSetupDialog connection={connection} onClose={jest.fn()} onChanged={jest.fn()} />);
   expect(await screen.findByText(/Setup key valid for/)).toHaveTextContent(/14:(10|09)/);
   expect(screen.getByRole("button", { name: "Start setup" })).toBeEnabled();
   expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
 });
 it("re-reads a legacy server's saved state when the local countdown reaches zero instead of claiming expiry", async () => {
+  const deadline = new Date(Date.now() - 1_000).toISOString();
   (listProviderComputerSetups as jest.Mock)
-    .mockResolvedValueOnce([{ ...view, enrollmentExpiresAt: new Date(Date.now() - 1_000).toISOString() }])
-    .mockResolvedValueOnce([{ ...view, stage: "expired", enrollmentExpiresAt: new Date(Date.now() - 1_000).toISOString() }]);
+    .mockResolvedValueOnce([{ ...view, enrollmentExpiresAt: deadline, enrollmentClosesAt: deadline }])
+    .mockResolvedValueOnce([{ ...view, stage: "expired", enrollmentExpiresAt: null, enrollmentClosesAt: null }]);
   render(<ProviderComputerSetupDialog connection={connection} onClose={jest.fn()} onChanged={jest.fn()} />);
   expect(await screen.findByRole("heading", { name: "Setup window expired" })).toBeInTheDocument();
   expect(listProviderComputerSetups).toHaveBeenCalledTimes(2);
@@ -178,7 +178,8 @@ it("shows no countdown before Start setup for a server whose window opens at Sta
 });
 it("starts the countdown only from the deadline the server reports after Start setup", async () => {
   const started = { ...startView, stage: "power_requested" as const,
-    enrollmentExpiresAt: new Date(Date.now() + 14 * 60_000 + 10_500).toISOString() };
+    enrollmentExpiresAt: new Date(Date.now() + 14 * 60_000 + 10_500).toISOString(),
+    enrollmentClosesAt: new Date(Date.now() + 16 * 60_000 + 10_500).toISOString() };
   let finish!: (value: ProviderComputerSetupView) => void;
   (advanceProviderComputerSetup as jest.Mock).mockReturnValueOnce(Promise.resolve(started))
     .mockReturnValue(new Promise(resolve => { finish = resolve; }));
@@ -193,22 +194,58 @@ it("starts the countdown only from the deadline the server reports after Start s
     expect(countdown).toHaveTextContent("Setup must finish within 15 minutes of starting.");
     expect(countdown).toHaveTextContent(/14:(10|09)/);
     expect(screen.queryByText(/Setup key valid for/)).not.toBeInTheDocument();
-    await act(async () => { finish({ ...started, stage: "identity_enrolled", enrollmentExpiresAt: null }); });
+    await act(async () => { finish({ ...started, stage: "identity_enrolled", enrollmentExpiresAt: null, enrollmentClosesAt: null }); });
   } finally { jest.useRealTimers(); }
 });
-it("re-reads the saved state at zero and explains a start-window expiry", async () => {
-  (listProviderComputerSetups as jest.Mock)
-    .mockResolvedValueOnce([{ ...startView, stage: "waiting_for_identity", enrollmentExpiresAt: new Date(Date.now() - 1_000).toISOString() }])
-    .mockResolvedValueOnce([{ ...startView, stage: "expired", enrollmentExpiresAt: new Date(Date.now() - 1_000).toISOString() }]);
+it("keeps reading through the server's boot allowance after the 15 minutes, then explains a start-window expiry", async () => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+  try {
+    // The 15 minutes ended a second ago; the server accepts the connection for 2 more minutes.
+    const waiting = { ...startView, stage: "waiting_for_identity" as const,
+      enrollmentExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+      enrollmentClosesAt: new Date(Date.now() + 2 * 60_000 - 1_000).toISOString() };
+    (listProviderComputerSetups as jest.Mock)
+      .mockResolvedValueOnce([waiting]).mockResolvedValueOnce([waiting])
+      .mockResolvedValue([{ ...startView, stage: "expired", enrollmentExpiresAt: null, enrollmentClosesAt: null }]);
+    render(<ProviderComputerSetupDialog connection={connection} onClose={jest.fn()} onChanged={jest.fn()} />);
+    const slack = await screen.findByText(/Hivra keeps listening/);
+    expect(slack).toHaveTextContent(/1:5\d longer while Hetzner finishes booting the server/);
+    // Read once when the 15 minutes ended; the server still says it's waiting.
+    await waitFor(() => expect(listProviderComputerSetups).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("heading", { name: "Setup window expired" })).not.toBeInTheDocument();
+    // When the server's own window closes, the page reads again instead of stalling.
+    await act(async () => { jest.advanceTimersByTime(2 * 60_000); });
+    expect(await screen.findByRole("heading", { name: "Setup window expired" })).toBeInTheDocument();
+    expect(listProviderComputerSetups).toHaveBeenCalledTimes(3);
+    expect(screen.getByText(/didn't connect back within 15 minutes of starting setup/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /(Start|Continue) setup/ })).not.toBeInTheDocument();
+    expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
+  } finally { jest.useRealTimers(); }
+});
+it("reads again after the server's window closes when this device's clock runs ahead", async () => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+  try {
+    const closed = new Date(Date.now() - 1_000).toISOString();
+    const waiting = { ...startView, stage: "waiting_for_identity" as const, enrollmentExpiresAt: closed, enrollmentClosesAt: closed };
+    (listProviderComputerSetups as jest.Mock).mockResolvedValueOnce([waiting]).mockResolvedValueOnce([waiting])
+      .mockResolvedValue([{ ...startView, stage: "expired", enrollmentExpiresAt: null, enrollmentClosesAt: null }]);
+    render(<ProviderComputerSetupDialog connection={connection} onClose={jest.fn()} onChanged={jest.fn()} />);
+    expect(await screen.findByText(/The setup window has closed. Checking the saved state/)).toBeInTheDocument();
+    await waitFor(() => expect(listProviderComputerSetups).toHaveBeenCalledTimes(2));
+    await act(async () => { jest.advanceTimersByTime(30_000); });
+    expect(await screen.findByRole("heading", { name: "Setup window expired" })).toBeInTheDocument();
+    expect(listProviderComputerSetups).toHaveBeenCalledTimes(3);
+  } finally { jest.useRealTimers(); }
+});
+it("says no server exists when a start-window server request was never sent in time", async () => {
+  (listProviderComputerSetups as jest.Mock).mockResolvedValue([{ ...startView, stage: "expired", providerServerId: null }]);
   render(<ProviderComputerSetupDialog connection={connection} onClose={jest.fn()} onChanged={jest.fn()} />);
   expect(await screen.findByRole("heading", { name: "Setup window expired" })).toBeInTheDocument();
-  expect(screen.getByText(/didn't connect back within 15 minutes of starting setup/)).toBeInTheDocument();
-  expect(listProviderComputerSetups).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole("button", { name: /(Start|Continue) setup/ })).not.toBeInTheDocument();
-  expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
+  expect(screen.getByText(/no server was created and there is nothing to remove/)).toBeInTheDocument();
+  expect(screen.queryByText(/Remove created server/)).not.toBeInTheDocument();
 });
 it("hides the countdown once the server has connected back", async () => {
-  (listProviderComputerSetups as jest.Mock).mockResolvedValue([{ ...view, stage: "identity_enrolled", enrollmentExpiresAt: null }]);
+  (listProviderComputerSetups as jest.Mock).mockResolvedValue([{ ...view, stage: "identity_enrolled", enrollmentExpiresAt: null, enrollmentClosesAt: null }]);
   render(<ProviderComputerSetupDialog connection={connection} onClose={jest.fn()} onChanged={jest.fn()} />);
   expect(await screen.findByRole("button", { name: "Continue setup" })).toBeInTheDocument();
   expect(screen.queryByText(/Setup key valid for/)).not.toBeInTheDocument();

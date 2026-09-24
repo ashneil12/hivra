@@ -60,7 +60,8 @@ it("keeps a legacy server's 15 minutes from creation, shown only until it connec
     issuedAt: "2026-08-28T00:55:00.000Z", expiresAt: "2026-08-28T01:10:00.000Z" };
   h.deps.boot.mockResolvedValue(null as never);
   const [waiting] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
-  expect(waiting).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z", enrollmentWindow: "since_creation" });
+  expect(waiting).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z",
+    enrollmentClosesAt: "2026-08-28T01:10:00.000Z", enrollmentWindow: "since_creation" });
 
   h.enrollment.phase = "enrolled";
   const [enrolled] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
@@ -90,7 +91,10 @@ it("has no deadline before Start setup, then 15 minutes from Hivra's recorded po
   h.enrollment.phase = "awaiting_identity";
   h.enrollment.armedAt = "2026-08-28T00:58:00.000Z"; h.enrollment.armedExpiresAt = "2026-08-28T01:15:00.000Z";
   const [started] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
-  expect(started).toMatchObject({ enrollmentExpiresAt: "2026-08-28T01:13:00.000Z", enrollmentWindow: "since_start" });
+  // The server's own deadline (2 minutes of boot slack later) is reported too,
+  // so the page reads saved state again when it passes instead of guessing.
+  expect(started).toMatchObject({ enrollmentExpiresAt: "2026-08-28T01:13:00.000Z",
+    enrollmentClosesAt: "2026-08-28T01:15:00.000Z", enrollmentWindow: "since_start" });
   // Hivra still accepts the connection during the 2-minute boot slack...
   const slack = await listProviderComputerSetups("owner", cleanupConnection, { ...h.deps, now: () => new Date("2026-08-28T01:14:00Z") });
   expect(slack[0].stage).not.toBe("expired");
@@ -100,7 +104,29 @@ it("has no deadline before Start setup, then 15 minutes from Hivra's recorded po
 
   h.enrollment.phase = "enrolled";
   const [enrolled] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
-  expect(enrolled).toMatchObject({ stage: "identity_enrolled", enrollmentExpiresAt: null });
+  expect(enrolled).toMatchObject({ stage: "identity_enrolled", enrollmentExpiresAt: null, enrollmentClosesAt: null });
+});
+it("reports a current-recipe server request that was never sent in time as expired, with no server to remove", async () => {
+  const h = harness();
+  h.enrollment.phase = "staged"; h.enrollment.providerServerId = null;
+  h.enrollment.challenge = { ...h.enrollment.challenge, binding: { ...h.enrollment.challenge.binding, recipeVersion: FIRST_BOOT_RECIPE_VERSION },
+    issuedAt: "2026-08-28T00:50:00.000Z", expiresAt: "2026-08-28T01:05:00.000Z" };
+  h.order.operation = { ...h.order.operation, status: "creating", providerServerId: null };
+  h.order.serverPostAttemptedAt = null;
+  h.deps.boot.mockResolvedValue(null as never);
+  // Inside the 15-minute delivery window the request may still be sent.
+  const [pending] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(pending).toMatchObject({ stage: "waiting_for_capacity", enrollmentExpiresAt: null, enrollmentClosesAt: null });
+  // Past it, with no request ever sent, Hivra will not send one: no server exists.
+  const late = { ...h.deps, now: () => new Date("2026-08-28T01:05:00Z") };
+  const [expired] = await listProviderComputerSetups("owner", cleanupConnection, late);
+  expect(expired).toMatchObject({ stage: "expired", providerServerId: null, enrollmentWindow: "since_start" });
+  // A request that was sent but not confirmed may have created a server; keep
+  // reconciling it instead of calling it expired.
+  h.order.serverPostAttemptedAt = "2026-08-28T00:51:00.000Z";
+  h.order.operation = { ...h.order.operation, status: "ambiguous" };
+  const [unconfirmed] = await listProviderComputerSetups("owner", cleanupConnection, late);
+  expect(unconfirmed.stage).toBe("waiting_for_capacity");
 });
 it("reads the original attempt of either recipe without naming one", async () => {
   const h = harness();

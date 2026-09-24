@@ -37,7 +37,7 @@ async function describe(userId: string, connectionId: string, order: StoredHetzn
     orderId: operation.id, connectionId, connectionRevision: order.connectionRevision,
     serverName: operation.quote.serverName, providerServerId: operation.providerServerId,
     stage: "awaiting_setup", targetId: null, observedAt: null, launchReady: false, enrollmentExpiresAt: null,
-    enrollmentWindow: null,
+    enrollmentClosesAt: null, enrollmentWindow: null,
   };
   // Either recipe: a server keeps the rules it was created with.
   const lookup = { binding: { userId, connectionId, connectionRevision: order.connectionRevision, orderId: operation.id,
@@ -54,11 +54,17 @@ async function describe(userId: string, connectionId: string, order: StoredHetzn
   if (enrollment && (enrollment.phase === "staged" || enrollment.phase === "awaiting_identity")) {
     view.enrollmentExpiresAt = !startArmed ? enrollment.challenge.expiresAt
       : enrollment.armedAt ? new Date(Date.parse(enrollment.armedAt) + FIRST_BOOT_SETUP_WINDOW_MS).toISOString() : null;
+    view.enrollmentClosesAt = view.enrollmentExpiresAt !== null && deadline !== null ? new Date(deadline).toISOString() : null;
   }
   if (["deleted", "cleaning"].includes(operation.status)) view.stage = "retired";
   else if (!enrollment) view.stage = "not_requested";
   else if (["revoked", "failed"].includes(enrollment.phase)) view.stage = "stopped";
   else if (enrollment.phase !== "enrolled" && deadline !== null && deps.now().getTime() >= deadline) view.stage = "expired";
+  // A current-recipe order has no enrollment deadline until Start setup, but its
+  // server request had to be sent within 15 minutes of staging. Past that, with
+  // no request ever sent, no server exists and Hivra will not send one.
+  else if (startArmed && enrollment.phase === "staged" && !order.serverPostAttemptedAt
+    && deps.now().getTime() >= Date.parse(enrollment.challenge.expiresAt)) view.stage = "expired";
   else if (operation.status !== "created_off" || !scope) view.stage = "waiting_for_capacity";
   else {
     const boot = await deps.boot(scope);

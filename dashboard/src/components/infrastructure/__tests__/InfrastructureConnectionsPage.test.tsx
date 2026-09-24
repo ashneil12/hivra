@@ -543,7 +543,7 @@ function hetznerSetupView(patch: Record<string, unknown> = {}) {
     launchReady: false,
     // A newly created server: its 15 minutes start at Start setup, so the
     // server reports no deadline before then.
-    enrollmentExpiresAt: null,
+    enrollmentExpiresAt: null, enrollmentClosesAt: null,
     enrollmentWindow: "since_start" as const,
     ...patch,
   };
@@ -1073,7 +1073,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
         hetznerSetupView(),
         hetznerSetupView({ orderId: "00000000-0000-4000-8000-000000001017", providerServerId: "4815162344", serverName: "hivra-ready",
           stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
-          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null }),
+          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null }),
       ]}
       setupEvidence="loaded"
       loading={false}
@@ -1326,7 +1326,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
     (advanceProviderComputerSetup as jest.Mock).mockResolvedValue(hetznerSetupView({
       stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
-      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null,
+      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null,
     }));
     render(<InfrastructureConnectionsPage />);
     const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
