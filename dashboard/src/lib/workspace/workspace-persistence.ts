@@ -45,7 +45,12 @@ function selectedStorage(storage?: SelectionStorage): SelectionStorage | null {
   return storage ?? browserStorage();
 }
 
-function isWorkspaceAgentUid(value: unknown): value is string {
+/**
+ * A source-qualified uid (`x-` Hivra, `h-` Hermes) that is safe to keep in
+ * browser storage: bounded, plain characters, and nothing that reads like a
+ * credential. Shared with the recents list, which stores the same uids.
+ */
+export function isWorkspaceAgentUid(value: unknown): value is string {
   if (typeof value !== "string" || !SOURCE_QUALIFIED_UID.test(value)) {
     return false;
   }

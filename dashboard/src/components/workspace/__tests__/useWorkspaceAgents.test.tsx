@@ -1,13 +1,11 @@
 /** @jest-environment jsdom */
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-import { listAgentsResult } from "@/lib/hivra/agent-api";
 import { clientLog } from "@/lib/client/logger";
-import { useWorkspaceAgents } from "../useWorkspaceAgents";
+import type { ReactNode } from "react";
 
-jest.mock("@/lib/hivra/agent-api", () => ({
-  listAgentsResult: jest.fn(),
-}));
+import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
+import { useWorkspaceAgents, WorkspaceOwnerContext } from "../useWorkspaceAgents";
 
 jest.mock("@/lib/client/logger", () => ({
   clientLog: {
@@ -15,15 +13,15 @@ jest.mock("@/lib/client/logger", () => ({
   },
 }));
 
-const mockedListAgentsResult = jest.mocked(listAgentsResult);
 const mockedWarn = jest.mocked(clientLog.warn);
 
 function hermesEnvelope(data: unknown[]) {
   return { success: true, data };
 }
 
+/** The /api/hivra/agents body: the agents, or the route's error envelope. */
 function hivraResult(agents: unknown[], error: string | null = null) {
-  return { agents, error };
+  return error === null ? { success: true, data: { agents } } : { success: false, error };
 }
 
 function hermesRow(id: string, name = "Hermes") {
@@ -60,6 +58,7 @@ function deferred<T>() {
 describe("useWorkspaceAgents", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetResourceInventory();
   });
 
   it("keeps where each agent's computer runs, and drops placement values it does not know (ATT-11)", async () => {
@@ -272,29 +271,153 @@ describe("useWorkspaceAgents", () => {
   });
 
   it("uses the default authenticated source fetchers", async () => {
-    const fetchMock = jest.fn(async () => ({
+    const fetchMock = jest.fn(async (url: string) => ({
       ok: true,
-      json: async () => hermesEnvelope([hermesRow("default-h")]),
+      json: async () => url === "/api/instances?summary=true"
+        ? hermesEnvelope([hermesRow("default-h")])
+        : hivraResult([hivraRow("default-x")]),
     })) as unknown as jest.MockedFunction<typeof fetch>;
     const originalFetch = global.fetch;
     global.fetch = fetchMock;
-    mockedListAgentsResult.mockResolvedValue({
-      agents: [hivraRow("default-x") as Awaited<ReturnType<typeof listAgentsResult>>["agents"][number]],
-      error: null,
-    });
 
-    const { result } = renderHook(() => useWorkspaceAgents());
-    await waitFor(() => expect(result.current.loading).toBe(false));
+    try {
+      const { result } = renderHook(() => useWorkspaceAgents());
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/instances?summary=true", {
-      cache: "no-store",
-    });
-    expect(mockedListAgentsResult).toHaveBeenCalledTimes(1);
-    expect(result.current.agents.map(({ uid }) => uid).sort()).toEqual([
-      "h-default-h",
-      "x-default-x",
-    ]);
-    global.fetch = originalFetch;
+      expect(fetchMock).toHaveBeenCalledWith("/api/instances?summary=true", expect.objectContaining({ cache: "no-store" }));
+      expect(fetchMock).toHaveBeenCalledWith("/api/hivra/agents", expect.objectContaining({ cache: "no-store" }));
+      expect(result.current.agents.map(({ uid }) => uid).sort()).toEqual([
+        "h-default-h",
+        "x-default-x",
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  // Home and the switcher under an agent's name read the same two lists. They
+  // used to fetch them separately, so opening Home read each list twice.
+  it("shares one read of each list between everything that shows it", async () => {
+    const fetchMock = jest.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url === "/api/instances?summary=true"
+        ? hermesEnvelope([hermesRow("shared-h")])
+        : hivraResult([hivraRow("shared-x")]),
+    })) as unknown as jest.MockedFunction<typeof fetch>;
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock;
+
+    try {
+      const home = renderHook(() => useWorkspaceAgents());
+      const switcher = renderHook(() => useWorkspaceAgents({ reuseHeldList: true }));
+      await waitFor(() => expect(home.result.current.loading).toBe(false));
+      await waitFor(() => expect(switcher.result.current.loading).toBe(false));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(switcher.result.current.agents.map(({ uid }) => uid).sort()).toEqual(["h-shared-h", "x-shared-x"]);
+
+      // A menu opened inside the freshness window shows the held read at once.
+      const menu = renderHook(() => useWorkspaceAgents({ reuseHeldList: true }));
+      expect(menu.result.current.loading).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // An explicit retry reads again, and every reader sees the result.
+      await act(async () => { await menu.result.current.retryHivra(); });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/hivra/agents", expect.objectContaining({ cache: "no-store" }));
+      expect(home.result.current.lastRefreshedAt).toBe(menu.result.current.lastRefreshedAt);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  // Home offers to continue in an agent. A list held from a moment ago can
+  // still name one deleted since, so Home waits for a read made after it
+  // opened, and two views opening together still share one.
+  it("waits for a read made since it opened unless it may show the held list", async () => {
+    let listed = [hivraRow("kept"), hivraRow("deleted")];
+    const fetchMock = jest.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url === "/api/instances?summary=true" ? hermesEnvelope([]) : hivraResult(listed),
+    })) as unknown as jest.MockedFunction<typeof fetch>;
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock;
+
+    try {
+      const first = renderHook(() => useWorkspaceAgents());
+      await waitFor(() => expect(first.result.current.loading).toBe(false));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      listed = [hivraRow("kept")];
+      const home = renderHook(() => useWorkspaceAgents());
+      expect(home.result.current.loading).toBe(true);
+      await waitFor(() => expect(home.result.current.loading).toBe(false));
+      expect(home.result.current.agents.map(({ uid }) => uid)).toEqual(["x-kept"]);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+
+      const together = [renderHook(() => useWorkspaceAgents()), renderHook(() => useWorkspaceAgents())];
+      for (const view of together) await waitFor(() => expect(view.result.current.loading).toBe(false));
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("reports only a current read's failure, not a held one's", async () => {
+    const fetchMock = jest.fn(async (url: string) => {
+      if (url === "/api/hivra/agents") throw new Error("offline");
+      return { ok: true, json: async () => hermesEnvelope([]) };
+    }) as unknown as jest.MockedFunction<typeof fetch>;
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock;
+    try {
+      const first = renderHook(() => useWorkspaceAgents());
+      await waitFor(() => expect(first.result.current.hivraError).not.toBeNull());
+
+      fetchMock.mockImplementation(async (url) => ({
+        ok: true,
+        json: async () => url === "/api/instances?summary=true" ? hermesEnvelope([]) : hivraResult([hivraRow("back")]),
+      }) as Response);
+      const next = renderHook(() => useWorkspaceAgents());
+      expect(next.result.current.hivraError).toBeNull();
+      await waitFor(() => expect(next.result.current.loading).toBe(false));
+      expect(next.result.current.hivraError).toBeNull();
+      expect(next.result.current.agents.map(({ uid }) => uid)).toEqual(["x-back"]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  // Signing out and into another account need not reload the page, and the
+  // lists are held between pages.
+  it("never shows a list held for another account", async () => {
+    const accountList = (name: string) => jest.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url === "/api/instances?summary=true" ? hermesEnvelope([]) : hivraResult([hivraRow(name.toLowerCase(), name)]),
+    })) as unknown as jest.MockedFunction<typeof fetch>;
+    const originalFetch = global.fetch;
+    try {
+      global.fetch = accountList("ACCOUNT_A_PROJECT");
+      resourceInventory.setOwner("account-a");
+      await act(async () => {
+        await Promise.all([resourceInventory.load("hermes"), resourceInventory.load("hivra")]);
+      });
+
+      global.fetch = accountList("ACCOUNT_B_PROJECT");
+      const seen: string[] = [];
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <WorkspaceOwnerContext.Provider value="account-b">{children}</WorkspaceOwnerContext.Provider>
+      );
+      const { result } = renderHook(() => {
+        const value = useWorkspaceAgents({ reuseHeldList: true });
+        seen.push(...value.agents.map((agent) => agent.name));
+        return value;
+      }, { wrapper });
+      await waitFor(() => expect(result.current.agents.map((agent) => agent.name)).toEqual(["ACCOUNT_B_PROJECT"]));
+      expect(seen).not.toContain("ACCOUNT_A_PROJECT");
+      expect(resourceInventory.getSnapshot().owner).toBe("account-b");
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("returns only public agent state when source rows contain secrets", async () => {
