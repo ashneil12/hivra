@@ -445,8 +445,8 @@ not blocked while an update is pending.
 **"Next message" or "new chats".** The file is loaded when a chat starts.
 "applies from its next message" is shown only for a runtime and pinned
 version where spike S3 proved that a resumed chat reads the instruction file
-again on every turn. That applies to Codex everywhere and to Claude Code
-`--resume` on agent-owned computers. Otherwise Manage says "applies to new
+again on every turn. This rule covers Codex and Claude Code `--resume` only
+once S3 has passed for that runtime and pinned version. Otherwise Manage says "applies to new
 chats", and a chat started before the latest delivery shows one line above
 the composer: "Hivra updated what Codex knows about this computer after this
 chat started. Start a new chat to use it." The choice comes from a pinned
@@ -578,12 +578,16 @@ surfaces, placements and sizes come from enums, never from free text.
     - Every writer of a Hivra-managed `hivra_agents` row takes the same lock
       and count. Three exist today: the launch route's direct insert
       (`app/api/hivra/agents/route.ts:1465`), the launch-model reservation
-      (`reserve_hivra_launch_model_request_v2`, current body in
+      (`reserve_hivra_launch_model_request_v2`, defined in
+      `20260915150000_hivra_resource_envelopes.sql` as a wrapper around v1,
+      `reserve_hivra_launch_model_request`, whose `INSERT` is in
       `20260905140000_managed_provisioner_channels.sql`) and the Canary
       prepared-computer fixture (`prepared-canary-computers.ts:171`). The
       direct insert and the fixture move into a service-only function,
       `insert_hivra_managed_agent(p_row, p_agent_limit)`. The reservation
-      gets a v3 that also takes `p_agent_limit`. A `BEFORE INSERT` trigger on
+      gets a v3 that takes `p_agent_limit`, holds the lock and performs the
+      insert itself. v1 and v2 lose their `service_role` EXECUTE, so no caller
+      can reach the unlocked insert. A `BEFORE INSERT` trigger on
       `hivra_agents` refuses a Hivra-managed row unless the writing function
       set the transaction-local flag `hivra.agent_slot_checked`, so a new
       writer cannot skip the lock by accident. The trigger cannot check the
@@ -594,10 +598,25 @@ surfaces, placements and sizes come from enums, never from free text.
       the trigger also covers `UPDATE`. This closes a launch racing an
       attach, and the existing race between two launches. It is a launch
       hot-path change and ships in build step 5 with the launch smoke tests.
-    - Residual: Hermes-lane instances (`hermes_instances`, created by
-      `/api/instances`) count toward the same limit but are created by their
-      own lane, outside this lock. A Hermes launch racing an attach can still
-      go one over. Moving that lane under the lock is its own change.
+    - **Rollout order (two migrations; the second is Blocking).** The trigger
+      refuses every writer that does not set the flag, and none does today,
+      so shipping it before the new code serves would break every launch.
+      Migration A is additive: `insert_hivra_managed_agent`, the v3
+      reservation and `hivra_owner_agent_slot_count`. It is applied before the
+      code that calls them. The code merges and must be *serving* on the
+      environment (Canary: the Git build of the merge is live; prod: after the
+      owner's Promote) before migration B, which revokes v1 and v2 EXECUTE and
+      creates the trigger, is applied. A launch smoke test runs on the served
+      revision between A and B and again after B. Undoing B (drop the trigger,
+      restore the grants) is the rollback; A stays.
+    - The Hermes lane keeps its own limit. `/api/instances`
+      (`instance-service.ts:2451-2467`) counts only `hermes_instances` of its
+      own product surface and never counts `hivra_agents` or attachments, by
+      design, so it cannot race this lock. `loadCurrentComputeUsage`, however,
+      counts every `hermes_instances` row whatever its product surface.
+      `hivra_owner_agent_slot_count` reproduces `loadCurrentComputeUsage`
+      exactly, that asymmetry included, so this change moves nobody's limit.
+      Aligning the two lanes is a separate billing decision.
     - The route no longer counts again after the claim or cancels its own
       claim. Revision 2 did, and the cron worker could dispatch between the
       claim and the recount.
@@ -682,9 +701,12 @@ with `nosuid,nodev`:
   start step, `attached-workspace verify`, runs as the agent inside the
   sandbox, not as root. It checks that the view is mounted at that path with
   the expected mount id and idmap. If it is not, the agent does not start.
-- On each start and on Remove, the helper re-asserts owner and mode 0700 on
-  `/home/bux/Hivra` through the directory fd it opened (5.3.1), because the
-  agent can `chmod` the root of its view.
+- On each start, on Remove, and every minute from the watchdog, the helper
+  re-asserts owner and mode 0700 on `/home/bux/Hivra` through the directory
+  fd it opened (5.3.1), because the agent can `chmod` the root of its view.
+  New matrix row: the agent sets the view root to 0777; within a minute it is
+  0700 again, and a desktop install or update still passes
+  `verify_workspace_identity`.
 - Remove is an unmount; there is nothing to undo on disk.
 - Rejected alternative: POSIX ACLs. They rewrite metadata on every file in the
   owner's folder, their mask hides files created 0600, and they change the
@@ -910,8 +932,14 @@ activation journal.
     network, not the internet. A private-range list misses them. Dropping a
     gateway as a destination does not break routing, because forwarded
     internet traffic only passes through the gateway.
-  - The network unit fills `onlink` and `gateways` from `ip -j route` and
-    `ip -j -6 route` at start. The watchdog re-reads them every minute. On
+  - Docker hosts: every Ubuntu Desktop computer runs Docker (Selkies), whose
+    `FORWARD` chain policy is DROP. The agent namespace's accept rule goes in
+    `DOCKER-USER` as well as the unit's inet table, and the enforcement
+    probe's public-HTTPS request refuses activation if either drops it.
+  - The network unit fills `onlink` and `gateways` from
+    `ip -j route show table all` and `ip -j -6 route show table all` at start,
+    so policy tables (Tailscale's table 52 if the owner enables accept-routes,
+    WireGuard's) are included. The watchdog re-reads them every minute. On
     any change it stops the agent, updates the sets, runs the enforcement
     probe again and only then starts the agent, the same path as a restore.
     Hivra Cloud and My server computers have static addresses from
@@ -1458,9 +1486,9 @@ picks it up. Otherwise it is deleted with its tests.
 | T32 | The agent keeps work running outside its unit (cron, at, a user service manager, lingering) and escapes its limits | `NoNewPrivileges` (`crontab` and `at` are setgid or setuid); read-only spools under `ProtectSystem=strict`; `cron.deny` and `at.deny`; no system bus | New matrix: `crontab -`, `at now`, `systemd-run --user` and `loginctl enable-linger` fail inside the unit; a minute later no process of the UID exists outside the unit's cgroup |
 | T33 | The agent stops its runtime loading the contract (removes or re-points the file, adds an override, edits its config, or rewrites the working folder a session it resumes recorded) while Manage shows it delivered; or a contract update never reaches a resumed chat | The contract is in the root-owned, read-only starting folder where every new Codex session starts; `server.js` passes the S3 overrides on the command line; resumed sessions follow the S3 outcome (5.4): Hivra passes the working folder on every resume, or Manage narrows the claim to new chats; attached mode never decides anything from a session file; root reads the file back inside the unit's mount namespace and compares inode and digest. Residual: the agent controls its own processes and can ignore the file, and Delivered claims only the file | New matrix, reading the stub model endpoint's request log: a new chat's first model request carries the current contract block and the starting folder as its working folder. As the agent, `rm`, `mv` and `ln -sf` on `AGENTS.md`, and creating any file in the starting folder, fail; the read-back still matches. As the agent, rewrite an existing session's recorded working folder to its home and put an `AGENTS.md` there. Outcome (a): the next resumed turn's request still carries the starting folder and the current block, and after a re-render it carries the new block. Outcome (b): Manage shows "applies to new chats" and that chat shows the start-a-new-chat line. New: `attachment-contract-readback.test.ts` (an inode or digest mismatch, or a missing namespace read, is never shown as delivered). New: Manage contract panel test: "applies from its next message" only when the pinned runtime flag says resume reloads |
 | T34 | A receipt signed with a key the agent can read is shown as Hivra's own check | Receipt trust table (4.6); "reported by the computer" wording for agent-attested receipts; "checked by Hivra" only for root read-back | New: Manage contract panel test: an HMAC receipt from an agent-owned computer and an attached `llm-apply` receipt render the reported wording, and only a root read-back renders "checked by Hivra" |
-| T35 | Attaching gets around the plan's agent limit (a Free plan ends up with two agents), including through two attaches at once, a launch racing an attach, or the cron worker dispatching a claim after the owner went over | Attachments count toward the slot limit on Hivra-managed computers; the gate refuses before the Review; the claim and the dispatch count under the per-owner slot lock and refuse or cancel with `plan_agent_limit` in the same transaction; every Hivra-managed `hivra_agents` writer takes the same lock, and a trigger refuses a writer that did not; one SQL count feeds launch, billing usage and attach (5.1). Residual: a Hermes-lane launch racing an attach | New PGlite (real migrations): at limit − 1, claim A succeeds and claim B returns `plan_agent_limit` with no row; with claim A in flight, `insert_hivra_managed_agent` and the v3 reservation refuse at the same limit; a slot-consuming row written between claim and dispatch (a legacy `hermes_instances` row) makes the dispatch cancel the claim with `plan_agent_limit` and write no dispatch outbox row; a direct Hivra-managed insert without the flag is refused by the trigger; claim, dispatch and both writers take `pg_advisory_xact_lock` on the owner key before counting (from `pg_get_functiondef`, since PGlite cannot run two sessions at once); `hivra_owner_agent_slot_count` equals `loadCurrentComputeUsage().activeCount` on shared fixtures (active, stopped, deleted, cold-archived legacy, pool-exempt, and claimed, dispatched, cancelled, failed, detached and My server attachments). New: `resource-gate.test.ts` (an in-flight or active attachment counts one slot and no CPU or memory); billing usage route test; attach route test (Free with a desktop returns 403 with no RPC; the route makes one claim call, maps `plan_agent_limit` to 403 and never calls cancel); launch route test (`plan_agent_limit` from the database maps to the existing copy) |
-| T36 | The agent attacks its DNS relay, the one process that takes its input inside the computer's own network namespace | A pinned byte relay with no DNS parsing beyond length framing; size and rate caps; `DynamicUser` and the agent unit's sandbox; the socket unit allows only the agent namespace's loopback (`127.0.0.0/8`, the queries' source) and the relay service only `127.0.0.53/32` (its one upstream), each with `IPAddressDeny=any`, because systemd applies a service's list only to sockets it creates (5.3); port 53 fixed in code. Residual: a compromised relay is still a process in the computer's namespace, one more reason `ttyd` moves to unix sockets | New: `scripts/test-attached-dns-relay.py` (oversized datagram dropped, TCP length cap, destination fixed, no other outbound connection); unit renderer test pins both units' IP lists and the relay's sandbox. New matrix: a query from the agent, sourced from 127.0.0.1, resolves; from the relay's cgroup, connecting to 127.0.0.1:7681, 127.0.0.54 and each of the computer's own addresses fails |
-| T37 | The agent reaches other machines on the computer's own network: neighbours on a subnet the computer is directly on (a My server guest on a public `/24`, other guests on the same bridge) or its gateway | Forward drop of every connected prefix (set `onlink`) and every gateway (set `gateways`), IPv4 and IPv6, refreshed by the watchdog, which stops the agent and re-probes on any change; systemd IP filter with the prefixes and gateways observed at start; the enforcement probe refuses activation when a connected prefix or gateway is missing from either layer (5.3) | New: `scripts/test-attached-network-sets.py` (container): from `ip -j route` fixtures with a public `/24` on-link, a global IPv6 prefix and a gateway outside the prefix, the rendered nft sets and unit `IPAddressDeny=` contain each, and the probe refuses a rendering that lacks one. New matrix: a neighbour namespace on the guest's segment with an address in each on-link prefix, the public-range one included, and a listener on the default gateway's address; connections from inside the unit to each fail with both layers and with each layer removed in turn; a public HTTPS request through that gateway still succeeds; changing the guest's address makes the watchdog stop the agent, update the sets and re-probe before it starts again |
+| T35 | Attaching gets around the plan's agent limit (a Free plan ends up with two agents), including through two attaches at once, a launch racing an attach, or the cron worker dispatching a claim after the owner went over | Attachments count toward the slot limit on Hivra-managed computers; the gate refuses before the Review; the claim and the dispatch count under the per-owner slot lock and refuse or cancel with `plan_agent_limit` in the same transaction; every Hivra-managed `hivra_agents` writer takes the same lock, and a trigger refuses a writer that did not; one SQL count feeds launch, billing usage and attach (5.1). Residual: none in the Hivra lane; the Hermes lane keeps its own separate limit (5.1) | New PGlite (real migrations): at limit − 1, claim A succeeds and claim B returns `plan_agent_limit` with no row; with claim A in flight, `insert_hivra_managed_agent` and the v3 reservation refuse at the same limit; a slot-consuming row written between claim and dispatch (a legacy `hermes_instances` row) makes the dispatch cancel the claim with `plan_agent_limit` and write no dispatch outbox row; a direct Hivra-managed insert without the flag is refused by the trigger; claim, dispatch and both writers take `pg_advisory_xact_lock` on the owner key before counting (from `pg_get_functiondef`, since PGlite cannot run two sessions at once); `hivra_owner_agent_slot_count` equals `loadCurrentComputeUsage().activeCount` on shared fixtures (active, stopped, deleted, cold-archived legacy, pool-exempt, and claimed, dispatched, cancelled, failed, detached and My server attachments). New: `resource-gate.test.ts` (an in-flight or active attachment counts one slot and no CPU or memory); billing usage route test; attach route test (Free with a desktop returns 403 with no RPC; the route makes one claim call, maps `plan_agent_limit` to 403 and never calls cancel); launch route test (`plan_agent_limit` from the database maps to the existing copy) |
+| T36 | The agent attacks its DNS relay, the one process that takes its input inside the computer's own network namespace | A pinned byte relay with no DNS parsing beyond length framing; size and rate caps; `DynamicUser` and the agent unit's sandbox; the socket unit allows only the agent namespace's loopback (`127.0.0.0/8`, the queries' source) and the relay service only `127.0.0.53/32` (its one upstream) and, through a per-cgroup nftables rule, only port 53 there (`IPAddressAllow` does not restrict ports), each with `IPAddressDeny=any`, because systemd applies a service's list only to sockets it creates (5.3); port 53 fixed in code. Residual: a compromised relay is still a process in the computer's namespace, one more reason `ttyd` moves to unix sockets | New: `scripts/test-attached-dns-relay.py` (oversized datagram dropped, TCP length cap, destination fixed, no other outbound connection); unit renderer test pins both units' IP lists and the relay's sandbox. New matrix: a query from the agent, sourced from 127.0.0.1, resolves; from the relay's cgroup, connecting to 127.0.0.1:7681, 127.0.0.54, 127.0.0.53 on any port but 53, and each of the computer's own addresses fails |
+| T37 | The agent reaches other machines on the computer's own network: neighbours on a subnet the computer is directly on (a My server guest on a public `/24`, other guests on the same bridge) or its gateway | Forward drop of every connected prefix (set `onlink`) and every gateway (set `gateways`), IPv4 and IPv6, refreshed by the watchdog, which stops the agent and re-probes on any change; systemd IP filter with the prefixes and gateways observed at start; the enforcement probe refuses activation when a connected prefix or gateway is missing from either layer (5.3) | New: `scripts/test-attached-network-sets.py` (container): from `ip -j route show table all` fixtures (including a policy table) with a public `/24` on-link, a global IPv6 prefix and a gateway outside the prefix, the rendered nft sets and unit `IPAddressDeny=` contain each, and the probe refuses a rendering that lacks one. New matrix: a neighbour namespace on the guest's segment with an address in each on-link prefix, the public-range one included, and a listener on the default gateway's address; connections from inside the unit to each fail with both layers and with each layer removed in turn; a public HTTPS request through that gateway still succeeds; changing the guest's address makes the watchdog stop the agent, update the sets and re-probe before it starts again |
 
 ---
 
