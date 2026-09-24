@@ -738,6 +738,11 @@ def environment():
             "virt": run(["systemd-detect-virt"], text=True).stdout.strip()}
 
 
+def script_version(body):
+    match = re.search(rb"^hse_version\(\) \{\n  printf '%s' '([0-9.]+)'\n\}$", body, re.M)
+    return match.group(1).decode() if match else None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--body", required=True)
@@ -749,7 +754,10 @@ def main():
     if os.environ.get("HIVRA_DISPOSABLE_CI") != "1" or os.geteuid() != 0 or sys.platform != "linux":
         raise SystemExit("Refusing: run only as root on a disposable Linux server with HIVRA_DISPOSABLE_CI=1.")
     body = open(args.body, "rb").read()
-    print(json.dumps({"environment": environment()}), flush=True)
+    # Bind the evidence to the exact script: the body's sha256 is what
+    # /enroll/script.sha256 publishes for this release.
+    print(json.dumps({"environment": environment(), "scriptBodySha256": hashlib.sha256(body).hexdigest(),
+                      "scriptVersion": script_version(body)}), flush=True)
     work = tempfile.mkdtemp(prefix="hse-host-")
     run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "hse-admin", "-f", os.path.join(work, "admin")],
         check=True)

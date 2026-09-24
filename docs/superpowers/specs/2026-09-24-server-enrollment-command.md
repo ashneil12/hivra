@@ -1,10 +1,11 @@
 # My server: one-command enrollment, design and threat model
 
 Date: 2026-09-24
-Status: Design and threat model for slice 13. Revision 4 is implemented on
+Status: Design and threat model for slice 13. Revision 5 is implemented on
 branch `claude/capacity-connect` (code, migration `20260924213000`, script
 `2026.09.24.1`) and was checked on disposable Ubuntu 22.04 and 24.04 servers
-(section 21). It is not merged, deployed or accepted on Canary: section 18
+(section 21). The migration must be applied to a database before code that
+reads it serves there (section 20). It is not merged, deployed or accepted on Canary: section 18
 lists what the Canary run must still show, section 22 is that run on a
 disposable Hetzner server, and until it passes nothing here claims a working
 enrollment for users.
@@ -46,6 +47,19 @@ N-1 rollback are written down (20). The account-code test uses fixed vectors
 sudo transport's `PATH` hid `/usr/local/bin` (where Prepare installs `runsc`)
 from the gVisor check, and the uninstall's `userdel` raced the systemd user
 manager on Ubuntu 24.04 (9.2, 6.7).
+Revision 5 (2026-09-24) fixes the review of the implementation: the deploy
+order requires the migration before the merge into `canary` and before
+Promote, because every connection read selects its new columns (20, 22.1);
+closing the command panel no longer cancels an unused command, and the
+Capacity page lists every open command with Cancel and keeps polling so a
+command copied before closing still works (4, 5); a switch to the hivra user
+can take an owner-entered address on the card, as 8.1 allowed; the gVisor
+check's `docker info | grep -q` pipe is hardened like the runsc one, and a
+third disposable server binds the host check to the script digest and
+repeats Prepare-then-check on 22.04 (21, 22.3); and the Capacity chooser's
+"Before you connect" for a remote server now describes the command (a
+terminal with sudo), not an address, key file and fingerprint, and its button
+reads "Connect a server you already have" (4).
 Scope: redesign proposal C7 / slice 13 (INF-03), plus the privilege change it
 depends on (INF-04) and the trust-on-first-use rule it shares with the advanced
 SSH wizard (INF-14).
@@ -142,6 +156,14 @@ Not in scope, and not claimed:
 
 **My server → Connect a server you already have**
 
+The way in: Capacity → Add capacity → **Choose my machine** → **Remote
+server** (or **Choose cloud provider** → **Use an existing server**). "Before
+you connect" lists a Linux server (Ubuntu 22.04 or 24.04 on x86, public IPv4,
+SSH open), a terminal on it as root or a sudo user, and this page open, then
+"Proxmox VE, or no terminal on the server? The next step also lets you connect
+with SSH details instead." Its button, **Connect a server you already have**,
+opens the panel:
+
 > Run this on the server, as a user who can use sudo:
 >
 > `curl -fsS --proto '=https' -H 'Authorization: Bearer hse1_…' https://hivra.cloud/enroll | sudo bash` **[Copy]**
@@ -173,6 +195,26 @@ report for your command: it arrived over IPv6 only" after a refused report
 20th download (6.2). The origin in the command is the deployment's own `NEXT_PUBLIC_APP_URL`
 (Canary shows the Canary origin). The code is never put in a link or the page
 URL.
+
+**Closing the panel never cancels the command** (Revision 5). An owner often
+copies the command, closes the panel and then pastes it on the server; a
+command cancelled on close would answer that paste with "it has expired, was
+already used, or was replaced". So closing the panel, pressing Escape, or
+choosing "Connect with SSH details instead" leaves the command working until
+it is used or expires, and the panel says so under the waiting line:
+
+> Closing this panel doesn't cancel the command. Until it's used or expires,
+> Capacity lists it under Setup commands, where you can cancel it.
+
+The Capacity page's **Setup commands** section lists every open command,
+without its code, which is never shown again: "The setup command you made at
+12:03 hasn't been used yet. It works until 12:18." or, once a download is
+counted, "The setup script was downloaded with your command at 12:04. No
+report yet.", each with **[Cancel this command]**. While any command is open
+the page asks for the list every 5 seconds, so "Is this your server?" appears
+there when a server reports after the panel was closed. The 3-command limit
+(5) answers "You already have 3 setup commands waiting. Cancel one, or wait
+for it to expire.", and the Cancel buttons are right there.
 
 **In the terminal**
 
@@ -259,7 +301,7 @@ sudo bash`."
 | Format | `hse1_` + 32 characters of lowercase RFC 4648 base32 (`[a-z2-7]`), from 20 bytes of `crypto.randomBytes`: 160 bits. The proposal's `7Q4K-M2XR` was an illustration; 40 bits is too few for an online bearer that can take over a server. |
 | Where it travels | Only in the `Authorization` header of the GET, then inside the served script, then in the `Authorization` header of the report. Never in a URL path or query, so browser history, referrers and platform request logs don't see it (canonical design, "Computer identity and access"). |
 | At rest | Only `code_sha256 = sha256("hivra/server-enrollment/code/v1" ‖ 0x00 ‖ code)`, unique-indexed. The code itself is never stored, logged, returned again, or placed in events. A 160-bit random secret needs no pepper or slow hash. |
-| Shown | Once, in the issue response, held in React memory only (no storage). A reload loses it; the panel offers **Get a new command**, which cancels the previous code unless a server already reported with it. |
+| Shown | Once, in the issue response, held in React memory only (no storage). A reload loses it; the panel offers **Get a new command**, which cancels the previous code unless a server already reported with it. Closing the panel or reloading does not cancel the code: whatever was copied keeps working until it is used or expires, and the Capacity page lists each open code (never the code itself) with **Cancel this command** (4). |
 | Owner-bound | The row carries the issuing `user_id`. The machine endpoints never take an account from the request. Confirm, replace, cancel and status need that owner's Clerk session. |
 | Account code | What the terminal names the receiving account by. `accountCode(userId)` is the first 40 bits of `sha256("hivra/account-code/v1" ‖ 0x00 ‖ userId)` in Crockford base32 (no I, L, O or U), shown as `XXXX-XXXX`. It is derived, not stored, and it is the same wherever it appears: next to the command, in the account menu and on the settings page, and in the final line of the script. It is not a secret and grants nothing. Nobody chooses it, because Clerk assigns user ids: an attacker who wants a victim's code must create about 2^40 (a trillion) accounts, and even matching the first four characters takes about 2^20 (a million). A code holder learns this pseudonymous value, not the owner's email. |
 | Lifetime | 15 minutes from issue to report (`expires_at`, checked at SQL commit with `clock_timestamp()`). After a report, the owner has 30 minutes to answer (`confirm_by`). |
@@ -765,7 +807,10 @@ What the card offers depends on the connection it matched:
    attempt (at most 5 per enrollment). The connection is not changed.
 3. **Verify before swapping.** The app signs in to web-1's current address. For
    a switch, the owner may choose the address on the card instead; for a
-   key-only change the address can't move, as in credential recovery today. The
+   key-only change the address can't move, as in credential recovery today
+   (the switch card reads "Hivra will sign in to web-1 at 198.51.100.7 as
+   hivra. [Use a different address]"; the key-only card has no address
+   control). The
    sign-in requires web-1's pinned Ed25519 key, uses user `hivra` and the
    enrollment's private key, and runs one fixed, read-only probe through the
    sudo transport (9.2) that prints the effective UID and whether the server
@@ -1797,11 +1842,25 @@ Order:
    arguments (the new ones have defaults), writes only v1 snapshots (still
    accepted, and v1 must not carry the new fields, which old code never
    writes) and never reads the new columns.
-2. Deploy the code. It needs the migration: without it, creating a sudo
-   connection fails (PostgREST has no function with `p_ssh_privilege`), every
-   host inspection fails (SQL refuses `contractVersion` 2), and every
-   enrollment route fails (no tables). Nothing half-happens: each is refused
-   before any server is touched.
+2. Deploy the code **only after step 1 is applied to that database and
+   checked by objects** (22.1 step 1). For Canary that means before the PR is
+   merged into `canary`: the merge builds and serves automatically, so
+   applying the migration "with the build" leaves a window in which the new
+   code serves against the old schema. For production it means before the
+   owner's Promote. (Revision 5, review of round 1.)
+
+   What breaks if the code serves first is much more than the new features.
+   Every connection read selects the two new columns (`CONNECTION_SELECT` in
+   `src/lib/infrastructure/connection-store.ts` names `ssh_privilege` and
+   `ssh_host_key_type`), so listing, reading and loading the sealed secret of
+   **any** connection fails with an unknown-column error: the Capacity page's
+   servers, self-managed launches, Linux Sandbox operations and inspections,
+   for every existing user. On top of that, creating a sudo connection fails
+   (PostgREST has no function with `p_ssh_privilege`), every host inspection
+   fails (it writes a v2 snapshot, which the old SQL refuses), and every
+   enrollment route fails (no tables). Nothing half-happens on a server: each
+   of these is refused before any server is touched. The fix for that window
+   is to apply the migration, not to roll the code back.
 3. Enable nothing else: the retention cron is in `vercel.json` and runs with
    the deploy; the T43 gate is a code constant (off).
 
@@ -1878,6 +1937,26 @@ line late (exit 141 before the fix). That this was the race the servers hit is
 likely but not proven on a server: the Canary run below does Prepare then the
 check, and a repeat of the failure there would mean a second cause.
 
+**Binding and the repeat run (Revision 5).** The runs above recorded no script
+digest: only their timestamps (14:19 to 15:19 UTC, before commit `40f3ca5c`
+put the file at `e1ec492a…`) tie them to this script, and they ran before the
+SIGPIPE fix. The host check now prints `scriptBodySha256` and `scriptVersion`
+on its first line. A third server, `hivra-spike-c1-3` (cx23, fsn1,
+`ubuntu-22.04`: Ubuntu 22.04.5, kernel 5.15.0-190, sudo 1.9.9, OpenSSH 8.9p1,
+`use_pty` on), ran on 2026-09-24 from 18:46 to 19:08 UTC with the fixed check
+and the hardened runtime line (the `docker info … | grep -q '"runsc"'` pipe,
+the other early-exit reader under `pipefail`, now reads docker's whole output,
+with a stub regression test that fails with exit 141 before the change): the
+host check passed 39 of 39 with `scriptBodySha256`
+`e1ec492a165f21addfa515883b06bad3693e9234c99c63ea5191b9ed46689cfe`, version
+`2026.09.24.1`; then the live runner file passed 10 of 10 in each of 4
+consecutive runs, one fresh gVisor Prepare and three repeat Prepares through
+sudo, each followed by the strict readiness check. Before the fix, 2 of 4 such
+runs on 22.04 failed. That fits the race and nothing else was seen, but four
+passing runs make a second cause unlikely, not impossible; 22.3 step 6 still
+treats any repeat as one. The server and its SSH key were deleted (404).
+Ubuntu 24.04's binding stays by timestamp only.
+
 ## 22. Canary acceptance run (after merge)
 
 This is the run the release owner does after the branch is merged into
@@ -1889,11 +1968,13 @@ proposal's original target and stays optional, for the owner to approve.
 ### 22.1 Before the run
 
 1. Apply the migration to the Canary database (`hermesos-canary`,
-   `srrwbdvxlqvqjuexitaf`), before or with the Git build (section 20):
+   `srrwbdvxlqvqjuexitaf`) **before the PR is merged into `canary`**, not with
+   the build (section 20: once merged, the new code serves at once, and
+   without the migration every connection read fails for every user):
    `20260924213000_server_enrollment_command.sql` (additive + compatible
    function replacements, not blocking). It is the only migration this slice
    adds, and nothing is parked in `_pending_destructive_migrations/`. After
-   applying, check by objects, not only the ledger: tables
+   applying, and before merging, check by objects, not only the ledger: tables
    `infrastructure_server_enrollments` and
    `infrastructure_server_enrollment_events` exist with RLS on; columns
    `infrastructure_connections.ssh_privilege` and `ssh_host_key_type`; the
@@ -1944,8 +2025,8 @@ Hetzner console or `ssh-keyscan -t ed25519`, its Ed25519 fingerprint. Check
 
 ### 22.3 The owner flow (a Canary test account, in the browser)
 
-1. Capacity → Add capacity → My server → "Connect a server you already have".
-   The panel shows the one-line command with Copy, "Single use · expires in
+1. Capacity → Add capacity → Choose my machine → Remote server → "Connect a
+   server you already have" (4). The panel shows the one-line command with Copy, "Single use · expires in
    14:5x", View the script first, Get a new command, and the account code,
    which matches the account menu. View the script first shows the script
    version `2026.09.24.1`, the published sha256 (as in 22.1 step 3), "your
@@ -1954,18 +2035,34 @@ Hetzner console or `ssh-keyscan -t ed25519`, its Ed25519 fingerprint. Check
 2. Dry run on the server as `ubuntu`: paste the "Try it without changing
    anything" line. It prints the plan and changes nothing (`id hivra` fails),
    and the panel's waiting line becomes "The setup script was downloaded with
-   your command at <time>. Waiting for its report · 0:xx".
-3. Get a new command: the old command stops working (`curl` of it prints the
-   refusal line); copy the new one.
+   your command at <time>. Waiting for its report · 0:xx". Close the panel:
+   the command is not cancelled, and Capacity lists it under Setup commands
+   ("The setup script was downloaded with your command at … No report yet."
+   with Cancel this command). Cancel it there: it leaves the list, and `curl`
+   of that command now prints the refusal line.
+3. Open the panel again (a new command). Get a new command: the command it
+   replaces stops working (`curl` of it prints the refusal line). Copy the new
+   one with Copy, then **close the panel before running it** (the round-1
+   defect: closing used to cancel an unused command). Capacity lists it: "The
+   setup command you made at … hasn't been used yet. It works until …".
 4. On the server as `ubuntu`, paste the copied command. The terminal shows the
    plan and the account code; answer `y`; the three words print.
-5. In Hivra, "Is this your server?" shows the hostname, "Connected from" the
+5. On the Capacity page, with the panel still closed, "Is this your server?"
+   appears within about 5 seconds and shows the hostname, "Connected from" the
    server's public IPv4 (or "Hivra couldn't see this server's address" if 22.1
    step 4 found Cloudflare), Ubuntu 24.04, the CPU count, RAM, the same three
    words and the Ed25519 identity matching 22.2. Yes and No, cancel are
    separate buttons.
 6. Yes, this is my server. Hivra inspects the server and says it can run Linux
-   Sandbox after a short setup. Review setup → Prepare (gVisor) → ready.
+   Sandbox after a short setup. Review setup → Prepare (gVisor) → ready. Then
+   Check readiness on the server's card (inspection, then the strict check)
+   and see it ready again; the repeat Prepare the 22.04 runs failed after was
+   repeated on a disposable server (21). If the strict readiness check fails at any point
+   after Prepare, even once and even if a retry passes, stop and record it as
+   a **second cause**: the `runsc --version | head` SIGPIPE race (468467bf)
+   and the `docker info | grep -q` pipe are both fixed, so a repeat is not
+   that race. Capture Hivra's error, the card's message and, on the server,
+   `sudo journalctl -t sudo --since -10min` and `sudo runsc --version; echo $?`.
 7. Launch on this server → launch a Linux Sandbox → its terminal opens and runs
    `id; uname -a; echo ok`.
 8. On the server: `sudo journalctl -t sudo` shows one constant Hivra command
