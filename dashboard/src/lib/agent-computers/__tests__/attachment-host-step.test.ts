@@ -45,7 +45,7 @@ it("holds the host lock only for the VM check and the start, and waits for the a
   expect(script).toContain("os.dup2(lock,9)");
   expect(() => buildAttachmentHostStepScript(target, PROGRAM, "{}", 0)).toThrow();
   expect(() => buildAttachmentHostStepScript(target, PROGRAM, "{}", 901)).toThrow();
-  expect(() => buildAttachmentHostStepScript({ ...target, guestIp: "10.0.0.1;true" }, PROGRAM, "{}", 5)).toThrow();
+  expect(() => buildAttachmentHostStepScript({ ...target, guestIp: "10.241.0.1;true" }, PROGRAM, "{}", 5)).toThrow();
 });
 
 it("accepts the guest address with any prefix length and names each refusal", () => {
