@@ -1940,10 +1940,12 @@ function handleLoginCompleteAeon(res, body) {
     // dashboard so it serves against the right repo.
     finalizeAeonConnect(venice, (result) => {
       // Hard-fail (with a clear, actionable message) on the states that would
-      // otherwise re-surface later as a silent "save does nothing": the user
-      // has no fork, the token lacks Secrets:write, or (after the sync below)
-      // the fork refuses this computer's push. Auth itself succeeded, so any
-      // other state (incl. a diagnostics hiccup) passes.
+      // otherwise re-surface later as a silent "save does nothing" and that a
+      // reconnect can fix: the user has no fork, the token lacks
+      // Secrets:write, or (after the sync below) GitHub refused this
+      // computer's push or git could not be given the sign-in. Auth itself
+      // succeeded, so any other state passes and is reported as `sync` (a
+      // GitHub outage is retried by the computer on its own).
       const hardFail = result.status === "no_secrets" || result.status === "no_fork";
       // A first fetch of a long-lived fork can outlast the request; it keeps
       // running and its outcome lands in the status /api/login/status returns.
@@ -1960,11 +1962,17 @@ function handleLoginCompleteAeon(res, body) {
           if (replied) return;
           replied = true;
           if (hardFail) return jsonRes(res, 400, { ok: false, error: result.message });
-          // The fork was reachable but refused this computer's push: every
-          // dashboard save would silently stay on the computer. Same class as
-          // no_secrets, so the same actionable hard failure.
-          if (sync && sync.status === "push_failed") {
+          // GitHub refused this computer's push (403, or a token without the
+          // workflow permission): every dashboard save would silently stay on
+          // the computer. Same class as no_secrets, so the same actionable
+          // hard failure. Only a refusal from GitHub gets this message.
+          if (sync && sync.status === "push_denied") {
             return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Edit the token at github.com/settings/tokens?type=beta → Repository permissions → set Contents and Workflows to Read and write, then reconnect." });
+          }
+          // gh could not become git's credential helper (or git still has no
+          // sign-in): nothing about the token to change, so say to reconnect.
+          if (sync && sync.status === "credentials_failed") {
+            return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Connect GitHub again to retry." });
           }
           // venice: "ok" | "failed" | "unsupported" (fork's gateway predates the
           // VENICE_BASE_URL override) | undefined when wiring wasn't requested.
@@ -2076,38 +2084,109 @@ function finalizeAeonConnect(venice, cb) {
 // syncAeonFork makes the clone push-capable against the connected fork: gh as
 // the HTTPS credential helper, the GitHub account as commit identity, and a
 // real local branch tracking the fork's default branch with this computer's
-// unpushed edits carried onto it and pushed. It also enables the fork's Aeon
-// workflows GitHub leaves disabled on new forks, and records the outcome in
-// ~/.hivra/aeon-connect.json for /api/login/status, so the Hivra dashboard can
-// show the truth after a refresh. It runs after GitHub connect and on every
-// gateway start, so a runtime update (which restarts the gateway) repairs
-// computers connected before this existed. Idempotent; never rejects.
+// unpushed dashboard saves carried onto it and pushed. It also enables the
+// fork's Aeon workflows GitHub leaves disabled on new forks, and records the
+// outcome in ~/.hivra/aeon-connect.json for /api/login/status, so the Hivra
+// dashboard can show the truth after a refresh. It runs after GitHub connect
+// and on every gateway start (retried with backoff while GitHub cannot be
+// reached), so a runtime update (which restarts the gateway) repairs computers
+// connected before this existed. Idempotent; never rejects.
+//
+// Nothing on the computer is ever discarded: every move of the clone is a
+// `git rebase --autostash` (git sets the working tree's other edits aside and
+// puts them back, or keeps them in the stash list when they collide with the
+// fork), commits the fork cannot take are kept on a local branch first, and a
+// sync interrupted by a gateway stop is rolled back by the next one.
 const AEON_CONNECT_FILE = path.join(HOME, ".hivra", "aeon-connect.json");
 const AEON_CONNECT_SYNC_WAIT_MS = 45000;
+// Waits before each retry of a sync GitHub could not be reached for (about 7.5
+// minutes in all); a sync that GitHub answered is never retried on its own.
+const AEON_SYNC_RETRY_DELAYS_MS = [30000, 60000, 120000, 240000];
+const AEON_RETRYABLE_STATUSES = new Set(["unreachable", "fetch_failed"]);
 // Scheduled skills, inbound messages, skill chains and the Telegram command menu.
 const AEON_WORKFLOWS = ["aeon.yml", "scheduler.yml", "messages.yml", "chain-runner.yml", "setup-commands.yml"];
 // States GitHub sets by itself (new fork, 60 days without activity). A workflow
 // the user disabled by hand stays disabled: this runs on every gateway start.
 const AEON_AUTO_DISABLED_WORKFLOWS = new Set(["disabled_fork", "disabled_inactivity"]);
+// What the pinned Aeon dashboard saves (every commitAndPush and saveFile call
+// in its apps/dashboard): aeon.yml, skills/<name>/, soul/*.md, STRATEGY.md and
+// .mcp.json. Edits to these tracked paths are carried to the fork, and so is
+// whatever is already staged: the dashboard stages each save before it
+// commits, so a save whose commit failed (including the .github/workflows
+// secret allowlist an MCP save writes) is staged. Anything else changed on the
+// computer (terminal edits, other workflow edits, untracked files) is never
+// committed: a fork of a public repository is public.
+const AEON_SAVED_PATHS = ["aeon.yml", "skills", "soul", "STRATEGY.md", ".mcp.json"];
 // The provisioner rewrites this tracked file so the dashboard serves under
 // /aeon. It is this computer's setting, never an edit to push to the fork.
 const AEON_NEXT_CONFIG = "apps/dashboard/next.config.ts";
+const AEON_NEXT_CONFIG_MARKER = "AEON_BASE_PATH";
+// A durable copy of that file, written before any sync moves the clone, so a
+// sync stopped part-way (a runtime update restarts this gateway) can never
+// lose it: every sync puts it back whenever the working-tree file lacks it.
+const AEON_NEXT_CONFIG_BACKUP = path.join(HOME, ".hivra", "aeon-next.config.ts");
+// Byte-identical to the file provision-claude-code-box.sh writes (a contract
+// test keeps them together); used only when no durable copy exists yet.
+const AEON_HIVRA_NEXT_CONFIG = [
+  "import type { NextConfig } from 'next'",
+  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.",
+  "const basePath = process.env.AEON_BASE_PATH || undefined",
+  "const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}",
+  "export default nextConfig",
+  "",
+].join("\n");
 // A missing credential helper must fail fast, never wait on a prompt.
 const AEON_GIT_ENV = Object.assign({}, AGENT_ENV, { GIT_TERMINAL_PROMPT: "0" });
 
 function aeonExec(cmd, args, timeout) {
   return new Promise((resolve) => {
     execFile(cmd, args, { env: AEON_GIT_ENV, cwd: AEON_DIR, timeout: timeout || 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, out: String(stdout || "").trim(), err: String(stderr || (err && err.message) || "").trim() });
+      let detail = String(stderr || (err && err.message) || "").trim();
+      // Killed by the timeout: a stalled connection, not an answer from GitHub.
+      if (err && err.killed) detail = (detail ? detail + "\n" : "") + "timed out";
+      resolve({ ok: !err, out: String(stdout || "").trim(), err: detail });
     });
   });
 }
 const aeonGit = (...args) => aeonExec("git", args);
 const aeonGh = (...args) => aeonExec(GH, args, 60000);
-// Last line of a git/gh error, bounded, for the status file and the journal.
+async function aeonRev(ref) {
+  const rev = await aeonGit("rev-parse", "--verify", "--quiet", ref + "^{commit}");
+  return rev.ok && /^[0-9a-f]{40}$/.test(rev.out) ? rev.out : null;
+}
+// Last meaningful line of a git/gh error, bounded, for the status file and the journal.
 function aeonDetail(text) {
-  const lines = String(text || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = String(text || "").split("\n").map((line) => line.trim())
+    .filter((line) => line && !/^(hint:|Created autostash|Applied autostash|Successfully rebased)/.test(line));
   return (lines[lines.length - 1] || "no detail").slice(0, 300);
+}
+
+// What a failed call to GitHub means. "credentials": git has no usable GitHub
+// credentials on this computer; "denied": GitHub answered and refused
+// (401/403, a token without the permission, the workflow-scope refusal);
+// "transient": GitHub could not be reached or was briefly unavailable;
+// "other": anything else.
+function aeonRemoteFailure(text) {
+  const t = String(text || "");
+  if (/could not read (Username|Password)|terminal prompts disabled/i.test(t)) return "credentials";
+  if (/rate limit/i.test(t)) return "transient";
+  if (/HTTP 40[13]\b|returned error: 40[13]\b|Permission to \S+ denied|permission denied|denied to |Bad credentials|Write access to repository not granted|refusing to allow an? (Personal Access Token|OAuth App|GitHub App)|Authentication failed|requires authentication|gh auth login/i.test(t)) return "denied";
+  if (/timed? ?out|deadline exceeded|could not resolve|no such host|lookup |dial tcp|connection (refused|reset|closed|timed out)|failed to connect|couldn't connect|network is unreachable|temporary failure|\bTLS\b|\bSSL\b|\bEOF\b|remote end hung up|RPC failed|HTTP 5\d\d|returned error: 5\d\d|HTTP 429|returned error: 429|error connecting to|ECONN|EAI_AGAIN|ETIMEDOUT/i.test(t)) return "transient";
+  return "other";
+}
+
+// Why a rebase that stopped short of a conflict failed, in words the owner can
+// act on (git lists the files in the way on tab-indented lines).
+function aeonMoveFailureDetail(text) {
+  const t = String(text || "");
+  const files = t.split("\n").filter((line) => /^\t\S/.test(line)).map((line) => line.trim()).slice(0, 10);
+  if (/untracked working tree files would be overwritten/i.test(t)) {
+    return "Files on this computer that git does not track are in the way of the fork's version: " + files.join(", ") + ". Move or delete them in the terminal; nothing was changed.";
+  }
+  if (/local changes to the following files would be overwritten/i.test(t)) {
+    return "Edits on this computer are in the way of the fork's version: " + files.join(", ") + ". Nothing was changed.";
+  }
+  return aeonDetail(t);
 }
 
 function readAeonConnectStatus() {
@@ -2119,17 +2198,69 @@ function readAeonConnectStatus() {
   }
 }
 
+// Replace `file` with `text` so that a stop at any moment leaves either the
+// old or the new content on disk, never a partial or missing file.
+function writeFileDurably(file, text, mode) {
+  const tmp = file + ".hivra-tmp";
+  try {
+    const fd = fs.openSync(tmp, "w", mode);
+    try {
+      fs.writeFileSync(fd, text);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+    try {
+      const dir = fs.openSync(path.dirname(file), "r");
+      try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+    } catch {}
+    return true;
+  } catch (error) {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+    console.error("hivra-chat: " + file + " could not be written: " + ((error && error.message) || error));
+    return false;
+  }
+}
+
 function writeAeonConnectStatus(state) {
   const record = Object.assign({}, state, { at: new Date().toISOString() });
-  const tmp = AEON_CONNECT_FILE + ".tmp";
   try {
     fs.mkdirSync(path.dirname(AEON_CONNECT_FILE), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(record) + "\n", { mode: 0o600 });
-    fs.renameSync(tmp, AEON_CONNECT_FILE);
-  } catch (error) {
-    console.error("hivra-chat: aeon sync status could not be saved: " + ((error && error.message) || error));
-  }
+  } catch {}
+  writeFileDurably(AEON_CONNECT_FILE, JSON.stringify(record) + "\n", 0o600);
   return record;
+}
+
+// Keep the dashboard's /aeon basePath config in place. While the working-tree
+// file is Hivra's version, a durable copy of it is kept; whenever it is not
+// (a sync stopped part-way, an autostash git could not put back, a fork that
+// changed the file), the durable copy (or the provisioner's text) is put back.
+// The running dashboard keeps serving its build; the file matters for the next
+// build, so it must never be lost.
+function ensureAeonNextConfig() {
+  const file = path.join(AEON_DIR, AEON_NEXT_CONFIG);
+  let current = null;
+  try { current = fs.readFileSync(file, "utf8"); } catch {}
+  if (current !== null && current.includes(AEON_NEXT_CONFIG_MARKER)) {
+    let saved = null;
+    try { saved = fs.readFileSync(AEON_NEXT_CONFIG_BACKUP, "utf8"); } catch {}
+    if (saved !== current) {
+      try { fs.mkdirSync(path.dirname(AEON_NEXT_CONFIG_BACKUP), { recursive: true }); } catch {}
+      writeFileDurably(AEON_NEXT_CONFIG_BACKUP, current, 0o600);
+    }
+    return;
+  }
+  let text = null;
+  try { text = fs.readFileSync(AEON_NEXT_CONFIG_BACKUP, "utf8"); } catch {}
+  if (!text || !text.includes(AEON_NEXT_CONFIG_MARKER)) text = AEON_HIVRA_NEXT_CONFIG;
+  if (!fs.existsSync(path.dirname(file))) {
+    console.error("hivra-chat: aeon dashboard folder is missing; " + AEON_NEXT_CONFIG + " could not be restored");
+    return;
+  }
+  if (writeFileDurably(file, text, 0o644)) {
+    console.error("hivra-chat: aeon dashboard basePath config was missing from " + AEON_NEXT_CONFIG + " and has been restored");
+  }
 }
 
 // owner/name of the connected fork from the clone's origin, or null while the
@@ -2168,6 +2299,38 @@ async function enableAeonWorkflows(repo) {
   return result;
 }
 
+function aeonRebaseInProgress(gitDir) {
+  return fs.existsSync(path.join(gitDir, "rebase-merge")) || fs.existsSync(path.join(gitDir, "rebase-apply"));
+}
+
+// A gateway stopped mid-sync can leave a rebase half done: roll it back before
+// anything else reads the clone. `rebase --abort` returns HEAD to where it was
+// and puts the autostash back. If git itself was stopped before it wrote its
+// rebase state, `rebase --quit` keeps the autostash in the stash list, and it
+// is put straight back when nothing has moved since it was made.
+async function recoverAeonClone(gitDir) {
+  if (!aeonRebaseInProgress(gitDir)) return;
+  const aborted = await aeonGit("rebase", "--abort");
+  if (aborted.ok) {
+    console.error("hivra-chat: aeon clone: rolled back a rebase an earlier sync left unfinished");
+    return;
+  }
+  const stashBefore = await aeonRev("refs/stash");
+  const quit = await aeonGit("rebase", "--quit");
+  if (!quit.ok) {
+    console.error("hivra-chat: aeon clone: an unfinished rebase could not be rolled back: " + aeonDetail(aborted.err) + "; " + aeonDetail(quit.err));
+    return;
+  }
+  const stashAfter = await aeonRev("refs/stash");
+  if (stashAfter && stashAfter !== stashBefore
+    && (await aeonRev(stashAfter + "^1")) === (await aeonRev("HEAD"))
+    && (await aeonGit("diff", "--quiet", "HEAD")).ok) {
+    const popped = await aeonGit("stash", "pop", "--quiet");
+    if (!popped.ok) console.error("hivra-chat: aeon clone: edits set aside by an unfinished rebase stay in the stash list: " + aeonDetail(popped.err));
+  }
+  console.error("hivra-chat: aeon clone: cleared an unfinished rebase an earlier sync left behind");
+}
+
 // Where this computer's own edits begin. The provisioned clone is a depth-1
 // checkout of the pinned template commit, so its shallow boundary is exactly
 // that point. It is preferred to a merge-base, which for a fork older than the
@@ -2182,198 +2345,312 @@ async function aeonEditsBase(gitDir, head, upstream) {
   return common.ok && /^[0-9a-f]{40}$/.test(common.out) ? common.out : null;
 }
 
-// Put the clone on `branch` tracking origin/<branch>, with every edit made on
-// this computer committed and replayed on top of the fork. Nothing the fork
-// lacks is ever dropped: when edits conflict with the fork (or were made while
-// another fork was connected) they are kept on a local
-// hivra/unpushed-edits-<time> branch and the clone follows the fork. A branch
-// the user switched to by hand is left as it is. Returns { parked } or { error }.
-async function carryAeonEdits(branch, switchedRepo) {
+// Commit the dashboard's unpushed saves (never anything else, never apps/) and
+// put the clone on `branch`, tracking origin/<branch>, with those commits
+// replayed on top of the fork. HEAD is either `branch` itself, the branch an
+// earlier sync followed for a previously connected fork, or the provisioned
+// detached checkout (the caller leaves any other checkout alone). Nothing the
+// fork lacks is ever dropped: commits that conflict with the fork (or were made
+// while another fork was connected) are kept on a local
+// hivra/unpushed-edits-<time> branch and the clone follows the fork; every
+// other edit rides through each move in git's autostash. Returns
+// { parked, notes } or { error }.
+async function carryAeonEdits({ branch, gitDir, onBranch, switchedRepo }) {
   const upstream = "refs/remotes/origin/" + branch;
   const localRef = "refs/heads/" + branch;
-  const revOf = async (ref) => {
-    const rev = await aeonGit("rev-parse", "--verify", "--quiet", ref + "^{commit}");
-    return rev.ok && /^[0-9a-f]{40}$/.test(rev.out) ? rev.out : null;
+  const parked = [];
+  const notes = [];
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  // Branches already kept aside stay reported with the error.
+  const fail = (error) => ({ error, parked, notes });
+  // Before a ref is moved, keep any commit on it the fork does not have (once).
+  const keep = async (commit) => {
+    if (!commit || (await aeonGit("merge-base", "--is-ancestor", commit, upstream)).ok) return "";
+    const existing = await aeonGit("for-each-ref", "--format=%(refname:short)", "--points-at", commit, "refs/heads/hivra/");
+    const already = existing.out.split("\n").find((name) => /^hivra\/unpushed-edits-/.test(name));
+    if (already) {
+      if (!parked.includes(already)) parked.push(already);
+      return "";
+    }
+    for (let n = 1; n <= 20; n++) {
+      const name = "hivra/unpushed-edits-" + stamp + (n > 1 ? "-" + n : "");
+      if ((await aeonGit("branch", name, commit)).ok) {
+        parked.push(name);
+        return "";
+      }
+    }
+    return "Local Aeon edits could not be kept aside on a branch.";
   };
-  const gitDir = (await aeonGit("rev-parse", "--absolute-git-dir")).out;
-  if (!gitDir) return { error: "The Aeon folder on this computer is not a git clone." };
-  // A sync interrupted mid-rebase (gateway restart) is rolled back first.
-  if (fs.existsSync(path.join(gitDir, "rebase-merge")) || fs.existsSync(path.join(gitDir, "rebase-apply"))) {
-    await aeonGit("rebase", "--abort");
+
+  // The dashboard's saves: tracked edits under the paths it writes, plus what
+  // it already staged. Pathspecs git does not know are skipped (git add fails
+  // on them). A staged file under apps/ is unstaged, never committed.
+  const known = await aeonGit("ls-files", "-z", "--", ...AEON_SAVED_PATHS);
+  const knownFiles = known.out.split("\0").filter(Boolean);
+  const saved = AEON_SAVED_PATHS.filter((spec) => knownFiles.some((file) => file === spec || file.startsWith(spec + "/")));
+  if (saved.length) {
+    const added = await aeonGit("add", "--update", "--", ...saved);
+    if (!added.ok) return fail("Aeon dashboard saves could not be staged: " + aeonDetail(added.err));
   }
-  const nextFile = path.join(AEON_DIR, AEON_NEXT_CONFIG);
-  let hivraNext = null;
-  try {
-    const text = fs.readFileSync(nextFile, "utf8");
-    if (text.includes("AEON_BASE_PATH")) hivraNext = text;
-  } catch {}
-  try {
-    if (hivraNext !== null) await aeonGit("checkout", "HEAD", "--", AEON_NEXT_CONFIG);
-    // Anything else changed under apps/ is dashboard build output (Next
-    // rewrites its tracked next-env.d.ts), not configuration: set it aside
-    // recoverably instead of pushing it to the user's fork.
-    const build = await aeonGit("status", "--porcelain", "--untracked-files=no", "--", "apps");
-    if (build.out) {
-      const stashed = await aeonGit("stash", "push", "--quiet", "-m", "hivra: Aeon dashboard build changes set aside for GitHub sync", "--", "apps");
-      if (!stashed.ok) return { error: "Dashboard build changes could not be set aside: " + aeonDetail(stashed.err) };
-    }
-    // The user's own edits (aeon.yml, skills/, soul/, STRATEGY.md, .mcp.json,
-    // workflows) all live outside apps/: changes to tracked files, plus what
-    // the dashboard already staged for a save whose commit or push failed (new
-    // skills included). Files nothing ever staged stay local and untouched: a
-    // fork of a public repository is public.
-    const added = await aeonGit("add", "--update", "--", ".", ":(exclude)apps");
-    if (!added.ok) return { error: "Local Aeon edits could not be staged: " + aeonDetail(added.err) };
-    if (!(await aeonGit("diff", "--cached", "--quiet")).ok) {
-      const committed = await aeonGit("commit", "--quiet", "--no-verify", "-m", "chore: save Aeon dashboard edits made on this computer");
-      if (!committed.ok) return { error: "Local Aeon edits could not be committed: " + aeonDetail(committed.err) };
-    }
-    const tip = await revOf("HEAD");
-    const current = await aeonGit("symbolic-ref", "--quiet", "--short", "HEAD");
-    const onBranch = current.ok ? current.out : null;
-    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-    const parked = [];
-    const keptCommits = new Set();
-    // Before a ref is moved, keep any commit on it the fork does not have.
-    const keep = async (commit) => {
-      if (!commit || keptCommits.has(commit) || (await aeonGit("merge-base", "--is-ancestor", commit, upstream)).ok) return "";
-      for (let n = 1; n <= 20; n++) {
-        const name = "hivra/unpushed-edits-" + stamp + (n > 1 ? "-" + n : "");
-        if ((await aeonGit("branch", name, commit)).ok) {
-          parked.push(name);
-          keptCommits.add(commit);
-          return "";
-        }
-      }
-      return "Local Aeon edits could not be kept aside on a branch.";
-    };
-    let moved;
-    if (switchedRepo) {
-      moved = { ok: false, err: "the clone followed a different fork before" };
-    } else if (onBranch === branch) {
-      moved = await aeonGit("rebase", "--quiet", upstream);
-    } else if (onBranch) {
-      moved = (await revOf(localRef))
-        ? await aeonGit("checkout", "--quiet", branch)
-        : await aeonGit("checkout", "--quiet", "-b", branch, upstream);
-      if (moved.ok) moved = await aeonGit("rebase", "--quiet", upstream);
+  if ((await aeonGit("diff", "--cached", "--name-only", "--", "apps")).out) {
+    const unstaged = await aeonGit("reset", "--quiet", "--", "apps");
+    if (!unstaged.ok) return fail("Staged dashboard build files could not be left out: " + aeonDetail(unstaged.err));
+  }
+  if (!(await aeonGit("diff", "--cached", "--quiet")).ok) {
+    const committed = await aeonGit("commit", "--quiet", "--no-verify", "-m", "chore: save Aeon dashboard edits made on this computer");
+    if (!committed.ok) return fail("Aeon dashboard saves could not be committed: " + aeonDetail(committed.err));
+  }
+  const tip = await aeonRev("HEAD");
+  if (!tip) return fail("The Aeon folder on this computer has no commit checked out.");
+
+  // Where this computer's own commits begin: the fork's own history (on the
+  // branch), the provisioned template commit (detached), or nowhere (another
+  // fork's commits are never replayed into this one).
+  let from = upstream;
+  if (switchedRepo) {
+    const failure = await keep(tip);
+    if (failure) return fail(failure);
+    from = tip;
+  } else if (!onBranch) {
+    const base = await aeonEditsBase(gitDir, tip, upstream);
+    if (base) {
+      from = base;
     } else {
-      // Detached: the provisioned template checkout plus anything made on it.
-      const failure = await keep(await revOf(localRef));
-      if (failure) return { error: failure };
-      const base = await aeonEditsBase(gitDir, tip, upstream);
-      if (base === tip) {
-        // Nothing was made on this computer: follow the fork as it is.
-        moved = await aeonGit("checkout", "--quiet", "-B", branch, upstream);
-      } else if (base) {
-        // Replay only this computer's commits (base..tip) onto the fork.
-        moved = await aeonGit("checkout", "--quiet", "-B", branch);
-        if (moved.ok) moved = await aeonGit("rebase", "--quiet", "--onto", upstream, base, branch);
-      } else {
-        moved = { ok: false, err: "no history shared with the fork" };
-      }
-    }
-    if (!moved.ok) {
-      await aeonGit("rebase", "--abort");
-      // Keep what the forced checkout below would orphan: the detached work
-      // and the local branch (a hand-made branch keeps its own commits).
-      const failure = (onBranch && onBranch !== branch ? "" : await keep(tip)) || await keep(await revOf(localRef));
-      if (failure) return { error: failure };
-      const reset = await aeonGit("checkout", "--quiet", "--force", "-B", branch, upstream);
-      if (!reset.ok) return { error: "The Aeon clone could not follow the fork: " + aeonDetail(reset.err) };
-    }
-    if (parked.length) console.error("hivra-chat: aeon edits kept on " + parked.join(", ") + " (" + aeonDetail(moved.err) + ")");
-    const tracked = await aeonGit("branch", "--quiet", "--set-upstream-to=origin/" + branch, branch);
-    if (!tracked.ok) return { error: "The Aeon clone could not track the fork: " + aeonDetail(tracked.err) };
-    return { parked };
-  } finally {
-    if (hivraNext !== null) {
-      let current = null;
-      try { current = fs.readFileSync(nextFile, "utf8"); } catch {}
-      if (current !== hivraNext) {
-        try { fs.writeFileSync(nextFile, hivraNext); } catch (error) {
-          console.error("hivra-chat: aeon dashboard basePath config could not be restored: " + ((error && error.message) || error));
-        }
-      }
+      const failure = await keep(tip);
+      if (failure) return fail(failure);
+      notes.push("this computer's Aeon folder shares no history with the fork");
+      from = tip;
     }
   }
+  // Moving onto `branch`: a local branch of that name keeps its own commits.
+  if (onBranch !== branch) {
+    const failure = await keep(await aeonRev(localRef));
+    if (failure) return fail(failure);
+  }
+  if (onBranch && onBranch !== branch) {
+    // The branch an earlier sync followed for another fork: switch names in place.
+    const renamed = await aeonGit("checkout", "--quiet", "-B", branch);
+    if (!renamed.ok) return fail("The Aeon folder could not switch to " + branch + ": " + aeonDetail(renamed.err));
+  }
+
+  const stashBefore = await aeonRev("refs/stash");
+  const replay = (start) => aeonGit("rebase", "--quiet", "--autostash", "--onto", upstream, start);
+  let moved = await replay(from);
+  if (!moved.ok) {
+    const conflicted = aeonRebaseInProgress(gitDir)
+      && Boolean((await aeonGit("diff", "--name-only", "--diff-filter=U")).out);
+    if (!conflicted) {
+      // Not a conflict (an untracked file in the way, a lock held by a
+      // dashboard save): roll back whatever git started, change nothing else
+      // and force nothing.
+      if (aeonRebaseInProgress(gitDir)) await aeonGit("rebase", "--abort");
+      return fail("The Aeon folder on this computer could not follow the fork. " + aeonMoveFailureDetail(moved.err));
+    }
+    // A real conflict between this computer's commits and the fork: roll the
+    // replay back (HEAD returns to the tip and the autostash is put back),
+    // keep those commits on a local branch, then follow the fork.
+    const aborted = await aeonGit("rebase", "--abort");
+    if (!aborted.ok) return fail("A conflicting replay onto the fork could not be rolled back: " + aeonDetail(aborted.err));
+    const failure = await keep(await aeonRev("HEAD"));
+    if (failure) return fail(failure);
+    notes.push(aeonDetail(moved.err));
+    moved = await replay("HEAD");
+    if (!moved.ok) {
+      if (aeonRebaseInProgress(gitDir)) await aeonGit("rebase", "--abort");
+      return fail("The Aeon folder on this computer could not follow the fork. " + aeonMoveFailureDetail(moved.err));
+    }
+  }
+  // Edits git could not put back after the move are in the stash list: leave
+  // no conflict markers or half-staged files behind (the edits are safe there).
+  const stashAfter = await aeonRev("refs/stash");
+  if (stashAfter && stashAfter !== stashBefore) {
+    const unmerged = (await aeonGit("diff", "--name-only", "--diff-filter=U")).out.split("\n").filter(Boolean);
+    await aeonGit("reset", "--quiet");
+    if (unmerged.length) await aeonGit("checkout", "--quiet", "HEAD", "--", ...unmerged);
+    notes.push("edits on this computer to " + (unmerged.length ? unmerged.join(", ") : "files") + " that the fork also changed were kept in the git stash (git stash list)");
+  }
+  if (!onBranch) {
+    // The replay ran on the detached checkout; attach it (no working-tree change).
+    const attached = await aeonGit("checkout", "--quiet", "-B", branch);
+    if (!attached.ok) return fail("The Aeon folder could not switch to " + branch + ": " + aeonDetail(attached.err));
+  }
+  const tracked = await aeonGit("branch", "--quiet", "--set-upstream-to=origin/" + branch, branch);
+  if (!tracked.ok) return fail("The Aeon clone could not track the fork: " + aeonDetail(tracked.err));
+  if (parked.length) console.error("hivra-chat: aeon edits kept on " + parked.join(", ") + " (" + notes.join("; ") + ")");
+  return { parked, notes };
 }
 
-async function syncAeonForkOnce(reason) {
+async function syncAeonForkOnce(reason, attempt) {
   if (!fs.existsSync(path.join(AEON_DIR, ".git"))) return null;
   const repo = await aeonConnectedRepo();
   if (!repo) return null;
   const previous = readAeonConnectStatus();
-  const state = { status: "syncing", repo, branch: null, pushReady: false, workflows: {}, parkedBranches: [] };
+  const state = { status: "syncing", repo, branch: null, pushReady: false, workflows: {}, parkedBranches: [], attempt: attempt + 1 };
   // Branches kept aside by earlier syncs stay reported while they exist.
   for (const name of previous && Array.isArray(previous.parkedBranches) ? previous.parkedBranches : []) {
-    if (typeof name === "string" && /^hivra\/unpushed-edits-[0-9TZ-]+$/.test(name)
-      && (await aeonGit("rev-parse", "--verify", "--quiet", "refs/heads/" + name)).ok) state.parkedBranches.push(name);
+    if (typeof name === "string" && /^hivra\/unpushed-edits-[0-9TZ-]+$/.test(name) && !state.parkedBranches.includes(name)
+      && (await aeonRev("refs/heads/" + name))) state.parkedBranches.push(name);
   }
   writeAeonConnectStatus(state);
   const finish = (status, detail) => {
     state.status = status;
     if (detail) state.detail = detail;
-    if (status !== "ok") console.error("hivra-chat: aeon fork sync (" + reason + ") " + status + ": " + (detail || ""));
+    if (AEON_RETRYABLE_STATUSES.has(status) && attempt < AEON_SYNC_RETRY_DELAYS_MS.length) {
+      state.retryAt = new Date(Date.now() + AEON_SYNC_RETRY_DELAYS_MS[attempt]).toISOString();
+    }
+    if (status !== "ok") console.error("hivra-chat: aeon fork sync (" + reason + ") " + status + ": " + (detail || "") + (state.retryAt ? " (retrying at " + state.retryAt + ")" : ""));
     return writeAeonConnectStatus(state);
   };
 
-  const account = await aeonGh("api", "user");
-  let user = null;
-  try { user = JSON.parse(account.out); } catch {}
-  const login = user && typeof user.login === "string" ? user.login : "";
-  const id = user && Number.isSafeInteger(user.id) ? user.id : 0;
-  if (!account.ok || !/^[A-Za-z0-9-]{1,39}$/.test(login) || id <= 0) {
-    return finish("auth_failed", "GitHub sign-in on this computer is not working: " + aeonDetail(account.err));
+  const gitDir = (await aeonGit("rev-parse", "--absolute-git-dir")).out;
+  if (!gitDir) return finish("error", "The Aeon folder on this computer is not a git clone.");
+  // Before anything else: roll back what an interrupted sync left, and make
+  // sure the basePath config is on disk (and durably copied) before any move.
+  await recoverAeonClone(gitDir);
+  ensureAeonNextConfig();
+  try {
+    const account = await aeonGh("api", "user");
+    let user = null;
+    try { user = JSON.parse(account.out); } catch {}
+    const login = user && typeof user.login === "string" ? user.login : "";
+    const id = user && Number.isSafeInteger(user.id) ? user.id : 0;
+    if (!account.ok || !/^[A-Za-z0-9-]{1,39}$/.test(login) || id <= 0) {
+      const kind = account.ok ? "other" : aeonRemoteFailure(account.err);
+      if (kind === "transient") return finish("unreachable", "Could not reach GitHub from this computer: " + aeonDetail(account.err));
+      if (kind === "denied" || kind === "credentials") return finish("auth_failed", "GitHub sign-in on this computer is not working: " + aeonDetail(account.err));
+      return finish("error", "The GitHub account on this computer could not be read: " + aeonDetail(account.err || account.out));
+    }
+    state.workflows = await enableAeonWorkflows(repo);
+    // gh becomes git's HTTPS credential helper for github.com (~/.gitconfig).
+    const helper = await aeonGh("auth", "setup-git", "--hostname", "github.com");
+    if (!helper.ok) {
+      return finish("credentials_failed", "Git on this computer could not be given the GitHub sign-in for " + repo + ": " + aeonDetail(helper.err));
+    }
+    // Commits are made as the connected account, like GitHub's own web editor.
+    const named = await aeonGit("config", "user.name", login);
+    const mailed = await aeonGit("config", "user.email", id + "+" + login + "@users.noreply.github.com");
+    if (!named.ok || !mailed.ok) return finish("error", "The Aeon clone's commit identity could not be set: " + aeonDetail(named.err || mailed.err));
+
+    // A failed read of the fork: unreachable (retried), no credentials, or refused.
+    const readFailure = (result, what) => {
+      const kind = aeonRemoteFailure(result.err);
+      if (kind === "transient") return finish("unreachable", "Could not reach GitHub to " + what + " " + repo + ": " + aeonDetail(result.err));
+      if (kind === "credentials") return finish("credentials_failed", "Git on this computer has no GitHub sign-in for " + repo + ": " + aeonDetail(result.err));
+      return finish("fetch_failed", "Could not " + what + " " + repo + " from GitHub: " + aeonDetail(result.err));
+    };
+    const head = await aeonGit("ls-remote", "--symref", "origin", "HEAD");
+    const symref = head.ok && head.out.match(/^ref: refs\/heads\/(\S+)\s+HEAD$/m);
+    if (!head.ok) return readFailure(head, "read");
+    if (!symref || !(await aeonGit("check-ref-format", "--branch", symref[1])).ok) {
+      return finish("fetch_failed", "Could not read the default branch of " + repo + " from GitHub.");
+    }
+    const branch = symref[1];
+    state.branch = branch;
+
+    // Only the fork's default branch (or the one an earlier sync followed for
+    // another fork, or the untouched provisioned checkout) is ever moved. A
+    // branch or commit the owner checked out by hand is left exactly as it
+    // is, with nothing committed onto it; saves are not pushed until they
+    // switch back.
+    const current = await aeonGit("symbolic-ref", "--quiet", "--short", "HEAD");
+    const onBranch = current.ok ? current.out : null;
+    const followed = (await aeonGit("config", "--get", "hivra.syncedFork")).out;
+    const followedBranch = (await aeonGit("config", "--get", "hivra.syncedBranch")).out;
+    const ours = onBranch ? onBranch === branch || (Boolean(followedBranch) && onBranch === followedBranch) : !followed;
+    if (!ours) {
+      return finish("on_other_branch", "The Aeon folder on this computer is on " + (onBranch ? "the branch " + onBranch : "a commit checked out by hand")
+        + ", not " + branch + ". Aeon dashboard saves are not pushed to " + repo + " until " + branch + " is checked out again; nothing was changed.");
+    }
+
+    const fetchFork = () => aeonExec("git", ["fetch", "--quiet", "--no-tags", "origin", "+refs/heads/" + branch + ":refs/remotes/origin/" + branch], 600000);
+    const fetched = await fetchFork();
+    if (!fetched.ok) return readFailure(fetched, "fetch");
+
+    // Commits from a previously connected fork are never replayed into a different one.
+    const switchedRepo = Boolean(followed) && followed.toLowerCase() !== repo.toLowerCase();
+    // Branches this sync kept aside are reported even if a later step fails.
+    const parked = new Set();
+    const notes = [];
+    const recordCarry = (carry) => {
+      for (const name of carry.parked || []) {
+        parked.add(name);
+        if (!state.parkedBranches.includes(name)) state.parkedBranches.push(name);
+      }
+      notes.push(...(carry.notes || []));
+    };
+    const carried = await carryAeonEdits({ branch, gitDir, onBranch, switchedRepo });
+    recordCarry(carried);
+    if (carried.error) return finish("error", carried.error);
+    await aeonGit("config", "hivra.syncedFork", repo);
+    await aeonGit("config", "hivra.syncedBranch", branch);
+
+    // Push the way the dashboard does: a plain `git push` of the tracked
+    // branch. With nothing to push, a dry run still proves the credentials can
+    // write. A push GitHub did not refuse (most often: the fork moved since the
+    // fetch, e.g. an Actions run committed) is retried once after a new fetch
+    // and replay.
+    const pushOnce = async () => {
+      const ahead = await aeonGit("rev-list", "--count", "refs/remotes/origin/" + branch + "..refs/heads/" + branch);
+      return Number(ahead.out) > 0
+        ? await aeonExec("git", ["push", "--quiet"], 300000)
+        : await aeonGit("push", "--quiet", "--dry-run");
+    };
+    let push = await pushOnce();
+    if (!push.ok && !["denied", "credentials"].includes(aeonRemoteFailure(push.err))) {
+      console.error("hivra-chat: aeon fork sync (" + reason + ") push failed, fetching and retrying once: " + aeonDetail(push.err));
+      const refetched = await fetchFork();
+      if (refetched.ok) {
+        const again = await carryAeonEdits({ branch, gitDir, onBranch: branch, switchedRepo: false });
+        recordCarry(again);
+        if (again.error) return finish("error", again.error);
+        push = await pushOnce();
+      } else {
+        push = { ok: false, err: refetched.err };
+      }
+    }
+    state.pushReady = push.ok;
+    if (!push.ok) {
+      const kind = aeonRemoteFailure(push.err);
+      if (kind === "credentials") return finish("credentials_failed", "Git on this computer has no GitHub sign-in to push to " + repo + ": " + aeonDetail(push.err));
+      if (kind === "denied") return finish("push_denied", "GitHub refused this computer's push to " + repo + ": " + aeonDetail(push.err));
+      if (kind === "transient") return finish("unreachable", "Could not reach GitHub to push to " + repo + ": " + aeonDetail(push.err));
+      return finish("push_failed", "This computer could not push to " + repo + ": " + aeonDetail(push.err));
+    }
+    const said = [];
+    if (parked.size) said.push("Edits made on this computer could not be applied to " + repo + " and were kept on the local branch " + Array.from(parked).join(", ") + ".");
+    const stashed = notes.filter((note) => /git stash/.test(note));
+    if (stashed.length) said.push(stashed.map((note) => note.charAt(0).toUpperCase() + note.slice(1) + ".").join(" "));
+    return finish("ok", said.join(" "));
+  } finally {
+    ensureAeonNextConfig();
   }
-  state.workflows = await enableAeonWorkflows(repo);
-  // gh becomes git's HTTPS credential helper for github.com (~/.gitconfig).
-  const helper = await aeonGh("auth", "setup-git", "--hostname", "github.com");
-  if (!helper.ok) console.error("hivra-chat: gh could not become git's credential helper: " + aeonDetail(helper.err));
-  // Commits are made as the connected account, like GitHub's own web editor.
-  const named = await aeonGit("config", "user.name", login);
-  const mailed = await aeonGit("config", "user.email", id + "+" + login + "@users.noreply.github.com");
-  if (!named.ok || !mailed.ok) return finish("error", "The Aeon clone's commit identity could not be set: " + aeonDetail(named.err || mailed.err));
-
-  const head = await aeonGit("ls-remote", "--symref", "origin", "HEAD");
-  const symref = head.ok && head.out.match(/^ref: refs\/heads\/(\S+)\s+HEAD$/m);
-  if (!symref || !(await aeonGit("check-ref-format", "--branch", symref[1])).ok) {
-    return finish("fetch_failed", "Could not read " + repo + " from GitHub: " + aeonDetail(head.err || helper.err));
-  }
-  const branch = symref[1];
-  state.branch = branch;
-  const fetched = await aeonExec("git", ["fetch", "--quiet", "--no-tags", "origin", "+refs/heads/" + branch + ":refs/remotes/origin/" + branch], 600000);
-  if (!fetched.ok) return finish("fetch_failed", "Could not fetch " + repo + ": " + aeonDetail(fetched.err));
-
-  // The fork this clone's branch last followed. Commits from a previously
-  // connected fork are never replayed into a different one.
-  const followed = (await aeonGit("config", "--get", "hivra.syncedFork")).out;
-  const carried = await carryAeonEdits(branch, Boolean(followed) && followed.toLowerCase() !== repo.toLowerCase());
-  if (carried.error) return finish("error", carried.error);
-  state.parkedBranches.push(...carried.parked);
-  await aeonGit("config", "hivra.syncedFork", repo);
-
-  // Push the way the dashboard does: a plain `git push` of the tracked branch.
-  // With nothing to push, a dry run still proves the credentials can write.
-  const ahead = await aeonGit("rev-list", "--count", "refs/remotes/origin/" + branch + "..refs/heads/" + branch);
-  const push = Number(ahead.out) > 0
-    ? await aeonExec("git", ["push", "--quiet"], 300000)
-    : await aeonGit("push", "--quiet", "--dry-run");
-  state.pushReady = push.ok;
-  if (!push.ok) return finish("push_failed", "This computer cannot push to " + repo + ": " + aeonDetail(push.err));
-  return finish("ok", carried.parked.length
-    ? "Edits made on this computer could not be applied to " + repo + " and were kept on the local branch " + carried.parked.join(", ") + "."
-    : "");
 }
 
 let aeonSyncChain = Promise.resolve();
-function syncAeonFork(reason) {
-  const run = aeonSyncChain.then(() => syncAeonForkOnce(reason)).catch((error) => {
+let aeonSyncRetry = null;
+let aeonSyncGeneration = 0;
+// Serialized; a sync GitHub could not be reached for is retried with backoff
+// (AEON_SYNC_RETRY_DELAYS_MS). A newer sync (a reconnect) replaces a pending retry.
+function syncAeonFork(reason, attempt) {
+  const tries = attempt || 0;
+  const generation = ++aeonSyncGeneration;
+  if (aeonSyncRetry) {
+    clearTimeout(aeonSyncRetry);
+    aeonSyncRetry = null;
+  }
+  const run = aeonSyncChain.then(() => syncAeonForkOnce(reason, tries)).catch((error) => {
     console.error("hivra-chat: aeon fork sync (" + reason + ") crashed: " + ((error && error.stack) || error));
     const previous = readAeonConnectStatus();
-    return writeAeonConnectStatus(Object.assign({}, previous || {}, { status: "error", pushReady: false, detail: "The computer could not finish syncing with GitHub." }));
+    return writeAeonConnectStatus(Object.assign({}, previous || {}, { status: "error", pushReady: false, retryAt: undefined, detail: "The computer could not finish syncing with GitHub." }));
   });
   aeonSyncChain = run.then(() => undefined, () => undefined);
+  void run.then((state) => {
+    if (generation !== aeonSyncGeneration || !state || !state.retryAt || tries >= AEON_SYNC_RETRY_DELAYS_MS.length) return;
+    aeonSyncRetry = setTimeout(() => {
+      aeonSyncRetry = null;
+      void syncAeonFork(reason, tries + 1);
+    }, AEON_SYNC_RETRY_DELAYS_MS[tries]);
+  });
   return run;
 }
 

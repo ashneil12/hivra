@@ -256,16 +256,43 @@ powers the VM on or off itself.
   gateway start, the gateway makes that clone push-capable against the user's
   fork: `gh auth setup-git` for HTTPS credentials, the GitHub account (and its
   noreply address) as the clone's commit identity, and a local branch tracking
-  the fork's default branch. Edits made on the computer are committed and
-  replayed onto the fork (only this computer's own commits: the depth-1
-  template checkout's shallow boundary marks where they begin); edits that
-  cannot be applied stay on a local `hivra/unpushed-edits-<time>` branch.
-  Hivra's `apps/dashboard/next.config.ts` is never pushed. Workflows GitHub
-  disabled by itself (`disabled_fork`, `disabled_inactivity`) among `aeon.yml`,
-  `scheduler.yml`, `messages.yml`, `chain-runner.yml` and `setup-commands.yml`
-  are enabled; a manual disable is left alone. The outcome is written to
-  `~/.hivra/aeon-connect.json` and returned as `connect` by
-  `GET /api/login/status`.
+  the fork's default branch.
+  - Only the dashboard's own saves are committed and pushed: tracked edits to
+    `aeon.yml`, `skills/`, `soul/`, `STRATEGY.md` and `.mcp.json` (the paths
+    the pinned dashboard's `commitAndPush`/`saveFile` calls write), plus
+    whatever the dashboard already staged for a save whose commit failed
+    (including the `.github/workflows` secret allowlist an MCP save writes).
+    Every other edit (terminal edits, other workflow edits, untracked files)
+    stays an uncommitted edit on the computer. Only this computer's own
+    commits are replayed (the depth-1 template checkout's shallow boundary
+    marks where they begin).
+  - Nothing on the computer is discarded. Every move is a
+    `git rebase --autostash` (never a forced checkout): commits that conflict
+    with the fork are kept on a local `hivra/unpushed-edits-<time>` branch
+    first; a move that fails for any other reason (for example an untracked
+    file in the way) changes nothing and reports `error` with the files named;
+    edits git cannot put back after a move stay in the stash list.
+  - A branch or commit the owner checked out by hand is left exactly as it is
+    (nothing committed, HEAD not moved) and reported as `on_other_branch`.
+  - Hivra's `apps/dashboard/next.config.ts` (the `/aeon` basePath) is never
+    pushed. A durable copy is kept in `~/.hivra/aeon-next.config.ts`, and
+    every sync first rolls back a rebase a stopped gateway left unfinished and
+    puts the file back whenever it lacks the basePath config.
+  - Statuses: `ok`, `auth_failed` (GitHub rejected the sign-in),
+    `unreachable` and `fetch_failed` (retried after 30 s, 1, 2 and 4 min),
+    `credentials_failed` (`gh auth setup-git` failed or git has no sign-in),
+    `push_denied` (GitHub refused the push: 403, permissions or workflow
+    scope), `push_failed` (any other push failure, after one retry following a
+    fresh fetch and replay), `on_other_branch` and `error`. Connect answers 400
+    only for `push_denied` (with the token-permissions fix) and
+    `credentials_failed` (connect again).
+  - Workflows GitHub disabled by itself (`disabled_fork`,
+    `disabled_inactivity`) among `aeon.yml`, `scheduler.yml`, `messages.yml`,
+    `chain-runner.yml` and `setup-commands.yml` are enabled; a manual disable
+    is left alone. The outcome is written to `~/.hivra/aeon-connect.json` and
+    returned as `connect` by `GET /api/login/status`.
+  - Verified against local git repositories and a stubbed `gh` only; not yet
+    exercised against GitHub on a running Aeon computer.
 - **Telegram connect.** `hivra-tg-apply apply` writes `/etc/bux/tg.env` and then
   enables and restarts `bux-tg`, so a new bot token or pairing link takes
   effect even when the bot is already running.

@@ -660,9 +660,27 @@ function boxBase(boxUrl: string): string {
 /** An Aeon computer's last sync with the user's GitHub fork, as recorded by
  *  the computer (~/.hivra/aeon-connect.json). `pushReady` means dashboard
  *  saves reach the fork; `workflows` maps each Aeon workflow file to its
- *  GitHub state after the computer enabled the ones GitHub disabled itself. */
+ *  GitHub state after the computer enabled the ones GitHub disabled itself.
+ *  - auth_failed: GitHub rejected the computer's sign-in (401/403).
+ *  - unreachable: GitHub could not be reached; retried until `retryAt`.
+ *  - fetch_failed: the fork could not be read; also retried.
+ *  - credentials_failed: git could not be given the GitHub sign-in.
+ *  - push_denied: GitHub refused the push (token permissions).
+ *  - push_failed: the push failed for another reason.
+ *  - on_other_branch: the owner checked out another branch by hand; nothing
+ *    was changed and saves are not pushed until the default branch is back. */
 export interface AeonConnectStatus {
-  status: "syncing" | "ok" | "auth_failed" | "fetch_failed" | "push_failed" | "error";
+  status:
+    | "syncing"
+    | "ok"
+    | "auth_failed"
+    | "unreachable"
+    | "fetch_failed"
+    | "credentials_failed"
+    | "push_denied"
+    | "push_failed"
+    | "on_other_branch"
+    | "error";
   repo: string;
   branch: string | null;
   pushReady: boolean;
@@ -670,6 +688,10 @@ export interface AeonConnectStatus {
   /** Local branches holding edits that could not be applied to the fork. */
   parkedBranches: string[];
   detail?: string;
+  /** How many syncs have run in this series (1 for the first). */
+  attempt?: number;
+  /** When the computer will try again, for the retried statuses. */
+  retryAt?: string;
   at: string;
 }
 
