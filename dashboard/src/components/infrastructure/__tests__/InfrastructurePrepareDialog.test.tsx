@@ -364,4 +364,83 @@ describe("InfrastructurePrepareDialog", () => {
       jest.useRealTimers();
     }
   });
+
+  // INF-17: choosing Review setup in the connection wizard closed it and
+  // opened this dialog without its Connect → Ready progress bar, so the bar
+  // never reached Prepare or Ready.
+  describe("carrying on the connection wizard's progress", () => {
+    function progress() {
+      const bar = screen.getByRole("list", { name: "Host setup progress" });
+      return within(bar).getAllByRole("listitem").map((step) => step.getAttribute("aria-label"));
+    }
+
+    it.each([
+      ["Proxmox", CONNECTION, "proxmox" as const, "Set up Studio Proxmox", "Studio Proxmox is ready for agents."],
+      ["Linux Sandbox", LINUX_HOST, "gvisor" as const, "Set up Linux Sandbox", "web-1 is ready for Linux Sandbox."],
+    ])("moves %s setup from Prepare to Ready with the launch action", async (_label, connection, engine, action, ready) => {
+      (prepareInfrastructureConnection as jest.Mock).mockResolvedValue(PREPARATION);
+      (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: GVISOR_TARGET_ID, ready: true });
+      render(withLaunch(
+        <InfrastructurePrepareDialog connection={connection} engine={engine} continuesHostSetup onClose={jest.fn()} onPrepared={jest.fn(async () => undefined)} />,
+        [READY_PROXMOX_TARGET],
+      ));
+
+      expect(progress()).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, current", "Ready"]);
+      fireEvent.click(screen.getByRole("button", { name: action }));
+
+      expect(await screen.findByRole("heading", { name: ready })).toBeInTheDocument();
+      expect(progress()).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, complete", "Ready, current"]);
+      expect(screen.getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+    });
+
+    it("stays on Prepare when setup stops, with Review and try again", async () => {
+      (prepareInfrastructureConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError(
+        "Setup couldn't find active Proxmox storage for virtual machines.", 502, "PREPARATION_FAILED", null, { cause: "storage_unavailable" },
+      ));
+      render(withLaunch(<InfrastructurePrepareDialog connection={CONNECTION} continuesHostSetup onClose={jest.fn()} onPrepared={jest.fn(async () => undefined)} />));
+      fireEvent.click(screen.getByRole("button", { name: "Set up Studio Proxmox" }));
+
+      await screen.findByRole("heading", { name: "Setup couldn't find active Proxmox storage for virtual machines." });
+      expect(progress()[3]).toBe("Prepare, current");
+      expect(progress()[4]).toBe("Ready");
+      expect(screen.getByRole("button", { name: "Review and try again" })).toBeInTheDocument();
+    });
+
+    it("stays on Prepare when setup finished but its check didn't pass", async () => {
+      (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: GVISOR_TARGET_ID, ready: false });
+      render(withLaunch(<InfrastructurePrepareDialog connection={LINUX_HOST} engine="gvisor" continuesHostSetup onClose={jest.fn()} />));
+      fireEvent.click(screen.getByRole("button", { name: "Set up Linux Sandbox" }));
+
+      await screen.findByRole("heading", { name: "web-1 was set up, but its check didn't pass." });
+      expect(progress()[3]).toBe("Prepare, current");
+    });
+
+    // Seen in a browser: the wizard's closing returned focus to the card that
+    // opened it and scrolled the page, leaving the carried-on bar out of view.
+    it("brings its top back into view when it opens and as each phase resizes it", async () => {
+      const scrollIntoView = jest.fn();
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollIntoView;
+      try {
+        (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: GVISOR_TARGET_ID, ready: true });
+        render(withLaunch(<InfrastructurePrepareDialog connection={LINUX_HOST} engine="gvisor" continuesHostSetup onClose={jest.fn()} />));
+        const dialog = screen.getByRole("dialog");
+        expect(scrollIntoView.mock.contexts.at(-1)).toBe(dialog);
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+        const opened = scrollIntoView.mock.calls.length;
+
+        fireEvent.click(screen.getByRole("button", { name: "Set up Linux Sandbox" }));
+        await screen.findByRole("heading", { name: "web-1 is ready for Linux Sandbox." });
+        expect(scrollIntoView.mock.calls.length).toBeGreaterThan(opened);
+        expect(scrollIntoView.mock.contexts.at(-1)).toBe(screen.getByRole("dialog"));
+      } finally {
+        Element.prototype.scrollIntoView = original;
+      }
+    });
+
+    it("shows no wizard progress when setup opens on its own, from a card or a check", () => {
+      render(withLaunch(<InfrastructurePrepareDialog connection={CONNECTION} onClose={jest.fn()} />));
+      expect(screen.queryByRole("list", { name: "Host setup progress" })).not.toBeInTheDocument();
+    });
+  });
 });
