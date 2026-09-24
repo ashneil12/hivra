@@ -71,8 +71,12 @@ The script refuses to run unless the source logo has the SHA-256 above.
 ## Keep these URLs stable
 
 Never overwrite, rename or delete any `hivra-token-*.png` file. If the mark
-ever changes, export it under a new file name. The export script enforces this:
-it writes a missing file, leaves an identical one alone, and stops without
-writing anything if an existing file's bytes would change. The app icons (`hivra-icon-*.png`, `favicon.ico`, `icon.png`,
-`apple-icon.png`) are separate files so they can change without touching the
-token image.
+ever changes, export it under a new file name. The export script enforces this
+for the token files and the `hivra-icon-*.png` app icons: it writes a missing
+file, leaves an identical one alone, and stops without writing anything if an
+existing one's bytes would change.
+
+The Next.js icon files (`favicon.ico`, `icon.png`, `apple-icon.png`) cannot
+move to a new name, because Next.js fixes those names. The script rewrites them
+when the approved mark changes. They are separate files, so that never touches
+the token image.

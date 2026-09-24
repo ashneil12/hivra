@@ -32,8 +32,12 @@ transparency.
 The red H sits within 35% of the width from the centre, inside the 40% maskable
 safe zone, so the full-bleed square works as a maskable icon without padding.
 
-The script never overwrites a published export. It writes missing files, leaves
-identical ones alone and stops, writing nothing, if an existing file would change.
+The script never overwrites a published export (`hivra-token-*`, `hivra-icon-*`).
+It writes missing files, leaves identical ones alone and stops, writing nothing,
+if an existing published file would change: a changed mark gets new file names.
+The Next.js icon files (`favicon.ico`, `icon.png`, `apple-icon.png`) have names
+fixed by the framework, so the script rewrites them when the mark changes.
+[`test_export_brand_assets.py`](test_export_brand_assets.py) checks both rules.
 
 ## Launch banner drafts
 
