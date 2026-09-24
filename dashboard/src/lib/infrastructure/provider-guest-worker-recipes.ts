@@ -315,6 +315,11 @@ const recipes = Object.freeze({
     workerSha256: "6e00f1968087325f137e565433359b249f12475a8eaecc9ba3af657d737e29e1",
     workerSize: 45185,
   }),
+  "2026.09.24.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds detached chat runs to the guest gateway.
+    workerSha256: "d0b33f0520f2e099589a1b31a25899b00fc360cd05d2cedb9d188466383b57ac",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;
