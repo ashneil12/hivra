@@ -15,10 +15,12 @@ import {
   buildComputerContractGuestScript,
   parseComputerContractGuestOutput,
   runComputerContractSeed,
+  runProviderComputerContractSeed,
   type ComputerContractGuestRequest,
 } from "../computer-contract-seed";
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("../provider-guest-seed", () => ({ runProviderAgentGuestScript: jest.fn() }));
 const { runProxmoxHostScript } = jest.requireMock("@/lib/services/proxmox-instance-service") as { runProxmoxHostScript: jest.Mock };
 
 const sha = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
@@ -175,5 +177,32 @@ describe("computer contract seed transport", () => {
     await expect(runComputerContractSeed("10.253.0.5", { ...request(), block: "no markers" }, {})).resolves.toEqual({ ok: false, error: "invalid_request" });
     await expect(runComputerContractSeed("10.253.0.5", { ...request(), expected: "nope" }, {})).resolves.toEqual({ ok: false, error: "invalid_request" });
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
+  });
+});
+
+describe("runProviderComputerContractSeed (ATT-05)", () => {
+  const request = (): ComputerContractGuestRequest => {
+    const content = block(1);
+    return { mode: "deliver", expected: "absent", revision: 1, block: content, contentSha256: sha(content), facts: {} };
+  };
+  const ref = { userId: "user_1", agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+  const line = `HIVRA_CONTRACT_RESULT ${JSON.stringify({ status: "delivered", revision: 1, contentSha256: "a".repeat(64), observed: "a".repeat(64), replay: false, bootId: null })}`;
+
+  it("runs the same guest script as the Proxmox lane, bound to the owner and agent", async () => {
+    const run = jest.fn(async () => ({ ok: true as const, stdout: `${line}\n` }));
+    await expect(runProviderComputerContractSeed(ref, request(), run)).resolves.toEqual({ ok: true, result: expect.objectContaining({ status: "delivered" }) });
+    expect(run).toHaveBeenCalledWith(ref, buildComputerContractGuestScript(request()));
+  });
+
+  it("claims nothing when the lane can't reach the computer, or it answers with anything but one result line", async () => {
+    await expect(runProviderComputerContractSeed(ref, request(), async () => ({ ok: false, error: "not_eligible" }))).resolves.toEqual({ ok: false, error: "unreachable" });
+    await expect(runProviderComputerContractSeed(ref, request(), async () => ({ ok: false, error: "unreachable" }))).resolves.toEqual({ ok: false, error: "unreachable" });
+    await expect(runProviderComputerContractSeed(ref, request(), async () => ({ ok: true, stdout: `${line}\n${line}\n` }))).resolves.toEqual({ ok: false, error: "unrecognized_output" });
+  });
+
+  it("refuses a malformed request before contacting anything", async () => {
+    const run = jest.fn();
+    await expect(runProviderComputerContractSeed(ref, { ...request(), block: "no markers" }, run)).resolves.toEqual({ ok: false, error: "invalid_request" });
+    expect(run).not.toHaveBeenCalled();
   });
 });

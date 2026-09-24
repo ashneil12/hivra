@@ -59,8 +59,14 @@ function query() {
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: () => query() } }));
 jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("../provider-guest-seed", () => ({ runProviderAgentGuestScript: jest.fn() }));
 
-import { advanceProxmoxComputerContract, computerContractStatusFor, COMPUTER_CONTRACT_RETRY_MS } from "../computer-contract-delivery";
+import {
+  advanceProviderComputerContract,
+  advanceProxmoxComputerContract,
+  computerContractStatusFor,
+  COMPUTER_CONTRACT_RETRY_MS,
+} from "../computer-contract-delivery";
 
 const sha = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 const USER = "user_1";
@@ -200,14 +206,39 @@ describe("advanceProxmoxComputerContract", () => {
   });
 });
 
-describe("computerContractStatusFor", () => {
-  it("renders a preview for a computer in the owner's own cloud but never claims delivery", async () => {
-    const status = await computerContractStatusFor(USER, { ...AGENT, computer_substrate: "provider-vm", deployment_mode: "self-managed" });
-    expect(status).toMatchObject({ kind: "not_deliverable", reason: "provider_vm" });
-    expect(status.kind === "not_deliverable" && status.preview).toContain("in your user's own cloud account");
+describe("advanceProviderComputerContract (ATT-05)", () => {
+  const PROVIDER = { ...AGENT, computer_substrate: "provider-vm", deployment_mode: "self-managed", cpu: 2, ram: 4, cpu_max: 2, ram_max: 4 };
+  const providerSeed = jest.fn<Promise<ComputerContractGuestOutcome>, [{ userId: string; agentId: string }, ComputerContractGuestRequest]>();
+  beforeEach(() => providerSeed.mockReset());
+
+  it("delivers to a computer in the owner's own cloud over its enrolled pin, bound to the owner and agent", async () => {
+    providerSeed.mockImplementation(async (_ref, request) => delivered(request));
+    const status = await advanceProviderComputerContract(USER, PROVIDER, "auto", { providerSeed, seed, now });
+    expect(providerSeed).toHaveBeenCalledWith({ userId: USER, agentId: PROVIDER.id }, expect.objectContaining({ mode: "deliver", expected: "absent", revision: 1 }));
+    expect(providerSeed.mock.calls[0][1].block).toContain("in your user's own cloud account");
     expect(seed).not.toHaveBeenCalled();
+    expect(status).toMatchObject({ kind: "tracked", channel: "provider-seed", revision: 1, state: "delivered" });
+    expect(table[0]).toMatchObject({ channel: "provider-seed", receipt: expect.objectContaining({ channel: "provider-seed", attestedBy: "computer" }) });
   });
 
+  it("stays pending, and says so, when the computer can't be reached", async () => {
+    providerSeed.mockResolvedValue({ ok: false, error: "unreachable" });
+    const status = await advanceProviderComputerContract(USER, PROVIDER, "auto", { providerSeed, seed, now });
+    expect(status).toMatchObject({ kind: "tracked", state: "pending", deliveredAt: null, lastError: "unreachable" });
+    // The next poll within a minute does not reach for the computer again.
+    await advanceProviderComputerContract(USER, PROVIDER, "auto", { providerSeed, seed, now });
+    expect(providerSeed).toHaveBeenCalledTimes(1);
+  });
+
+  it("never sends a Proxmox agent's note over the provider lane, or the reverse", async () => {
+    await advanceProviderComputerContract(USER, AGENT, "deliver", { providerSeed, seed, now });
+    await advanceProxmoxComputerContract(USER, PROVIDER, {}, "deliver", { providerSeed, seed, now });
+    expect(providerSeed).not.toHaveBeenCalled();
+    expect(seed).not.toHaveBeenCalled();
+  });
+});
+
+describe("computerContractStatusFor", () => {
   it("says a dashboard runtime reads its own instructions", async () => {
     expect(await computerContractStatusFor(USER, { ...AGENT, type: "openclaw" })).toEqual({ kind: "not_applicable", reason: "own_instructions" });
     expect(await computerContractStatusFor(USER, { ...AGENT, type: "linux-desktop" })).toEqual({ kind: "not_applicable", reason: "computer" });

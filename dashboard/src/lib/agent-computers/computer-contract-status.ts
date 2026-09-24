@@ -13,8 +13,6 @@ export type ComputerContractState = "pending" | "delivered" | "sent" | "conflict
 export type ComputerContractStatus =
   /** A computer without an agent, or a runtime with its own instructions. */
   | { kind: "not_applicable"; reason: "computer" | "own_instructions" }
-  /** Rendered, but Hivra has no channel to this computer yet. */
-  | { kind: "not_deliverable"; reason: "provider_vm"; preview: string }
   /** The contract store could not be read. Nothing is claimed. */
   | { kind: "unavailable" }
   /** No revision exists yet: the agent is not running, or a DigitalOcean

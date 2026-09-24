@@ -5,6 +5,7 @@ const mockAuth = jest.fn();
 const mockAgent = jest.fn();
 const mockStatus = jest.fn();
 const mockAdvance = jest.fn();
+const mockAdvanceProvider = jest.fn();
 const mockPrepare = jest.fn();
 const mockSendSetup = jest.fn();
 const mockContext = jest.fn();
@@ -35,6 +36,7 @@ jest.mock("@/lib/supabase", () => ({
 jest.mock("@/lib/hivra/computer-contract-delivery", () => ({
   computerContractStatusFor: (...args: unknown[]) => mockStatus(...args),
   advanceProxmoxComputerContract: (...args: unknown[]) => mockAdvance(...args),
+  advanceProviderComputerContract: (...args: unknown[]) => mockAdvanceProvider(...args),
   prepareDigitalOceanComputerContract: (...args: unknown[]) => mockPrepare(...args),
 }));
 jest.mock("@/lib/hivra/do-managed-sessions", () => ({
@@ -74,6 +76,7 @@ beforeEach(() => {
   mockAgent.mockReset().mockImplementation(() => row);
   mockStatus.mockReset().mockResolvedValue(TRACKED);
   mockAdvance.mockReset().mockResolvedValue({ ...TRACKED, checkedAt: "2026-09-24T12:00:00.000Z" });
+  mockAdvanceProvider.mockReset().mockResolvedValue({ ...TRACKED, channel: "provider-seed" });
   mockPrepare.mockReset().mockResolvedValue({ revision: 1 });
   mockSendSetup.mockReset().mockResolvedValue({ runId: "run_1", revision: 1 });
   mockContext.mockReset().mockResolvedValue({ env: { PROXMOX_NODE: "fixturenode10" } });
@@ -113,6 +116,15 @@ describe("POST /api/hivra/agents/[id]/computer-contract", () => {
     expect(response.status).toBe(200);
     expect(mockContext).toHaveBeenCalledWith("user_1", CODEX);
     expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, { PROXMOX_NODE: "fixturenode10" }, action);
+  });
+
+  it.each(["deliver", "check", "restore"])("runs %s for a computer in the owner's own cloud over its enrolled pin, never the Proxmox host", async (action) => {
+    row = { ...CODEX, computer_substrate: "provider-vm", deployment_mode: "self-managed" };
+    const response = await POST(post({ action }), params);
+    expect(response.status).toBe(200);
+    expect(mockAdvanceProvider).toHaveBeenCalledWith("user_1", row, action);
+    expect(mockContext).not.toHaveBeenCalled();
+    expect(mockAdvance).not.toHaveBeenCalled();
   });
 
   it("sends a DigitalOcean note only as the owner's explicit visible message", async () => {

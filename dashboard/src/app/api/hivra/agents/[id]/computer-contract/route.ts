@@ -2,7 +2,7 @@
 //
 // GET says what Manage may show about the note Hivra gives the agent about its
 // computer. It never contacts the computer. POST runs one explicit step:
-//   deliver  Try again now (Hivra Cloud and My server)
+//   deliver  Try again now (Hivra Cloud, My server and My cloud)
 //   check    Read the computer's copy without writing
 //   restore  Replace a copy someone edited on the computer
 //   send     DigitalOcean: send the current note as one visible message
@@ -21,6 +21,7 @@ import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { computerContractPlanFor } from "@/lib/agent-computers/computer-contract-input";
 import {
+  advanceProviderComputerContract,
   advanceProxmoxComputerContract,
   computerContractStatusFor,
   prepareDigitalOceanComputerContract,
@@ -108,6 +109,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (action === "send") return noStore(apiError("Unknown action.", 400));
     if (agent.status !== "running" || !agent.ip) {
       return noStore(apiError("The computer must be running before Hivra can update it.", 409));
+    }
+    if (plan.channel === "provider-seed") {
+      // My cloud: the enrolled provider pin, bound to this owner and agent.
+      return noStore(apiSuccess({ contract: await advanceProviderComputerContract(userId, agent, action) }));
     }
     let context;
     try {

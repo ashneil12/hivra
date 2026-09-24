@@ -29,13 +29,15 @@ export interface ComputerContractSubject extends AgentSurfaceSubject, ComputerPl
 export type ComputerContractChannel =
   /** Hivra Cloud and My server: the host-to-guest seed lane, read back in the same call. */
   | "proxmox-seed"
+  /** My cloud: the same guest program over the enrolled provider pin, read back in the same call. */
+  | "provider-seed"
   /** DigitalOcean: a visible first "Hivra setup" message in the transcript. */
   | "do-setup-message";
 
+export const COMPUTER_CONTRACT_CHANNELS = ["proxmox-seed", "provider-seed", "do-setup-message"] as const satisfies readonly ComputerContractChannel[];
+
 export type ComputerContractPlan =
   | { status: "deliverable"; channel: ComputerContractChannel; input: ComputerContractInput }
-  /** Rendered and shown in Manage, but Hivra has no channel to that computer yet. */
-  | { status: "not_deliverable"; reason: "provider_vm"; input: ComputerContractInput }
   /** No contract applies: a computer without an agent, or a runtime that
    * reads its own instructions rather than ~/system-prompt.md. */
   | { status: "not_applicable"; reason: "computer" | "own_instructions" };
@@ -85,7 +87,7 @@ export function computerContractPlanFor(subject: ComputerContractSubject): Compu
     tools: digitalOcean ? "none" : catalogToolsUnavailableReason(subject.computer_substrate) ? "mcp" : "catalog",
   };
   if (digitalOcean) return { status: "deliverable", channel: "do-setup-message", input };
-  if (placement === "my-cloud") return { status: "not_deliverable", reason: "provider_vm", input };
+  if (placement === "my-cloud") return { status: "deliverable", channel: "provider-seed", input };
   return { status: "deliverable", channel: "proxmox-seed", input };
 }
 

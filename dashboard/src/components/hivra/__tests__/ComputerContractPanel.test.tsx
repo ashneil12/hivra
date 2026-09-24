@@ -102,12 +102,12 @@ it("offers a DigitalOcean update as one more visible message after a rename", as
   expect(screen.getByRole("button", { name: "Send update to Codex 1" })).toBeInTheDocument();
 });
 
-it("never claims delivery to a computer in the owner's own cloud, but shows the text", async () => {
-  await renderWith({ kind: "not_deliverable", reason: "provider_vm", preview: BLOCK }, { ...AGENT, computer_substrate: "provider-vm" });
-  expect(screen.getByText("Not delivered")).toBeInTheDocument();
-  expect(screen.getByText(/can't send notes to computers in your own cloud yet/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Show text" }));
-  expect(screen.getByLabelText("Text Hivra gives Codex 1")).toHaveTextContent("revision 3");
+it("reports delivery to a computer in the owner's own cloud the same way, from its read-back (ATT-05)", async () => {
+  await renderWith(tracked({ channel: "provider-seed" }), { ...AGENT, computer_substrate: "provider-vm", deployment_mode: "self-managed", cpu: 2, ram: 4 });
+  expect(screen.getByText(/runs on its own computer \(My cloud · 2 CPU \/ 4 GB\)/)).toBeInTheDocument();
+  expect(screen.getByText(`Delivered ${formatContractTime(NOW)}`)).toBeInTheDocument();
+  expect(screen.getByText(/Reported by software on this computer/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
 });
 
 it("says a dashboard runtime keeps its own instructions", async () => {

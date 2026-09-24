@@ -125,8 +125,15 @@ jest.mock("@/lib/hivra/agent-bootstrap", () => ({
 }));
 
 const mockAdvanceComputerContract = jest.fn();
+const mockAdvanceProviderContract = jest.fn();
 jest.mock("@/lib/hivra/computer-contract-delivery", () => ({
   advanceProxmoxComputerContract: (...args: unknown[]) => mockAdvanceComputerContract(...args),
+  advanceProviderComputerContract: (...args: unknown[]) => mockAdvanceProviderContract(...args),
+}));
+const mockSeedProviderAgent = jest.fn();
+jest.mock("@/lib/hivra/provider-agent-seed", () => ({
+  ...jest.requireActual("@/lib/hivra/provider-agent-seed"),
+  seedProviderAgent: (...args: unknown[]) => mockSeedProviderAgent(...args),
 }));
 
 jest.mock("@/lib/hivra/proxmox-target", () => ({
@@ -1179,6 +1186,79 @@ describe("GET /api/hivra/agents/[id]", () => {
       }),
     );
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalled();
+  });
+
+  describe("seeds and Computer Contract on a computer in the owner's own cloud (ATT-05)", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    let stamped: Array<{ payload: Record<string, unknown>; guard: [string, unknown] | null }>;
+    beforeEach(() => {
+      stamped = [];
+      mockAdvanceProviderContract.mockReset().mockResolvedValue({ kind: "tracked" });
+      mockSeedProviderAgent.mockReset().mockResolvedValue({ attempted: ["bootstrap", "bankr-skills"], confirmed: ["bootstrap"] });
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", desired_state: "running", operation_id: null, operation_kind: null,
+        computer_substrate: "provider-vm", deployment_mode: "self-managed", vmid: null, ip: "203.0.113.10",
+        bootstrapped_at: null, bankr_skills_seeded_at: null, template_skills_seeded_at: null,
+      };
+      mockSupabaseFrom.mockImplementation(() => {
+        const builder: Record<string, jest.Mock> = {};
+        let payload: Record<string, unknown> | null = null;
+        let guard: [string, unknown] | null = null;
+        for (const name of ["select", "eq"]) builder[name] = jest.fn(() => builder);
+        builder.is = jest.fn((column: string, value: unknown) => { guard = [column, value]; return builder; });
+        builder.update = jest.fn((next: Record<string, unknown>) => { payload = next; return builder; });
+        builder.single = jest.fn(async () => ({ data: mockAgentRow, error: null }));
+        builder.maybeSingle = jest.fn(async () => {
+          if (!payload) return { data: mockAgentRow, error: null };
+          stamped.push({ payload, guard });
+          mockAgentRow = { ...mockAgentRow, ...payload };
+          return { data: mockAgentRow, error: null };
+        });
+        return builder;
+      });
+    });
+
+    it("delivers the launch seeds over the enrolled pin and stamps only what the computer confirmed", async () => {
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockSeedProviderAgent).toHaveBeenCalledWith("user-free", expect.objectContaining({ id: "agent-1", type: "codex" }));
+      expect(stamped).toEqual([{ payload: { bootstrapped_at: expect.any(String) }, guard: ["bootstrapped_at", null] }]);
+      expect(mockLogHivraAgentEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "bootstrapped", agentId: "agent-1" }));
+      expect(mockLogWarn).toHaveBeenCalledWith("provider agent seed not confirmed; retrying on a later poll", expect.objectContaining({
+        detail: { unconfirmed: ["bankr-skills"] } }));
+      expect(mockAdvanceProviderContract).toHaveBeenCalledWith("user-free", expect.objectContaining({ id: "agent-1", bootstrapped_at: expect.any(String) }), "auto");
+      // Never the Proxmox host lane.
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockSeedAgentBox).not.toHaveBeenCalled();
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+    });
+
+    it("makes no connection once every seed is stamped, beyond keeping the contract current", async () => {
+      mockAgentRow = { ...mockAgentRow, bootstrapped_at: "x", bankr_skills_seeded_at: "x" };
+      await GET(makeGetRequest() as never, params);
+      expect(mockSeedProviderAgent).not.toHaveBeenCalled();
+      expect(mockAdvanceProviderContract).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["a computer that isn't running", { status: "stopped" }],
+      ["a lifecycle operation in flight", { operation_id: "op", operation_kind: "restart", status: "provisioning" }],
+      ["a dashboard runtime with its own instructions", { type: "openclaw" }],
+    ])("leaves %s alone", async (_label, patch) => {
+      mockProviderPower.mockResolvedValue("reboot_pending");
+      mockAgentRow = { ...mockAgentRow, ...patch };
+      await GET(makeGetRequest() as never, params);
+      expect(mockSeedProviderAgent).not.toHaveBeenCalled();
+      expect(mockAdvanceProviderContract).not.toHaveBeenCalled();
+    });
+
+    it("never fails the poll when the provider lane throws", async () => {
+      mockSeedProviderAgent.mockRejectedValueOnce(new Error("provider unreachable"));
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { agent: { id: "agent-1", status: "running" } } });
+      expect(mockLogWarn).toHaveBeenCalledWith("provider agent seed step skipped", expect.objectContaining({ agentId: "agent-1" }));
+    });
   });
 
   describe("Computer Contract step", () => {

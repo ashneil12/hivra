@@ -19,7 +19,9 @@ create table if not exists public.hivra_computer_contracts (
   user_id          text        not null check (btrim(user_id) <> ''),
   revision         integer     not null check (revision between 1 and 1000000),
   template_version smallint    not null check (template_version between 1 and 100),
-  channel          text        not null check (channel in ('proxmox-seed', 'do-setup-message')),
+  -- proxmox-seed: Hivra Cloud and My server; provider-seed: My cloud (the
+  -- enrolled provider pin); do-setup-message: a visible DigitalOcean message.
+  channel          text        not null,
   input            jsonb       not null check (jsonb_typeof(input) = 'object' and pg_column_size(input) <= 8192),
   input_sha256     text        not null check (input_sha256 ~ '^[0-9a-f]{64}$'),
   content          text        not null check (octet_length(content) between 1 and 4096),
@@ -43,6 +45,13 @@ create table if not exists public.hivra_computer_contracts (
     and (delivery_state <> 'pending' or delivered_at is null)
   )
 );
+
+-- Named, so a re-run replaces the allowed channels instead of stacking checks.
+alter table public.hivra_computer_contracts
+  drop constraint if exists hivra_computer_contracts_channel_check;
+alter table public.hivra_computer_contracts
+  add constraint hivra_computer_contracts_channel_check
+  check (channel in ('proxmox-seed', 'provider-seed', 'do-setup-message'));
 
 alter table public.hivra_computer_contracts enable row level security;
 revoke all on public.hivra_computer_contracts from public, anon, authenticated;

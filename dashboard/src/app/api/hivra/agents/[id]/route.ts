@@ -31,7 +31,8 @@ import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { seedAgentBox } from "@/lib/hivra/agent-bootstrap";
-import { advanceProxmoxComputerContract } from "@/lib/hivra/computer-contract-delivery";
+import { advanceProviderComputerContract, advanceProxmoxComputerContract } from "@/lib/hivra/computer-contract-delivery";
+import { providerAgentSeedsDue, seedProviderAgent, type ProviderAgentSeedPart, type ProviderAgentSeedRow } from "@/lib/hivra/provider-agent-seed";
 import { computerContractPlanFor } from "@/lib/agent-computers/computer-contract-input";
 import { getAccountMemory } from "@/lib/account-memory";
 import { bankrSkillsDirForType, seedBankrSkillsOntoBox } from "@/lib/hivra/bankr-skills-seed";
@@ -342,6 +343,58 @@ async function maybeSeedTemplateSkills(
 // a slow seed earlier in the same request leaves it for the next visit.
 const COMPUTER_CONTRACT_POLL_BUDGET_MS = 60_000;
 
+const PROVIDER_SEED_COLUMN: Record<ProviderAgentSeedPart, "bootstrapped_at" | "bankr_skills_seeded_at" | "template_skills_seeded_at"> = {
+  bootstrap: "bootstrapped_at",
+  "bankr-skills": "bankr_skills_seeded_at",
+  "template-skills": "template_skills_seeded_at",
+};
+const PROVIDER_SEED_EVENT: Record<ProviderAgentSeedPart, "bootstrapped" | "bankr_skills_seeded" | "template_skills_seeded"> = {
+  bootstrap: "bootstrapped",
+  "bankr-skills": "bankr_skills_seeded",
+  "template-skills": "template_skills_seeded",
+};
+
+/**
+ * A running Claude Code or Codex agent on a computer in the owner's own cloud
+ * gets the same launch seeds and Computer Contract as on Hivra Cloud, over
+ * the enrolled provider pin (ATT-05). Each confirmed seed is stamped once;
+ * nothing here fails the poll or changes the computer's lifecycle.
+ */
+async function advanceProviderAgentSeeds(userId: string, agent: Record<string, unknown>, pollStartedAt: number): Promise<Record<string, unknown>> {
+  if (!supabaseAdmin || agent.status !== "running" || agent.operation_id || agent.operation_kind) return agent;
+  let current = agent;
+  try {
+    if (providerAgentSeedsDue(current as unknown as ProviderAgentSeedRow).length > 0) {
+      const { attempted, confirmed } = await seedProviderAgent(userId, current as unknown as ProviderAgentSeedRow);
+      const at = new Date().toISOString();
+      for (const part of confirmed) {
+        const column = PROVIDER_SEED_COLUMN[part];
+        const { data: updated } = await supabaseAdmin.from("hivra_agents").update({ [column]: at })
+          .eq("id", String(current.id)).eq("user_id", userId).is(column, null).select().maybeSingle();
+        if (updated) current = updated;
+        await logHivraAgentEvent({ userId, event: PROVIDER_SEED_EVENT[part], agentId: String(current.id), agentType: String(current.type) });
+      }
+      if (attempted.length > confirmed.length) {
+        log.warn("provider agent seed not confirmed; retrying on a later poll", {
+          source: "hivra/agents/[id]", failureType: "provider_agent_seed_unconfirmed", userId, agentId: String(current.id),
+          detail: { unconfirmed: attempted.filter((part) => !confirmed.includes(part)) },
+        });
+      }
+    }
+    const contractPlan = computerContractPlanFor(current as unknown as Parameters<typeof computerContractPlanFor>[0]);
+    if (current.ip && contractPlan.status === "deliverable" && contractPlan.channel === "provider-seed"
+      && Date.now() - pollStartedAt < COMPUTER_CONTRACT_POLL_BUDGET_MS) {
+      await advanceProviderComputerContract(userId, current, "auto");
+    }
+  } catch (seedError) {
+    log.warn("provider agent seed step skipped", {
+      source: "hivra/agents/[id]", failureType: "provider_agent_seed_skipped", userId, agentId: String(current.id),
+      errorMessage: seedError instanceof Error ? seedError.message : String(seedError),
+    });
+  }
+  return current;
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const pollStartedAt = Date.now();
   try {
@@ -393,7 +446,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         latest = observed;
       }
       // Provider computers have no Proxmox VMID or host-side bootstrap lane.
-      // Never pass them to the legacy poll, seed or managed-fleet fallback.
+      // Never pass them to the legacy poll, seed or managed-fleet fallback;
+      // their seeds and contract use the enrolled provider pin instead.
+      latest = await advanceProviderAgentSeeds(userId, latest, pollStartedAt);
       const sameOperation = latest.operation_id === agent.operation_id && latest.operation_kind === agent.operation_kind;
       const response = apiSuccess({ agent: { ...sanitizeHivraAgentRow(latest),
         ...(sameOperation && latest.status === "provisioning" && readiness ? { readiness_stage: readiness } : {}),

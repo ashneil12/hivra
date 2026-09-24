@@ -1,8 +1,10 @@
 import "server-only";
 
-// Computer Contract delivery over the Proxmox host-to-guest seed lane, the
-// same owner-bound path the identity, skills and tool seeds use
-// (runProxmoxHostScript -> host root -> ssh ubuntu@<guest> -> sudo). Unlike
+// Computer Contract delivery over the guest seed lanes: on Proxmox the
+// host-to-guest lane the identity, skills and tool seeds use
+// (runProxmoxHostScript -> host root -> ssh ubuntu@<guest> -> sudo); on a
+// computer in the owner's own cloud the enrolled provider pin
+// (provider-guest-seed.ts). Both run the same program. Unlike
 // the one-shot identity seed it is revisioned and compare-and-swap: the
 // guest replaces exactly one HIVRA:COMPUTER block in ~/system-prompt.md only
 // when the block it finds is the one Hivra last delivered, then reads the
@@ -13,6 +15,7 @@ import "server-only";
 
 import { z } from "zod";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
+import { runProviderAgentGuestScript, type ProviderGuestSeedRef } from "./provider-guest-seed";
 import { COMPUTER_CONTRACT_END, COMPUTER_CONTRACT_MAX_BYTES, COMPUTER_CONTRACT_START_PREFIX } from "@/lib/agent-computers/computer-contract";
 
 const Digest = z.string().regex(/^[0-9a-f]{64}$/);
@@ -281,5 +284,23 @@ export async function runComputerContractSeed(
   }
   if (!result.ok) return { ok: false, error: "unreachable" };
   const parsed = parseComputerContractGuestOutput(result.stdout || "");
+  return parsed ? { ok: true, result: parsed } : { ok: false, error: "unrecognized_output" };
+}
+
+/**
+ * The same guest program on a computer in the owner's own cloud, over the
+ * provider seed lane (provider-guest-seed.ts). An agent that is not stable and
+ * running there, or a computer that cannot be verified, is "unreachable": no
+ * receipt, and the next attempt tries again.
+ */
+export async function runProviderComputerContractSeed(
+  ref: ProviderGuestSeedRef,
+  request: ComputerContractGuestRequest,
+  run: typeof runProviderAgentGuestScript = runProviderAgentGuestScript,
+): Promise<ComputerContractGuestOutcome> {
+  if (!validRequest(request)) return { ok: false, error: "invalid_request" };
+  const outcome = await run(ref, buildComputerContractGuestScript(request));
+  if (!outcome.ok) return { ok: false, error: "unreachable" };
+  const parsed = parseComputerContractGuestOutput(outcome.stdout);
   return parsed ? { ok: true, result: parsed } : { ok: false, error: "unrecognized_output" };
 }

@@ -107,10 +107,6 @@ export function ComputerContractPanel({ agent, runtimeName }: { agent: ComputerC
     meta = <StateTag state="unavailable">Couldn&apos;t check</StateTag>;
     body = <p className={styles.body}>Hivra couldn&apos;t load what it told {agent.name}. Nothing is shown as delivered until it can.</p>;
     actions = <button type="button" className={styles.button} onClick={() => setReload((value) => value + 1)}><RefreshCw size={13} aria-hidden />Check again</button>;
-  } else if (status.kind === "not_deliverable") {
-    meta = <StateTag state="pending">Not delivered</StateTag>;
-    body = <p className={styles.body}>Hivra can&apos;t send notes to computers in your own cloud yet. You can read what it would say, and paste it into a chat yourself.</p>;
-    text = status.preview;
   } else if (status.kind === "not_started") {
     if (status.channel === "do-setup-message") {
       meta = <StateTag state="pending">Not sent yet</StateTag>;

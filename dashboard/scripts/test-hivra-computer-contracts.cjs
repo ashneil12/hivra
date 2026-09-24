@@ -1,6 +1,7 @@
 // Apply every migration up to 20260924190000 in PostgreSQL/WASM (twice for the
 // new file, proving it re-runs), then check what it adds:
-// - hivra_computer_contracts: one row per agent revision, a delivered or sent
+// - hivra_computer_contracts: one row per agent revision on a known channel
+//   (Proxmox seed, provider seed, DigitalOcean message), a delivered or sent
 //   revision always carries its receipt, content is capped, and the table is
 //   closed to anon and authenticated with RLS on;
 // - hivra_do_session_inputs.source: existing prompts read as the owner's, and
@@ -86,6 +87,13 @@ async function main() {
     await rejects(db, revision(2, "delivery_state,delivered_at,receipt|'sent',now(),null"), /hivra_computer_contracts_delivery_receipt_check/, "sent without a receipt");
     await rejects(db, revision(2, "delivered_at|now()"), /hivra_computer_contracts_delivery_receipt_check/, "pending with a delivery time");
     await rejects(db, revision(2).replace("'do-setup-message'", "'email'"), /hivra_computer_contracts_channel_check/, "unknown channel");
+    // Every seeded lane is allowed; the re-run replaced the channel check
+    // instead of adding a second one.
+    for (const channel of ["proxmox-seed", "provider-seed"]) {
+      await db.exec(revision(90).replace("'do-setup-message'", `'${channel}'`));
+      await db.exec("delete from public.hivra_computer_contracts where revision = 90");
+    }
+    assert.equal(Number((await one("select count(*) as n from pg_constraint where conrelid = 'public.hivra_computer_contracts'::regclass and contype = 'c' and conname like '%channel%'")).n), 1);
     await rejects(db, revision(2, "last_error|'Free text; drop table'"), /hivra_computer_contracts_last_error_check/, "free-text error");
     await rejects(db, revision(2).replace("'note 2'", "repeat('x', 4097)"), /hivra_computer_contracts_content_check/, "content over 4 KB");
     await rejects(db, revision(2).replace(`'${DIGEST}','note 2'`, "'not-a-digest','note 2'"), /hivra_computer_contracts_input_sha256_check/, "bad input digest");

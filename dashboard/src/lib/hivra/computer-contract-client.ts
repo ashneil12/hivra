@@ -5,13 +5,13 @@
 import { z } from "zod";
 
 import type { ComputerContractStatus } from "@/lib/agent-computers/computer-contract-status";
+import { COMPUTER_CONTRACT_CHANNELS } from "@/lib/agent-computers/computer-contract-input";
 
-const Channel = z.enum(["proxmox-seed", "do-setup-message"]);
+const Channel = z.enum(COMPUTER_CONTRACT_CHANNELS);
 const Timestamp = z.string().nullable();
 
 const StatusSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("not_applicable"), reason: z.enum(["computer", "own_instructions"]) }),
-  z.object({ kind: z.literal("not_deliverable"), reason: z.literal("provider_vm"), preview: z.string() }),
   z.object({ kind: z.literal("unavailable") }),
   z.object({ kind: z.literal("not_started"), channel: Channel }),
   z.object({
