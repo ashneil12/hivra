@@ -121,12 +121,12 @@ const CONNECTED_UBUNTU = {
   chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
 };
 
-// Agent pages group their surfaces as Chat · Computer · Manage, each view a
+// Agent pages group their surfaces as Agent · Computer · Manage, each view a
 // tab in its group's row; computers keep one flat bar with a Tools menu.
 // Reach a surface the way an owner does: its tab, then its group, then Tools.
 const GROUP_OF_LABEL: Record<string, string> = {
   Terminal: "Computer", Files: "Computer", Browser: "Computer", Git: "Computer",
-  "Claude Code session": "Chat", "Codex session": "Chat",
+  "Claude Code session": "Agent", "Codex session": "Agent",
   Skills: "Manage", Tasks: "Manage", Telegram: "Manage",
 };
 function groupFor(name: string | RegExp): string | null {
@@ -586,25 +586,70 @@ describe("AgentPage", () => {
     requestSubmit.mockRestore();
   });
 
-  it("groups an agent's surfaces as Chat · Computer · Manage and names its computer (ATT-11, ATT-12)", async () => {
+  it("groups an agent's surfaces as Agent · Computer · Manage and names its computer (ATT-11, ATT-12)", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
     render(<AgentPage />);
     const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
-    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Chat", "Computer", "Manage"]);
-    expect(within(screen.getByRole("tablist", { name: "Chat views" })).getAllByRole("tab").map((tab) => tab.textContent))
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Agent", "Computer", "Manage"]);
+    expect(within(screen.getByRole("tablist", { name: "Agent views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Chat", "Codex session"]);
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Terminal", "Files", "Browser", "Git"]);
     expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    // The group is Manage, so its own pane's tab is Settings: no "Manage › Manage".
     expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Manage", "Skills", "Tasks", "Telegram"]);
+      .toEqual(["Settings", "Skills", "Tasks", "Telegram"]);
+    expect(screen.getByText("Manage panel")).toBeInTheDocument();
     // Retired: "Box Terminal", "<Agent> Terminal", the Desktop tab on an agent, and the Tools overflow.
     expect(document.body).not.toHaveTextContent(/Box Terminal|Codex Terminal/);
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Desktop" })).not.toBeInTheDocument();
+  });
+
+  it("says Agent once in a chat agent's bar: the group button, not the switcher's caption as well", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
+    render(<AgentPage />);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(nav.textContent?.match(/Agent/g)).toEqual(["Agent"]);
+    const switcher = within(nav).getByRole("button", { name: "Switch agent or computer: Codex 1" });
+    expect(switcher).toHaveTextContent(/^Codex 1running$/);
+    expect(switcher).toHaveAccessibleDescription("running");
+  });
+
+  it("keeps the kind in the switcher's caption where no group button already names it", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    const { unmount } = render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: OPENCLAW_AGENT" })).toHaveTextContent("Agent · running");
+    unmount();
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: UBUNTU" })).toHaveTextContent("Computer · running");
+  });
+
+  it("gives a dashboard agent's single-surface groups no second row, with Export data still in reach", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Dashboard", "Computer", "Manage"]);
+    expect(await screen.findByTitle("OpenClaw · dashboard")).toBeInTheDocument();
+    // Dashboard and Manage each hold one surface: their buttons open it, and
+    // no "Dashboard › Dashboard" or "Manage › Manage" row repeats the name.
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.getByText("Manage panel")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Terminal", "Files", "Browser"]);
+    expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
   });
 
   it("keeps the Browser tab exposed for browser-capable agents even when browser automation is off", async () => {
@@ -854,7 +899,7 @@ describe("AgentPage", () => {
   it("keeps the chat mounted while working in other surfaces", async () => {
     mockChatMounts.mockClear();
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Chat" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agent" }));
     const chat = await screen.findByText("Chat panel");
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
 
@@ -863,7 +908,7 @@ describe("AgentPage", () => {
     expect(chat).toBeInTheDocument();
     expect(chat).not.toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
     expect(screen.getByText("Chat panel")).toBe(chat);
     expect(chat).toBeVisible();
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
