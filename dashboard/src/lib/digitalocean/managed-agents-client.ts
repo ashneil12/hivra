@@ -11,6 +11,8 @@
  * never included in an error message.
  */
 
+import { createHash } from "node:crypto";
+
 import { log } from "@/lib/logger";
 
 const LOG_SOURCE = "digitalocean-managed-agents";
@@ -22,6 +24,9 @@ const ERROR_BODY_MAX_BYTES = 8 * 1024;
 const RESPONSE_BODY_MAX_BYTES = 512 * 1024;
 /** One SSE frame larger than this is not a chat event Hivra renders. */
 const SSE_FRAME_MAX_BYTES = 256 * 1024;
+/** Workspace downloads end with `DOWSSHA1<64 hex>\n` (godo workspaceDownloadBody). */
+const WORKSPACE_FOOTER_PREFIX = "DOWSSHA1";
+const WORKSPACE_FOOTER_LENGTH = WORKSPACE_FOOTER_PREFIX.length + 64 + 1;
 
 export type DigitalOceanApiErrorCode =
   | "unauthorized"
@@ -105,6 +110,20 @@ export interface DigitalOceanSessionEvent {
 
 export type DigitalOceanHitlOutcome = "HITL_OUTCOME_APPROVE" | "HITL_OUTCOME_REJECT" | "HITL_OUTCOME_DEFER";
 
+export interface DigitalOceanExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface DigitalOceanWorkspaceDownload {
+  /** Payload with DigitalOcean's integrity footer removed; errors if it does not verify. */
+  body: ReadableStream<Uint8Array>;
+  isArchive: boolean;
+  /** DigitalOcean's size hint for the payload, or null when it sent none. */
+  sizeBytes: number | null;
+}
+
 export interface DigitalOceanManagedAgentsClient {
   listSandboxSizes(): Promise<DigitalOceanSandboxSize[]>;
   /** Manifest is a JSON document; DigitalOcean parses it as YAML 1.2. */
@@ -116,6 +135,10 @@ export interface DigitalOceanManagedAgentsClient {
   resumeSession(sessionId: string): Promise<void>;
   sendInput(sessionId: string, text: string): Promise<{ runId: string | null }>;
   resolveHitl(sessionId: string, requestId: string, outcome: DigitalOceanHitlOutcome, reason?: string): Promise<void>;
+  /** Run one argv (no shell unless argv names one) inside the session's sandbox. */
+  execInSandbox(sessionId: string, input: { argv: string[]; workdir?: string; timeoutSeconds?: number }): Promise<DigitalOceanExecResult>;
+  /** Stream one file, or a directory as a tar, from the session's /workspace. */
+  downloadWorkspace(sessionId: string, input: { path: string; asArchive?: boolean; maxBytes?: number; signal?: AbortSignal }): Promise<DigitalOceanWorkspaceDownload>;
   /**
    * Open the session event stream. Live mode stays open (resume with
    * `replayFrom` as Last-Event-ID); replay-only ends at the last stored event.
@@ -301,6 +324,108 @@ export async function* readServerSentEvents(
   }
 }
 
+export const DIGITALOCEAN_INFERENCE_BASE_URL = "https://inference.do-ai.run";
+const INFERENCE_MODEL_LIMIT = 300;
+
+/**
+ * Model ids DigitalOcean Serverless Inference offers this team. The endpoint
+ * accepts the account API token, so Hivra can fill a model list without
+ * asking for the model access key first.
+ */
+export async function listDigitalOceanInferenceModels(
+  apiToken: string,
+  options: { fetch?: FetchLike; baseUrl?: string; timeoutMs?: number } = {},
+): Promise<string[]> {
+  const fetchImpl = options.fetch ?? fetch;
+  const url = `${(options.baseUrl ?? DIGITALOCEAN_INFERENCE_BASE_URL).replace(/\/$/, "")}/v1/models`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      headers: { Authorization: `Bearer ${apiToken}`, Accept: "application/json" },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+  } catch {
+    throw new DigitalOceanApiError(controller.signal.aborted ? "timeout" : "unavailable", null, "GET", "/v1/models");
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    log.warn("DigitalOcean inference model list was rejected", {
+      source: LOG_SOURCE, failureType: "digitalocean_inference_models_rejected", status: response.status,
+    });
+    throw new DigitalOceanApiError(errorCodeForStatus(response.status), response.status, "GET", "/v1/models");
+  }
+  const text = await readBounded(response, RESPONSE_BODY_MAX_BYTES);
+  let body: unknown;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  const data = (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data)) throw new DigitalOceanApiError("response_invalid", response.status, "GET", "/v1/models");
+  const ids = new Set<string>();
+  for (const entry of data) {
+    const id = (entry as { id?: unknown } | null)?.id;
+    if (typeof id === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(id)) ids.add(id);
+    if (ids.size >= INFERENCE_MODEL_LIMIT) break;
+  }
+  return [...ids].sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * Strip and verify DigitalOcean's workspace download footer while streaming:
+ * hold back the last footer-length bytes, hash everything before them, and
+ * error the stream at the end unless the footer names that exact digest.
+ */
+export function verifyWorkspaceDownloadBody(
+  source: ReadableStream<Uint8Array>,
+  options: { maxBytes?: number; method?: string; path?: string } = {},
+): ReadableStream<Uint8Array> {
+  const hasher = createHash("sha256");
+  let pending = new Uint8Array(0);
+  let delivered = 0;
+  const fail = () => new DigitalOceanApiError("response_invalid", null, options.method ?? "GET", options.path ?? SESSIONS_PATH);
+  return source.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const joined = new Uint8Array(pending.byteLength + chunk.byteLength);
+      joined.set(pending, 0);
+      joined.set(chunk, pending.byteLength);
+      const releasable = joined.byteLength - WORKSPACE_FOOTER_LENGTH;
+      if (releasable <= 0) {
+        pending = joined;
+        return;
+      }
+      const out = joined.slice(0, releasable);
+      pending = joined.slice(releasable);
+      delivered += out.byteLength;
+      if (options.maxBytes !== undefined && delivered > options.maxBytes) {
+        controller.error(fail());
+        return;
+      }
+      hasher.update(out);
+      controller.enqueue(out);
+    },
+    flush(controller) {
+      const footer = new TextDecoder().decode(pending);
+      const match = /^DOWSSHA1([0-9a-fA-F]{64})\n$/.exec(footer);
+      if (pending.byteLength !== WORKSPACE_FOOTER_LENGTH || !match
+        || match[1].toLowerCase() !== hasher.digest("hex")) {
+        log.warn("DigitalOcean workspace download failed its integrity check", {
+          source: LOG_SOURCE,
+          failureType: "digitalocean_workspace_download_unverified",
+          footerPresent: Boolean(match),
+        });
+        controller.error(fail());
+      }
+    },
+  }));
+}
+
 export function createDigitalOceanManagedAgentsClient(
   apiToken: string,
   options: ClientOptions = {},
@@ -452,6 +577,44 @@ export function createDigitalOceanManagedAgentsClient(
           ...(reason ? { reason: reason.slice(0, 500) } : {}),
         }),
       });
+    },
+
+    async execInSandbox(sessionId, input) {
+      const path = `${sessionPath(sessionId)}/sandbox/exec`;
+      const body = await json("POST", path, {
+        body: JSON.stringify({
+          argv: input.argv,
+          ...(input.workdir ? { workdir: input.workdir } : {}),
+          ...(input.timeoutSeconds ? { timeout_seconds: input.timeoutSeconds } : {}),
+        }),
+      });
+      const raw = (body ?? {}) as { exit_code?: unknown; stdout?: unknown; stderr?: unknown };
+      if (typeof raw.exit_code !== "number" || !Number.isInteger(raw.exit_code)) {
+        throw new DigitalOceanApiError("response_invalid", null, "POST", `${SESSIONS_PATH}/sandbox/exec`);
+      }
+      return {
+        exitCode: raw.exit_code,
+        stdout: typeof raw.stdout === "string" ? raw.stdout : "",
+        stderr: typeof raw.stderr === "string" ? raw.stderr.slice(0, 4_000) : "",
+      };
+    },
+
+    async downloadWorkspace(sessionId, input) {
+      const query = new URLSearchParams({ path: input.path });
+      if (input.asArchive) query.set("as_archive", "true");
+      const path = `${sessionPath(sessionId)}/workspace/download?${query}`;
+      const response = await request("GET", path, {
+        accept: "application/octet-stream",
+        signal: input.signal,
+        stream: true,
+      });
+      if (!response.body) throw new DigitalOceanApiError("response_invalid", response.status, "GET", `${SESSIONS_PATH}/workspace/download`);
+      const hint = Number.parseInt(response.headers.get("X-Workspace-Size-Bytes")?.trim() ?? "", 10);
+      return {
+        body: verifyWorkspaceDownloadBody(response.body, { maxBytes: input.maxBytes, path: `${SESSIONS_PATH}/workspace/download` }),
+        isArchive: response.headers.get("X-Workspace-Is-Archive")?.trim().toLowerCase() === "true",
+        sizeBytes: Number.isSafeInteger(hint) && hint >= 0 ? hint : null,
+      };
     },
 
     async *streamEvents(sessionId, streamOptions) {
