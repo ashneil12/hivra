@@ -13,6 +13,7 @@ import { OG_IMAGE } from "@/lib/og-meta";
 import { SITE_URL } from "@/lib/seo-urls";
 import { readChangelog, type ChangelogEntry } from "@/lib/changelog";
 import { CHANGELOG_FEED_TITLE } from "@/lib/changelog-rss";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const CHANGELOG_URL = `${SITE_URL}/changelog`;
 const CHANGELOG_FEED_URL = `${CHANGELOG_URL}/rss.xml`;
@@ -82,5 +83,5 @@ export default function ChangelogPage() {
     ],
   };
 
-  return <PublicSite className={styles.page} data-page="changelog"><StructuredData schema={schema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Changelog" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Changelog</span><h1>What shipped on Hivra</h1><p>Dated notes on every notable change to Hivra — bug fixes, feature ships, upstream syncs, and infrastructure work.</p>{lastUpdated ? <div className={styles.metadata}>Last updated <time dateTime={lastUpdated}>{formatDate(lastUpdated)}</time></div> : null}<div className={styles.changeLinks}><Link href="/roadmap">Roadmap <ArrowUpRight size={17} aria-hidden="true" /></Link><a href="/changelog/rss.xml">RSS feed <ArrowUpRight size={17} aria-hidden="true" /></a><Link href="/get-started?plan=operator">Deploy Now <ArrowUpRight size={17} aria-hidden="true" /></Link></div></header>{entries.length > 0 ? entries.map((entry) => <EntryBlock key={entry.date} entry={entry} />) : <p>No changelog entries yet.</p>}</main></PublicSite>;
+  return <PublicSite className={styles.page} data-page="changelog"><StructuredData schema={schema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Changelog" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Changelog</span><h1>What shipped on Hivra</h1><p>Dated notes on every notable change to Hivra — bug fixes, feature ships, upstream syncs, and infrastructure work.</p>{lastUpdated ? <div className={styles.metadata}>Last updated <time dateTime={lastUpdated}>{formatDate(lastUpdated)}</time></div> : null}<div className={styles.changeLinks}><Link href="/roadmap">Roadmap <ArrowUpRight size={17} aria-hidden="true" /></Link><a href="/changelog/rss.xml">RSS feed <ArrowUpRight size={17} aria-hidden="true" /></a><Link href={PUBLIC_START_HREF}>Deploy Now <ArrowUpRight size={17} aria-hidden="true" /></Link></div></header>{entries.length > 0 ? entries.map((entry) => <EntryBlock key={entry.date} entry={entry} />) : <p>No changelog entries yet.</p>}</main></PublicSite>;
 }

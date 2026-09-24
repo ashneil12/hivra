@@ -6,6 +6,7 @@ import { useLocale } from "@/components/i18n/LocaleProvider";
 import styles from "./home.module.css";
 import { AGENT_LAUNCH_HREF } from "./public-home-content";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 interface HeroSectionProps { agentsCounter?: ReactNode; liveStat?: ReactNode }
 export default function HeroSection({ agentsCounter, liveStat }: HeroSectionProps = {}) {
   const { copy, locale } = useLocale();
@@ -20,7 +21,7 @@ export default function HeroSection({ agentsCounter, liveStat }: HeroSectionProp
         <h1 id="home-title">{english ? <>Your agent needs a <em>computer.</em><span>It doesn&apos;t need yours.</span></> : <>{hero.headlinePrefix}<em>{hero.headlineEmphasis}</em></>}</h1>
         <p className={styles.heroDescription}>{english ? "Give it room to work. Decide what it can reach. Launch an agent on a computer of its own, or start with a computer and use it yourself." : hero.primary}</p>
         <div className={styles.heroActions}>
-          <Link id="hero-primary-cta" href={english ? AGENT_LAUNCH_HREF : "/get-started?plan=free"} className={styles.primary}>{english ? "Launch an agent" : hero.primaryCta}<ArrowRight size={18} aria-hidden="true" /></Link>
+          <Link id="hero-primary-cta" href={english ? AGENT_LAUNCH_HREF : PUBLIC_START_HREF} className={styles.primary}>{english ? "Launch an agent" : hero.primaryCta}<ArrowRight size={18} aria-hidden="true" /></Link>
           {english ? <>
             <Link id="hero-secondary-cta" href="/download" className={`${styles.secondary} ${styles.desktopOnly}`} aria-describedby={downloadsPending ? "desktop-availability" : undefined}>Download the app<Download size={18} aria-hidden="true" /></Link>
             <a href="#computers" className={`${styles.secondary} ${styles.phoneOnly}`}>Start with a computer<ArrowRight size={18} aria-hidden="true" /></a>

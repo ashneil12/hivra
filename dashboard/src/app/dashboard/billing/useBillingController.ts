@@ -9,6 +9,7 @@ import {
   requestSubscriptionCheckout,
 } from "@/lib/billing/client";
 import { isPlanKey } from "@/lib/billing/plan-display";
+import { readHoldAmounts, type HoldAmounts } from "@/lib/billing/hold-amounts";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
@@ -420,6 +421,30 @@ export function useBillingController() {
         return false;
       });
   }, []);
+
+  // Per-plan hold amounts for this user (epoch- and founders-aware), from the
+  // wallet eligibility API. Refetched when the verified balance changes.
+  const [holdAmounts, setHoldAmounts] = useState<HoldAmounts | null>(null);
+  const tokenBalanceKey = tokenHolding?.snapshot?.balanceDisplay ?? null;
+  useEffect(() => {
+    if (!cryptoBillingEnabled) return;
+    let cancelled = false;
+    fetch("/api/billing/wallet/eligibility", { cache: "no-store" })
+      .then(readApiPayload)
+      .then((payload) => {
+        if (!cancelled) setHoldAmounts(readHoldAmounts(apiSuccessData(payload)));
+      })
+      .catch((err) => {
+        clientLog.warn("Billing hold amounts fetch failed", {
+          source: "billing-page",
+          failureType: "billing_hold_amounts_fetch_failed",
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cryptoBillingEnabled, tokenBalanceKey]);
 
   const fetchTokenHolding = useCallback((quiet = false) => {
     if (!quiet) setTokenLoading(true);
@@ -1150,6 +1175,7 @@ export function useBillingController() {
     activityError,
     managedVeniceSummary,
     tokenHolding,
+    holdAmounts,
     tokenLoading,
     tokenRefreshing,
     walletConnecting,

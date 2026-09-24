@@ -10,7 +10,9 @@ import {
 } from "@/lib/hivra/agent-api";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import { launchManagedSession, ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
-import type { DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { DIGITALOCEAN_HARNESS_LABELS } from "@/lib/hivra/managed-session-contracts";
+import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
 import { getApiErrorMessage, getCardRequiredMessage, isCardRequiredResponse } from "@/lib/billing/card-required";
@@ -40,7 +42,13 @@ import {
   nativeCliAgentRequest,
   type HermesModelChoice,
 } from "./runtime-requests";
-import { digitalOceanLaunchRequest } from "./digitalocean-launch";
+import {
+  digitalOceanHarnessFor,
+  digitalOceanLaunchRequest,
+  digitalOceanLaunchVaultKeyId,
+  effectiveDigitalOceanModelMode,
+} from "./digitalocean-launch";
+import { GvisorRecheckError, gvisorNeedsRecheck, recheckGvisorForLaunch } from "./gvisor-launch-recheck";
 
 type ReceiptBearingCreateInput = CreateAgentInput & { launchRequestId: string };
 
@@ -59,6 +67,7 @@ const CLOCK_SKEW_MS = 120_000;
 /** The last thing Hivra reported about a launch in flight. Only observed
  * facts: the moment the request was sent, then any receipt phase read back. */
 export type LaunchObservation =
+  | { kind: "checking-host"; at: number }
   | { kind: "sent"; at: number }
   | { kind: "receipt"; phase: string; at: number };
 
@@ -75,6 +84,8 @@ export type LaunchSubmitOptions = {
   onObserved?: (observation: LaunchObservation) => void;
   /** The DigitalOcean team a DigitalOcean launch runs on, as Launch last read it. */
   digitalOceanTarget?: DigitalOceanDeploymentTargetDto | null;
+  /** The connected server a self-managed launch runs on, as Launch last read it. */
+  selfManagedTarget?: DeploymentTargetDto | null;
 };
 
 /** A correctable rejection that also offers a next step. */
@@ -244,13 +255,13 @@ async function submitObserved(input: CreateAgentInput, draft: LaunchDraft, optio
   }
 }
 
-async function saveKeyToVault(provider: string, key: string): Promise<string | null> {
+async function saveKeyToVault(provider: string, key: string, name = providerName(provider)): Promise<string | null> {
   try {
     const response = await fetch("/api/vault", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ name: providerName(provider), provider, key: key.trim() }),
+      body: JSON.stringify({ name, provider, key: key.trim() }),
     });
     const body = await response.json().catch(() => null) as { success?: boolean; data?: { id?: unknown } } | null;
     return body?.success && typeof body.data?.id === "string" ? body.data.id : null;
@@ -258,6 +269,12 @@ async function saveKeyToVault(provider: string, key: string): Promise<string | n
     // Saving is a convenience; the launch goes ahead with the pasted key.
     return null;
   }
+}
+
+/** The short preview the Vault keeps, so a key saved from a launch can be
+ * told apart later without the key itself. */
+function keyPreview(key: string): string {
+  return key.length <= 8 ? `${key.slice(0, 4)}...` : `${key.slice(0, 6)}...${key.slice(-4)}`;
 }
 
 /** The key this launch uses: the saved Vault key the owner confirmed, or the
@@ -277,10 +294,7 @@ async function launchKey(draft: LaunchDraft, options: LaunchSubmitOptions): Prom
     const provider = effectiveProvider(profileId, access);
     const saved = await saveKeyToVault(provider, pasted);
     if (saved) {
-      // The same short preview the Vault keeps, so the saved key can be told
-      // apart later without the key itself.
-      const preview = pasted.length <= 8 ? `${pasted.slice(0, 4)}...` : `${pasted.slice(0, 6)}...${pasted.slice(-4)}`;
-      options.onKeySaved?.(saved, { id: saved, provider, name: providerName(provider), key_preview: preview });
+      options.onKeySaved?.(saved, { id: saved, provider, name: providerName(provider), key_preview: keyPreview(pasted) });
       return { vaultKeyId: saved };
     }
   }
@@ -383,6 +397,25 @@ async function submitCodex(draft: LaunchDraft, deployment: AgentDeploymentDestin
   return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options.onObserved);
 }
 
+/** The key a DigitalOcean launch sends: the saved Vault key the owner
+ * confirmed, or the pasted one, saved to the Vault first when they asked
+ * (only a provider key: the Vault holds no DigitalOcean model access key). */
+async function digitalOceanKey(draft: LaunchDraft, options: LaunchSubmitOptions): Promise<string | { vaultKeyId: string }> {
+  const vaultKeyId = digitalOceanLaunchVaultKeyId(draft);
+  if (vaultKeyId) return { vaultKeyId };
+  const pasted = options.apiKey?.trim() ?? "";
+  const harness = digitalOceanHarnessFor(draft.profileId);
+  const provider = harness ? DIGITALOCEAN_HARNESS_LABELS[harness].vaultProvider : null;
+  if (!pasted || !harness || !provider || !draft.digitalOcean.saveKey
+    || effectiveDigitalOceanModelMode(harness, draft.digitalOcean) !== "vendor") return pasted;
+  // Named as the Vault page names these providers, not as a model list does.
+  const name = DIGITALOCEAN_HARNESS_LABELS[harness].vendorKey ?? providerName(provider);
+  const saved = await saveKeyToVault(provider, pasted, name);
+  if (!saved) return pasted;
+  options.onKeySaved?.(saved, { id: saved, provider, name, key_preview: keyPreview(pasted) });
+  return { vaultKeyId: saved };
+}
+
 /** A DigitalOcean sandbox on the owner's own team. DigitalOcean bills it; a
  * refusal DigitalOcean or Hivra can explain is correctable in Review. */
 async function submitDigitalOcean(
@@ -395,7 +428,7 @@ async function submitDigitalOcean(
     throw new HivraLaunchCorrectableError("That DigitalOcean team isn't available any more. Choose where it runs again.", 409, "digitalocean_target_changed");
   }
   try {
-    const session = await launchManagedSession(digitalOceanLaunchRequest(draft, deployment, target, options.apiKey ?? ""));
+    const session = await launchManagedSession(digitalOceanLaunchRequest(draft, deployment, target, await digitalOceanKey(draft, options)));
     return { id: session.agentId, name: session.name, status: session.status };
   } catch (error) {
     if (error instanceof ManagedSessionApiError && error.status >= 400 && error.status < 500) {
@@ -476,6 +509,20 @@ export async function submitLaunchDraft(
   if (profileId === "linux-terminal") {
     if (deployment.mode !== "self-managed") {
       throw new HivraLaunchCorrectableError("Linux Sandbox requires a compatible gVisor host you connected.", 409, "gvisor_self_managed_only");
+    }
+    const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
+    if (gvisorNeedsRecheck(host, Date.now())) {
+      options.onObserved?.({ kind: "checking-host", at: Date.now() });
+      try {
+        await recheckGvisorForLaunch(host);
+      } catch (error) {
+        if (!(error instanceof GvisorRecheckError)) throw error;
+        throw new LaunchCorrectableError(error.message, error.status, "gvisor_recheck_failed", {
+          kind: "open",
+          label: "Check it in Capacity",
+          href: buildInfrastructureSetupHref("linux-terminal", { unified: true }),
+        });
+      }
     }
     return submitWithReceipt({
       type: "linux-terminal",

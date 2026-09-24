@@ -187,6 +187,39 @@ describe("policy of ['GB']", () => {
     }
   });
 
+  it("records a first qualification for an ops admin (OPS_ADMIN_USER_IDS) with a stored GB country, from a cron or a UK request", async () => {
+    // An obviously fake ID: the repo is public and no real admin is named.
+    const original = process.env.OPS_ADMIN_USER_IDS;
+    process.env.OPS_ADMIN_USER_IDS = "user_ops_admin_test";
+    try {
+      storedCountry("GB");
+      const cronDb = new FakeDb();
+      const fromCron = await evaluateAndRecordTokenTierEligibility({
+        userId: "user_ops_admin_test",
+        balances: { hermesos: 250_000n },
+        db: cronDb as unknown as Db,
+        now: NOW,
+      });
+      expect(fromCron.pro?.transition).toBe("qualified");
+      expect(cronDb.inserts).toBe(1);
+
+      const requestDb = new FakeDb();
+      const tokenGeo = await resolveTokenGeoBlock({ get: () => "GB" }, { userId: "user_ops_admin_test" });
+      expect(tokenGeo).toEqual({ blocked: false });
+      await evaluateAndRecordTokenTierEligibility({
+        userId: "user_ops_admin_test",
+        balances: { hermesos: 250_000n },
+        tokenGeo,
+        db: requestDb as unknown as Db,
+        now: NOW,
+      });
+      expect(requestDb.inserts).toBe(1);
+    } finally {
+      if (original === undefined) delete process.env.OPS_ADMIN_USER_IDS;
+      else process.env.OPS_ADMIN_USER_IDS = original;
+    }
+  });
+
   it("still records a first qualification for a user who is not blocked", async () => {
     storedCountry("FR");
     const db = new FakeDb();

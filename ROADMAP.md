@@ -25,13 +25,48 @@ current merely because related implementation is pulled forward.
 | Slice 0 — Product truth | **Complete 2026-09-04:** all canonical documents record the approval, crosswalk, unchanged portable gate, and authority scope. This does not close the separate Phase 0 public-release exit. |
 | Slice 1 — Launch contract and shell | Pulls forward Phase 2 contracts behind a gated web shell while Phase 1 portable closure continues. |
 | Slice 2 — Hivra Cloud golden paths | Runs one managed Agent alongside Phases 1/3 and Ubuntu Computer alongside Phase 8; neither substitutes for portable acceptance. |
-| Slice 2B — Attach Agent | Adds explicit binding between runtime consolidation and full Computer use. |
+| Slice 2B — Attach Agent | Adds explicit binding between runtime consolidation and full Computer use. **Status:** part-built and fenced off; nothing a user can reach attaches an agent. See [Slice 2B status](#slice-2b-status). |
 | Slice 3 — Customer-owned capacity | Carries the Phase 1/3 reference path and `UC-PORTABLE-AGENT-01` unchanged. |
 | Slices 4A-4C — Recovery and linking | Split Phase 4 into self-host control-plane recovery, Computer data portability, and separately threat-modelled optional Cloud linking. |
 | Slice 5 — Linux Computer | Carries Phase 8 desktop performance acceptance. |
 | Slice 6 — Windows guest | Carries the Windows-guest part of Phase 9. |
 | Slice 7 — Native clients | Later separately authorized release track; excluded from current execution scope. |
 | Slice 8 — Orchestration | Carries Phase 7 after real single-agent execution, authority, recovery, and bounded stops; Phase 6 workspace is not a prerequisite. |
+
+### Slice 2B status
+
+**Recorded 2026-09-24.** The attach backend is part-built and fenced off. The
+full inventory, with the state of each layer, is section 2.1 of
+[the agent computer contract and attach spec](docs/superpowers/specs/2026-09-24-agent-computer-contract-and-attach.md#21-the-half-built-attach-backend);
+section 2.2 says why it cannot ship as built. In short:
+
+- **What exists.** Nine `hivra_attachment_*` migrations
+  (`20260906190000` through `20260907010000`: lease, dispatch, installation
+  reservation, guest, staging, execution snapshot, activation and native
+  observations), on top of the canonical relationship authority and reader
+  (`20260906170000`, `20260906180000`). Nineteen
+  `dashboard/src/lib/agent-computers/attachment-*.ts` worker modules and the
+  guest staging scripts. The scope is Codex only, on a running Ubuntu Desktop
+  computer on Proxmox KVM.
+- **What is fenced.** Every mutating attachment RPC is revoked from all roles;
+  the two read RPCs are service-role only. The workers are one-pass functions
+  that nothing registers or calls, and production invocation stays disabled.
+  The guest scripts have only run in containers, never on a customer computer.
+- **What is missing.** Any attach UI; the mutation routes
+  (`POST /api/hivra/computers/[id]/agents`, `PATCH` and `DELETE`
+  `…/agents/[attachmentId]`); the registered progress worker; the completion,
+  failure, change-access, detach and computer-delete transitions; the grant
+  model and its security review; the contract the attached agent is given; and
+  a chat bridge to it. Until those exist, an agent gets its own computer at
+  launch and cannot be added to one the owner already has.
+- **The one reachable piece.** `GET /api/hivra/computers/[id]/relationships`
+  is live for a signed-in owner on Hivra hosts and no screen calls it yet.
+  **Decision:** keep it as it is. It only reads: it answers for the signed-in
+  owner's own computer (404 for any other), is rate-limited and uncached, and
+  changes no state. Its planned consumer is the Slice 2B computer page
+  ("Agents on this computer"), which the spec builds on the same reader.
+  Revisit it if Slice 2B changes the relationship snapshot, or drop it if
+  Slice 2B is withdrawn.
 
 The working agent catalogue, launch path, detail screens, and native surfaces
 remain available until migration, parity, rollback, and acceptance gates pass.

@@ -1130,6 +1130,105 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(await screen.findByText("Ready for agents")).toBeInTheDocument();
   });
 
+  // INF-17: Review setup closed the wizard and opened setup without its
+  // Connect → Ready progress bar, so the bar never reached Prepare or Ready.
+  describe("host setup started from the connection wizard", () => {
+    const hostSetupProgress = (container: HTMLElement) => within(container)
+      .getAllByRole("listitem")
+      .filter((step) => step.closest('[aria-label="Host setup progress"]'))
+      .map((step) => step.getAttribute("aria-label"));
+
+    it("carries the wizard's progress into Linux Sandbox setup and ends on Ready", async () => {
+      const readyHost: InfrastructureConnectionDto = { ...PENDING_HOST_CONNECTION, status: "ready", lastCheckedAt: "2026-09-15T12:05:00.000Z" };
+      (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyHost]);
+      (listInfrastructureTargets as jest.Mock).mockResolvedValueOnce([]).mockResolvedValue([READY_GVISOR_TARGET]);
+      (updateInfrastructureConnection as jest.Mock).mockResolvedValue(readyHost);
+      (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+        ...DISCOVERED_INSTALLED_GVISOR,
+        snapshot: {
+          ...DISCOVERED_INSTALLED_GVISOR.snapshot,
+          engines: DISCOVERED_INSTALLED_GVISOR.snapshot.engines.map((engine) => engine.id === "gvisor"
+            ? { ...engine, availability: "installable" as const, detectedVersion: null, unmetRequirements: ["ENGINE_NOT_INSTALLED" as const, "DOCKER_REQUIRED" as const] }
+            : engine),
+        },
+      } satisfies HostDiscoveryResult);
+      (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+      render(<InfrastructureConnectionsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const wizard = await screen.findByRole("dialog");
+      fireEvent.click(within(wizard).getByRole("button", { name: "Save and inspect" }));
+      expect(await within(wizard).findByRole("heading", { name: "Linux host can run Linux Sandbox after a short setup." })).toBeInTheDocument();
+      fireEvent.click(within(wizard).getByRole("button", { name: "Review setup" }));
+
+      const setup = await screen.findByRole("dialog", { name: "Set up Linux Sandbox on Linux host?" });
+      expect(hostSetupProgress(setup)).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, current", "Ready"]);
+      fireEvent.click(within(setup).getByRole("button", { name: "Set up Linux Sandbox" }));
+
+      expect(await screen.findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+      const done = screen.getByRole("dialog");
+      expect(hostSetupProgress(done)).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, complete", "Ready, current"]);
+      expect(within(done).getByRole("link", { name: "Launch on this server" })).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
+    });
+
+    it("carries the wizard's progress into Proxmox setup and ends on Ready", async () => {
+      const readyHost: InfrastructureConnectionDto = { ...PENDING_HOST_CONNECTION, status: "ready", lastCheckedAt: "2026-09-15T12:05:00.000Z" };
+      (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyHost]);
+      (listInfrastructureTargets as jest.Mock).mockResolvedValueOnce([PREPARABLE_PROXMOX_TARGET]).mockResolvedValue([READY_PROXMOX_TARGET]);
+      (updateInfrastructureConnection as jest.Mock).mockResolvedValue(readyHost);
+      (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_PROXMOX);
+      const readyPreflight = {
+        ok: true as const,
+        connectionId: readyHost.id,
+        checkedAt: "2026-09-15T12:05:00.000Z",
+        target: {
+          externalId: "pve-01",
+          displayName: "Linux host / pve-01",
+          proxmoxVersion: "pve-manager/8.4.1",
+          launchReady: true,
+          capacity: READY_PROXMOX_TARGET.capacity,
+          capabilities: {
+            isolationDrivers: ["proxmox-kvm" as const],
+            isolationClass: "hardware-vm" as const,
+            kvmAvailable: true,
+            bridges: ["hivra0"],
+            storages: ["local-lvm"],
+            template: null,
+            provisioner: { ready: true, version: "2026.09.15.2" },
+            runtimeCompatibility: null,
+            vmidRange: { start: 200, end: 399, freeCount: 200 },
+          },
+        },
+        warnings: [],
+        unmetRequirements: [],
+      };
+      (preflightInfrastructureConnection as jest.Mock).mockResolvedValue({
+        ...readyPreflight,
+        target: { ...readyPreflight.target, launchReady: false, capabilities: { ...readyPreflight.target.capabilities, provisioner: null } },
+        warnings: ["Prepared assets are not configured."],
+        unmetRequirements: [{ code: "PROVISIONER_UNAVAILABLE", message: "Prepared assets are not configured." }],
+      });
+      (prepareInfrastructureConnection as jest.Mock).mockResolvedValue({
+        ok: true, connectionId: readyHost.id, provisionerVersion: "2026.09.15.2", preflight: readyPreflight,
+      });
+
+      render(<InfrastructureConnectionsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const wizard = await screen.findByRole("dialog");
+      fireEvent.click(within(wizard).getByRole("button", { name: "Save and inspect" }));
+      fireEvent.click(await within(wizard).findByRole("button", { name: "Check Proxmox readiness" }));
+      fireEvent.click(await within(wizard).findByRole("button", { name: "Review setup" }));
+
+      const setup = await screen.findByRole("dialog", { name: "Set up Linux host for agents?" });
+      expect(hostSetupProgress(setup)).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, current", "Ready"]);
+      fireEvent.click(within(setup).getByRole("button", { name: "Set up Linux host" }));
+
+      expect(await screen.findByRole("heading", { name: "Linux host is ready for agents." })).toBeInTheDocument();
+      expect(hostSetupProgress(screen.getByRole("dialog")))
+        .toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, complete", "Ready, current"]);
+    });
+  });
+
   it("returns unified Codex capacity setup to the saved launch journey", async () => {
     const target = providerVmTarget();
     target.connectionId = HETZNER_CONNECTION.id;
@@ -1613,6 +1712,49 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(await within(dialog).findByRole("button", { name: "Review current rates" })).toBeDisabled();
     expect(within(dialog).getByText(/hivra-a1b2c3d4 is using it/)).toBeInTheDocument();
     expect(quoteHetznerCloudCapacity).not.toHaveBeenCalled();
+  });
+
+  // Live test of INF02 on Canary: a server Hivra had just set up sat on the
+  // card as "Off" beside "Ready for agents", because Start setup powered it on
+  // after the last inventory sync, until the owner pressed Sync servers.
+  it("syncs a set-up server's power state once instead of showing it Off beside Ready for agents", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, status: "running", discoveredAt: "2026-08-26T15:31:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Running")).toBeInTheDocument();
+    expect(within(server).getByText("Ready for agents")).toBeInTheDocument();
+    expect(within(server).queryByText("Off")).not.toBeInTheDocument();
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a set-up server that really is off as Off after one sync, without syncing again", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, discoveredAt: "2026-08-26T16:00:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    await waitFor(() => expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1));
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Off")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
   });
 
   it("replaces a rejected project token from the card without disconnecting", async () => {

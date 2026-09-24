@@ -433,12 +433,6 @@ const BASE_MARKETING_COPY = {
     },
     getStarted: {
       loadingCheckout: "Redirecting to checkout...",
-      steps: {
-        choosePlan: "Choose Plan",
-        createAccount: "Create Account",
-        activate: "Activate",
-        payment: "Payment",
-      },
       badges: {
         free: "Always Free",
         paid: "7-Day Money-Back Guarantee",
@@ -1302,12 +1296,6 @@ const BASE_MARKETING_COPY = {
     },
     getStarted: {
       loadingCheckout: "正在跳转到结账...",
-      steps: {
-        choosePlan: "选择计划",
-        createAccount: "创建账户",
-        activate: "激活",
-        payment: "付款",
-      },
       badges: {
         free: "始终免费",
         paid: "7 天退款保证",
@@ -2209,12 +2197,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Redirigiendo al pago...",
-      "steps": {
-        "choosePlan": "Elige plan",
-        "createAccount": "Crear cuenta",
-        "activate": "Activar",
-        "payment": "Pago"
-      },
       "badges": {
         "free": "Siempre gratis",
         "paid": "Garantía de devolución de 7 días"
@@ -3061,12 +3043,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Redirecionando para o checkout...",
-      "steps": {
-        "choosePlan": "Escolher Plano",
-        "createAccount": "Criar Conta",
-        "activate": "Ativar",
-        "payment": "Pagamento"
-      },
       "badges": {
         "free": "Sempre Gratuito",
         "paid": "Garantia de 7 Dias"
@@ -3913,12 +3889,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Redirection vers le paiement...",
-      "steps": {
-        "choosePlan": "Choisir un plan",
-        "createAccount": "Créer un compte",
-        "activate": "Activer",
-        "payment": "Paiement"
-      },
       "badges": {
         "free": "Toujours gratuit",
         "paid": "Garantie satisfait ou remboursé 7 jours"
@@ -4765,12 +4735,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Weiterleitung zum Checkout...",
-      "steps": {
-        "choosePlan": "Plan wählen",
-        "createAccount": "Konto erstellen",
-        "activate": "Aktivieren",
-        "payment": "Zahlung"
-      },
       "badges": {
         "free": "Immer kostenlos",
         "paid": "7-Tage-Geld-zurück-Garantie"
@@ -5617,12 +5581,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "チェックアウトへ移動中...",
-      "steps": {
-        "choosePlan": "プランを選ぶ",
-        "createAccount": "アカウント作成",
-        "activate": "有効化",
-        "payment": "お支払い"
-      },
       "badges": {
         "free": "常時無料",
         "paid": "7 日間返金保証"
@@ -6469,12 +6427,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "결제 페이지로 이동 중...",
-      "steps": {
-        "choosePlan": "플랜 선택",
-        "createAccount": "계정 만들기",
-        "activate": "활성화",
-        "payment": "결제"
-      },
       "badges": {
         "free": "항상 무료",
         "paid": "7일 환불 보장"

@@ -126,19 +126,18 @@ describe("GetStartedPage", () => {
     expect(screen.getByRole("button", { name: /Pro \$9\.99/, pressed: true })).toHaveFocus();
   });
 
-  it("keeps the step indicator ahead of the form once the form moves first", () => {
+  // FTUE-16: a 1-2-3 "Choose plan / Create account / Payment" counter here
+  // was followed by Launch restarting at step 1.
+  it("shows no step counter: Launch, where this ends, has the only one", () => {
     mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
     mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
 
     const { container } = render(<GetStartedPage />);
 
-    // Wide layout: in the plan column. Single column (media query): above the summary and form.
-    expect(container.querySelector(".get-started-sticky .get-started-steps")).toHaveTextContent(/Choose plan.*Create account.*Payment/i);
-    const form = container.querySelector(".get-started-form") as HTMLElement;
-    const compactSteps = form.querySelector(".get-started-steps-compact")!;
-    expect(compactSteps).toHaveTextContent(/Choose plan.*Create account.*Payment/i);
-    expect(compactSteps.compareDocumentPosition(form.querySelector(".get-started-summary")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(compactSteps.compareDocumentPosition(screen.getByTestId("mock-sign-up")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("mock-sign-up")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/choose plan/i);
+    expect(container).not.toHaveTextContent(/create account.*payment/i);
+    expect(container.querySelector(".get-started-steps, .get-started-steps-compact")).toBeNull();
   });
 
   it("does not render a back link on the signed-out get-started flow", () => {
@@ -206,27 +205,40 @@ describe("GetStartedPage", () => {
     });
   });
 
-  it("keeps free plan intent instead of falling back to a paid plan", () => {
-    mockUseAuth.mockReturnValue({
-      isLoaded: true,
-      isSignedIn: false,
-    });
+  // FTUE-16: a Free link used to open this plan page first, ahead of Launch.
+  it("sends a Free link to sign-up, which lands in Launch, instead of a plan page", async () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
     mockGet.mockImplementation((key: string) => {
       if (key === "plan") return "free";
+      if (key === "agentType") return "claude-code";
       return null;
     });
 
     render(<GetStartedPage />);
 
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/sign-up?agentType=claude-code"));
+    expect(mockSignUp).not.toHaveBeenCalled();
+    expect(screen.queryByText(/redirecting to checkout/i)).not.toBeInTheDocument();
+    expect(captureClient).not.toHaveBeenCalledWith("get_started_viewed", expect.anything());
+  });
+
+  it("keeps Free as a choice for a visitor who came for a paid plan", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+
+    render(<GetStartedPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^Free/ }));
+
     expect(screen.getByText(/free is best/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Most users can launch without a card/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/higher-risk free-tier deploys may need card verification first/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/free sandbox/i)).not.toBeInTheDocument();
-    expect(mockSignUp.mock.calls[0][0]).toMatchObject({
+    expect(mockSignUp.mock.calls[mockSignUp.mock.calls.length - 1][0]).toMatchObject({
       forceRedirectUrl: "/get-started/activate?plan=free",
       fallbackRedirectUrl: "/get-started/activate?plan=free",
       signInUrl: "/sign-in?plan=free",
     });
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
   it("emphasizes Pro with a Most popular badge and defaults to Pro without plan intent", () => {
@@ -252,11 +264,12 @@ describe("GetStartedPage", () => {
       isSignedIn: false,
     });
     mockGet.mockImplementation((key: string) => {
-      if (key === "plan") return "free";
+      if (key === "plan") return "operator";
       return null;
     });
 
     render(<GetStartedPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^Free/ }));
 
     expect(
       screen.getByText(/no web browsing · no persistent memory · no scheduled tasks · 0\.5 vCPU/i)
@@ -321,14 +334,15 @@ describe("GetStartedPage", () => {
       isSignedIn: false,
     });
     mockGet.mockImplementation((key: string) => {
-      if (key === "plan") return "free";
+      if (key === "plan") return "operator";
       if (key === "cadence") return "yearly";
       return null;
     });
 
     render(<GetStartedPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^Free/ }));
 
-    expect(mockSignUp.mock.calls[0][0]).toMatchObject({
+    expect(mockSignUp.mock.calls[mockSignUp.mock.calls.length - 1][0]).toMatchObject({
       forceRedirectUrl: "/get-started/activate?plan=free",
       signInUrl: "/sign-in?plan=free",
     });
@@ -379,7 +393,7 @@ describe("GetStartedPage", () => {
       isSignedIn: false,
     });
     mockGet.mockImplementation((key: string) => {
-      if (key === "plan") return "free";
+      if (key === "plan") return "fleet";
       return null;
     });
 
@@ -396,7 +410,7 @@ describe("GetStartedPage", () => {
         source: "get-started",
         route: "/get-started",
         plan: "operator",
-        previousPlan: "free",
+        previousPlan: "fleet",
         cadence: "monthly",
       })
     );

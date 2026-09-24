@@ -185,6 +185,10 @@ function safeDigitalOceanChoice(value: unknown): LaunchDigitalOceanChoice {
     modelMode: input.modelMode === "digitalocean-inference" ? "digitalocean-inference" : "vendor",
     model: typeof input.model === "string" && DIGITALOCEAN_MODEL.test(input.model) ? input.model : "",
     firstTask: typeof input.firstTask === "string" ? input.firstTask.slice(0, 8_000) : "",
+    keySource: input.keySource === "saved" || input.keySource === "paste" ? input.keySource : null,
+    vaultKeyId: typeof input.vaultKeyId === "string" && UUID.test(input.vaultKeyId) ? input.vaultKeyId.toLowerCase() : null,
+    sendSavedKey: input.sendSavedKey === true,
+    saveKey: input.saveKey === true,
   };
 }
 

@@ -52,6 +52,7 @@ import {
   HETZNER_CLOUD_CONNECTION_ERROR_CODES,
   HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION,
 } from "@/lib/infrastructure/contracts";
+import { staleHetznerPowerKeys } from "@/lib/infrastructure/hetzner-inventory-freshness";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import {
   hetznerCloudTokenReplacedNotice,
@@ -116,6 +117,8 @@ type PreparingState = {
   connection: SshInfrastructureConnectionDto;
   engine: "proxmox" | "gvisor";
   mode: "prepare" | "repair";
+  /** Handed over from the connection wizard: setup carries on its progress bar. */
+  continuesHostSetup?: boolean;
 };
 
 type HetznerInventoryState = {
@@ -428,6 +431,23 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     return () => controller.abort();
   }, [loadConnections]);
 
+  // A server Hivra set up can be newer than the last inventory sync: Start
+  // setup powers it on after that sync. Sync once per setup step so its card
+  // doesn't say "Off" beside "Ready for agents".
+  const syncedForSetup = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const [connectionId, state] of Object.entries(hetznerInventory)) {
+      const setup = hetznerSetups[connectionId];
+      if (state.loading || state.error || setup?.status !== "loaded") continue;
+      const fresh = staleHetznerPowerKeys(state.inventory, setup.computers)
+        .map((key) => `${connectionId}:${key}`)
+        .filter((key) => !syncedForSetup.current.has(key));
+      if (fresh.length === 0) continue;
+      for (const key of fresh) syncedForSetup.current.add(key);
+      void loadHetznerInventory(connectionId, { refresh: true });
+    }
+  }, [hetznerInventory, hetznerSetups, loadHetznerInventory]);
+
   // Open "Replace token" once for the connection a deep link names.
   const handledTokenReplacement = useRef<string | null>(null);
   useEffect(() => {
@@ -582,14 +602,19 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     await loadConnections();
   }
 
-  /** Close whichever inspection is open and hand over to the review dialog. */
-  function requestGvisorSetup(connection: InfrastructureConnectionDto, mode: "prepare" | "repair") {
+  /** Close whichever inspection is open and hand over to the review dialog.
+   * From the connection wizard, the review carries on the wizard's progress. */
+  function requestGvisorSetup(
+    connection: InfrastructureConnectionDto,
+    mode: "prepare" | "repair",
+    options: { continuesHostSetup?: boolean } = {},
+  ) {
     if (!isSshConnection(connection)) return;
     setWizardOpen(false);
     setEditingConnection(null);
     setWizardPrefill(null);
     setCheckDialog(null);
-    setPreparing({ connection, engine: "gvisor", mode });
+    setPreparing({ connection, engine: "gvisor", mode, continuesHostSetup: options.continuesHostSetup });
   }
 
   /** Close the inspection and open the connection's settings. */
@@ -1162,9 +1187,11 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                 setWizardOpen(false);
                 setEditingConnection(null);
                 setWizardPrefill(null);
-                if (isSshConnection(saved)) setPreparing({ connection: saved, engine: "proxmox", mode: "prepare" });
+                if (isSshConnection(saved)) {
+                  setPreparing({ connection: saved, engine: "proxmox", mode: "prepare", continuesHostSetup: true });
+                }
               }}
-              onGvisorSetupRequested={requestGvisorSetup}
+              onGvisorSetupRequested={(saved, mode) => requestGvisorSetup(saved, mode, { continuesHostSetup: true })}
               onEditRequested={requestConnectionEdit}
               onGvisorReady={() => void loadConnections()}
             />
@@ -1198,6 +1225,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
               connection={preparing.connection}
               engine={preparing.engine}
               mode={preparing.mode}
+              continuesHostSetup={preparing.continuesHostSetup}
               onClose={() => {
                 setPreparing(null);
                 void loadConnections();

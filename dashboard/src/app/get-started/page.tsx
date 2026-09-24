@@ -19,6 +19,7 @@ import { LanguageSwitcher, LocaleProvider, useLocale } from "@/components/i18n/L
 import { FunnelHeader } from "@/components/layout/LandingHeader";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { isLocalAuthMode } from "@/lib/self-host/config";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const GET_STARTED_ROUTE = "/get-started";
 
@@ -85,6 +86,11 @@ function GetStartedPageContent() {
   const planParam = searchParams?.get("plan") ?? null;
   const agentTypeKey = resolveWelcomeAgentTypeKey(searchParams?.get("agentType"));
   const agentTypeQuery = buildAgentTypeQuery(agentTypeKey);
+  // A Free link is no plan choice to make: it joins every other new account
+  // at sign-up, which lands in Launch. Launch turns Free on, with its own
+  // button, only for a launch on Hivra Cloud.
+  const freeIntent = planParam === "free";
+  const startHref = agentTypeQuery ? `${PUBLIC_START_HREF}?${agentTypeQuery.replace(/^&/, "")}` : PUBLIC_START_HREF;
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>(
     resolvePlanParam(planParam)
   );
@@ -121,14 +127,14 @@ function GetStartedPageContent() {
   // activation and aren't entering the signup funnel.
   const viewedRef = useRef(false);
   useEffect(() => {
-    if (selfHosted || !isLoaded || isSignedIn || viewedRef.current) return;
+    if (selfHosted || !isLoaded || isSignedIn || freeIntent || viewedRef.current) return;
     viewedRef.current = true;
     captureFunnelEvent("get_started_viewed", {
       plan: selectedPlan,
       cadence,
       agentType: agentTypeKey ?? null,
     });
-  }, [selfHosted, isLoaded, isSignedIn, selectedPlan, cadence, agentTypeKey]);
+  }, [selfHosted, isLoaded, isSignedIn, freeIntent, selectedPlan, cadence, agentTypeKey]);
 
   // This page is the hosted account and plan funnel. An independent install
   // has one installation-owned operator instead, so it must never render the
@@ -140,34 +146,20 @@ function GetStartedPageContent() {
   }, [selfHosted, isLoaded, isSignedIn, router]);
 
   // A signed-in visitor with a paid plan goes to activation to start checkout.
-  // A Free intent (the public Register link) needs no checkout, so it goes
-  // straight to the dashboard instead of re-running the Free activation.
+  // A Free intent (an older Register link) needs no checkout, so it goes
+  // straight to the dashboard instead of re-running the Free activation; a
+  // signed-out one goes to sign-up like every other new account.
   useEffect(() => {
-    if (!selfHosted && isLoaded && isSignedIn) {
-      router.replace(planParam === "free" ? "/dashboard" : activationUrl);
-    }
-  }, [activationUrl, planParam, selfHosted, isLoaded, isSignedIn, router]);
+    if (selfHosted || !isLoaded) return;
+    if (isSignedIn) router.replace(freeIntent ? "/dashboard" : activationUrl);
+    else if (freeIntent) router.replace(startHref);
+  }, [activationUrl, freeIntent, startHref, selfHosted, isLoaded, isSignedIn, router]);
 
   const showPlanSwitcher = () => {
     const switcher = document.getElementById("get-started-plans");
     switcher?.scrollIntoView({ behavior: "smooth", block: "center" });
     switcher?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
   };
-
-  // Rendered twice: in the plan column on wide screens, and above the form
-  // in the single-column layout, where the form comes first.
-  const stepIndicator = (className: string) => (
-    <div className={className} style={{
-      display: "flex", alignItems: "center", gap: 12,
-      marginBottom: "2rem",
-    }}>
-      <StepBadge number={1} label={setup.steps.choosePlan} active />
-      <div className="get-started-step-line" style={{ width: 32, height: 1, background: "var(--etched-border)" }} />
-      <StepBadge number={2} label={setup.steps.createAccount} active />
-      <div className="get-started-step-line" style={{ width: 32, height: 1, background: "var(--etched-border)" }} />
-      <StepBadge number={3} label={selectedPlan === "free" ? setup.steps.activate : setup.steps.payment} />
-    </div>
-  );
 
   if (selfHosted) {
     return (
@@ -191,15 +183,19 @@ function GetStartedPageContent() {
     );
   }
 
-  // If already signed in, show loading while redirect happens
-  if (isSignedIn) {
+  // If already signed in, or sent on to sign-up, show loading while the
+  // redirect happens
+  if (isSignedIn || freeIntent) {
     return (
       <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <Loader2 size={24} style={{ opacity: 0.4, animation: "spin 1s linear infinite" }} />
-          <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
-            {setup.loadingCheckout}
-          </span>
+          {/* Only a paid plan is on its way to checkout. */}
+          {freeIntent ? null : (
+            <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
+              {setup.loadingCheckout}
+            </span>
+          )}
         </div>
       </div>
     );
@@ -228,8 +224,8 @@ function GetStartedPageContent() {
 
           {/* ── RIGHT: Clerk Sign Up ────────────────────────────────── */}
           {/* First in the DOM so the single-column reading and tab order match the screen. */}
+          {/* No step counter here: Launch, where this ends, has the only one. */}
           <div className="get-started-form">
-            {stepIndicator("get-started-steps-compact")}
             {/* Phones get the form first; this line keeps the plan in view. */}
             <div className="get-started-summary">
               <span className="mono">
@@ -292,8 +288,6 @@ function GetStartedPageContent() {
 
           {/* ── LEFT: Plan Summary ──────────────────────────────────── */}
           <div className="get-started-sticky" style={{ position: "sticky", top: "3rem" }}>
-            {stepIndicator("get-started-steps")}
-
             {/* Selected plan card */}
             <div className={funnelStyles.funnelCard} style={{
               border: "1px solid var(--ink-black)",
@@ -530,9 +524,6 @@ function GetStartedPageContent() {
           .get-started-summary {
             display: none;
           }
-          .get-started-steps-compact {
-            display: none !important;
-          }
           /* The form leads the DOM; the wide layout keeps the plan column on the left. */
           .get-started-grid {
             reading-flow: grid-rows;
@@ -546,13 +537,6 @@ function GetStartedPageContent() {
             grid-row: 1;
           }
           @media (max-width: 840px) {
-            .get-started-steps {
-              display: none !important;
-            }
-            .get-started-steps-compact {
-              display: flex !important;
-              margin-bottom: 1.25rem !important;
-            }
             .get-started-grid {
               grid-template-columns: 1fr !important;
               gap: 2rem !important;
@@ -599,20 +583,6 @@ function GetStartedPageContent() {
               cursor: pointer;
             }
           }
-          @media (max-width: 767px) {
-            .get-started-steps-compact {
-              gap: 8px !important;
-            }
-            .get-started-steps-compact span {
-              font-size: 11px !important;
-              letter-spacing: 0.06em !important;
-            }
-            .get-started-steps-compact .get-started-step-line {
-              width: auto !important;
-              flex: 0 1 32px;
-              min-width: 8px;
-            }
-          }
           @media (max-width: 840px), (pointer: coarse) {
             .get-started-cadence button {
               min-height: 44px;
@@ -637,27 +607,6 @@ function GetStartedPageContent() {
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
-
-function StepBadge({ number, label, active }: { number: number; label: string; active?: boolean }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, opacity: active ? 1 : 0.35 }}>
-      <span style={{
-        width: 22, height: 22,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        border: active ? "1.5px solid var(--ink-black)" : "1px solid var(--etched-border)",
-        background: active ? "var(--ink-black)" : "transparent",
-        color: active ? "var(--bg-surface)" : "var(--ink-black)",
-        fontFamily: "var(--font-mono), monospace",
-        fontSize: 10, fontWeight: 700,
-      }}>
-        {number}
-      </span>
-      <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-        {label}
-      </span>
-    </div>
-  );
-}
 
 function SpecItem({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (

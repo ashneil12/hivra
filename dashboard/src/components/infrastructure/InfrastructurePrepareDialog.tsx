@@ -28,6 +28,7 @@ import {
 import type { GvisorReadinessCheck } from "@/lib/infrastructure/launch-on-server";
 
 import styles from "./Infrastructure.module.css";
+import { HostSetupProgress } from "./HostSetupProgress";
 import { LaunchOnServerLink, useGvisorCheckLaunchAction, useLaunchOnServer } from "./LaunchOnServer";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -49,6 +50,7 @@ export function InfrastructurePrepareDialog({
   connection,
   engine = "proxmox",
   mode = "prepare",
+  continuesHostSetup = false,
   onClose,
   onPrepared,
   onGvisorPrepared,
@@ -57,6 +59,9 @@ export function InfrastructurePrepareDialog({
   engine?: HostPreparationEngine;
   /** "repair" reinstalls an existing Linux Sandbox setup. */
   mode?: "prepare" | "repair";
+  /** Opened from the connection wizard: it carries on the wizard's
+   * Connect → Ready progress bar at Prepare, and ends on Ready. */
+  continuesHostSetup?: boolean;
   onClose: () => void;
   onPrepared?: (preparation: InfrastructurePreparation) => Promise<void>;
   onGvisorPrepared?: (target: GvisorTargetResult) => Promise<void>;
@@ -89,6 +94,13 @@ export function InfrastructurePrepareDialog({
       headingRef.current?.focus();
     }
   }, [phase]);
+
+  // Handed over from the wizard, whose closing returns focus to the control
+  // that opened it and can scroll the page away. Keep this dialog's top, and
+  // the progress bar carried on there, in view as each phase resizes it.
+  useEffect(() => {
+    if (continuesHostSetup) dialogRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [continuesHostSetup, dialogRef, phase]);
 
   // Leaving mid-step would hide the result the owner is waiting for.
   useEffect(() => {
@@ -143,6 +155,10 @@ export function InfrastructurePrepareDialog({
         ? launch.forProxmoxConnection(connection.id, preparation.preflight.target.externalId)
         : null;
 
+  // Ready only once setup finished and its check passed (and, for Linux
+  // Sandbox, is still fresh). A stop or a failed check stays on Prepare.
+  const hostSetupStep = phase === "success" && ready && !gvisorCheckLapsed ? "Ready" : "Prepare";
+
   const failedIndex = failure?.failedStepId ? steps.findIndex((step) => step.id === failure.failedStepId) : -1;
   const stepState = (index: number): StepState => {
     if (phase === "success") return ready || index < steps.length - 1 ? "done" : "attention";
@@ -189,7 +205,7 @@ export function InfrastructurePrepareDialog({
     <div className={styles.modalBackdrop}>
       <section
         ref={dialogRef}
-        className={`${styles.confirmDialog} ${styles.prepareDialog}`}
+        className={[styles.confirmDialog, styles.prepareDialog, continuesHostSetup ? styles.prepareContinues : ""].filter(Boolean).join(" ")}
         role={phase === "failure" ? "alertdialog" : "dialog"}
         aria-modal="true"
         aria-labelledby="prepare-host-title"
@@ -197,6 +213,7 @@ export function InfrastructurePrepareDialog({
         aria-busy={running || undefined}
         tabIndex={-1}
       >
+        {continuesHostSetup ? <HostSetupProgress current={hostSetupStep} className={styles.prepareProgress} /> : null}
         <span
           className={phase === "success" ? styles.successIcon : phase === "failure" ? styles.dangerIcon : styles.prepareIcon}
           aria-hidden="true"
