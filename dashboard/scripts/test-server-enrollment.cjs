@@ -343,6 +343,34 @@ async function main() {
     await report(again.code);
     const againYes = await confirm("other", again.enrollmentId);
     assert.equal((await one("select name from public.infrastructure_connections where id = $1", [againYes.connectionId])).name, "ip-172-31-4-9 2");
+    // A connection made another way (the SSH details wizard) takes the name
+    // between Yes's check and its insert: Yes moves to the next suffix instead
+    // of failing on the name index (review round 2). The trigger plays that
+    // concurrent create, once.
+    await db.exec(`
+      create function pg_temp.race_connection_name() returns trigger language plpgsql as $race$
+      begin
+        if new.user_id = 'race-user' and new.name = 'ip-172-31-4-9' and pg_trigger_depth() = 1 then
+          insert into public.infrastructure_connections (user_id, name, provider, operating_mode, setup_mode, status,
+            ssh_host, ssh_port, ssh_user, ssh_host_fingerprint_sha256, ssh_privilege, ssh_host_key_type, config)
+          values (new.user_id, 'IP-172-31-4-9', 'host', 'self-managed', 'simple', 'pending', '198.51.100.9', 22,
+            'root', md5('race-a') || md5('race-b'), 'login', 'ssh-ed25519', '{}'::jsonb);
+        end if;
+        return new;
+      end $race$;
+      create trigger race_connection_name before insert on public.infrastructure_connections
+        for each row execute function pg_temp.race_connection_name();`);
+    const raced = await issue("race-user");
+    await report(raced.code);
+    const racedYes = await confirm("race-user", raced.enrollmentId);
+    await db.exec("drop trigger race_connection_name on public.infrastructure_connections");
+    assert.equal(racedYes.outcome, "connected");
+    // In one session the played create rolls back with Yes's failed insert;
+    // in production it is another committed transaction. Either way Yes
+    // stepped past the clashing name.
+    assert.deepEqual((await db.query("select name, ssh_user from public.infrastructure_connections where user_id = 'race-user' order by name")).rows
+      .map((r) => [r.name, r.ssh_user]), [["ip-172-31-4-9 2", "hivra"]]);
+    assert.equal((await enrollment(raced.enrollmentId)).connection_id, racedYes.connectionId);
     // Yes after confirm_by (T23).
     const slow = await issue("slow-user");
     await report(slow.code);

@@ -1022,6 +1022,7 @@ declare
   v_connection public.infrastructure_connections%rowtype;
   v_name text;
   v_suffix integer := 2;
+  v_constraint text;
 begin
   if p_ssh_host is null or btrim(p_ssh_host) = '' or char_length(p_ssh_host) > 253
     or p_connection_name is null or btrim(p_connection_name) = '' or char_length(p_connection_name) > 80
@@ -1041,22 +1042,36 @@ begin
     return jsonb_build_object('outcome', 'known_identity');
   end if;
 
+  -- Names are unique per account, ignoring case. The advisory lock orders
+  -- only other Yes answers: a connection made another way (the SSH details
+  -- wizard) can take the chosen name between the check and the insert, so a
+  -- clash on the name index moves to the next suffix instead of failing Yes.
   v_name := left(btrim(p_connection_name), 80);
-  while exists (select 1 from public.infrastructure_connections
-      where user_id = p_user_id and lower(name) = lower(v_name)) loop
-    v_name := left(btrim(p_connection_name), 74) || ' ' || v_suffix;
-    v_suffix := v_suffix + 1;
-    if v_suffix > 1000 then raise exception 'No free connection name' using errcode = '23505'; end if;
+  loop
+    while exists (select 1 from public.infrastructure_connections
+        where user_id = p_user_id and lower(name) = lower(v_name)) loop
+      v_name := left(btrim(p_connection_name), 74) || ' ' || v_suffix;
+      v_suffix := v_suffix + 1;
+      if v_suffix > 1000 then raise exception 'No free connection name' using errcode = '23505'; end if;
+    end loop;
+    begin
+      insert into public.infrastructure_connections (
+        user_id, name, provider, operating_mode, setup_mode, status, ssh_host, ssh_port,
+        ssh_user, ssh_host_fingerprint_sha256, ssh_privilege, ssh_host_key_type, config
+      ) values (
+        p_user_id, v_name, 'host', 'self-managed', 'simple', 'pending', btrim(p_ssh_host), v_row.ssh_port,
+        'hivra', public.server_enrollment_key_hex_fingerprint(v_row.host_public_key), 'sudo',
+        'ssh-ed25519', '{}'::jsonb
+      ) returning * into v_connection;
+      exit;
+    exception when unique_violation then
+      get stacked diagnostics v_constraint = constraint_name;
+      if v_constraint is distinct from 'infrastructure_connections_user_name_key' then raise; end if;
+      v_name := left(btrim(p_connection_name), 74) || ' ' || v_suffix;
+      v_suffix := v_suffix + 1;
+      if v_suffix > 1000 then raise exception 'No free connection name' using errcode = '23505'; end if;
+    end;
   end loop;
-
-  insert into public.infrastructure_connections (
-    user_id, name, provider, operating_mode, setup_mode, status, ssh_host, ssh_port,
-    ssh_user, ssh_host_fingerprint_sha256, ssh_privilege, ssh_host_key_type, config
-  ) values (
-    p_user_id, v_name, 'host', 'self-managed', 'simple', 'pending', btrim(p_ssh_host), v_row.ssh_port,
-    'hivra', public.server_enrollment_key_hex_fingerprint(v_row.host_public_key), 'sudo',
-    'ssh-ed25519', '{}'::jsonb
-  ) returning * into v_connection;
   insert into public.infrastructure_connection_secrets (connection_id, user_id, encrypted_bundle, key_version)
     values (v_connection.id, p_user_id, p_encrypted_bundle, p_key_version);
 
