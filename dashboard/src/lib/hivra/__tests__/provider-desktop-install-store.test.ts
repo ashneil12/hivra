@@ -26,6 +26,7 @@ function journal() { return { agent_id: op.agentId, user_id: op.userId, operatio
 function load(data: unknown) {
   mockRead.mockResolvedValueOnce({ data: row(), error: null })
     .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: h.f.binding.quoteFingerprint }, error: null })
+    .mockResolvedValueOnce({ data: { recipe_version: h.f.binding.recipeVersion }, error: null })
     .mockResolvedValueOnce({ data, error: null });
 }
 
@@ -35,7 +36,7 @@ describe("private desktop install and cleanup store", () => {
     load(cancelled ? journal() : null);
     await expect(loadProviderDesktopInstallOperation(op)).resolves.toMatchObject({ runtime: "linux-desktop", identity,
       operation: op, scope: h.scope, cancellationRequested: cancelled });
-    expect(mockFrom.mock.calls.map(c => c[0])).toEqual(["hivra_agents", "infrastructure_capacity_orders", "hivra_provider_desktop_cleanup"]);
+    expect(mockFrom.mock.calls.map(c => c[0])).toEqual(["hivra_agents", "infrastructure_capacity_orders", "infrastructure_first_boot_enrollments", "hivra_provider_desktop_cleanup"]);
     expect(mockQuery.select.mock.calls.at(-1)).toEqual(["agent_id,user_id,operation_id,identity"]);
     for (const pair of [["agent_id", op.agentId], ["user_id", op.userId], ["operation_id", op.operationId]]) expect(mockQuery.eq).toHaveBeenCalledWith(...pair);
     expect(mockQuery.select.mock.calls.map(c => c[0]).join(",")).not.toMatch(/private_key|encrypted|api_token|llm_config/);
@@ -61,6 +62,7 @@ describe("private desktop install and cleanup store", () => {
     load(null); mockRead.mockReset();
     mockRead.mockResolvedValueOnce({ data: row(), error: null })
       .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: h.f.binding.quoteFingerprint }, error: null })
+    .mockResolvedValueOnce({ data: { recipe_version: h.f.binding.recipeVersion }, error: null })
       .mockResolvedValueOnce({ data: null, error: { message: "private query failure" } });
     await expect(loadProviderDesktopInstallOperation(op)).rejects.toThrow("could not be verified");
   });

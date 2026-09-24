@@ -7,6 +7,7 @@ import { InfrastructureConnectionStoreError } from "../connection-store";
 import { HetznerCloudCapacityQuoteDtoSchema } from "../contracts";
 import type { StoredHetznerCloudCapacityOrder } from "../hetzner-cloud-store";
 import { createHetznerCreationReceipt } from "../hetzner-creation-receipt";
+import { FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
 import {
   connectHetznerCloudProject,
   createHetznerCloudCapacity,
@@ -400,8 +401,8 @@ describe("private prepared capacity creation",()=>{
         observedServerStatus:"off" as const,providerObservedAt:f.attemptedAt}};
     const provider=capacityClient({createServer:jest.fn().mockResolvedValue({server:f.exactServer,action:f.mainAction,nextActions:[f.nextAction]}),
       getServer:jest.fn().mockResolvedValue(f.exactServer),getAction:jest.fn(async id=>id===500?f.mainAction:f.nextAction)}, image);
-    const recipe={userData:"fixture prepared user-data",enrollmentExpiresAt:f.quote.expiresAt,
-      expectedEnrollment:{attemptId:"44444444-4444-4444-8444-444444444444",verifierSha256:"b".repeat(64),recipeVersion:"2026.08.27.1" as const}};
+    const recipe={userData:"fixture prepared user-data",deliveryExpiresAt:f.quote.expiresAt,
+      expectedEnrollment:{attemptId:"44444444-4444-4444-8444-444444444444",verifierSha256:"b".repeat(64),recipeVersion:FIRST_BOOT_RECIPE_VERSION}};
     const deps={now:()=>new Date(f.attemptedAt),monotonicNow:()=>0,generateBootstrap:()=>f.bootstrap,
       loadBootstrap:jest.fn().mockResolvedValue(f.bootstrap),loadQuote:jest.fn().mockResolvedValue({...f.captured,connectionRevision:7}),
       claimOrder:jest.fn().mockResolvedValue({outcome:"claimed",execute:true,order}),
@@ -460,6 +461,16 @@ describe("private prepared capacity creation",()=>{
     expect(f.provider.createServer).not.toHaveBeenCalled();
     expect(f.deps.firstBootRecipe).not.toHaveBeenCalled();
   });
+  it("finds an original prepared attempt of either recipe on a replay, never assuming the current one", async () => {
+    const f = await fixture(capacityOnlyImage);
+    f.deps.claimOrder.mockResolvedValue({ outcome: "replay", execute: false, order: f.accepted });
+    f.deps.firstBootEnrollment.mockResolvedValue({ phase: "awaiting_identity" } as never);
+    await createPreparedHetznerCloudCapacity("user_a", CONNECTION_ID, f.request, preparation, f.deps);
+    expect(f.deps.firstBootEnrollment).toHaveBeenCalledWith({ binding: { userId: "user_a", connectionId: CONNECTION_ID,
+      connectionRevision: 7, orderId: f.quote.id, quoteFingerprint: f.captured.quoteFingerprintSha256 },
+    capacityIdempotencyKey: f.idempotencyKey });
+    expect(f.deps.firstBootRecipe).not.toHaveBeenCalled();
+  });
   it("reconciles an earlier prepared server even after its quote expires and its image is unsupported", async () => {
     const f = await fixture(capacityOnlyImage);
     f.deps.now = () => new Date(Date.parse(f.quote.expiresAt) + 1_000);
@@ -476,7 +487,7 @@ describe("private prepared capacity creation",()=>{
   it("uses the separately confirmed original recipe and exact admission, while still creating powered off",async()=>{
     const f=await fixture();const result=await createPreparedHetznerCloudCapacity("user_a",CONNECTION_ID,f.request,preparation,f.deps);
     expect(f.deps.firstBootRecipe).toHaveBeenCalledWith({...preparation,binding:{userId:"user_a",connectionId:CONNECTION_ID,
-      connectionRevision:7,orderId:f.quote.id,quoteFingerprint:f.captured.quoteFingerprintSha256,recipeVersion:"2026.08.27.1"},
+      connectionRevision:7,orderId:f.quote.id,quoteFingerprint:f.captured.quoteFingerprintSha256,recipeVersion:FIRST_BOOT_RECIPE_VERSION},
       capacityIdempotencyKey:f.idempotencyKey,publicKeyOpenSsh:f.bootstrap.publicKeyOpenSsh});
     expect(f.deps.markFirstBootServerPost).toHaveBeenCalledWith(expect.objectContaining({expectedEnrollment:f.recipe.expectedEnrollment,
       providerSshKeyId:"77",orderId:f.quote.id,idempotencyKey:f.idempotencyKey}));
@@ -512,7 +523,7 @@ describe("private prepared capacity creation",()=>{
   it.each(["rejected","delayed","expired"])("never dispatches a server when prepared admission is %s",async failure=>{
     const f=await fixture();
     if(failure==="rejected") f.deps.markFirstBootServerPost.mockResolvedValue(false);
-    if(failure==="expired") f.deps.firstBootRecipe.mockResolvedValue({...f.recipe,enrollmentExpiresAt:f.attemptedAt});
+    if(failure==="expired") f.deps.firstBootRecipe.mockResolvedValue({...f.recipe,deliveryExpiresAt:f.attemptedAt});
     // Dependencies are snapshotted at entry; use a shared elapsed clock.
     let elapsed=0;f.deps.monotonicNow=()=>elapsed;
     if(failure==="delayed") f.deps.markFirstBootServerPost.mockImplementation(async()=>{elapsed=30_000;return true;});

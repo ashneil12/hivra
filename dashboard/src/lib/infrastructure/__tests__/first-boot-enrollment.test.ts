@@ -1,16 +1,19 @@
 import { createHash, generateKeyPairSync } from "node:crypto";
 import {
-  canonicalFirstBootHostKey, createFirstBootChallenge, FIRST_BOOT_ENROLLMENT_TTL_MS,
-  FIRST_BOOT_RECIPE_VERSION, FirstBootEnrollmentError, inspectFirstBootEnrollmentProof,
+  canonicalFirstBootHostKey, createFirstBootChallenge, FIRST_BOOT_ARMED_WINDOW_MS, FIRST_BOOT_ENROLLMENT_TTL_MS,
+  FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION, FIRST_BOOT_SETUP_WINDOW_MS, FirstBootEnrollmentError,
+  firstBootEnrollmentDeadline, firstBootEnrollmentWindow, inspectFirstBootEnrollmentProof, verifyFirstBootChallengeSecret,
   type FirstBootBinding,
 } from "../first-boot-enrollment";
 
 const now = new Date("2026-08-27T15:00:00.000Z");
+// The pre-existing suite pins the legacy recipe: servers created with it keep
+// exactly these rules (15 minutes from creation, no arming).
 const binding: FirstBootBinding = {
   userId: "user_first_boot", connectionId: "11111111-1111-4111-8111-111111111111",
   connectionRevision: 2, orderId: "22222222-2222-4222-8222-222222222222",
   attemptId: "33333333-3333-4333-8333-333333333333",
-  quoteFingerprint: "a".repeat(64), recipeVersion: FIRST_BOOT_RECIPE_VERSION,
+  quoteFingerprint: "a".repeat(64), recipeVersion: FIRST_BOOT_LEGACY_RECIPE_VERSION,
 };
 function hostKey() {
   const jwk = generateKeyPairSync("ed25519").publicKey.export({ format: "jwk" });
@@ -27,7 +30,8 @@ function fixture() {
   return {
     key, proof,
     input: {
-      record: { challenge: proof.challenge, phase: "awaiting_identity" as const, enrolledHostPublicKey: null },
+      record: { challenge: proof.challenge, phase: "awaiting_identity" as const, enrolledHostPublicKey: null,
+        armedAt: null as string | null, armedExpiresAt: null as string | null },
       currentBinding: { ...binding }, expectedProviderServerId: "42", token: proof.token, now,
       registration: { version: 1, orderId: binding.orderId, attemptId: binding.attemptId,
         providerServerId: "42", hostPublicKey: key.publicKey + " root@temporary-host" },
@@ -39,7 +43,7 @@ function rejects(run: () => unknown, code: FirstBootEnrollmentError["code"]) {
   expect(run).toThrow("First-boot enrollment failed: " + code);
 }
 
-describe("one-purpose first-boot SSH identity proof", () => {
+describe("one-purpose first-boot SSH identity proof (legacy recipe, unchanged)", () => {
   it("creates unpredictable 256-bit tokens with scope-bound private verifiers and exact expiry", () => {
     const one = createFirstBootChallenge(binding, now);
     const two = createFirstBootChallenge(binding, now);
@@ -145,5 +149,93 @@ describe("one-purpose first-boot SSH identity proof", () => {
       key.publicKey + "\n", key.publicKey + "=", key.publicKey + " comment with spaces", "", undefined!]) {
       rejects(() => canonicalFirstBootHostKey(invalid), "invalid_proof");
     }
+  });
+});
+
+describe("current recipe: the window opens only when Hivra powers the server on for setup", () => {
+  const current: FirstBootBinding = { ...binding, recipeVersion: FIRST_BOOT_RECIPE_VERSION };
+  const issued = new Date("2026-08-27T15:00:00.000Z");
+  // Start setup two hours after creation, long after the delivery window.
+  const armedAt = new Date(issued.getTime() + 2 * 60 * 60_000);
+  function armedFixture(armed: Date | null = armedAt) {
+    const proof = createFirstBootChallenge(current, issued);
+    const key = hostKey();
+    return { key, proof, input: {
+      record: { challenge: proof.challenge, phase: "awaiting_identity" as const, enrolledHostPublicKey: null,
+        armedAt: armed ? armed.toISOString() : null,
+        armedExpiresAt: armed ? new Date(armed.getTime() + FIRST_BOOT_ARMED_WINDOW_MS).toISOString() : null },
+      currentBinding: { ...current }, expectedProviderServerId: "42", token: proof.token,
+      now: new Date(armedAt.getTime() + 60_000),
+      registration: { version: 1, orderId: current.orderId, attemptId: current.attemptId,
+        providerServerId: "42", hostPublicKey: key.publicKey },
+    } };
+  }
+  it("still bounds delivery (staging to the server request) to 15 minutes", () => {
+    const { proof } = armedFixture();
+    expect(verifyFirstBootChallengeSecret({ ...proof, currentBinding: current, now: issued })).toEqual(proof.challenge);
+    rejects(() => verifyFirstBootChallengeSecret({ ...proof, currentBinding: current,
+      now: new Date(issued.getTime() + FIRST_BOOT_ENROLLMENT_TTL_MS) }), "expired");
+  });
+  it("refuses an authentic proof while Hivra has not armed the challenge, at any time", () => {
+    for (const at of [issued, new Date(issued.getTime() + 60_000), new Date(armedAt.getTime() + 60_000)]) {
+      const { input } = armedFixture(null);
+      rejects(() => inspectFirstBootEnrollmentProof({ ...input, now: at }), "not_armed");
+    }
+    const { input } = armedFixture(null);
+    expect(firstBootEnrollmentWindow(input.record)).toBeNull();
+    expect(firstBootEnrollmentDeadline(input.record)).toBeNull();
+  });
+  it("accepts a late first boot inside the armed window, including the boot slack", () => {
+    for (const offset of [0, 60_000, FIRST_BOOT_SETUP_WINDOW_MS, FIRST_BOOT_ARMED_WINDOW_MS - 1]) {
+      const { input, key } = armedFixture();
+      expect(inspectFirstBootEnrollmentProof({ ...input, now: new Date(armedAt.getTime() + offset) }))
+        .toMatchObject({ kind: "candidate", hostPublicKey: key.publicKey });
+    }
+    const { input } = armedFixture();
+    expect(firstBootEnrollmentDeadline(input.record)).toBe(armedAt.getTime() + FIRST_BOOT_ARMED_WINDOW_MS);
+  });
+  it.each([-1, FIRST_BOOT_ARMED_WINDOW_MS, FIRST_BOOT_ARMED_WINDOW_MS + 60_000])("refuses the proof outside the armed window: %i", offset => {
+    const { input } = armedFixture();
+    rejects(() => inspectFirstBootEnrollmentProof({ ...input, now: new Date(armedAt.getTime() + offset) }), "expired");
+  });
+  it("permits an exact-key acknowledgement replay only while the armed window lasts", () => {
+    const { input, key } = armedFixture();
+    const record = { ...input.record, phase: "enrolled" as const, enrolledHostPublicKey: key.publicKey };
+    expect(inspectFirstBootEnrollmentProof({ ...input, record }).kind).toBe("acknowledgement_replay");
+    rejects(() => inspectFirstBootEnrollmentProof({ ...input, record,
+      now: new Date(armedAt.getTime() + FIRST_BOOT_ARMED_WINDOW_MS) }), "expired");
+  });
+  it("refuses a malformed armed state instead of widening the window", () => {
+    const { input } = armedFixture();
+    const expiresAt = input.record.armedExpiresAt!;
+    for (const record of [
+      { ...input.record, armedExpiresAt: null },
+      { ...input.record, armedAt: null },
+      { ...input.record, armedExpiresAt: new Date(armedAt.getTime() + 24 * 60 * 60_000).toISOString() },
+      { ...input.record, armedAt: new Date(issued.getTime() - 60_000).toISOString(),
+        armedExpiresAt: new Date(issued.getTime() - 60_000 + FIRST_BOOT_ARMED_WINDOW_MS).toISOString() },
+      { ...input.record, armedAt: armedAt.toISOString().replace(".000Z", "Z"), armedExpiresAt: expiresAt },
+    ]) rejects(() => inspectFirstBootEnrollmentProof({ ...input, record }), "invalid_proof");
+    // A legacy challenge never carries an armed window.
+    const legacy = fixture().input;
+    rejects(() => inspectFirstBootEnrollmentProof({ ...legacy, record: { ...legacy.record,
+      armedAt: now.toISOString(), armedExpiresAt: new Date(now.getTime() + FIRST_BOOT_ARMED_WINDOW_MS).toISOString() } }), "invalid_proof");
+  });
+  it("never lets a legacy proof pass as the current recipe or the reverse", () => {
+    const legacy = fixture().input;
+    const relabeled = { ...legacy.currentBinding, recipeVersion: FIRST_BOOT_RECIPE_VERSION };
+    rejects(() => inspectFirstBootEnrollmentProof({ ...legacy, currentBinding: relabeled }), "invalid_proof");
+    // Rewritten stored challenge: unarmed, and its verifier no longer matches.
+    expect(() => inspectFirstBootEnrollmentProof({ ...legacy, currentBinding: relabeled,
+      record: { ...legacy.record, challenge: { ...legacy.record.challenge, binding: relabeled } } })).toThrow(FirstBootEnrollmentError);
+    const armed = armedFixture().input;
+    expect(() => inspectFirstBootEnrollmentProof({ ...armed, currentBinding: binding, now: new Date(issued.getTime() + 60_000),
+      record: { ...armed.record, armedAt: null, armedExpiresAt: null,
+        challenge: { ...armed.record.challenge, binding } } })).toThrow("invalid_proof");
+  });
+  it("still authenticates the proof and its exact binding inside the window", () => {
+    const { input } = armedFixture();
+    rejects(() => inspectFirstBootEnrollmentProof({ ...input, token: "hbe1_" + "x".repeat(43) }), "invalid_proof");
+    rejects(() => inspectFirstBootEnrollmentProof({ ...input, currentBinding: binding }), "invalid_proof");
   });
 });

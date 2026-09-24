@@ -14,17 +14,16 @@ from unittest.mock import Mock, patch
 spec = importlib.util.spec_from_file_location("hivra_enroll", Path(__file__).with_name("hetzner-enroll.py"))
 enrollment = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(enrollment)
-NOW = 1787842800.0  # 2026-08-27T15:00:00Z
+UPTIME = 60.0  # One minute after this machine's first boot.
 TOKEN = "hbe1_" + "x" * 43
 KEY = "ssh-ed25519 " + base64.b64encode(enrollment.PREFIX + bytes(range(1, 33))).decode()
 
 
 def config():
-    return {"version": 1, "recipeVersion": enrollment.RECIPE_VERSION,
+    return {"version": 2, "recipeVersion": enrollment.RECIPE_VERSION,
             "orderId": "22222222-2222-4222-8222-222222222222",
             "attemptId": "33333333-3333-4333-8333-333333333333",
-            "token": TOKEN, "issuedAt": "2026-08-27T15:00:00.000Z",
-            "expiresAt": "2026-08-27T15:15:00.000Z",
+            "token": TOKEN,
             "callbackUrl": "https://hivra.example/api/infrastructure/first-boot/enroll"}
 
 
@@ -37,8 +36,9 @@ def acknowledgement():
 
 class EnrollmentTests(unittest.TestCase):
     def run_enroll(self, request, **kwargs):
+        kwargs.setdefault("uptime", lambda: UPTIME)
         return enrollment.enroll(config(), KEY + " guest@host", "42", request=request,
-                                 wall_clock=lambda: NOW, pause=lambda _: None, **kwargs)
+                                 pause=lambda _: None, **kwargs)
 
     def assert_code(self, code, operation):
         with self.assertRaises(enrollment.EnrollmentFailure) as caught:
@@ -100,16 +100,55 @@ class EnrollmentTests(unittest.TestCase):
                     Mock(return_value=(200, json.dumps(value).encode()))))
         self.assert_code("INVALID_ACKNOWLEDGEMENT", lambda: self.run_enroll(Mock(return_value=(200, b"not-json"))))
 
-    def test_configuration_and_expiry_are_strict(self):
-        self.assertEqual(enrollment.validate_config(config(), lambda: NOW), config())
-        for invalid in (None, {**config(), "version": True}, {**config(), "extra": 1},
+    def test_configuration_is_strict(self):
+        self.assertEqual(enrollment.validate_config(config(), lambda: UPTIME), config())
+        legacy = {**config(), "version": 1, "recipeVersion": "2026.08.27.1",
+                  "issuedAt": "2026-08-27T15:00:00.000Z", "expiresAt": "2026-08-27T15:15:00.000Z"}
+        for invalid in (None, {**config(), "version": True}, {**config(), "version": 1}, {**config(), "extra": 1},
                         {**config(), "token": TOKEN + "\n"}, {**config(), "recipeVersion": "later"},
-                        {**config(), "attemptId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}):
-            self.assert_code("INVALID_CONFIGURATION", lambda: enrollment.validate_config(invalid, lambda: NOW))
-        for timestamp in (NOW - 1, NOW + 900, NOW + 1000):
-            self.assert_code("ENROLLMENT_EXPIRED", lambda: enrollment.validate_config(config(), lambda: timestamp))
-        self.assert_code("ENROLLMENT_EXPIRED", lambda: enrollment.validate_config(
-            {**config(), "expiresAt": "2026-08-27T15:16:00.000Z"}, lambda: NOW))
+                        {**config(), "recipeVersion": "2026.08.27.1"}, {**config(), "expiresAt": "2026-08-27T15:15:00.000Z"},
+                        legacy, {**config(), "attemptId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}):
+            self.assert_code("INVALID_CONFIGURATION", lambda: enrollment.validate_config(invalid, lambda: UPTIME))
+
+    def test_accepts_a_late_first_boot_without_consulting_the_wall_clock(self):
+        # Hivra created the server days ago and powered it on just now. The
+        # guest's clock, however wrong, is never compared with a creation time.
+        request = Mock(return_value=(200, json.dumps(acknowledgement()).encode()))
+        with patch.object(enrollment.time, "time", side_effect=AssertionError("wall clock consulted")):
+            for uptime in (0.0, 30.0, 899.9):
+                with self.subTest(uptime=uptime):
+                    self.assertEqual(enrollment.validate_config(config(), lambda: uptime), config())
+                    self.assertTrue(self.run_enroll(request, uptime=lambda: uptime)["ok"])
+
+    def test_refuses_fifteen_minutes_after_first_boot(self):
+        for uptime in (900.0, 900.5, 3600.0, 86400.0 * 7):
+            with self.subTest(uptime=uptime):
+                request = Mock(return_value=(200, json.dumps(acknowledgement()).encode()))
+                self.assert_code("ENROLLMENT_EXPIRED", lambda: enrollment.validate_config(config(), lambda: uptime))
+                self.assert_code("ENROLLMENT_EXPIRED", lambda: self.run_enroll(request, uptime=lambda: uptime))
+                self.assertEqual(request.call_count, 0)
+        # The window closing between retries stops the next attempt.
+        request = Mock(return_value=(503, b""))
+        clock = Mock(side_effect=[880.0, 880.0, 890.0, 900.0])
+        self.assert_code("ENROLLMENT_EXPIRED", lambda: self.run_enroll(request, uptime=clock))
+        self.assertEqual(request.call_count, 1)
+        # A success that arrives after the window closed is not reported as one.
+        request = Mock(return_value=(200, json.dumps(acknowledgement()).encode()))
+        clock = Mock(side_effect=[890.0, 895.0, 900.0])
+        self.assert_code("ENROLLMENT_EXPIRED", lambda: self.run_enroll(request, uptime=clock))
+
+    def test_boot_clock_is_the_kernel_uptime_and_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="hivra-uptime-test-") as folder:
+            file = Path(folder) / "uptime"
+            file.write_text("123.45 678.90\n")
+            self.assertEqual(enrollment.read_uptime(str(file)), 123.45)
+            for bad in ("", "\n", "abc 1", "-1 2", "nan 2", "inf 2"):
+                with self.subTest(bad=bad):
+                    file.write_text(bad)
+                    self.assert_code("BOOT_CLOCK_UNAVAILABLE", lambda: enrollment.read_uptime(str(file)))
+            self.assert_code("BOOT_CLOCK_UNAVAILABLE", lambda: enrollment.read_uptime(str(Path(folder) / "missing")))
+        self.assertEqual(enrollment.UPTIME_PATH, "/proc/uptime")
+        self.assertTrue(enrollment.CONFIG_PATH.startswith("/run/"))
 
     def test_https_destination_has_no_url_credentials_or_redirect_path(self):
         for url in ("http://hivra.example" + enrollment.CALLBACK_PATH,
@@ -118,7 +157,7 @@ class EnrollmentTests(unittest.TestCase):
                     config()["callbackUrl"] + "?token=" + TOKEN,
                     config()["callbackUrl"] + "#" + TOKEN,
                     "https://hivra.example/other", "https://hivra.example\\@evil.example" + enrollment.CALLBACK_PATH):
-            self.assert_code("INVALID_CONFIGURATION", lambda: enrollment.validate_config({**config(), "callbackUrl": url}, lambda: NOW))
+            self.assert_code("INVALID_CONFIGURATION", lambda: enrollment.validate_config({**config(), "callbackUrl": url}, lambda: UPTIME))
 
     def test_direct_tls_transport_ignores_proxy_and_bounds_response(self):
         connection = Mock()
