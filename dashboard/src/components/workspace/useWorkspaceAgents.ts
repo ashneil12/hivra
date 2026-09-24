@@ -64,6 +64,9 @@ const HIVRA_ERROR = "Some agents and computers couldn't be loaded. Retry to chec
 const HIVRA_STATUSES = new Set(["provisioning", "running", "stopped", "error", "deleted"]);
 const HIVRA_SUBSTRATES = new Set(["proxmox-kvm", "provider-vm", "gvisor", "do-managed-session"]);
 const HIVRA_DEPLOYMENT_MODES = new Set(["hivra-managed", "self-managed"]);
+// A computer's operating system: Home names and opens it by this, and an
+// unknown value is dropped rather than shown.
+const HIVRA_COMPUTER_PROFILES = new Set(["ubuntu-desktop", "omarchy", "windows", "linux-terminal"]);
 
 /** A known enum value, or undefined for anything else (never a guess). */
 function knownValue<T extends string>(value: unknown, known: Set<string>): T | undefined {
@@ -145,6 +148,7 @@ function parseHivraEnvelope(value: unknown): HivraAgent[] {
       // Where the agent's computer runs, for its linked-pair line (ATT-11).
       computer_substrate: knownValue<NonNullable<HivraAgent["computer_substrate"]>>(row.computer_substrate, HIVRA_SUBSTRATES),
       deployment_mode: knownValue<NonNullable<HivraAgent["deployment_mode"]>>(row.deployment_mode, HIVRA_DEPLOYMENT_MODES),
+      computer_profile: knownValue<NonNullable<HivraAgent["computer_profile"]>>(row.computer_profile, HIVRA_COMPUTER_PROFILES) ?? null,
     };
   });
 }
