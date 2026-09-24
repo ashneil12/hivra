@@ -116,6 +116,12 @@ if (!/^[a-f0-9]{64}$/.test(API_TOKEN)) {
 const AUTH_COOKIE = "__Host-hivra_auth";
 const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const AUTH_SESSIONS = new Map();
+// Random identity of THIS gateway process, advertised by /api/meta. Surface
+// sessions live only in AUTH_SESSIONS, so a restart (runtime update, crash,
+// systemd restart) silently invalidates every embedded surface's cookie. A new
+// bootId tells the dashboard to re-bootstrap its frames. Not a secret and not
+// an authority: it grants nothing and is never compared on this side.
+const BOOT_ID = crypto.randomBytes(16).toString("hex");
 function cookieVal(req, name) {
   const raw = String(req.headers["cookie"] || "");
   for (const part of raw.split(";")) {
@@ -2149,7 +2155,12 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
   }
-  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
+  if (req.method === "GET" && u === "/api/meta") {
+    // no-store: bootId and nativeReady describe the live process, never a
+    // copy cached from before a restart.
+    res.setHeader("Cache-Control", "no-store");
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: BOOT_ID, ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
+  }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
