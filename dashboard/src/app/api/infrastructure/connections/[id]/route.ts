@@ -75,6 +75,14 @@ function storeFailure(error: unknown, method: "GET" | "PATCH" | "DELETE"): Respo
         { code: "capacity_force_forget_required" },
       ));
     }
+    if (error.code === "key_passphrase_required") {
+      return noStore(apiError("This key has a passphrase. Enter it below the key.", 422, undefined,
+        { code: "key_passphrase_required" }));
+    }
+    if (error.code === "key_passphrase_incorrect") {
+      return noStore(apiError("That passphrase didn't unlock this key.", 422, undefined,
+        { code: "key_passphrase_incorrect" }));
+    }
     if (error.code === "invalid_request") {
       return noStore(apiError("Invalid infrastructure connection update.", 400));
     }
