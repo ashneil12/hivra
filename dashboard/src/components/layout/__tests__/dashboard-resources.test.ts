@@ -1,3 +1,5 @@
+import type { HivraAgent } from '@/lib/hivra/agent-api';
+import { unifyAll } from '@/lib/hivra/unified-agent';
 import { filterDashboardResources, parseDashboardResources, resourceMatchesPath } from '../dashboard-resources';
 
 const envelope = (source: string, rows: unknown[]) => ({ success: true, data: source === 'hermes' ? rows : { agents: rows } });
@@ -21,6 +23,27 @@ describe('dashboard resource projection', () => {
   it('uses the actual computer profile and working desktop path, with no availability claim', () => {
     const [computer] = parseDashboardResources(envelope('hivra', [{ id: 'box', name: 'Work', type: 'linux-desktop', computer_profile: 'omarchy', status: 'running' }]), 'hivra');
     expect(computer).toMatchObject({ kind: 'computer', description: 'Omarchy', status: 'running', href: '/dashboard/agent/box?tab=desktop' });
+  });
+
+  it('classifies a provider agent with a desktop profile as the computer web Home shows', () => {
+    // An agent type that carries a desktop profile is a computer on web Home
+    // (unified-agent) and in the canonical resource shadow; the sidebar and the
+    // native inventory must list it in the same group, on its desktop.
+    const rows = [
+      { id: 'provider-desktop', name: 'Provider box', type: 'claude-code', computer_profile: 'ubuntu-desktop', status: 'running' },
+      { id: 'agent', name: 'Agent', type: 'claude-code', computer_profile: null, status: 'running' },
+      { id: 'ubuntu', name: 'Ubuntu', type: 'linux-desktop', computer_profile: 'ubuntu-desktop', status: 'running' },
+      { id: 'sandbox', name: 'Sandbox', type: 'linux-terminal', status: 'running' },
+    ];
+    const feed = parseDashboardResources(envelope('hivra', rows), 'hivra');
+    const home = unifyAll([], rows as unknown as HivraAgent[]);
+    expect(feed.find((resource) => resource.id === 'provider-desktop')).toMatchObject({
+      kind: 'computer', description: 'Ubuntu Desktop', href: '/dashboard/agent/provider-desktop?tab=desktop',
+    });
+    for (const row of rows) {
+      expect({ id: row.id, kind: feed.find((resource) => resource.id === row.id)?.kind })
+        .toEqual({ id: row.id, kind: home.find((agent) => agent.id === row.id)?.resourceKind });
+    }
   });
 
   it('opens Windows through the fast desktop handoff from native inventory', () => {

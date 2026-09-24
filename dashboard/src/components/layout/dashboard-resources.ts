@@ -1,6 +1,7 @@
 import { resourceAttention, type ResourceAttention } from "@/lib/hivra/resource-attention";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate } from "@/lib/hivra/computer-catalog";
+import { hivraResourceKind } from "@/lib/hivra/unified-agent";
 
 export type DashboardResourceSource = "hermes" | "hivra";
 
@@ -49,8 +50,10 @@ export function parseDashboardResources(value: unknown, source: DashboardResourc
     } else {
       const type = required(row, "type");
       const definition = getAgent(type);
-      const kind = definition?.resourceKind === "computer" ? "computer" : "agent";
-      const profile = typeof row.computer_profile === "string" ? getComputerTemplate(row.computer_profile) : undefined;
+      const profileId = typeof row.computer_profile === "string" ? row.computer_profile : null;
+      // Web Home's rule, so the sidebar, native shells and Home list a row in the same group.
+      const kind = hivraResourceKind({ type, computer_profile: profileId });
+      const profile = profileId ? getComputerTemplate(profileId) : undefined;
       const desktopQuery = kind !== "computer" ? ""
         : profile?.id === "windows" ? "?tab=desktop&open=fast"
           : "?tab=desktop";
