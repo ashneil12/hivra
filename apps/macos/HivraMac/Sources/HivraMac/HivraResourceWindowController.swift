@@ -37,16 +37,14 @@ final class HivraResourceWindowController: NSWindowController, NSWindowDelegate 
 }
 
 private struct HivraResourceWindowView: View {
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject var tab: HivraWorkspaceTab
     let profile: HivraConnectionProfile
     let onReturn: () -> Void
     @AppStorage("hivra.mac.appearance") private var appearance = HivraAppearance.system.rawValue
 
     var body: some View {
-        HivraFocusedWorkPane(browser: tab.browser, profile: profile, onDetach: { url in
-            openWindow(value: HivraDetachedSurface(url: url, title: tab.displayName))
-        }, onReturn: onReturn)
+        // A popped-out resource offers Return to Hivra, never a further window.
+        HivraFocusedWorkPane(browser: tab.browser, profile: profile, onDetach: { _ in }, onReturn: onReturn)
             .preferredColorScheme(HivraAppearance(rawValue: appearance)?.colorScheme)
     }
 }
