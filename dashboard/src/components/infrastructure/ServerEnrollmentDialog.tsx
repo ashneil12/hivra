@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, ExternalLink, KeyRound, Loader2, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, KeyRound, Loader2, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { InfrastructureApiError } from "@/lib/infrastructure/client";
@@ -37,16 +37,48 @@ const REFUSAL_COPY: Record<NonNullable<ServerEnrollmentDto["lastRefusal"]>, stri
   invalid_report: "it didn't match what this command expects",
 };
 
-/** The waiting line: only what Hivra itself observed. */
-export function waitingLine(item: ServerEnrollmentDto, now: number): string {
-  if (item.scriptFetches >= 20) return "Your command reached its download limit. Get a new command.";
+/** What Hivra itself observed about an open command, without the clock.
+ * Only this part sits in the live region, so a screen reader hears a change
+ * of state, not a clock ticking every second. `since` starts the clock. */
+export function waitingState(item: ServerEnrollmentDto): { text: string; since: string | null } {
+  if (item.scriptFetches >= 20) return { text: "Your command reached its download limit. Get a new command.", since: null };
   if (item.lastRefusal && item.lastRefusedAt) {
-    return `Hivra refused a report for your command at ${timeOfDay(item.lastRefusedAt)}: ${REFUSAL_COPY[item.lastRefusal]}.`;
+    return {
+      text: `Hivra refused a report for your command at ${timeOfDay(item.lastRefusedAt)}: ${REFUSAL_COPY[item.lastRefusal]}.`,
+      since: null,
+    };
   }
   if (item.lastFetchedAt) {
-    return `The setup script was downloaded with your command at ${timeOfDay(item.lastFetchedAt)}. Waiting for its report · ${clock(now - Date.parse(item.lastFetchedAt))}`;
+    return {
+      text: `The setup script was downloaded with your command at ${timeOfDay(item.lastFetchedAt)}. Waiting for its report`,
+      since: item.lastFetchedAt,
+    };
   }
-  return `Waiting for your server… no contact yet · ${clock(now - Date.parse(item.issuedAt))}`;
+  return { text: "Waiting for your server… no contact yet", since: item.issuedAt };
+}
+
+/** The waiting line as it reads on screen: the state, then the clock. */
+export function waitingLine(item: ServerEnrollmentDto, now: number): string {
+  const { text, since } = waitingState(item);
+  return since ? `${text} · ${clock(now - Date.parse(since))}` : text;
+}
+
+/** A command that can no longer be run, in its own words: cancelled, used
+ * (Yes, from this panel or anywhere else) or expired. Never "expired" for a
+ * command that ended another way. */
+export function closedCommandLine(item: ServerEnrollmentDto): string {
+  switch (item.phase) {
+    case "cancelled":
+      return `This command was cancelled${item.refusedReports >= 10 ? " after 10 refused reports" : ""}. Get a new command.`;
+    case "confirmed":
+      return item.outcome === "replaced_access"
+        ? "This command was used, and your server's access was replaced. Close this panel to see it under Capacity."
+        : "This command was used, and your server is connected. Close this panel to see it under Capacity.";
+    case "rejected":
+      return "This command was cancelled after No was chosen. Get a new command.";
+    default:
+      return "This command expired. Get a new command.";
+  }
 }
 
 type State =
@@ -68,6 +100,8 @@ export function ServerEnrollmentDialog({
   onConnected,
   onAccessReplaced,
   onChanged,
+  onDeclined,
+  onConnectionsChanged,
   returnFocusRef,
 }: {
   onClose: () => void;
@@ -79,6 +113,12 @@ export function ServerEnrollmentDialog({
   onAccessReplaced: (connection: InfrastructureConnectionDto) => void;
   /** Something the page lists changed (a report, a cancellation). */
   onChanged: () => void;
+  /** No was chosen here: the page keeps the answer (and its uninstall
+   * command) listed until the owner dismisses it. */
+  onDeclined?: (enrollment: ServerEnrollmentDto) => void;
+  /** The command was used to connect a server (Yes here or anywhere else):
+   * the page's list of connections is out of date. */
+  onConnectionsChanged?: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const [state, setState] = useState<State>({ kind: "issuing" });
@@ -126,13 +166,14 @@ export function ServerEnrollmentDialog({
         setState((current) => (current.kind === "ready" && current.enrollment.id === next.id
           ? { ...current, enrollment: next } : current));
         if (next.phase !== "issued") onChanged();
+        if (next.phase === "confirmed") onConnectionsChanged?.();
       }).catch(() => undefined);
     }, POLL_MS);
     return () => {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [enrollmentId, phase, onChanged]);
+  }, [enrollmentId, phase, onChanged, onConnectionsChanged]);
 
   async function renew() {
     if (state.kind !== "ready") return;
@@ -146,6 +187,11 @@ export function ServerEnrollmentDialog({
   const item = ready?.enrollment ?? null;
   const expiresIn = item ? Date.parse(item.expiresAt) - now : 0;
   const answering = item?.phase === "reported" || item?.phase === "unsupported";
+  // After No the card stays, as "Cancelled." with the uninstall command, even
+  // once the poll reads the command back as rejected.
+  const declined = item?.phase === "rejected";
+  const open = item?.phase === "issued" && expiresIn > 0;
+  const waiting = item && open ? waitingState(item) : null;
 
   return (
     <div className={styles.modalBackdrop}>
@@ -177,26 +223,39 @@ export function ServerEnrollmentDialog({
               <AlertTriangle size={16} aria-hidden="true" />
               <span>{state.message}</span>
             </div>
-          ) : item && answering ? (
-            <ServerEnrollmentCard
-              enrollment={item}
-              uninstallCommand={ready?.issued.uninstallCommand ?? null}
-              onConfirmed={(connection) => { onChanged(); onConnected(connection); }}
-              onReplaced={(connection) => { onChanged(); onAccessReplaced(connection); }}
-              onDeclined={onChanged}
-              onNewCommand={() => void renew()}
-            />
+          ) : item && (answering || declined) ? (
+            <>
+              <ServerEnrollmentCard
+                enrollment={item}
+                uninstallCommand={ready?.issued.uninstallCommand ?? null}
+                onConfirmed={(connection) => { onChanged(); onConnected(connection); }}
+                onReplaced={(connection) => { onChanged(); onAccessReplaced(connection); }}
+                onDeclined={() => { onDeclined?.({ ...item, phase: "rejected" }); onChanged(); }}
+                onNewCommand={() => void renew()}
+              />
+              {declined ? (
+                <p className={enrollmentStyles.meta}>
+                  <button type="button" className={enrollmentStyles.linkButton} onClick={() => void renew()} disabled={renewing}>
+                    {renewing ? "Getting a new command…" : "Get a new command"}
+                  </button>
+                </p>
+              ) : null}
+            </>
+          ) : item && item.phase === "confirmed" ? (
+            <p className={enrollmentStyles.lead} role="status" data-testid="server-enrollment-waiting">
+              <CheckCircle2 size={15} aria-hidden="true" /> {closedCommandLine(item)}
+            </p>
           ) : item && ready ? (
             <>
               <p className={enrollmentStyles.lead}>Run this on the server, as a user who can use sudo:</p>
-              {item.phase === "issued" && expiresIn > 0 ? (
+              {open ? (
                 <div className={enrollmentStyles.commandRow}>
                   <code className={enrollmentStyles.command} data-testid="server-enrollment-command">{ready.issued.command}</code>
                   <CopyButton value={ready.issued.command} label="Copy the setup command" />
                 </div>
               ) : null}
               <p className={enrollmentStyles.meta}>
-                {item.phase === "issued" && expiresIn > 0 ? <>Single use · expires in {clock(expiresIn)} · </> : null}
+                {open ? <>Single use · expires in {clock(expiresIn)} · </> : null}
                 <button type="button" className={enrollmentStyles.linkButton} onClick={() => setScriptOpen((open) => !open)} aria-expanded={scriptOpen}>
                   View the script first
                 </button>
@@ -230,19 +289,23 @@ export function ServerEnrollmentDialog({
                 </li>
               </ul>
 
-              <div className={enrollmentStyles.waiting} role="status" aria-live="polite">
-                {item.phase === "issued" && expiresIn > 0 ? (
+              <div className={enrollmentStyles.waiting} data-testid="server-enrollment-waiting">
+                {waiting ? (
                   <>
                     <Loader2 size={14} className={styles.spin} aria-hidden="true" />
-                    <span>{waitingLine(item, now)}{item.scriptFetches === 0 && !item.lastRefusal ? " — check your terminal if nothing happens." : ""}</span>
+                    <span>
+                      {/* Only a change of state is announced; the clock beside
+                          it ticks outside the live region. */}
+                      <span role="status" aria-live="polite">{waiting.text}</span>
+                      {waiting.since ? <> · {clock(now - Date.parse(waiting.since))}</> : null}
+                      {item.scriptFetches === 0 && !item.lastRefusal ? " — check your terminal if nothing happens." : ""}
+                    </span>
                   </>
-                ) : item.phase === "cancelled" ? (
-                  <span>This command was cancelled{item.refusedReports >= 10 ? " after 10 refused reports" : ""}. Get a new command.</span>
                 ) : (
-                  <span>This command expired. Get a new command.</span>
+                  <span role="status" aria-live="polite">{closedCommandLine(item)}</span>
                 )}
               </div>
-              {item.phase === "issued" && expiresIn > 0 ? (
+              {open ? (
                 <p className={enrollmentStyles.fine}>
                   Closing this panel doesn&apos;t cancel the command. Until it&apos;s used or expires, Capacity lists it
                   under Setup commands, where you can cancel it.

@@ -38,6 +38,7 @@ import { HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION, HETZNER_CLOUD_SIMPLE_MODE_POLI
 import { getHivraCloudCapacity } from "@/lib/infrastructure/hivra-cloud-client";
 import {
   cancelServerEnrollment,
+  declineServerEnrollment,
   issueServerEnrollment,
   listServerEnrollments,
 } from "@/lib/infrastructure/server-enrollment-client";
@@ -2403,6 +2404,63 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [], uninstallCommand: null });
     fireEvent.click(within(commands).getByRole("button", { name: "Cancel this command" }));
     await waitFor(() => expect(cancelServerEnrollment).toHaveBeenCalledWith(ISSUED_ENROLLMENT.id));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Setup commands" })).not.toBeInTheDocument());
+  });
+
+  // Review (round 2): Cancel swallowed its error, so a failed cancel left the
+  // command listed and working with no word of it.
+  it("says so when a command couldn't be cancelled, and keeps it listed", async () => {
+    const open = { ...ISSUED_ENROLLMENT, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [open], uninstallCommand: null });
+    (cancelServerEnrollment as jest.Mock).mockRejectedValueOnce(
+      new InfrastructureApiError("Hivra couldn't reach its database.", 503));
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    fireEvent.click(within(commands).getByRole("button", { name: "Cancel this command" }));
+    expect(await within(commands).findByRole("alert"))
+      .toHaveTextContent("Hivra couldn't reach its database. It wasn't cancelled and still works until it expires. Try again.");
+    expect(within(commands).getByRole("button", { name: "Cancel this command" })).toBeEnabled();
+    expect(within(commands).getByText(/hasn't been used yet/)).toBeInTheDocument();
+  });
+
+  // Review (round 2): after No, the page re-read its list, which leaves out
+  // rejected commands, so "Cancelled." and the uninstall command vanished at
+  // once. They stay until the owner dismisses them.
+  it.each([
+    ["the refreshed list returns the command as rejected", "rejected"],
+    ["the refreshed list no longer returns the command", "gone"],
+  ] as const)("keeps \"Cancelled.\" and the uninstall command after No until dismissed (%s)", async (_label, after) => {
+    const uninstall = "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash";
+    const question: ServerEnrollmentDto = {
+      ...ISSUED_ENROLLMENT, phase: "reported", scriptFetches: 1, lastFetchedAt: new Date().toISOString(),
+      confirmBy: new Date(Date.now() + 30 * 60_000).toISOString(),
+      report: { kind: "enrolled", reportedAt: new Date().toISOString(), observedAddress: "203.0.113.24", sshPort: 22,
+        hostFingerprintSha256: "SHA256:" + "X".repeat(43), consent: "terminal", words: "amber-falcon-river", reenrollment: false,
+        facts: { hostname: "web-7", osId: "ubuntu", osVersionId: "24.04", architecture: "x86_64", cpuCount: 2,
+          memoryBytes: 4 * 1024 ** 3, virtualization: "kvm", proxmoxVersion: null, sshMatchRules: false } },
+    };
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [question], uninstallCommand: uninstall });
+    (declineServerEnrollment as jest.Mock).mockResolvedValue(undefined);
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    expect(within(commands).getByRole("heading", { name: "Is this your server?" })).toBeInTheDocument();
+
+    (listServerEnrollments as jest.Mock).mockResolvedValue({
+      enrollments: after === "rejected" ? [{ ...question, phase: "rejected", decidedAt: new Date().toISOString() }] : [],
+      uninstallCommand: uninstall,
+    });
+    const reads = (listServerEnrollments as jest.Mock).mock.calls.length;
+    fireEvent.click(within(commands).getByRole("button", { name: "No, cancel" }));
+    await waitFor(() => expect(declineServerEnrollment).toHaveBeenCalledWith(question.id));
+    await waitFor(() => expect((listServerEnrollments as jest.Mock).mock.calls.length).toBeGreaterThan(reads));
+    await act(async () => { await Promise.resolve(); });
+
+    const region = screen.getByRole("region", { name: "Setup commands" });
+    expect(within(region).getByRole("heading", { name: "Cancelled." })).toBeInTheDocument();
+    expect(within(region).getByText(uninstall)).toBeInTheDocument();
+    expect(within(region).queryByRole("heading", { name: "Is this your server?" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(region).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Setup commands" })).not.toBeInTheDocument());
   });
 

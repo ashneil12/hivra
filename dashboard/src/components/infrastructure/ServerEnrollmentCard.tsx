@@ -106,7 +106,10 @@ export function ServerEnrollmentCard({
   const observed = report.observedAddress;
   const needsAddress = !observed || editingAddress;
 
-  if (declined) {
+  // "Cancelled." is what the owner sees after No, both right away and once a
+  // refresh reads the command back as rejected: the uninstall command must
+  // not vanish with the question.
+  if (declined || item.phase === "rejected") {
     return (
       <section className={`${enrollment.card} ${enrollment.cardDone}`} aria-labelledby={headingId} role="status">
         <h3 id={headingId}>Cancelled.</h3>

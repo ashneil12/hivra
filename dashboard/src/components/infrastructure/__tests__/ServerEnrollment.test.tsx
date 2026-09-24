@@ -33,7 +33,7 @@ import type {
 } from "@/lib/infrastructure/server-enrollment-contracts";
 
 import { replacementFailureCopy, ServerEnrollmentCard } from "../ServerEnrollmentCard";
-import { ServerEnrollmentDialog, waitingLine } from "../ServerEnrollmentDialog";
+import { closedCommandLine, ServerEnrollmentDialog, waitingLine } from "../ServerEnrollmentDialog";
 
 const CODE = "hse1_abcdefghijklmnopqrstuvwxyz234567";
 const NOW = Date.parse("2026-09-24T12:00:00.000Z");
@@ -94,7 +94,7 @@ afterEach(() => jest.useRealTimers());
 
 function renderDialog() {
   const handlers = { onClose: jest.fn(), onUseSshDetails: jest.fn(), onConnected: jest.fn(), onAccessReplaced: jest.fn(),
-    onChanged: jest.fn() };
+    onChanged: jest.fn(), onDeclined: jest.fn(), onConnectionsChanged: jest.fn() };
   render(<ServerEnrollmentDialog {...handlers} />);
   return handlers;
 }
@@ -164,6 +164,27 @@ describe("the command panel", () => {
     expect(cancelServerEnrollment).not.toHaveBeenCalled();
   });
 
+  // Review (round 2): the clock re-rendered every second inside an aria-live
+  // region, so a screen reader could announce it continuously.
+  it("announces a change of state, never the ticking clock", async () => {
+    renderDialog();
+    await screen.findByTestId("server-enrollment-command");
+    await act(async () => { jest.advanceTimersByTime(41_000); });
+    const waiting = screen.getByTestId("server-enrollment-waiting");
+    expect(waiting).toHaveTextContent("Waiting for your server… no contact yet · 0:41 — check your terminal if nothing happens.");
+    const live = within(waiting).getByRole("status");
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live.textContent).toBe("Waiting for your server… no contact yet");
+    await act(async () => { jest.advanceTimersByTime(1_000); });
+    expect(waiting).toHaveTextContent("no contact yet · 0:42");
+    expect(live.textContent).toBe("Waiting for your server… no contact yet");
+    // A download Hivra observed is a change of state: that is announced.
+    (getServerEnrollment as jest.Mock).mockResolvedValue(enrollment({ scriptFetches: 1, lastFetchedAt: new Date(NOW + 43_000).toISOString() }));
+    await act(async () => { jest.advanceTimersByTime(2_000); });
+    expect(within(screen.getByTestId("server-enrollment-waiting")).getByRole("status").textContent)
+      .toMatch(/^The setup script was downloaded with your command at .+\. Waiting for its report$/);
+  });
+
   it("never cancels the command when the owner switches to the SSH details wizard", async () => {
     const handlers = renderDialog();
     await screen.findByTestId("server-enrollment-command");
@@ -172,6 +193,62 @@ describe("the command panel", () => {
     expect(cancelServerEnrollment).not.toHaveBeenCalled();
   });
 
+});
+
+// Review (round 2): after No the poll read the command back as rejected; the
+// card unmounted and the panel said "This command expired", dropping the
+// uninstall command. A command used elsewhere read as expired too.
+describe("the panel after the answer", () => {
+  async function reachQuestion() {
+    const handlers = renderDialog();
+    await screen.findByTestId("server-enrollment-command");
+    (getServerEnrollment as jest.Mock).mockResolvedValue(reported());
+    await act(async () => { jest.advanceTimersByTime(2_000); });
+    await screen.findByRole("heading", { level: 1, name: "Is this your server?" });
+    return handlers;
+  }
+
+  it("keeps \"Cancelled.\" and the uninstall command after No, once the poll reads the command as rejected (T39)", async () => {
+    const handlers = await reachQuestion();
+    fireEvent.click(screen.getByRole("button", { name: "No, cancel" }));
+    expect(await screen.findByText("Cancelled.")).toBeInTheDocument();
+    expect(handlers.onDeclined).toHaveBeenCalledWith(expect.objectContaining({ id: reported().id, phase: "rejected" }));
+
+    (getServerEnrollment as jest.Mock).mockResolvedValue({ ...reported(), phase: "rejected",
+      decidedAt: new Date(NOW + 5_000).toISOString() });
+    await act(async () => { jest.advanceTimersByTime(2_000); });
+    await act(async () => { jest.advanceTimersByTime(2_000); });
+    expect(screen.getByText("Cancelled.")).toBeInTheDocument();
+    expect(screen.getByText(UNINSTALL)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy the uninstall command" })).toBeInTheDocument();
+    expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Get a new command" }));
+    await waitFor(() => expect(issueServerEnrollment).toHaveBeenLastCalledWith(null));
+  });
+
+  it("says a command used elsewhere connected the server, and refreshes the page's connections", async () => {
+    const handlers = await reachQuestion();
+    (getServerEnrollment as jest.Mock).mockResolvedValue({ ...reported(), phase: "confirmed", outcome: "connected",
+      connectionId: "99999999-9999-4999-8999-999999999999", decidedAt: new Date(NOW + 5_000).toISOString() });
+    await act(async () => { jest.advanceTimersByTime(2_000); });
+    expect(await screen.findByText("This command was used, and your server is connected. Close this panel to see it under Capacity."))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
+    expect(handlers.onConnectionsChanged).toHaveBeenCalledTimes(1);
+    await act(async () => { jest.advanceTimersByTime(4_000); });
+    expect(handlers.onConnectionsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ phase: "cancelled" as const }, "This command was cancelled. Get a new command."],
+    [{ phase: "cancelled" as const, refusedReports: 10 }, "This command was cancelled after 10 refused reports. Get a new command."],
+    [{ phase: "confirmed" as const, outcome: "replaced_access" as const },
+      "This command was used, and your server's access was replaced. Close this panel to see it under Capacity."],
+    [{ phase: "rejected" as const }, "This command was cancelled after No was chosen. Get a new command."],
+    [{ phase: "expired" as const }, "This command expired. Get a new command."],
+  ])("names how a command ended (%o)", (overrides, copy) => {
+    expect(closedCommandLine(enrollment(overrides))).toBe(copy);
+  });
 });
 
 function renderCard(item: ServerEnrollmentDto) {

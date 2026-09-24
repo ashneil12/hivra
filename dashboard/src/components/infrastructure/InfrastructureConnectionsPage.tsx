@@ -157,16 +157,29 @@ function isEnrolledConnection(connection: InfrastructureConnectionDto): boolean 
 }
 
 /** Open setup commands and answers the page shows, newest first. */
-function openEnrollments(enrollments: ServerEnrollmentDto[], dismissed: Set<string>, now: number) {
-  return enrollments.filter((item) => {
+export function openEnrollments(
+  enrollments: ServerEnrollmentDto[],
+  dismissed: Set<string>,
+  now: number,
+  declinedHere: ReadonlyMap<string, ServerEnrollmentDto> = new Map(),
+) {
+  const shown = enrollments.filter((item) => {
     if (dismissed.has(item.id)) return false;
     if (item.phase === "reported") return true;
     // Every open command: closing the panel doesn't cancel one, so a copied
     // command can still be run, and a download may mean a run is under way.
     if (item.phase === "issued") return Date.parse(item.expiresAt) > now;
+    // No, cancel: "Cancelled." and its uninstall command stay until the owner
+    // dismisses them, even after a refresh reads the command as rejected.
+    if (item.phase === "rejected") return declinedHere.has(item.id);
     // "A server used your setup command…" stays visible for an hour.
     return item.phase === "unsupported" && item.decidedAt !== null && now - Date.parse(item.decidedAt) < 60 * 60_000;
   });
+  // A command declined on this page that the list no longer returns.
+  for (const [id, item] of declinedHere) {
+    if (!dismissed.has(id) && !shown.some((other) => other.id === id)) shown.push(item);
+  }
+  return shown.sort((a, b) => Date.parse(b.issuedAt) - Date.parse(a.issuedAt));
 }
 
 function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | null {
@@ -249,6 +262,12 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
   const [enrollments, setEnrollments] = useState<ServerEnrollmentDto[]>([]);
   const [uninstallCommand, setUninstallCommand] = useState<string | null>(null);
   const [dismissedEnrollments, setDismissedEnrollments] = useState<Set<string>>(() => new Set());
+  // Commands the owner answered No to while this page is open, as the answer
+  // left them: they stay listed, with the uninstall command, until dismissed.
+  const [declinedEnrollments, setDeclinedEnrollments] = useState<ReadonlyMap<string, ServerEnrollmentDto>>(() => new Map());
+  const rememberDeclined = useCallback((item: ServerEnrollmentDto) => {
+    setDeclinedEnrollments((current) => new Map(current).set(item.id, { ...item, phase: "rejected" }));
+  }, []);
   // Coarse clock for which setup commands the page still shows.
   const enrollmentNow = useNow(30_000);
   const [editingConnection, setEditingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
@@ -999,14 +1018,22 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
         {/* Answers waiting (Is this your server?, open commands) come first:
             they are the owner's next step, above the ways to add more. */}
         <ServerEnrollmentAnswers
-          enrollments={openEnrollments(enrollments, dismissedEnrollments, enrollmentNow)}
+          enrollments={openEnrollments(enrollments, dismissedEnrollments, enrollmentNow, declinedEnrollments)}
           uninstallCommand={uninstallCommand}
           onConfirmed={(connection) => inspectEnrolledConnection(connection, `${connection.name} is connected. Hivra is inspecting it now.`)}
           onReplaced={(connection) => inspectEnrolledConnection(connection, `${connection.name}'s access was replaced. Hivra is checking it again.`)}
-          onDeclined={() => void loadEnrollments()}
-          onCancel={async (id) => {
-            await cancelServerEnrollment(id).catch(() => undefined);
+          onDeclined={(item) => {
+            rememberDeclined(item);
             void loadEnrollments();
+          }}
+          onCancel={async (id) => {
+            // A failed cancel is shown beside the command; the list is read
+            // again either way, since the command may have been used meanwhile.
+            try {
+              await cancelServerEnrollment(id);
+            } finally {
+              void loadEnrollments();
+            }
           }}
           onDismiss={(id) => setDismissedEnrollments((current) => new Set(current).add(id))}
           onNewCommand={openServerEnrollment}
@@ -1299,6 +1326,8 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
               onConnected={(connection) => inspectEnrolledConnection(connection, `${connection.name} is connected. Hivra is inspecting it now.`)}
               onAccessReplaced={(connection) => inspectEnrolledConnection(connection, `${connection.name}'s access was replaced. Hivra is checking it again.`)}
               onChanged={() => void loadEnrollments()}
+              onDeclined={rememberDeclined}
+              onConnectionsChanged={() => void loadConnections()}
             />
           ) : null}
 
@@ -1811,8 +1840,8 @@ function clockTime(iso: string): string {
 }
 
 /** Answers still to give: "Is this your server?", every open command (used
- * or not), and recent unsupported results. Each stays until it is answered,
- * cancelled or expires. */
+ * or not), recent unsupported results, and a No given on this page. Each
+ * stays until it is answered, cancelled, expires or is dismissed. */
 function ServerEnrollmentAnswers({
   enrollments,
   uninstallCommand,
@@ -1827,12 +1856,39 @@ function ServerEnrollmentAnswers({
   uninstallCommand: string | null;
   onConfirmed: (connection: InfrastructureConnectionDto) => void;
   onReplaced: (connection: InfrastructureConnectionDto) => void;
-  onDeclined: () => void;
-  onCancel: (id: string) => void;
+  onDeclined: (enrollment: ServerEnrollmentDto) => void;
+  /** Rejects when Hivra couldn't cancel the command. */
+  onCancel: (id: string) => Promise<void>;
   onDismiss: (id: string) => void;
   onNewCommand: () => void;
 }) {
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({});
   if (enrollments.length === 0) return null;
+
+  async function cancel(id: string) {
+    setCancelling(id);
+    setCancelErrors((current) => {
+      const rest = { ...current };
+      delete rest[id];
+      return rest;
+    });
+    try {
+      await onCancel(id);
+    } catch (error) {
+      // 404/409: the command ended another way (used, expired); the refreshed
+      // list shows how. Anything else: it was not cancelled and still works.
+      const ended = error instanceof InfrastructureApiError && (error.status === 404 || error.status === 409);
+      const message = error instanceof Error && error.message ? error.message : "Hivra couldn't cancel this command.";
+      setCancelErrors((current) => ({
+        ...current,
+        [id]: ended ? message : `${message} It wasn't cancelled and still works until it expires. Try again.`,
+      }));
+    } finally {
+      setCancelling(null);
+    }
+  }
+
   return (
     <section className={enrollmentStyles.section} aria-labelledby="server-enrollment-answers-heading">
       <div className={styles.sectionHeader}>
@@ -1856,7 +1912,15 @@ function ServerEnrollmentAnswers({
               </>
             )}
           </span>
-          <button type="button" className={styles.tertiaryButton} onClick={() => onCancel(item.id)}>Cancel this command</button>
+          <button type="button" className={styles.tertiaryButton} onClick={() => void cancel(item.id)} disabled={cancelling === item.id}>
+            {cancelling === item.id ? "Cancelling…" : "Cancel this command"}
+          </button>
+          {cancelErrors[item.id] ? (
+            <div className={styles.formError} role="alert">
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>{cancelErrors[item.id]}</span>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div key={item.id}>
@@ -1865,10 +1929,10 @@ function ServerEnrollmentAnswers({
             uninstallCommand={uninstallCommand}
             onConfirmed={onConfirmed}
             onReplaced={onReplaced}
-            onDeclined={onDeclined}
+            onDeclined={() => onDeclined(item)}
             onNewCommand={onNewCommand}
           />
-          {item.phase === "unsupported" ? (
+          {item.phase === "unsupported" || item.phase === "rejected" ? (
             <button type="button" className={styles.tertiaryButton} onClick={() => onDismiss(item.id)}>Dismiss</button>
           ) : null}
         </div>
