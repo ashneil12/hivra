@@ -179,11 +179,13 @@ export function FleetControlPane({ requested = false, attentionRequested = false
         </div>
       ) : null}
 
-      {hermesError ? (
-        <SourceFailure source="Hermes" onRetry={() => void retryHermes()} />
-      ) : null}
-      {hivraError ? (
-        <SourceFailure source="Hivra" onRetry={() => void retryHivra()} />
+      {/* One message, whichever list failed: how Hivra stores an agent is
+          not something the owner should have to know (FTUE-03). */}
+      {hermesError || hivraError ? (
+        <SourceFailure onRetry={() => {
+          if (hermesError) void retryHermes();
+          if (hivraError) void retryHivra();
+        }} />
       ) : null}
 
       {/* The attention filter must be escapable — a view you cannot leave is
@@ -287,17 +289,11 @@ function FleetEntry({
   );
 }
 
-function SourceFailure({
-  source,
-  onRetry,
-}: {
-  source: "Hermes" | "Hivra";
-  onRetry: () => void;
-}) {
+function SourceFailure({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border border-[color:var(--yellow)]/40 bg-[var(--bg-elevated)] px-3 py-2">
       <p className="text-[12px] leading-[1.4] text-[var(--yellow)]">
-        {source === "Hermes" ? "Your Hermes agents" : "Some of your agents and computers"} couldn&apos;t be loaded. Everything else is still listed.
+        Some agents and computers couldn&apos;t be loaded. The rest are listed.
       </p>
       <button
         type="button"
@@ -305,7 +301,7 @@ function SourceFailure({
         className="mono inline-flex min-h-[28px] pointer-coarse:min-h-[44px] items-center gap-1.5 pointer-coarse:px-2 text-[11px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
       >
         <RotateCcw aria-hidden="true" size={12} />
-        Retry {source}
+        Retry
       </button>
     </div>
   );

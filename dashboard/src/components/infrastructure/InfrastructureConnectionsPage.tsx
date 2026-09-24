@@ -156,13 +156,14 @@ export type EmbeddedCapacity = {
   onClose: () => void;
 };
 
-/** The target a Launch link inside the sheet points at, if it is one. */
-function launchTargetFromHref(href: string | null): string | null {
+/** A Launch link inside the sheet, and the place it chooses if any; null for
+ * any other link. */
+function launchLinkFromHref(href: string | null): { targetId: string | null } | null {
   if (!href) return null;
   try {
     const url = new URL(href, "https://hivra.invalid");
     if (url.origin !== "https://hivra.invalid" || url.pathname !== "/dashboard/launch") return null;
-    return url.searchParams.get("targetId");
+    return { targetId: url.searchParams.get("targetId") };
   } catch {
     return null;
   }
@@ -756,15 +757,16 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     <LaunchOnServerProvider pending={pendingLaunch} targets={targets}>
     <div
       className={embedded ? styles.embeddedPage : styles.page}
-      // Inside Launch, "Launch on this server" and "Continue launch" hand the
-      // server back to the same launch instead of opening Launch again.
+      // Inside Launch, every link back to Launch returns to the same launch
+      // instead of opening Launch again: with the place it chooses, if any.
       onClickCapture={embedded ? (event) => {
         const anchor = (event.target as HTMLElement | null)?.closest?.("a");
-        const targetId = launchTargetFromHref(anchor?.getAttribute("href") ?? null);
-        if (!targetId) return;
+        const link = launchLinkFromHref(anchor?.getAttribute("href") ?? null);
+        if (!link) return;
         event.preventDefault();
         event.stopPropagation();
-        embedded.onLaunchTarget(targetId);
+        if (link.targetId) embedded.onLaunchTarget(link.targetId);
+        else embedded.onClose();
       } : undefined}
     >
       {embedded ? null : <div className={styles.pageGlow} aria-hidden="true" />}
@@ -817,7 +819,17 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
           </div>
         ) : null}
 
-        {launchReturnHref && requestedLaunchLabel ? (
+        {/* Inside Launch, Hivra Cloud is already one of the launch's choices:
+            only a new place to run is news worth handing back. */}
+        {embedded && readyLaunchTarget && requestedLaunchLabel ? (
+          <div className={styles.pageNotice} role="status">
+            <CheckCircle2 size={16} aria-hidden="true" />
+            <span>{readyLaunchTarget.displayName} is ready for {requestedLaunchLabel}.</span>
+            <button type="button" className={styles.primaryButton} onClick={() => embedded.onLaunchTarget(readyLaunchTarget.id)}>
+              Use it for this launch <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          </div>
+        ) : !embedded && launchReturnHref && requestedLaunchLabel ? (
           <div className={styles.pageNotice} role="status">
             <CheckCircle2 size={16} aria-hidden="true" />
             <span>Capacity is ready for {requestedLaunchLabel}. Return to finish this launch.</span>

@@ -158,17 +158,32 @@ describe("FleetControlPane", () => {
 
   it("keeps the other family listed when one source fails, and offers retry", () => {
     const retryHermes = jest.fn(async () => undefined);
+    const retryHivra = jest.fn(async () => undefined);
     mockedUseWorkspaceAgents.mockReturnValue(
-      state({ hermesError: "boom", retryHermes, agents: [codex, ubuntu] }),
+      state({ hermesError: "boom", retryHermes, retryHivra, agents: [codex, ubuntu] }),
     );
     render(<FleetControlPane />);
 
-    expect(screen.getByText(/Your Hermes agents couldn't be loaded/)).toBeInTheDocument();
-    // The Hivra half must still be usable.
+    // One message in product words: never how Hivra stores an agent (FTUE-03).
+    expect(screen.getByText("Some agents and computers couldn't be loaded. The rest are listed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry (Hermes|Hivra)/ })).not.toBeInTheDocument();
+    // The rest must still be usable.
     expect(screen.getByText("CODEX_AGENT")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Retry Hermes/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retryHermes).toHaveBeenCalledTimes(1);
+    expect(retryHivra).not.toHaveBeenCalled();
+  });
+
+  it("offers one retry that re-reads every list that failed", () => {
+    const retryHermes = jest.fn(async () => undefined);
+    const retryHivra = jest.fn(async () => undefined);
+    mockedUseWorkspaceAgents.mockReturnValue(state({ hermesError: "a", hivraError: "b", retryHermes, retryHivra }));
+    render(<FleetControlPane />);
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retryHermes).toHaveBeenCalledTimes(1);
+    expect(retryHivra).toHaveBeenCalledTimes(1);
   });
 
   it("marks duplicate names so two same-named boxes are tellable apart", () => {
@@ -316,7 +331,7 @@ describe("FleetControlPane", () => {
     mockedUseWorkspaceAgents.mockReturnValue(state({ hivraError: 'Unavailable' }));
     render(<FleetControlPane />);
     expect(replace).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Retry Hivra' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
 
   it('distinguishes an attention search with no matches from no attention', () => {
