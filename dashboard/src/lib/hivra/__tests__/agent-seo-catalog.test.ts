@@ -135,6 +135,15 @@ describe("agent SEO catalog", () => {
     expect(AGENTS_HUB_DEPLOY_HREF).toBe(PUBLIC_START_HREF);
   });
 
+  it("describes the sign-up and Launch path its deploy buttons take, not the old plan page", () => {
+    for (const entry of AGENT_SEO_ENTRIES) {
+      for (const step of entry.howItWorks) {
+        expect(`${step.title} ${step.detail}`).not.toMatch(/get-started|get started page/i);
+      }
+      expect(entry.howItWorks[0].title).toMatch(/^Sign up and launch /);
+    }
+  });
+
   it("sends every agent page's deploy button to sign-up, which opens Launch on that agent", () => {
     for (const entry of AGENT_SEO_ENTRIES) {
       const href = new URL(agentDeployHref(entry), "https://hivra.test");

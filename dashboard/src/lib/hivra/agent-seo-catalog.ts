@@ -37,7 +37,7 @@ export interface AgentSeoStep {
 
 export interface AgentSeoEntry {
   slug: AgentSeoSlug;
-  /** The /get-started agentType key (Hermes launches as "general"). */
+  /** The sign-up agentType key that opens Launch on this agent (Hermes is "general"). */
   agentType: WelcomeAgentTypeKey;
   h1: string;
   subhead: string;
@@ -106,8 +106,8 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     howItWorks: [
       {
-        title: "Pick Claude Code on the get-started page",
-        detail: "Choose a plan, name the agent, and choose resources. The live browser is optional.",
+        title: "Sign up and launch Claude Code",
+        detail: "Launch opens with Claude Code selected. Choose where it runs and a plan, name the agent, and choose resources. The live browser is optional.",
       },
       {
         title: "Hivra provisions a private VM",
@@ -180,8 +180,8 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     howItWorks: [
       {
-        title: "Pick Codex on the get-started page",
-        detail: "Choose a plan, name the agent, and choose resources. The live browser is optional.",
+        title: "Sign up and launch Codex",
+        detail: "Launch opens with Codex selected. Choose where it runs and a plan, name the agent, and choose resources. The live browser is optional.",
       },
       {
         title: "Hivra provisions a private VM",
@@ -250,8 +250,8 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     howItWorks: [
       {
-        title: "Pick Hermes on the get-started page",
-        detail: "Choose a plan and name your agent. Plans start at $9.99 a month.",
+        title: "Sign up and launch Hermes",
+        detail: "Launch opens with Hermes selected. Hermes runs on Hivra Cloud: choose a plan and name your agent. Paid plans start at $9.99 a month.",
       },
       {
         title: "Hivra provisions a private VM",
@@ -320,8 +320,8 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     howItWorks: [
       {
-        title: "Pick Aeon on the get-started page",
-        detail: "Choose a plan and name the agent. Aeon barely uses any compute.",
+        title: "Sign up and launch Aeon",
+        detail: "Launch opens with Aeon selected. Choose where it runs and a plan, and name the agent. Aeon barely uses any compute.",
       },
       {
         title: "Hivra provisions a small computer",
@@ -394,8 +394,8 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     howItWorks: [
       {
-        title: "Pick OpenClaw on the get-started page",
-        detail: "It needs a paid plan, from $9.99 a month. Name the agent and launch.",
+        title: "Sign up and launch OpenClaw",
+        detail: "Launch opens with OpenClaw selected. On Hivra Cloud it needs a paid plan, from $9.99 a month. Name the agent and launch.",
       },
       {
         title: "Hivra provisions a private VM",
@@ -467,8 +467,8 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     howItWorks: [
       {
-        title: "Pick Agent Zero on the get-started page",
-        detail: "It needs a paid plan, from $9.99 a month. Name the agent and launch.",
+        title: "Sign up and launch Agent Zero",
+        detail: "Launch opens with Agent Zero selected. On Hivra Cloud it needs a paid plan, from $9.99 a month. Name the agent and launch.",
       },
       {
         title: "Hivra provisions a private VM",
