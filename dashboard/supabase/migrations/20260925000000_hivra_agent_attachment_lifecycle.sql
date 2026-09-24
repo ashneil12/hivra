@@ -10,9 +10,13 @@
 -- the routes and the worker behind a Canary-only switch.
 --
 -- Rollout: additive. Apply before the code that calls these functions serves.
--- The attach tables hold no rows on any environment before this release (the
--- chain was never granted), so the replaced checks and indexes validate
--- instantly.
+-- The attach tables have existed since 20260906190000 but the chain was never
+-- granted to an application role, so they are expected to be empty. Preflight
+-- on each environment before applying, and stop if it returns any row:
+--   select phase, dispatch_id is null as undispatched, completed_at is null as open, count(*)
+--   from public.hivra_agent_attachments group by 1,2,3;
+-- A row in a phase or shape this file does not know makes the replaced checks
+-- fail and the whole file roll back; nothing is half applied.
 --
 -- Idempotent: tables and columns use "if not exists", functions are replaced,
 -- triggers and constraints are dropped before they are created again.
@@ -865,8 +869,8 @@ returns jsonb language sql stable security definer set search_path=pg_catalog,pg
 $$;
 
 -- Open work for the minute worker: attachments still installing and access or
--- remove steps still open. Oldest first, bounded.
--- At most p_limit items in all, oldest first across both kinds.
+-- remove steps still open. At most p_limit items in all, oldest first across
+-- both kinds.
 create or replace function public.list_open_hivra_agent_attachment_work(p_limit integer)
 returns jsonb language sql stable security definer set search_path=pg_catalog,pg_temp as $$
   select coalesce(jsonb_agg(item order by at, id),'[]'::jsonb) from (

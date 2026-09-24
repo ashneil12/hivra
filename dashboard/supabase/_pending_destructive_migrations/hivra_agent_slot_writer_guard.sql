@@ -18,7 +18,8 @@
 --      than every existing file, regenerate the manifest
 --      (node scripts/generate-migrations-manifest.cjs), merge that by PR, and
 --      apply that one file with its ledger row.
---   4. Run the launch, start and restart smoke tests again.
+--   4. Run the launch, start and restart smoke tests again, including Start of
+--      an agent in 'error' (it must still start: see the audit below).
 --
 -- Rollback: drop the trigger and function below and restore service_role
 -- EXECUTE on the two reservation functions. Migration A stays.
@@ -35,11 +36,26 @@ revoke execute on function public.reserve_hivra_launch_model_request_v2(text,uui
 
 -- A new writer cannot skip the lock by accident: a Hivra-managed row that takes
 -- a slot is refused unless the writing function counted it under the owner's
--- slot lock in this transaction. That covers an insert, and an update that
--- moves a row into a slot: into Hivra-managed mode, or from a status that holds
--- no slot (error, deleted) back into one that does (provisioning, running,
--- stopped), such as a restore or a retry. Moves between slot-holding statuses
--- (start, stop, restart) and every move out of a slot are left alone. The
+-- slot lock in this transaction. That covers an insert, a move into
+-- Hivra-managed mode, and a deleted row coming back into a slot-holding status
+-- (provisioning, running, stopped). Moves between slot-holding statuses and
+-- every move out of a slot are left alone.
+--
+-- A move from 'error' back into a slot is left alone too. Audit of every
+-- status writer (2026-09-24): an errored Hivra-managed agent keeps its
+-- computer, and these writers move it back without the slot lock by design:
+--   - POST /api/hivra/agents/<id>/action start, restart, resize and
+--     update_runtime, through continue_hivra_agent_operation and
+--     continue_hivra_agent_resize_operation;
+--   - recover-stuck-provisioning (continue_hivra_agent_operation, then the
+--     operation completion that marks the agent running);
+--   - the operation completion functions of 20260826130000 and later.
+-- Refusing those would make Start or Restart of an errored agent fail after
+-- its computer was already started. do-managed-sessions status sync,
+-- gvisor-computer-service, windows-byo-iso and remote-desktop installs write
+-- self-managed rows only, which this trigger never checks. No writer moves a
+-- row out of 'deleted'. The accepted gap: an errored agent that comes back is
+-- not checked against the plan again (its computer was never released). The
 -- trigger cannot check the limit itself; it cannot see the plan.
 create or replace function public.guard_hivra_managed_agent_slot_writer()
 returns trigger language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
@@ -48,7 +64,7 @@ begin
     and new.status in ('provisioning','running','stopped')
     and (tg_op='INSERT'
       or old.deployment_mode is distinct from 'hivra-managed'
-      or old.status is null or old.status not in ('provisioning','running','stopped'))
+      or old.status is null or old.status='deleted')
     and coalesce(current_setting('hivra.agent_slot_checked', true), '')<>'on' then
     raise exception 'Hivra-managed agents must be written under the plan slot lock'
       using errcode='55000';

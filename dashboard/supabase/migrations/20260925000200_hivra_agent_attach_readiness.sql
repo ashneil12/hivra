@@ -14,9 +14,14 @@
 --   has not answered is measured from the database.
 --
 -- Rollout: additive. Apply after 20260925000000 and 20260925000100 and before
--- the code that calls refuse_hivra_agent_attachment serves. The attach tables
--- hold no rows on any environment before this release, so the replaced checks
--- validate instantly.
+-- the code that calls refuse_hivra_agent_attachment serves. The replaced
+-- checks only widen what a failed row may look like, so every row the earlier
+-- files allow still passes. Preflight on each environment and keep the
+-- result with the release record:
+--   select phase, end_reason, dispatch_id is null as undispatched, count(*)
+--   from public.hivra_agent_attachments group by 1,2,3;
+-- Expected: no rows, or only rows in the phases and reasons listed below. A
+-- row outside them fails the file as a whole; nothing is half applied.
 --
 -- Idempotent: constraints are dropped before they are created again, functions
 -- are replaced, and the grants are revoked before they are given.

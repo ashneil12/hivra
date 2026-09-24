@@ -615,16 +615,26 @@ def matrix(installation):
           {k: files.get(k) for k in ("rm_agents_md", "mv_agents_md", "ln_agents_md", "create_in_starting_folder")})
     socket_path = "/run/hivra-attached/%s.sock" % installation
     others = {}
-    for who in ("nobody", "hivra-desktop-broker"):
-        try:
-            pwd.getpwnam(who)
-        except KeyError:
-            others[who] = "no such user"
-            continue
-        result = run(["setpriv", "--reuid", who, "--regid", "nogroup", "--clear-groups", "python3", "-c",
-                      "import socket;s=socket.socket(socket.AF_UNIX);s.connect('%s')" % socket_path], check=False)
-        others[who] = "refused" if result.returncode != 0 else "connected"
-    check("T15_other_users_cannot_open_chat_socket", all(v != "connected" for v in others.values()), others)
+    # A computer without the remote desktop (these VMs) has no desktop broker
+    # user: a stand-in system user takes its place, so the check always tries
+    # a real connection and never passes on a missing account.
+    stand_in = False
+    try:
+        pwd.getpwnam("hivra-desktop-broker")
+    except KeyError:
+        run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "hivra-desktop-broker"])
+        stand_in = True
+    try:
+        for who in ("nobody", "hivra-desktop-broker"):
+            result = run(["setpriv", "--reuid", who, "--regid", "nogroup", "--clear-groups", "python3", "-c",
+                          "import socket;s=socket.socket(socket.AF_UNIX);s.connect('%s')" % socket_path], check=False)
+            others[who] = "refused" if result.returncode != 0 else "connected"
+    finally:
+        if stand_in:
+            run(["userdel", "hivra-desktop-broker"], check=False)
+    others["brokerStandIn"] = stand_in
+    check("T15_other_users_cannot_open_chat_socket",
+          [others[who] for who in ("nobody", "hivra-desktop-broker")] == ["refused", "refused"], others)
     bux_home = run(["setpriv", "--reuid", "bux", "--regid", "bux", "--init-groups", "ls", user.pw_dir], check=False)
     check("T11_owner_cannot_read_agent_home", bux_home.returncode != 0, bux_home.stderr.strip()[-200:])
 

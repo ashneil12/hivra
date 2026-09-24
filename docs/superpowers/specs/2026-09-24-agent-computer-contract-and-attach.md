@@ -90,7 +90,7 @@ computer says "Not available to add to an existing computer yet".
 | Database | `20260925000000_hivra_agent_attachment_lifecycle.sql`: intent v2 (the reviewed grants and review digest, the pinned installer and grant policy); the plan limit checked again in claim and in dispatch under the per-owner slot lock; activation v2, admitted only with the unit renderer's and the lifecycle program's pinned digests, with the instance token stored beside the binding in a table no role can read; complete only with the recorded readiness observation (it publishes the canonical identity, installation and binding and releases the computer's lease); fail only with an observed cleanup receipt; the contract a revision at a time, delivered only on a matching read-back; Change access and Remove as their own operations on the lease (`agent_access_change`, `agent_detach`); restore refused while an agent is attached; a computer delete detaches the binding with a `computer_deleted` receipt. `20260925000100_hivra_agent_attachment_grants.sql`: `EXECUTE` for `service_role` only on the functions the routes and worker call, revoked from everyone on the v1 activation admission. `20260925000200_hivra_agent_attach_readiness.sql`: the gate reads `computer_not_ready` for a running computer Hivra has not seen ready (no `provisioned_at`, or no gateway `chat_url` for the Chat tab); `refuse_hivra_agent_attachment` ends a claim no dispatch was ever granted for as **failed** with `computer_not_running` or `computer_not_ready` and releases the lease; the worker's state read carries the claim's `createdAt` | **Refinement of 5.9.** The v1 activation chain is retired rather than changed: `attachment-activation-*`, `attachment-native-*`, `preflight-`, `start-` and `observe-attached-codex-activation.py`, `probe-attached-codex-native.py` and `attached-codex-protocol.py` are deleted with their tests. One guest program, `attached-agent.py`, carries activate, observe, access, state and remove, and the database pins its digest |
 | Guest | Units v2, rendered byte-equal by `attachment-service-units.ts` and `attached-agent.py`: the socket, agent, workspace, network, DNS socket and relay, enforcement probe and watchdog timer. `attached-workspace.py` (fd-based idmapped mount, verify, the Remove walker), `attached-network.py` (namespace, veth and NAT, the nftables table with the `onlink`, `gateways` and `blocked` sets, systemd `IPAddressDeny` on the agent and probe units, the relay guard, the enforcement probe, the watchdog), `attached-dns-relay.py`. Folder recovery stops the attached units before it touches `~/Hivra` | **Found on the VMs:** the agent unit also hides the system bus, the snapd, acpid, dhcpcd and uuidd sockets, `io.systemd.Resolve` and `io.systemd.ManagedOOM` (not all of `/run/systemd/resolve`, because `/etc/resolv.conf` links into it). `OOMPolicy=continue`: the memory limit kills the process that hit it and Codex keeps running (T22). Enforcement needs all three layers: the nftables table and each element as the kernel answers for it, systemd's effective `IPAddressDeny` checked by coverage (systemd drops an entry another one covers), and `CONFIG_CGROUP_BPF`. The watchdog keeps Codex stopped until both layers are back, then starts it again. Change access checks the mount point before it stops Codex and refuses a link or anything else that is not a plain empty folder (`workspace_path_not_plain`); a view that is not as granted refuses to start (`view_not_as_granted`). Remove also clears the staging journal it owns. A read-only `state` action lets the worker look after a lost answer instead of changing access again |
 | Chat | `hivra-chat/server.js` attached mode: socket activation, the root-owned token file, its own `HOME` and `CODEX_HOME` (created 0700 when missing: spike S4), the root-owned starting folder, `exec -C <folder> resume`, `-c project_doc_max_bytes=32768`, and the chat route allowlist. The computer gateway's `/agents/<installation id>/` proxy with the socket check | S3 picked outcome (a) of 5.4. Manage says "applies from its next message" for attached Codex 0.149.1 only (`contract-resume-evidence.ts`); agent-owned computers keep "applies to new chats" |
-| Worker and routes | `GET /api/cron/progress-agent-attachments` every minute, at most five steps a pass within 600 s: staging, activation, readiness and completion, cleanup before a failure, Change access and Remove. Before anything runs on the computer the worker checks it is running and ready; a precondition refusal ends the attach as failed with its reason, never held: the computer stopped (`computer_not_running`), is not ready, or its guest has not answered Hivra within three minutes of the claim (`computer_not_ready`). A pending delete still cancels. `GET` and `POST /api/hivra/computers/<id>/agents`, `PATCH` and `DELETE /api/hivra/computers/<id>/agents/<attachment id>`, `GET /api/hivra/attached-agents` | `<id>` is the Hivra computer id (`hivra_agents.id`). **Flag:** `isAgentAttachEnabled()` reads the deployment channel on the server (`isCanaryDeployment`), so production needs no change to keep attach off. Elsewhere the routes answer 404 and the worker does nothing |
+| Worker and routes | `GET /api/cron/progress-agent-attachments` every minute, at most five open items a pass (oldest first across attaches and steps), with one deadline 20 s inside the function's 800 s limit: a host step starts only if its own worst case fits, checked before each dispatch compare-and-swap, so nothing is granted and then left unstarted (`budget_exhausted` holds it for the next pass). The host allocation lock (`/run/lock/hivra-allocation.lock`, shared with launch, start, stop, restart, snapshots and bundle sync, which wait at most 60 s) is held only while the host checks the VM (running, binding tag, guest address with any prefix length) and hands the step to its guest agent (`qm guest exec --synchronous 0`); the wait for the answer (`qm guest exec-status`) runs without it. A VM the host refuses is named (`computer_not_running`, `binding_mismatch`, `address_mismatch`), and before the stage dispatch that ends the claim as failed. Steps: staging, activation, readiness and completion, cleanup before a failure, Change access and Remove. Before anything runs on the computer the worker checks it is running and ready; a precondition refusal ends the attach as failed with its reason, never held: the computer stopped (`computer_not_running`), is not ready, or its guest has not answered Hivra within three minutes of the claim (`computer_not_ready`). A pending delete still cancels. `GET` and `POST /api/hivra/computers/<id>/agents`, `PATCH` and `DELETE /api/hivra/computers/<id>/agents/<attachment id>`, `GET /api/hivra/attached-agents` | `<id>` is the Hivra computer id (`hivra_agents.id`). **Flag:** `isAgentAttachEnabled()` reads the deployment channel on the server (`isCanaryDeployment`), so production needs no change to keep attach off. Elsewhere the routes answer 404 and the worker does nothing |
 | UI | Computer page → Manage → "Agents on this computer": Add an agent, the gate of 5.8 with the pair line "Adds a new Codex to <computer>. Your other agents stay as they are.", the Review with the isolation line and technical details, progress from receipts only, the plan limit with a Billing link and no Review, "not running" and "not ready" with no Review, a refused add shown as failed with its reason, the contract as "Delivered <time> · checked by Hivra · applies from its next message", Change access and Remove as their own reviews, and the snapshot note. A Chat tab on the computer page once Codex is ready. Launch → "Put an agent on a computer I already have", and the same entry on the Agents list, open the computer list, where each computer that can take Codex shows the pair line and the others "Not available to add to an existing computer yet". The shared agents list (`useWorkspaceAgents`: Home and the agent switcher) and the Agents list show "Codex on <computer>" right after its computer, opening that computer's Chat tab (or Manage while it is being added). A sign-in link from the attached agent opens only on OpenAI or ChatGPT sign-in hosts (T28) | Not built: the "One of my computers" group in Where it runs; the ⌘K palette's own resource list does not include attached agents. Not in scope (the owner's open decision): connecting an existing agent to another computer, and desktop or browser grants |
 
 **Tests in 8.1, where they differ from the list:**
@@ -182,14 +182,55 @@ built.
 
 - Canary acceptance AC-A1 to AC-A12. AC-A2 needs a ChatGPT account or an
   OpenAI key approved for testing.
-- The Proxmox path: the VMID-bound guest exec and the host allocation lock
-  were not run on a real Proxmox host. The lock is held for the whole guest
-  step, up to about nine minutes for an activation, so other host operations
-  wait behind it.
+- The Proxmox path end to end (a Hivra computer on a Canary host, AC-A1):
+  the detached guest exec and the lock release were checked on a disposable
+  Proxmox VE 8.4 host with a guest agent (see "The host lock on a real
+  Proxmox host" below) and in a container against a fake `qm`
+  (`scripts/test-attachment-host-step.py`, run by Dashboard CI's attach
+  fixtures job), not yet on a Hivra host with a Hivra computer.
+- T15 on a VM with the remote desktop: on the VMs above no
+  `hivra-desktop-broker` user existed, so that half of T15 connected as
+  nobody only. The matrix now makes a stand-in system user when the broker
+  is missing; it has not been run again on a VM since.
 - The Desktop after attach, Change access and Remove (no remote desktop on
   the VMs), aarch64, and the "One of my computers" group.
 - The slot writer guard for queued launches stays in
   `_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql`.
+
+### Release steps (Canary, then production)
+
+This branch changes the launch, resize and billing paths for every owner,
+not only attach: every Hivra-managed launch writes through
+`insert_hivra_managed_agent` or `reserve_hivra_launch_model_request_v3` with
+the plan limit, and `loadCurrentComputeUsage` (launch, resize, billing usage
+and the attach gate) fails closed when `hivra_owner_agent_slot_count` errors.
+A database without these functions answers "Could not verify remaining
+compute" to every launch and every usage read.
+
+Database, in this order, on each environment:
+
+| # | File | Class | Before applying |
+|---|---|---|---|
+| 1 | `20260924220000_hivra_agent_slot_limit.sql` | Additive (plan limit A) | none |
+| 2 | `20260924230000_provider_release_admission_2026_09_24_2.sql` | Additive | none |
+| 3 | `20260925000000_hivra_agent_attachment_lifecycle.sql` | Additive | preflight: `select phase, dispatch_id is null, completed_at is null, count(*) from public.hivra_agent_attachments group by 1,2,3;` returns no rows |
+| 4 | `20260925000100_hivra_agent_attachment_grants.sql` | Additive (grants) | none |
+| 5 | `20260925000200_hivra_agent_attach_readiness.sql` | Additive | preflight: `select phase, end_reason, dispatch_id is null, count(*) from public.hivra_agent_attachments group by 1,2,3;` shows only phases and reasons the file allows |
+| 6 | `_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql` | **Blocking** (queued) | only after the code serves there, with the launch, start and restart smoke tests (an agent in `error` included) before and after |
+
+Steps 1 to 5 go on before the merged code serves (Canary: before the merge
+into `canary` builds; production: **before the owner's Promote**, not only on
+Canary). Step 6 follows the served code on each environment. Each file is
+idempotent and PGlite applies each twice in its test.
+
+Canary acceptance after the merge serves, before any attach check (the hot
+path, not behind the attach flag): see 8.3, AC-H1 to AC-H5.
+
+**The attach flag.** `isAgentAttachEnabled()` is `isCanaryDeployment()`:
+on for the Canary deployment's own channel and hosts, off for `hivra.cloud`,
+`hermesos-*` production URLs and an explicit production channel. Production
+needs no environment change to keep attach off; the routes answer 404 and the
+worker does nothing there.
 
 ---
 
@@ -761,9 +802,14 @@ surfaces, placements and sizes come from enums, never from free text.
       in `supabase/_pending_destructive_migrations/`, outside the migrations
       folder, so no "apply every pending migration" run can apply it early; the
       release doc lists it under "Queued database steps". Its trigger covers
-      inserts and updates that move a row into a slot (into Hivra-managed mode,
-      or from `error` or `deleted` back to a slot-holding status). No app path
-      makes such an update today; a future restore or retry must take the lock.
+      inserts, a move into Hivra-managed mode, and a `deleted` row coming back
+      into a slot-holding status. A move from `error` is left alone: an audit
+      of every status writer (listed in the file's header) found that Start,
+      Restart, resize and runtime update of an errored agent, and
+      recover-stuck-provisioning, move it back without the slot lock through
+      `continue_hivra_agent_operation`, after its computer has already
+      started. The accepted gap is that an errored agent that comes back is
+      not checked against the plan again; its computer was never released.
     - The Hermes lane keeps its own limit. `/api/instances`
       (`instance-service.ts:2451-2467`) counts only `hermes_instances` of its
       own product surface and never counts `hivra_agents` or attachments, by
@@ -1763,6 +1809,18 @@ Hivra-owned capacity, with cleanup evidence.
 | AC-C3 | Tamper | Edit the block on the computer | Manage shows "Changed on the computer"; Restore brings back "The computer reported it delivered" |
 | AC-C4 | Hetzner provider VM | Same as AC-C1 | **Needs purchase approval**, unless an existing Canary provider VM is available |
 | AC-C5 | DigitalOcean | Launch; the setup card is visible; ask the question | **UNAVAILABLE** until a preview team, token and prepaid balance are approved |
+
+**Hot path** (every owner, not behind the attach flag; run first, on the
+served Git SHA, with disposable Canary capacity and cleanup evidence)
+
+| Id | Steps | Pass |
+|---|---|---|
+| AC-H1 | Launch a Hivra Cloud Codex agent | It launches; the launch writes through `insert_hivra_managed_agent` (no "Could not verify remaining compute"); Billing's agent count rises by one |
+| AC-H2 | Resize that agent | The resize is admitted against the plan and completes |
+| AC-H3 | Stop, Start and Restart it; then Start an agent in `error` if a fixture has one | Each completes; nothing answers "Hivra-managed agents must be written under the plan slot lock" |
+| AC-H4 | Launch on My server (self-managed) and, if a preview team is approved, on DigitalOcean | Both launch; My server does not count against the plan's Hivra Cloud limit |
+| AC-H5 | `GET /api/billing/usage` as the fixture owner | 200 with the agent count from `hivra_owner_agent_slot_count` |
+| AC-H6 | On a fixture at its plan's limit, Launch | The existing plan-limit copy, and no row is written |
 
 **Attach** (Codex on a disposable Canary Ubuntu Desktop)
 

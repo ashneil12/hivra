@@ -171,8 +171,10 @@ async function main() {
       "a Hivra-managed row written without the slot lock is refused");
     await agent(pid("1", 10), { status: "running", mode: "self-managed" });
     // Updates: moving into a slot needs the lock; slot-to-slot and out-of-slot moves do not.
-    await assert.rejects(() => db.query("update public.hivra_agents set status='provisioning' where id=$1", [pid("1", 4)]),
-      { code: "55000" }, "an error row moved back into a slot without the lock is refused");
+    // Start or Restart of an errored agent moves it back without the slot lock
+    // (continue_hivra_agent_operation): it keeps its computer, and must not fail.
+    await db.query("update public.hivra_agents set status='provisioning' where id=$1", [pid("1", 4)]);
+    await db.query("update public.hivra_agents set status='error' where id=$1", [pid("1", 4)]);
     await assert.rejects(() => db.query("update public.hivra_agents set status='running',desired_state='running' where id=$1", [pid("1", 5)]),
       { code: "55000" }, "a deleted row restored without the lock is refused");
     await assert.rejects(() => db.query(`update public.hivra_agents set deployment_mode='hivra-managed',proxmox_host='local',
