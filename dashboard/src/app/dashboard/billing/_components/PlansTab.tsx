@@ -254,9 +254,11 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
   const isApple = source === "apple_iap";
 
   // $HermesOS plan payment is offered only to people who don't already pay
-  // for a plan by card or through Apple.
+  // for a plan by card or through Apple, and only where the token geo-policy
+  // allows token features (this hides the chip and the token path with it).
   const canPayWithToken =
     c.flags.cryptoBillingEnabled &&
+    c.tokenGeo.status === "allowed" &&
     !hasPaidCardOrAppleSubscription({ planKey: currentPlanKey, source });
   const path: PlanPaymentPath = canPayWithToken && c.paidPath === "crypto" ? "token" : "card";
   const tokenMode: TokenPlanMode = c.cryptoMode === "permanent" ? "hold" : "yearly";

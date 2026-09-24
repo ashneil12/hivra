@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { utils as ssh2Utils } from "ssh2";
 
@@ -17,6 +17,7 @@ import {
   type HetznerServer,
   type HetznerServerType,
 } from "@/lib/hetzner/client";
+import { log } from "@/lib/logger";
 
 import {
   HETZNER_CLOUD_BILLING_SEMANTICS,
@@ -41,6 +42,19 @@ import {
 } from "./contracts";
 import { InfrastructureConnectionStoreError } from "./connection-store";
 import { FIRST_BOOT_RECIPE_VERSION } from "./first-boot-enrollment";
+import { isHetznerGuidedSetupImage, isHetznerGuidedSetupServerType } from "./hetzner-guided-setup";
+import {
+  HETZNER_WRITE_CHECK_KEY_PREFIX,
+  HETZNER_WRITE_CHECK_LABEL,
+  HetznerWriteCheckKeyNameSchema,
+  hetznerCloudTokenCheckMessage,
+  hetznerCloudTokenReplaceMessage,
+  type HetznerCloudTokenCheckErrorCode,
+  type HetznerCloudTokenProjectCheck,
+  type HetznerCloudTokenReplaceErrorCode,
+  type HetznerCloudTokenReplaceResult,
+  type HetznerCloudWriteCheck,
+} from "./hetzner-cloud-token-contracts";
 import { resolveFirstBootCreationRecipe } from "./first-boot-creation-recipe";
 import {
   FIRST_BOOT_PREPARATION_CONFIRMATION, loadFirstBootEnrollmentForOrder, markFirstBootServerPostAttempted,
@@ -59,6 +73,7 @@ import {
   loadHetznerCloudCapacityBootstrap,
   loadHetznerCloudCapacityQuote,
   loadHetznerCloudConnectionSecret,
+  loadHetznerCloudTokenReplacementScope,
   markHetznerCloudServerPostAttempted,
   markHetznerCloudSshKeyPostAttempted,
   recordHetznerCloudCapacityOrderProgress,
@@ -66,9 +81,11 @@ import {
   recordHetznerCloudInventoryFailure,
   recordHetznerCloudSshKeyResult,
   reconcileHetznerCloudInventory,
+  replaceHetznerCloudConnectionToken,
   upsertHetznerCloudInventoryServer,
   type SanitizedHetznerCloudServer,
   type HetznerBootstrapBundle,
+  type HetznerCloudTokenReplacementScope,
   type StoredHetznerCloudCapacityOrder,
 } from "./hetzner-cloud-store";
 import type { HetznerCurrentServerShape } from "./hetzner-current-server-shape";
@@ -77,6 +94,28 @@ export class HetznerCloudConnectionError extends Error {
   constructor(public readonly code: HetznerCloudConnectionErrorCode) {
     super(`Hetzner Cloud connection failed: ${code}`);
     this.name = "HetznerCloudConnectionError";
+  }
+}
+
+/** A token that authenticates but cannot be used here: read-only, from a
+ * different project, or a write check Hetzner did not confirm. Never persisted
+ * as a connection status; the user fixes it on the same screen. */
+export class HetznerCloudTokenCheckError extends Error {
+  constructor(
+    public readonly code: HetznerCloudTokenCheckErrorCode,
+    public readonly strayKeyName: string | null = null,
+  ) {
+    super(hetznerCloudTokenCheckMessage(code, strayKeyName));
+    this.name = "HetznerCloudTokenCheckError";
+  }
+}
+
+/** Replace token refused because the credential is in use, or finished in a
+ * state it can't confirm. `replaced_unconfirmed` means the swap happened. */
+export class HetznerCloudTokenReplaceError extends Error {
+  constructor(public readonly code: HetznerCloudTokenReplaceErrorCode) {
+    super(hetznerCloudTokenReplaceMessage(code));
+    this.name = "HetznerCloudTokenReplaceError";
   }
 }
 
@@ -109,6 +148,9 @@ type Dependencies = {
   recordOrderProgress: typeof recordHetznerCloudCapacityOrderProgress;
   recordOrderResult: typeof recordHetznerCloudCapacityOrderResult;
   upsertInventoryServer: typeof upsertHetznerCloudInventoryServer;
+  loadTokenReplacementScope: typeof loadHetznerCloudTokenReplacementScope;
+  replaceToken: typeof replaceHetznerCloudConnectionToken;
+  writeCheckKey(): { name: string; publicKey: string };
   newId(): string;
   generateBootstrap(input: {
     userId: string;
@@ -141,6 +183,9 @@ const defaultDependencies: Dependencies = {
   recordOrderProgress: recordHetznerCloudCapacityOrderProgress,
   recordOrderResult: recordHetznerCloudCapacityOrderResult,
   upsertInventoryServer: upsertHetznerCloudInventoryServer,
+  loadTokenReplacementScope: loadHetznerCloudTokenReplacementScope,
+  replaceToken: replaceHetznerCloudConnectionToken,
+  writeCheckKey: generateHetznerWriteCheckKey,
   newId: randomUUID,
   generateBootstrap: generateHetznerBootstrapBundle,
 };
@@ -1238,27 +1283,271 @@ function capacityOperationResult(
   };
 }
 
+function sshWireUint32(value: number): Buffer {
+  const buffer = Buffer.alloc(4);
+  buffer.writeUInt32BE(value);
+  return buffer;
+}
+
+/** A throwaway Ed25519 public key for the disclosed write check. The private
+ * half is never exported or stored, so the key cannot open any server even if
+ * it outlives the check. Built from the raw 32-byte key (not ssh2), so it has
+ * no leading-zero serialization hazard. */
+export function generateHetznerWriteCheckKey(): { name: string; publicKey: string } {
+  const { publicKey } = generateKeyPairSync("ed25519");
+  const jwk = publicKey.export({ format: "jwk" }) as { x?: unknown };
+  const raw = typeof jwk.x === "string" ? Buffer.from(jwk.x, "base64url") : Buffer.alloc(0);
+  if (raw.length !== 32) throw new HetznerCloudTokenCheckError("write_check_unconfirmed");
+  const type = Buffer.from("ssh-ed25519", "ascii");
+  const blob = Buffer.concat([sshWireUint32(type.length), type, sshWireUint32(raw.length), raw]);
+  return {
+    name: `${HETZNER_WRITE_CHECK_KEY_PREFIX}${randomBytes(6).toString("hex")}`,
+    publicKey: `ssh-ed25519 ${blob.toString("base64")} hivra-check`,
+  };
+}
+
+function exactWriteCheckKeyId(
+  key: HetznerSshKey | null | undefined,
+  name: string,
+): number | null {
+  return key
+    && typeof key === "object"
+    && key.name === name
+    && Number.isSafeInteger(key.id)
+    && key.id > 0
+    ? key.id
+    : null;
+}
+
+/**
+ * Disclosed, non-billable proof that a token can change this project: add one
+ * labelled SSH key, then delete it by its exact id. A read-only token fails
+ * here, before any connection is saved or any price is reviewed. If the
+ * delete fails, write access is still proven and the stray key's name is
+ * returned so the user can remove it; it is never hidden.
+ */
+async function verifyHetznerProjectWriteAccess(
+  provider: HetznerCloudProjectClient,
+  deps: Dependencies,
+): Promise<HetznerCloudWriteCheck> {
+  const probe = deps.writeCheckKey();
+  if (!HetznerWriteCheckKeyNameSchema.safeParse(probe.name).success) {
+    throw new HetznerCloudTokenCheckError("write_check_unconfirmed");
+  }
+  let keyId: number | null = null;
+  let createUncertain = false;
+  try {
+    keyId = exactWriteCheckKeyId(
+      await provider.createSshKey({
+        name: probe.name,
+        publicKey: probe.publicKey,
+        labels: { [HETZNER_WRITE_CHECK_LABEL]: "true" },
+      }),
+      probe.name,
+    );
+    createUncertain = keyId === null;
+  } catch (error) {
+    if (!(error instanceof HetznerCloudApiError)) throw providerFailure(error);
+    if (error.providerCode === "token_readonly") {
+      throw new HetznerCloudTokenCheckError("token_read_only");
+    }
+    if (error.status === 401 || error.providerCode === "unauthorized") {
+      throw new HetznerCloudConnectionError("invalid_credentials");
+    }
+    if (error.providerCode === "resource_limit_exceeded") {
+      throw new HetznerCloudTokenCheckError("write_check_blocked");
+    }
+    // A timeout or an unreadable success may still have created the key.
+    // Anything else is a definite provider refusal or outage.
+    if (error.code !== "timeout" && error.code !== "response_invalid") {
+      throw providerFailure(error);
+    }
+    createUncertain = true;
+  }
+  if (createUncertain) {
+    let matches: HetznerSshKey[];
+    try {
+      matches = (await provider.findSshKeysByName(probe.name)).filter((key) => (
+        key.name === probe.name && key.labels?.[HETZNER_WRITE_CHECK_LABEL] === "true"
+      ));
+    } catch {
+      throw new HetznerCloudTokenCheckError("write_check_unconfirmed", probe.name);
+    }
+    if (matches.length === 0) {
+      // Nothing was written, so write access is unproven. Retrying is safe.
+      throw new HetznerCloudTokenCheckError("write_check_unconfirmed");
+    }
+    keyId = matches.length === 1 ? exactWriteCheckKeyId(matches[0], probe.name) : null;
+    if (keyId === null) return { strayKeyName: probe.name };
+  }
+  try {
+    await provider.deleteSshKey(keyId as number);
+    return { strayKeyName: null };
+  } catch {
+    return { strayKeyName: probe.name };
+  }
+}
+
 export async function connectHetznerCloudProject(
   input: { userId: string; name: string; apiToken: string },
   dependencies: Partial<Dependencies> = {},
 ): Promise<{
   connection: HetznerCloudConnectionDto;
   inventory: HetznerCloudServerInventoryDto[];
+  writeCheck: HetznerCloudWriteCheck;
 }> {
   const deps = { ...defaultDependencies, ...dependencies };
   const discoveredAt = deps.now().toISOString();
+  const provider = deps.client(input.apiToken);
   let inventory: SanitizedHetznerCloudServer[];
   try {
     // GET /servers both validates the project-scoped token and produces the
-    // first inventory snapshot. No provider mutation occurs in this flow.
-    const servers = await deps.client(input.apiToken).listServers();
+    // first inventory snapshot.
+    const servers = await provider.listServers();
     inventory = servers.map((server) => sanitizeServer(server, discoveredAt));
   } catch (error) {
     throw providerFailure(error);
   }
+  // The only mutation in this flow: the disclosed add-then-remove SSH key.
+  const writeCheck = await verifyHetznerProjectWriteAccess(provider, deps);
   // Encryption and atomic persistence are deliberately outside the provider
   // error boundary so database or master-key failures retain their real class.
-  return deps.createRecord({ ...input, discoveredAt, inventory });
+  const record = await deps.createRecord({ ...input, discoveredAt, inventory });
+  return { ...record, writeCheck };
+}
+
+/** A secret-free failure class for logs: store codes only, never messages. */
+function storeFailureType(error: unknown): string {
+  return error instanceof InfrastructureConnectionStoreError ? error.code : error instanceof Error ? error.name : typeof error;
+}
+
+/** A 'creating' order updated this recently may still be inside its create
+ * request (45-second route, 30-second dispatch budget). Mirrors the interval
+ * in replace_hetzner_cloud_connection_token. */
+export const HETZNER_SERVER_REQUEST_IN_FLIGHT_MS = 2 * 60_000;
+
+/**
+ * Does the new token reach the project this connection manages? Hetzner ids
+ * are unique across projects, so seeing one server or generated SSH key Hivra
+ * created here, one server the saved list saw, or a still-unconfirmed
+ * request's server or key (by Hivra's generated name and exact labels) proves
+ * it. Refuses only when Hivra holds something here that the token can't see.
+ */
+function sameProjectCheck(
+  scope: HetznerCloudTokenReplacementScope,
+  servers: HetznerServer[],
+  sshKeys: HetznerSshKey[],
+): HetznerCloudTokenProjectCheck {
+  const serverIds = new Set(servers.map((server) => String(server.id)));
+  const keyIds = new Set(sshKeys.map((key) => String(key.id)));
+  const matched = scope.heldServerIds.some((id) => serverIds.has(id))
+    || scope.heldSshKeyIds.some((id) => keyIds.has(id))
+    || scope.knownServerIds.some((id) => serverIds.has(id))
+    || scope.pendingOrders.some((order) => (
+      servers.some((server) => server.name === order.serverName && labelsMatch(server.labels, order.providerLabels))
+      || sshKeys.some((key) => key.name === capacitySshKeyName(order.orderId)
+        && labelsMatch(key.labels, order.providerLabels))
+    ));
+  if (matched) return "confirmed";
+  const holdsResources = scope.heldServerIds.length > 0
+    || scope.heldSshKeyIds.length > 0
+    || scope.pendingOrders.length > 0;
+  if (holdsResources) throw new HetznerCloudTokenCheckError("token_project_mismatch");
+  return "unconfirmed";
+}
+
+/**
+ * Replace a Hetzner project token in place. Refused while a server request may
+ * still be running. The new token must authenticate, reach the same project
+ * (see sameProjectCheck) and pass the write check. The envelope is then
+ * swapped at the same revision, so the generated SSH keys, setup enrollments
+ * and targets bound to that revision all carry forward. Nothing is wiped or
+ * re-created. Once the swap succeeds, no later failure reports "nothing was
+ * replaced": a failed inventory write returns the saved list (or none), and a
+ * read-back that doesn't show this token is `replaced_unconfirmed`.
+ */
+export async function replaceHetznerCloudToken(
+  input: { userId: string; connectionId: string; apiToken: string },
+  dependencies: Partial<Dependencies> = {},
+): Promise<HetznerCloudTokenReplaceResult> {
+  const deps = { ...defaultDependencies, ...dependencies };
+  const scope = await deps.loadTokenReplacementScope(input.userId, input.connectionId);
+  const nowMs = deps.now().getTime();
+  // A purchase in flight must finish on the token it started with. The
+  // database refuses the same window; checking first gives the real reason
+  // instead of a project mismatch for a server that doesn't have an id yet.
+  if (scope.pendingOrders.some((order) => order.status === "creating"
+    && nowMs - Date.parse(order.updatedAt) < HETZNER_SERVER_REQUEST_IN_FLIGHT_MS)) {
+    throw new HetznerCloudTokenReplaceError("server_request_in_progress");
+  }
+  const discoveredAt = deps.now().toISOString();
+  const provider = deps.client(input.apiToken);
+  let servers: HetznerServer[];
+  let inventory: SanitizedHetznerCloudServer[];
+  let sshKeys: HetznerSshKey[] = [];
+  try {
+    servers = await provider.listServers();
+    inventory = servers.map((server) => sanitizeServer(server, discoveredAt));
+    if (scope.heldSshKeyIds.length > 0 || scope.pendingOrders.length > 0) {
+      sshKeys = await provider.listSshKeys();
+    }
+  } catch (error) {
+    throw providerFailure(error);
+  }
+  const projectCheck = sameProjectCheck(scope, servers, sshKeys);
+  const writeCheck = await verifyHetznerProjectWriteAccess(provider, deps);
+  const outcome = await deps.replaceToken({
+    userId: input.userId,
+    connectionId: input.connectionId,
+    expectedRevision: scope.revision,
+    expectedEnvelope: scope.encryptedEnvelope,
+    apiToken: input.apiToken,
+  });
+  if (outcome === "server_request_in_progress") throw new HetznerCloudTokenReplaceError("server_request_in_progress");
+  if (outcome !== "replaced") throw new HetznerCloudTokenReplaceError("token_in_use");
+
+  // The token is replaced from here on.
+  let reconciled: HetznerCloudServerInventoryDto[] | null;
+  try {
+    reconciled = await deps.reconcileInventory({
+      userId: input.userId,
+      connectionId: input.connectionId,
+      expectedRevision: scope.revision,
+      discoveredAt,
+      inventory,
+    });
+  } catch (error) {
+    // A newer concurrent sync may have won the write (conflict), or the write
+    // failed. Show whichever snapshot is saved; with none, the caller syncs.
+    if (!(error instanceof InfrastructureConnectionStoreError && error.code === "conflict")) {
+      log.warn("Hetzner token replaced but its inventory write failed", {
+        source: "infrastructure/hetzner-cloud/token", requestId: input.connectionId, userId: input.userId,
+        failureType: storeFailureType(error),
+      });
+    }
+    reconciled = await deps.listInventory(input.userId, input.connectionId).catch(() => null);
+  }
+  // Read the saved envelope back through the bound-token path: this proves the
+  // swap decrypts, belongs to this owner and revision, and holds this token.
+  let saved: Awaited<ReturnType<typeof deps.loadSecret>>;
+  try {
+    saved = await deps.loadSecret(input.userId, input.connectionId, { requireBoundToken: true });
+  } catch (error) {
+    log.warn("Hetzner token replaced but the saved token could not be read back", {
+      source: "infrastructure/hetzner-cloud/token", requestId: input.connectionId, userId: input.userId,
+      failureType: storeFailureType(error),
+    });
+    throw new HetznerCloudTokenReplaceError("replaced_unconfirmed");
+  }
+  if (saved.revision !== scope.revision || saved.apiToken !== input.apiToken) {
+    // Another change (most likely a second Replace token) landed straight after.
+    log.warn("Hetzner token replaced but the connection changed again before read-back", {
+      source: "infrastructure/hetzner-cloud/token", requestId: input.connectionId, userId: input.userId,
+      failureType: saved.revision !== scope.revision ? "revision_changed" : "token_changed",
+    });
+    throw new HetznerCloudTokenReplaceError("replaced_unconfirmed");
+  }
+  return { connection: saved.connection, inventory: reconciled, writeCheck, projectCheck };
 }
 
 export async function getHetznerCloudInventory(
@@ -2086,11 +2375,10 @@ async function createCapacityWithRecipe(
     // supported base is Ubuntu 22.04/amd64. Reject before a new provider key or
     // server can be created. Earlier POSTs are reconciled above, not stranded
     // by a newer image policy. Capacity-only creation keeps its own contract.
+    // The create dialog lists only this same base (hetzner-guided-setup).
     if (preparation && (
-      freshQuote.serverType.architecture !== "x86"
-      || freshQuote.image.architecture !== "x86"
-      || freshQuote.image.osFlavor !== "ubuntu"
-      || freshQuote.image.osVersion !== "22.04"
+      !isHetznerGuidedSetupServerType(freshQuote.serverType)
+      || !isHetznerGuidedSetupImage(freshQuote.image)
     )) {
       throw new HetznerCloudCapacityError("access_setup_failed");
     }
