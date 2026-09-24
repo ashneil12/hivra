@@ -34,13 +34,13 @@ describe("public start links", () => {
     expect(PUBLIC_START_HREF).toBe("/sign-up");
   });
 
-  it("never send someone to a plan page from a page or component", () => {
-    const offenders = ["app", "components"]
+  it("never start someone free through the plan page", () => {
+    const offenders = ["app", "components", "lib"]
       .flatMap((dir) => sourceFiles(path.join(ROOT, dir)))
-      // Only a hard-coded plan: the funnel pages pass on a plan the visitor chose.
-      .filter((file) => /["'`]\/get-started\?plan=(?!\$\{)/.test(readFileSync(file, "utf8")))
+      // A free start goes through sign-up and Launch. A link to a paid plan
+      // is a choice the visitor made on a pricing card, and stays allowed.
+      .filter((file) => /["'`]\/get-started\?plan=free\b/.test(readFileSync(file, "utf8")))
       .map((file) => path.relative(ROOT, file));
-    // A hard-coded plan link is a start link that picks a plan for them.
     expect(offenders).toEqual([]);
   });
 

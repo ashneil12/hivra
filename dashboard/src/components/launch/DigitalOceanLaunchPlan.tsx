@@ -202,8 +202,10 @@ export function DigitalOceanLaunchPlan({
                     placeholder={mode === "vendor" ? `Paste your ${vendorKey}` : "Paste a model access key"}
                     onChange={(event) => {
                       onPastedKeyChange(event.target.value);
-                      // Typing a key is choosing it: a saved key listed late never replaces it.
-                      if (choice.keySource === null) onChange({ keySource: "paste" });
+                      // Typing a key is choosing it: a saved key listed late never
+                      // replaces it, and a saved key that is gone (deleted, or the
+                      // Vault didn't load) is never sent in its place.
+                      if (choice.keySource !== "paste") onChange({ keySource: "paste", sendSavedKey: false });
                     }}
                   />
                   <small>{canSaveKey && choice.saveKey
