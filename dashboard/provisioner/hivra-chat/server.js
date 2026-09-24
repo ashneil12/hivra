@@ -76,8 +76,31 @@ if (WORKSPACE_ROOT !== HOME && !WORKSPACE_ROOT.startsWith(HOME + path.sep)) {
 const AGENT_ENV = Object.assign({}, process.env, {
   PATH: "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
   HOME: HOME,
+  // Hivra installs and updates the vetted CLI versions (agent-cli-versions.json);
+  // a vendor self-update would swap the binary under the gateway mid-life.
+  DISABLE_AUTOUPDATER: "1",
 });
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
+
+// The installed agent CLI version, reported on /api/meta so the dashboard can
+// compare it with the release's vetted pin (agent-cli-versions.json). Probed
+// once at start (a runtime update restarts the gateway, which probes again);
+// the field is omitted until the probe finishes and null when it failed.
+const AGENT_CLI = AGENT_KIND === "claude" ? { name: "claude-code", bin: CLAUDE }
+  : AGENT_KIND === "codex" ? { name: "codex", bin: CODEX } : null;
+let agentCliReport = null;
+if (AGENT_CLI) {
+  try {
+    execFile(AGENT_CLI.bin, ["--version"], { env: AGENT_ENV, cwd: HOME, timeout: 15000 }, (err, stdout) => {
+      const match = !err && /\b(\d+\.\d+\.\d+)\b/.exec(String(stdout || ""));
+      agentCliReport = { name: AGENT_CLI.name, version: match ? match[1] : null };
+      if (!match) console.warn("hivra-chat: " + AGENT_CLI.name + " --version failed: " + (err ? (err.code || err.message) : "no version in output"));
+    });
+  } catch (error) {
+    agentCliReport = { name: AGENT_CLI.name, version: null };
+    console.warn("hivra-chat: " + AGENT_CLI.name + " --version failed: " + ((error && error.message) || error));
+  }
+}
 
 // Per-box Bankr wallet credentials. The dashboard provisions the wallet LAZILY
 // (user clicks "Create wallet") and SSH-writes ~/.hivra/bankr.env (0600, KEY=VALUE);
@@ -2186,7 +2209,7 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
   }
-  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
+  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(agentCliReport ? { agentCli: agentCliReport } : {}) });
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });

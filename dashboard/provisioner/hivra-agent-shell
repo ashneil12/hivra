@@ -69,13 +69,19 @@ if [ ! -f "$kind_file" ] || [ ! -r "$kind_file" ] || ! kind="$(< "$kind_file")";
 fi
 case "$kind" in
   claude|codex)
-    if ! command -v "$kind" >/dev/null 2>&1; then
+    # The exact binary the chat gateway runs (server.js CLAUDE_BIN/CODEX_BIN),
+    # so Terminal and Chat never run different versions and a CLI that happens
+    # to be earlier on PATH (a vendor self-install, another agent) never stands
+    # in for the selected one.
+    if [ "$kind" = claude ]; then cli="${CLAUDE_BIN:-/usr/bin/claude}"
+    else cli="${CODEX_BIN:-$HOME/.npm-global/bin/codex}"; fi
+    if [ ! -f "$cli" ] || [ ! -x "$cli" ]; then
       printf '%s\n' 'The selected agent runtime is unavailable. Open the box terminal to repair its installation.' >&2
       exit 127
     fi
     # With arguments the CLI runs directly with them, never through a shell.
-    if [ "$surface" = agent ]; then persist hivra-agent "agent-$slot" "$kind"; fi
-    exec "$kind" "$@"
+    if [ "$surface" = agent ]; then persist hivra-agent "agent-$slot" "$cli"; fi
+    exec "$cli" "$@"
     ;;
   aeon|openclaw|agent-zero|linux-desktop)
     # Dashboard runtimes and Linux computers do not impersonate a coding-agent

@@ -5,6 +5,8 @@
  * Keep this module free of filesystem and credential access so importing the
  * contract cannot accidentally pull server secrets into a client bundle.
  */
+import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
+
 export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.09.24.1";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
@@ -236,6 +238,18 @@ const PORTABLE_HIVRA_SIMPLE_UBUNTU_IMAGE = "/var/lib/vz/template/iso/hivra-ubunt
 const PORTABLE_HIVRA_SIMPLE_UBUNTU_IMAGE_SHA256 = "ff271290a23279ce764561dbe2e9c3ec29da899535b571a987c37b47970c2ad9";
 
 /**
+ * The Claude Code and Codex versions this release installs and updates to
+ * (provisioner/agent-cli-versions.json, read by the guest installer and the
+ * runtime updater). Vendor self-updaters are off on Hivra computers, so a
+ * computer reporting a different version (GET /api/meta agentCli) is behind or
+ * ahead of the vetted release until update_runtime reconciles it.
+ */
+export const AGENT_CLI_VERSIONS: Readonly<Record<"claude-code" | "codex", string>> = Object.freeze({
+  "claude-code": agentCliVersions["claude-code"],
+  codex: agentCliVersions.codex,
+});
+
+/**
  * Explicit allowlist of files streamed to a user-owned Proxmox host. New
  * runtime files must be intentionally added here; directory traversal and
  * accidental credential files can never enter the upload through a glob.
@@ -245,6 +259,7 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "PROVENANCE.md",
   "README.md",
   "VERSION",
+  "agent-cli-versions.json",
   "bux-hivra-chat.service",
   "bux-local-browser.service",
   "bux-box-ttyd.service",
@@ -260,6 +275,7 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "deepseek-harness/bux-hivra-chat.service",
   "hivra-agent-shell",
   "hivra-agent-trace.py",
+  "hivra-codex-config-pin.py",
   "hivra-agent-trace.service",
   "hivra-guest-ssh-known-hosts",
   "hivra-host-capacity-admission",

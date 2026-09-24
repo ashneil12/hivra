@@ -34,9 +34,12 @@ describe("portable native terminal setup", () => {
       // A login shell reads the runner's /etc/profile before this fixture's
       // .bash_profile. Keep fixture CLIs first, but retain the minimal system
       // PATH that a real guest login has so distro profiles can call id/grep.
-      env: { HOME: root, PATH: `${path.join(root, "bin")}:/usr/bin:/bin`, NODE_ENV: "test" },
+      env: { HOME: root, PATH: `${path.join(root, "bin")}:/usr/bin:/bin`, NODE_ENV: "test", ...managedBins() },
     });
   }
+  // The shell runs the gateway's exact binaries (server.js CLAUDE_BIN/CODEX_BIN);
+  // the fixtures stand in for /usr/bin/claude and ~/.npm-global/bin/codex.
+  const managedBins = () => ({ CLAUDE_BIN: path.join(root, "bin", "claude"), CODEX_BIN: path.join(root, "bin", "codex") });
   it.each(["claude", "codex"])("executes the selected %s CLI with literal arguments", kind => {
     const result = run(kind, ["claude", "codex"], ["two words", "$(do-not-run)", "--flag"]);
     expect(result).toMatchObject({ status: 0, stdout: `CLI ${kind}\n<two words>\n<$(do-not-run)>\n<--flag>\n`, stderr: "" });
@@ -46,6 +49,40 @@ describe("portable native terminal setup", () => {
     expect(result.status).toBe(127);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Open the box terminal");
+  });
+  it.each(["claude", "codex"])("runs the %s binary the chat gateway runs, never a different one earlier on PATH", kind => {
+    // A vendor self-install in ~/.npm-global/bin sits ahead of /usr/bin on PATH.
+    mkdirSync(path.join(root, "managed"));
+    const managed = path.join(root, "managed", kind);
+    writeFileSync(managed, `#!/bin/sh\nprintf 'MANAGED ${kind}\\n'\n`);
+    chmodSync(managed, 0o700);
+    writeFileSync(path.join(root, ".hivra/agent-kind"), kind + "\n");
+    for (const name of ["claude", "codex"]) {
+      writeFileSync(path.join(root, "bin", name), "#!/bin/sh\nprintf 'PATH COPY\\n'\n");
+      chmodSync(path.join(root, "bin", name), 0o700);
+    }
+    const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", shell(), "hivra-agent-shell", "--version"], {
+      input: "", encoding: "utf8", timeout: 3_000,
+      env: { HOME: root, PATH: `${path.join(root, "bin")}:/usr/bin:/bin`, NODE_ENV: "test", [kind === "claude" ? "CLAUDE_BIN" : "CODEX_BIN"]: managed },
+    });
+    expect(result).toMatchObject({ status: 0, stdout: `MANAGED ${kind}\n`, stderr: "" });
+  });
+  it("finds Codex where the gateway does when no override is set", () => {
+    mkdirSync(path.join(root, ".npm-global", "bin"), { recursive: true });
+    writeFileSync(path.join(root, ".npm-global", "bin", "codex"), "#!/bin/sh\nprintf 'OWNER CODEX\\n'\n");
+    chmodSync(path.join(root, ".npm-global", "bin", "codex"), 0o700);
+    writeFileSync(path.join(root, ".hivra/agent-kind"), "codex\n");
+    const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", shell(), "hivra-agent-shell", "x"], {
+      input: "", encoding: "utf8", timeout: 3_000, env: { HOME: root, PATH: "/usr/bin:/bin", NODE_ENV: "test" },
+    });
+    expect(result).toMatchObject({ status: 0, stdout: "OWNER CODEX\n", stderr: "" });
+  });
+  it("never lets Claude stand in for a Codex computer whose Codex is missing", () => {
+    // The exact regression: codex absent where the gateway runs it, claude present.
+    const result = run("codex", ["claude"]);
+    expect(result.status).toBe(127);
+    expect(result.stdout).not.toContain("CLI claude");
+    expect(result.stderr).toContain("The selected agent runtime is unavailable");
   });
   it.each(["aeon", "openclaw", "agent-zero", "linux-desktop"])("opens a login shell for the %s dashboard or computer runtime", kind => {
     expect(run(kind)).toMatchObject({ status: 0, stdout: "BOX_SHELL\n", stderr: "" });
@@ -80,7 +117,7 @@ describe("portable native terminal setup", () => {
       "sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))",
     ].join("\n");
     const result = spawnSync(python, ["-c", driver, "/bin/bash", "--noprofile", "--norc", "-c", shell(), "hivra-agent-shell", ...args], {
-      encoding: "utf8", timeout: 5_000, env: { HOME: root, PATH: path.join(root, "bin"), NODE_ENV: "test" },
+      encoding: "utf8", timeout: 5_000, env: { HOME: root, PATH: path.join(root, "bin"), NODE_ENV: "test", ...managedBins() },
     });
     return { status: result.status, lines: result.stdout.replace(/\r/g, "").split("\n").filter(Boolean) };
   }
@@ -93,7 +130,7 @@ describe("portable native terminal setup", () => {
       const argv = tmuxArgv(lines);
       // Private socket, no user config, and attach-or-create the tab's session.
       expect(argv.slice(0, 5)).toEqual(["-L", "hivra-agent", "-f", "/dev/null", "start-server"]);
-      expect(argv.slice(-5)).toEqual(["new-session", "-A", "-s", session, kind]);
+      expect(argv.slice(-5)).toEqual(["new-session", "-A", "-s", session, path.join(root, "bin", kind)]);
       for (const option of [["status", "off"], ["mouse", "on"], ["escape-time", "10"]]) {
         expect(argv.join(" ")).toContain(`set-option -g ${option.join(" ")} ;`);
       }
@@ -140,6 +177,8 @@ describe("portable native terminal setup", () => {
       expect(unit).toContain("WorkingDirectory=/home/bux\n");
       expect(unit).toContain("Environment=HOME=/home/bux\n");
       expect(unit).toContain("Environment=PATH=/home/bux/.npm-global/bin:/home/bux/.bun/bin:/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin\n");
+      // Hivra owns CLI versions; a vendor self-update never runs from a terminal.
+      expect(unit).toContain("Environment=DISABLE_AUTOUPDATER=1\n");
       expect(unit).toContain(`ExecStart=/usr/local/bin/ttyd -i lo -p ${port} -b ${base} -a -W /usr/local/bin/hivra-agent-shell --${port === "7682" ? "box" : "agent"}-terminal\n`);
       // A ttyd restart must leave the persistent sessions running.
       expect(unit).toContain("KillMode=process\n");
