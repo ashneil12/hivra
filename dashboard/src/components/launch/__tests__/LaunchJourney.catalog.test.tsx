@@ -28,6 +28,13 @@ jest.mock("@/lib/billing/managed-venice-client", () => ({
 
 jest.mock("@/lib/abuse/client-fingerprint", () => ({ getFingerprintRequestId: async () => null }));
 
+let tokenGeoStatus: "allowed" | "blocked" = "allowed";
+jest.mock("@/hooks/useTokenGeoAccess", () => ({
+  useTokenGeoAccess: () => tokenGeoStatus === "allowed"
+    ? { status: "allowed", notice: null }
+    : { status: "blocked", notice: "Token features aren't available where you are." },
+}));
+
 jest.mock("@/components/billing/ManagedVeniceDepositModal", () => ({
   ManagedVeniceDepositModal: () => <div role="dialog" aria-label="Add Hivra credit" />,
 }));
@@ -45,10 +52,10 @@ const PAID_PLAN = {
   poolCpu: 16, poolRam: 32, usage: { agentCount: 0, usedCpu: 0, usedRam: 0 },
 };
 
-function balance(cardUsd: number) {
+function balance(cardUsd: number, tokenUsd = 0) {
   return { ok: true, summary: { wallets: {
     card: { balanceMicroUsd: cardUsd * 1_000_000, availableMicroUsd: cardUsd * 1_000_000, reservedMicroUsd: 0 },
-    hermesos: { tokenDisplay: "0", lockedValueMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
+    hermesos: { tokenDisplay: "0", lockedValueMicroUsd: 0, availableMicroUsd: tokenUsd * 1_000_000, reservedMicroUsd: 0 },
   } } };
 }
 
@@ -70,6 +77,7 @@ beforeEach(() => {
   instanceBodies = [];
   workspaceReady = false;
   resolveInstance = null;
+  tokenGeoStatus = "allowed";
   fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
   summaryMock.mockResolvedValue(balance(4.25));
   createAgentMock.mockResolvedValue({ id: AGENT_ID, type: "claude-code", name: "Claude Code 1", status: "provisioning", cpu: 0.5, ram: 1 });
@@ -159,6 +167,29 @@ describe("every catalog agent launches in the Launch journey", () => {
     await waitFor(() => expect(instanceBodies).toHaveLength(1));
     expect(instanceBodies[0]).toMatchObject({ unconfigured: true });
     expect(instanceBodies[0]).not.toHaveProperty("provider");
+  });
+
+  it("lets the owner choose which funded wallet pays, and bills it", async () => {
+    summaryMock.mockResolvedValue(balance(1, 2));
+    await chooseAgent("Hermes");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
+    const wallet = screen.getByRole("combobox", { name: "Pay from" });
+    fireEvent.change(wallet, { target: { value: "hermesos" } });
+    const review = await reviewLaunch();
+    expect(review.getByText(/^Hivra credits \(\$2\.00 available\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
+    await waitFor(() => expect(instanceBodies).toHaveLength(1));
+    expect(instanceBodies[0]).toMatchObject({ managedVenice: { enabled: true, walletType: "hermesos" } });
+  });
+
+  it("offers only card credits to a viewer the token geo-policy blocks", async () => {
+    tokenGeoStatus = "blocked";
+    summaryMock.mockResolvedValue(balance(0, 7));
+    await chooseAgent("Hermes");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
+    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("combobox", { name: "Pay from" })).not.toBeInTheDocument();
   });
 
   it("shows only observed launch state while a Hermes launch is being confirmed", async () => {

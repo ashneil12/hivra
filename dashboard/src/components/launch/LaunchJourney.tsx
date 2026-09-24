@@ -34,6 +34,7 @@ import {
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
 import { useHermesWorkspaceReady } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
 import { FreeTierCardVerification } from "@/components/billing/FreeTierCardVerification";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { getAgent } from "@/lib/hivra/agent-catalog";
@@ -608,7 +609,17 @@ export function LaunchJourney() {
   const [restoredDestinationFor, setRestoredDestinationFor] = useState<string | null>(null);
   // Model access evidence: the owner's Hivra credit balance and the keys saved
   // in their Vault (listed without the keys themselves).
-  const [creditsBalance, setCreditsBalance] = useState<CreditsBalance>({ state: "loading" });
+  const [observedCredits, setCreditsBalance] = useState<CreditsBalance>({ state: "loading" });
+  // Token geo-policy: a viewer it blocks (or while it is still checking) sees
+  // and bills card credits only, as the welcome deploy form does. "allowed"
+  // at once while the policy is dormant.
+  const tokenPaymentsShown = useTokenGeoAccess().status === "allowed";
+  const creditsBalance = useMemo<CreditsBalance>(
+    () => tokenPaymentsShown || observedCredits.state !== "known"
+      ? observedCredits
+      : { ...observedCredits, hermesosMicroUsd: 0 },
+    [observedCredits, tokenPaymentsShown],
+  );
   const [creditsRevision, setCreditsRevision] = useState(0);
   const [savedKeys, setSavedKeys] = useState<SavedModelKey[]>([]);
   // A key pasted for one launch, held only in this page's memory. It is never
