@@ -25,14 +25,14 @@ ADDRESSES = [
     {"ifname": "eth0", "addr_info": [{"family": "inet", "local": "203.0.113.45", "prefixlen": 24},
                                      {"family": "inet6", "local": "2001:db8:45::10", "prefixlen": 64},
                                      {"family": "inet6", "local": "fe80::1%eth0", "prefixlen": 64}]},
-    {"ifname": "docker0", "addr_info": [{"family": "inet", "local": "172.17.0.1", "prefixlen": 16}]},
+    {"ifname": "docker0", "addr_info": [{"family": "inet", "local": "172.18.0.1", "prefixlen": 16}]},
     {"ifname": "tailscale0", "addr_info": [{"family": "inet", "local": "100.101.102.103", "prefixlen": 32}]},
     {"ifname": OWN["host"], "addr_info": [{"family": "inet", "local": "198.18.0.1", "prefixlen": 30}]},
 ]
 ROUTES4 = [
     {"type": "unicast", "dst": "default", "gateway": "198.51.100.1", "dev": "eth0", "flags": ["onlink"]},
     {"type": "unicast", "dst": "203.0.113.0/24", "dev": "eth0", "protocol": "kernel", "scope": "link"},
-    {"type": "unicast", "dst": "172.17.0.0/16", "dev": "docker0", "scope": "link"},
+    {"type": "unicast", "dst": "172.18.0.0/16", "dev": "docker0", "scope": "link"},
     {"type": "unicast", "dst": "198.18.0.0/30", "dev": OWN["host"], "scope": "link"},
     {"type": "unicast", "dst": "100.64.0.0/10", "dev": "tailscale0", "table": "52"},
     {"type": "unicast", "dst": "192.0.2.0/24", "table": "52", "nexthops": [{"gateway": "100.101.102.1"}, {"gateway": "100.101.102.2"}]},
@@ -68,12 +68,12 @@ class NetworkSets(unittest.TestCase):
         network.ip_json = self.original
 
     def test_facts_cover_every_connected_prefix_gateway_and_address(self):
-        for prefix in ("203.0.113.0/24", "172.17.0.0/16", "100.64.0.0/10", "2001:db8:45::/64", "fe80::/64"):
+        for prefix in ("203.0.113.0/24", "172.18.0.0/16", "100.64.0.0/10", "2001:db8:45::/64", "fe80::/64"):
             self.assertIn(prefix, self.facts["onlink"])
         self.assertNotIn("198.18.0.0/30", self.facts["onlink"], "the veth link is Hivra's own, in the static ranges")
         for gateway in ("198.51.100.1", "100.101.102.1", "100.101.102.2", "fe80::1", "2001:db8:45::1"):
             self.assertIn(gateway, self.facts["gateways"])
-        for address in ("203.0.113.45", "2001:db8:45::10", "fe80::1", "127.0.0.1", "::1", "172.17.0.1", "100.101.102.103"):
+        for address in ("203.0.113.45", "2001:db8:45::10", "fe80::1", "127.0.0.1", "::1", "172.18.0.1", "100.101.102.103"):
             self.assertIn(address, self.facts["addresses"])
 
     def test_both_layers_name_every_prefix_gateway_and_host_address(self):
