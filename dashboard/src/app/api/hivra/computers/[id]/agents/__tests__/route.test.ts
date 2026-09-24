@@ -166,3 +166,14 @@ it("says an ineligible computer is not available yet, without reading the attach
   expect(body).toMatchObject({ available: false, reason: "unsupported_computer", message: ATTACH_NOT_AVAILABLE, reviews: null });
   expect(store.readTarget).not.toHaveBeenCalled();
 });
+
+it("checks the computer is running and ready: the gate says why, and Add is refused before any claim", async () => {
+  store.readTarget.mockResolvedValue({ ...target, eligible: false, reason: "computer_not_ready" });
+  const gate = await (await get()).json();
+  expect(gate.data).toMatchObject({ available: false, reason: "computer_not_ready", reviews: null, billingHref: null,
+    message: "This computer isn't ready yet. Add Codex once it has finished starting." });
+  const response = await post({ grants: { workspace: true }, reviewSha256: review(true), requestId: REQUEST });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ reason: "computer_not_ready" });
+  expect(store.claim).not.toHaveBeenCalled();
+});

@@ -25,12 +25,25 @@ import { createAttachmentLifecycleStore, type AttachmentLifecycleStore, type Att
 // never by a blind second install. Anything uncertain stays held, and the
 // computer page says so.
 
-const COMPUTER_COLUMNS = "id, user_id, name, type, cpu, ram, status, desired_state, operation_id, operation_kind, vmid, ip, chat_url, "
+const COMPUTER_COLUMNS = "id, user_id, name, type, cpu, ram, status, desired_state, operation_id, operation_kind, vmid, ip, chat_url, provisioned_at, "
   + "computer_profile, computer_substrate, deployment_mode, proxmox_host, infrastructure_connection_id, deployment_target_id, "
   + "infrastructure_connection_revision, infrastructure_binding_token_hash, infrastructure_binding_token_enforced, "
   + "managed_provisioner_channel";
 
-type ComputerRow = RemoteDesktopAgentRow & { name: string; cpu: number | null; ram: number | null };
+type ComputerRow = RemoteDesktopAgentRow & { name: string; cpu: number | null; ram: number | null; provisioned_at?: string | null };
+
+/** A guest that has not answered Hivra for this long since the claim is not ready: the attach fails with that reason. */
+export const ATTACH_GUEST_ANSWER_WINDOW_MS = 3 * 60_000;
+
+type Precondition = "computer_not_running" | "computer_not_ready";
+
+/** Running and ready, from the computer's own row (5.8): anything else refuses the attach before it starts. */
+export function attachPrecondition(computer: Pick<ComputerRow, "status" | "vmid" | "ip" | "chat_url" | "provisioned_at">,
+  desiredState: string | null): Precondition | null {
+  if (computer.status !== "running" || desiredState !== "running" || computer.vmid == null || !computer.ip) return "computer_not_running";
+  if (!computer.provisioned_at || typeof computer.chat_url !== "string" || !computer.chat_url.trim()) return "computer_not_ready";
+  return null;
+}
 
 export type AttachmentWorkProgress = {
   kind: AttachmentWorkItem["kind"]; id: string;
@@ -47,6 +60,7 @@ type Dependencies = {
   uuid: () => string;
   token: () => string;
   event: typeof logHivraAgentEvent;
+  now: () => number;
 };
 
 async function loadComputer(ownerId: string, sourceId: string): Promise<ComputerRow | null> {
@@ -73,7 +87,7 @@ function defaults(overrides: Partial<Dependencies>): Dependencies {
   return {
     store: createAttachmentLifecycleStore(), loadComputer, hostAddresses, stage: progressAttachmentStaging,
     execute: executeAttachedAgentStep, uuid: randomUUID, token: () => randomBytes(32).toString("hex"),
-    event: logHivraAgentEvent, ...overrides,
+    event: logHivraAgentEvent, now: Date.now, ...overrides,
   };
 }
 
@@ -117,17 +131,32 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   if (!computer) return held("computer_unavailable");
   const architecture = "x86_64" as const;
 
+  // Nothing ran on the computer while the claim is undispatched. A pending
+  // delete cancels it; a computer that is not running and ready refuses it:
+  // failed with that reason, never held (5.5, 5.8).
+  const refuse = async (reason: Precondition): Promise<AttachmentWorkProgress> => {
+    if (!await deps.store.refuse(ownerId, id, reason)) return held("failure_unconfirmed");
+    await deps.event({ userId: ownerId, event: "agent_attach_failed", agentId: computer.id, agentType: computer.type as string,
+      detail: { attachmentId: id, agentName: state!.agentName, computerName: computer.name, reason } });
+    return { kind: "attach", id, state: "failed", reason };
+  };
   if (state.phase === "claimed") {
-    // A pending delete or a computer that stopped under the claim ends it;
-    // nothing ran on the computer yet.
-    if (state.desiredState !== "running" || computer.status !== "running") {
-      const reason = state.desiredState === "deleted" ? "pending_delete" : "computer_not_running";
-      return await deps.store.cancel(ownerId, id, reason) ? { kind: "attach", id, state: "cancelled", reason } : held("cancel_unconfirmed");
+    if (state.desiredState === "deleted") {
+      return await deps.store.cancel(ownerId, id, "pending_delete")
+        ? { kind: "attach", id, state: "cancelled", reason: "pending_delete" } : held("cancel_unconfirmed");
     }
+    const precondition = attachPrecondition(computer, state.desiredState);
+    if (precondition) return await refuse(precondition);
   }
   if (!state.staged) {
     const staged = await deps.stage(ownerId, id, architecture);
-    if (staged.state !== "staging_recorded") return held(staged.reason);
+    if (staged.state !== "staging_recorded") {
+      // The guest never answered: once the window has passed it is not ready.
+      const claimedAt = state.createdAt ? Date.parse(state.createdAt) : Number.NaN;
+      if (staged.reason === "boot_unobserved" && state.phase === "claimed" && Number.isFinite(claimedAt)
+        && deps.now() - claimedAt >= ATTACH_GUEST_ANSWER_WINDOW_MS) return await refuse("computer_not_ready");
+      return held(staged.reason);
+    }
     state = await deps.store.readState(ownerId, id);
     if (!state || state.phase !== "dispatched" || !state.staged) return held("state_unavailable");
   }

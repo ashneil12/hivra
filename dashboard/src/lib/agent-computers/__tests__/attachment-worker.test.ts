@@ -30,7 +30,9 @@ const computerRow = {
   id: SOURCE, user_id: OWNER, name: "MY_UBUNTU_DESKTOP", type: "linux-desktop", cpu: 2, ram: 4, status: "running", vmid: 1201,
   ip: "192.0.2.10", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
   infrastructure_binding_token_hash: "b".repeat(64), infrastructure_binding_token_enforced: true,
+  chat_url: "https://desk.example.test", provisioned_at: "2026-09-24T10:00:00.000Z",
 };
+const NOW = Date.parse("2026-09-24T12:00:00.000Z");
 
 function stateOf(overrides: Record<string, unknown> = {}) {
   return {
@@ -48,7 +50,7 @@ const removed = { version: 1, operationId: ID, installationId: INSTALLATION, sta
 
 function fakes() {
   const store = {
-    readState: jest.fn(), cancel: jest.fn().mockResolvedValue(true), dispatchActivation: jest.fn().mockResolvedValue(true),
+    readState: jest.fn(), cancel: jest.fn().mockResolvedValue(true), refuse: jest.fn().mockResolvedValue(true), dispatchActivation: jest.fn().mockResolvedValue(true),
     readInstanceToken: jest.fn().mockResolvedValue(TOKEN), recordObservation: jest.fn().mockResolvedValue(true),
     complete: jest.fn().mockResolvedValue(true), fail: jest.fn().mockResolvedValue(true), recordContract: jest.fn().mockResolvedValue(true),
     readOperation: jest.fn(), dispatchOperation: jest.fn().mockResolvedValue(true), cancelOperation: jest.fn().mockResolvedValue(true),
@@ -63,23 +65,71 @@ function fakes() {
     uuid: jest.fn(() => ACTIVATION),
     token: jest.fn(() => TOKEN),
     event: jest.fn().mockResolvedValue(undefined),
+    now: jest.fn(() => NOW),
   };
   return { store, deps };
 }
 const actions = (execute: jest.Mock) => execute.mock.calls.map((call) => call[2]);
 
 describe("adding Codex", () => {
-  it("cancels a claim on a computer that stopped, or is being deleted, before anything runs on it", async () => {
+  it("fails a claim on a computer that stopped, with that reason, and cancels one being deleted, before anything runs on it", async () => {
     const { store, deps } = fakes();
     store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, computerStatus: "stopped" }));
     deps.loadComputer.mockResolvedValue({ ...computerRow, status: "stopped" });
     expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
-      .toEqual({ kind: "attach", id: ID, state: "cancelled", reason: "computer_not_running" });
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_not_running" });
+    expect(store.refuse).toHaveBeenLastCalledWith(OWNER, ID, "computer_not_running");
+    expect(store.cancel).not.toHaveBeenCalled();
+    expect(deps.event).toHaveBeenLastCalledWith(expect.objectContaining({ event: "agent_attach_failed",
+      detail: expect.objectContaining({ reason: "computer_not_running" }) }));
     store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, desiredState: "deleted" }));
-    expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).reason).toBe("pending_delete");
+    deps.loadComputer.mockResolvedValue(computerRow);
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "cancelled", reason: "pending_delete" });
     expect(store.cancel).toHaveBeenLastCalledWith(OWNER, ID, "pending_delete");
     expect(deps.stage).not.toHaveBeenCalled();
     expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["has not been seen ready", { provisioned_at: null }],
+    ["has no gateway for the agent's chat", { chat_url: null }],
+  ])("fails a claim on a running computer that %s as computer_not_ready, never held", async (_label, row) => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.loadComputer.mockResolvedValue({ ...computerRow, ...row });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_not_ready" });
+    expect(store.refuse).toHaveBeenCalledWith(OWNER, ID, "computer_not_ready");
+    expect(deps.stage).not.toHaveBeenCalled();
+  });
+
+  it("retries a guest that has not answered yet, then fails the claim as computer_not_ready once the window has passed", async () => {
+    const { store, deps } = fakes();
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "boot_unobserved" });
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, createdAt: new Date(NOW - 60_000).toISOString() }));
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "boot_unobserved" });
+    expect(store.refuse).not.toHaveBeenCalled();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, createdAt: new Date(NOW - 3 * 60_000).toISOString() }));
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_not_ready" });
+    expect(store.refuse).toHaveBeenCalledWith(OWNER, ID, "computer_not_ready");
+    // A guest that answered but whose record was not confirmed is not a refusal.
+    store.refuse.mockClear();
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "boot_unconfirmed" });
+    expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).state).toBe("held");
+    expect(store.refuse).not.toHaveBeenCalled();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("keeps a refusal the database did not confirm held, to be read again", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    store.refuse.mockResolvedValue(false);
+    deps.loadComputer.mockResolvedValue({ ...computerRow, provisioned_at: null });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "failure_unconfirmed" });
   });
 
   it("stages, starts Codex once after winning the activation dispatch, and completes only with the readiness observation", async () => {

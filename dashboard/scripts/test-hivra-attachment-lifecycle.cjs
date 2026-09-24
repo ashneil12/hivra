@@ -8,6 +8,8 @@
 // - complete only with the readiness observation, publishing the canonical
 //   identity, installation and binding and releasing the computer's lease;
 // - fail only with an observed cleanup receipt; cancel with its reason;
+// - a computer that is not running and ready: the gate says so, and a claim
+//   nothing ran for yet is refused as failed with its reason, never held;
 // - the contract a revision at a time, delivered only on a matching read-back;
 // - change access and Remove as their own operations on the lease, each
 //   finished only by its observed receipt;
@@ -21,6 +23,7 @@ const { openMigratedDatabase, readMigration } = require("./lib/pglite-all-migrat
 
 const LIFECYCLE = "20260925000000_hivra_agent_attachment_lifecycle.sql";
 const GRANTS = "20260925000100_hivra_agent_attachment_grants.sql";
+const READINESS = "20260925000200_hivra_agent_attach_readiness.sql";
 const OWNER = "owner";
 const INSTALLER = "77d72e2e8346cc19ef74264e8458bbca8802772d1c668c3fdffa653c4273d375";
 const WORKER = "2a0aee3e5e3fc0d4403d41a93dbece648648c8a84ab4349a71d7fe87243121ab";
@@ -42,9 +45,10 @@ async function main() {
   const SERVICE_POLICY = pinned(lifecycleSql, "p_service_policy_sha256");
   const PROGRAM = pinned(lifecycleSql, "p_program_sha256");
   try {
-    // Both migrations are idempotent.
+    // The attach migrations are idempotent, applied again in order.
     await db.exec(readMigration(LIFECYCLE));
     await db.exec(readMigration(GRANTS));
+    await db.exec(readMigration(READINESS));
 
     let computers = 0;
     const computer = async (mode = "hivra-managed") => {
@@ -52,9 +56,10 @@ async function main() {
       const id = pid("1", computers);
       await db.query(`insert into public.hivra_agents(id,user_id,type,name,status,desired_state,computer_profile,computer_substrate,
           deployment_mode,proxmox_host,vmid,ip,cpu,ram,infrastructure_binding_token_hash,infrastructure_binding_token_enforced,
-          managed_provisioner_channel)
-        values($1,$2,'linux-desktop',$3,'running','running','ubuntu-desktop','proxmox-kvm',$4,'local',$5,$6,2,4,repeat('a',64),true,'canary')`,
-        [id, OWNER, `Desk ${computers}`, mode, 1200 + computers, `10.241.0.${20 + computers}`]);
+          managed_provisioner_channel,provisioned_at,chat_url)
+        values($1,$2,'linux-desktop',$3,'running','running','ubuntu-desktop','proxmox-kvm',$4,'local',$5,$6,2,4,repeat('a',64),true,'canary',
+          now(),$7)`,
+        [id, OWNER, `Desk ${computers}`, mode, 1200 + computers, `10.241.0.${20 + computers}`, `https://desk-${computers}.example.test`]);
       const authority = await value("select public.hivra_desktop_prepare_authority(a) as result from public.hivra_agents a where id=$1", [id]);
       return { id, authority, n: computers };
     };
@@ -315,6 +320,42 @@ async function main() {
     assert.deepEqual(await one("select phase, end_reason from public.hivra_agent_attachments where id=$1", [cop]),
       { phase: "cancelled", end_reason: "pending_delete" });
 
+    // ---- running and ready, or refused as failed with its reason ------------
+    const rdesk = await computer();
+    await db.query("update public.hivra_agents set provisioned_at=null where id=$1", [rdesk.id]);
+    assert.equal((await target(rdesk)).reason, "computer_not_ready", "a computer Hivra has not seen ready is not offered");
+    await db.query("update public.hivra_agents set provisioned_at=now(),chat_url=' ' where id=$1", [rdesk.id]);
+    assert.equal((await target(rdesk)).reason, "computer_not_ready", "no gateway for the agent's chat is not ready either");
+    await db.query("update public.hivra_agents set chat_url='https://desk-ready.example.test' where id=$1", [rdesk.id]);
+    rdesk.authority = await value("select public.hivra_desktop_prepare_authority(a) as result from public.hivra_agents a where id=$1", [rdesk.id]);
+    assert.equal((await target(rdesk)).eligible, true);
+    const rop = pid("5", 7);
+    assert.equal((await claim(rdesk, rop, intent(7))).status, "claimed");
+    const refuse = (operation, reason, owner = OWNER) => value("select public.refuse_hivra_agent_attachment($1,$2,$3) as result",
+      [owner, operation, reason]);
+    assert.equal((await value("select public.read_hivra_agent_attachment_state($1,$2) as result", [OWNER, rop])).createdAt !== undefined, true,
+      "the worker reads when the claim was made");
+    assert.equal(await refuse(rop, "install_failed"), false, "only a precondition is a refusal");
+    assert.equal(await refuse(rop, "computer_not_ready", "other"), false, "the owner comes from the claim");
+    assert.equal(await refuse(rop, "computer_not_ready"), true);
+    assert.deepEqual(await one("select phase, end_reason, dispatch_id from public.hivra_agent_attachments where id=$1", [rop]),
+      { phase: "failed", end_reason: "computer_not_ready", dispatch_id: null }, "a refusal ends failed with its reason, never held");
+    assert.deepEqual(await lease(rdesk), { operation_id: null, operation_kind: null }, "the refusal released the computer's lease");
+    assert.equal(await refuse(rop, "computer_not_ready"), true, "a replay of the same refusal is the same answer");
+    assert.equal(await refuse(rop, "computer_not_running"), false, "a refusal is never rewritten");
+    assert.equal((await target(rdesk)).eligible, true, "a refused claim leaves the computer free to try again");
+    const rop2 = pid("5", 8);
+    assert.equal((await claim(rdesk, rop2, intent(8))).status, "claimed");
+    assert.equal(await reserve(rop2, 8), true);
+    assert.equal(await observe(rdesk, rop2), true);
+    assert.equal(await dispatch(rdesk, rop2, pid("a", 8)), true);
+    assert.equal(await refuse(rop2, "computer_not_running"), false, "a dispatched install is never refused: it needs an observed cleanup");
+    assert.equal(await value("select public.fail_hivra_agent_attachment($1,$2,2,$3::jsonb,$4::jsonb,'install_failed') as result",
+      [OWNER, rop2, JSON.stringify(rdesk.authority), JSON.stringify({ ...cleanup, installationId: pid("6", 8) })]), true);
+    await assert.rejects(db.query(`update public.hivra_agent_attachments set phase='failed',completed_at=now(),end_reason='install_failed',
+        dispatch_id=null,dispatched_at=null where id=$1`, [rop]), /hivra_agent_attachments_check/,
+    "a failure without a dispatch is only a precondition refusal");
+
     // ---- deleting the computer detaches its binding (T30) -----------------
     const ddesk = await computer();
     const dop = pid("5", 6);
@@ -358,6 +399,7 @@ async function main() {
       "fail_hivra_agent_attachment_operation(text,uuid,text,jsonb)", "read_hivra_agent_attachments(text,uuid)",
       "read_hivra_owner_attached_agents(text)", "list_open_hivra_agent_attachment_work(integer)",
       "read_hivra_agent_attachment_state(text,uuid)", "read_hivra_agent_attachment_operation(text,uuid)",
+      "refuse_hivra_agent_attachment(text,uuid,text)",
       "reserve_hivra_attachment_installation(text,uuid,bigint,uuid,uuid,text)", "observe_hivra_attachment_guest(text,uuid,bigint,jsonb,uuid,text)",
       "record_hivra_attachment_staging_result(text,uuid,bigint,jsonb,uuid,jsonb)",
       "record_hivra_attachment_activation_observation(text,uuid,bigint,jsonb,jsonb,uuid,jsonb)"];

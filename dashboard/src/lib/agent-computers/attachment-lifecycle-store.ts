@@ -20,7 +20,7 @@ const Target = z.object({
   version: z.literal(1), sourceId: Id, computerId: Id.nullable(), deploymentMode: z.string().nullable(),
   ramGb: z.number().nullable(), cpu: z.number().nullable(), authority: z.record(z.string(), z.unknown()),
   writeAuthority: z.enum(["legacy", "canonical"]).nullable(), eligible: z.boolean(),
-  reason: z.enum(["unsupported_computer", "agent_present", "computer_not_running", "computer_busy"]).nullable(),
+  reason: z.enum(["unsupported_computer", "agent_present", "computer_not_running", "computer_busy", "computer_not_ready"]).nullable(),
   liveAttachmentId: Id.nullable(),
 });
 export type AttachTarget = z.infer<typeof Target>;
@@ -65,6 +65,8 @@ const State = z.object({
   bootId: Id.nullable(), staged: z.unknown().nullable(), activation: z.record(z.string(), z.unknown()).nullable(),
   readyObservationId: Id.nullable(), contractRevision: z.number().int().nullable(),
   desiredState: z.string().nullable(), computerStatus: z.string().nullable(),
+  /** When the claim was made (migration 20260925000200); absent from an older read. */
+  createdAt: z.string().optional(),
 });
 export type AttachmentState = z.infer<typeof State>;
 
@@ -123,6 +125,9 @@ export function createAttachmentLifecycleStore(db: Database | null = supabaseAdm
         p_agent_limit: input.agentLimit }, ClaimResult) as Promise<ClaimResult>,
     cancel: (ownerId: string, operationId: string, reason: "cancelled" | "computer_not_running" | "pending_delete") =>
       boolean("cancel_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
+    /** Before any dispatch: ends the claim as failed with a precondition reason, never held (20260925000200). */
+    refuse: (ownerId: string, operationId: string, reason: "computer_not_running" | "computer_not_ready") =>
+      boolean("refuse_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
     listWork: async (limit: number) => (await parsed("list_open_hivra_agent_attachment_work", { p_limit: limit }, z.array(WorkItem))) ?? [],
     readState: (ownerId: string, attachmentId: string) =>
       parsed("read_hivra_agent_attachment_state", { p_owner: ownerId, p_attachment_id: attachmentId }, State, true),

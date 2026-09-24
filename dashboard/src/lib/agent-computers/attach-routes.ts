@@ -41,7 +41,8 @@ export async function loadOwnedComputer(ownerId: string, computerId: string): Pr
     bindingEnforced: (row.infrastructure_binding_token_enforced as boolean | null) ?? null, chatUrl: (row.chat_url as string | null) ?? null };
 }
 
-export type AttachReason = "unsupported_computer" | "agent_present" | "computer_not_running" | "computer_busy" | "plan_agent_limit" | "plan_required";
+export type AttachReason = "unsupported_computer" | "agent_present" | "computer_not_running" | "computer_not_ready" | "computer_busy"
+  | "plan_agent_limit" | "plan_required";
 
 /** One sentence per refusal; nothing is bought or upgraded automatically. */
 export function attachReasonCopy(reason: AttachReason, planMessage?: string): string {
@@ -49,6 +50,7 @@ export function attachReasonCopy(reason: AttachReason, planMessage?: string): st
     case "unsupported_computer": return ATTACH_NOT_AVAILABLE;
     case "agent_present": return "Codex is already on this computer.";
     case "computer_not_running": return "Start the computer to add Codex.";
+    case "computer_not_ready": return "This computer isn't ready yet. Add Codex once it has finished starting.";
     case "computer_busy": return "This computer is busy with another step. Try again in a minute.";
     case "plan_required": return "Plan access is required before adding an agent.";
     case "plan_agent_limit": return planMessage ?? "Your plan's agent limit is reached. Upgrade for more slots, or remove an agent first.";

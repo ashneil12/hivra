@@ -9,7 +9,9 @@ import { executeAttachmentGuestAction } from "./attachment-host-executor";
 
 type Dependencies = { store: AttachmentExecutionStore; observeBoot: typeof observeAttachmentGuestBoot;
   execute: typeof executeAttachmentGuestAction; uuid: () => string };
-type Reason = "state_unavailable" | "pending_delete" | "reservation_unconfirmed" | "boot_unconfirmed"
+// boot_unobserved: the computer's guest did not answer Hivra at all, so it is
+// not ready; boot_unconfirmed: it answered and recording that was not confirmed.
+type Reason = "state_unavailable" | "pending_delete" | "reservation_unconfirmed" | "boot_unobserved" | "boot_unconfirmed"
   | "fetch_unconfirmed" | "dispatch_unconfirmed" | "staging_unconfirmed" | "result_unconfirmed";
 export type AttachmentStagingProgress = { operationId: string; state: "staging_recorded" }
   | { operationId: string; state: "held"; reason: Reason };
@@ -60,12 +62,14 @@ export async function progressAttachmentStaging(
       snapshot = next;
     }
     if (!snapshot.observation) {
-      reason = "boot_unconfirmed";
+      reason = "boot_unobserved";
       const observed = await deps.observeBoot(ownerId, attachmentExecutionAgent(snapshot), {
         operationId, computerId: snapshot.computerId, sourceId: snapshot.guestAuthority.id,
         architecture: snapshot.installation!.architecture,
       });
-      if (!observed.ok || await deps.store.recordBoot(snapshot, observed.observation.bootId) !== true) return held();
+      if (!observed.ok) return held();
+      reason = "boot_unconfirmed";
+      if (await deps.store.recordBoot(snapshot, observed.observation.bootId) !== true) return held();
       const next = await read();
       if (!next || !sameAuthority(snapshot, next) || next.phase !== "claimed" || next.desiredState !== "running"
         || next.observation?.bootId !== observed.observation.bootId

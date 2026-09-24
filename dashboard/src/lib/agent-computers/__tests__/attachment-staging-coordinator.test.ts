@@ -239,3 +239,15 @@ it("does not execute against unavailable or wrong-owner state", async () => {
   expect(deps.execute).not.toHaveBeenCalled();
   expect(deps.store.dispatch).not.toHaveBeenCalled();
 });
+
+it("tells a guest that never answered (boot_unobserved) from an answer it could not record (boot_unconfirmed)", async () => {
+  const deps = fixture();
+  deps.store.read.mockResolvedValue({ ...prepared, observation: null });
+  deps.observeBoot.mockResolvedValue({ ok: false, code: "transport_failed" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "boot_unobserved" });
+  expect(deps.store.recordBoot).not.toHaveBeenCalled();
+  deps.observeBoot.mockResolvedValue({ ok: true, observation: { bootId: dispatched.observation!.bootId } });
+  deps.store.recordBoot.mockResolvedValue(false);
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "boot_unconfirmed" });
+  expect(deps.execute).not.toHaveBeenCalled();
+});
