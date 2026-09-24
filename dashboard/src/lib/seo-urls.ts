@@ -18,18 +18,23 @@ const CORE_PAGES_LAST_MODIFIED = new Date("2026-07-07");
 // Promote date: Google compares lastmod with its last crawl of production.
 const FEATURE_COMPARE_LAST_MODIFIED = new Date("2026-09-24");
 
+// Pages whose content changed for the cutover: the homepage (title, copy and
+// JSON-LD), the blog index (restored articles) and the privacy policy (Google
+// Analytics as a processor). Same rule: move to the Promote date if it slips.
+export const CUTOVER_LAST_MODIFIED = new Date("2026-09-24");
+
 export function getSiteUrls(): MetadataRoute.Sitemap {
   // Core public pages
   const corePages: MetadataRoute.Sitemap = [
     {
       url: SITE_URL,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: CUTOVER_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 1.0,
     },
     {
       url: `${SITE_URL}/blog`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: CUTOVER_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 0.9,
     },
@@ -94,7 +99,7 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     },
     {
       url: `${SITE_URL}/privacy`,
-      lastModified: new Date("2026-03-01"),
+      lastModified: CUTOVER_LAST_MODIFIED,
       changeFrequency: "monthly",
       priority: 0.3,
     },

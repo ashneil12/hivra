@@ -1,4 +1,4 @@
-import { getSiteUrls, SITE_URL } from "../seo-urls";
+import { CUTOVER_LAST_MODIFIED, getSiteUrls, SITE_URL } from "../seo-urls";
 
 describe("seo urls", () => {
   it("includes the token verification page in the sitemap", () => {
@@ -46,6 +46,17 @@ describe("seo urls", () => {
       expect(new Date(entry!.lastModified as Date).getTime()).toBeGreaterThanOrEqual(
         new Date("2026-07-01").getTime()
       );
+    }
+  });
+
+  // Crawlers refetch on a newer lastmod, so pages rewritten for the cutover
+  // must carry at least the cutover date.
+  it("dates the pages the cutover rewrote no earlier than the cutover", () => {
+    const urls = getSiteUrls();
+    for (const path of ["", "/blog", "/privacy", "/features", "/compare", "/pricing", "/agents", "/tools"]) {
+      const entry = urls.find((u) => u.url === `${SITE_URL}${path}`);
+      expect({ path, defined: Boolean(entry) }).toEqual({ path, defined: true });
+      expect(new Date(entry!.lastModified as Date).getTime()).toBeGreaterThanOrEqual(CUTOVER_LAST_MODIFIED.getTime());
     }
   });
 
