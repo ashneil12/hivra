@@ -269,6 +269,8 @@ powers the VM on or off itself.
 - **Telegram connect.** `hivra-tg-apply apply` writes `/etc/bux/tg.env` and then
   enables and restarts `bux-tg`, so a new bot token or pairing link takes
   effect even when the bot is already running.
+- **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
+  with `docker stop -t 60` (docker's default is 10 s) and `TimeoutStopSec=75`.
 
 ## Gotchas (do NOT reintroduce these)
 

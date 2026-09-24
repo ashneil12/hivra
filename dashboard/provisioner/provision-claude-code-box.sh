@@ -1053,6 +1053,10 @@ docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
   || die "Agent Zero image digest is unavailable after pull"
 
 # --- systemd unit: run the pinned image loopback-bound, env + state mounted ---
+# Stop grace: Agent Zero's supervisord gives its own processes up to 60 s to
+# finish and save, but `docker stop` defaults to 10 s before SIGKILL. Give the
+# container the full 60 s, and systemd enough headroom (75 s) that it never
+# kills `docker stop` itself before that grace ends.
 cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT
 [Unit]
 Description=Hivra Agent Zero (agent0ai/agent-zero on 127.0.0.1:${A0_PORT}, mounted at /agent-zero)
@@ -1060,11 +1064,12 @@ After=network-online.target docker.service
 Requires=docker.service
 [Service]
 TimeoutStartSec=0
+TimeoutStopSec=75
 Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f hivra-agent-zero
 ExecStart=/usr/bin/docker run --rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
-ExecStop=/usr/bin/docker stop hivra-agent-zero
+ExecStop=/usr/bin/docker stop -t 60 hivra-agent-zero
 [Install]
 WantedBy=multi-user.target
 UNIT

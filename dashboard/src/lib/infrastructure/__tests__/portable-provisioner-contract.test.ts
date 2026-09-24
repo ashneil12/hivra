@@ -443,6 +443,18 @@ describe("portable provisioner source contract", () => {
     expect(updater).not.toMatch(/tg\.env|>\s*\/etc\/sudoers/);
   });
 
+  it("gives Agent Zero its full 60 second stop grace instead of docker's 10 seconds", () => {
+    const installer = source("provision-claude-code-box.sh");
+    const unit = installer.slice(
+      installer.indexOf("cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT"),
+      installer.indexOf("chmod 0644 /etc/systemd/system/hivra-agent-zero.service"),
+    );
+    expect(unit).toContain("ExecStop=/usr/bin/docker stop -t 60 hivra-agent-zero");
+    expect(unit).not.toMatch(/ExecStop=\/usr\/bin\/docker stop hivra-agent-zero/);
+    const stopTimeout = Number((unit.match(/^TimeoutStopSec=(\d+)$/m) || [])[1]);
+    expect(stopTimeout).toBeGreaterThan(60);
+  });
+
   it("does not default installer dependencies to a moving main/latest reference", () => {
     const installerSource = [
       source("prepare-proxmox-host.sh"),
