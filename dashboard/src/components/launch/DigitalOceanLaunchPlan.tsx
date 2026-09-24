@@ -193,11 +193,29 @@ export function DigitalOceanLaunchPlan({
         <span className={journeyStyles.planValue}>
           <span className={journeyStyles.planSummary}>
             <strong>DigitalOcean bills this sandbox per second while it runs, to your team.</strong>
+            <small>Hivra first sends {name} a short setup note as a visible chat message: where it runs, its /workspace and how you see its work. {name} replies once, which uses a little of your DigitalOcean and model usage.</small>
             {balanceLine ? <small>{balanceLine}{" "}
               <a className={journeyStyles.inlineAction} href={DIGITALOCEAN_BILLING_URL} target="_blank" rel="noreferrer">DigitalOcean billing</a>
               {" "}
               <button type="button" className={journeyStyles.inlineAction} onClick={balance.recheck} disabled={balance.checking}>Check again</button>
             </small> : null}
+          </span>
+        </span>
+      </div>
+      <div className={journeyStyles.planRow}>
+        <span className={journeyStyles.planLabel}>First task</span>
+        <span className={journeyStyles.planValue}>
+          <span className={styles.field}>
+            <label htmlFor={`${id}-task`}>First task (optional)</label>
+            <textarea
+              id={`${id}-task`}
+              rows={3}
+              maxLength={8000}
+              value={choice.firstTask}
+              placeholder={`What should ${name} start on?`}
+              onChange={(event) => onChange({ firstTask: event.target.value })}
+            />
+            <small>Sent once the sandbox is ready, right after Hivra&apos;s setup note. You can also just start chatting.</small>
           </span>
         </span>
       </div>

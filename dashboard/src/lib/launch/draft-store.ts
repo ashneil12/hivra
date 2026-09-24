@@ -184,6 +184,7 @@ function safeDigitalOceanChoice(value: unknown): LaunchDigitalOceanChoice {
       ? input.size as LaunchDigitalOceanChoice["size"] : DEFAULT_DIGITALOCEAN_CHOICE.size,
     modelMode: input.modelMode === "digitalocean-inference" ? "digitalocean-inference" : "vendor",
     model: typeof input.model === "string" && DIGITALOCEAN_MODEL.test(input.model) ? input.model : "",
+    firstTask: typeof input.firstTask === "string" ? input.firstTask.slice(0, 8_000) : "",
   };
 }
 

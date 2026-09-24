@@ -9,9 +9,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle, Check, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Info, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
 
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { computerContractDisplayText } from "@/lib/agent-computers/computer-contract";
 import {
   answerManagedSessionApproval,
   changeManagedSession,
@@ -58,19 +59,44 @@ function statusCopy(session: ManagedSessionDto, transcript: ManagedTranscript): 
   return { label: "Ready", dot: styles.dotReady };
 }
 
+/**
+ * Hivra's setup note, exactly as sent, as a Hivra card rather than as a
+ * message the owner typed. Collapsed: it is context, not the conversation.
+ */
+function HivraSetupNote({ text, agentName }: { text: string; agentName: string }) {
+  return (
+    <details className={styles.setupNote}>
+      <summary>
+        <Info size={13} aria-hidden />
+        <span className={styles.setupTitle}>Hivra setup</span>
+        <span className={styles.setupSummary}>Hivra told {agentName} where it runs and how you see its work.</span>
+      </summary>
+      <div className={styles.setupBody}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{computerContractDisplayText(text)}</ReactMarkdown>
+      </div>
+    </details>
+  );
+}
+
 function RunView({
   run,
+  agentName,
   submitting,
   onAnswer,
 }: {
   run: ManagedTranscriptRun;
+  agentName: string;
   submitting: Record<string, "approve" | "reject">;
   onAnswer: (requestId: string, outcome: "approve" | "reject") => void;
 }) {
   const hasOutput = run.text || run.tools.length || run.approvals.length || run.reasoning;
   return (
     <>
-      {run.prompt ? <div className={styles.userBubble}>{run.prompt}</div> : null}
+      {run.prompt
+        ? run.promptSource === "hivra-setup"
+          ? <HivraSetupNote text={run.prompt} agentName={agentName} />
+          : <div className={styles.userBubble}>{run.prompt}</div>
+        : null}
       <div className={styles.assistant}>
         {run.reasoning ? (
           <details className={styles.reasoning}>
@@ -138,11 +164,21 @@ export function ManagedSessionChat({
   initialSession,
   onDeleted,
   onCredentialProblem,
+  firstTask,
+  historyVersion = 0,
 }: {
   initialSession: ManagedSessionDto;
   onDeleted?: () => void;
   /** Called when a request fails because Hivra's DigitalOcean token cannot manage this agent. */
   onCredentialProblem?: (error: ManagedSessionApiError) => void;
+  /**
+   * The task chosen at launch. When the stored conversation holds no message
+   * from the owner, it goes back in the message box, unsent, so a launch that
+   * couldn't deliver it never loses it.
+   */
+  firstTask?: string | null;
+  /** Changing it reloads the stored conversation, for example after Hivra sent its setup note. */
+  historyVersion?: number;
 }) {
   const agentId = initialSession.agentId;
   const [session, setSession] = useState(initialSession);
@@ -166,6 +202,18 @@ export function ManagedSessionChat({
     if (isManagedSessionCredentialProblem(error)) onCredentialProblemRef.current?.(error);
   }, []);
   const streamable = Boolean(session.sessionId) && session.status !== "deleted" && session.status !== "deleting";
+  const firstTaskRef = useRef(firstTask);
+  useEffect(() => { firstTaskRef.current = firstTask; }, [firstTask]);
+  const nameRef = useRef(session.name);
+  useEffect(() => { nameRef.current = session.name; }, [session.name]);
+  const firstTaskOfferedRef = useRef(false);
+  // Reload the stored conversation when asked, the same way Reconnect does.
+  const [seenHistoryVersion, setSeenHistoryVersion] = useState(historyVersion);
+  if (seenHistoryVersion !== historyVersion) {
+    setSeenHistoryVersion(historyVersion);
+    setHistoryLoaded(false);
+    setStreamState("idle");
+  }
 
   useEffect(() => { lastEventIdRef.current = transcript.lastEventId; }, [transcript.lastEventId]);
 
@@ -192,9 +240,19 @@ export function ManagedSessionChat({
       .then(({ events, prompts }) => {
         let next = emptyManagedTranscript();
         for (const event of events) next = applyManagedSessionEvent(next, event);
-        for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text);
+        for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text, prompt.source);
         setTranscript(next);
         setHistoryLoaded(true);
+        // Once per visit: a launch task with no trace in the conversation was
+        // never sent. Offer it back; only the owner's Send sends it.
+        const task = (firstTaskRef.current ?? "").trim();
+        if (!firstTaskOfferedRef.current && task && !next.runs.some((run) => run.promptSource !== "hivra-setup")) {
+          setDraft((current) => current || task);
+          // Only the conversation's absence is observed: the send may have
+          // reached the computer without being recorded, so don't claim it wasn't.
+          setNotice({ tone: "info", text: `Hivra can't find your first task in this conversation with ${nameRef.current}. It's in the message box; check the conversation, then send it if it's missing.` });
+        }
+        firstTaskOfferedRef.current = true;
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -362,7 +420,7 @@ export function ManagedSessionChat({
             </div>
           ) : null}
           {transcript.runs.map((run) => (
-            <RunView key={run.runId} run={run} submitting={submitting} onAnswer={(id, outcome) => void answer(id, outcome)} />
+            <RunView key={run.runId} run={run} agentName={session.name} submitting={submitting} onAnswer={(id, outcome) => void answer(id, outcome)} />
           ))}
           {orphanPrompts.map((prompt, index) => <div key={`orphan-${index}`} className={styles.userBubble}>{prompt}</div>)}
         </div>

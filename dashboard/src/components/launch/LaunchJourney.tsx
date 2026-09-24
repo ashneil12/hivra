@@ -53,6 +53,7 @@ import {
 import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
 import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
 import {
@@ -368,7 +369,10 @@ function freshDraftCapacity(choice: LaunchDestinationChoice): LaunchCapacityChoi
     : { mode: "hivra-managed", targetId: null };
 }
 
-/** States what this launch needs next to what the plan can still hold for it. */
+/** States what this launch needs next to what the plan can still hold for it:
+ * the per-computer limit when that is what it exceeds, otherwise how much of
+ * the plan's shared CPU or memory is still free. The two are never mixed into
+ * one "left" figure (a per-computer cap is not what is left). */
 function managedCapacityShortfall(
   label: string,
   resourceKind: LaunchResourceKind,
@@ -376,12 +380,24 @@ function managedCapacityShortfall(
   plan: PlanInfo & { usage: NonNullable<PlanInfo["usage"]> },
 ): string {
   const { usedCpu, usedRam } = plan.usage;
-  const cpu = Math.max(0, Math.min(plan.maxCpuPerAgent, plan.poolCpu - usedCpu));
-  const ram = Math.max(0, Math.min(plan.maxRamPerAgent, plan.poolRam - usedRam));
-  if (resources.cpu > cpu || resources.ram > ram) {
-    return usedCpu === 0 && usedRam === 0
-      ? `${label} needs ${formatLaunchSize(resources.cpu, resources.ram)}. Your ${plan.name} plan includes ${formatLaunchSize(cpu, ram)}.`
-      : `${label} needs ${formatLaunchSize(resources.cpu, resources.ram)}. Your ${plan.name} plan has ${formatLaunchSize(cpu, ram)} left.`;
+  const amount = (value: number) => Math.floor(value * 10 + 1e-9) / 10;
+  const freeCpu = Math.max(0, plan.poolCpu - usedCpu);
+  const freeRam = Math.max(0, plan.poolRam - usedRam);
+  const needs = `${label} needs ${formatLaunchSize(resources.cpu, resources.ram)}.`;
+  const overCap = resources.cpu > plan.maxCpuPerAgent || resources.ram > plan.maxRamPerAgent;
+  const overPool = resources.cpu > freeCpu || resources.ram > freeRam;
+  // On plans whose per-computer limit is the whole allowance (Free), "includes" says both.
+  const capIsPool = plan.maxCpuPerAgent >= plan.poolCpu && plan.maxRamPerAgent >= plan.poolRam;
+  if (overCap && !capIsPool) {
+    return `${needs} Your ${plan.name} plan allows up to ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for each ${resourceKind}.`;
+  }
+  if (overCap || overPool) {
+    if (usedCpu === 0 && usedRam === 0) return `${needs} Your ${plan.name} plan includes ${formatLaunchSize(plan.poolCpu, plan.poolRam)}.`;
+    const free = [
+      resources.cpu > freeCpu ? `${amount(freeCpu)} of its ${amount(plan.poolCpu)} CPU free` : null,
+      resources.ram > freeRam ? `${amount(freeRam)} of its ${amount(plan.poolRam)} GB free` : null,
+    ].filter((part): part is string => part !== null);
+    return `${needs} Your ${plan.name} plan has ${free.join(" and ")}.`;
   }
   return `${label} is set to use up to ${formatLaunchSize(resources.maximumCpu ?? resources.cpu, resources.maximumRam ?? resources.ram)}. Your ${plan.name} plan allows up to ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for each ${resourceKind}.`;
 }
@@ -2617,6 +2633,13 @@ export function LaunchJourney() {
             <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{digitalOceanLane
               ? "Its own DigitalOcean sandbox and /workspace. Chat and files through Hivra. No browser, desktop or terminal."
               : whatItCanUse}</dd></div>
+            {draft.resourceKind === "agent" && draft.profileId ? <div><dt>You can see its work in</dt><dd>{
+              // The same decision that draws the agent page's tabs and the note
+              // Hivra gives the agent about its computer (ATT-15).
+              agentLaunchWatchRow(digitalOceanLane
+                ? { type: draft.profileId, computer_substrate: "do-managed-session", deployment_mode: "self-managed" }
+                : { type: draft.profileId, computer_substrate: substrate === "provider-vm" ? "provider-vm" : "proxmox-kvm",
+                  deployment_mode: destination.mode }, { browser: digitalOceanLane ? false : browserOn })}</dd></div> : null}
             {modelSummary ? <div><dt>Model</dt><dd>{modelSummary}</dd></div> : null}
             {hermesMemoryKey && draft.sendMemoryKey && !digitalOceanLane
               ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>
@@ -2628,8 +2651,11 @@ export function LaunchJourney() {
               ? <>DigitalOcean bills this sandbox per second while it runs, to your team.{digitalOceanBalance.balance && digitalOceanBalance.balance.state !== "unreadable"
                 ? <small>Prepaid balance {formatDigitalOceanBalance(digitalOceanBalance.balance.balance)}</small> : null}</>
               : cost}</dd></div>
+            {digitalOceanLane && draft.digitalOcean.firstTask.trim()
+              ? <div><dt>First task</dt><dd>{draft.digitalOcean.firstTask.trim()}<small>Sent right after Hivra&apos;s setup note.</small></dd></div>
+              : null}
             <div><dt>Changes</dt><dd>{digitalOceanLane
-              ? `Creates one DigitalOcean sandbox on ${digitalOceanTarget?.displayName ?? "your team"} and starts it. DigitalOcean bills from now. Nothing is bought from Hivra.`
+              ? `Creates one DigitalOcean sandbox on ${digitalOceanTarget?.displayName ?? "your team"} and starts it. DigitalOcean bills from now. Hivra sends it a short setup note as the first chat message. Nothing is bought from Hivra.`
               : launchChangesSummary({
               profileId: draft.profileId,
               substrate,

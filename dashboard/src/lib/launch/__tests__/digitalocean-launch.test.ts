@@ -17,7 +17,7 @@ describe("DigitalOcean as a place a Launch agent runs", () => {
   });
 
   it("asks for the key and model each mode needs", () => {
-    const choice = { size: "mars-2vcpu-4gb" as const, modelMode: "vendor" as const, model: "" };
+    const choice = { size: "mars-2vcpu-4gb" as const, modelMode: "vendor" as const, model: "", firstTask: "" };
     expect(digitalOceanModelProblem("codex", choice, "")).toBe("Paste your OpenAI API key for Codex.");
     expect(digitalOceanModelProblem("codex", choice, "sk-test-openai-key-for-launch-0000")).toBeNull();
     // Hermes has no vendor key there: it always needs Inference, a key and a model.
@@ -32,7 +32,7 @@ describe("DigitalOcean as a place a Launch agent runs", () => {
     const draft = {
       ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1",
       capacity: { mode: "digitalocean" as const, targetId: TEAM_ID },
-      digitalOcean: { size: "mars-1vcpu-1gb" as const, modelMode: "digitalocean-inference" as const, model: "llama3.3-70b-instruct" },
+      digitalOcean: { size: "mars-1vcpu-1gb" as const, modelMode: "digitalocean-inference" as const, model: "llama3.3-70b-instruct", firstTask: "Summarize the repo" },
       submittedDeployment: { mode: "digitalocean" as const, connectionId: CONNECTION_ID, targetId: TEAM_ID },
     };
     writeLaunchDraft(draft, "owner");
@@ -43,7 +43,7 @@ describe("DigitalOcean as a place a Launch agent runs", () => {
     const read = readLaunchDraft("owner");
     expect(read?.capacity).toEqual({ mode: "digitalocean", targetId: TEAM_ID });
     expect(read?.submittedDeployment).toEqual({ mode: "digitalocean", connectionId: CONNECTION_ID, targetId: TEAM_ID });
-    expect(read?.digitalOcean).toEqual({ size: "mars-2vcpu-4gb", modelMode: "digitalocean-inference", model: "llama3.3-70b-instruct" });
+    expect(read?.digitalOcean).toEqual({ size: "mars-2vcpu-4gb", modelMode: "digitalocean-inference", model: "llama3.3-70b-instruct", firstTask: "Summarize the repo" });
     expect(JSON.stringify(read)).not.toContain("must-not-survive");
   });
 

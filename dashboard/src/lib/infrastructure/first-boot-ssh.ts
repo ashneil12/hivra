@@ -224,8 +224,27 @@ export async function inspectProviderDesktopPower(input: FirstBootSshInput & Pro
     hostFingerprintSha256: result.hostFingerprintSha256, receipt: parseProviderDesktopPowerReceipt(result.output, request) };
 }
 
+/** Largest server-built guest seed accepted (the Bankr skill suite is the biggest). */
+export const MAX_PROVIDER_GUEST_SEED_BYTES=1024*1024;
+
+/** Server-built guest seed over the original enrolled pin: the provider-VM
+ * twin of the Proxmox host-to-guest seed lane (identity files, skill files,
+ * the Computer Contract). The caller builds the script from server data only,
+ * with every payload base64-encoded inside it, and must have loaded a stable
+ * running computer. It runs as root with no inherited environment under the
+ * same 8-second bound. It creates no lifecycle state and trusts no new key. */
+export async function runProviderGuestSeed(input: FirstBootSshInput & { script: string },
+  dependencies: Partial<Dependencies> = {}): Promise<FirstBootSshIdentity & { output: string }> {
+  const request = structuredClone(input);
+  if (typeof request.script !== "string" || !request.script.startsWith("set -e\n")
+    || Buffer.byteLength(request.script) > MAX_PROVIDER_GUEST_SEED_BYTES) throw new FirstBootSshError("invalid_identity");
+  const result = await connectFirstBootGuest(request, dependencies, { kind: "seed", script: request.script });
+  return { hostVerified: result.hostVerified, administratorAuthenticated: result.administratorAuthenticated,
+    hostFingerprintSha256: result.hostFingerprintSha256, output: result.output };
+}
+
 async function connectFirstBootGuest(input:FirstBootSshInput,dependencies:Partial<Dependencies>,recipe?:{
-  kind:"discovery"|"bundle";script:string;
+  kind:"discovery"|"bundle"|"seed";script:string;
 }):Promise<FirstBootSshIdentity & {output:string}> {
   const deps={...defaults,...dependencies};
   const {address,hostPublicKey,administratorPublicKey,administratorPrivateKey,dispatchDeadlineMs}=input;
@@ -331,7 +350,7 @@ async function connectFirstBootGuest(input:FirstBootSshInput,dependencies:Partia
       // Both recipes have fixed interpreters and no inherited environment.
       // Python imports must not create bytecode files on the read-only probe.
       const command="sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/timeout --signal=TERM --kill-after=1s 8s "
-        +(recipe.kind==="discovery"?"/bin/bash --noprofile --norc -s":"/usr/bin/python3 -I -B -");
+        +(recipe.kind==="discovery" || recipe.kind==="seed"?"/bin/bash --noprofile --norc -s":"/usr/bin/python3 -I -B -");
       if(!current())return finish("deadline_expired");
       try {client.exec(command,(error,stream)=>{
         const active=()=>{

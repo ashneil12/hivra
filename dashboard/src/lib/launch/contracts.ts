@@ -69,12 +69,15 @@ export type LaunchDigitalOceanChoice = {
   modelMode: "vendor" | "digitalocean-inference";
   /** DigitalOcean Inference model slug; "" until chosen. */
   model: string;
+  /** Optional first message, sent right after Hivra's setup note. */
+  firstTask: string;
 };
 
 export const DEFAULT_DIGITALOCEAN_CHOICE: LaunchDigitalOceanChoice = {
   size: "mars-2vcpu-4gb",
   modelMode: "vendor",
   model: "",
+  firstTask: "",
 };
 
 type LaunchResult = {

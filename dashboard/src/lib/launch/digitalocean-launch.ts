@@ -104,5 +104,6 @@ export function digitalOceanLaunchRequest(
     model: mode === "vendor"
       ? { mode: "vendor", apiKey: key.trim() }
       : { mode: "digitalocean-inference", apiKey: key.trim(), model: draft.digitalOcean.model },
+    ...(draft.digitalOcean.firstTask.trim() ? { firstTask: draft.digitalOcean.firstTask.trim() } : {}),
   });
 }

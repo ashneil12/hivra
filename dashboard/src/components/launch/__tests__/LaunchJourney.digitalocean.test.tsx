@@ -158,6 +158,9 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
   fireEvent.change(screen.getByLabelText("OpenAI API key"), { target: { value: OPENAI_KEY } });
   fireEvent.change(size, { target: { value: "mars-1vcpu-1gb" } });
+  // The setup note Hivra sends first costs a reply, so it is disclosed before launch.
+  expect(screen.getByText(/Hivra first sends Codex 1 a short setup note as a visible chat message/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("First task (optional)"), { target: { value: "Summarize the repo" } });
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
   expect(JSON.stringify({ ...window.localStorage })).not.toContain(OPENAI_KEY);
   fireEvent.click(screen.getByTestId("launch-primary-action"));
@@ -166,7 +169,8 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   expect(review.getByText(/DigitalOcean · Studio team/)).toBeInTheDocument();
   expect(review.getByText("1 vCPU / 1 GB DigitalOcean sandbox")).toBeInTheDocument();
   expect(review.getByText("Your OpenAI API key, sent to DigitalOcean for this sandbox")).toBeInTheDocument();
-  expect(review.getByText(/Creates one DigitalOcean sandbox on Studio team and starts it\. DigitalOcean bills from now\./)).toBeInTheDocument();
+  expect(review.getByText(/Creates one DigitalOcean sandbox on Studio team and starts it\. DigitalOcean bills from now\. Hivra sends it a short setup note/)).toBeInTheDocument();
+  expect(review.getByText("Summarize the repo")).toBeInTheDocument();
   const launch = screen.getByTestId("launch-primary-action");
   expect(launch).toHaveTextContent("Launch and start billing");
   fireEvent.click(launch);
@@ -180,6 +184,7 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
     size: "mars-1vcpu-1gb",
     name: "Codex 1",
     model: { mode: "vendor", apiKey: OPENAI_KEY },
+    firstTask: "Summarize the repo",
   });
   await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}`));
   expect(JSON.stringify({ ...window.localStorage })).not.toContain(OPENAI_KEY);

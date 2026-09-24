@@ -31,7 +31,7 @@ export function InfrastructureEntryChooser({
     if (previousPath.current !== path) headingRef.current?.focus();
     previousPath.current = path;
   }, [path]);
-  const title = path === "choose" ? "How would you like to add infrastructure?"
+  const title = path === "choose" ? "How would you like to add capacity?"
     : path === "cloud" ? "Which cloud account do you use?"
       : path === "machine" ? "Where is your machine?"
         : path === "local" ? "Connect a machine on your network" : "Connect an existing server";

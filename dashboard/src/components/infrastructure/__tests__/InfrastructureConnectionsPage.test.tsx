@@ -631,7 +631,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     expect(screen.queryByLabelText("Infrastructure summary")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Available infrastructure" })).not.toBeInTheDocument();
@@ -654,7 +654,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHivraCloudCapacity as jest.Mock).mockRejectedValueOnce(new Error("Usage temporarily unavailable"));
     render(<InfrastructureConnectionsPage />);
 
-    const chooser = await screen.findByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
     expect(screen.getByRole("button", { name: "Retry Hivra Cloud capacity" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Hivra Cloud capacity" })).not.toBeInTheDocument();
@@ -1121,7 +1121,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       render(<InfrastructureConnectionsPage />);
 
       const chooser = await screen.findByRole("region", {
-        name: "How would you like to add infrastructure?",
+        name: "How would you like to add capacity?",
       });
       expect(screen.getByText(/Connect a cloud project or bring a computer you control/i)).toBeInTheDocument();
       expect(screen.queryByText(/Managed capacity appears here as soon as your plan is active/i)).not.toBeInTheDocument();
@@ -1145,7 +1145,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "How would you like to add infrastructure?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "How would you like to add capacity?" })).not.toBeInTheDocument();
     const cloudCard = screen.getByRole("heading", { name: "Hivra Cloud" }).closest("article") as HTMLElement;
     expect(within(cloudCard).getByText(/Your plan's CPU and RAM allowance/i)).toHaveTextContent("The servers that host them have separate capacity.");
     expect(within(cloudCard).getByText("1.5 vCPU allocated")).toBeInTheDocument();
@@ -1174,7 +1174,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Add capacity" }));
-    const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     expect(within(chooser).getByText("Pro is active. Review plan options in Billing.")).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
     expect(within(chooser).getByRole("link", { name: /Manage Hivra Cloud/i })).toHaveAttribute(
@@ -1202,7 +1202,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose Hivra Cloud/i }));
 
@@ -1234,7 +1234,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose Hivra Cloud/i }));
     fireEvent.click(screen.getByRole("button", { name: /Continue to secure checkout/i }));
@@ -1425,7 +1425,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Start with Hetzner/i }));
@@ -2047,7 +2047,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose my machine/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /^Remote server/i }));
@@ -2609,7 +2609,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     const addCapacity = await screen.findByRole("button", { name: "Add capacity" });
     fireEvent.click(addCapacity);
-    const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     const openDialog = within(chooser).getByRole("button", { name: /Start with Hetzner/i });
     openDialog.focus();
@@ -2825,7 +2825,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     { trigger: "Connect existing host", title: "Connect a host" },
   ])("pins $title inside the dashboard scrollport", async ({ trigger, title }) => {
     const { container, unmount } = render(<InfrastructureConnectionsPage />);
-    const chooser = await screen.findByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     if (trigger === "Start with Hetzner") {
       fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     } else {

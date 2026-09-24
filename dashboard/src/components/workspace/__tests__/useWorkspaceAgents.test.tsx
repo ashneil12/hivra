@@ -62,6 +62,24 @@ describe("useWorkspaceAgents", () => {
     jest.clearAllMocks();
   });
 
+  it("keeps where each agent's computer runs, and drops placement values it does not know (ATT-11)", async () => {
+    const { result } = renderHook(() =>
+      useWorkspaceAgents({
+        fetchHermes: async () => hermesEnvelope([]),
+        fetchHivra: async () => hivraResult([
+          { ...hivraRow("cloud"), computer_substrate: "provider-vm", deployment_mode: "self-managed" },
+          { ...hivraRow("managed"), computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" },
+          { ...hivraRow("odd"), computer_substrate: "mainframe", deployment_mode: 7 },
+        ]),
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const pairs = Object.fromEntries(result.current.agents.map((agent) => [agent.id, agent.computerPair?.placement]));
+    // An unknown placement is not guessed as Hivra Cloud.
+    expect(pairs).toEqual({ cloud: "My cloud", managed: "Hivra Cloud", odd: null });
+    expect(result.current.hivraError).toBeNull();
+  });
+
   it("combines successful families with stable source-qualified identities", async () => {
     const { result } = renderHook(() =>
       useWorkspaceAgents({

@@ -16,6 +16,7 @@ import { AgentModelSettings } from "./AgentModelSettings";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
+import { ComputerAgentSlot, ComputerContractPanel } from "./ComputerContractPanel";
 
 import {
   stopAgent, startAgent, restartAgent, updateAgentRuntime, resizeAgent, renameAgent, deleteAgent, browserToggle,
@@ -524,6 +525,7 @@ export function HivraManage({
     && (!agent.computer_profile || agent.computer_profile === "ubuntu-desktop");
   const jumpTargets = [
     { id: "manage-overview", label: "Overview" },
+    { id: "manage-computer", label: isComputerOnly ? "Agent" : "Computer" },
     { id: "manage-power", label: "Power" },
     ...(chatModelSection || veniceModelSection ? [{ id: "manage-model", label: "Model" }] : []),
     ...(permissionsSection ? [{ id: "manage-permissions", label: "Permissions" }] : []),
@@ -593,7 +595,6 @@ export function HivraManage({
           <Row icon={<Cpu size={14} />} k="Size"><span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><span style={valStyle}>{agent.cpu} CPU · {agent.ram} GB reserved · up to {agent.cpu_max ?? agent.cpu} CPU · {agent.ram_max ?? agent.ram} GB</span><a href="#resources" className="hm-inline-link" style={{ ...label, color: "var(--ink-black)" }}>Resources</a></span></Row>
           <Row icon={<Globe size={14} />} k="Region"><span style={valStyle}>{providerComputer ? "See your provider project" : "EU"}</span></Row>
           {agent.ip ? <Row icon={<Globe size={14} />} k="IP"><span style={valStyle}>{agent.ip}</span></Row> : null}
-          {agent.vmid ? <Row icon={<Hash size={14} />} k="VM ID"><span style={valStyle}>{agent.vmid}</span></Row> : null}
           <Row icon={<Clock size={14} />} k="Created"><span style={valStyle}>{fmtDate(agent.created_at)}</span></Row>
           {agent.chat_url ? (
             <Row icon={<Globe size={14} />} k="Endpoint">
@@ -607,8 +608,27 @@ export function HivraManage({
               </span>
             </Row>
           ) : null}
+          {/* The VM ID is for support, not for using the agent (ATT-12). */}
+          {agent.vmid ? (
+            <details className="hm-advanced">
+              <summary className="mono" style={{ ...label, cursor: "pointer", minHeight: 32, display: "inline-flex", alignItems: "center" }}>Advanced</summary>
+              <div style={{ paddingTop: 8 }}>
+                <Row icon={<Hash size={14} />} k="VM ID"><span style={valStyle}>{agent.vmid}</span></Row>
+              </div>
+            </details>
+          ) : null}
         </div>
       </div>
+
+      {/* COMPUTER — the agent and its computer as one pair (ATT-11), and what
+          the agent knows about it (the Computer Contract). A computer without
+          an agent shows an honest Agent slot until attach exists. */}
+      <div id="manage-computer" className="hm-anchor" />
+      {isComputerOnly ? (
+        <ComputerAgentSlot />
+      ) : (
+        <ComputerContractPanel agent={agent} runtimeName={def?.name || "This agent"} />
+      )}
 
       {/* POWER */}
       <div id="manage-power" className="mono hm-anchor" style={{ ...label, marginBottom: 10 }}>Power</div>
@@ -623,19 +643,19 @@ export function HivraManage({
               {acting === "stop" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Stop
             </button>
           )}
-          <button type="button" disabled={busy || lifecyclePending || agent.status === "stopped"} onClick={() => void run("restart", () => restartAgent(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status === "stopped" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status === "stopped" ? 0.5 : 1 }} title={agent.status === "stopped" ? "Box is stopped — use Start" : "Reboot the box"}>
+          <button type="button" disabled={busy || lifecyclePending || agent.status === "stopped"} onClick={() => void run("restart", () => restartAgent(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status === "stopped" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status === "stopped" ? 0.5 : 1 }} title={agent.status === "stopped" ? "The computer is stopped. Use Start" : "Reboot the computer"}>
             {acting === "restart" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Restart
           </button>
-          {!providerComputer && !preparedComputer ? <button type="button" disabled={busy || lifecyclePending || agent.status !== "running"} onClick={() => void run("runtime-update", () => updateAgentRuntime(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status !== "running" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status !== "running" ? 0.5 : 1 }} title="Refresh the Hivra connection service and reboot the box">
+          {!providerComputer && !preparedComputer ? <button type="button" disabled={busy || lifecyclePending || agent.status !== "running"} onClick={() => void run("runtime-update", () => updateAgentRuntime(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status !== "running" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status !== "running" ? 0.5 : 1 }} title="Refresh the Hivra connection service and reboot the computer">
             {acting === "runtime-update" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Update &amp; restart
           </button> : null}
         </div>
         {errorFor("power")}
         <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          Stop shuts down the box; Start brings it back. Restart reboots in place. {!providerComputer && !preparedComputer
+          Stop shuts down the computer; Start brings it back. Restart reboots in place. {!providerComputer && !preparedComputer
             ? isComputerOnly
               ? "Update & restart refreshes Hivra’s connection service, then reboots; your files and local logins remain on the computer."
-              : "Update & restart refreshes Hivra’s connection service, then reboots; your agent login, chats, model credentials, and files remain on the box."
+              : "Update & restart refreshes Hivra’s connection service, then reboots; your agent login, chats, model credentials, and files remain on the computer."
             : ""} Stopping does not cancel your plan or any provider billing.
         </div>
         {acting && LIFECYCLE_PROGRESS[acting] ? (
@@ -768,7 +788,7 @@ export function HivraManage({
                     ? "The agent has a live, self-hosted Chrome — the Browser tab works and it can browse the web. Reserves +1 CPU / +2 GB."
                     : providerComputer
                     ? "Browser automation is off. This agent still uses its whole cloud computer; turning the browser off does not resize the server or reduce provider billing."
-                    : "No browser — the box runs leaner and can resize down to the 0.5 CPU / 1 GB floor. The Browser tab and web automation are off until you turn this back on."}
+                    : "No browser. The computer runs leaner and can resize down to the 0.5 CPU / 1 GB floor. The Browser tab and web automation are off until you turn this back on."}
                 </div>
               </div>
               {browserStateKnown ? <button
@@ -898,7 +918,7 @@ export function HivraManage({
           <div id="manage-permissions" className="mono hm-anchor" style={{ ...label, marginBottom: 10 }}>Permissions</div>
           <div style={{ ...card, marginBottom: 20 }}>
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-              How much the agent may do on its box. Applies from the next message.
+              How much the agent may do on its computer. Applies from the next message.
             </div>
             {/* A tap applies the preset at once, so touch layouts show each hint before the tap. */}
             <div className="hm-choices">
@@ -940,7 +960,7 @@ export function HivraManage({
                 ? "The agent can read files and browse but won't run commands or change anything."
                 : restrict === "limited"
                   ? (def?.cliKind === "codex" ? "Sandboxed to its workspace — can edit project files but not the wider system." : "Shell commands are off; file reads and edits still work.")
-                  : "The agent runs autonomously with full access to its own box (it's single-tenant — yours alone)."}
+                  : "The agent runs autonomously with full access to its own computer (it's single-tenant, yours alone)."}
             </div>
           </div>
         </>
@@ -957,7 +977,7 @@ export function HivraManage({
               </div>
             ) : <>
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-              Attach a capability to {def?.name || "the agent"} — crypto research, deeper web search, and more. Each tool wires up its own connector (and credentials) on the box; they load on the next message.
+              Attach a capability to {def?.name || "the agent"} — crypto research, deeper web search, and more. Each tool wires up its own connector (and credentials) on the computer; they load on the next message.
             </div>
             <div>
               <button
@@ -979,7 +999,7 @@ export function HivraManage({
               </summary>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, marginTop: 12 }}>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-                  Any Model Context Protocol server, by command. Servers run on the box and load on the next message.
+                  Any Model Context Protocol server, by command. Servers run on the computer and load on the next message.
                 </div>
             {(mcp || []).length > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
@@ -1049,7 +1069,7 @@ export function HivraManage({
             </div>
             {errorFor("tools")}
                 <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                  Servers that need API keys read them from the command&apos;s environment — include them as <span className="mono">KEY=value</span> via the box terminal if needed.
+                  Servers that need API keys read them from the command&apos;s environment — include them as <span className="mono">KEY=value</span> from the Terminal if needed.
                 </div>
               </div>
             </details>
@@ -1149,14 +1169,14 @@ export function HivraManage({
               : budget.fixedSize ? `This managed dashboard has a fixed ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB allocation. It uses an agent slot, not your compute pool.`
               : hasPlan
               ? poolFull
-                ? `Your ${plan?.name} pool is fully used by your other agents — shrink another box to grow this one.`
-                : `Min ${fmtNum(floor.cpu)} CPU / ${fmtNum(floor.ram)} GB · up to ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB for this box on ${plan?.name}.`
+                ? `Your ${plan?.name} pool is fully used by your other agents. Shrink another computer to grow this one.`
+                : `Min ${fmtNum(floor.cpu)} CPU / ${fmtNum(floor.ram)} GB · up to ${fmtNum(capCpu)} CPU / ${fmtNum(capRam)} GB for this computer on ${plan?.name}.`
               : `Min for ${def?.name || "this agent"}: ${floor.cpu} CPU / ${floor.ram} GB · max ${MAX_CPU} / ${MAX_RAM} GB.`}
           </span>
           {!budget.ready ? <button type="button" style={btnGhost} onClick={onChanged}>Refresh capacity</button> : null}
         </div>
         {errorFor("resources")}
-        {!providerComputer ? <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Resizing reboots the box (a brief reconnect; the chat reattaches automatically).</div> : null}
+        {!providerComputer ? <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Resizing reboots the computer (a brief reconnect; the chat reattaches automatically).</div> : null}
       </div>
       </>}
       </section>
@@ -1190,7 +1210,7 @@ export function HivraManage({
             </div>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 9, fontSize: 12.5, color: "var(--text-secondary)", cursor: "pointer", lineHeight: 1.5 }}>
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} style={{ marginTop: 2, accentColor: "#c0392b" }} />
-              I understand this is irreversible and deletes all data on the box.
+              I understand this is irreversible and deletes all data on the computer.
             </label>
             <div>
               <div className="mono" style={{ ...label, marginBottom: 6 }}>Type <span style={{ color: "#c0623f" }}>{agent.name}</span> to confirm</div>

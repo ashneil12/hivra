@@ -8,6 +8,8 @@ import { SurfaceActions } from "./SurfaceActions";
 import { useNativeWorkspaceSurfaces } from "@/components/layout/NativeWorkspaceBridge";
 
 type Surface = { id: string; label: string; icon: ReactNode };
+/** A top-level destination and the surfaces it holds, in order. */
+export type SurfaceGroup<T extends string> = { id: string; label: string; icon: ReactNode; surfaces: T[] };
 const PRIMARY = new Set(["chat", "aeon", "terminal", "desktop", "files", "manage"]);
 
 /**
@@ -18,9 +20,20 @@ const PRIMARY = new Set(["chat", "aeon", "terminal", "desktop", "files", "manage
  * separate 56px header above it — two rows that both named the same resource.
  */
 export function ResourceSurfaceNavigation<T extends string>({
-  surfaces, active, onSelect, exportHref, identity, actionSurface,
+  surfaces, groups, groupNotes, active, onSelect, exportHref, identity, actionSurface, panelId,
 }: {
   surfaces: (Surface & { id: T })[];
+  /**
+   * Agent pages pass groups (Chat · Computer · Manage): the bar shows one
+   * button per group and a second row for the active group's own surfaces.
+   * Without groups (computers) every surface stays in one flat bar. Native
+   * clients always receive the flat list.
+   */
+  groups?: SurfaceGroup<T>[];
+  /** The element the surfaces render into, for the sub-row's aria-controls. */
+  panelId?: string;
+  /** A short fact shown at the end of a group's row, keyed by group id. */
+  groupNotes?: Record<string, ReactNode>;
   active: T;
   onSelect: (id: T) => void;
   exportHref?: string;
@@ -115,6 +128,14 @@ export function ResourceSurfaceNavigation<T extends string>({
     </a> : null}
   </div>;
 
+  const visibleGroups = (groups ?? [])
+    .map(group => ({ ...group, surfaces: group.surfaces.filter(id => surfaces.some(surface => surface.id === id)) }))
+    .filter(group => group.surfaces.length > 0);
+  if (visibleGroups.length > 0) {
+    return <GroupedSurfaceNavigation surfaces={surfaces} groups={visibleGroups} active={active} onSelect={onSelect}
+      exportHref={exportHref} identity={identity} actions={actions} panelId={panelId} notes={groupNotes} />;
+  }
+
   return <nav aria-label="Resource surfaces" className={styles.navigation}>
     {identity}
     <div className={styles.primary}>
@@ -160,4 +181,80 @@ export function ResourceSurfaceNavigation<T extends string>({
     {manage && <button type="button" className={`${styles.surface} ${styles.manage}`} aria-label={manage.label} title={manage.label}
       aria-pressed={active === manage.id} onClick={() => { setOpen(false); onSelect(manage.id); }}>{manage.icon}<span>{manage.label}</span></button>}
   </nav>;
+}
+
+/**
+ * Chat · Computer (Terminal, Files, Browser, Git) · Manage.
+ *
+ * Chat and Manage open their namesake surface; Computer reopens the view last
+ * used in it (Terminal first). The active group's surfaces sit in their own
+ * row as tabs, so every surface stays one tap away without an overflow menu.
+ */
+function GroupedSurfaceNavigation<T extends string>({
+  surfaces, groups, active, onSelect, exportHref, identity, actions, panelId, notes,
+}: {
+  notes?: Record<string, ReactNode>;
+  surfaces: (Surface & { id: T })[];
+  groups: SurfaceGroup<T>[];
+  active: T;
+  onSelect: (id: T) => void;
+  exportHref?: string;
+  identity?: ReactNode;
+  actions: ReactNode;
+  panelId?: string;
+}) {
+  const [remembered, setRemembered] = useState<Record<string, T>>({});
+  const activeGroup = groups.find(group => group.surfaces.includes(active)) ?? groups[0];
+  const byId = new Map(surfaces.map(surface => [surface.id, surface]));
+  const choose = (group: SurfaceGroup<T>, id: T) => {
+    setRemembered(current => current[group.id] === id ? current : { ...current, [group.id]: id });
+    onSelect(id);
+  };
+  const openGroup = (group: SurfaceGroup<T>) => {
+    // A button named after one of its surfaces (Chat, Manage, Dashboard)
+    // always opens that surface. Computer reopens the view last used in it.
+    const namesake = group.surfaces.find(id => byId.get(id)?.label === group.label);
+    const last = remembered[group.id];
+    choose(group, namesake ?? (last && group.surfaces.includes(last) ? last : group.surfaces[0]));
+  };
+  const showExport = Boolean(exportHref) && activeGroup.id === "manage";
+  const subSurfaces = activeGroup.surfaces.length > 1 || showExport ? activeGroup.surfaces : [];
+
+  return <>
+    <nav aria-label="Resource surfaces" className={styles.navigation} data-grouped="true">
+      {identity}
+      <div className={styles.primary}>
+        {groups.map(group => <button key={group.id} type="button" data-surface-group={group.id}
+          aria-label={group.label} aria-pressed={group.id === activeGroup.id} onClick={() => openGroup(group)}
+          className={styles.surface}>
+          {group.icon}<span>{group.label}</span>
+        </button>)}
+      </div>
+      {actions}
+    </nav>
+    {subSurfaces.length > 0 ? <div className={styles.subnav} role="tablist" aria-label={`${activeGroup.label} views`}>
+      {subSurfaces.map(id => {
+        const surface = byId.get(id);
+        if (!surface) return null;
+        return <button key={id} type="button" role="tab" aria-selected={id === active}
+          aria-controls={id === active ? panelId : undefined} tabIndex={id === active ? 0 : -1}
+          className={styles.subSurface} onClick={() => choose(activeGroup, id)}
+          onKeyDown={event => {
+            if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+            event.preventDefault();
+            const index = subSurfaces.indexOf(id);
+            const next = subSurfaces[(index + (event.key === "ArrowRight" ? 1 : subSurfaces.length - 1)) % subSurfaces.length];
+            choose(activeGroup, next);
+            const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+            buttons?.[subSurfaces.indexOf(next)]?.focus();
+          }}>
+          {surface.icon}<span>{surface.label}</span>
+        </button>;
+      })}
+      {showExport ? <a href={exportHref} title="Download chats and memory as JSON" className={styles.subExport}>
+        <Download size={13} aria-hidden="true" />Export data
+      </a> : null}
+      {notes?.[activeGroup.id] ? <span className={styles.subNote}>{notes[activeGroup.id]}</span> : null}
+    </div> : null}
+  </>;
 }
