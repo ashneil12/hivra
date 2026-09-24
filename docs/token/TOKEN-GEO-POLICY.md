@@ -47,6 +47,8 @@ the stored country decides, and so does the country Clerk recorded for the
 user's latest session activity (the same source as the `sync-user-geo` cron),
 standing in for the request IP. A failed Clerk read counts as unknown.
 
+The ops admin is exempt, for testing and operating the service; this is not a customer-facing exception. `isOpsAdminUser` reads only the first entry of `OPS_ADMIN_USER_IDS` and of `OPS_ADMIN_EMAILS` (its email must be the user's verified primary address in Clerk), so the account that must keep token features from a listed country has to be that first entry. Prefer `OPS_ADMIN_USER_IDS`: it needs no Clerk lookup.
+
 Hivra stores no billing address and no profile country, and the Stripe card's
 issuing country is not kept. So the FCA's "refuse a UK payment method" check
 does not exist yet; capturing `card.country` at the `setup_intent.succeeded`
