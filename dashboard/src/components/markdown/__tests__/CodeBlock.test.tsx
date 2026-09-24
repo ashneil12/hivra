@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { render, waitFor } from "@testing-library/react";
+import { Profiler } from "react";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -13,8 +14,11 @@ const mockNativeRequire = (process as unknown as { getBuiltinModule(id: "node:mo
 const mockGrammarsLoaded: string[] = [];
 jest.mock("react-syntax-highlighter/dist/esm/prism-async-light", () =>
   jest.requireActual("react-syntax-highlighter/dist/cjs/prism-async-light"));
+jest.mock("react-syntax-highlighter/dist/esm/async-languages/prism", () =>
+  jest.requireActual("react-syntax-highlighter/dist/cjs/async-languages/prism"));
 jest.mock("refractor/core", () => mockNativeRequire("refractor/core"));
-for (const grammar of ["tsx", "python", "javascript"]) {
+// "false" is Prism's grammar for the fence the async build calls "falselang".
+for (const grammar of ["tsx", "python", "javascript", "false"]) {
   jest.mock(`refractor/${grammar}`, () => {
     mockGrammarsLoaded.push(grammar);
     return mockNativeRequire(`refractor/${grammar}`);
@@ -65,6 +69,20 @@ describe("CodeBlock", () => {
     expect(container).toHaveTextContent(/^js/);
   });
 
+  // A name the highlighter can't find registered after loading it makes it
+  // load again after every render, for as long as the block is on screen.
+  it.each(["constructor", "falselang"])("settles on a %s fence instead of rendering again and again", async (language) => {
+    let commits = 0;
+    const { container } = render(
+      <Profiler id="block" onRender={() => { commits += 1; }}>
+        <CodeBlock language={language} value="just words" />
+      </Profiler>,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(container).toHaveTextContent("just words");
+    expect(commits).toBeLessThan(10);
+  });
+
   it("keeps an unknown language as readable plain code", async () => {
     const { container } = render(<CodeBlock language="not-a-language" value="just words" />);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -76,10 +94,10 @@ describe("CodeBlock", () => {
 describe("prismLanguage", () => {
   const loaders = jest.requireActual("react-syntax-highlighter/dist/cjs/async-languages/prism").default as Record<string, unknown>;
   const langDir = path.join(path.dirname(mockNativeRequire.resolve("refractor/core")), "..", "lang");
-  const refractorAliases = readdirSync(langDir).filter((file) => file.endsWith(".js")).flatMap((file) => {
-    const grammar = mockNativeRequire(path.join(langDir, file)).default as { displayName: string; aliases?: string[] };
-    return (grammar.aliases ?? []).map((alias) => [alias, grammar.displayName] as const);
-  });
+  const grammars = readdirSync(langDir).filter((file) => file.endsWith(".js")).map((file) =>
+    mockNativeRequire(path.join(langDir, file)).default as { displayName: string; aliases?: string[] });
+  const refractorAliases = grammars.flatMap((grammar) =>
+    (grammar.aliases ?? []).map((alias) => [alias, grammar.displayName] as const));
 
   it("maps every short name refractor knows to a grammar the async build can load", () => {
     const loadable = refractorAliases.filter(([, language]) => typeof loaders[language] === "function");
@@ -91,10 +109,24 @@ describe("prismLanguage", () => {
     }
   });
 
-  it("leaves Prism names, unknown labels and object keys alone", () => {
+  it("leaves Prism names alone and reads anything it can't load as plain text", () => {
     expect(prismLanguage("TSX")).toBe("tsx");
     expect(prismLanguage("python")).toBe("python");
-    expect(prismLanguage("constructor")).toBe("constructor");
     expect(prismLanguage("text")).toBe("text");
+    expect(prismLanguage("not-a-language")).toBe("text");
+    expect(prismLanguage("constructor")).toBe("text");
+    expect(prismLanguage("hasOwnProperty")).toBe("text");
+    expect(prismLanguage("__proto__")).toBe("text");
+    expect(prismLanguage("falselang")).toBe("text");
+    expect(prismLanguage("shellSession")).toBe("text");
+  });
+
+  // The highlighter keeps loading a language until that exact name is
+  // registered, so every name passed on must be one Prism registers.
+  it("passes on only names whose grammar registers under that name", () => {
+    const registeredNames = new Set(grammars.map((grammar) => grammar.displayName));
+    const passedOn = Object.keys(loaders).filter((name) => prismLanguage(name) === name);
+    expect(passedOn.length).toBeGreaterThan(250);
+    for (const name of passedOn) expect([name, registeredNames.has(name)]).toEqual([name, true]);
   });
 });

@@ -1,3 +1,5 @@
+import languageLoaders from "react-syntax-highlighter/dist/esm/async-languages/prism";
+
 // Code fences often use a short name for a language (```js, ```py, ```sh).
 // The full Prism build resolved those itself. The async build loads each
 // grammar by its Prism name the first time a block needs it, so a short name
@@ -81,10 +83,22 @@ const LANGUAGE_BY_ALIAS = new Map(
   Object.entries(ALIASES_BY_LANGUAGE).flatMap(([language, aliases]) => aliases.map((alias) => [alias, language] as const)),
 );
 
-/** The Prism grammar name for a code fence's language label. */
+// The async build's "falselang" loader registers Prism's "false" grammar, so
+// the highlighter never finds "falselang" registered. Its fences show as plain
+// code.
+const REGISTERED_UNDER_ANOTHER_NAME = new Set(["falselang"]);
+
+/**
+ * The Prism grammar name for a code fence's language label, or "text" when
+ * the async build can't load it. The highlighter loads a language again after
+ * every render until that exact name is registered, so a name without its own
+ * loader ("constructor" would find Object's) or registered under another name
+ * would keep the block rendering for as long as it is on screen.
+ */
 export function prismLanguage(fence: string): string {
   const name = fence.toLowerCase();
-  return LANGUAGE_BY_ALIAS.get(name) ?? name;
+  const language = LANGUAGE_BY_ALIAS.get(name) ?? name;
+  return Object.hasOwn(languageLoaders, language) && !REGISTERED_UNDER_ANOTHER_NAME.has(language) ? language : "text";
 }
 
 /** Every short name this maps, for the tests. */
