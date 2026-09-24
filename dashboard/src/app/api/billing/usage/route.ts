@@ -143,6 +143,23 @@ export async function GET() {
     const activeHivraAgents = (hivraAgents || []).filter((a) =>
       isActiveComputeStatus(a.status)
     );
+    // The agent count is the database's own slot count, the one launch and
+    // attach enforce under the owner's slot lock. It also counts agents added
+    // to the owner's Hivra Cloud computers, which have no row above and use
+    // none of the pool's CPU or memory.
+    const { data: slotCount, error: slotError } = await supabaseAdmin
+      .rpc("hivra_owner_agent_slot_count", { p_owner: userId });
+    if (slotError || !Number.isSafeInteger(slotCount) || (slotCount as number) < 0) {
+      log.warn("billing usage could not verify the agent count", {
+        source: "billing.usage",
+        route: "/api/billing/usage",
+        userId,
+        failureType: "billing_usage_agent_slot_count_failed",
+      });
+      const response = apiError("Current compute usage is unavailable. Refresh before choosing a size.", 503);
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
     const { usedCpu, usedRam, instances: mappedInstances } = calculateUsage(activeInstances, activeHivraAgents);
     const maxAgents = sub.instance_limit;
     const totalCpu = sub.total_cpu_budget;
@@ -171,7 +188,7 @@ export async function GET() {
         },
       },
       usage: {
-        agentCount: activeInstances.length + activeHivraAgents.length,
+        agentCount: slotCount as number,
         maxAgents,
         usedCpu,
         totalCpu,

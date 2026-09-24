@@ -190,8 +190,31 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: (...args: unknown[]) => mockSupabaseFrom(...args),
+    rpc: (...args: unknown[]) => mockSupabaseRpc(...args),
   },
 }));
+
+// The database's side of the plan slot count (T35): the count every gate reads,
+// and the slot-locked writer that replaced the direct Hivra-managed insert. The
+// writer records the same payload the old insert spy saw, so the launch
+// assertions keep reading mockAgentInsert.
+const mockSupabaseRpc = jest.fn();
+let mockSlotCountOverride: number | null = null;
+function mockDefaultRpc(name: string, args: Record<string, unknown>) {
+  if (name === "hivra_owner_agent_slot_count") {
+    const counted = mockExistingAgents.filter(row => (row.deployment_mode ?? "hivra-managed") === "hivra-managed"
+      && ["provisioning", "running", "stopped"].includes(String(row.status))).length;
+    return Promise.resolve({ data: mockSlotCountOverride ?? counted, error: null });
+  }
+  if (name === "insert_hivra_managed_agent") {
+    const row = args.p_row as Record<string, unknown>;
+    mockAgentInsert(row);
+    if (mockAgentInsertThrows) return Promise.reject(mockAgentInsertThrows);
+    if (mockAgentInsertError) return Promise.resolve({ data: null, error: mockAgentInsertError });
+    return Promise.resolve({ data: { status: "inserted", row: { id: mockInsertedAgentId, ...row } }, error: null });
+  }
+  return Promise.resolve({ data: null, error: { message: `unexpected rpc ${name}` } });
+}
 
 jest.mock("@/lib/hivra/hivra-flag", () => ({
   isHivraApiAllowed: () => true,
@@ -413,6 +436,8 @@ describe("POST /api/hivra/agents", () => {
     mockAgentInsertError = null;
     mockAgentInsertThrows = null;
     mockExistingAgents = [];
+    mockSlotCountOverride = null;
+    mockSupabaseRpc.mockReset().mockImplementation(mockDefaultRpc);
     mockAuth.mockResolvedValue({ userId: "user-free" });
     mockTunnelConfigured = false;
     mockLocalAuthMode = false;
@@ -738,6 +763,24 @@ describe("POST /api/hivra/agents", () => {
     }));
     expect(mockOperationPrepare).not.toHaveBeenCalled();
     expect(mockOperationReserve).not.toHaveBeenCalled();
+  });
+
+  it("maps the model reservation's plan-limit refusal to the launch copy and releases nothing it did not create", async () => {
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    const { LaunchPlanAgentLimitError } = jest.requireActual("@/lib/hivra/launch-model-store");
+    mockLaunchReserve.mockRejectedValueOnce(new LaunchPlanAgentLimitError(4, 4));
+    mockRunProxmoxHostScript.mockReset()
+      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_RESOURCE_MAXIMUM_FITS 16 65536\n" });
+    mockTunnelConfigured = true;
+    const response = await POST(makeRequest({ type: "codex", llm: MODEL_SELECTION, cpu: 1.5, ram: 3,
+      launchRequestId: LAUNCH_REQUEST_ID }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ code: "plan_agent_limit" }));
+    expect(mockLaunchReserve).toHaveBeenCalledWith(expect.objectContaining({ agentLimit: 4 }));
+    expect(mockCreateBoxTunnel).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit launch maximum below the reserved allocation", async () => {
@@ -1831,6 +1874,39 @@ describe("POST /api/hivra/agents", () => {
     expect(mockOperationMarkReconciling).not.toHaveBeenCalled();
     expect(mockOperationBindAgent).not.toHaveBeenCalled();
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("writes a Hivra-managed row only through the slot-locked database writer with the plan's limit", async () => {
+    const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+    expect(response.status).toBe(201);
+    expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
+      p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
+    }));
+  });
+
+  it("refuses a launch the database counts past the plan limit, with the existing copy and no computer work (T35)", async () => {
+    // The courtesy gate saw a free slot; a concurrent attach or launch took it
+    // before the database counted under the owner's slot lock.
+    mockSupabaseRpc.mockImplementation((name: string, args: Record<string, unknown>) => name === "insert_hivra_managed_agent"
+      ? Promise.resolve({ data: { status: "plan_agent_limit", activeCount: 1, limit: 1 }, error: null })
+      : mockDefaultRpc(name, args));
+    const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      error: "Your Free plan allows 1 active agent.", code: "plan_agent_limit",
+    }));
+    expect(mockOperationFail).toHaveBeenCalledWith(expect.objectContaining({ requestId: LAUNCH_REQUEST_ID }), 403, "plan_agent_limit");
+    expect(mockOperationMarkReconciling).not.toHaveBeenCalled();
+    expect(mockOperationBindAgent).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("counts the plan from the database slot count, so an agent attached to a computer fills the Free slot", async () => {
+    mockSlotCountOverride = 1;
+    const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ error: "Your Free plan allows 1 active agent." }));
+    expect(mockAgentInsert).not.toHaveBeenCalled();
   });
 
   it("keeps a thrown generic row-insert acknowledgement reconciling", async () => {
