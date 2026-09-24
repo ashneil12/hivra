@@ -157,6 +157,25 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `PROFILE_DIR` | `/home/bux/.browser-profile` | **Must be non-default** (see gotcha #1). |
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
 | `DUMMY_BU_KEY` | `local` | Dummy `BROWSER_USE_API_KEY` (installer requires one; we self-host). |
+| `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | from `agent-cli-versions.json` | Vetted CLI versions. Leave unset on managed computers so the installer, the runtime updater and the dashboard read the same pins. |
+
+### Agent CLI versions
+
+Hivra owns the Claude Code and Codex versions on its computers. The vetted
+versions ship as `agent-cli-versions.json` (exported to the dashboard as
+`AGENT_CLI_VERSIONS`); vendor self-updaters are off (`DISABLE_AUTOUPDATER=1`
+for every CLI the gateway starts and on both terminal units, and Codex's
+`check_for_update_on_startup = false`, set by `hivra-codex-config-pin.py` only
+when the owner has not chosen). The agent terminal runs the exact binary the
+chat gateway runs and never falls back to another vendor's CLI.
+
+`hivra-update-guest-runtime.sh` reports the installed and vetted versions
+(`HIVRA_AGENT_CLI` line) and, when they differ, starts
+`hivra-agent-cli-update.sh` as a transient unit: it downloads the package,
+waits until no chat run is in flight (up to 6 hours), holds new runs back for
+the few seconds of the swap, verifies the new version and restores the previous
+package on failure. The gateway reports the installed version and the swap's
+progress to the dashboard as `agentCli` on authenticated `GET /api/meta`.
 
 ## The one manual step
 

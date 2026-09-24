@@ -204,6 +204,35 @@ async function probeBoxBrowserEnabled(chatUrl: string | null, token: string | nu
   }
 }
 
+/**
+ * The runtime updater's host-validated agent CLI line (Claude Code / Codex
+ * computers): the installed version, this release's vetted version
+ * (AGENT_CLI_VERSIONS) and whether a background swap was scheduled. The swap
+ * itself runs on the computer after this request; GET /api/meta agentCli.update
+ * reports its progress.
+ */
+type AgentCliUpdateReport = {
+  name: "claude-code" | "codex";
+  version: string | null;
+  target: string;
+  state: "current" | "scheduled" | "running" | "failed";
+};
+const AGENT_CLI_LINE = /^HIVRA_AGENT_CLI name=(claude-code|codex) version=(\d{1,6}\.\d{1,6}\.\d{1,6}|unknown) target=(\d{1,6}\.\d{1,6}\.\d{1,6}) state=(current|scheduled|running|failed)$/;
+function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null {
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = AGENT_CLI_LINE.exec(line);
+    if (match) {
+      return {
+        name: match[1] as AgentCliUpdateReport["name"],
+        version: match[2] === "unknown" ? null : match[2],
+        target: match[3],
+        state: match[4] as AgentCliUpdateReport["state"],
+      };
+    }
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
@@ -1103,14 +1132,15 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
         });
         return apiError("The connection service was updated, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
       }
+      const agentCli = parseAgentCliReport(r.stdout || "");
       await logHivraAgentEvent({
         userId,
         event: "runtime_updated",
         agentId: agent.id,
         agentType: agent.type,
-        detail: { inPlace: true },
+        detail: { inPlace: true, ...(agentCli ? { agentCli } : {}) },
       });
-      return apiSuccess({ status: "running" });
+      return apiSuccess({ status: "running", ...(agentCli ? { agentCli } : {}) });
     }
 
     if (action === "resize") {

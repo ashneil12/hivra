@@ -121,7 +121,8 @@ function runHelper(options: {
       chmodSync(path.join(binDir, name), 0o755);
     }
     for (const asset of RUNTIME_ASSETS) copyFileSync(path.join(bundleRoot, "hivra-chat", asset), path.join(bundle, "hivra-chat", asset));
-    for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
+    for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
+      "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
       copyFileSync(path.join(bundleRoot, file), path.join(bundle, file));
     }
     // The real helper, with only its fixed root paths moved under the sandbox.
@@ -242,6 +243,35 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
       if (index !== 3) expect(call.stdin).not.toContain(CREDENTIAL.token);
     }
     expect(run.stdout + run.stderr).not.toContain(CREDENTIAL.token);
+  });
+
+  it("forwards the guest's agent CLI report only in its exact shape", () => {
+    const valid = "HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled";
+    const run = runHelper({ guestStdout: `${valid}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe(`${valid}\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n`);
+    for (const forged of [
+      "HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=done; rm -rf /",
+      "HIVRA_AGENT_CLI name=gemini version=1.0.0 target=1.0.1 state=scheduled",
+      "HIVRA_AGENT_CLI name=codex version=latest target=0.156.1 state=scheduled",
+      " HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled",
+    ]) {
+      const other = runHelper({ guestStdout: `${forged}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
+      expect(other.stdout).toBe("HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+    }
+  });
+
+  it("ships the agent CLI pins and helpers, and schedules the swap only after the gateway commit", () => {
+    const run = runHelper();
+    const guest = run.sshCall(1).stdin;
+    const commit = guest.indexOf("COMMITTED=1");
+    expect(commit).toBeGreaterThan(0);
+    expect(guest.indexOf("systemd-run --unit=hivra-agent-cli-update")).toBeGreaterThan(commit);
+    expect(guest.indexOf("agent_cli_report || true")).toBeGreaterThan(commit);
+    expect(guest.indexOf("agent_cli_report || true")).toBeLessThan(guest.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
+    // Every terminal unit must keep the vendor self-updater off, or the update rolls back.
+    expect(guest).toContain("grep -Fxq DISABLE_AUTOUPDATER=1");
+    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py\)/);
   });
 
   it("prints only the receipt for a computer without a staged credential", () => {

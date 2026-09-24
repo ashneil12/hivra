@@ -935,6 +935,22 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     }
     const rpcNames = () => mockSupabaseRpc.mock.calls.map((call) => call[0]);
 
+    it.each([
+      ["HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled", { name: "codex", version: "0.149.1", target: "0.156.1", state: "scheduled" }],
+      ["HIVRA_AGENT_CLI name=claude-code version=unknown target=2.1.246 state=failed", { name: "claude-code", version: null, target: "2.1.246", state: "failed" }],
+    ])("returns the agent CLI state the updater reported: %s", async (line, agentCli) => {
+      mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: `${line}\n${RECEIPT}`, stderr: "" });
+      const response = await POST(updateRequest(), params());
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ success: true, data: { status: "running", agentCli } });
+    });
+
+    it("ignores an agent CLI line in any other shape", async () => {
+      mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled\n${RECEIPT}`, stderr: "" });
+      const response = await POST(updateRequest(), params());
+      expect(await response.json()).toEqual({ success: true, data: { status: "running" } });
+    });
+
     it("updates the bound guest runtime without powering the computer off and completes it as running", async () => {
       mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: RECEIPT, stderr: "" });
       const response = await POST(updateRequest(), params());

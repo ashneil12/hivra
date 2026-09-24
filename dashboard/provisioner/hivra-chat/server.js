@@ -83,23 +83,69 @@ const AGENT_ENV = Object.assign({}, process.env, {
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
 
 // The installed agent CLI version, reported on /api/meta so the dashboard can
-// compare it with the release's vetted pin (agent-cli-versions.json). Probed
-// once at start (a runtime update restarts the gateway, which probes again);
-// the field is omitted until the probe finishes and null when it failed.
+// compare it with the release's vetted pin (agent-cli-versions.json). Probed at
+// start and again whenever the binary changes on disk (hivra-agent-cli-update
+// swaps it in place); the field is omitted until the first probe finishes and
+// the version is null when it failed. The updater's progress rides along. Only
+// an authenticated caller (the dashboard's bearer) sees it.
 const AGENT_CLI = AGENT_KIND === "claude" ? { name: "claude-code", bin: CLAUDE }
   : AGENT_KIND === "codex" ? { name: "codex", bin: CODEX } : null;
-let agentCliReport = null;
-if (AGENT_CLI) {
+const AGENT_CLI_LOCK = process.env.HIVRA_AGENT_CLI_LOCK || "/run/hivra-agent-cli-update.lock";
+const AGENT_CLI_STATUS = process.env.HIVRA_AGENT_CLI_STATUS || "/var/lib/hivra/agent-cli-update.json";
+const AGENT_CLI_UPDATE_STATES = new Set(["downloading", "waiting", "installing", "done", "deferred", "rolled_back", "failed"]);
+let agentCliVersion;
+let agentCliProbedKey = null;
+let agentCliProbing = false;
+function agentCliBinaryKey() {
+  try { const st = fs.statSync(AGENT_CLI.bin); return st.ino + ":" + st.size + ":" + st.mtimeMs; } catch { return "missing"; }
+}
+function probeAgentCli() {
+  if (!AGENT_CLI || agentCliProbing) return;
+  const key = agentCliBinaryKey();
+  if (key === agentCliProbedKey) return;
+  agentCliProbing = true;
+  const done = (version, detail) => {
+    agentCliProbing = false;
+    agentCliProbedKey = key;
+    agentCliVersion = version;
+    if (!version) console.warn("hivra-chat: " + AGENT_CLI.name + " --version failed: " + detail);
+  };
   try {
     execFile(AGENT_CLI.bin, ["--version"], { env: AGENT_ENV, cwd: HOME, timeout: 15000 }, (err, stdout) => {
       const match = !err && /\b(\d+\.\d+\.\d+)\b/.exec(String(stdout || ""));
-      agentCliReport = { name: AGENT_CLI.name, version: match ? match[1] : null };
-      if (!match) console.warn("hivra-chat: " + AGENT_CLI.name + " --version failed: " + (err ? (err.code || err.message) : "no version in output"));
+      done(match ? match[1] : null, err ? (err.code || err.message) : "no version in output");
     });
   } catch (error) {
-    agentCliReport = { name: AGENT_CLI.name, version: null };
-    console.warn("hivra-chat: " + AGENT_CLI.name + " --version failed: " + ((error && error.message) || error));
+    done(null, (error && error.message) || String(error));
   }
+}
+probeAgentCli();
+function agentCliReport() {
+  if (!AGENT_CLI) return null;
+  probeAgentCli();
+  if (agentCliVersion === undefined) return null;
+  const report = { name: AGENT_CLI.name, version: agentCliVersion };
+  try {
+    const status = JSON.parse(fs.readFileSync(AGENT_CLI_STATUS, "utf8"));
+    if (status && status.name === AGENT_CLI.name && AGENT_CLI_UPDATE_STATES.has(status.state)
+      && typeof status.to === "string" && /^\d+\.\d+\.\d+$/.test(status.to)) {
+      report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
+        ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
+    }
+  } catch {}
+  return report;
+}
+// While hivra-agent-cli-update swaps the CLI package it holds new chat runs
+// back (a run started mid-swap would find a half-installed binary). A lock left
+// by a crashed updater stops counting after 30 minutes.
+function agentCliUpdateRefusal() {
+  if (!AGENT_CLI) return null;
+  try {
+    if (Date.now() - fs.statSync(AGENT_CLI_LOCK).mtimeMs < 30 * 60 * 1000) {
+      return { code: "agent_updating", status: 503, message: "The agent is being updated to a new version. Send your message again in a minute." };
+    }
+  } catch {}
+  return null;
 }
 
 // Per-box Bankr wallet credentials. The dashboard provisions the wallet LAZILY
@@ -1358,7 +1404,7 @@ function handleChat(req, res) {
     let started;
     try {
       started = CHAT_RUNS.start({
-        runId, clientRef, detached: detach, agentKind: AGENT_KIND, title: message.slice(0, 120),
+        runId, clientRef, detached: detach, agentKind: AGENT_KIND, title: message.slice(0, 120), admit: agentCliUpdateRefusal,
         resumeSessionId: typeof sessionId === "string" ? sessionId : null,
         bin, args, cwd: HOME, env: spawnEnv, textMode, stdinText: useStdin ? sendMsg : null,
       });
@@ -2209,7 +2255,7 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
   }
-  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(agentCliReport ? { agentCli: agentCliReport } : {}) });
+  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });

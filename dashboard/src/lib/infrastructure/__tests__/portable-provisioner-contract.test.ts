@@ -405,7 +405,7 @@ describe("portable provisioner source contract", () => {
 
   it("delivers persistent terminal sessions to running computers without ending open shells", () => {
     const updater = source("hivra-update-guest-runtime.sh");
-    expect(updater).toContain("TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service)");
+    expect(updater).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\s/);
     expect(updater).toContain('AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf');
     expect(updater).toContain('BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service');
     // Linux computers keep their terminals in the shared workspace.

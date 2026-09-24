@@ -38,7 +38,7 @@ describe("Codex startup update check", () => {
   afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
   const config = () => path.join(home, ".codex", "config.toml");
   function pin() {
-    return spawnSync("python3", ["-I", "-"], { input: fs.readFileSync(PIN_SCRIPT), encoding: "utf8", env: { HOME: home, PATH: "/usr/bin:/bin" } });
+    return spawnSync("python3", ["-I", "-"], { input: fs.readFileSync(PIN_SCRIPT), encoding: "utf8", env: { HOME: home, PATH: "/usr/bin:/bin", NODE_ENV: "test" } });
   }
 
   it("turns the check off for a computer with no Codex config yet", () => {
@@ -94,11 +94,18 @@ describe("Codex startup update check", () => {
 });
 
 describe("gateway agent CLI report", () => {
+  const TOKEN = "e".repeat(64);
+  type Box = Awaited<ReturnType<typeof boot>>;
   async function boot(kind: string, versionReply: { error: Error | null; stdout: string }) {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hivra-agent-cli-")));
     fs.mkdirSync(path.join(home, ".hivra"), { mode: 0o700 });
-    fs.writeFileSync(path.join(home, ".hivra", "api-token"), "e".repeat(64));
+    fs.writeFileSync(path.join(home, ".hivra", "api-token"), TOKEN);
     fs.writeFileSync(path.join(home, ".hivra", "agent-kind"), kind + "\n");
+    // Stand-ins for /usr/bin/claude and ~/.npm-global/bin/codex that exit at once.
+    const bin = path.join(home, "cli");
+    fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const lock = path.join(home, "agent-cli-update.lock");
+    const status = path.join(home, "agent-cli-update.json");
     const probes: Array<{ bin: string; args: string[]; env: Record<string, string> }> = [];
     let server: http.Server | undefined;
     const realRequire = createRequire(SERVER_PATH);
@@ -108,8 +115,8 @@ describe("gateway agent CLI report", () => {
         if (name === "child_process") {
           return {
             spawn: () => { throw new Error("no agent process in this test"); },
-            execFile: (bin: string, args: string[], options: { env: Record<string, string> }, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
-              probes.push({ bin, args, env: options.env });
+            execFile: (file: string, args: string[], options: { env: Record<string, string> }, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+              probes.push({ bin: file, args, env: options.env });
               setImmediate(() => callback(versionReply.error, versionReply.stdout, ""));
             },
           };
@@ -117,50 +124,96 @@ describe("gateway agent CLI report", () => {
         if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
-      process: { env: { HOME: home, HIVRA_CHAT_PORT: "0" }, once: () => undefined },
+      process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", CLAUDE_BIN: bin, CODEX_BIN: bin, HIVRA_AGENT_CLI_LOCK: lock, HIVRA_AGENT_CLI_STATUS: status }, once: () => undefined },
       __dirname: path.dirname(SERVER_PATH),
       console: { log: () => undefined, warn: () => undefined, error: () => undefined },
       Buffer, URL, URLSearchParams, setTimeout, clearTimeout, setImmediate,
     }, { filename: SERVER_PATH });
     if (!server!.listening) await once(server!, "listening");
     const port = (server!.address() as net.AddressInfo).port;
-    const meta = async () => JSON.parse(await new Promise<string>((resolve, reject) => {
-      http.get({ hostname: "127.0.0.1", port, path: "/api/meta", agent: false }, (res) => {
-        let text = ""; res.setEncoding("utf8"); res.on("data", (c) => { text += c; }); res.once("end", () => resolve(text));
-      }).once("error", reject);
-    }));
+    const call = (method: string, route: string, body?: unknown, auth = true) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request({ hostname: "127.0.0.1", port, path: route, method, agent: false,
+        headers: { ...(auth ? { Authorization: `Bearer ${TOKEN}` } : {}), "Content-Type": "application/json" } }, (res) => {
+        let text = ""; res.setEncoding("utf8"); res.on("data", (c) => { text += c; }); res.once("end", () => resolve({ status: res.statusCode ?? 0, body: text }));
+      });
+      req.once("error", reject);
+      req.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+    const meta = async (auth = true) => JSON.parse((await call("GET", "/api/meta", undefined, auth)).body);
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
     const close = async () => { await new Promise<void>((resolve) => server!.close(() => resolve())); fs.rmSync(home, { recursive: true, force: true }); };
-    return { probes, meta, close };
+    return { home, bin, lock, status, probes, call, meta, settle, close };
+  }
+  async function withBox(kind: string, reply: { error: Error | null; stdout: string }, test: (box: Box) => Promise<void>) {
+    const box = await boot(kind, reply);
+    try { await box.settle(); await test(box); } finally { await box.close(); }
   }
 
   it.each([
-    ["claude", "/usr/bin/claude", "2.1.246 (Claude Code)\n", "claude-code", "2.1.246"],
-    ["codex", "/home/bux/.npm-global/bin/codex", "codex-cli 0.149.1\n", "codex", "0.149.1"],
-  ])("reports the %s version from the binary chat runs", async (kind, bin, stdout, name, version) => {
-    const box = await boot(kind, { error: null, stdout });
-    try {
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(box.probes).toHaveLength(1);
-      expect(box.probes[0]).toMatchObject({ bin, args: ["--version"] });
-      // Every CLI the gateway starts runs with the vendor self-updater off.
-      expect(box.probes[0].env.DISABLE_AUTOUPDATER).toBe("1");
-      expect((await box.meta()).agentCli).toEqual({ name, version });
-    } finally { await box.close(); }
-  });
+    ["claude", "2.1.246 (Claude Code)\n", "claude-code", "2.1.246"],
+    ["codex", "codex-cli 0.149.1\n", "codex", "0.149.1"],
+  ])("reports the %s version from the binary chat runs, to the dashboard only", (kind, stdout, name, version) => withBox(kind, { error: null, stdout }, async (box) => {
+    expect(box.probes).toHaveLength(1);
+    expect(box.probes[0]).toMatchObject({ bin: box.bin, args: ["--version"] });
+    // Every CLI the gateway starts runs with the vendor self-updater off.
+    expect(box.probes[0].env.DISABLE_AUTOUPDATER).toBe("1");
+    expect((await box.meta()).agentCli).toEqual({ name, version });
+    // The public metadata a signed-out visitor sees carries no version.
+    expect(await box.meta(false)).not.toHaveProperty("agentCli");
+  }));
 
-  it("reports null when the CLI cannot report a version", async () => {
-    const box = await boot("codex", { error: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }), stdout: "" });
-    try {
-      await new Promise((resolve) => setImmediate(resolve));
-      expect((await box.meta()).agentCli).toEqual({ name: "codex", version: null });
-    } finally { await box.close(); }
-  });
+  it("reports null when the CLI cannot report a version", () => withBox("codex", { error: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }), stdout: "" }, async (box) => {
+    expect((await box.meta()).agentCli).toEqual({ name: "codex", version: null });
+  }));
 
-  it("reports nothing for runtimes that are not a coding CLI", async () => {
-    const box = await boot("openclaw", { error: null, stdout: "" });
+  it("probes again only after the binary changes on disk", () => withBox("claude", { error: null, stdout: "2.1.246\n" }, async (box) => {
+    await box.meta(); await box.meta();
+    expect(box.probes).toHaveLength(1);
+    fs.writeFileSync(box.bin, "#!/bin/sh\n# a newer package\nexit 0\n");
+    await box.meta(); await box.settle();
+    expect(box.probes).toHaveLength(2);
+  }));
+
+  it("reports the updater's progress and ignores anything malformed", () => withBox("codex", { error: null, stdout: "codex-cli 0.149.1\n" }, async (box) => {
+    fs.writeFileSync(box.status, JSON.stringify({ name: "codex", state: "waiting", from: "0.149.1", to: "0.156.1", updatedAt: "2026-09-24T18:00:00Z" }));
+    expect((await box.meta()).agentCli).toEqual({ name: "codex", version: "0.149.1", update: { state: "waiting", target: "0.156.1", updatedAt: "2026-09-24T18:00:00Z" } });
+    fs.writeFileSync(box.status, JSON.stringify({ name: "codex", state: "rolled_back", to: "0.156.1", updatedAt: "2026-09-24T18:05:00Z", reason: "install_failed" }));
+    expect((await box.meta()).agentCli.update).toEqual({ state: "rolled_back", target: "0.156.1", updatedAt: "2026-09-24T18:05:00Z", reason: "install_failed" });
+    for (const bad of [{ name: "claude-code", state: "done", to: "2.1.246" }, { name: "codex", state: "<b>", to: "0.156.1" }, { name: "codex", state: "done", to: "latest" }, "not json"]) {
+      fs.writeFileSync(box.status, typeof bad === "string" ? bad : JSON.stringify(bad));
+      expect((await box.meta()).agentCli).toEqual({ name: "codex", version: "0.149.1" });
+    }
+  }));
+
+  it("holds a new chat run back while the CLI package is being swapped, but never a re-attach", () => withBox("claude", { error: null, stdout: "2.1.246\n" }, async (box) => {
+    fs.writeFileSync(box.lock, "");
+    const refused = await box.call("POST", "/api/chat", { message: "hello", runId: "00000000-0000-4000-8000-000000000001", detach: true });
+    expect(refused.status).toBe(503);
+    expect(JSON.parse(refused.body)).toMatchObject({ code: "agent_updating" });
+    expect(fs.existsSync(path.join(box.home, ".hivra", "chat-runs", "00000000-0000-4000-8000-000000000001"))).toBe(false);
+  }));
+
+  it("reports nothing for runtimes that are not a coding CLI", () => withBox("openclaw", { error: null, stdout: "" }, async (box) => {
+    expect(box.probes).toEqual([]);
+    expect(await box.meta()).not.toHaveProperty("agentCli");
+  }));
+});
+
+describe("chat run admission", () => {
+  it("lets the caller refuse a new run but always re-attaches an existing one", () => {
+    const { createChatRunStore, ChatRunError } = createRequire(SERVER_PATH)("./chat-runs.cjs");
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hivra-chat-admit-")));
     try {
-      expect(box.probes).toEqual([]);
-      expect(await box.meta()).not.toHaveProperty("agentCli");
-    } finally { await box.close(); }
+      let spawned = 0;
+      const store = createChatRunStore({ root, spawn: () => { spawned += 1; return { on: () => undefined, unref: () => undefined, pid: 4242 }; } });
+      const input = { runId: "00000000-0000-4000-8000-000000000002", bin: "/bin/true", args: [], cwd: root, env: {}, stdinText: "hi" };
+      const refusal = { code: "agent_updating", status: 503, message: "later" };
+      expect(() => store.start({ ...input, admit: () => refusal })).toThrow(ChatRunError);
+      expect(spawned).toBe(0);
+      expect(store.start({ ...input, admit: () => null }).created).toBe(true);
+      expect(spawned).toBe(1);
+      expect(store.start({ ...input, admit: () => refusal }).created).toBe(false);
+      expect(spawned).toBe(1);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });

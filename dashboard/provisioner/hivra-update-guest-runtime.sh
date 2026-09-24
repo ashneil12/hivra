@@ -11,9 +11,10 @@
 # release_lifecycle_lock). It never powers the VM on/off and never touches agent
 # files, native CLI credentials, model credentials, or the box API token.
 #
-# Stdout carries only host-authored lines: at most one HIVRA_ACTIVITY_COLLECTOR
-# line, then the final `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt, which
-# is printed only after the guest committed the update.
+# Stdout carries only host-authored lines: at most one HIVRA_AGENT_CLI line (the
+# guest's report, re-validated here), at most one HIVRA_ACTIVITY_COLLECTOR line,
+# then the final `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt, which is
+# printed only after the guest committed the update.
 set -euo pipefail
 umask 077
 
@@ -121,7 +122,9 @@ for asset in "${ASSETS[@]}"; do
   [ -f "$source" ] && [ ! -L "$source" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
 done
-TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service)
+# Terminal entrypoint and units, plus the agent CLI pins and their helpers.
+TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service
+  agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py)
 for asset in "${TERMINAL_ASSETS[@]}"; do
   [ -f "$PROVISIONER_DIR/$asset" ] && [ ! -L "$PROVISIONER_DIR/$asset" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
@@ -206,7 +209,7 @@ if [ -f "$AGENT_SHELL" ] && [ ! -L "$AGENT_SHELL" ]; then install -o root -g roo
 else : > "$BACKUP/hivra-agent-shell.absent"; fi
 if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
 else : > "$BACKUP/detached-runs.conf.absent"; fi
-for asset in bux-ttyd-base-path.conf bux-box-ttyd.service; do
+for asset in bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
@@ -236,6 +239,7 @@ node --check "$WORK/guarded-files.cjs" >/dev/null
 node --check "$WORK/agent-zero-editor.cjs" >/dev/null
 node --check "$WORK/chat-runs.cjs" >/dev/null
 bash -n "$WORK/hivra-agent-shell"
+bash -n "$WORK/hivra-agent-cli-update.sh"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -311,6 +315,9 @@ for unit in bux-ttyd.service bux-box-ttyd.service; do
     || ! systemctl show -p ExecStart --value "$unit" | grep -Fq '/usr/local/bin/hivra-agent-shell --'; then
     rollback; echo "terminal $unit would not keep its sessions" >&2; exit 1
   fi
+  if ! systemctl show -p Environment --value "$unit" | tr ' ' '\n' | grep -Fxq DISABLE_AUTOUPDATER=1; then
+    rollback; echo "terminal $unit would let a vendor self-update replace the agent CLI" >&2; exit 1
+  fi
 done
 TTYD_RESTARTED=1
 if [ "$RESTART_AGENT_TTYD" = 1 ] && ! systemctl try-restart bux-ttyd.service; then rollback; exit 1; fi
@@ -332,10 +339,54 @@ fi
 rm -rf -- "$BACKUP_ROOT/previous"
 mv -- "$BACKUP" "$BACKUP_ROOT/previous"
 COMMITTED=1
+
+# Agent CLI (Claude Code / Codex computers). Vendor self-updaters stay off, so
+# Hivra moves the CLI to this release's vetted version (agent-cli-versions.json):
+# hivra-agent-cli-update.sh runs as a transient unit that downloads, waits for
+# in-flight chat runs to finish, swaps and verifies, so a slow download never
+# holds this request. Nothing here can fail the committed update above.
+AGENT_CLI_HELPER=/usr/local/sbin/hivra-agent-cli-update
+agent_cli_report() {
+  local name bin target version state
+  case "$KIND_BEFORE" in
+    claude) name=claude-code; bin=/usr/bin/claude ;;
+    codex) name=codex; bin=/home/bux/.npm-global/bin/codex ;;
+    *) return 0 ;;
+  esac
+  if [ "$KIND_BEFORE" = codex ]; then
+    runuser -u bux -- env -i HOME=/home/bux PATH=/usr/bin:/bin python3 -I - <"$WORK/hivra-codex-config-pin.py" >/dev/null 2>&1 \
+      || echo "the Codex startup update check could not be turned off" >&2
+  fi
+  target="$(python3 -I -c 'import json, re, sys
+value = json.load(open(sys.argv[1])).get(sys.argv[2])
+if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
+print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
+  install -o root -g root -m 0700 "$WORK/hivra-agent-cli-update.sh" "$AGENT_CLI_HELPER"
+  version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin DISABLE_AUTOUPDATER=1 \
+    timeout -k 5 30 "$bin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
+  [ -n "$version" ] || version=unknown
+  if [ "$version" = "$target" ]; then
+    state=current
+  elif systemctl is-active --quiet hivra-agent-cli-update.service; then
+    state=running
+  else
+    systemctl reset-failed hivra-agent-cli-update.service >/dev/null 2>&1 || true
+    if systemd-run --unit=hivra-agent-cli-update --collect --no-block --quiet -p Nice=10 \
+      "$AGENT_CLI_HELPER" "$KIND_BEFORE" "$target" >/dev/null 2>&1; then
+      state=scheduled
+    else
+      state=failed
+    fi
+  fi
+  printf 'HIVRA_AGENT_CLI name=%s version=%s target=%s state=%s\n' "$name" "$version" "$target" "$state"
+}
+agent_cli_report || true
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'
 GUEST
 grep -Fxq HIVRA_GUEST_RUNTIME_UPDATED "$GUEST_RESULT" \
   || { echo "guest runtime update ended without its commit receipt" >&2; exit 1; }
+# The guest's agent CLI report reaches stdout only in this exact shape.
+AGENT_CLI_LINE="$(grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6} state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
 
 # (Re)install the agent-run reporter with the fresh credential, as the start
 # helper does after a boot. The gateway update above is already committed; every
@@ -407,6 +458,9 @@ fi
 if [ -n "$ACTIVITY_CREDENTIAL_JSON" ]; then
   install_activity_collector || true
   ACTIVITY_CREDENTIAL_JSON=""
+fi
+if [ -n "$AGENT_CLI_LINE" ]; then
+  printf '%s\n' "$AGENT_CLI_LINE"
 fi
 if [ -n "$ACTIVITY_COLLECTOR_STATUS" ]; then
   printf 'HIVRA_ACTIVITY_COLLECTOR %s\n' "$ACTIVITY_COLLECTOR_STATUS"

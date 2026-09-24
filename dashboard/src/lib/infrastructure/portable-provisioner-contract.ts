@@ -273,6 +273,7 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "deepseek-harness/service-owner.py",
   "deepseek-harness/install-guest.py",
   "deepseek-harness/bux-hivra-chat.service",
+  "hivra-agent-cli-update.sh",
   "hivra-agent-shell",
   "hivra-agent-trace.py",
   "hivra-codex-config-pin.py",
