@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -205,6 +205,33 @@ export function useLaunchDestination(
   };
 }
 
+/** One more place it can run, drawn like Hivra Cloud and My infrastructure. */
+export function DestinationOption({ selected, onClick, icon, title, detail, disabled = false }: {
+  selected: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  title: string;
+  detail: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`${styles.option} ${selected ? styles.optionActive : ""}`}
+      aria-pressed={selected}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {icon}
+      <span>
+        <strong>{title}</strong>
+        <small>{detail}</small>
+      </span>
+      {selected ? <Check size={14} className={styles.check} aria-hidden="true" /> : null}
+    </button>
+  );
+}
+
 export function DeploymentDestinationControl({
   state,
   managedAvailable = true,
@@ -212,6 +239,9 @@ export function DeploymentDestinationControl({
   runtimeName = "this agent",
   resourceLabel = "agent",
   capacitySetupHref = "/dashboard/infrastructure",
+  otherOptions = null,
+  otherSelected = false,
+  onSetUpCapacity = null,
 }: {
   state: LaunchDestinationState;
   managedAvailable?: boolean;
@@ -221,12 +251,22 @@ export function DeploymentDestinationControl({
   runtimeName?: string;
   resourceLabel?: "agent" | "computer";
   capacitySetupHref?: string;
+  /** More places it can run (a DigitalOcean team), shown as options in the same group. */
+  otherOptions?: ReactNode;
+  /** One of otherOptions is chosen, so neither Hivra Cloud nor a host is. */
+  otherSelected?: boolean;
+  /** Set up capacity without leaving this page (Launch's capacity sheet). */
+  onSetUpCapacity?: (() => void) | null;
 }) {
   const selfHosted = isLocalAuthMode();
   const selfManagedAvailable = ownServerSupported && state.readyTargets.length > 0;
   const selectedTarget = state.selectedTarget;
   // An unavailable destination is never shown as the pressed choice.
-  const managedSelected = managedAvailable && state.mode === "hivra-managed";
+  const managedSelected = !otherSelected && managedAvailable && state.mode === "hivra-managed";
+  const selfManagedSelected = !otherSelected && state.mode === "self-managed";
+  const setUpCapacity = onSetUpCapacity
+    ? <button type="button" className={styles.manageLink} onClick={onSetUpCapacity}>Add capacity</button>
+    : <Link className={styles.manageLink} href={capacitySetupHref}>Open Infrastructure</Link>;
 
   return (
     <section
@@ -275,8 +315,8 @@ export function DeploymentDestinationControl({
 
         <button
           type="button"
-          className={`${styles.option} ${state.mode === "self-managed" ? styles.optionActive : ""}`}
-          aria-pressed={state.mode === "self-managed"}
+          className={`${styles.option} ${selfManagedSelected ? styles.optionActive : ""}`}
+          aria-pressed={selfManagedSelected}
           onClick={() => state.setMode("self-managed")}
           disabled={state.loading || !selfManagedAvailable}
         >
@@ -289,11 +329,12 @@ export function DeploymentDestinationControl({
                 ? "A compatible computer prepared by this installation. Uses its measured capacity."
                 : "A compatible host you connected. Uses its measured capacity, not Hivra plan compute."}</small>
           </span>
-          {state.mode === "self-managed" ? <Check size={14} className={styles.check} aria-hidden="true" /> : null}
+          {selfManagedSelected ? <Check size={14} className={styles.check} aria-hidden="true" /> : null}
         </button>
+        {otherOptions}
       </div>
 
-      {!ownServerSupported ? null : state.loading ? (
+      {!ownServerSupported || otherSelected ? null : state.loading ? (
         <div className={styles.notice} role="status" aria-live="polite">
           <Loader2 size={14} className={styles.spin} aria-hidden="true" />
           <span>Checking your ready hosts...</span>
@@ -303,7 +344,7 @@ export function DeploymentDestinationControl({
           <AlertTriangle size={14} aria-hidden="true" />
           <span>
             Ready self-managed hosts could not be loaded. {selfHosted ? "Fix the connection before launching." : "Hivra Cloud is still available."} {state.error}{" "}
-            <Link className={styles.manageLink} href={capacitySetupHref}>Open Infrastructure</Link>
+            {setUpCapacity}
           </span>
         </div>
       ) : !state.loading && !selfManagedAvailable ? (
@@ -313,13 +354,13 @@ export function DeploymentDestinationControl({
             {state.incompatibleReadyTargetCount > 0
               ? `None of your ready hosts has current compatibility evidence for ${runtimeName}. `
               : "No self-managed host is ready yet. "}
-            <Link className={styles.manageLink} href={capacitySetupHref}>Open Infrastructure</Link>{" "}
+            {setUpCapacity}{" "}
             to connect, inspect, and prepare a host.
           </span>
         </div>
       ) : null}
 
-      {state.mode === "self-managed" && selfManagedAvailable ? (
+      {selfManagedSelected && selfManagedAvailable ? (
         <div className={styles.targetPanel}>
           <label className={styles.targetLabel}>
             Ready host

@@ -9,6 +9,8 @@ import {
   type HivraAgent,
 } from "@/lib/hivra/agent-api";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
+import { launchManagedSession, ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
+import type { DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
 import { getApiErrorMessage, getCardRequiredMessage, isCardRequiredResponse } from "@/lib/billing/card-required";
@@ -16,6 +18,7 @@ import { buildPostDeployDestination } from "@/lib/welcome-deploy";
 import {
   DEFAULT_MODEL_ACCESS,
   PROFILE_DETAILS,
+  type LaunchDeploymentSnapshot,
   type LaunchDraft,
   type LaunchErrorAction,
   type LaunchModelAccess,
@@ -37,6 +40,7 @@ import {
   nativeCliAgentRequest,
   type HermesModelChoice,
 } from "./runtime-requests";
+import { digitalOceanLaunchRequest } from "./digitalocean-launch";
 
 type ReceiptBearingCreateInput = CreateAgentInput & { launchRequestId: string };
 
@@ -69,6 +73,8 @@ export type LaunchSubmitOptions = {
    * it from now on instead of needing the key again. */
   onKeySaved?: (vaultKeyId: string, saved: SavedModelKey) => void;
   onObserved?: (observation: LaunchObservation) => void;
+  /** The DigitalOcean team a DigitalOcean launch runs on, as Launch last read it. */
+  digitalOceanTarget?: DigitalOceanDeploymentTargetDto | null;
 };
 
 /** A correctable rejection that also offers a next step. */
@@ -84,6 +90,13 @@ export class LaunchCorrectableError extends HivraLaunchCorrectableError {
  * so sending it again can never start a second computer. "observe": its lane
  * takes no such ID, so Hivra only looks for the computer the first request
  * created and never sends it again. */
+export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capacity">): "resend" | "observe" {
+  // DigitalOcean records the launch request ID and answers a repeat with the
+  // agent the first request created, for every harness.
+  if (draft.capacity.mode === "digitalocean") return "resend";
+  return draft.profileId ? launchResumeMode(draft.profileId) : "resend";
+}
+
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
   return profileId === "claude-code" || profileId === "hermes" || profileId === "openclaw"
     || profileId === "agent-zero" || profileId === "aeon"
@@ -370,12 +383,36 @@ async function submitCodex(draft: LaunchDraft, deployment: AgentDeploymentDestin
   return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options.onObserved);
 }
 
+/** A DigitalOcean sandbox on the owner's own team. DigitalOcean bills it; a
+ * refusal DigitalOcean or Hivra can explain is correctable in Review. */
+async function submitDigitalOcean(
+  draft: LaunchDraft,
+  deployment: { connectionId: string; targetId: string },
+  options: LaunchSubmitOptions,
+): Promise<LaunchResult> {
+  const target = options.digitalOceanTarget;
+  if (!target || target.id !== deployment.targetId || target.connectionId !== deployment.connectionId) {
+    throw new HivraLaunchCorrectableError("That DigitalOcean team isn't available any more. Choose where it runs again.", 409, "digitalocean_target_changed");
+  }
+  try {
+    const session = await launchManagedSession(digitalOceanLaunchRequest(draft, deployment, target, options.apiKey ?? ""));
+    return { id: session.agentId, name: session.name, status: session.status };
+  } catch (error) {
+    if (error instanceof ManagedSessionApiError && error.status >= 400 && error.status < 500) {
+      throw new HivraLaunchCorrectableError(error.message, error.status, error.code);
+    }
+    throw error;
+  }
+}
+
 export async function submitLaunchDraft(
   draft: LaunchDraft,
-  deployment: AgentDeploymentDestination,
+  snapshot: LaunchDeploymentSnapshot,
   options: LaunchSubmitOptions = {},
 ): Promise<LaunchResult> {
   if (!draft.profileId || !draft.name.trim()) throw new Error("Launch draft is incomplete.");
+  if (snapshot.mode === "digitalocean") return submitDigitalOcean(draft, snapshot, options);
+  const deployment: AgentDeploymentDestination = snapshot;
   const profileId = draft.profileId;
   if (profileId === "omarchy") {
     if (deployment.mode !== "hivra-managed") {
@@ -503,7 +540,8 @@ export async function submitLaunchDraft(
 /** Looks, without sending anything, for the computer a launch whose answer
  * was lost created. Null means it isn't visible (yet). */
 export async function reconcileLaunchDraft(draft: LaunchDraft): Promise<LaunchResult | null> {
-  if (!draft.profileId) return null;
+  // A DigitalOcean launch is resumed by sending the same request again.
+  if (!draft.profileId || draft.capacity.mode === "digitalocean") return null;
   if (launchResumeMode(draft.profileId) === "resend") {
     const receipt = await findHivraLaunchReceipt(draft.launchRequestId);
     return receipt?.state === "accepted" ? receipt.agent : null;
@@ -514,6 +552,8 @@ export async function reconcileLaunchDraft(draft: LaunchDraft): Promise<LaunchRe
 /** Where a launched agent or computer opens: each runtime's own surface. */
 export function launchResultHref(draft: LaunchDraft, agentId: string): string {
   const id = encodeURIComponent(agentId);
+  // A DigitalOcean agent opens its own chat and files.
+  if (draft.capacity.mode === "digitalocean") return `/dashboard/agent/${id}`;
   if (draft.profileId === "hermes") {
     return buildPostDeployDestination({
       instanceId: agentId,
@@ -545,4 +585,10 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
  * accepted launch opens its own surface straight away. */
 export function opensOnAcceptance(profileId: LaunchProfileId | null): boolean {
   return profileId !== "hermes";
+}
+
+/** As opensOnAcceptance, for this launch: Hermes on DigitalOcean opens its
+ * DigitalOcean chat, never the Hivra Cloud workspace wait. */
+export function opensOnAcceptanceFor(draft: Pick<LaunchDraft, "profileId" | "capacity">): boolean {
+  return draft.capacity.mode === "digitalocean" || opensOnAcceptance(draft.profileId);
 }
