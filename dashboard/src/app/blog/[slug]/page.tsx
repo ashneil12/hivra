@@ -8,7 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import StructuredData from "@/components/StructuredData";
 import { BLOG_ARTICLES } from "@/lib/blog-data";
-import { buildBlogArticleMetadata } from "@/lib/blog/metadata";
+import { blogArticleOgImagePath, buildBlogArticleMetadata } from "@/lib/blog/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
 
@@ -48,6 +48,7 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
         headline: article.title,
         description: article.metaDescription,
         url: articleUrl,
+        image: `${SITE_URL}${blogArticleOgImagePath(slug)}`,
         datePublished: article.publishedDate,
         dateModified: article.lastModified,
         author: {
@@ -118,7 +119,8 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
             <EditorialQuestions questions={article.faqs} />
           </div>
         </div>
-        <EditorialCTA />
+        {/* The shared CTA's default headline promises a deploy time nobody has measured. */}
+        <EditorialCTA title={<>Give your agent a computer <strong>that stays on.</strong></>} />
         <EditorialRelated title="Related reading" links={[
           ...article.relatedArticles.map(({ slug, title }) => ({ label: title, href: `/blog/${slug}` })),
           ...(article.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })),

@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Chatbots and AI agents are not the same thing. Here's the concrete technical difference, why it matters for real automation work, and where each category is the right tool.",
   publishedDate: "2026-03-17",
-  lastModified: "2026-03-17",
+  lastModified: "2026-09-24",
   readingTimeMin: 7,
   author: "Hivra team",
   tagline: "The distinction matters more than you might think.",
@@ -46,7 +46,7 @@ export const article: BlogArticle = {
     {
       heading: "The middle ground: tool-augmented models",
       paragraphs: [
-        "There is a spectrum between pure chatbots and full agents. ChatGPT on the $200/month Pro plan now includes Agents mode (previously called Operator) for autonomous web tasks — but it is US-only and still session-scoped. Claude with computer use can control a browser. GPT-5.4 ships with native computer-use capabilities. These are more capable than bare chatbots but still not persistent: they do not run on schedules, do not maintain long-term memory by default, and cannot execute work while you are offline.",
+        "There is a spectrum between pure chatbots and full agents. ChatGPT on the Pro plan (from $100/month) now includes Agents mode (previously called Operator) for autonomous web tasks — but it is US-only and still session-scoped. Claude with computer use can control a browser. GPT-5.4 ships with native computer-use capabilities. These are more capable than bare chatbots but still not persistent: they do not run on schedules, do not maintain long-term memory by default, and cannot execute work while you are offline.",
         "For many people, this middle ground covers the need. The step up to a fully autonomous persistent agent is significant in setup complexity and the trust required to let a system act for you. Middle-ground tools have lower friction and are appropriate for tasks that are inherently conversational or single-session in nature.",
       ],
     },

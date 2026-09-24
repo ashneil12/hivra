@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Most AI tools forget you the moment you close the tab. Here's how persistent memory actually works in agents, what it stores, and what it means for automation you can trust.",
   publishedDate: "2026-03-19",
-  lastModified: "2026-03-19",
+  lastModified: "2026-09-24",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Not a longer context window. Something else.",
@@ -61,11 +61,11 @@ export const article: BlogArticle = {
     },
     {
       q: "Can I export or review my agent's memory?",
-      a: "Yes. From the agent's page in the dashboard, one click downloads your data — the agent's chats plus its memory files — as a single structured JSON file. The memory files (USER.md / MEMORY.md) are also browsable and editable in the Files tab.",
+      a: "Yes. On Hivra, a Hermes agent keeps its memory in plain files (USER.md and MEMORY.md) that you can browse and download from the agent's file explorer. Claude Code and Codex agents also have an Export data link on the agent's page that downloads their chats plus memory files as a single structured JSON file.",
     },
     {
       q: "What happens to memory if I cancel my Hivra subscription?",
-      a: "Export before you cancel. While your subscription is active you can download your full data — chats and memory — as a single portable JSON file from the agent's page, any time you like. (A grace window to download after cancellation is on the roadmap; for now, take your export while you're still subscribed.)",
+      a: "Export before you cancel. While your subscription is active, download what you want to keep: a Hermes agent's memory files from its file explorer, or a Claude Code or Codex agent's chats and memory as one JSON file from the agent's page. (A grace window to download after cancellation is on the roadmap; for now, take your export while you're still subscribed.)",
     },
   ],
   relatedArticles: [

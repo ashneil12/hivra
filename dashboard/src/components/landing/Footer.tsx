@@ -5,10 +5,10 @@ import styles from "../public-site/public-site.module.css";
 
 const COLUMNS = [
   { title: "Product", links: [
-    { label: "Agents", href: "/#agents" },
+    { label: "Agents", href: "/agents" },
     { label: "Computers", href: "/#computers" },
     { label: "Hosting & self-hosting", href: "/#hosting" },
-    { label: "Pricing", href: "/#pricing" },
+    { label: "Pricing", href: "/pricing" },
     { label: "Roadmap", href: "/roadmap" },
     { label: "Changelog", href: "/changelog" },
     { label: "Status", href: "/status" },
@@ -19,6 +19,7 @@ const COLUMNS = [
     { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
     { label: "Litepaper", href: "/docs/litepaper/" },
     { label: "Blog", href: "/blog" },
+    { label: "Free tools", href: "/tools" },
     { label: "Download the app", href: "/download" },
     { label: "Ecosystem", href: "/ecosystem" },
     { label: "Token", href: "/token" },
