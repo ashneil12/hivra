@@ -734,6 +734,43 @@
 }
 
 .outcome .primaryAction { margin-top: 1.6rem; }
+.outcome .secondaryAction { margin-top: 1.2rem; display: inline-flex; align-items: center; text-decoration: none; }
+
+.observed {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font: 700 0.7rem/1.5 var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.resendKey {
+  margin-top: 1rem;
+  width: min(28rem, 100%);
+  display: grid;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.resendKey input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  color: inherit;
+  padding: 0.5rem 0.6rem;
+  font: 0.9rem var(--font-mono), monospace;
+}
+
+.resendKey input:focus-visible {
+  outline: 2px solid var(--launch-accent);
+  outline-offset: 3px;
+}
 
 .outcomeLink {
   min-height: 44px;

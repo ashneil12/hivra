@@ -23,7 +23,9 @@ module.exports = async function desktopStoreSqlFixture({ db, desktopFixture, des
     } catch (error) { return { data: null, error }; }
   };
   const from = table => {
-    assert.ok(["hivra_agents", "infrastructure_capacity_orders", "hivra_provider_desktop_cleanup", "infrastructure_first_boot_operations"].includes(table));
+    // The attempt's recipe version is read from its enrollment (a non-secret column).
+    assert.ok(["hivra_agents", "infrastructure_capacity_orders", "hivra_provider_desktop_cleanup", "infrastructure_first_boot_operations",
+      "infrastructure_first_boot_enrollments"].includes(table));
     let columns, filters = [];
     return {
       select(selected) { columns = selected.split(",").map(identifier).join(","); return this; },

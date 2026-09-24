@@ -105,6 +105,9 @@ export interface AgentLlmInput {
   mode: "byok" | "managed";
   /** BYOK only. */
   apiKey?: string;
+  /** BYOK only: a Venice key saved in the owner's Vault, read by the server
+   * instead of being sent again. Never combined with apiKey. */
+  vaultKeyId?: string;
   model?: string;
   /** Managed only. */
   walletType?: "hermesos" | "card";
@@ -270,8 +273,10 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
   if (input.launchRequestId) {
     if (
       data?.agent
-      && data.launch?.state === "accepted"
       && data.launchRequestId === input.launchRequestId
+      // A launch with a model key answers from its own admission record,
+      // which names the request but has no launch-operation state.
+      && (data.launch?.state === "accepted" || (input.llm !== undefined && data.launch === undefined))
     ) return data.agent;
     throw new Error(`Provision returned an invalid receipt (${r.status})`);
   }
@@ -671,6 +676,45 @@ export async function readBoxSession(boxUrl: string, id: string, token?: string 
     return (((await r.json()) as { messages?: BoxMessage[] }).messages) || [];
   } catch { return []; }
 }
+// ---- Detached chat runs ----
+// A chat turn runs on the box independently of the browser request that started
+// it, so closing the tab or losing the network does not end the agent's work.
+// These let the chat stop a run explicitly and find runs that kept going while
+// the page was closed or offline. Boxes on an older runtime have no run API.
+export interface BoxChatRun {
+  runId: string;
+  clientRef: string | null;
+  state: "running" | "finished";
+  title: string;
+  code: number | null;
+  stopped: "user" | "disconnect" | null;
+  interrupted: boolean;
+  agentSessionId: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+/** Recent runs, newest first; null when the box predates detached runs or is unreachable. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null): Promise<BoxChatRun[] | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token) });
+    if (!r.ok) return null;
+    const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
+    return Array.isArray(runs) ? runs : null;
+  } catch { return null; }
+}
+export function boxChatRunEventsUrl(boxUrl: string, runId: string): string {
+  return `${boxBase(boxUrl)}/api/chat/runs/${encodeURIComponent(runId)}/events`;
+}
+/** Ask the box to end a run. Resolves false when the box could not confirm it. */
+export async function stopBoxChatRun(boxUrl: string, runId: string, token?: string | null): Promise<boolean> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs/${encodeURIComponent(runId)}/stop`, {
+      method: "POST", headers: boxHeaders(token), keepalive: true,
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
 export async function listBoxFiles(boxUrl: string, dir: string, token?: string | null): Promise<{ path: string; entries: BoxFileEntry[]; error: string | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/files?path=${encodeURIComponent(dir)}`, { cache: "no-store", headers: boxHeaders(token) });

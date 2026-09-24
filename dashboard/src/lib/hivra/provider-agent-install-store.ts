@@ -2,7 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
+import { loadFirstBootRecipeVersion } from "@/lib/infrastructure/first-boot-store";
 import { parseFirstBootOperationScope } from "@/lib/infrastructure/first-boot-operations";
 import { parseProviderGuestWorkerReceipt, type ProviderGuestWorkerIdentity, type ProviderGuestWorkerReceipt } from "@/lib/infrastructure/provider-guest-worker";
 import { readAgentProviderDirectAccess } from "./provider-direct-access";
@@ -58,12 +58,12 @@ async function loadInstallOperation(input: ProviderAgentInstallOperation, contra
       .eq("connection_revision", row.infrastructure_connection_revision).eq("provider_resource_id", row.provider_server_id)
       .eq("status", "created_off").maybeSingle();
     if (orderError || !order) throw new Error();
-    const scope = parseFirstBootOperationScope({ binding: {
-      userId: current.userId, connectionId: row.infrastructure_connection_id,
+    const attempt = { userId: current.userId, connectionId: row.infrastructure_connection_id,
       connectionRevision: row.infrastructure_connection_revision, orderId: row.provider_capacity_order_id,
-      attemptId: row.provider_enrollment_attempt_id, quoteFingerprint: order.quote_fingerprint_sha256,
-      recipeVersion: FIRST_BOOT_RECIPE_VERSION,
-    }, providerServerId: row.provider_server_id });
+      attemptId: row.provider_enrollment_attempt_id, quoteFingerprint: order.quote_fingerprint_sha256 };
+    // The attempt's own recipe, never the current one: it is part of the scope digest.
+    const scope = parseFirstBootOperationScope({ binding: { ...attempt,
+      recipeVersion: await loadFirstBootRecipeVersion(attempt) }, providerServerId: row.provider_server_id });
     // Preserve the public catalog ID; only the shared installer uses "claude".
     const runtime = row.type === "claude-code" ? "claude" as const : row.type;
     const direct = readAgentProviderDirectAccess(row);

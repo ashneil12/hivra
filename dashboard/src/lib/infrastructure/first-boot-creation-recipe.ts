@@ -5,7 +5,7 @@ import { createFirstBootChallenge, verifyFirstBootChallengeSecret } from "./firs
 import { renderFirstBootCloudInit } from "./first-boot-cloud-init";
 import {
   FIRST_BOOT_PREPARATION_CONFIRMATION, FirstBootRecipeExpectationSchema, FirstBootStoreError,
-  loadFirstBootEnrollmentForOrder, loadStagedFirstBootDelivery, stageFirstBootEnrollment,
+  loadFirstBootEnrollmentForOrder, loadStagedFirstBootDelivery, parseFirstBootCreationScope, stageFirstBootEnrollment,
   type FirstBootCreationScope, type FirstBootRecipeExpectation,
 } from "./first-boot-store";
 
@@ -22,6 +22,10 @@ const defaults:Dependencies={now:()=>new Date(),newAttemptId:randomUUID,load:loa
 
 /** Private fresh-creation recipe. Reuses the original short-lived capability
  * after a lost acknowledgement; never rotates an expired or competing attempt.
+ * Only the current recipe is rendered: an attempt staged under an older
+ * recipe is not found here and fails closed rather than getting new user-data.
+ * deliveryExpiresAt bounds the server request only; enrollment itself opens
+ * later, when Start setup powers the server on.
  * The caller must pass trusted deployment configuration for callbackOrigin,
  * then atomically admit this exact expectation before any server POST.
  * No provider token/model key, purchase, power-on or readiness is involved.
@@ -29,11 +33,11 @@ const defaults:Dependencies={now:()=>new Date(),newAttemptId:randomUUID,load:loa
 export async function resolveFirstBootCreationRecipe(input:FirstBootCreationScope & {
   confirmation:typeof FIRST_BOOT_PREPARATION_CONFIRMATION;
   publicKeyOpenSsh:string;callbackOrigin:string;
-},dependencies:Partial<Dependencies>={}):Promise<{userData:string;expectedEnrollment:FirstBootRecipeExpectation;enrollmentExpiresAt:string}> {
+},dependencies:Partial<Dependencies>={}):Promise<{userData:string;expectedEnrollment:FirstBootRecipeExpectation;deliveryExpiresAt:string}> {
   if(input.confirmation!==FIRST_BOOT_PREPARATION_CONFIRMATION) throw new FirstBootStoreError("invalid_delivery");
   const {confirmation,publicKeyOpenSsh,callbackOrigin}=input;
   const deps={...defaults,...dependencies};
-  const scope={binding:{...input.binding},capacityIdempotencyKey:input.capacityIdempotencyKey};
+  const scope=parseFirstBootCreationScope({binding:{...input.binding},capacityIdempotencyKey:input.capacityIdempotencyKey});
   let stored=await deps.load(scope);
   let delivery:Awaited<ReturnType<typeof loadStagedFirstBootDelivery>>;
   if(!stored) {
@@ -64,6 +68,6 @@ export async function resolveFirstBootCreationRecipe(input:FirstBootCreationScop
   const userData=await deps.render({...delivery,currentBinding:binding,publicKeyOpenSsh,callbackOrigin,now:deps.now()});
   // A slow renderer may not return an already-expired delivery for dispatch.
   verifyFirstBootChallengeSecret({...delivery,currentBinding:binding,now:deps.now()});
-  return {userData,enrollmentExpiresAt:stored.challenge.expiresAt,expectedEnrollment:FirstBootRecipeExpectationSchema.parse({attemptId:binding.attemptId,
+  return {userData,deliveryExpiresAt:stored.challenge.expiresAt,expectedEnrollment:FirstBootRecipeExpectationSchema.parse({attemptId:binding.attemptId,
     verifierSha256:stored.challenge.verifierSha256,recipeVersion:binding.recipeVersion})};
 }

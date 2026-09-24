@@ -113,9 +113,29 @@ still requires a control-plane check through pinned SSH. Do not disable
 `StrictHostKeyChecking`, use `accept-new` as identity proof, or treat an
 SSH connection to the expected IP as sufficient identity.
 
+### Start-armed window (recipe 2026.09.24.1)
+
+Hivra creates the server powered off, so a window counted from creation
+expired for any owner who waited more than 15 minutes before Start setup. For
+recipe 2026.09.24.1 the capability's `expiresAt` only bounds delivery (staging
+to the server request). The challenge carries `armed_at` / `armed_expires_at`,
+set once, by the database, in the same transaction as the setup power-on
+checkpoint (`power_dispatch`): `armed_at` equals the recorded power-on and the
+window is 15 minutes plus 2 minutes for Hetzner to boot. Consumption accepts a
+proof only while `armed_at <= now < armed_expires_at`; an unarmed challenge is
+always refused, so a leaked token is useless before Start setup. Arming is
+allowed only while the attempt awaits identity and no power-on has ever been
+recorded for it, and never a second time; after a recorded power-on the
+recovery is a rebuild. Triggers refuse any other arming path and any recorded
+power-on without its arming. The guest helper no longer receives an absolute
+expiry: it enforces 15 minutes from this machine's first boot (`/proc/uptime`,
+with its configuration in `/run`, written by cloud-init on the first boot
+only), so a skewed guest clock does not matter; Hivra checks its own clock.
+Recipe 2026.08.27.1 servers keep their 15 minutes from creation unchanged.
+
 ### Persisted identity after enrollment
 
-The 15-minute expiry limits enrollment, not the lifetime of the pinned host
+The enrollment window limits enrollment, not the lifetime of the pinned host
 identity. After successful enrollment, a fresh enrolled-only operation claim
 may verify that same guest using current owner, connection revision, original
 order/receipt and unrevoked pin authority. It shares the existing bounded
