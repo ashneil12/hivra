@@ -11,7 +11,7 @@
 .site ::selection{color:var(--public-accent-ink);background:var(--public-accent)}
 .header{position:sticky;top:0;z-index:60;border-bottom:1px solid var(--public-line)}
 .headerInner{display:flex;align-items:center;gap:26px;width:min(100%,1640px);min-height:80px;margin:auto;padding-inline:var(--public-gutter)}
-.brand{display:inline-flex;align-items:center;gap:10px;font-size:27px;font-weight:750;letter-spacing:-.075em;line-height:1;white-space:nowrap;text-decoration:none;color:var(--public-text);flex-shrink:0;min-height:44px}.brand svg{width:32px;height:32px}
+.brand{display:inline-flex;align-items:center;gap:10px;font-size:27px;font-weight:750;letter-spacing:-.075em;line-height:1;white-space:nowrap;text-decoration:none;color:var(--public-text);flex-shrink:0;min-height:44px}.brand img{width:32px;height:32px}
 .desktopNav{display:flex;align-items:center;justify-content:flex-end;gap:clamp(17px,1.9vw,30px);margin-left:auto}
 .desktopNav a,.loginLink{font-size:12px;font-weight:550;white-space:nowrap;text-decoration:none;color:var(--public-muted);display:inline-flex;align-items:center;min-height:44px;transition:color .2s}
 .desktopNav a{position:relative}.desktopNav a:after{content:"";position:absolute;left:0;right:0;bottom:8px;height:1px;background:var(--public-accent);transform:scaleX(0);transform-origin:left;transition:transform .3s var(--public-ease)}
@@ -54,7 +54,7 @@
 .noScriptNav{display:flex;flex-wrap:wrap;gap:12px 22px;padding:15px var(--public-gutter);font-size:12px}.noScriptNav a{min-height:44px;display:inline-flex;align-items:center}
 .footerTop{grid-template-columns:.8fr 1.2fr;gap:7%}.footerColumns{gap:20px}}
 @media(max-width:680px){
-.headerInner{min-height:70px;gap:8px;padding-inline:max(19px,env(safe-area-inset-left,0px),env(safe-area-inset-right,0px))}.brand{font-size:25px;gap:8px}.brand svg{width:27px;height:27px}.headerTools{display:none}
+.headerInner{min-height:70px;gap:8px;padding-inline:max(19px,env(safe-area-inset-left,0px),env(safe-area-inset-right,0px))}.brand{font-size:25px;gap:8px}.brand img{width:27px;height:27px}.headerTools{display:none}
 .mobileLogin{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-left:auto;padding:0 12px;border:1px solid var(--public-line);font:11px var(--public-mono);letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;color:var(--public-text);text-decoration:none}.mobileLogin:hover{border-color:var(--public-accent)}
 .menuToggle{width:44px;height:44px;padding:0;gap:0;flex-shrink:0}.menuToggle span{display:none}
 .mobileMenu{--menu-inset-top:max(10px,env(safe-area-inset-top,0px));--menu-inset-right:max(10px,env(safe-area-inset-right,0px));--menu-inset-bottom:max(10px,env(safe-area-inset-bottom,0px));--menu-inset-left:max(10px,env(safe-area-inset-left,0px));inset:var(--menu-inset-top) var(--menu-inset-right) var(--menu-inset-bottom) var(--menu-inset-left);width:calc(100% - var(--menu-inset-left) - var(--menu-inset-right));max-height:calc(100dvh - var(--menu-inset-top) - var(--menu-inset-bottom));padding:17px 22px 24px}.menuTop{padding-bottom:15px}.menuClose{font-size:11px}
@@ -74,7 +74,7 @@
 
 /* Funnel bar: sign-in, sign-up and get-started carry the brand and a way home. */
 .funnelBar{--public-text:var(--ink-black);position:relative;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:calc(56px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) max(clamp(16px,3vw,40px),env(safe-area-inset-right,0px)) 0 max(clamp(16px,3vw,40px),env(safe-area-inset-left,0px));border-bottom:1px solid var(--etched-border);background:var(--vellum-bg);font-family:"Hivra Manrope","Helvetica Neue",Arial,sans-serif}
-.funnelBar .brand{font-size:22px}.funnelBar .brand svg{width:28px;height:28px}
+.funnelBar .brand{font-size:22px}.funnelBar .brand img{width:28px;height:28px}
 .funnelBar :where(a,button):focus-visible{outline:2px solid var(--hivra-red);outline-offset:3px}
 .funnelTools{display:flex;align-items:center;gap:8px;min-width:0}
 .funnelTools>div>button{min-height:44px}

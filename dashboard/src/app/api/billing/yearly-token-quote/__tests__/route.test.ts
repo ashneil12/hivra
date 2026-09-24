@@ -58,7 +58,17 @@ jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
 }));
 
+const mockReportPriceGateRefusal = jest.fn<Promise<unknown>, unknown[]>(async () => ({
+  refusal: { assetKey: "hivra", asset: "$HIVRA", reason: "median_deviation", gate: "deviation", observed: {} },
+  logged: true,
+  alerted: true,
+}));
+jest.mock("@/lib/billing/price-gate-alerts", () => ({
+  reportPriceGateRefusal: (...args: unknown[]) => mockReportPriceGateRefusal(...args),
+}));
+
 import { auth } from "@clerk/nextjs/server";
+import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { GET, POST } from "../route";
 
 function makeReq(url: string, body?: unknown): NextRequest {
@@ -301,6 +311,26 @@ describe("/api/billing/yearly-token-quote", () => {
       expect(response.status).toBe(503);
       const body = await response.json();
       expect(body.error).toMatch(/try again later/i);
+    });
+
+    it("reports a refused price gate once and answers 503 without an error-level log", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const refusal = new PlatformTokenPriceGateError("deviation", "$HIVRA spot is 1500 bps above its 240-minute median");
+      mockCreateYearlyQuote.mockRejectedValueOnce(refusal);
+
+      const response = await POST(
+        makeReq("http://localhost/api/billing/yearly-token-quote", { tier: "pro" })
+      );
+
+      expect(response.status).toBe(503);
+      expect(mockReportPriceGateRefusal).toHaveBeenCalledTimes(1);
+      expect(mockReportPriceGateRefusal).toHaveBeenCalledWith(refusal, {
+        source: "billing/yearly-token-quote",
+        route: "/api/billing/yearly-token-quote",
+        method: "POST",
+      });
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
     });
 
     it("does not leak the underlying error message", async () => {
