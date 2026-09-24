@@ -891,7 +891,7 @@ describe("AgentPage", () => {
     await waitFor(() => expect(agentFrame).not.toBeInTheDocument());
     expect(boxFrame).not.toBeInTheDocument();
     fireEvent.click(getSurfaceButton("Terminal"));
-    expect(screen.getByText("The box isn't reachable yet.")).toBeInTheDocument();
+    expect(screen.getByText("The computer isn't reachable yet.")).toBeInTheDocument();
     expect(document.querySelector("iframe, form")).toBeNull();
   });
 

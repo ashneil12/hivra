@@ -1,7 +1,7 @@
 "use client";
 
-// Hivra per-agent view — Chat (live) · <Agent> Terminal · Box Terminal ·
-// Manage. Server-backed: polls the agent until provisioning finishes, then the
+// Hivra per-agent view — Chat (Chat, <Agent> session) · Computer (Terminal,
+// Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -1044,10 +1044,10 @@ export default function AgentPage() {
         ) : effectiveTab === "manage" ? (
           managePanel
         ) : agent.status === "error" ? (
-          <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the box. Destroy it and try again."} />
+          <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
         ) : effectiveTab === "aeon" ? (
           !agent.chat_url ? (
-            <Stub title="Dashboard not reachable" body="The box is up but its dashboard endpoint isn't connected yet. Give it a moment." />
+            <Stub title="Dashboard not reachable" body="The computer is up but its dashboard isn't connected yet. Give it a moment." />
           ) : loggedIn === null && def?.connect === "github" ? (
             <LoadingState compact label="Checking access…" />
           ) : loggedIn || def?.connect !== "github" ? (
@@ -1064,7 +1064,7 @@ export default function AgentPage() {
           )
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
-            <Stub title="Runtime not reachable" body="The box is up but its chat endpoint isn't connected yet. Give it a moment." />
+            <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />
           ) : chatReadiness === "upgrade_required" ? (
             <div className={styles.statusPanel} role="status">
               <h3>This computer needs a Chat update</h3>
@@ -1085,14 +1085,14 @@ export default function AgentPage() {
         ) : effectiveTab === "desktop" ? (
           agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
         ) : effectiveTab === "git" ? (
-          agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "files" ? (
           providerWorkspace && agent.status === "running" && agent.chat_url ? null
-            : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+            : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "skills" ? (
-          agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "telegram" ? (
-          agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "tasks" ? (
           agent.status === "running" ? (
             <TasksPanel
@@ -1103,10 +1103,10 @@ export default function AgentPage() {
               currentPlan={plan?.key ?? null}
             />
           ) : (
-            <Stub title="Not ready" body="The box isn't running yet — scheduled tasks become available once it's online." />
+            <Stub title="Not ready" body="The computer isn't running yet. Scheduled tasks become available once it's online." />
           )
         ) : effectiveTab === "terminal" || effectiveTab === "box" ? (
-          agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "browser" ? (
           browserOn === false ? (
             <BrowserDisabledView
@@ -1117,7 +1117,7 @@ export default function AgentPage() {
           ) : agent.chat_url ? (
             <BrowserView url={`${agent.chat_url.replace(/\/$/, "")}/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true`} token={tok} surfaceId="browser" active={effectiveTab === "browser"} onManage={() => selectTab("manage")} />
           ) : (
-            <Stub title="Not ready" body="The box isn't reachable yet." />
+            <Stub title="Not ready" body="The computer isn't reachable yet." />
           )
         ) : managePanel}
       </div>

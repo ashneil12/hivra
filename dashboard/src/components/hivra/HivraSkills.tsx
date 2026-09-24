@@ -3,7 +3,7 @@
 // HivraSkills — lists the agent's installed skills (~/.claude/skills or
 // ~/.codex/skills SKILL.md), in the Command Center vocabulary, with a remove
 // action. Talks to the box's token-gated /api/skills (+ DELETE /api/skills/:id).
-// Add new skills from the Box Terminal.
+// Add new skills from the Terminal.
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";

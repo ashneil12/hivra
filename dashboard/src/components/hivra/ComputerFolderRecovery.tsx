@@ -88,7 +88,7 @@ export function ComputerFolderRecovery() {
     <header>
       <h1>Move your Ubuntu Hivra folder</h1>
       <p className={styles.secondary}>Copy the Hivra folder from your Ubuntu desktop into a different freshly launched Ubuntu computer using an encrypted file. Your original computer is kept.</p>
-      <p className={styles.hint}>On the desktop, open <code>/home/ubuntu/Hivra</code>. In Box Terminal or Files, the same shared folder is <code>/home/bux/Hivra</code>. Only files inside this folder are included.</p>
+      <p className={styles.hint}>On the desktop, open <code>/home/ubuntu/Hivra</code>. In Terminal or Files, the same shared folder is <code>/home/bux/Hivra</code>. Only files inside this folder are included.</p>
     </header>
     <aside className={styles.notice}>
       <p>Folder only · 2 MiB total · 512 files and folders maximum</p>
