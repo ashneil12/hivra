@@ -53,6 +53,10 @@ describe("Hivra guest surface authentication runtime", () => {
   // process creation are isolated; requests, routing, crypto, cookies, and
   // WebSocket handshakes exercise the real server on ephemeral loopback ports.
   // Do not inherit process.env or read the developer's HOME/credentials.
+  // The fixture offers no sign-in store the gateway can trust (no user id, no
+  // ~/.hivra), so sign-ins live in each evaluation only: the fallback a real
+  // gateway uses when its store cannot be saved. Restarts with a saved store
+  // run real processes in hivra-surface-session-store.test.ts.
   async function evaluateGuest(): Promise<http.Server> {
     const serverPath = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
     const source = readFileSync(serverPath, "utf8");
@@ -227,7 +231,7 @@ describe("Hivra guest surface authentication runtime", () => {
     expect(result.body).not.toContain(FIXTURE_TOKEN);
   });
 
-  it("advertises one stable, uncached bootId for the lifetime of the gateway process", async () => {
+  it("advertises one stable, uncached bootId (the sign-in epoch) while the gateway runs", async () => {
     const first = await request("/api/meta");
     const second = await request("/api/meta");
     const bootId = JSON.parse(first.body).bootId;
@@ -240,12 +244,13 @@ describe("Hivra guest surface authentication runtime", () => {
     expect(cookie).not.toContain(bootId);
   });
 
-  it("changes bootId on restart, when every surface session from the previous process is gone", async () => {
+  it("changes bootId on restart when the sign-ins could not be saved and are gone", async () => {
     const before = JSON.parse((await request("/api/meta")).body).bootId;
     const cookie = await sessionCookie();
     expect((await request("/aeon/", { headers: { Cookie: cookie } })).status).toBe(200);
 
-    // Re-evaluating the module is a fresh gateway process (systemd restart).
+    // Re-evaluating the module is a fresh gateway process (systemd restart)
+    // with nothing saved from the previous one.
     const restarted = await evaluateGuest();
     extraGateways.push(restarted);
     const port = (restarted.address() as AddressInfo).port;

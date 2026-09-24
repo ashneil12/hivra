@@ -115,13 +115,159 @@ if (!/^[a-f0-9]{64}$/.test(API_TOKEN)) {
 // Secure + Path=/ + no Domain below are required by the prefix contract.
 const AUTH_COOKIE = "__Host-hivra_auth";
 const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const AUTH_SESSION_SECRET = /^[a-f0-9]{64}$/;
+// sha256(session secret) -> expiry (ms). The cookie value itself is never kept.
 const AUTH_SESSIONS = new Map();
-// Random identity of THIS gateway process, advertised by /api/meta. Surface
-// sessions live only in AUTH_SESSIONS, so a restart (runtime update, crash,
-// systemd restart) silently invalidates every embedded surface's cookie. A new
-// bootId tells the dashboard to re-bootstrap its frames. Not a secret and not
-// an authority: it grants nothing and is never compared on this side.
-const BOOT_ID = crypto.randomBytes(16).toString("hex");
+
+// ---- Surface sign-in store ----
+// Surface sign-ins must outlive the gateway process: a runtime update, crash
+// or reboot would otherwise sign every embedded terminal, browser and native
+// interface out, and the computer's own chat page cannot sign itself in again.
+// AUTH_SESSIONS stays the only authority on the request path (the DeepSeek
+// broker re-checks it every second); every change to it is written, before the
+// cookie is handed out, to ~/.hivra/surface-sessions.json: owner-only 0600,
+// replaced atomically, never read or written through a symlink, pruned and
+// bounded. The file holds only digests of the 256-bit secrets and their expiry.
+// It is bound to this computer's API token, so rotating the token signs every
+// surface out. The agent runs as the same user and can read that token anyway,
+// so the file grants it nothing new; its entries are validated regardless.
+//
+// The store's random epoch is the public /api/meta `bootId`. It changes only
+// when sign-ins were lost (no store yet, or one that is unreadable, corrupt,
+// bound to another token or cannot be kept up to date), which is exactly when
+// the dashboard must sign its frames in again. An ordinary restart keeps both
+// the epoch and every live surface.
+const AUTH_STORE_FILE = path.join(HOME, ".hivra", "surface-sessions.json");
+const AUTH_STORE_VERSION = 1;
+const AUTH_STORE_MAX_SESSIONS = 1024;
+const AUTH_STORE_MAX_BYTES = 256 * 1024;
+const AUTH_STORE_EPOCH = /^[a-f0-9]{32}$/;
+const AUTH_STORE_BINDING = crypto.createHmac("sha256", API_TOKEN).update("hivra-surface-sessions-v1").digest("hex");
+function authSessionDigest(session) {
+  return crypto.createHash("sha256").update(session).digest("hex");
+}
+function authStoreWarn(message) {
+  try { console.error("surface sign-in store: " + message); } catch {}
+}
+// The store lives only in a real directory owned by this user that nobody else
+// can write to; anything else keeps sign-ins in memory for this process.
+function authStoreDirectoryTrusted() {
+  if (typeof process.getuid !== "function") return false;
+  try {
+    const stat = fs.lstatSync(path.dirname(AUTH_STORE_FILE));
+    return stat.isDirectory() && stat.uid === process.getuid() && (stat.mode & 0o022) === 0;
+  } catch {
+    return false;
+  }
+}
+// A trustworthy store, or null. Expired entries are dropped; an entry that is
+// malformed, duplicated or outlives a fresh sign-in (with a small allowance for
+// clock steps) makes the whole file untrusted, because a surface signed in with
+// it would otherwise fail without the epoch telling the dashboard.
+function readAuthStore(now) {
+  if (!authStoreDirectoryTrusted()) return null;
+  let fd = null;
+  try {
+    fd = fs.openSync(AUTH_STORE_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > AUTH_STORE_MAX_BYTES) {
+      authStoreWarn("starting a new store: the saved one is not a private regular file of this user, or is too large");
+      return null;
+    }
+    const raw = fs.readFileSync(fd);
+    if (raw.length > AUTH_STORE_MAX_BYTES) throw new Error("store too large");
+    const doc = JSON.parse(raw.toString("utf8"));
+    if (!doc || typeof doc !== "object" || doc.v !== AUTH_STORE_VERSION || typeof doc.epoch !== "string" || !AUTH_STORE_EPOCH.test(doc.epoch)
+      || !Array.isArray(doc.sessions) || doc.sessions.length > AUTH_STORE_MAX_SESSIONS) {
+      throw new Error("unrecognised store");
+    }
+    // Written for another API token: every sign-in in it is revoked.
+    if (typeof doc.binding !== "string" || !safeEq(doc.binding, AUTH_STORE_BINDING)) {
+      authStoreWarn("starting a new store: the API token changed, so every saved sign-in is revoked");
+      return null;
+    }
+    const sessions = new Map();
+    for (const entry of doc.sessions) {
+      const digest = entry && entry.h, expiresAt = entry && entry.e;
+      if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest) || sessions.has(digest)
+        || !Number.isSafeInteger(expiresAt) || expiresAt > now + AUTH_SESSION_TTL_MS + 5 * 60 * 1000) {
+        throw new Error("invalid session entry");
+      }
+      if (expiresAt > now) sessions.set(digest, Math.min(expiresAt, now + AUTH_SESSION_TTL_MS));
+    }
+    return { epoch: doc.epoch, sessions };
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") authStoreWarn("starting a new store: " + ((error && (error.code || error.message)) || "unreadable"));
+    return null;
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+// Replace the store with the current sign-ins: an exclusive owner-only temp
+// file, flushed, renamed over the store (a rename replaces a planted symlink,
+// it never writes through one) and the directory flushed, so the file a later
+// process finds is never older than a cookie already handed out.
+function writeAuthStore() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(AUTH_STORE_FILE);
+  const temp = path.join(directory, ".surface-sessions." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    const sessions = [];
+    for (const [h, e] of AUTH_SESSIONS) sessions.push({ h, e });
+    const body = JSON.stringify({ v: AUTH_STORE_VERSION, binding: AUTH_STORE_BINDING, epoch: authStoreEpoch, sessions });
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, AUTH_STORE_FILE);
+    try {
+      const dirFd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    } catch {}
+    return true;
+  } catch (error) {
+    authStoreWarn("cannot save sign-ins: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+// Whether a later process could load this epoch from disk. While it can, the
+// file must list exactly the sign-ins in memory.
+let authStoreEpochOnDisk = false;
+let authStoreEpoch = crypto.randomBytes(16).toString("hex");
+function persistAuthSessions() {
+  if (writeAuthStore()) { authStoreEpochOnDisk = true; return; }
+  if (!authStoreEpochOnDisk) return;
+  // The file now lists different sign-ins under this epoch. Remove it so the
+  // next process starts a new epoch; failing that, move this process to a new
+  // epoch now so the dashboard signs its frames in again (and again after the
+  // next restart, which finds the old epoch). Never loops: the new epoch is
+  // not on disk.
+  if (authStoreDirectoryTrusted()) {
+    try { fs.unlinkSync(AUTH_STORE_FILE); authStoreEpochOnDisk = false; return; } catch (error) {
+      if (error && error.code === "ENOENT") { authStoreEpochOnDisk = false; return; }
+    }
+  }
+  authStoreWarn("the saved sign-ins are stale and cannot be removed; starting a new sign-in epoch");
+  authStoreEpoch = crypto.randomBytes(16).toString("hex");
+  authStoreEpochOnDisk = false;
+}
+(function loadAuthStore() {
+  const loaded = readAuthStore(Date.now());
+  if (loaded) {
+    authStoreEpoch = loaded.epoch;
+    authStoreEpochOnDisk = true;
+    for (const [digest, expiresAt] of [...loaded.sessions].sort((a, b) => a[1] - b[1])) AUTH_SESSIONS.set(digest, expiresAt);
+  }
+  // Save right away: prunes the file, and a fresh epoch then survives a
+  // restart that happens before the first sign-in.
+  persistAuthSessions();
+  if (!authStoreEpochOnDisk) authStoreWarn("cannot keep sign-ins in " + AUTH_STORE_FILE + "; surfaces sign in again after this gateway restarts");
+})();
 function cookieVal(req, name) {
   const raw = String(req.headers["cookie"] || "");
   for (const part of raw.split(";")) {
@@ -135,22 +281,35 @@ function safeEq(a, b) {
   return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
 }
 function pruneAuthSessions(now) {
-  for (const [session, expiresAt] of AUTH_SESSIONS) {
-    if (expiresAt <= now) AUTH_SESSIONS.delete(session);
+  for (const [digest, expiresAt] of AUTH_SESSIONS) {
+    if (expiresAt <= now) AUTH_SESSIONS.delete(digest);
   }
 }
+// Mints a sign-in and saves it before the caller hands the cookie out. At the
+// bound the sign-in closest to expiry is revoked, and that is saved too.
 function createAuthSession() {
   const now = Date.now();
   pruneAuthSessions(now);
+  while (AUTH_SESSIONS.size >= AUTH_STORE_MAX_SESSIONS) {
+    let oldest = null;
+    for (const [digest, expiresAt] of AUTH_SESSIONS) {
+      if (oldest === null || expiresAt < AUTH_SESSIONS.get(oldest)) oldest = digest;
+    }
+    AUTH_SESSIONS.delete(oldest);
+  }
   const session = crypto.randomBytes(32).toString("hex");
-  AUTH_SESSIONS.set(session, now + AUTH_SESSION_TTL_MS);
+  AUTH_SESSIONS.set(authSessionDigest(session), now + AUTH_SESSION_TTL_MS);
+  persistAuthSessions();
   return session;
 }
+// Hot path (every proxied request, and once a second per live DeepSeek stream):
+// memory only. An expiry dropped here needs no write, since every load prunes it.
 function validAuthSession(session) {
-  if (!session) return false;
-  const expiresAt = AUTH_SESSIONS.get(session);
+  if (!session || !AUTH_SESSION_SECRET.test(session)) return false;
+  const digest = authSessionDigest(session);
+  const expiresAt = AUTH_SESSIONS.get(digest);
   if (!expiresAt) return false;
-  if (expiresAt <= Date.now()) { AUTH_SESSIONS.delete(session); return false; }
+  if (expiresAt <= Date.now()) { AUTH_SESSIONS.delete(digest); return false; }
   return true;
 }
 function sameBoxOrigin(req) {
@@ -2156,10 +2315,10 @@ const server = http.createServer((req, res) => {
     }
   }
   if (req.method === "GET" && u === "/api/meta") {
-    // no-store: bootId and nativeReady describe the live process, never a
-    // copy cached from before a restart.
+    // no-store: bootId (the sign-in epoch) and nativeReady describe the live
+    // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
-    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: BOOT_ID, ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
