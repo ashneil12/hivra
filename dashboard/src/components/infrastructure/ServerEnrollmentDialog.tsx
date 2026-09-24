@@ -290,20 +290,15 @@ export function ServerEnrollmentDialog({
               </ul>
 
               <div className={enrollmentStyles.waiting} data-testid="server-enrollment-waiting">
-                {waiting ? (
-                  <>
-                    <Loader2 size={14} className={styles.spin} aria-hidden="true" />
-                    <span>
-                      {/* Only a change of state is announced; the clock beside
-                          it ticks outside the live region. */}
-                      <span role="status" aria-live="polite">{waiting.text}</span>
-                      {waiting.since ? <> · {clock(now - Date.parse(waiting.since))}</> : null}
-                      {item.scriptFetches === 0 && !item.lastRefusal ? " — check your terminal if nothing happens." : ""}
-                    </span>
-                  </>
-                ) : (
-                  <span role="status" aria-live="polite">{closedCommandLine(item)}</span>
-                )}
+                {waiting ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : null}
+                <span>
+                  {/* One live region for the command's whole life, so the line
+                      that says it ended is announced like every other change.
+                      The clock beside it ticks outside the region. */}
+                  <span role="status" aria-live="polite">{waiting ? waiting.text : closedCommandLine(item)}</span>
+                  {waiting?.since ? <> · {clock(now - Date.parse(waiting.since))}</> : null}
+                  {waiting && item.scriptFetches === 0 && !item.lastRefusal ? " — check your terminal if nothing happens." : ""}
+                </span>
               </div>
               {open ? (
                 <p className={enrollmentStyles.fine}>

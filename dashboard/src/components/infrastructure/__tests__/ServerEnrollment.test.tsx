@@ -185,6 +185,20 @@ describe("the command panel", () => {
       .toMatch(/^The setup script was downloaded with your command at .+\. Waiting for its report$/);
   });
 
+  // Review (round 3): the line that says a command ended was a newly mounted
+  // live region, which most screen readers don't announce. It is now the same
+  // region, with new text.
+  it("announces that a command ended in the same live region", async () => {
+    renderDialog();
+    await screen.findByTestId("server-enrollment-command");
+    const live = within(screen.getByTestId("server-enrollment-waiting")).getByRole("status");
+    (getServerEnrollment as jest.Mock).mockResolvedValue(enrollment({ phase: "expired" }));
+    await act(async () => { jest.advanceTimersByTime(3_000); });
+    expect(live.isConnected).toBe(true);
+    expect(live.textContent).toBe("This command expired. Get a new command.");
+    expect(within(screen.getByTestId("server-enrollment-waiting")).getAllByRole("status")).toEqual([live]);
+  });
+
   it("never cancels the command when the owner switches to the SSH details wizard", async () => {
     const handlers = renderDialog();
     await screen.findByTestId("server-enrollment-command");
