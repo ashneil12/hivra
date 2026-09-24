@@ -104,7 +104,8 @@ describe("LandingHeader", () => {
   it("includes a Register link in the public navigation", () => {
     render(<LandingHeader />);
     const links = screen.getAllByRole("link", { name: "Register" });
-    expect(links[0]).toHaveAttribute("href", "/get-started?plan=free");
+    // FTUE-16: sign-up, then Launch; no plan page first.
+    expect(links[0]).toHaveAttribute("href", "/sign-up");
   });
 
   it("keeps ecosystem discoverable without a primary token pitch", () => {
@@ -131,7 +132,7 @@ describe("LandingHeader", () => {
     );
     expect(
       screen.getAllByRole("link", { name: /register/i })[0]
-    ).toHaveAttribute("href", "/get-started?plan=free");
+    ).toHaveAttribute("href", "/sign-up");
     expect(screen.queryByRole("link", { name: /reserve/i })).not.toBeInTheDocument();
     // Signed-in CTA must not render.
     expect(screen.queryByRole("link", { name: /open dashboard/i })).not.toBeInTheDocument();
@@ -263,7 +264,7 @@ describe("LandingHeader", () => {
     document.cookie = "__client_uat=1758000000; path=/";
     document.cookie = "__client_uat_Abc123=0; path=/";
     render(<LandingHeader />);
-    expect(screen.getAllByRole("link", { name: "Register" })[0]).toHaveAttribute("href", "/get-started?plan=free");
+    expect(screen.getAllByRole("link", { name: "Register" })[0]).toHaveAttribute("href", "/sign-up");
     expect(screen.queryByRole("link", { name: "Open Dashboard" })).not.toBeInTheDocument();
   });
 

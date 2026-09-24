@@ -13,6 +13,7 @@ import {
 } from "@/lib/roadmap-content";
 
 import styles from "./RoadmapPage.module.css";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const NAV_LINKS = [
   { label: "Token verification", href: "/token" },
@@ -382,7 +383,7 @@ export default function RoadmapPageClient() {
               className={`${styles.heroActions} ${styles.heroReveal4}`}
               style={{ willChange: "transform, opacity" }}
             >
-              <Link href="/get-started?plan=operator" className={`mono ${styles.secondaryButton}`}>
+              <Link href={PUBLIC_START_HREF} className={`mono ${styles.secondaryButton}`}>
                 Deploy Hivra
               </Link>
               <a href="#what-is-hermesos" className={`mono ${styles.primaryButton}`}>

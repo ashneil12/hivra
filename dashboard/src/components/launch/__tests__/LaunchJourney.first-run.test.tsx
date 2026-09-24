@@ -121,6 +121,10 @@ describe("a new account in Launch", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(await screen.findByText(/The Free plan runs one agent or computer with 0\.5 CPU \/ 1 GB/)).toBeInTheDocument();
+    // FTUE-16: "You turn it on before you launch" read as a step every launch
+    // needs; Free is only for Hivra Cloud.
+    expect(screen.getByText(/You turn it on when you launch there; your own cloud or server doesn't need it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/before you launch/)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn.t check your plan/i)).not.toBeInTheDocument();
     const codex = screen.getByRole("button", { name: /^Codex/ });
     await waitFor(() => expect(codex).toHaveTextContent("Fits Free without a browser"));

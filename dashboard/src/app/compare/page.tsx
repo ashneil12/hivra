@@ -7,6 +7,7 @@ import { ArrowUpRight } from "lucide-react";
 import StructuredData from "@/components/StructuredData";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 export const metadata: Metadata = {
   title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
@@ -70,5 +71,5 @@ const breadcrumbSchema = {
 export default function ComparePage() {
   return (<PublicSite className={styles.page} data-page="compare"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Compare" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Honest Comparisons</span><h1>Hivra vs <strong>everything else.</strong></h1><p>We&apos;ll tell you when self-hosting makes more sense. We&apos;ll also tell you why most people regret that decision three hours in.</p></header>
   <div className={styles.directory}>{comparisons.map(({ slug, title, tagline, description }, index) => <Link key={slug} href={`/compare/${slug}`}><span>{String(index + 1).padStart(2, "0")}</span><h2>{title}</h2><div><h3>{tagline}</h3><p>{description}</p><span className={styles.readLink}>Read comparison<ArrowUpRight size={20} aria-hidden="true" /></span></div></Link>)}</div>
-  <section className={styles.cta}><p>7-day money-back guarantee on all plans</p><Link href="/get-started?plan=operator" className={styles.button}>Deploy in 5 Min<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "All Hivra features", href: "/features" }]} /></main></PublicSite>);
+  <section className={styles.cta}><p>7-day money-back guarantee on all plans</p><Link href={PUBLIC_START_HREF} className={styles.button}>Deploy in 5 Min<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "All Hivra features", href: "/features" }]} /></main></PublicSite>);
 }
