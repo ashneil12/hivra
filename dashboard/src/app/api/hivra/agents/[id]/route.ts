@@ -31,6 +31,8 @@ import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { seedAgentBox } from "@/lib/hivra/agent-bootstrap";
+import { advanceProxmoxComputerContract } from "@/lib/hivra/computer-contract-delivery";
+import { computerContractPlanFor } from "@/lib/agent-computers/computer-contract-input";
 import { getAccountMemory } from "@/lib/account-memory";
 import { bankrSkillsDirForType, seedBankrSkillsOntoBox } from "@/lib/hivra/bankr-skills-seed";
 import { installCuratedSkillsOnBox } from "@/lib/hivra/skill-install";
@@ -336,7 +338,12 @@ async function maybeSeedTemplateSkills(
   return updated || agent;
 }
 
+// The Computer Contract step runs last and only while the poll still has room;
+// a slow seed earlier in the same request leaves it for the next visit.
+const COMPUTER_CONTRACT_POLL_BUDGET_MS = 60_000;
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const pollStartedAt = Date.now();
   try {
     if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
@@ -931,6 +938,27 @@ fi` : ""}`;
       if (needsBootstrap) current = await maybeSeedBootstrap(current, userId, context.env);
       if (needsBankrSkills) current = await maybeSeedBankrSkills(current, userId, context.env);
       if (needsTemplateSkills) current = await maybeSeedTemplateSkills(current, userId, context.env);
+    }
+
+    // Computer Contract: keep what the agent is told about its computer
+    // current. Unlike the one-shot identity seed it is revisioned: a rename or
+    // resize mints a new revision, and delivery is compare-and-swap with a
+    // read-back receipt. It never fails this poll.
+    const contractPlan = computerContractPlanFor(current as Parameters<typeof computerContractPlanFor>[0]);
+    if (current.status === "running" && current.ip && contractPlan.status === "deliverable"
+      && contractPlan.channel === "proxmox-seed" && Date.now() - pollStartedAt < COMPUTER_CONTRACT_POLL_BUDGET_MS) {
+      try {
+        const context = await getExecutionContext();
+        await advanceProxmoxComputerContract(userId, current, context.env, "auto");
+      } catch (contractError) {
+        log.warn("computer contract step skipped", {
+          source: "hivra/agents/[id]",
+          failureType: "computer_contract_step_skipped",
+          userId,
+          agentId: String(current.id),
+          errorMessage: contractError instanceof Error ? contractError.message : String(contractError),
+        });
+      }
     }
 
     return apiSuccess({ agent: sanitizeHivraAgentRow(current) });

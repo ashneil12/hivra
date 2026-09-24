@@ -124,6 +124,11 @@ jest.mock("@/lib/hivra/agent-bootstrap", () => ({
   seedAgentBox: (...args: unknown[]) => mockSeedAgentBox(...args),
 }));
 
+const mockAdvanceComputerContract = jest.fn();
+jest.mock("@/lib/hivra/computer-contract-delivery", () => ({
+  advanceProxmoxComputerContract: (...args: unknown[]) => mockAdvanceComputerContract(...args),
+}));
+
 jest.mock("@/lib/hivra/proxmox-target", () => ({
   resolveHivraProxmoxHost: (host?: string | null) => host || "fixturenode10",
   shellQuote: (value: string) => `'${String(value).replace(/'/g, `'\\''`)}'`,
@@ -1174,6 +1179,44 @@ describe("GET /api/hivra/agents/[id]", () => {
       }),
     );
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalled();
+  });
+
+  describe("Computer Contract step", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    beforeEach(() => {
+      mockAdvanceComputerContract.mockReset().mockResolvedValue({ kind: "tracked" });
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", ip: "10.253.0.90", computer_substrate: "proxmox-kvm",
+        bootstrapped_at: "2026-09-24T00:00:00.000Z", bankr_skills_seeded_at: "2026-09-24T00:00:00.000Z",
+        infrastructure_binding_token_enforced: true,
+      };
+    });
+
+    it("keeps a running Hivra Cloud agent's contract current through the owner-scoped environment", async () => {
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockAdvanceComputerContract).toHaveBeenCalledWith("user-free", expect.objectContaining({ id: "agent-1", type: "codex" }),
+        expect.objectContaining({ PROXMOX_NODE: "fixturenode10" }), "auto");
+    });
+
+    it.each([
+      ["a dashboard runtime that reads its own instructions", { type: "openclaw" }],
+      ["a computer without an agent", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }],
+      ["an agent that is not running", { status: "stopped" }],
+    ])("skips %s", async (_label, patch) => {
+      mockAgentRow = { ...mockAgentRow, ...patch };
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+    });
+
+    it("never fails the poll when the contract step throws", async () => {
+      mockAdvanceComputerContract.mockRejectedValueOnce(new Error("guest unreachable"));
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { agent: { id: "agent-1", status: "running" } } });
+      expect(mockLogWarn).toHaveBeenCalledWith("computer contract step skipped", expect.objectContaining({ agentId: "agent-1" }));
+    });
   });
 
   it("does not run agent bootstrap for an already-running Ubuntu Desktop", async () => {

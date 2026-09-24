@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { getGoal, deriveIdentity, GOALS, DEFAULT_GOAL_ID } from "@/lib/hivra/agent-identity";
 import {
+  agentReadsHivraIdentity,
   buildBootstrapContent,
   buildGuestScript,
   BOOTSTRAP_START,
@@ -211,6 +212,34 @@ describe("buildGuestScript", () => {
     expect(script).toContain(BOOTSTRAP_END);
     expect(script).toContain("HIVRA_SEED_OK");
     expect(script).toContain("awk");
+  });
+});
+
+describe("identity seed per runtime (ATT-14)", () => {
+  const content = buildBootstrapContent({ id: "a2", name: "Claw", type: "openclaw" });
+  const llm = { provider: "venice" as const, baseUrl: "https://api.venice.ai/api/v1", apiKey: "vk-test-000000", model: "venice-uncensored" };
+
+  it("writes identity files only for runtimes that read them", () => {
+    expect(agentReadsHivraIdentity("claude-code")).toBe(true);
+    expect(agentReadsHivraIdentity("codex")).toBe(true);
+    for (const type of ["openclaw", "aeon", "agent-zero", "deepseek-harness", "linux-desktop", "not-a-runtime", null]) {
+      expect(agentReadsHivraIdentity(type)).toBe(false);
+    }
+  });
+
+  it("gives a dashboard runtime only its model settings, never SOUL.md or USER.md", () => {
+    const script = buildGuestScript(content, llm, { identity: false });
+    expect(script).not.toContain("SOUL.md");
+    expect(script).not.toContain("USER.md");
+    expect(script).not.toContain("system-prompt.md");
+    expect(script).toContain("llm-provider.json");
+    expect(script).toContain("HIVRA_SEED_OK");
+  });
+
+  it("keeps the full identity seed for Claude Code and Codex by default", () => {
+    const script = buildGuestScript(content, llm);
+    expect(script).toContain("$BUX/SOUL.md");
+    expect(script).toContain("system-prompt.md");
   });
 });
 
