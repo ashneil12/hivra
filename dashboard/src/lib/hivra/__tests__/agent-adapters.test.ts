@@ -243,6 +243,27 @@ describe("agent-adapters", () => {
       ]);
     });
 
+    // The chat gateway from before detached runs ends the stream on Codex's
+    // spawn error: that one stderr line, no newline, and no `_done` after it.
+    it("shows the last stderr line when the stream ends without `_done`", () => {
+      const adapter = getAdapter("codex");
+      const r = recorder();
+      const state = adapter.createTurnState();
+      adapter.parseEvent({ type: "_stderr", text: "spawn error: spawn /home/user/.npm-global/bin/codex ENOENT" }, r.sink, state);
+      expect(r.warnings).toEqual([]);
+      adapter.endTurn(r.sink, state);
+      expect(r.warnings).toEqual(["spawn error: spawn /home/user/.npm-global/bin/codex ENOENT"]);
+      // A turn that already ended, by `_done` or before, shows nothing more.
+      adapter.endTurn(r.sink, state);
+      expect(r.warnings).toHaveLength(1);
+
+      const traced = recorder();
+      const tracedState = adapter.createTurnState();
+      adapter.parseEvent({ type: "_stderr", text: SKILL_ERROR }, traced.sink, tracedState);
+      adapter.endTurn(traced.sink, tracedState);
+      expect(traced.warnings).toEqual([]);
+    });
+
     it("shows a usage limit once when Codex reports it as an error and again as the failed turn", () => {
       const limit = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again in 2 hours.";
       const r = run(getAdapter("codex"), [

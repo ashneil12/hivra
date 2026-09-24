@@ -697,6 +697,40 @@ describe("HivraChat", () => {
     expect(screen.getByLabelText("Response failed")).toHaveTextContent("Could not complete response");
   });
 
+  // A computer still on the chat gateway from before detached runs, whose
+  // agent could not start, streams one line, byte for byte what that gateway's
+  // `child.on("error")` writes, and closes: no `_run`, no `_done`, and the
+  // message has no newline of its own.
+  function olderGatewaySpawnError(bin: string) {
+    return jest.fn()
+      .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(JSON.stringify({ type: "_stderr", text: `spawn error: spawn ${bin} ENOENT` }) + "\n") })
+      .mockResolvedValue({ done: true, value: undefined });
+  }
+
+  it.each([
+    ["codex", "/home/user/.npm-global/bin/codex"],
+    ["claude", "/home/user/.local/bin/claude"],
+    ["generic", "/home/user/.local/bin/agent"],
+  ] as const)("fails a %s reply whose agent could not start on a computer with the older chat gateway, and says why", async (agentKind, bin) => {
+    window.localStorage.setItem(`hivra:first-welcome:oldergateway${agentKind}`, "1");
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(olderGatewaySpawnError(bin))) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey={`older-gateway-${agentKind}`} agentName="Atlas" agentKind={agentKind} />);
+    await sendMessage("begin");
+
+    expect(await screen.findByLabelText("Response failed")).toHaveTextContent("Could not complete response");
+    expect(screen.getByText(/spawn error:/)).toHaveTextContent(`⚠ spawn error: spawn ${bin} ENOENT`);
+  });
+
+  it("keeps the reason a Codex welcome could not start on a computer with the older chat gateway", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementationOnce(() => Promise.resolve(chatResponse(olderGatewaySpawnError("/home/user/.npm-global/bin/codex"))));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-older-gateway" token="box-token" agentName="Atlas" agentKind="codex" />);
+
+    expect(await screen.findByLabelText("Response failed")).toHaveTextContent("Could not complete response");
+    expect(screen.getByText(/spawn error:/)).toHaveTextContent("⚠ spawn error: spawn /home/user/.npm-global/bin/codex ENOENT");
+    expect(screen.queryByText(/finished without replying/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
   it("labels the composer, grows up to its cap, shrinks, and preserves IME input", async () => {
     global.fetch = jest.fn() as unknown as typeof fetch;
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);

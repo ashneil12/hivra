@@ -57,6 +57,10 @@ export interface AgentAdapter {
   createTurnState(): Record<string, unknown>;
   /** Map one stream event onto sink operations. Pure w.r.t. the sink. */
   parseEvent(ev: Record<string, unknown>, sink: ChatSink, state: Record<string, unknown>): void;
+  /** The turn's stream is over, whether or not its `_done` line arrived: emit
+   * anything held back waiting for more (Codex's last stderr line when the
+   * stream ended on it without a newline). */
+  endTurn(sink: ChatSink, state: Record<string, unknown>): void;
 }
 
 // ---- parse-time formatters (shared by adapters) ----
@@ -169,6 +173,8 @@ const claudeAdapter: AgentAdapter = {
       if (/error|invalid|denied|expired|unauthor/i.test(text)) sink.appendWarning(text.trim());
     }
   },
+  // Every event is judged as it arrives; nothing is held back.
+  endTurn() {},
 };
 
 // ---- codex stderr: tracing diagnostics are not replies ----
@@ -228,6 +234,12 @@ function warnOnce(sink: ChatSink, state: Record<string, unknown>, text: string) 
   if (!key || warned.has(key)) return;
   warned.add(key);
   sink.appendWarning(message);
+}
+
+// Judge the stderr line still held back for its newline: the stream is over.
+function flushCodexStderr(sink: ChatSink, state: Record<string, unknown>) {
+  const text = codexStderr(state, "", true);
+  if (text) warnOnce(sink, state, text);
 }
 
 // ---- codex: `codex exec --json` — thread/turn/item event model ----
@@ -291,13 +303,21 @@ const codexAdapter: AgentAdapter = {
       if (msg) warnOnce(sink, state, msg);
       return;
     }
-    if (type === "_stderr" || type === "_done") {
-      const text = codexStderr(state, type === "_stderr" ? String(ev.text || "") : "", type === "_done");
+    if (type === "_stderr") {
+      const text = codexStderr(state, String(ev.text || ""), false);
       if (text) warnOnce(sink, state, text);
+      return;
+    }
+    if (type === "_done") {
+      flushCodexStderr(sink, state);
       return;
     }
     // ignore turn.started / unrecognised
   },
+  // A computer on the chat gateway from before detached runs ends a stream
+  // without `_done` when Codex could not start: its one line is the
+  // "spawn error: …" stderr, with no newline of its own.
+  endTurn: flushCodexStderr,
 };
 
 // ---- generic: ANY other CLI agent the box wraps as plain text ----
@@ -322,6 +342,7 @@ const genericAdapter: AgentAdapter = {
     }
     // ignore _done and anything unrecognised
   },
+  endTurn() {},
 };
 
 const ADAPTERS: Record<AgentKind, AgentAdapter> = {
@@ -360,5 +381,6 @@ export function extractAssistantText(events: Record<string, unknown>[], kind: st
     reportOutcome: () => {},
   };
   for (const ev of events) adapter.parseEvent(ev, sink, state);
+  adapter.endTurn(sink, state);
   return text;
 }

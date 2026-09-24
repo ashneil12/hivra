@@ -312,11 +312,17 @@ function replyMarkdown(m: ChatMessage): string {
 
 // How a run ended when its agent reported nothing of its own (a generic CLI,
 // or one that died before its final event): exit 0 is success; any other code,
-// or none (killed by a signal, or never started), is a failure. A stream with
-// no `_done` comes from an older runtime, where that meant the turn finished.
-function exitOutcome(done: Record<string, unknown> | null): TurnOutcome {
- if (!done || !("code" in done)) return "complete";
- return done.code === 0 ? "complete" : "error";
+// or none (killed by a signal, or never started), is a failure.
+//
+// With no `_done` there is no exit to go on. That stream comes from a computer
+// on the chat gateway from before detached runs, which writes `_done` whenever
+// the agent's process closes; it ends a stream without one when the agent
+// could not start at all (its "spawn error: …" stderr is the only line), or
+// when the connection closed under the turn. A reply the agent wrote is kept
+// as finished; one with nothing but warnings, or nothing at all, failed.
+function exitOutcome(m: ChatMessage, done: Record<string, unknown> | null): TurnOutcome {
+ if (done) return !("code" in done) || done.code === 0 ? "complete" : "error";
+ return m.text.trim() || m.tools.length ? "complete" : "error";
 }
 
 // A pending reply whose run log the computer no longer keeps. Finished runs are
@@ -990,9 +996,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // (agent-adapters), which the welcome path shares — so live + welcome can't
  // diverge. This component only provides the sink that maps parser intents onto
  // React state, plus the per-turn scratch state in turnStateRef.
- const handleEvent = useCallback(
- (sessionId: string, ev: Record<string, unknown>, runId?: string) => {
- const sink: ChatSink = {
+ const runSink = useCallback(
+ (sessionId: string, runId: string | undefined): ChatSink => ({
  // A box-history stub listed for this conversation before this chat knew
  // its id (a reply adopted from another device) is the same chat: drop it.
  setSessionId: (id) => setSessions((prev) => prev
@@ -1003,13 +1008,17 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  upsertTool: (id, patch) => upsertTool(sessionId, runId, id, patch),
  appendWarning: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, warnings: [...(m.warnings || []), t] })),
  reportOutcome: (outcome) => updateRunMessage(sessionId, runId, (m) => ({ ...m, reported: outcome })),
- };
+ }),
+ [updateRunMessage, upsertTool],
+ );
+ const handleEvent = useCallback(
+ (sessionId: string, ev: Record<string, unknown>, runId?: string) => {
  let turnState = turnStateRef.current.get(sessionId);
  const adapter = getAdapter(agentKind);
  if (!turnState) { turnState = adapter.createTurnState(); turnStateRef.current.set(sessionId, turnState); }
- adapter.parseEvent(ev, sink, turnState);
+ adapter.parseEvent(ev, runSink(sessionId, runId), turnState);
  },
- [agentKind, updateRunMessage, upsertTool],
+ [agentKind, runSink],
  );
 
  // Read one NDJSON chat stream into a reply. `_done` means the run finished; a
@@ -1092,20 +1101,23 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [agentKind, boxUrl, readRunStream, token, updateRunMessage],
  );
 
- // Close a reply from the box's `_done` line (null: an older runtime whose
- // stream simply ended, which always meant the turn finished). How the run
- // ended decides the outcome, never a warning raised on the way.
+ // Close a reply from the box's `_done` line (null: a stream from the older
+ // gateway that ended without one; see exitOutcome). The agent's parser first
+ // emits what it held back for more of the stream. How the run ended decides
+ // the outcome, never a warning raised on the way.
  const finalizeRun = useCallback(
  (sessionId: string, runId: string | undefined, done: Record<string, unknown> | null) => {
+ const turnState = turnStateRef.current.get(sessionId);
+ if (turnState) getAdapter(agentKind).endTurn(runSink(sessionId, runId), turnState);
  updateRunMessage(sessionId, runId, (m) => {
  if (done?.interrupted) {
  return { ...m, streaming: false, outcome: "error", warnings: [...(m.warnings || []), "The run was interrupted before it finished because the agent's computer restarted."] };
  }
  if (done?.stopped) return { ...m, streaming: false, outcome: "stopped" };
- return { ...m, streaming: false, outcome: m.reported ?? exitOutcome(done) };
+ return { ...m, streaming: false, outcome: m.reported ?? exitOutcome(m, done) };
  });
  },
- [updateRunMessage],
+ [agentKind, runSink, updateRunMessage],
  );
 
  // Register a session's in-flight turn so Stop finds its controller and run id,
