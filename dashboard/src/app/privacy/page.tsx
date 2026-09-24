@@ -17,7 +17,7 @@ export const metadata = {
   }),
 };
 
-const LAST_UPDATED = "September 23, 2026";
+const LAST_UPDATED = "September 24, 2026";
 
 export default function PrivacyPage() {
   return (<PublicSite className={styles.page} data-page="privacy">
@@ -54,6 +54,7 @@ export default function PrivacyPage() {
             <li><strong>Vercel:</strong> hosting and delivery of this dashboard (United States and global edge).</li>
             <li><strong>Cloudflare:</strong> DNS, network routing, and secure tunneling.</li>
             <li><strong>PostHog:</strong> product analytics and session replay (United States).</li>
+            <li><strong>Google (Google Analytics and Google Tag Manager):</strong> website traffic analytics, loaded only after you accept analytics cookies (United States).</li>
             <li><strong>Stripe:</strong> payment processing; Stripe handles card numbers directly and we receive only limited metadata.</li>
             <li><strong>FingerprintJS:</strong> device signals used only for fraud and abuse prevention.</li>
             <li><strong>Managed inference and wallet partners:</strong> if you opt into managed AI inference or token and wallet features, Venice (inference) and Bankr (wallet and on-chain payments) process the data needed for those features.</li>
