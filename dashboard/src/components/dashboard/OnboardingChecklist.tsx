@@ -14,6 +14,7 @@
 //                /api/telegram/status probe the HivraTelegram tab uses).
 //   ④ browser  — Pro feature; locked on Free → UpgradePaywallModal('browser').
 //   ⑤ cron     — Pro feature; locked on Free → UpgradePaywallModal('cron').
+//                Only with a Hermes instance; opens its console Tasks tab.
 //
 // Dismiss persists in localStorage, with a short inline Undo. Funnel instrumentation:
 // `onboarding_checklist_item_clicked` {item, locked} + `onboarding_checklist_dismissed`
@@ -50,6 +51,16 @@ export interface OnboardingChecklistInstance {
 
 type ItemId = "deploy" | "message" | "telegram" | "browser" | "cron";
 type ItemState = "done" | "pending" | "locked";
+
+interface ChecklistItem {
+  id: ItemId;
+  label: string;
+  detail: string;
+  icon: React.ReactNode;
+  state: ItemState;
+  pro?: boolean;
+  onActivate: () => void;
+}
 
 function readLocalFlag(key: string): boolean {
   try {
@@ -237,15 +248,7 @@ export function OnboardingChecklist({
   const targetBox = agents.find((agent) => agent.status === "running") ?? agents[0] ?? null;
   const targetInstance = instances[0] ?? null;
 
-  const items: {
-    id: ItemId;
-    label: string;
-    detail: string;
-    icon: React.ReactNode;
-    state: ItemState;
-    pro?: boolean;
-    onActivate: () => void;
-  }[] = [
+  const items: ChecklistItem[] = [
     {
       id: "deploy",
       label: "Deploy your agent",
@@ -300,7 +303,11 @@ export function OnboardingChecklist({
         else if (targetInstance) router.push(`/dashboard/instances/${targetInstance.id}`);
       },
     },
-    {
+  ];
+  // Scheduled tasks run on the Hermes lane's scheduler, which Hivra computers
+  // do not have, so only a Hermes instance is offered one.
+  if (targetInstance) {
+    items.push({
       id: "cron",
       label: "Add a scheduled task",
       detail: "Recurring reports and monitors, on autopilot.",
@@ -314,11 +321,10 @@ export function OnboardingChecklist({
         }
         setAcks((current) => ({ ...current, cron: true }));
         writeLocalFlag(`${ACK_KEY_PREFIX}cron`);
-        if (targetBox) router.push(`/dashboard/agent/${targetBox.id}`);
-        else router.push("/dashboard/chat");
+        router.push(`/dashboard/instances/${targetInstance.id}/console?tab=tasks`);
       },
-    },
-  ];
+    });
+  }
 
   const doneCount = items.filter((item) => item.state === "done").length;
   const allDone = doneCount === items.length;
