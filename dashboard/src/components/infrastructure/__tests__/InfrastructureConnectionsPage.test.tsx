@@ -789,6 +789,45 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
+  it("inside Launch, names the ready server and uses it for the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    const banner = (await screen.findByText(`${READY_GVISOR_TARGET.displayName} is ready for Linux Sandbox.`)).closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(banner).getByRole("button", { name: "Use it for this launch" }));
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+  });
+
+  // Live test of slice 10: the sheet said "Capacity is ready" for the Hivra
+  // Cloud plan the launch had just outgrown, and its "Continue launch" link
+  // (no server in it) left the sheet open over the launch.
+  it("inside Launch, returns to the launch from any Launch link and doesn't offer Hivra Cloud back as news", async () => {
+    (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
+    const onLaunchTarget = jest.fn();
+    const onClose = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "codex", onLaunchTarget, onClose }} />);
+
+    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    screen.getByRole("link", { name: /Launch an agent/i }).dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onLaunchTarget).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
   // Review of slice 5: an owner who set up Linux Sandbox and came back an
   // hour later got Ready and a Launch button the server then refused.
   it("asks for a readiness check on a gVisor host whose last check is stale, then offers Launch", async () => {
