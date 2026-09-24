@@ -1080,7 +1080,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       "/dashboard/launch?start=1&kind=computer",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Add infrastructure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add capacity" }));
     const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
     expect(within(chooser).getByText("Pro is active. Review plan options in Billing.")).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
@@ -1119,8 +1119,18 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Yearly" }));
     fireEvent.click(within(dialog).getByRole("button", { name: /Continue to secure checkout/i }));
 
-    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("fleet", "yearly"));
+    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("fleet", "yearly", { returnTo: null }));
     expect(redirectToCheckoutUrl).toHaveBeenCalledWith("https://checkout.stripe.test/hivra-cloud");
+  });
+
+  it("returns a Hivra Cloud checkout started from a launch detour to that launch", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => ({ launch: "codex", returnTo: "unified-launch" } as Record<string, string>)[key] ?? null);
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Hivra Cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure checkout/i }));
+
+    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("operator", "monthly", { returnTo: "/dashboard/launch" }));
   });
 
   it("refreshes Infrastructure when Hivra Cloud activates without a checkout redirect", async () => {
@@ -2491,7 +2501,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
     render(<InfrastructureConnectionsPage />);
 
-    const addCapacity = await screen.findByRole("button", { name: "Add infrastructure" });
+    const addCapacity = await screen.findByRole("button", { name: "Add capacity" });
     fireEvent.click(addCapacity);
     const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
@@ -2584,7 +2594,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     await waitFor(() => expect(screen.queryByRole(role as "dialog" | "alertdialog")).not.toBeInTheDocument());
     expect(opener).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Add infrastructure" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add capacity" })).not.toHaveFocus();
   });
 
   it("requires typed confirmation before force-forgetting an idle ambiguous Hetzner connection", async () => {

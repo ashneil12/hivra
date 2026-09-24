@@ -5,6 +5,7 @@ import {
   type PortableLaunchResourceId,
 } from "@/lib/hivra/launch-navigation";
 import { PROFILE_DETAILS, type LaunchDraft, type LaunchProfileId } from "@/lib/launch/contracts";
+import { isUnfinishedLaunchDraft } from "@/lib/launch/draft-store";
 
 import {
   isGvisorDeploymentTarget,
@@ -41,14 +42,11 @@ export function pendingLaunchFrom(input: {
     return { source: "handoff", resourceId, unified: input.returnTo === "unified-launch" };
   }
   const draft = input.draft;
-  // A finished launch, or one with nothing chosen yet, is not pending. Nor is
-  // one already sent: its server was fixed when it was submitted, and another
-  // server can't take it over. Omarchy opens a prepared computer and never
-  // runs on the owner's own server.
-  if (!draft?.profileId || draft.profileId === "omarchy"
-    || draft.launchState === "accepted" || draft.launchState === "submitting" || draft.launchState === "uncertain") {
-    return null;
-  }
+  // Only a draft the owner started and hasn't sent is pending: a launch
+  // already sent keeps the server it was sent to, and a finished one is done.
+  // Omarchy opens a prepared computer and never runs on the owner's own
+  // server.
+  if (!isUnfinishedLaunchDraft(draft) || !draft.profileId || draft.profileId === "omarchy") return null;
   return { source: "journey", profileId: draft.profileId };
 }
 

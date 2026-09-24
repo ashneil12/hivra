@@ -95,6 +95,7 @@ function Harness({
       />
       <output data-testid="deployment">{JSON.stringify(state.deployment)}</output>
       <output data-testid="choice">{JSON.stringify(state.choice)}</output>
+      <output data-testid="launch-ready">{JSON.stringify(state.launchReadyTargets.map(target => target.id))}</output>
     </>
   );
 }
@@ -373,6 +374,29 @@ describe("DeploymentDestinationControl", () => {
       "/dashboard/infrastructure?launch=codex",
     );
     expect(screen.getByTestId("deployment")).toHaveTextContent('{"mode":"hivra-managed"}');
+  });
+
+  it("exposes every launch-ready target, compatible or not, so a picker can judge other runtimes", async () => {
+    const otherRuntime = {
+      ...TARGET,
+      id: "33333333-3333-4333-8333-333333333333",
+      capabilities: {
+        ...TARGET.capabilities,
+        runtimeCompatibility: {
+          contractVersion: 1,
+          provisionerVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
+          supportedCatalogRuntimeIds: ["claude-code"],
+        },
+      },
+    };
+    const notReady = { ...TARGET, id: "44444444-4444-4444-8444-444444444444", status: "unavailable" as const };
+    (listInfrastructureTargets as jest.Mock).mockResolvedValueOnce([TARGET, otherRuntime, notReady]);
+    render(<Harness />);
+
+    await waitFor(() => expect(screen.getByTestId("launch-ready")).toHaveTextContent(JSON.stringify([TARGET.id, otherRuntime.id])));
+    // Placement still offers only the compatible host.
+    fireEvent.click(screen.getByRole("button", { name: /My infrastructure/i }));
+    expect(screen.getAllByRole("option").map(option => option.getAttribute("value"))).toEqual([TARGET.id]);
   });
 
   it("fails closed when compatibility and observed evidence match an older provisioner", async () => {

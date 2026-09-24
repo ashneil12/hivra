@@ -1,9 +1,10 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 
 import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import {
@@ -15,7 +16,7 @@ import {
   type LaunchOnServerAction,
   type PendingLaunch,
 } from "@/lib/infrastructure/launch-on-server";
-import { LAUNCH_DRAFT_STORAGE_KEY, readLaunchDraft } from "@/lib/launch/draft-store";
+import { LAUNCH_DRAFT_STORAGE_KEY, launchDraftStorageKey, readLaunchDraft } from "@/lib/launch/draft-store";
 
 import styles from "./Infrastructure.module.css";
 
@@ -32,26 +33,33 @@ function subscribeLaunchDraft(onChange: () => void): () => void {
   return () => window.removeEventListener("storage", onChange);
 }
 
-/** The saved draft's raw text: a stable snapshot that changes only when the
- * draft does. The server render has no draft. */
-function readLaunchDraftSnapshot(): string | null {
+function storedText(storage: () => Storage, key: string): string | null {
   try {
-    return window.sessionStorage.getItem(LAUNCH_DRAFT_STORAGE_KEY);
+    return storage().getItem(key);
   } catch {
     return null;
   }
 }
 
-/** The launch the owner came here from: ?launch=<resource>, or the unified
- * journey's saved draft in this tab. */
+/** The launch the owner came here from: ?launch=<resource>, or the launch
+ * journey's unsent draft that this owner saved in this browser. */
 export function usePendingLaunch(): PendingLaunch | null {
   const searchParams = useSearchParams();
   const launchParam = searchParams?.get("launch") ?? null;
   const returnTo = searchParams?.get("returnTo") ?? null;
-  const rawDraft = useSyncExternalStore(subscribeLaunchDraft, readLaunchDraftSnapshot, () => null);
+  // Drafts are saved per owner; until auth says who, there is none to read.
+  const { isLoaded, userId } = useAuth();
+  const ownerId = isLoaded ? userId ?? null : null;
+  // The saved draft's raw text (and a draft from before drafts moved to
+  // localStorage): a stable snapshot that changes only when the draft does.
+  // The server render has no draft.
+  const readSnapshot = useCallback(() => (ownerId
+    ? `${storedText(() => window.localStorage, launchDraftStorageKey(ownerId)) ?? ""}\u0000${storedText(() => window.sessionStorage, LAUNCH_DRAFT_STORAGE_KEY) ?? ""}`
+    : null), [ownerId]);
+  const snapshot = useSyncExternalStore(subscribeLaunchDraft, readSnapshot, () => null);
   return useMemo(
-    () => pendingLaunchFrom({ launchParam, returnTo, draft: rawDraft === null ? null : readLaunchDraft() }),
-    [launchParam, rawDraft, returnTo],
+    () => pendingLaunchFrom({ launchParam, returnTo, draft: snapshot === null ? null : readLaunchDraft(ownerId) }),
+    [launchParam, ownerId, returnTo, snapshot],
   );
 }
 

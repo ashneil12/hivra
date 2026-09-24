@@ -1,6 +1,7 @@
 import { CreditCard, Sparkles, WalletCards, X } from "lucide-react";
 
 import { formatMicroUsd } from "@/components/billing/ManagedVeniceSubsidyBanner";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import type { ManagedVeniceWalletSummaryPayload } from "@/lib/billing/managed-venice-client";
 
 function balanceOrZero(value: number | undefined) {
@@ -39,6 +40,10 @@ export function ManagedVeniceCreditsPocket({
     balanceOrZero(summary?.killSwitch?.thresholdMicroUsd)
   );
   const emptyWallet = totalAvailable <= 0;
+  // Token geo-policy: the launch-bonus and launch-allocation rows promote
+  // $HermesOS top-ups, so a viewer it blocks (or while it is still checking)
+  // doesn't see them.
+  const tokenPromotionsShown = useTokenGeoAccess().status === "allowed";
   const visibleError = error && !/not found/i.test(error) ? error : null;
 
   return (
@@ -118,7 +123,7 @@ export function ManagedVeniceCreditsPocket({
       </div>
 
       <div style={{ display: "grid", gap: 8 }}>
-        {summary?.discount ? (
+        {summary?.discount && tokenPromotionsShown ? (
           <div
             style={{
               border: "1px solid rgba(255, 44, 45,0.4)",
@@ -140,7 +145,7 @@ export function ManagedVeniceCreditsPocket({
           </div>
         ) : null}
 
-        {summary?.killSwitch ? (
+        {summary?.killSwitch && tokenPromotionsShown ? (
           <div
             style={{
               border: "1px solid var(--etched-border)",

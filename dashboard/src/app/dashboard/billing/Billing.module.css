@@ -90,6 +90,24 @@
   min-width: 0;
 }
 
+/* Back to the page a plan change started from, e.g. a launch. */
+.returnLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  margin-bottom: 0.4rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.returnLink:hover { color: var(--ink-black); }
+
 .eyebrow {
   display: inline-flex;
   align-items: center;

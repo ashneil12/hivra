@@ -27,6 +27,7 @@
  * alone for the next sweep so a slow-but-healthy provision is never killed.
  */
 
+import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import {
@@ -503,6 +504,34 @@ function resizeEnvelope(row: StuckAgentRow): {
   return { cpu, ram, maximumCpu, maximumRam, explicitMaximum };
 }
 
+/**
+ * A box this sweep brings to running gets the wallet row applied to its
+ * bankr.env, as a polled boot does. No context is passed: the helper resolves
+ * a lifecycle one instead of this sweep's relaxed teardown context. Best
+ * effort; it never changes the recovery outcome.
+ */
+async function reconcileWalletIfRunning(
+  row: StuckAgentRow,
+  vmStatus: string | null,
+  ip?: string | null,
+): Promise<void> {
+  if (vmStatus !== "running") return;
+  try {
+    await reconcileBankrEnvAfterHivraBoot({
+      userId: row.user_id,
+      agent: { ...row, status: "running", ip: ip || row.ip },
+      trigger: "recovery",
+    });
+  } catch (error) {
+    log.warn("recovered hivra agent wallet boot sync threw", {
+      source: LOG_SOURCE,
+      failureType: "hivra_agent_wallet_boot_env_sync_failed",
+      agentId: row.id,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function resizeProviderConfigMatches(
   envelope: NonNullable<ReturnType<typeof resizeEnvelope>>,
   vmConfig: { cores: number; cpuLimit: number; memoryMb: number; balloonMb: number | null } | null,
@@ -579,6 +608,7 @@ async function flipToRunning(
     via,
     hasApiToken: Boolean(fields.api_token || row.api_token),
   });
+  await reconcileWalletIfRunning(row, "running", fields.ip);
   return true;
 }
 
@@ -667,6 +697,7 @@ async function settleStaleLifecycleFromProviderState(
   if (!completed) {
     return { ...base, action: "skipped", reason: "stale lifecycle completion was superseded" };
   }
+  await reconcileWalletIfRunning(row, vmStatus);
   return {
     ...base,
     action: vmStatus === "running" && resizeConfigMatches ? "recovered_from_log" : "skipped",
@@ -1105,6 +1136,8 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
       && evidence.providerStatus === "stopped"
       && evidence.snapshotConfigSha256 === expectedHash
       && evidence.currentConfigSha256 === expectedHash;
+    // A restore always ends stopped. The restored disk's bankr.env is brought
+    // back in line with the wallet row when the box next boots.
     if (restored) {
       const completed = await completeHivraAgentSnapshotRestore({
         userId: row.user_id,
@@ -1263,6 +1296,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         expectedDesiredState: "running",
         status: vmStatus,
       });
+      if (completed) await reconcileWalletIfRunning(row, vmStatus);
       return completed
         ? {
             ...base,
@@ -1280,6 +1314,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
       expectedDesiredState: "running",
       status: vmStatus,
     });
+    if (completed) await reconcileWalletIfRunning(row, vmStatus);
     return completed
       ? {
           ...base,

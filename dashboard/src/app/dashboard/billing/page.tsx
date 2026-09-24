@@ -1,9 +1,10 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
-import { Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { PLANS, getPlanDiff, isPlanUpgrade } from "@/lib/subscription";
 import { isPlanKey, planYearlyPriceCents } from "@/lib/billing/plan-display";
 import { buildHermesFadeSlideVariants, buildHermesStaggerVariants } from "@/components/ui/motion";
@@ -213,6 +214,12 @@ function BillingPageContent() {
     >
       <motion.header className={styles.header} variants={sectionVariants}>
         <div className={styles.headerText}>
+          {c.returnTo ? (
+            <Link className={styles.returnLink} href={c.returnTo}>
+              <ArrowLeft size={13} aria-hidden="true" />
+              {c.returnTo.startsWith("/dashboard/launch") ? "Back to your launch" : "Back"}
+            </Link>
+          ) : null}
           <p className={styles.eyebrow}>{billingCopy.eyebrow}</p>
           <h1 className={styles.title}>
             {billingCopy.titlePrefix}
@@ -321,7 +328,7 @@ function BillingPageContent() {
 
       <ManagedVeniceDepositModal
         isOpen={c.managedVeniceDeposit.open}
-        tokenPaymentsEnabled={c.flags.billingV2Enabled}
+        tokenPaymentsEnabled={c.flags.billingV2Enabled && c.tokenGeo.status === "allowed"}
         walletType={c.managedVeniceDeposit.wallet}
         amountUsd={c.managedVeniceDeposit.amountUsd}
         loading={c.managedVeniceDeposit.loading}

@@ -20,7 +20,6 @@ import {
   Moon,
   MonitorSmartphone,
   Palette,
-  ServerCog,
   Sun,
   Trash2,
   UserRound,
@@ -214,7 +213,6 @@ export default function SettingsPage() {
   ];
   const connectionRows: LinkRowItem[] = [
     { id: 'api-keys', href: '/dashboard/vault', icon: KeyRound, title: hub.rows.apiKeys.title, description: hub.rows.apiKeys.description },
-    { id: 'infrastructure', href: '/dashboard/infrastructure', icon: ServerCog, title: copy.dashboard.nav.infrastructure, description: hub.rows.infrastructure.description },
   ];
   const toolkitRows: LinkRowItem[] = [
     { id: 'memory', href: '/dashboard/settings/memory', icon: BrainCircuit, title: hub.rows.memory.title, description: hub.rows.memory.description },
