@@ -9,6 +9,7 @@ import StructuredData from "@/components/StructuredData";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { OG_IMAGE } from "@/lib/og-meta";
+import { officialProfileLinks } from "@/lib/public-project-links";
 import { SITE_URL } from "@/lib/seo-urls";
 import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
 
@@ -59,7 +60,7 @@ const homepageSchema = {
         width: 512,
         height: 512,
       },
-      sameAs: [],
+      sameAs: officialProfileLinks(),
     },
     {
       "@type": "WebSite",

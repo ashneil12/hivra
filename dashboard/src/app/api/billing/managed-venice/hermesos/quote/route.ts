@@ -4,6 +4,7 @@ import { z } from "zod";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
 import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
+import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import {
@@ -264,6 +265,13 @@ export async function POST(req: NextRequest) {
         });
       }
       if (error instanceof ManagedVeniceTokenQuotePriceError) {
+        // The rate-limited gate log and ops alert are the signal; the per-request
+        // line stays at info so a gate that holds for hours cannot flood the logs.
+        const { refusal } = await reportPriceGateRefusal(error, {
+          source: "billing/managed-venice/hermesos/quote",
+          route: "/api/billing/managed-venice/hermesos/quote",
+          method: "POST",
+        });
         return apiError(
           HERMES_PRICE_UNAVAILABLE_MESSAGE,
           503,
@@ -272,6 +280,8 @@ export async function POST(req: NextRequest) {
             step: "price_oracle",
             errorName: error.name,
             errorMessage: error.message,
+            gate: refusal.gate,
+            gateReason: refusal.reason,
           },
           { reason: "pricing_unavailable" },
           {
@@ -281,6 +291,7 @@ export async function POST(req: NextRequest) {
             userId: userIdForLog,
             failureType: "managed_venice_quote_price_unavailable",
             cause: error,
+            logLevel: "info",
           }
         );
       }
