@@ -1,10 +1,15 @@
 import {
+  DEFAULT_MODEL_ACCESS,
   LAUNCH_DRAFT_SCHEMA_VERSION,
   LAUNCH_NAME_MAX_LENGTH,
+  LAUNCH_PROFILE_IDS,
   PROFILE_DETAILS,
+  profileHasBrowser,
   type LaunchCapacityChoice,
   type LaunchDraft,
   type LaunchDeploymentSnapshot,
+  type LaunchErrorAction,
+  type LaunchModelAccess,
   type LaunchProfileId,
   type LaunchResourceKind,
   type LaunchResources,
@@ -32,7 +37,7 @@ const LEGACY_STAGES: Readonly<Record<string, LaunchStage>> = {
   capacity: "plan",
 };
 const RESOURCE_KINDS = new Set<LaunchResourceKind>(["agent", "computer"]);
-const PROFILES = new Set<LaunchProfileId>(["codex", "ubuntu-desktop", "linux-terminal", "omarchy", "windows"]);
+const PROFILES = new Set<LaunchProfileId>(LAUNCH_PROFILE_IDS);
 const LAUNCH_STATES = new Set<LaunchState>(["idle", "submitting", "uncertain", "accepted", "failed"]);
 
 function newRequestId(): string {
@@ -63,11 +68,73 @@ export function createLaunchDraft(): LaunchDraft {
     browserSource: "recommended",
     browserRaisedFrom: null,
     capacity: { mode: "hivra-managed", targetId: null },
+    modelAccess: { ...DEFAULT_MODEL_ACCESS },
+    sendMemoryKey: false,
     submittedDeployment: null,
+    submittedAt: null,
     launchState: "idle",
     result: null,
     error: null,
+    errorAction: null,
   };
+}
+
+const MODEL_ACCESS_MODES = new Set<LaunchModelAccess["mode"]>(["native", "api-key", "credits"]);
+const PROVIDER_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const MODEL_ID = /^[\x21-\x7e]{1,128}$/;
+
+/** An endpoint address without credentials in it. */
+function safeBaseUrl(value: string): string {
+  if (!value || value.length > 2048) return "";
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Secret-free model choice. Unknown fields (a key included) are dropped. */
+function safeModelAccess(value: unknown): LaunchModelAccess {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_MODEL_ACCESS };
+  const input = value as Record<string, unknown>;
+  const mode = typeof input.mode === "string" && MODEL_ACCESS_MODES.has(input.mode as LaunchModelAccess["mode"])
+    ? input.mode as LaunchModelAccess["mode"]
+    : DEFAULT_MODEL_ACCESS.mode;
+  const baseUrl = typeof input.baseUrl === "string" ? safeBaseUrl(input.baseUrl) : "";
+  return {
+    mode,
+    source: input.source === "custom" ? "custom" : "recommended",
+    provider: typeof input.provider === "string" && PROVIDER_ID.test(input.provider) ? input.provider : DEFAULT_MODEL_ACCESS.provider,
+    model: typeof input.model === "string" && (input.model === "" || MODEL_ID.test(input.model)) ? input.model : "",
+    keySource: input.keySource === "saved" ? "saved" : "paste",
+    vaultKeyId: typeof input.vaultKeyId === "string" && UUID.test(input.vaultKeyId) ? input.vaultKeyId.toLowerCase() : null,
+    sendSavedKey: input.sendSavedKey === true,
+    saveKey: input.saveKey !== false,
+    walletType: input.walletType === "hermesos" ? "hermesos" : "card",
+    baseUrl,
+  };
+}
+
+/** Only a link back into this dashboard can ride along with an error. */
+function safeErrorAction(value: unknown): LaunchErrorAction | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  if (input.kind === "verify-card") return { kind: "verify-card" };
+  if (
+    input.kind === "open"
+    && typeof input.label === "string" && input.label.trim() && input.label.length <= 60
+    && typeof input.href === "string" && /^\/dashboard\/[A-Za-z0-9/_?=&%.-]{1,300}$/.test(input.href)
+  ) {
+    return { kind: "open", label: input.label.trim(), href: input.href };
+  }
+  return null;
+}
+
+function safeTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 40) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
 function finiteResource(value: unknown, min: number, max: number): number | null {
@@ -134,8 +201,9 @@ function safeDraft(value: unknown): LaunchDraft | null {
 
   const resources = safeResources(input.resources);
   if (!resources) return null;
-  // Only an owner's own Codex size is ever given back after a browser raise.
-  const browserRaisedFrom = profileId === "codex" ? safeResources(input.browserRaisedFrom) : null;
+  // Only an owner's own size is ever given back after a browser raise.
+  const hasBrowser = profileHasBrowser(profileId);
+  const browserRaisedFrom = hasBrowser ? safeResources(input.browserRaisedFrom) : null;
 
   const capacityInput = input.capacity && typeof input.capacity === "object"
     ? input.capacity as Record<string, unknown>
@@ -208,14 +276,21 @@ function safeDraft(value: unknown): LaunchDraft | null {
     windowsRightsAttested: input.windowsRightsAttested === true,
     // Drafts saved before this choice existed launched Codex with its browser
     // sidecar. Restore that intent so an uncertain replay repeats it exactly.
-    browser: profileId === "codex" ? (typeof input.browser === "boolean" ? input.browser : true) : false,
+    browser: hasBrowser
+      ? (typeof input.browser === "boolean" ? input.browser : profileId === "codex")
+      : false,
     browserSource: input.browserSource === "custom" ? "custom" : "recommended",
     browserRaisedFrom: browserRaisedFrom?.source === "custom" ? browserRaisedFrom : null,
     capacity,
+    modelAccess: safeModelAccess(input.modelAccess),
+    // Consent to send a saved memory key is Hermes' only, and only ever true.
+    sendMemoryKey: profileId === "hermes" && input.sendMemoryKey === true,
     submittedDeployment: safeSubmittedDeployment(input.submittedDeployment),
+    submittedAt: safeTimestamp(input.submittedAt),
     launchState,
     result,
     error: typeof input.error === "string" ? input.error.slice(0, 500) : null,
+    errorAction: safeErrorAction(input.errorAction),
   };
 }
 

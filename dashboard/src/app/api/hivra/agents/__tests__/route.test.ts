@@ -841,6 +841,63 @@ describe("POST /api/hivra/agents", () => {
     expect(mockCreateBoxTunnel).not.toHaveBeenCalled(); expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  describe("a Codex model launch that names a saved Vault key", () => {
+    const VAULT_KEY_ID = "99999999-9999-4999-8999-999999999999";
+    let vaultFilters: Array<[string, unknown]>;
+    let vaultRow: Record<string, unknown> | null;
+
+    beforeEach(() => {
+      vaultFilters = [];
+      vaultRow = { id: VAULT_KEY_ID, provider: "venice", encrypted_key: "enc:synthetic-vault-key" };
+      const tables = mockSupabaseFrom.getMockImplementation()!;
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table !== "user_api_keys") return tables(table);
+        type VaultQuery = { select: () => VaultQuery; eq: (column: string, value: unknown) => VaultQuery; maybeSingle: () => Promise<unknown> };
+        const chain: VaultQuery = {
+          select: () => chain,
+          eq: (column, value) => { vaultFilters.push([column, value]); return chain; },
+          maybeSingle: async () => ({ data: vaultRow, error: null }),
+        };
+        return chain;
+      });
+    });
+
+    it("reads the owner's own key and admits it exactly like a pasted key", async () => {
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({ token: "synthetic-tunnel", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test" });
+      const response = await POST(makeRequest({ type: "codex", name: "Saved model",
+        llm: { provider: "venice", mode: "byok", vaultKeyId: VAULT_KEY_ID, model: "test-model" }, launchRequestId: LAUNCH_REQUEST_ID }));
+
+      expect(response.status).toBe(201);
+      expect(vaultFilters).toEqual(expect.arrayContaining([["id", VAULT_KEY_ID], ["user_id", "user-free"]]));
+      expect(mockLaunchReserve).toHaveBeenCalledWith(expect.objectContaining({ requestId: LAUNCH_REQUEST_ID,
+        llm: { provider: "venice", mode: "byok", apiKey: "synthetic-vault-key", model: "test-model" } }));
+      // The admission, its fingerprint and delivery never see the reference.
+      expect(JSON.stringify(mockLaunchReserve.mock.calls)).not.toContain(VAULT_KEY_ID);
+      expect(JSON.stringify(mockRunProxmoxHostScript.mock.calls)).not.toMatch(/synthetic-vault-key/);
+      expect(JSON.stringify(await response.json())).not.toMatch(/synthetic-vault-key/);
+    });
+
+    it("refuses a key that isn't in the owner's Vault before any allocation", async () => {
+      vaultRow = null;
+      const response = await POST(makeRequest({ type: "codex",
+        llm: { provider: "venice", mode: "byok", vaultKeyId: VAULT_KEY_ID }, launchRequestId: LAUNCH_REQUEST_ID }));
+
+      expect(response.status).toBe(404);
+      expect(mockLaunchReserve).not.toHaveBeenCalled(); expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    });
+
+    it("refuses a request that names a saved key and pastes one too", async () => {
+      const response = await POST(makeRequest({ type: "codex",
+        llm: { provider: "venice", mode: "byok", vaultKeyId: VAULT_KEY_ID, apiKey: "synthetic-launch-key" }, launchRequestId: LAUNCH_REQUEST_ID }));
+
+      expect(response.status).toBe(400);
+      expect(vaultFilters).toEqual([]);
+      expect(mockLaunchReserve).not.toHaveBeenCalled();
+    });
+  });
+
   it("stops allocation if named access disappears after a model reservation", async () => {
     mockTunnelConfigured = true; mockCreateBoxTunnel.mockResolvedValue(null);
     const response = await POST(makeRequest({ type: "codex", llm: MODEL_SELECTION, launchRequestId: LAUNCH_REQUEST_ID }));

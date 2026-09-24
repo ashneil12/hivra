@@ -105,6 +105,9 @@ export interface AgentLlmInput {
   mode: "byok" | "managed";
   /** BYOK only. */
   apiKey?: string;
+  /** BYOK only: a Venice key saved in the owner's Vault, read by the server
+   * instead of being sent again. Never combined with apiKey. */
+  vaultKeyId?: string;
   model?: string;
   /** Managed only. */
   walletType?: "hermesos" | "card";
@@ -270,8 +273,10 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
   if (input.launchRequestId) {
     if (
       data?.agent
-      && data.launch?.state === "accepted"
       && data.launchRequestId === input.launchRequestId
+      // A launch with a model key answers from its own admission record,
+      // which names the request but has no launch-operation state.
+      && (data.launch?.state === "accepted" || (input.llm !== undefined && data.launch === undefined))
     ) return data.agent;
     throw new Error(`Provision returned an invalid receipt (${r.status})`);
   }

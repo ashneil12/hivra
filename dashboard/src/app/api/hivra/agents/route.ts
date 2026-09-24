@@ -39,6 +39,7 @@ import { validateAgentResources, isActiveComputeStatus } from "@/lib/hivra/resou
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
 import { getTemplateForLaunch, type TemplateIdentity } from "@/lib/hivra/agent-templates";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
 import { coerceSkillIds } from "@/lib/hivra/template-skills";
@@ -1020,7 +1021,11 @@ async function launchAgent(request: NextRequest) {
 
     // Optional alternative LLM provider (Venice byok/managed). Validated against
     // the agent type's declared capability; absent = native vendor auth.
-    const llmValidation = validateLlmInput(body.llm, type);
+    // A saved Vault key is read here, for this owner only, and then carried
+    // exactly like a pasted key.
+    const vaultLlm = await resolveLaunchLlmVaultKey(userId, body.llm);
+    if (!vaultLlm.ok) return apiError(vaultLlm.error, vaultLlm.status);
+    const llmValidation = validateLlmInput(vaultLlm.llm, type);
     if (!llmValidation.ok) return apiError(llmValidation.error || "Invalid LLM config", 400);
     const llmInput = llmValidation.input ?? null;
     // managedVenice:true (catalog type + wallet opt-in) auto-builds a managed llm

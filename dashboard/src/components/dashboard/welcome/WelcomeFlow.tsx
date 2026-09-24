@@ -112,10 +112,12 @@ import { DeployForm, focusOnFinePointer, type DashboardVaultKey } from '@/compon
 import { parseLaunchTargetHandoff, type LaunchTargetHandoff } from '@/components/dashboard/welcome/launch-target-handoff';
 import { DeployingState } from '@/components/dashboard/welcome/DeployingState';
 import { DeployedCelebration } from '@/components/dashboard/welcome/DeployedCelebration';
+import { buildPostDeployDestination } from '@/lib/welcome-deploy';
 import {
-  buildPostDeployDestination,
-  buildWelcomeAgentSettings,
-} from '@/lib/welcome-deploy';
+  dashboardAgentRequest,
+  hermesInstanceRequest,
+  nativeCliAgentRequest,
+} from '@/lib/launch/runtime-requests';
 import {
   buildHermesWelcomeSystemPrompt,
   buildWelcomePersonalizationContext,
@@ -169,7 +171,6 @@ import {
   isCardRequiredResponse,
 } from '@/lib/billing/card-required';
 import { getFingerprintRequestId } from '@/lib/abuse/client-fingerprint';
-import { getManagedVeniceProxyBaseUrl } from '@/lib/venice/managed-endpoints';
 import type { ManagedVeniceWalletType } from '@/lib/venice/managed-credit-topup';
 import {
   requestManagedVeniceSummary,
@@ -675,8 +676,8 @@ export function WelcomeFlow() {
   const subscriptionSuccess = searchParams?.get('subscription') === 'success';
   const agentTypeParam = searchParams?.get('agentType');
   const hasExplicitAgentTypeParam = resolveWelcomeAgentTypeKey(agentTypeParam) !== null;
-  // "Browse every agent" on /dashboard/launch opens this catalog; keep a way
-  // back to the Launch journey that sent the user here.
+  // Older /dashboard/launch links opened this catalog with from=launch (every
+  // agent now launches inside Launch itself); keep a way back for them.
   const fromLaunch = searchParams?.get('from') === 'launch';
   const templateIdParam = searchParams?.get('templateId') ?? null;
   const templateTokenParam = searchParams?.get('templateToken') ?? null;
@@ -2023,38 +2024,6 @@ export function WelcomeFlow() {
         }
       }
 
-      const agentSettings = buildWelcomeAgentSettings({
-        // Clean-slate leaves the agent unconfigured: no provider/model/baseUrl
-        // is seeded so the box boots with nothing and its native onboarding
-        // overlay fires. (The server also skips seeding when unconfigured.)
-        providerId: cleanSlateDeploy ? '' : selectedProvider.id,
-        model: cleanSlateDeploy ? '' : model,
-        customBaseUrl: cleanSlateDeploy
-          ? ''
-          : managedVeniceDeploy
-            ? getManagedVeniceProxyBaseUrl()
-            : customBaseUrl,
-        systemPrompt: hasWelcomePersonalization(personalizationDraftRef.current)
-          ? buildHermesWelcomeSystemPrompt({
-              agentName: agentName.trim(),
-              basePrompt: selectedAgentType?.systemPrompt,
-              draft: personalizationDraftRef.current,
-            })
-          : selectedAgentType?.systemPrompt,
-        runtimeMode: 'managed',
-        // Privileged VM/Docker control is an explicit opt-in in Advanced Cloud
-        // Access. New agents start in the managed, non-root posture.
-        enableRootAccess: false,
-        webUseGateway: false,
-        imageGenUseGateway: false,
-        ttsUseGateway: false,
-        browserUseGateway: false,
-      });
-
-      const aiPeer = agentName
-        .trim()
-        .replace(/[^a-zA-Z0-9_-]/g, '_')
-        .toLowerCase();
       const fingerprintRequestId = await getFingerprintRequestId();
 
       captureWelcomeEvent('activation_instance_requested', {
@@ -2070,53 +2039,40 @@ export function WelcomeFlow() {
         hasHonchoKey: Boolean(resolvedHonchoVaultKeyId || honchoApiKey.trim()),
       });
 
+      // The same request the Launch journey's Hermes adapter sends. Clean-slate
+      // (Managed=OFF) deploys with NO inference provider, model or key and
+      // flags `unconfigured: true`; the server leaves instance.provider at its
+      // benign default ("openrouter") so redeploy/PROVIDER_ID_MAP lookups never
+      // throw, but seeds nothing, so the box's native onboarding fires.
       const res = await fetch('/api/instances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: agentName.trim(),
-          // Clean-slate (Managed=OFF) deploys with NO inference provider, model,
-          // or key. We omit provider/model/apiKey entirely and flag
-          // `unconfigured: true`; the server leaves instance.provider at its
-          // benign default ("openrouter") so redeploy/PROVIDER_ID_MAP lookups
-          // never throw, but seeds nothing — the box's native onboarding fires.
-          ...(cleanSlateDeploy
-            ? { unconfigured: true }
-            : {
-                provider: selectedProvider.id,
-                model,
-                ...(managedVeniceDeploy
-                  ? { apiKey: '' }
-                  : resolvedVaultKeyId
-                    ? { vaultKeyId: resolvedVaultKeyId }
-                    : apiKey.trim()
-                      ? { apiKey: apiKey.trim() }
-                      : {}),
-                ...(managedVeniceDeploy
-                  ? {
-                      managedVenice: {
-                        enabled: true,
-                        walletType: managedVeniceWalletType,
-                      },
-                    }
-                  : {}),
-              }),
-          honcho: {
-            enabled: true,
-            peerName: 'user',
-            aiPeer,
-            memoryMode: 'hybrid',
-            recallMode: 'hybrid',
-            ...(!resolvedHonchoVaultKeyId && honchoApiKey.trim()
-              ? { apiKey: honchoApiKey.trim() }
-              : {}),
-          },
-          ...(resolvedHonchoVaultKeyId ? { honchoVaultKeyId: resolvedHonchoVaultKeyId } : {}),
-          ...(fingerprintRequestId ? { fingerprintRequestId } : {}),
-          agentSettings,
-          cpuLimit,
-          ramLimit,
-        }),
+        body: JSON.stringify(hermesInstanceRequest({
+          name: agentName,
+          model: cleanSlateDeploy
+            ? { kind: 'unconfigured' }
+            : managedVeniceDeploy
+              ? { kind: 'managed', model, walletType: managedVeniceWalletType }
+              : {
+                  kind: 'key',
+                  provider: selectedProvider.id,
+                  model,
+                  vaultKeyId: resolvedVaultKeyId ?? null,
+                  apiKey,
+                  baseUrl: customBaseUrl,
+                },
+          honcho: { vaultKeyId: resolvedHonchoVaultKeyId ?? null, apiKey: honchoApiKey },
+          systemPrompt: hasWelcomePersonalization(personalizationDraftRef.current)
+            ? buildHermesWelcomeSystemPrompt({
+                agentName: agentName.trim(),
+                basePrompt: selectedAgentType?.systemPrompt,
+                draft: personalizationDraftRef.current,
+              })
+            : selectedAgentType?.systemPrompt,
+          fingerprintRequestId,
+          cpu: cpuLimit,
+          ramGb: deployRamGb,
+        })),
       });
       const data = await res.json().catch(() => null);
       if (!data?.success) {
@@ -3250,15 +3206,15 @@ function HivraBoxLaunchForOwner({ welcomeType, agentName, setAgentName, onAgentC
       const nativeRequestId = agent.id === 'codex'
         ? nativeLaunchRequestId(nativeOwnerScope, nativeIntentKey)
         : null;
-      const created = await createAgent(withLaunchTemplate({
-        type: agent.id,
+      const created = await createAgent(withLaunchTemplate(nativeCliAgentRequest({
+        type: agent.id === 'codex' ? 'codex' : 'claude-code',
         name: agentName.trim(),
         cpu: resolvedCpu,
         ram: resolvedRam,
         browser: effectiveBrowser,
         deployment,
-        ...(nativeRequestId ? { launchRequestId: nativeRequestId } : {}),
-      }, templateId));
+        launchRequestId: nativeRequestId,
+      }), templateId));
       if (nativeRequestId) clearNativeLaunchRequestId(nativeOwnerScope, nativeRequestId);
       // The create response is the acceptance boundary. Record it immediately;
       // optional personalization must never make a successfully-created box
@@ -3899,22 +3855,19 @@ function DashboardAgentLaunchForm({
       const cardMicro = veniceSummary?.wallets.card.availableMicroUsd ?? 0;
       const hermesosMicro = veniceSummary?.wallets.hermesos.availableMicroUsd ?? 0;
       const launchWalletType: 'card' | 'hermesos' = cardMicro <= 0 && hermesosMicro > 0 ? 'hermesos' : 'card';
-      const llmForLaunch = (agent.id === 'openclaw' || agent.id === 'agent-zero') && wantManaged
-        ? { provider: 'venice' as const, mode: 'managed' as const, walletType: launchWalletType }
-        : undefined;
       // Agent Zero's managed launch uses the visibly selected size. Other
       // dashboard agents keep their catalog floor. Self-managed launches use
       // measured target capacity; all requests are validated again server-side.
-      const created = await createAgent(withLaunchTemplate({
-        type: agent.id,
+      // The same request the Launch journey's adapter sends.
+      const created = await createAgent(withLaunchTemplate(dashboardAgentRequest({
+        type: agent.id === 'aeon' ? 'aeon' : agent.id === 'openclaw' ? 'openclaw' : 'agent-zero',
         name: agentName.trim(),
         cpu: resolvedCpu,
         ram: resolvedRam,
         browser: effectiveBrowser,
-        managedVenice: wantManaged,
-        llm: llmForLaunch,
+        credits: wantManaged ? { walletType: launchWalletType } : null,
         deployment,
-      }, templateId));
+      }), templateId));
       captureWelcomeEvent('launch_request_accepted', {
         agentType: agent.id,
         agentId: created.id,
