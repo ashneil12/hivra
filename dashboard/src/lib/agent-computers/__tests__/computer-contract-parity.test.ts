@@ -1,7 +1,7 @@
 // T19: the contract, the agent page tabs and the launch Review come from one
 // decision (agentSurfacesFor), so what the agent is told, what the owner can
 // open and what Review promises cannot drift apart.
-import { agentLaunchReviewRows, agentSurfacesFor, type AgentSurfaceId } from "../agent-surfaces";
+import { agentLaunchWatchRow, agentSurfacesFor, type AgentSurfaceId } from "../agent-surfaces";
 import { renderComputerContract } from "../computer-contract";
 import { computerContractPlanFor } from "../computer-contract-input";
 
@@ -30,7 +30,7 @@ describe.each(Object.entries(FIXTURES))("%s", (_name, fixture) => {
   if (plan.status === "not_applicable") throw new Error("every fixture is an agent with a contract");
   const contract = renderComputerContract(plan.input, 1);
   const phrases = fixture.computer_substrate === "do-managed-session" ? DIGITALOCEAN_PHRASE : OWN_COMPUTER_PHRASE;
-  const review = agentLaunchReviewRows(row, { browser: fixture.browser });
+  const watch = agentLaunchWatchRow(row, { browser: fixture.browser });
 
   it("builds the contract from exactly the tabs the page shows", () => {
     expect(plan.input.surfaces).toEqual(surfaces);
@@ -46,8 +46,8 @@ describe.each(Object.entries(FIXTURES))("%s", (_name, fixture) => {
     // A browser switched off at launch has nothing to watch yet, although its
     // tab stays on the page to explain how to turn it on.
     const watchable = surfaces.includes(surface) && (surface !== "browser" || fixture.browser);
-    if (watchable) expect(review.canSee).toMatch(REVIEW_LABEL[surface]!);
-    else expect(review.canSee).not.toMatch(REVIEW_LABEL[surface]!);
+    if (watchable) expect(watch).toMatch(REVIEW_LABEL[surface]!);
+    else expect(watch).not.toMatch(REVIEW_LABEL[surface]!);
   });
 
   it("only offers a browser where the computer can run one", () => {

@@ -45,6 +45,9 @@ export type LaunchDestinationState = {
   choice: LaunchDestinationChoice;
   setMode: (mode: LaunchDestinationMode) => void;
   readyTargets: DeploymentTargetDto[];
+  /** Every launch-ready target, before the kind and runtime filters. Lets a
+   * picker judge fit for runtimes the owner has not chosen yet. */
+  launchReadyTargets: DeploymentTargetDto[];
   incompatibleReadyTargetCount: number;
   selectedTarget: DeploymentTargetDto | null;
   selectedTargetId: string;
@@ -55,22 +58,7 @@ export type LaunchDestinationState = {
   refresh: () => void;
 };
 
-export type MeasuredTargetCapacity = {
-  cpu: number;
-  ramGb: number;
-};
-
-export function measuredTargetCapacity(
-  target: DeploymentTargetDto | null,
-): MeasuredTargetCapacity {
-  const availableMemoryBytes = target?.capacity.memoryBytes.available ?? null;
-  return {
-    cpu: target?.capacity.cpu.totalCores ?? 0,
-    ramGb: availableMemoryBytes === null
-      ? 0
-      : Math.floor(availableMemoryBytes / 1024 ** 3),
-  };
-}
+export { measuredTargetCapacity, type MeasuredTargetCapacity } from "@/lib/infrastructure/measured-target-capacity";
 
 export function deploymentForTarget(
   target: DeploymentTargetDto | null,
@@ -123,6 +111,7 @@ export function useLaunchDestination(
   const [evidence, setEvidence] = useState<{
     scope: typeof scope;
     targets: DeploymentTargetDto[];
+    launchReadyTargets: DeploymentTargetDto[];
     incompatibleReadyTargetCount: number;
     error: string | null;
   } | null>(null);
@@ -130,6 +119,7 @@ export function useLaunchDestination(
   // must not remain launchable while the new lookup is pending.
   const loading = evidence?.scope !== scope;
   const targets = !loading && evidence ? evidence.targets : [];
+  const launchReadyTargets = !loading && evidence ? evidence.launchReadyTargets : [];
   const incompatibleReadyTargetCount = !loading && evidence ? evidence.incompatibleReadyTargetCount : 0;
   const error = !loading && evidence ? evidence.error : null;
 
@@ -138,17 +128,18 @@ export function useLaunchDestination(
     listInfrastructureTargets(undefined, controller.signal)
       .then((nextTargets) => {
         if (controller.signal.aborted) return;
-        const launchReadyTargets = nextTargets.filter((target) =>
-          target.status === "ready"
-          && target.capabilities.launchReady
-          && (targetKind !== "proxmox" || isProxmoxDeploymentTarget(target))
+        const nextLaunchReadyTargets = nextTargets.filter((target) =>
+          target.status === "ready" && target.capabilities.launchReady,
+        );
+        const kindTargets = nextLaunchReadyTargets.filter((target) =>
+          (targetKind !== "proxmox" || isProxmoxDeploymentTarget(target))
           && (targetKind !== "gvisor" || (target.capabilities as unknown as { kind?: string }).kind === "gvisor"),
         );
-        const nextReadyTargets = launchReadyTargets.filter((target) =>
+        const nextReadyTargets = kindTargets.filter((target) =>
           targetSupportsCatalogRuntime(target, catalogRuntimeId),
         );
-        setEvidence({ scope, targets: nextReadyTargets,
-          incompatibleReadyTargetCount: launchReadyTargets.length - nextReadyTargets.length, error: null });
+        setEvidence({ scope, targets: nextReadyTargets, launchReadyTargets: nextLaunchReadyTargets,
+          incompatibleReadyTargetCount: kindTargets.length - nextReadyTargets.length, error: null });
         // Never clear an established selection on disappearance/error: doing
         // so would silently select the first other host on the next refresh.
         setChoice(current => current.handoffKey === handoffKey && current.targetId === null
@@ -156,7 +147,7 @@ export function useLaunchDestination(
       })
       .catch((loadError) => {
         if (controller.signal.aborted) return;
-        setEvidence({ scope, targets: [], incompatibleReadyTargetCount: 0,
+        setEvidence({ scope, targets: [], launchReadyTargets: [], incompatibleReadyTargetCount: 0,
           error: loadError instanceof Error
             ? loadError.message
             : "Hivra could not load your ready hosts." });
@@ -191,6 +182,7 @@ export function useLaunchDestination(
     choice: ownerChoice,
     setMode,
     readyTargets: targets,
+    launchReadyTargets,
     incompatibleReadyTargetCount,
     selectedTarget,
     selectedTargetId: selectedTarget?.id ?? "",

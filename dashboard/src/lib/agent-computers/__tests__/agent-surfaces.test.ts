@@ -1,7 +1,7 @@
 import {
   agentComputerPair,
   agentComputerPairLabel,
-  agentLaunchReviewRows,
+  agentLaunchWatchRow,
   agentSurfaceGroupOf,
   agentSurfaceGroups,
   agentSurfaceLabel,
@@ -94,31 +94,22 @@ describe("where the computer runs", () => {
   });
 });
 
-describe("agentLaunchReviewRows (ATT-15)", () => {
+describe("agentLaunchWatchRow (ATT-15)", () => {
   const codex = { type: "codex", deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm" };
 
-  it("says what the agent's own computer gives it, and the browser choice", () => {
-    expect(agentLaunchReviewRows(codex, { browser: true })).toEqual({
-      canUse: "A terminal, files and Git on its own computer, with administrator (sudo) access, and Chrome, which you can turn off in Manage.",
-      canSee: "Chat, Codex session, Terminal, Files, Browser (view-only) and Git",
-    });
-    // Off at launch: nothing to watch in Browser yet, and Review's Browser row says it is off.
-    expect(agentLaunchReviewRows(codex, { browser: false })).toEqual({
-      canUse: "A terminal, files and Git on its own computer, with administrator (sudo) access.",
-      canSee: "Chat, Codex session, Terminal, Files and Git",
-    });
+  it("lists where the owner watches the agent, and leaves out a browser that is off", () => {
+    expect(agentLaunchWatchRow(codex, { browser: true })).toBe("Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
+    // Off at launch: the Browser tab only explains how to turn it on.
+    expect(agentLaunchWatchRow(codex, { browser: false })).toBe("Chat, Codex session, Terminal, Files and Git");
   });
 
   it("describes a computer in the owner's own cloud with the same tabs", () => {
-    expect(agentLaunchReviewRows({ ...codex, computer_substrate: "provider-vm", deployment_mode: "self-managed" }, { browser: true }).canSee)
+    expect(agentLaunchWatchRow({ ...codex, computer_substrate: "provider-vm", deployment_mode: "self-managed" }, { browser: true }))
       .toBe("Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
   });
 
   it("describes a DigitalOcean session honestly", () => {
-    expect(agentLaunchReviewRows({ ...codex, computer_substrate: "do-managed-session" }, { browser: false })).toEqual({
-      canUse: "A shell and the files in /workspace, in a session DigitalOcean runs. Every consequential action waits for your approval in Hivra.",
-      canSee: "Chat and Files",
-    });
+    expect(agentLaunchWatchRow({ ...codex, computer_substrate: "do-managed-session" }, { browser: false })).toBe("Chat and Files");
   });
 });
 

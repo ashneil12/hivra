@@ -200,27 +200,17 @@ function listPhrase(items: readonly string[]): string {
 }
 
 /**
- * The launch Review's "Your agent can use" and "You can see its work in"
- * rows, built from the same surfaces the agent page will show (ATT-15).
- * `browser` is the owner's launch choice for browser-capable agents: with it
- * off the Browser tab only explains how to turn it on, so Review doesn't
- * offer it as a place to watch the agent work.
+ * The launch Review's "You can see its work in" row, built from the same
+ * surfaces the agent page will show (ATT-15). `browser` is the owner's launch
+ * choice for browser-capable agents: with it off the Browser tab only explains
+ * how to turn it on, so Review doesn't offer it as a place to watch.
  */
-export function agentLaunchReviewRows(
+export function agentLaunchWatchRow(
   subject: AgentSurfaceSubject & ComputerPlacementSubject,
   options: { browser: boolean },
-): { canUse: string; canSee: string } {
+): string {
   const def = catalogAgent(subject.type);
   const surfaces = agentSurfacesFor(subject);
-  const canSee = listPhrase(WATCH_ORDER.filter((id) => surfaces.includes(id) && (id !== "browser" || options.browser))
+  return listPhrase(WATCH_ORDER.filter((id) => surfaces.includes(id) && (id !== "browser" || options.browser))
     .map((id) => id === "browser" ? "Browser (view-only)" : agentSurfaceLabel(id, def)));
-  if (computerPlacementFor(subject) === "digitalocean") {
-    return {
-      canUse: "A shell and the files in /workspace, in a session DigitalOcean runs. Every consequential action waits for your approval in Hivra.",
-      canSee,
-    };
-  }
-  // Review's own Browser row says when it is off.
-  const browser = def?.browser && options.browser ? ", and Chrome, which you can turn off in Manage" : "";
-  return { canUse: `A terminal, files and Git on its own computer, with administrator (sudo) access${browser}.`, canSee };
 }

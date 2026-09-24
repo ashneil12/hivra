@@ -1,5 +1,6 @@
 import {
   LAUNCH_DRAFT_SCHEMA_VERSION,
+  LAUNCH_NAME_MAX_LENGTH,
   PROFILE_DETAILS,
   type LaunchCapacityChoice,
   type LaunchDraft,
@@ -11,10 +12,25 @@ import {
   type LaunchState,
 } from "./contracts";
 
+/** Drafts live in this browser's localStorage under this prefix plus the
+ * signed-in owner's id, so a draft survives a closed tab, a second tab and
+ * the Stripe round trip, and one account never resumes another's draft on a
+ * shared browser. Older drafts were kept per tab in sessionStorage under the
+ * bare prefix; they are moved over on first read. */
 export const LAUNCH_DRAFT_STORAGE_KEY = "hivra.launch-draft.v1";
 
+export function launchDraftStorageKey(ownerId: string): string {
+  return `${LAUNCH_DRAFT_STORAGE_KEY}:${ownerId}`;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const STAGES = new Set<LaunchStage>(["type", "profile", "capacity", "review", "launch"]);
+const STAGES = new Set<LaunchStage>(["choose", "plan", "review", "launch"]);
+/** Stages from before the Choose screen merged the type and profile screens. */
+const LEGACY_STAGES: Readonly<Record<string, LaunchStage>> = {
+  type: "choose",
+  profile: "choose",
+  capacity: "plan",
+};
 const RESOURCE_KINDS = new Set<LaunchResourceKind>(["agent", "computer"]);
 const PROFILES = new Set<LaunchProfileId>(["codex", "ubuntu-desktop", "linux-terminal", "omarchy", "windows"]);
 const LAUNCH_STATES = new Set<LaunchState>(["idle", "submitting", "uncertain", "accepted", "failed"]);
@@ -33,7 +49,7 @@ export function createLaunchDraft(): LaunchDraft {
   return {
     schemaVersion: LAUNCH_DRAFT_SCHEMA_VERSION,
     launchRequestId: newRequestId(),
-    stage: "type",
+    stage: "choose",
     resourceKind: null,
     profileId: null,
     name: "",
@@ -105,7 +121,9 @@ function safeDraft(value: unknown): LaunchDraft | null {
 
   const stage = typeof input.stage === "string" && STAGES.has(input.stage as LaunchStage)
     ? input.stage as LaunchStage
-    : "type";
+    : typeof input.stage === "string" && Object.hasOwn(LEGACY_STAGES, input.stage)
+      ? LEGACY_STAGES[input.stage]
+      : "choose";
   const resourceKind = typeof input.resourceKind === "string" && RESOURCE_KINDS.has(input.resourceKind as LaunchResourceKind)
     ? input.resourceKind as LaunchResourceKind
     : null;
@@ -171,7 +189,7 @@ function safeDraft(value: unknown): LaunchDraft | null {
     stage,
     resourceKind,
     profileId,
-    name: typeof input.name === "string" ? input.name.slice(0, 64) : "",
+    name: typeof input.name === "string" ? input.name.slice(0, LAUNCH_NAME_MAX_LENGTH) : "",
     resources,
     windowsIsoVolume: typeof input.windowsIsoVolume === "string"
       && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}:iso\/[A-Za-z0-9][A-Za-z0-9._+@() -]{0,190}\.iso$/i.test(input.windowsIsoVolume)
@@ -201,29 +219,80 @@ function safeDraft(value: unknown): LaunchDraft | null {
   };
 }
 
-function storage(): Storage | null {
-  return typeof window === "undefined" ? null : window.sessionStorage;
+function localDrafts(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    // Storage denied by browser privacy settings.
+    return null;
+  }
 }
 
-export function readLaunchDraft(): LaunchDraft | null {
-  const target = storage();
-  if (!target) return null;
+function legacyTabDrafts(): Storage | null {
   try {
-    const raw = target.getItem(LAUNCH_DRAFT_STORAGE_KEY);
-    return raw ? safeDraft(JSON.parse(raw)) : null;
+    return typeof window === "undefined" ? null : window.sessionStorage;
   } catch {
     return null;
   }
 }
 
-export function writeLaunchDraft(draft: LaunchDraft): void {
-  const target = storage();
-  if (!target) return;
-  const safe = safeDraft(draft);
-  if (!safe) return;
-  target.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify(safe));
+function parseStoredDraft(raw: string | null): LaunchDraft | null {
+  if (!raw) return null;
+  try {
+    return safeDraft(JSON.parse(raw));
+  } catch {
+    return null;
+  }
 }
 
-export function clearLaunchDraft(): void {
-  storage()?.removeItem(LAUNCH_DRAFT_STORAGE_KEY);
+/** The owner's saved draft in this browser. Without a known owner there is
+ * nothing to read: a draft is never shown to an account that did not save it. */
+export function readLaunchDraft(ownerId: string | null): LaunchDraft | null {
+  if (!ownerId) return null;
+  const target = localDrafts();
+  const key = launchDraftStorageKey(ownerId);
+  try {
+    const saved = parseStoredDraft(target?.getItem(key) ?? null);
+    if (saved) return saved;
+  } catch {
+    return null;
+  }
+  // A draft this tab saved before drafts moved to localStorage.
+  const legacy = legacyTabDrafts();
+  let migrated: LaunchDraft | null = null;
+  try {
+    migrated = parseStoredDraft(legacy?.getItem(LAUNCH_DRAFT_STORAGE_KEY) ?? null);
+    legacy?.removeItem(LAUNCH_DRAFT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  if (migrated) writeLaunchDraft(migrated, ownerId);
+  return migrated;
+}
+
+export function writeLaunchDraft(draft: LaunchDraft, ownerId: string | null): void {
+  if (!ownerId) return;
+  const safe = safeDraft(draft);
+  if (!safe) return;
+  try {
+    localDrafts()?.setItem(launchDraftStorageKey(ownerId), JSON.stringify(safe));
+  } catch {
+    // A full or denied store keeps the in-memory draft only.
+  }
+}
+
+export function clearLaunchDraft(ownerId: string | null): void {
+  try {
+    if (ownerId) localDrafts()?.removeItem(launchDraftStorageKey(ownerId));
+    legacyTabDrafts()?.removeItem(LAUNCH_DRAFT_STORAGE_KEY);
+  } catch {
+    // Nothing else to clear.
+  }
+}
+
+/** A draft the owner started and has not launched yet: resuming it is a
+ * choice, never something a new launch link silently throws away. */
+export function isUnfinishedLaunchDraft(draft: LaunchDraft | null): draft is LaunchDraft {
+  return Boolean(draft?.profileId)
+    && (draft?.launchState === "idle" || draft?.launchState === "failed");
 }

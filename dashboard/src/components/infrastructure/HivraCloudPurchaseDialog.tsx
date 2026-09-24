@@ -36,10 +36,13 @@ export function HivraCloudPurchaseDialog({
   onClose,
   onActivated,
   returnFocusRef,
+  returnTo = null,
 }: {
   onClose: () => void;
   onActivated: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  /** Where checkout leads back to, e.g. the launch that sent the owner here. */
+  returnTo?: string | null;
 }) {
   const [selectedPlan, setSelectedPlan] = useState<PaidPlanKey>("operator");
   const [cadence, setCadence] = useState<"monthly" | "yearly">("monthly");
@@ -57,7 +60,7 @@ export function HivraCloudPurchaseDialog({
   async function continueToCheckout() {
     setSubmitting(true);
     setError(null);
-    const result = await requestSubscriptionCheckout(selectedPlan, cadence);
+    const result = await requestSubscriptionCheckout(selectedPlan, cadence, { returnTo });
     if (!result.ok) {
       if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
         setActiveSubscription(true);
