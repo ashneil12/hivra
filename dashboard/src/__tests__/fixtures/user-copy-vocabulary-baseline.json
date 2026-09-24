@@ -9,17 +9,13 @@
     "the box": 10,
     "runtime": 5
   },
-  "app/dashboard/instances/[id]/console/page.tsx": {
-    "instance": 1,
-    "runtime": 20
-  },
   "app/dashboard/instances/[id]/console/tabs/ConfigurationDangerZone.tsx": {
     "instance": 5
   },
   "app/dashboard/instances/[id]/console/tabs/ConfigurationTab.tsx": {
-    "the box": 2,
-    "instance": 9,
-    "runtime": 4
+    "the box": 1,
+    "instance": 5,
+    "runtime": 1
   },
   "app/dashboard/instances/[id]/console/tabs/ConfigurationTailscalePanel.tsx": {
     "customer-owned": 1
@@ -29,8 +25,7 @@
   },
   "app/dashboard/instances/[id]/page.tsx": {
     "the box": 1,
-    "instance": 11,
-    "runtime": 3
+    "instance": 7
   },
   "app/dashboard/instances/[id]/tui/page.tsx": {
     "instance": 2,
@@ -87,11 +82,6 @@
   },
   "components/billing/ManagedVeniceByokSwitchPanel.tsx": {
     "instance": 1,
-    "runtime": 1
-  },
-  "components/computers/ComputerCatalogPage.tsx": {
-    "Canary": 1,
-    "customer-owned": 1,
     "runtime": 1
   },
   "components/console/CodexOAuthModal.tsx": {
