@@ -21,6 +21,11 @@ jest.mock("@/lib/infrastructure/hetzner-cloud", () => ({
       super(code);
     }
   },
+  HetznerCloudTokenCheckError: class HetznerCloudTokenCheckError extends Error {
+    constructor(public readonly code: string, message: string) {
+      super(message);
+    }
+  },
   connectHetznerCloudProject: (...args: unknown[]) =>
     mockConnectHetznerCloudProject(...args),
 }));
@@ -196,6 +201,32 @@ describe("/api/infrastructure/connections", () => {
     expect(mockCreateConnection).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain(apiToken);
     expect(body.data.connection.endpoint).toBeNull();
+  });
+
+  it("returns a read-only token as a same-screen fix, with nothing saved", async () => {
+    const { HetznerCloudTokenCheckError } = jest.requireMock("@/lib/infrastructure/hetzner-cloud") as {
+      HetznerCloudTokenCheckError: new (code: string, message: string) => Error;
+    };
+    mockConnectHetznerCloudProject.mockRejectedValueOnce(new HetznerCloudTokenCheckError(
+      "token_read_only",
+      "This token is read-only. Generate a Read & Write token in the same project and paste it here.",
+    ));
+    const response = await POST(post({
+      name: "My Hetzner",
+      provider: "hetzner-cloud",
+      operatingMode: "self-managed",
+      setupMode: "simple",
+      credentials: { apiToken: "project-scoped-read-only-token" },
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body).toMatchObject({
+      code: "token_read_only",
+      error: "This token is read-only. Generate a Read & Write token in the same project and paste it here.",
+    });
+    expect(JSON.stringify(body)).not.toContain("project-scoped-read-only-token");
+    expect(mockCreateConnection).not.toHaveBeenCalled();
   });
 
   it("rejects malformed connection data before the store", async () => {

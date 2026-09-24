@@ -34,8 +34,18 @@ import {
   HostDiscoveryResultSchema,
   type HostDiscoveryResult,
 } from "./host-discovery-contracts";
-import { PreparedCapacityCreateRequestSchema, ProviderComputerSetupRequestSchema, ProviderComputerSetupViewSchema,
-  type PreparedCapacityCreateRequest, type ProviderComputerSetupRequest } from "./provider-computer-setup-contracts";
+import {
+  HetznerCloudCapacitySlotDtoSchema,
+  HetznerCloudConnectResultSchema,
+  HetznerCloudTokenReplaceRequestSchema,
+  HetznerCloudTokenReplaceResultSchema,
+  type HetznerCloudCapacitySlotDto,
+  type HetznerCloudTokenReplaceResult,
+  type HetznerCloudWriteCheck,
+} from "./hetzner-cloud-token-contracts";
+import { PreparedCapacityCreateRequestSchema, ProviderComputerSetupEvidenceSchema, ProviderComputerSetupRequestSchema,
+  ProviderComputerSetupViewSchema, type PreparedCapacityCreateRequest, type ProviderComputerSetupEvidence,
+  type ProviderComputerSetupRequest } from "./provider-computer-setup-contracts";
 
 const ApiErrorSchema = z
   .object({
@@ -61,14 +71,21 @@ const ConnectionResponseSchema = z
 const HetznerCloudConnectionResponseSchema = z
   .object({
     success: z.literal(true),
-    data: z
-      .object({
-        connection: InfrastructureConnectionDtoSchema.refine(
-          (connection) => connection.provider === "hetzner-cloud",
-        ),
-        inventory: z.array(HetznerCloudServerInventoryDtoSchema),
-      })
-      .strict(),
+    data: HetznerCloudConnectResultSchema,
+  })
+  .passthrough();
+
+const HetznerCloudTokenReplaceResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: HetznerCloudTokenReplaceResultSchema,
+  })
+  .passthrough();
+
+const HetznerCloudCapacitySlotResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: z.object({ slot: HetznerCloudCapacitySlotDtoSchema }).strict(),
   })
   .passthrough();
 
@@ -272,12 +289,33 @@ export async function createInfrastructureConnection(
   return body.data.connection;
 }
 
-export async function connectHetznerCloudProject(
-  input: HetznerCloudConnectionCreate,
-): Promise<{
+export type HetznerCloudTokenReplaceOutcome = Omit<HetznerCloudTokenReplaceResult, "connection"> & {
+  connection: HetznerCloudConnectionDto;
+};
+
+type HetznerCloudConnectResult = {
   connection: HetznerCloudConnectionDto;
   inventory: HetznerCloudServerInventoryDto[];
-}> {
+  writeCheck: HetznerCloudWriteCheck;
+};
+
+function hetznerConnectResult(data: {
+  connection: InfrastructureConnectionDto;
+  inventory: HetznerCloudServerInventoryDto[];
+  writeCheck: HetznerCloudWriteCheck;
+}): HetznerCloudConnectResult {
+  if (data.connection.provider !== "hetzner-cloud") {
+    throw new InfrastructureApiError(
+      "The infrastructure service returned the wrong provider.",
+      0,
+    );
+  }
+  return { connection: data.connection, inventory: data.inventory, writeCheck: data.writeCheck };
+}
+
+export async function connectHetznerCloudProject(
+  input: HetznerCloudConnectionCreate,
+): Promise<HetznerCloudConnectResult> {
   const validated = InfrastructureConnectionCreateSchema.parse(input);
   if (validated.provider !== "hetzner-cloud") {
     throw new InfrastructureApiError("A Hetzner Cloud connection is required.", 0);
@@ -287,16 +325,35 @@ export async function connectHetznerCloudProject(
     { method: "POST", body: JSON.stringify(validated) },
     HetznerCloudConnectionResponseSchema,
   );
-  if (body.data.connection.provider !== "hetzner-cloud") {
-    throw new InfrastructureApiError(
-      "The infrastructure service returned the wrong provider.",
-      0,
-    );
+  return hetznerConnectResult(body.data);
+}
+
+/** Swap a Hetzner project's token in place. The server proves the new token
+ * reaches the same project and can write before replacing anything. */
+export async function replaceHetznerCloudToken(
+  connectionId: string,
+  apiToken: string,
+): Promise<HetznerCloudTokenReplaceOutcome> {
+  const validated = HetznerCloudTokenReplaceRequestSchema.parse({ apiToken });
+  const body = await requestJson(
+    `/api/infrastructure/connections/${z.string().uuid().parse(connectionId)}/hetzner-cloud/token`,
+    { method: "POST", body: JSON.stringify(validated) },
+    HetznerCloudTokenReplaceResponseSchema,
+  );
+  const { connection } = body.data;
+  if (connection.provider !== "hetzner-cloud") {
+    throw new InfrastructureApiError("The infrastructure service returned the wrong provider.", 0);
   }
-  return {
-    connection: body.data.connection,
-    inventory: body.data.inventory,
-  };
+  return { ...body.data, connection };
+}
+
+export async function getHetznerCloudCapacitySlot(signal?: AbortSignal): Promise<HetznerCloudCapacitySlotDto> {
+  const body = await requestJson(
+    "/api/infrastructure/hetzner-cloud/capacity-slot",
+    { method: "GET", signal },
+    HetznerCloudCapacitySlotResponseSchema,
+  );
+  return body.data.slot;
 }
 
 export async function getHetznerCloudInventory(
@@ -364,10 +421,15 @@ export async function createHetznerCloudCapacity(
 }
 
 const setupEndpoint = (id: string) => `/api/infrastructure/connections/${z.string().uuid().parse(id)}/hetzner-cloud/capacity/setup`;
-export async function listProviderComputerSetups(connectionId: string) {
+/** Saved setup views plus Hivra's record of every server request on the
+ * connection. Read-only; it never advances setup. */
+export async function listProviderComputerSetupEvidence(connectionId: string): Promise<ProviderComputerSetupEvidence> {
   const result = await requestJson(setupEndpoint(connectionId), { method: "GET", redirect: "error" },
-    z.object({ success: z.literal(true), data: z.object({ computers: z.array(ProviderComputerSetupViewSchema).max(20) }).strict() }).passthrough());
-  return result.data.computers;
+    z.object({ success: z.literal(true), data: ProviderComputerSetupEvidenceSchema }).passthrough());
+  return result.data;
+}
+export async function listProviderComputerSetups(connectionId: string) {
+  return (await listProviderComputerSetupEvidence(connectionId)).computers;
 }
 export async function advanceProviderComputerSetup(connectionId: string, request: ProviderComputerSetupRequest) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 55_000);
