@@ -41,7 +41,7 @@
     "runtime": 3
   },
   "app/dashboard/vault/page.tsx": {
-    "instance": 14,
+    "instance": 1,
     "runtime": 1
   },
   "app/ecosystem/page.tsx": {
@@ -157,9 +157,6 @@
   "components/hivra/PoolMeter.tsx": {
     "the box": 1
   },
-  "components/hivra/ResourceSwitcher.tsx": {
-    "runtime": 2
-  },
   "components/hivra/RuntimeSurfaceFrame.tsx": {
     "runtime": 3
   },
@@ -231,9 +228,6 @@
   },
   "components/webui/WebuiIframe.tsx": {
     "instance": 3
-  },
-  "components/workspace/AgentSwitcherMenu.tsx": {
-    "runtime": 8
   },
   "components/workspace/CanaryTestGuide.tsx": {
     "Canary": 7,

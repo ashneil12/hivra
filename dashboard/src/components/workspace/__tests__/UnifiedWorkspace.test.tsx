@@ -478,10 +478,10 @@ describe("UnifiedWorkspace", () => {
     fireEvent.click(trigger);
     // A menu, not a sidebar: the options appear and the trigger says so.
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("dialog", { name: "Switch runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Switch agent or computer" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Beta/ })).toBeInTheDocument();
     // The rail's own affordances came with it rather than being dropped.
-    expect(screen.getByRole("link", { name: /Launch a runtime/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Launch an agent or computer/ })).toBeInTheDocument();
   });
 
   it("closes the agent menu when the user clicks away from it", () => {
@@ -493,14 +493,14 @@ describe("UnifiedWorkspace", () => {
     render(<UnifiedWorkspace />);
 
     fireEvent.click(screen.getByRole("button", { name: /^Switch agent/ }));
-    expect(screen.getByRole("dialog", { name: "Switch runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Switch agent or computer" })).toBeInTheDocument();
 
     // Clicking anywhere outside the menu and its trigger dismisses it. This was
     // an explicit request: the previous overlay could only be closed by finding
     // its own close control.
     fireEvent.pointerDown(document.body);
     expect(
-      screen.queryByRole("dialog", { name: "Switch runtime" }),
+      screen.queryByRole("dialog", { name: "Switch agent or computer" }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /^Switch agent/ }),
@@ -622,14 +622,14 @@ describe("UnifiedWorkspace", () => {
     const trigger = screen.getByRole("button", { name: /^Switch agent/ });
     fireEvent.click(trigger);
 
-    const menu = screen.getByRole("dialog", { name: "Switch runtime" });
+    const menu = screen.getByRole("dialog", { name: "Switch agent or computer" });
     expect(menu).toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.keyDown(window, { key: "Escape" });
 
     expect(
-      screen.queryByRole("dialog", { name: "Switch runtime" }),
+      screen.queryByRole("dialog", { name: "Switch agent or computer" }),
     ).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
@@ -643,7 +643,7 @@ describe("UnifiedWorkspace", () => {
     render(<UnifiedWorkspace />);
 
     fireEvent.click(screen.getByRole("button", { name: /^Switch agent/ }));
-    const search = screen.getByRole("combobox", { name: "Search your runtimes" });
+    const search = screen.getByRole("combobox", { name: "Search your agents and computers" });
 
     fireEvent.change(search, { target: { value: "alph" } });
     expect(screen.getByRole("option", { name: /Alpha/ })).toBeInTheDocument();
@@ -651,7 +651,7 @@ describe("UnifiedWorkspace", () => {
 
     fireEvent.change(search, { target: { value: "zzzz" } });
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
-    expect(screen.getByText("Nothing in your runtimes matches that search.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing matches that search.")).toBeInTheDocument();
   });
 
   it("returns keyboard agent selection focus to the switcher trigger", async () => {
@@ -669,7 +669,7 @@ describe("UnifiedWorkspace", () => {
     expect(trigger).toHaveTextContent("Alpha");
     await waitFor(() => expect(trigger).toHaveFocus());
     expect(
-      screen.queryByRole("dialog", { name: "Switch runtime" }),
+      screen.queryByRole("dialog", { name: "Switch agent or computer" }),
     ).not.toBeInTheDocument();
   });
 
@@ -865,7 +865,7 @@ describe("agent switcher menu positioning", () => {
       />,
     );
 
-    const menu = await screen.findByRole("dialog", { name: "Switch runtime" });
+    const menu = await screen.findByRole("dialog", { name: "Switch agent or computer" });
     // Not left at the default 0 — it was measured against the anchor.
     expect(menu.style.left).toBe("220px");
     expect(menu.style.top).toBe("48px");
