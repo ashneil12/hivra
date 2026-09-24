@@ -20,6 +20,11 @@ export type ProxmoxConnectionRuntimeInput = {
   sshUser: string;
   sshHostFingerprintSha256: string;
   sshPrivateKey: string;
+  /** "sudo" runs every host script through the fixed sudo transport. Absent
+   * or "login" keeps today's exact commands. */
+  sshPrivilege?: "login" | "sudo";
+  /** When set, SSH offers only this host key algorithm. */
+  sshHostKeyType?: "ssh-ed25519" | null;
   node?: string | null;
   templateId?: number | null;
   vmidStart?: number | null;
@@ -76,6 +81,18 @@ function validateResolvedAddress(address: string, allowPrivateNetwork: boolean):
     "ssh_host_forbidden",
     "SSH host resolves to an address that this control plane is not allowed to reach.",
   );
+}
+
+/** Whether Hivra may connect to this literal address: never loopback,
+ * unspecified, link-local or metadata; private and CGNAT ranges only when a
+ * self-hosted operator allows private networks. */
+export function isAllowedSshAddress(address: string, env: EnvLike = process.env): boolean {
+  try {
+    validateResolvedAddress(address, privateNetworksAllowed(env));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function resolveValidatedSshDestination(
@@ -164,6 +181,8 @@ export function buildUserProxmoxEnvironment(
       connection.sshHostFingerprintSha256,
     ),
   };
+  if (connection.sshPrivilege === "sudo") env.PROXMOX_SSH_PRIVILEGE = "sudo";
+  if (connection.sshHostKeyType === "ssh-ed25519") env.PROXMOX_SSH_HOST_KEY_TYPE = "ssh-ed25519";
 
   if (connection.node) env.PROXMOX_NODE = connection.node;
   if (connection.templateId != null) env.PROXMOX_TEMPLATE_ID = String(connection.templateId);

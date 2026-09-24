@@ -30,6 +30,8 @@ import styles from './DashboardSidebar.module.css';
 interface DashboardSidebarProps {
   userName: string;
   userEmail: string;
+  /** The account code the server setup script shows (XXXX-XXXX). */
+  accountCode?: string | null;
   resourceOwnerKey?: string;
   onActiveResourceKindChange?: (kind: DashboardResource['kind'] | null) => void;
   /** The phone bar has no sidebar, so it badges More with this count. */
@@ -60,7 +62,7 @@ function compactRailSnapshot() { return window.matchMedia(COMPACT_RAIL_QUERY).ma
 function serverCompactRailSnapshot() { return false; }
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
-  userName, userEmail, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
+  userName, userEmail, accountCode, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
   switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
@@ -223,7 +225,8 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
           <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
           <div className={styles.account}>
             {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}
-            {effectivelyExpanded && <span className={styles.accountName}><strong>{userName}</strong><small>{userEmail}</small></span>}
+            {effectivelyExpanded && <span className={styles.accountName}><strong>{userName}</strong><small>{userEmail}</small>
+              {accountCode ? <small title="Hivra's server setup command shows this code">Account code {accountCode}</small> : null}</span>}
             <ThemeToggle />
           </div>
         </div>
