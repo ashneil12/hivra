@@ -67,6 +67,18 @@ import {
 } from "@/lib/browser-sidecar/deployment-gate";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { log } from "@/lib/logger";
+import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
+import {
+  buildInFlightUpdateGateScript,
+  missingInFlightUpdateGateReport,
+  parseInFlightUpdateGateReport,
+  updateDeferralStatePath,
+  type InFlightUpdateGateReport,
+} from "@/lib/services/inflight-update-gate";
+import {
+  isSystemLiveUpdate,
+  type LiveUpdateInitiator,
+} from "@/lib/services/live-update-initiator";
 
 const LOG_SOURCE = "instance-orchestrator";
 
@@ -291,19 +303,70 @@ export async function resolveBankrRuntimeEnvPlanForUpdate(
   return { action: "upsert", config, userConnected: true, walletAddresses };
 }
 
+export interface LiveUpdateOptions {
+  /**
+   * Who asked for this update. Required so every caller decides: a system
+   * initiator (scheduled automation) passes the in-flight turn gate and may be
+   * deferred; user and operator initiators recreate immediately. See
+   * live-update-initiator.ts.
+   */
+  initiator: LiveUpdateInitiator;
+  applyTerminalBackend?: boolean;
+}
+
+/**
+ * - applied: the update was launched on the box. `inFlightGate` is the gate's
+ *   report for a system update (null for user/operator updates, which skip it).
+ * - deferred: a system update found a web-chat turn in flight and did NOT
+ *   launch; nothing on the box or in the row changed. The caller retries on its
+ *   next tick. `error` carries a readable reason for callers that only log it.
+ * - otherwise: the launch failed (`error`).
+ */
+export type LiveUpdateResult =
+  | {
+      applied: true;
+      deferred?: undefined;
+      initiator: LiveUpdateInitiator;
+      inFlightGate: InFlightUpdateGateReport | null;
+    }
+  | {
+      applied: false;
+      deferred: true;
+      reason: "deferred_busy";
+      error: string;
+      initiator: LiveUpdateInitiator;
+      inFlightGate: InFlightUpdateGateReport;
+    }
+  | {
+      applied: false;
+      deferred?: undefined;
+      error: string;
+      initiator: LiveUpdateInitiator;
+    };
+
+/** Last line of the launch output that isn't the gate's report: the background pid. */
+function launchedPid(stdout: string): string {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("HERMES_INFLIGHT_GATE "));
+  return lines[lines.length - 1] ?? "";
+}
+
 export async function applyLiveUpdate(
   instance: InstanceRowForOrchestration,
   ipv4: string,
   globalSettings: Record<string, unknown>,
   supabaseAdmin: SupabaseClient,
-  options: { applyTerminalBackend?: boolean } = {}
-) {
+  options: LiveUpdateOptions
+): Promise<LiveUpdateResult> {
+  const { initiator } = options;
   const proxmoxInfrastructure = getProxmoxInfrastructure(instance.config);
   if (!proxmoxInfrastructure && !instance.host_id && !instance.hetzner_server_id) {
-    return { applied: false as const, error: "No host attached" };
+    return { applied: false as const, error: "No host attached", initiator };
   }
   if (!proxmoxInfrastructure && !ipv4) {
-    return { applied: false as const, error: "Host has no IPv4 address" };
+    return { applied: false as const, error: "Host has no IPv4 address", initiator };
   }
 
   const decryptedSecret = decryptApiKey(instance.api_key_encrypted);
@@ -573,11 +636,27 @@ export async function applyLiveUpdate(
     const artifacts = isOperatorosFlavor
       ? buildWebUIProvisioningArtifacts(webUIParams, "update")
       : buildWebUIProvisioningArtifacts(webUIParams);
+    // Refresh the box-local idle-gated update stack (idle sampler + hourly roll +
+    // static refresh) where the box already runs it, so fixes to it (such as the
+    // sampler counting web-chat turns) reach existing boxes instead of only new
+    // provisions. Boxes that never had the stack are not enrolled here. Same
+    // builder call as the Proxmox provision path, plus the row's pinned image so
+    // the roll follows the image this compose runs.
+    const rollExecutable = `/usr/local/bin/hermes-roll-${instance.id}`;
+    const idleGatedStackRefresh = `# Refresh the idle-gated update stack only where it is already installed.
+if [ -x ${shQuote(rollExecutable)} ]; then
+${buildIdleGatedUpdateProvisioningScript({
+  instanceId: instance.id,
+  backend: "gateway",
+  ...(resolvedAgentImage ? { agentImage: resolvedAgentImage } : {}),
+})}fi
+`;
     agentScript = buildWebUIBootstrapScript(artifacts, webUIParams, {
       mode: "update",
       // Normal updates/recovery must retain backend changes made in the native
       // Hermes config; only the terminal/access Save & Apply flow overrides it.
       ...(options.applyTerminalBackend === true ? { applyTerminalBackend: true } : {}),
+      additionalProvisioningScript: idleGatedStackRefresh,
     });
   } else {
     agentScript = buildAgentDeployScript({
@@ -657,7 +736,25 @@ else
 fi
 `;
 
+  // In-flight turn gate. A system-initiated update (nobody asked for this
+  // restart) first checks the box for a running web-chat turn and, while one is
+  // running, prints a defer report and exits before anything is written or
+  // launched; the gate caps how long that can go on (inflight-update-gate.ts).
+  // User and operator updates skip the check. Every launched update ends the
+  // box's deferral streak.
+  const gatePath = `/tmp/hermes-update-gate-${instance.id}.sh`;
+  const deferralStatePath = updateDeferralStatePath(instance.id);
+  const gateLines = isSystemLiveUpdate(initiator)
+    ? [
+        `printf '%s' '${Buffer.from(buildInFlightUpdateGateScript({ instanceId: instance.id })).toString("base64")}' | base64 -d > ${gatePath}`,
+        `hermes_update_gate_report="$(bash ${gatePath} </dev/null 2>/dev/null)" || true`,
+        `rm -f ${gatePath}`,
+        `printf '%s\\n' "$hermes_update_gate_report"`,
+        `case "$hermes_update_gate_report" in *"action=defer"*) exit 0 ;; esac`,
+      ]
+    : [`rm -f ${shQuote(deferralStatePath)}`];
   const innerScript = [
+    ...gateLines,
     `printf '%s' '${Buffer.from(agentScript).toString("base64")}' | base64 -d > ${scriptPath}`,
     `chmod +x ${scriptPath}`,
     `printf '%s' '${Buffer.from(wrapperScript).toString("base64")}' | base64 -d > ${wrapperPath}`,
@@ -704,7 +801,7 @@ fi
       hostId: proxmoxHostConfig?.hostId ?? null,
       redactedMessage: redactSensitiveCommandOutput(message, 600),
     });
-    return { applied: false as const, error: message };
+    return { applied: false as const, error: message, initiator };
   }
 
   const launchResult = proxmoxInfrastructure
@@ -778,7 +875,65 @@ fi
     return {
       applied: false as const,
       error: launchResult.stderr || launchResult.error || "Failed to start update process on server",
+      initiator,
     };
+  }
+
+  let inFlightGate: InFlightUpdateGateReport | null = null;
+  if (isSystemLiveUpdate(initiator)) {
+    inFlightGate = parseInFlightUpdateGateReport(launchResult.stdout);
+    if (inFlightGate?.action === "defer") {
+      // Nothing was written or launched on the box, so the row keeps its
+      // status and last_synced_at; the caller's next tick retries.
+      log.info("system live update deferred: agent turn in flight", {
+        source: LOG_SOURCE,
+        failureType: "live_update_deferred_busy",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        trigger: initiator.trigger,
+        verdict: inFlightGate.verdict,
+        gateReason: inFlightGate.reason,
+        liveTurns: inFlightGate.liveTurns,
+        unreadableMarkers: inFlightGate.unreadableMarkers,
+        deferrals: inFlightGate.deferrals,
+        streakSeconds: inFlightGate.streakSeconds,
+      });
+      return {
+        applied: false as const,
+        deferred: true as const,
+        reason: "deferred_busy" as const,
+        error: `Deferred: an agent turn is in flight (deferral ${inFlightGate.deferrals}); the next run retries`,
+        initiator,
+        inFlightGate,
+      };
+    }
+    if (!inFlightGate) {
+      // The gate printed nothing usable (crashed, or the box shell ate its
+      // output). The launch still went ahead, so say so rather than guess.
+      inFlightGate = missingInFlightUpdateGateReport();
+      log.warn("system live update launched without an in-flight gate report", {
+        source: LOG_SOURCE,
+        failureType: "live_update_gate_report_missing",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        trigger: initiator.trigger,
+      });
+    } else if (inFlightGate.verdict !== "idle") {
+      // Proceeding while a turn may be running: the deferral cap was reached
+      // (or the streak could not be recorded). Loud, because it can interrupt
+      // a turn.
+      log.warn("system live update proceeding past the in-flight gate", {
+        source: LOG_SOURCE,
+        failureType: "live_update_gate_cap_reached",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        trigger: initiator.trigger,
+        verdict: inFlightGate.verdict,
+        gateReason: inFlightGate.reason,
+        deferrals: inFlightGate.deferrals,
+        streakSeconds: inFlightGate.streakSeconds,
+      });
+    }
   }
 
   // Mark as redeploying immediately so the UI shows progress. We MUST go
@@ -811,7 +966,10 @@ fi
     source: LOG_SOURCE,
     instanceId: instance.id,
     userId: instance.user_id,
-    pid: launchResult.stdout.trim(),
+    pid: launchedPid(launchResult.stdout),
+    initiator: initiator.kind,
+    ...(isSystemLiveUpdate(initiator) ? { trigger: initiator.trigger } : {}),
+    ...(inFlightGate ? { gateReason: inFlightGate.reason } : {}),
   });
-  return { applied: true as const };
+  return { applied: true as const, initiator, inFlightGate };
 }

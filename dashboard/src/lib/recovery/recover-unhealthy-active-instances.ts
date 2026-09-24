@@ -31,6 +31,12 @@
  * recover-stuck flipping it back to running on a healthy probe), the
  * existing reset path on the recover-stuck side clears the counter.
  *
+ * In-flight turns: the repair is a system update, so it passes the in-flight
+ * gate first. A gateway can be down while official-dashboard keeps running a
+ * web-chat turn; that repair is deferred (not counted as an attempt, no
+ * cooldown stamp) and retried next tick, until the turn ends or the gate's
+ * deferral cap is reached.
+ *
  * Scope:
  *   - webfree backends only (backend in WEBFREE_BACKENDS) — matches the
  *     user-driven repair path and the manual
@@ -59,6 +65,7 @@ import {
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
+import { systemLiveUpdate } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { WEBFREE_BACKENDS } from "@/lib/types/instance";
 
@@ -123,6 +130,9 @@ export interface RecoverUnhealthyActiveInstancesSummary {
   archivedHealthy: number;
   redeployAttempted: number;
   redeployFailed: number;
+  // Repairs held back because an agent turn was in flight on the box (see the
+  // in-flight gate). Not an attempt: retried next tick.
+  redeployDeferred: number;
   cooldownSkipped: number;
   deadlineSkipped: number;
   exhausted: number;
@@ -430,7 +440,7 @@ async function attemptRepair(
   db: NonNullable<typeof supabaseAdmin>,
   candidate: CandidateWithEvent,
   now: number,
-): Promise<"attempted" | "failed"> {
+): Promise<"attempted" | "failed" | "deferred"> {
   const { row, firstUnhealthyAt } = candidate;
   const nowIso = new Date(now).toISOString();
   const nextAttempts = (row.auto_restart_attempts ?? 0) + 1;
@@ -478,7 +488,23 @@ async function attemptRepair(
     instanceId: row.id,
   });
 
-  const result = await applyLiveUpdate(row, ipv4, globalSettings, db);
+  const result = await applyLiveUpdate(row, ipv4, globalSettings, db, {
+    initiator: systemLiveUpdate("unhealthy_recovery"),
+  });
+
+  if (result.deferred) {
+    // The box is running an agent turn. Nothing was touched, so this is not an
+    // attempt: no counter bump and no cooldown stamp, and the next tick retries.
+    log.info("recover-unhealthy-active repair deferred: agent turn in flight", {
+      source: SOURCE,
+      failureType: "recover_unhealthy_repair_deferred_busy",
+      instanceId: row.id,
+      userId: row.user_id,
+      deferrals: result.inFlightGate.deferrals,
+      firstUnhealthyAt,
+    });
+    return "deferred";
+  }
 
   if (!result.applied) {
     await db
@@ -535,6 +561,7 @@ export async function runRecoverUnhealthyActiveInstancesSweep(): Promise<Recover
   let alreadyHealthy = 0;
   let redeployAttempted = 0;
   let redeployFailed = 0;
+  let redeployDeferred = 0;
   let cooldownSkipped = 0;
   let exhausted = 0;
   let vmReleased = 0;
@@ -556,7 +583,7 @@ export async function runRecoverUnhealthyActiveInstancesSweep(): Promise<Recover
     if (repaired >= MAX_REPAIRS_PER_RUN) break;
     if (Date.now() - now > SWEEP_DEADLINE_MS) {
       deadlineSkipped = sorted.length - alreadyHealthy - exhausted -
-        cooldownSkipped - repaired - errors;
+        cooldownSkipped - repaired - redeployDeferred - errors;
       break;
     }
 
@@ -619,6 +646,12 @@ export async function runRecoverUnhealthyActiveInstancesSweep(): Promise<Recover
 
     try {
       const outcome = await attemptRepair(db, candidate, now);
+      if (outcome === "deferred") {
+        // Not a repair: it must not use up the per-run cap, or a few busy
+        // boxes would hold every slot while other broken boxes wait.
+        redeployDeferred += 1;
+        continue;
+      }
       if (outcome === "attempted") {
         redeployAttempted += 1;
       } else {
@@ -669,6 +702,7 @@ export async function runRecoverUnhealthyActiveInstancesSweep(): Promise<Recover
     archivedHealthy,
     redeployAttempted,
     redeployFailed,
+    redeployDeferred,
     cooldownSkipped,
     deadlineSkipped,
     exhausted,

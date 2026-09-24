@@ -19,6 +19,14 @@ import {
 } from "@/lib/billing/bankr-instance-wallets";
 import { isProTierUser } from "@/lib/billing/pro-tier";
 import { log } from "@/lib/logger";
+import {
+  OPERATOR_LIVE_UPDATE,
+  USER_LIVE_UPDATE,
+  systemLiveUpdate,
+} from "@/lib/services/live-update-initiator";
+import { buildInFlightUpdateGateScript } from "@/lib/services/inflight-update-gate";
+import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
+import { spawnSync } from "child_process";
 
 jest.mock("@/lib/hetzner/ssh", () => ({
   sshExec: jest.fn(),
@@ -204,7 +212,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     const consoleOutput = stringifyMockCalls(consoleErrorSpy);
@@ -212,6 +221,7 @@ describe("applyLiveUpdate", () => {
     expect(result).toEqual({
       applied: false,
       error: "client_secret=super-secret",
+      initiator: USER_LIVE_UPDATE,
     });
     expect(consoleOutput).toContain("[REDACTED]");
     expect(consoleOutput).not.toContain("super-secret");
@@ -259,13 +269,15 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     // We bail with applied:false, but only AFTER stamping the row failed.
     expect(result).toEqual({
       applied: false,
       error: "VM 4242 is not reachable over SSH",
+      initiator: USER_LIVE_UPDATE,
     });
     // The failed-stamp is the only write on this path (we return before the
     // redeploying patch) and it must target THIS row with lifecycle_state='failed'
@@ -325,10 +337,11 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     // The Nous OAuth bundle still resolves through resolveProviderDeploymentSecret
     // regardless of backend, so an empty session never forces an OPENAI key.
     expect(resolveNousDeploymentSecret).toHaveBeenCalledWith("serialized-nous-session");
@@ -377,10 +390,11 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     expect(buildWebUIProvisioningArtifacts).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayDockerAccess: true,
@@ -421,12 +435,13 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     const consoleOutput = stringifyMockCalls(consoleWarnSpy);
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     expect(consoleOutput).toContain("key=[REDACTED]");
     expect(consoleOutput).not.toContain("super-secret");
 
@@ -470,10 +485,11 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
 
     const [, launchCommand, launchOptions] = (sshExec as jest.Mock).mock.calls[0];
     expect(launchCommand).toBe("bash -s");
@@ -521,10 +537,11 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       status: "redeploying",
@@ -570,10 +587,11 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
 
     const [, launchCommand, launchOptions] = (sshExec as jest.Mock).mock.calls[0];
     expect(launchCommand).toBe("bash -s");
@@ -633,10 +651,11 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     expect(sshExec).not.toHaveBeenCalled();
     expect(runProxmoxHostScript).toHaveBeenCalledWith(
       expect.stringContaining("10.250.20.51"),
@@ -725,7 +744,8 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     const call = (runProxmoxHostScript as jest.Mock).mock.calls[0];
@@ -791,7 +811,8 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     // resolveProxmoxHostEnv should have been asked to resolve the env for fixturenodea's
@@ -864,11 +885,11 @@ describe("applyLiveUpdate", () => {
       },
       "10.250.20.88",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result.applied).toBe(false);
-    expect(result.error).toContain("fixturelegacy");
+    expect(result).toMatchObject({ applied: false, error: expect.stringContaining("fixturelegacy") });
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
     expect(sshExec).not.toHaveBeenCalled();
   });
@@ -898,7 +919,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     const innerScript = String((sshExec as jest.Mock).mock.calls[0]?.[2]?.stdin ?? "");
@@ -969,10 +991,11 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     // Critically: the WebUI builder must run; the gateway builder must NOT.
     expect(buildWebUIProvisioningArtifacts).toHaveBeenCalledTimes(1);
     expect(buildWebUIBootstrapScript).toHaveBeenCalledTimes(1);
@@ -1055,10 +1078,11 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     expect(buildWebUIProvisioningArtifacts).toHaveBeenCalledWith(
       expect.objectContaining({
         personaSoulPrompt: null,
@@ -1107,7 +1131,8 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     )).rejects.toThrow("missing its pinned runtime image");
 
     expect(buildWebUIProvisioningArtifacts).not.toHaveBeenCalled();
@@ -1154,7 +1179,8 @@ describe("applyLiveUpdate", () => {
       },
       "",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(buildWebUIProvisioningArtifacts).toHaveBeenCalledWith(
@@ -1199,7 +1225,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(isProTierUser).not.toHaveBeenCalled();
@@ -1242,7 +1269,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(isProTierUser).toHaveBeenCalledWith("user-123");
@@ -1290,7 +1318,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(isProTierUser).toHaveBeenCalledWith("user-123");
@@ -1329,7 +1358,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(isProTierUser).toHaveBeenCalledWith("user-123");
@@ -1366,7 +1396,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     // Opt-out short-circuits before the tier check and disables the sidecar.
@@ -1414,7 +1445,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(resolveCodexDeploymentSecret).toHaveBeenCalledWith("serialized-codex-session");
@@ -1453,15 +1485,17 @@ describe("applyLiveUpdate", () => {
       "127.0.0.1",
       {},
       supabase,
-      applyTerminalBackend === undefined ? undefined : { applyTerminalBackend },
+      applyTerminalBackend === undefined
+        ? { initiator: USER_LIVE_UPDATE }
+        : { initiator: USER_LIVE_UPDATE, applyTerminalBackend },
     );
 
     expect(buildWebUIBootstrapScript).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       applyTerminalBackend === true
-        ? { mode: "update", applyTerminalBackend: true }
-        : { mode: "update" },
+        ? { mode: "update", applyTerminalBackend: true, additionalProvisioningScript: expect.any(String) }
+        : { mode: "update", additionalProvisioningScript: expect.any(String) },
     );
   });
 
@@ -1496,7 +1530,8 @@ describe("applyLiveUpdate", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
 
     expect(buildWebUIBootstrapScript).toHaveBeenCalledTimes(1);
@@ -1535,6 +1570,219 @@ function walletRow(
     ...overrides,
   };
 }
+
+describe("applyLiveUpdate in-flight turn gate", () => {
+  const FLEET_SYNC = systemLiveUpdate("fleet_sync");
+
+  function supabaseCapturing() {
+    const patches: Array<Record<string, unknown>> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => {
+          patches.push(patch);
+          return { eq: jest.fn().mockResolvedValue({ error: null }) };
+        }),
+      }),
+    } as unknown as SupabaseClient;
+    return { supabase, patches };
+  }
+
+  const row = (id: string) => ({
+    id,
+    user_id: "user-123",
+    provider: "openai",
+    backend: "gateway" as const,
+    hetzner_server_id: 1,
+    api_key_encrypted: "enc-api-key",
+    api_server_key_encrypted: "enc-gateway",
+    config: {},
+  });
+
+  function launchedInnerScript(): string {
+    return String((sshExec as jest.Mock).mock.calls[0]?.[2]?.stdin ?? "");
+  }
+
+  function gateReport(fields: string) {
+    return `HERMES_INFLIGHT_GATE ${fields}\n`;
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (decryptApiKey as jest.Mock).mockReturnValue("plain-api-key");
+    (getAutoUpdateConfig as jest.Mock).mockReturnValue({ enabled: false, time: "06:00" });
+    (getRuntimeAgentSettings as jest.Mock).mockReturnValue({});
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValue(null);
+    (isProTierUser as jest.Mock).mockResolvedValue({ ok: false, reason: "not_pro" });
+    (validateProviderApiKey as jest.Mock).mockResolvedValue({ valid: true });
+    (getProfileDeploymentState as jest.Mock).mockResolvedValue({ profileRoutes: [], profilesToRestore: [] });
+    (resolveGatewayConfiguration as jest.Mock).mockReturnValue({
+      fqdn: "agent.example.com",
+      gatewayUrl: "https://agent.example.com",
+    });
+    (buildWebUIProvisioningArtifacts as jest.Mock).mockReturnValue({ configYaml: "config" });
+    (buildWebUIBootstrapScript as jest.Mock).mockReturnValue("#!/bin/bash\necho webui ok\n");
+    (resolveProviderBaseUrl as jest.Mock).mockReturnValue(undefined);
+    (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
+  });
+
+  it("checks the box for an in-flight turn before a system update writes or launches anything", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout: gateReport("action=proceed verdict=idle reason=no_turn_in_flight live=0 unreadable=0 deferrals=0 streak_s=0") + "4242\n",
+      stderr: "",
+    });
+    const { supabase } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-gate-order"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+
+    expect(result).toMatchObject({ applied: true, initiator: FLEET_SYNC });
+    const inner = launchedInnerScript();
+    const gateScript = extractEmbeddedScript(inner, "/tmp/hermes-update-gate-inst-gate-order.sh");
+    expect(gateScript).toBe(buildInFlightUpdateGateScript({ instanceId: "inst-gate-order" }));
+    const gateIdx = inner.indexOf('hermes_update_gate_report="$(bash /tmp/hermes-update-gate-inst-gate-order.sh');
+    const deferExitIdx = inner.indexOf('*"action=defer"*) exit 0');
+    const writeIdx = inner.indexOf("> /tmp/hermes-update-inst-gate-order.sh");
+    const launchIdx = inner.indexOf("nohup bash /tmp/hermes-update-wrapper-inst-gate-order.sh");
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(deferExitIdx).toBeGreaterThan(gateIdx);
+    expect(writeIdx).toBeGreaterThan(deferExitIdx);
+    expect(launchIdx).toBeGreaterThan(writeIdx);
+  });
+
+  it.each([
+    ["defer", false],
+    ["proceed", true],
+  ])("the launch script writes and launches only when the gate does not defer (gate says %s)", (action, launches) => {
+    // Run the launch script's own control flow with the gate swapped for a stub
+    // that prints the given verdict, and the write/launch replaced by a marker.
+    const id = `inst-gate-flow-${action}`;
+    return (async () => {
+      (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+      const { supabase } = supabaseCapturing();
+      await applyLiveUpdate(row(id), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+      const inner = launchedInnerScript();
+      const stub = `#!/usr/bin/env bash\necho "HERMES_INFLIGHT_GATE action=${action} verdict=busy reason=in_flight_turn live=1 unreadable=0 deferrals=1 streak_s=0"\n`;
+      const writeIdx = inner.indexOf(`printf '%s' '`, inner.indexOf("esac"));
+      const gatePortion = inner
+        .slice(0, writeIdx)
+        .replace(/printf '%s' '[^']+' \| base64 -d > (\/tmp\/hermes-update-gate-[^\n]+)/, `printf '%s' '${Buffer.from(stub).toString("base64")}' | base64 -d > $1`);
+      const run = spawnSync("bash", ["-c", `${gatePortion}\necho LAUNCHED`], { encoding: "utf8" });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(`HERMES_INFLIGHT_GATE action=${action}`);
+      expect(run.stdout.includes("LAUNCHED")).toBe(launches);
+    })();
+  });
+
+  it("reports deferred_busy and leaves the row untouched when a turn is in flight", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout: gateReport("action=defer verdict=busy reason=in_flight_turn live=1 unreadable=0 deferrals=2 streak_s=900"),
+      stderr: "",
+    });
+    const info = jest.spyOn(log, "info");
+    const { supabase, patches } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-busy"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+
+    expect(result).toEqual({
+      applied: false,
+      deferred: true,
+      reason: "deferred_busy",
+      error: expect.stringContaining("in flight"),
+      initiator: FLEET_SYNC,
+      inFlightGate: {
+        action: "defer",
+        verdict: "busy",
+        reason: "in_flight_turn",
+        liveTurns: 1,
+        unreadableMarkers: 0,
+        deferrals: 2,
+        streakSeconds: 900,
+      },
+    });
+    // No redeploying/failed lifecycle patch and no last_synced_at bump.
+    expect(patches).toEqual([]);
+    expect(info).toHaveBeenCalledWith(
+      "system live update deferred: agent turn in flight",
+      expect.objectContaining({ instanceId: "inst-busy", trigger: "fleet_sync", deferrals: 2 })
+    );
+    info.mockRestore();
+  });
+
+  it("proceeds loudly once the deferral cap is reached", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout: gateReport("action=proceed verdict=busy reason=deferral_cap live=1 unreadable=0 deferrals=24 streak_s=21700") + "4242\n",
+      stderr: "",
+    });
+    const warn = jest.spyOn(log, "warn");
+    const { supabase, patches } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-capped"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+
+    expect(result).toMatchObject({
+      applied: true,
+      initiator: FLEET_SYNC,
+      inFlightGate: { action: "proceed", reason: "deferral_cap", deferrals: 24 },
+    });
+    expect(patches[0]).toMatchObject({ status: "redeploying", last_synced_at: expect.any(String) });
+    expect(warn).toHaveBeenCalledWith(
+      "system live update proceeding past the in-flight gate",
+      expect.objectContaining({ instanceId: "inst-capped", gateReason: "deferral_cap" })
+    );
+    warn.mockRestore();
+  });
+
+  it("says so when a gated launch printed no gate report", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const warn = jest.spyOn(log, "warn");
+    const { supabase } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-noreport"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+
+    expect(result).toMatchObject({
+      applied: true,
+      inFlightGate: { action: "proceed", verdict: "unknown", reason: "gate_report_missing" },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "system live update launched without an in-flight gate report",
+      expect.objectContaining({ instanceId: "inst-noreport" })
+    );
+    warn.mockRestore();
+  });
+
+  it.each([
+    ["user", USER_LIVE_UPDATE],
+    ["operator", OPERATOR_LIVE_UPDATE],
+  ])("a %s-initiated update skips the gate but ends any deferral streak", async (_label, initiator) => {
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const { supabase } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-user"), "127.0.0.1", {}, supabase, { initiator });
+
+    expect(result).toEqual({ applied: true, initiator, inFlightGate: null });
+    const inner = launchedInnerScript();
+    expect(inner).not.toContain("hermes-update-gate-");
+    expect(inner.split("\n")[0]).toBe("rm -f '/var/lib/hermes-update-deferrals-inst-user'");
+  });
+
+  it("refreshes the idle-gated update stack only where the box already runs it", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const { supabase } = supabaseCapturing();
+
+    await applyLiveUpdate(row("inst-stack"), "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+
+    const options = (buildWebUIBootstrapScript as jest.Mock).mock.calls[0][2];
+    const refresh = String(options.additionalProvisioningScript);
+    expect(refresh.startsWith("# Refresh the idle-gated update stack only where it is already installed.\nif [ -x '/usr/local/bin/hermes-roll-inst-stack' ]; then\n")).toBe(true);
+    expect(refresh).toContain(
+      buildIdleGatedUpdateProvisioningScript({ instanceId: "inst-stack", backend: "gateway" })
+    );
+    expect(refresh.trimEnd().endsWith("fi")).toBe(true);
+    const syntax = spawnSync("bash", ["-n"], { input: refresh, encoding: "utf8" });
+    expect(syntax.status).toBe(0);
+  });
+});
 
 describe("resolveBankrRuntimeEnvPlanForUpdate", () => {
   const db = {} as SupabaseClient;
@@ -1787,9 +2035,10 @@ describe("applyLiveUpdate BANKR_* reconcile flag", () => {
       },
       "127.0.0.1",
       {},
-      supabase
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
     );
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
     const params = (buildWebUIProvisioningArtifacts as jest.Mock).mock.calls[0][0];
     // The bootstrap builder must see the very same params.
     expect((buildWebUIBootstrapScript as jest.Mock).mock.calls[0][1]).toBe(params);

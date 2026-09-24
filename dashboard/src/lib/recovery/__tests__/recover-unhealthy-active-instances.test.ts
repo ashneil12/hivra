@@ -9,6 +9,7 @@ import {
 import { getProxmoxInstanceStatus } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
+import { systemLiveUpdate } from "@/lib/services/live-update-initiator";
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
@@ -401,6 +402,79 @@ describe("runRecoverUnhealthyActiveInstancesSweep", () => {
         recoveryAction: "repair_runtime",
       }),
     });
+  });
+
+  it("repairs as a system update, so the box's in-flight turn gate applies", async () => {
+    const longAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    mockSupabase({
+      events: [{ instance_id: "inst-1", first_seen_at: longAgo }],
+      rows: [buildRow()],
+    });
+    mockedProbe.mockResolvedValue({
+      response: { ok: false, status: 521, text: async () => "" },
+      url: "https://inst1.agents.hermesos.cloud/health",
+    });
+
+    await runRecoverUnhealthyActiveInstancesSweep();
+
+    expect(mockedApplyLiveUpdate.mock.calls[0][4]).toEqual({
+      initiator: systemLiveUpdate("unhealthy_recovery"),
+    });
+  });
+
+  it("defers a repair while an agent turn is in flight: no attempt, no cooldown, no per-run slot", async () => {
+    // The gateway can be down while official-dashboard keeps running a web-chat
+    // turn. Recreating would kill it; the gate defers instead, and a deferral
+    // must not use up the attempt cap (which pages an operator) or the cooldown.
+    const longAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    const updateCalls: UpdateCall[] = [];
+    const busyIds = ["busy-1", "busy-2", "busy-3", "busy-4", "busy-5"];
+    mockSupabase({
+      events: [...busyIds, "idle-1"].map((id, index) => ({
+        instance_id: id,
+        // Busy boxes are the longest-broken, so they sort first.
+        first_seen_at: new Date(Date.parse(longAgo) - (10 - index) * 60_000).toISOString(),
+      })),
+      rows: [...busyIds, "idle-1"].map((id) => buildRow({ id })),
+      updateCalls,
+    });
+    mockedProbe.mockResolvedValue({
+      response: { ok: false, status: 521, text: async () => "" },
+      url: "https://inst1.agents.hermesos.cloud/health",
+    });
+    mockedApplyLiveUpdate.mockImplementation(async (row: { id: string }) =>
+      busyIds.includes(row.id)
+        ? {
+            applied: false,
+            deferred: true,
+            reason: "deferred_busy",
+            error: "Deferred: an agent turn is in flight (deferral 1); the next run retries",
+            initiator: systemLiveUpdate("unhealthy_recovery"),
+            inFlightGate: {
+              action: "defer",
+              verdict: "busy",
+              reason: "in_flight_turn",
+              liveTurns: 1,
+              unreadableMarkers: 0,
+              deferrals: 1,
+              streakSeconds: 0,
+            },
+          }
+        : { applied: true, initiator: systemLiveUpdate("unhealthy_recovery"), inFlightGate: null },
+    );
+
+    const summary = await runRecoverUnhealthyActiveInstancesSweep();
+
+    expect(summary.redeployDeferred).toBe(5);
+    expect(summary.redeployFailed).toBe(0);
+    // Five deferrals did not consume the five per-run repair slots: the
+    // idle box behind them was still repaired this tick.
+    expect(summary.redeployAttempted).toBe(1);
+    expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(6);
+    for (const id of busyIds) {
+      expect(updateCalls.filter((call) => call.whereId === id)).toEqual([]);
+    }
+    expect(updateCalls.find((call) => call.whereId === "idle-1")?.patch.auto_restart_attempts).toBe(1);
   });
 
   it("bumps the counter when applyLiveUpdate fails to launch", async () => {

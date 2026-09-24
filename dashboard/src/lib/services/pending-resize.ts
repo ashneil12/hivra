@@ -11,8 +11,11 @@
  * — it keeps the named webui-state / agent-source volumes, so no data loss),
  * then clears the flag.
  *
- * Two callers: the instant wallet-unlock flow (a user's own instances) and the
- * apply-pending-resizes cron (background sweep).
+ * Two callers: the instant wallet-unlock flow (a user's own instances, which
+ * recreates immediately because the user just asked for the compute) and the
+ * apply-pending-resizes cron (background sweep, a system update: while an agent
+ * turn is running it is deferred, keeps its flag and is retried next tick, up to
+ * the in-flight gate's cap).
  */
 
 import "server-only";
@@ -25,6 +28,7 @@ import {
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
+import type { LiveUpdateInitiator } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { isWebfreeBackend } from "@/lib/types/instance";
@@ -63,6 +67,8 @@ interface PendingResizeResult {
   id: string;
   redeployed: boolean;
   skipped?: boolean;
+  /** A system sweep found an agent turn in flight; the flag stays set for the next tick. */
+  deferred?: boolean;
   error?: string;
 }
 
@@ -70,6 +76,7 @@ export interface PendingResizeSummary {
   redeployed: number;
   failed: number;
   skipped: number;
+  deferred: number;
   results: PendingResizeResult[];
 }
 
@@ -101,6 +108,7 @@ function createSettingsCache(): (userId: string) => Promise<Record<string, unkno
 async function redeployOne(
   row: PendingResizeRow,
   getSettings: (userId: string) => Promise<Record<string, unknown>>,
+  initiator: LiveUpdateInitiator,
 ): Promise<PendingResizeResult> {
   if (!supabaseAdmin) return { id: row.id, redeployed: false, error: "db_unavailable" };
 
@@ -120,7 +128,19 @@ async function redeployOne(
   }
 
   const settings = await getSettings(row.user_id);
-  const update = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin);
+  const update = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin, { initiator });
+  if (update.deferred) {
+    // An agent turn is running. The new caps wait for it (bounded by the gate's
+    // cap); tier_change_pending stays set so the next tick retries.
+    log.info("pending resize deferred: agent turn in flight", {
+      source: LOG_SOURCE,
+      instanceId: row.id,
+      userId: row.user_id,
+      failureType: "pending_resize_deferred_busy",
+      deferrals: update.inFlightGate.deferrals,
+    });
+    return { id: row.id, redeployed: false, deferred: true, error: "deferred_busy" };
+  }
   if (!update.applied) {
     log.warn("pending resize redeploy failed", {
       source: LOG_SOURCE,
@@ -160,7 +180,7 @@ async function redeployOne(
  */
 export async function redeployPendingResizes(
   rows: PendingResizeRow[],
-  opts: { concurrency?: number } = {},
+  opts: { concurrency?: number; initiator: LiveUpdateInitiator },
 ): Promise<PendingResizeSummary> {
   const getSettings = createSettingsCache();
   const concurrency = Math.max(1, opts.concurrency ?? 5);
@@ -181,7 +201,9 @@ export async function redeployPendingResizes(
     // an unreachable box IS idle, so the poison sorts to the FRONT and lands in
     // wave 1, re-poisoning every batch. Paid cap upgrades behind it never land.
     // Turn a rejection into a normal failed result and keep sweeping.
-    const settled = await Promise.allSettled(wave.map((row) => redeployOne(row, getSettings)));
+    const settled = await Promise.allSettled(
+      wave.map((row) => redeployOne(row, getSettings, opts.initiator)),
+    );
     settled.forEach((outcome, index) => {
       if (outcome.status === "fulfilled") {
         results.push(outcome.value);
@@ -200,8 +222,9 @@ export async function redeployPendingResizes(
   }
   return {
     redeployed: results.filter((r) => r.redeployed).length,
-    failed: results.filter((r) => !r.redeployed && !r.skipped).length,
+    failed: results.filter((r) => !r.redeployed && !r.skipped && !r.deferred).length,
     skipped: results.filter((r) => r.skipped).length,
+    deferred: results.filter((r) => r.deferred).length,
     results,
   };
 }

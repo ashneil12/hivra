@@ -12,7 +12,9 @@
  * disruptive instances are recreated first; bounded per tick to stay inside
  * the function time budget. Reuses applyLiveUpdate (keeps named volumes — no
  * data loss) and clears the flag on success; failures are simply retried next
- * tick (idempotent).
+ * tick (idempotent). This sweep is a system update: a box with an agent turn in
+ * flight is deferred (flag kept, retried next tick) until the turn ends or the
+ * in-flight gate's cap is reached.
  */
 
 import { NextRequest } from "next/server";
@@ -25,6 +27,7 @@ import {
   PENDING_RESIZE_SELECT,
   type PendingResizeRow,
 } from "@/lib/services/pending-resize";
+import { systemLiveUpdate } from "@/lib/services/live-update-initiator";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { WEBFREE_BACKENDS } from "@/lib/types/instance";
@@ -77,10 +80,13 @@ async function handle(req: NextRequest) {
 
   const rows = (data ?? []) as unknown as PendingResizeRow[];
   if (rows.length === 0) {
-    return apiSuccess({ pending: 0, redeployed: 0, failed: 0, skipped: 0 });
+    return apiSuccess({ pending: 0, redeployed: 0, failed: 0, skipped: 0, deferred: 0 });
   }
 
-  const summary = await redeployPendingResizes(rows, { concurrency: 5 });
+  const summary = await redeployPendingResizes(rows, {
+    concurrency: 5,
+    initiator: systemLiveUpdate("pending_resize_sweep"),
+  });
 
   log.info("apply-pending-resizes sweep complete", {
     source: SOURCE,
@@ -89,6 +95,7 @@ async function handle(req: NextRequest) {
     redeployed: summary.redeployed,
     failed: summary.failed,
     skipped: summary.skipped,
+    deferred: summary.deferred,
   });
 
   // Backlog + failure observability. BATCH_LIMIT=20/tick is a deliberate
@@ -124,6 +131,7 @@ async function handle(req: NextRequest) {
         redeployed: summary.redeployed,
         failed: summary.failed,
         skipped: summary.skipped,
+        deferred: summary.deferred,
         total_pending: totalPending,
       },
     });
