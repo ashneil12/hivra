@@ -1,6 +1,6 @@
 "use client";
 
-// Hivra per-agent view — Chat (Chat, <Agent> session) · Computer (Terminal,
+// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Terminal,
 // Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
@@ -830,13 +830,16 @@ export default function AgentPage() {
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Chat · Computer (Terminal, Files,
-  // Browser, Git) · Manage. Computers keep their short flat list.
+  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
+  // Computer (Terminal, Files, Browser, Git) · Manage. Computers keep their
+  // short flat list. Agent and Manage always open their first view (Chat or
+  // the dashboard, Settings); Computer reopens the view last used in it.
   const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
     id: group.id,
     label: group.label,
     icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
     surfaces: group.surfaces,
+    home: group.id === "computer" ? undefined : group.surfaces[0],
   }));
   // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
   // falls back to the dashboard surface.
