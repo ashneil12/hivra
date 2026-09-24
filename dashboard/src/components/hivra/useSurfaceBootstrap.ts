@@ -14,23 +14,53 @@
 // Gateways that advertise a per-process `bootId` make that visible: while the
 // surface is mounted and active it re-probes /api/meta on window focus, the
 // `online` event, the page becoming visible and every 30 s, and when the
-// bootId changed it re-submits its bootstrap form into the same frame, which
-// re-authenticates and reloads to the same destination. An unchanged bootId,
-// or a gateway that has none (older runtimes), never reloads a loaded frame.
-// A surface whose check failed recovers by itself once a later probe succeeds.
+// bootId changed (or appeared, or disappeared) it signs in again. An unchanged
+// bootId, or a gateway that never had one (older runtimes), never reloads a
+// loaded frame. A surface whose check failed recovers by itself once a later
+// probe succeeds.
+//
+// Each sign-in is a new `generation`, and hosts key their iframe on it: the
+// bootstrap is POSTed into a freshly mounted frame with the same name, never
+// into the loaded one. Navigating a frame that has already loaded a document
+// adds a joint session history entry, so Back would reload the surface (and
+// end a terminal's shell, or trip ttyd's leave prompt) instead of leaving the
+// page. The first navigation of a new frame replaces its initial about:blank
+// and adds none.
 //
 // Runtimes that serve their own interface at `nativeSurface` (DeepSeek) answer
 // 503 there until their process is up. A surface for that path waits, polling
-// with backoff, for `nativeReady: true` before it bootstraps.
+// with backoff, for `nativeReady: true` before it bootstraps, and goes back to
+// waiting whenever a loaded one reports itself down. The wait is bounded: a
+// gateway that stays unreachable is reported as unreachable, and a start that
+// takes longer than the limit is reported as failed, with Try again.
 
 import { useEffect, useRef, useState } from "react";
+import { clientLog } from "@/lib/client/logger";
 
-export type SurfaceAccessStatus = "checking" | "starting" | "ready" | "upgrade-required" | "unavailable";
-type SettledStatus = Exclude<SurfaceAccessStatus, "checking">;
+export type SurfaceAccessStatus =
+  | "checking"
+  | "starting"
+  | "stalled"
+  | "ready"
+  | "upgrade-required"
+  | "unavailable";
+type ProbeStatus = "starting" | "ready" | "upgrade-required" | "unavailable";
 
 export const SURFACE_RECHECK_INTERVAL_MS = 30_000;
 /** Delays between probes while waiting for a runtime or after a failed probe. */
 export const SURFACE_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
+/**
+ * How long a native interface may take to start before the wait is reported as
+ * failed. DeepSeek gives its own start 90 s (deepseek-harness/runtime-process.cjs)
+ * and systemd retries it 5 s later, so this covers one failed attempt and most
+ * of a second.
+ */
+export const SURFACE_NATIVE_START_LIMIT_MS = 180_000;
+/**
+ * How long a gateway may stay unreachable during that wait before it is
+ * reported as unreachable. A restart (RestartSec=5 plus node start-up) fits.
+ */
+export const SURFACE_UNREACHABLE_GRACE_MS = 20_000;
 // focus and visibilitychange usually fire together; one probe answers both.
 const EVENT_PROBE_THROTTLE_MS = 2_000;
 const PROBE_TIMEOUT_MS = 10_000;
@@ -38,16 +68,25 @@ const PROBE_TIMEOUT_MS = 10_000;
 const BOOT_ID = /^[A-Za-z0-9_-]{8,128}$/;
 
 interface RuntimeProbe {
-  status: SettledStatus;
+  status: ProbeStatus;
   bootId: string | null;
   agentKind: string | null;
+  /** Why the check failed, for diagnostics only. Never carries the token. */
+  failure: string | null;
 }
 
-interface SurfaceAccess extends RuntimeProbe {
+interface SurfaceAccess {
   key: string;
   token: string;
-  /** Bootstrap submissions made into the frame for this key. */
+  status: Exclude<SurfaceAccessStatus, "checking">;
+  bootId: string | null;
+  agentKind: string | null;
+  /** Sign-ins made for this key; each one mounts a new frame. */
   generation: number;
+  /** When the current wait for a native interface began. */
+  waitingSince: number | null;
+  /** First failed probe of an unbroken run of failures during that wait. */
+  unreachableSince: number | null;
 }
 
 export interface SurfaceEndpoints {
@@ -81,9 +120,13 @@ export function surfaceEndpoints(url: string): SurfaceEndpoints | null {
   }
 }
 
+function unavailableProbe(failure: string | null): RuntimeProbe {
+  return { status: "unavailable", bootId: null, agentKind: null, failure };
+}
+
 function classifyRuntime(metadata: unknown, pathname: string): RuntimeProbe {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return { status: "unavailable", bootId: null, agentKind: null };
+    return unavailableProbe("metadata is not a JSON object");
   }
   const record = metadata as Record<string, unknown>;
   const agentKind = typeof record.agentKind === "string" ? record.agentKind : null;
@@ -91,73 +134,161 @@ function classifyRuntime(metadata: unknown, pathname: string): RuntimeProbe {
     const bootId = typeof record.bootId === "string" && BOOT_ID.test(record.bootId) ? record.bootId : null;
     const waitingForNative = typeof record.nativeSurface === "string" && record.nativeSurface === pathname
       && record.nativeReady !== true;
-    return { status: waitingForNative ? "starting" : "ready", bootId, agentKind };
+    return { status: waitingForNative ? "starting" : "ready", bootId, agentKind, failure: null };
   }
   // A runtime that names itself but not this protocol needs an update; never
   // fall back to an older, URL-token handshake.
-  return { status: agentKind ? "upgrade-required" : "unavailable", bootId: null, agentKind };
+  return agentKind
+    ? { status: "upgrade-required", bootId: null, agentKind, failure: null }
+    : unavailableProbe("metadata names neither an agent nor surfaceAuth");
 }
 
 async function probeRuntime(metadataUrl: string, pathname: string, signal: AbortSignal): Promise<RuntimeProbe> {
   const controller = new AbortController();
+  let timedOut = false;
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort);
-  const timeout = window.setTimeout(abort, PROBE_TIMEOUT_MS);
+  const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, PROBE_TIMEOUT_MS);
+  let stage = "request";
   try {
     // Nonsecret runtime metadata only: no credentials, no bearer. An old or
     // unreachable runtime must never fall back to putting it in a URL.
     const response = await fetch(metadataUrl, { cache: "no-store", credentials: "omit", signal: controller.signal });
-    if (!response.ok) throw new Error(`Runtime metadata answered ${response.status}.`);
+    if (!response.ok) return unavailableProbe(`metadata answered HTTP ${response.status}`);
+    stage = "metadata body";
     return classifyRuntime(await response.json(), pathname);
-  } catch {
-    return { status: "unavailable", bootId: null, agentKind: null };
+  } catch (error) {
+    // The surface went away: nothing to report.
+    if (signal.aborted) return unavailableProbe(null);
+    if (timedOut) return unavailableProbe(`no answer within ${PROBE_TIMEOUT_MS / 1_000} s`);
+    // Network, CORS and TLS failures all surface here as a bare TypeError.
+    return unavailableProbe(`${stage} failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     window.clearTimeout(timeout);
     signal.removeEventListener("abort", abort);
   }
 }
 
-/** The next state after a background re-probe; the same object when nothing changes. */
-function advance(previous: SurfaceAccess, probe: RuntimeProbe): SurfaceAccess {
-  if (previous.status === "ready") {
-    // Only a different gateway process invalidates the frame's session. A
-    // failed probe (network blip, gateway mid-restart) or an unchanged or
-    // absent bootId leaves the loaded surface and its own reconnect alone.
-    if (probe.status !== "ready" && probe.status !== "starting") return previous;
-    if (!probe.bootId || probe.bootId === previous.bootId) return previous;
-    return probe.status === "ready"
-      ? { ...previous, ...probe, generation: previous.generation + 1 }
-      : { ...previous, ...probe };
-  }
-  // Waiting or failed: a failed probe keeps the current message, and any
-  // successful answer moves on (to the frame once the runtime is ready).
-  if (probe.status === "unavailable") return previous;
-  if (probe.status === previous.status && probe.bootId === previous.bootId) return previous;
+// Surfaces retry on their own, so a stuck one must leave a trail (DevTools and
+// ops events): one line when the check starts failing or its reason changes,
+// not one per retry. Origin and reason only; the probe never carries the token.
+function reportProbe(probe: RuntimeProbe, origin: string, lastFailure: { current: string | null }) {
+  if (probe.failure === lastFailure.current) return;
+  lastFailure.current = probe.failure;
+  if (!probe.failure) return;
+  clientLog.warn("computer surface check failed", {
+    // An allow-listed client source, so the ops event is accepted for everyone.
+    source: "client.diagnostic",
+    surface: "computer-surface",
+    failureType: "hivra_surface_metadata_unavailable",
+    origin,
+    reason: probe.failure,
+  });
+}
+
+function firstAccess(key: string, token: string, probe: RuntimeProbe, now: number): SurfaceAccess {
   return {
-    ...previous,
-    ...probe,
-    agentKind: probe.agentKind ?? previous.agentKind,
-    generation: probe.status === "ready" ? previous.generation + 1 : previous.generation,
+    key,
+    token,
+    status: probe.status,
+    bootId: probe.bootId,
+    agentKind: probe.agentKind,
+    generation: probe.status === "ready" ? 1 : 0,
+    waitingSince: probe.status === "starting" ? now : null,
+    unreachableSince: null,
   };
 }
 
-/** Status copy while a runtime is still starting its own interface. */
-export function startingRuntimeCopy(agentKind: string | null): { title: string; detail: string } {
+/** The next state after a background re-probe; the same object when nothing changes. */
+function advance(previous: SurfaceAccess, probe: RuntimeProbe, now: number): SurfaceAccess {
+  const agentKind = probe.agentKind ?? previous.agentKind;
+  const signIn = (): SurfaceAccess => ({
+    ...previous,
+    status: "ready",
+    bootId: probe.bootId,
+    agentKind,
+    generation: previous.generation + 1,
+    waitingSince: null,
+    unreachableSince: null,
+  });
+  const wait = (): SurfaceAccess => ({
+    ...previous,
+    status: "starting",
+    bootId: probe.bootId,
+    agentKind,
+    waitingSince: now,
+    unreachableSince: null,
+  });
+
+  switch (previous.status) {
+    case "ready":
+      // A native interface that reports itself down is showing its 503 in the
+      // frame, whatever the bootId says (older gateways have none): wait for
+      // it again, then sign in afresh.
+      if (probe.status === "starting") return wait();
+      // Otherwise only a different gateway process invalidates the frame's
+      // session. A failed probe (network blip, gateway mid-restart) or an
+      // unchanged bootId leaves the loaded surface and its own reconnect
+      // alone. A bootId that appears (update) or disappears (rollback to an
+      // older runtime) is a different process too; a gateway that never had
+      // one never reloads.
+      if (probe.status !== "ready" || probe.bootId === previous.bootId) return previous;
+      return signIn();
+    case "starting":
+    case "stalled": {
+      if (probe.status === "ready") return signIn();
+      if (probe.status === "upgrade-required") {
+        return { ...previous, status: "upgrade-required", bootId: null, agentKind, waitingSince: null, unreachableSince: null };
+      }
+      // A gateway restart takes seconds. One that stays unreachable is
+      // reported as unreachable, not as an interface that is still starting.
+      const unreachableSince = probe.status === "unavailable" ? previous.unreachableSince ?? now : null;
+      if (unreachableSince !== null && now - unreachableSince >= SURFACE_UNREACHABLE_GRACE_MS) {
+        return { ...previous, status: "unavailable", waitingSince: null, unreachableSince: null };
+      }
+      // Never claim progress indefinitely. Past the limit the wait is reported
+      // as failed (a crash-looping start keeps answering "not ready"), and a
+      // later ready answer still opens the surface.
+      const overdue = previous.waitingSince !== null && now - previous.waitingSince >= SURFACE_NATIVE_START_LIMIT_MS;
+      const status = previous.status === "stalled" || overdue ? "stalled" : "starting";
+      if (status === previous.status && unreachableSince === previous.unreachableSince) return previous;
+      return { ...previous, status, agentKind, unreachableSince };
+    }
+    default:
+      // No frame on screen (unreachable, outdated gateway): a failed probe
+      // keeps the current message, and any successful answer moves on.
+      if (probe.status === "unavailable" || probe.status === previous.status) return previous;
+      if (probe.status === "ready") return signIn();
+      if (probe.status === "starting") return wait();
+      return { ...previous, status: probe.status, bootId: null, agentKind, waitingSince: null, unreachableSince: null };
+  }
+}
+
+/** Status copy while a runtime starts its own interface, and once it has not. */
+export function nativeStartCopy(agentKind: string | null) {
   const name = agentKind === "deepseek-harness" ? "DeepSeek" : null;
   return {
-    title: `Starting ${name ?? "the agent"}…`,
-    detail: `${name ?? "The agent"} is still starting on this computer. It opens here as soon as it’s ready.`,
+    starting: {
+      title: `Starting ${name ?? "the agent"}…`,
+      detail: `${name ?? "The agent"} is still starting on this computer. It opens here as soon as it’s ready.`,
+    },
+    stalled: {
+      title: `${name ?? "The agent"} hasn’t started`,
+      detail: `${name ?? "The agent"} didn’t finish starting on this computer. Check its status in Manage, then try again.`,
+    },
   };
 }
 
 export function useSurfaceBootstrap({ url, token, active = true }: { url: string; token: string | null; active?: boolean }) {
   const endpoints = surfaceEndpoints(url);
+  const origin = endpoints?.origin ?? "";
   const metadataUrl = endpoints?.metadataUrl ?? "";
   const bootstrapUrl = endpoints?.bootstrapUrl ?? "";
   const destination = endpoints?.destination ?? "";
   const pathname = endpoints?.pathname ?? "";
   const formRef = useRef<HTMLFormElement>(null);
   const lastProbeAt = useRef(0);
+  const lastFailure = useRef<string | null>(null);
   const [probeVersion, setProbeVersion] = useState(0);
   const [access, setAccess] = useState<SurfaceAccess | null>(null);
   const probeKey = `${metadataUrl}:${probeVersion}`;
@@ -172,13 +303,14 @@ export function useSurfaceBootstrap({ url, token, active = true }: { url: string
     void probeRuntime(metadataUrl, pathname, controller.signal).then((probe) => {
       if (controller.signal.aborted) return;
       lastProbeAt.current = Date.now();
-      setAccess({ key: probeKey, token, ...probe, generation: probe.status === "ready" ? 1 : 0 });
+      reportProbe(probe, origin, lastFailure);
+      setAccess(firstAccess(probeKey, token, probe, Date.now()));
     });
     return () => controller.abort();
-  }, [metadataUrl, pathname, probeKey, token]);
+  }, [metadataUrl, origin, pathname, probeKey, token]);
 
-  // Each new generation signs the same frame in again and reloads it to its
-  // destination. The bearer only ever travels in this POST body.
+  // Each generation signs its own, newly mounted frame in (hosts key the
+  // iframe on it). The bearer only ever travels in this POST body.
   useEffect(() => {
     if (status !== "ready" || generation < 1 || !bootstrapUrl || !destination || !token) return;
     formRef.current?.requestSubmit();
@@ -193,8 +325,8 @@ export function useSurfaceBootstrap({ url, token, active = true }: { url: string
     let attempt = 0;
     let retry: number | undefined;
     // Waiting for a runtime or for an unreachable gateway: keep asking with
-    // backoff. An outdated gateway needs an update first, so it is left to the
-    // regular checks.
+    // backoff. An outdated gateway needs an update first and a failed start
+    // needs attention, so those are left to the regular checks.
     const unsettled = status === "starting" || status === "unavailable";
     const probe = () => {
       if (disposed) return;
@@ -204,9 +336,11 @@ export function useSurfaceBootstrap({ url, token, active = true }: { url: string
       inFlight = controller;
       void probeRuntime(metadataUrl, pathname, controller.signal).then((result) => {
         if (disposed) return;
-        lastProbeAt.current = Date.now();
+        const now = Date.now();
+        lastProbeAt.current = now;
+        reportProbe(result, origin, lastFailure);
         setAccess((previous) => previous && previous.key === probeKey && previous.token === token
-          ? advance(previous, result) : previous);
+          ? advance(previous, result, now) : previous);
         // A failed probe on a loaded frame is often a gateway mid-restart:
         // look again soon so the new bootId is seen in seconds, not 30 s.
         if (unsettled || result.status === "unavailable") {
@@ -249,12 +383,16 @@ export function useSurfaceBootstrap({ url, token, active = true }: { url: string
       window.clearTimeout(retry);
       inFlight?.abort();
     };
-  }, [active, metadataUrl, pathname, probeKey, status, token]);
+  }, [active, metadataUrl, origin, pathname, probeKey, status, token]);
 
+  const copy = nativeStartCopy(current?.agentKind ?? null);
   return {
     status,
-    starting: startingRuntimeCopy(current?.agentKind ?? null),
-    origin: endpoints?.origin ?? "",
+    /** Key for the surface's iframe: a new frame for every sign-in. */
+    generation,
+    starting: copy.starting,
+    stalled: copy.stalled,
+    origin,
     bootstrapUrl,
     destination,
     formRef,

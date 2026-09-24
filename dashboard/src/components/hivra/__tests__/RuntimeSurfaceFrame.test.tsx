@@ -2,8 +2,18 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
+import { clientLog } from "@/lib/client/logger";
 import { RuntimeSurfaceFrame } from "../RuntimeSurfaceFrame";
-import { SURFACE_RECHECK_INTERVAL_MS } from "../useSurfaceBootstrap";
+import {
+  SURFACE_NATIVE_START_LIMIT_MS,
+  SURFACE_RECHECK_INTERVAL_MS,
+  SURFACE_UNREACHABLE_GRACE_MS,
+} from "../useSurfaceBootstrap";
+
+jest.mock("@/lib/client/logger", () => ({
+  clientLog: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+}));
+const warn = clientLog.warn as jest.Mock;
 
 const TOKEN = "fixture-box-token";
 const BOOT_A = "00000000400080000000000000000001";
@@ -15,6 +25,8 @@ type Meta = Record<string, unknown> | null;
 let answer: Meta | "down" = null;
 let fetchMock: jest.Mock;
 let requestSubmit: jest.SpyInstance;
+// For each bootstrap POST, the frame its target named when it was sent.
+let submittedInto: Array<HTMLIFrameElement | null>;
 
 function meta(extra: Record<string, unknown> = {}): Meta {
   return { agentKind: "agent-zero", surfaceAuth: "post-cookie-v1", ...extra };
@@ -37,7 +49,11 @@ beforeEach(() => {
     return { ok: true, status: 200, json: async () => body };
   });
   global.fetch = fetchMock as unknown as typeof fetch;
-  requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => undefined);
+  submittedInto = [];
+  requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(function (this: HTMLFormElement) {
+    submittedInto.push(document.querySelector<HTMLIFrameElement>(`iframe[name="${this.getAttribute("target")}"]`));
+  });
+  warn.mockClear();
 });
 
 afterEach(() => {
@@ -46,11 +62,12 @@ afterEach(() => {
 });
 
 describe("RuntimeSurfaceFrame gateway restart recovery", () => {
-  it("re-submits the bootstrap into the same frame when the gateway's bootId changes", async () => {
+  it("signs in again, into a new frame with the same name, when the gateway's bootId changes", async () => {
     renderFrame();
     await settle();
     const frame = screen.getByTitle("Agent Zero · runtime");
     expect(requestSubmit).toHaveBeenCalledTimes(1);
+    expect(submittedInto[0]).toBe(frame);
 
     // The gateway restarted while the page stayed open.
     answer = meta({ bootId: BOOT_B });
@@ -61,11 +78,19 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(2);
     const form = requestSubmit.mock.instances[1] as HTMLFormElement;
     expect(form).toHaveAttribute("action", "https://box.example.com/auth/bootstrap");
-    expect(form).toHaveAttribute("target", frame.getAttribute("name"));
     expect(form.querySelector('input[name="destination"]')).toHaveValue("/agent-zero/");
-    // Same frame, re-authenticated in place; never a bearer in a URL.
-    expect(screen.getByTitle("Agent Zero · runtime")).toBe(frame);
-    expect(frame).not.toHaveAttribute("src");
+    // Posting into the frame that already loaded the surface would add a
+    // history entry (Back would reload it). The POST goes into a frame mounted
+    // for this sign-in, whose first navigation replaces its about:blank.
+    const next = screen.getByTitle("Agent Zero · runtime");
+    expect(next).not.toBe(frame);
+    expect(frame.isConnected).toBe(false);
+    expect(document.querySelectorAll("iframe")).toHaveLength(1);
+    expect(next).toHaveAttribute("name", frame.getAttribute("name"));
+    expect(form).toHaveAttribute("target", next.getAttribute("name"));
+    expect(submittedInto[1]).toBe(next);
+    // Never a bearer in a URL.
+    expect(next).not.toHaveAttribute("src");
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toBe("https://box.example.com/api/meta");
       expect(call[1]).toMatchObject({ credentials: "omit", cache: "no-store" });
@@ -103,6 +128,7 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
   it("does not reload a loaded frame while the bootId is unchanged, even across a failed probe", async () => {
     renderFrame();
     await settle();
+    const frame = screen.getByTitle("Agent Zero · runtime");
     const probesAtStart = fetchMock.mock.calls.length;
 
     await settle(5_000);
@@ -116,6 +142,23 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
 
     expect(fetchMock.mock.calls.length).toBeGreaterThan(probesAtStart + 2);
     expect(requestSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.getByTitle("Agent Zero · runtime")).toBe(frame);
+  });
+
+  it("signs in again when the gateway stops advertising a bootId (rolled back to an older runtime)", async () => {
+    renderFrame();
+    await settle();
+    expect(requestSubmit).toHaveBeenCalledTimes(1);
+
+    // The update's rollback restarted the previous gateway: a new process, so
+    // the frame's session is gone even though there is no bootId to compare.
+    answer = meta();
+    await settle(SURFACE_RECHECK_INTERVAL_MS);
+    expect(requestSubmit).toHaveBeenCalledTimes(2);
+
+    // From then on it behaves like any gateway without a bootId.
+    await settle(SURFACE_RECHECK_INTERVAL_MS * 3);
+    expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a legacy gateway without bootId exactly as before: one bootstrap, no reloads", async () => {
@@ -226,11 +269,132 @@ describe("RuntimeSurfaceFrame native runtime start", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
+  it("waits again when an older DeepSeek gateway without a bootId restarts, then signs in", async () => {
+    const legacy = (nativeReady: boolean) => ({
+      agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", nativeSurface: "/", nativeReady,
+    });
+    answer = legacy(true);
+    renderFrame("https://box.example.com/");
+    await settle();
+    const frame = screen.getByTitle("Agent Zero · runtime");
+    expect(requestSubmit).toHaveBeenCalledTimes(1);
+
+    // Its native interface is down (the frame would show the broker's 503),
+    // even though there is no bootId to say the process changed.
+    answer = legacy(false);
+    await settle(SURFACE_RECHECK_INTERVAL_MS);
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+    expect(document.querySelector("iframe")).toBeNull();
+
+    answer = legacy(true);
+    await settle(1_000);
+    expect(requestSubmit).toHaveBeenCalledTimes(2);
+    expect(screen.getByTitle("Agent Zero · runtime")).not.toBe(frame);
+  });
+
+  it("stops claiming DeepSeek is starting once the start limit has passed", async () => {
+    answer = deepseek(false);
+    renderFrame("https://box.example.com/");
+    await settle();
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+
+    // A start that crash-loops keeps answering "not ready" forever.
+    await settle(SURFACE_NATIVE_START_LIMIT_MS - 20_000);
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+    await settle(20_000 + 15_000);
+    expect(screen.queryByText("Starting DeepSeek…")).not.toBeInTheDocument();
+    expect(screen.getByText("DeepSeek hasn’t started")).toBeInTheDocument();
+    expect(screen.getByText(/didn’t finish starting on this computer/)).toBeInTheDocument();
+    expect(document.querySelector("svg.animate-spin")).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(requestSubmit).not.toHaveBeenCalled();
+
+    // Still watched: if it does come up, it opens.
+    answer = deepseek(true);
+    await settle(SURFACE_RECHECK_INTERVAL_MS);
+    expect(screen.getByTitle("Agent Zero · runtime")).toBeInTheDocument();
+    expect(requestSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a fresh wait when Try again is chosen after the start limit", async () => {
+    answer = deepseek(false);
+    renderFrame("https://box.example.com/");
+    await settle();
+    await settle(SURFACE_NATIVE_START_LIMIT_MS + 15_000);
+    expect(screen.getByText("DeepSeek hasn’t started")).toBeInTheDocument();
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Try again" })); });
+    await settle();
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+    await settle(SURFACE_NATIVE_START_LIMIT_MS - 20_000);
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+  });
+
+  it("rides out a gateway restart while waiting, but reports a gateway that stays unreachable", async () => {
+    answer = deepseek(false);
+    renderFrame("https://box.example.com/");
+    await settle();
+
+    // Down for a few seconds, as during a restart: still starting.
+    answer = "down";
+    await settle(5_000);
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+
+    // Down for longer than a restart takes: say so, with Try again.
+    await settle(SURFACE_UNREACHABLE_GRACE_MS + 15_000);
+    expect(screen.queryByText("Starting DeepSeek…")).not.toBeInTheDocument();
+    expect(screen.getByText("Couldn’t verify secure access")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+    // Reachable again and still starting: back to the honest wait.
+    answer = deepseek(false);
+    await settle(1_000);
+    expect(screen.getByText("Starting DeepSeek…")).toBeInTheDocument();
+    answer = deepseek(true);
+    await settle(2_000);
+    expect(screen.getByTitle("Agent Zero · runtime")).toBeInTheDocument();
+  });
+
   it("does not hold a gateway surface such as the terminal behind the native start", async () => {
     answer = deepseek(false);
     renderFrame("https://box.example.com/terminal/");
     await settle();
     expect(screen.getByTitle("Agent Zero · runtime")).toBeInTheDocument();
     expect(requestSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RuntimeSurfaceFrame diagnostics", () => {
+  it("logs a failing check once per reason, with origin and reason only", async () => {
+    answer = "down";
+    renderFrame();
+    await settle();
+    // Several backoff retries fail the same way: one line, not one per retry.
+    await settle(1_000 + 2_000 + 4_000);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("computer surface check failed", expect.objectContaining({
+      source: "client.diagnostic",
+      surface: "computer-surface",
+      origin: "https://box.example.com",
+      reason: "request failed: Failed to fetch",
+    }));
+
+    // A different failure is worth its own line.
+    fetchMock.mockImplementation(async () => ({ ok: false, status: 502, json: async () => ({}) }));
+    await settle(8_000);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[1][1]).toMatchObject({ reason: "metadata answered HTTP 502" });
+
+    // Recovery is quiet; a later failure is a new episode and is logged again.
+    fetchMock.mockImplementation(async () => ({ ok: true, status: 200, json: async () => meta({ bootId: BOOT_A }) }));
+    await settle(15_000);
+    expect(screen.getByTitle("Agent Zero · runtime")).toBeInTheDocument();
+    fetchMock.mockImplementation(async () => { throw new TypeError("Failed to fetch"); });
+    await settle(SURFACE_RECHECK_INTERVAL_MS);
+    expect(warn).toHaveBeenCalledTimes(3);
+
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(TOKEN);
   });
 });

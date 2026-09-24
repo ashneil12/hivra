@@ -11,8 +11,9 @@
 // `/api/meta` for protocol support (never send a bearer to an unverified
 // runtime), then POST the token to `/auth/bootstrap` inside a hidden form whose
 // target is the iframe, so the credential never lands in a URL. The shared
-// hook also re-bootstraps the frame after the box gateway restarts and waits
-// for a native runtime (DeepSeek) to be ready before opening it.
+// hook also signs in again after the box gateway restarts (into a new frame,
+// keyed on its generation, so no history entry is added) and waits, for a
+// bounded time, for a native runtime (DeepSeek) to be ready before opening it.
 
 import { ExternalLink, Loader2 } from "lucide-react";
 import { useId, useRef } from "react";
@@ -45,7 +46,9 @@ export function RuntimeSurfaceFrame({
   const newTabFormRef = useRef<HTMLFormElement>(null);
   const {
     status: accessStatus,
+    generation,
     starting,
+    stalled,
     bootstrapUrl,
     destination,
     formRef,
@@ -119,6 +122,7 @@ export function RuntimeSurfaceFrame({
 
       {accessStatus === "ready" ? (
         <iframe
+          key={generation}
           name={frameName}
           title={label}
           style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }}
@@ -137,18 +141,22 @@ export function RuntimeSurfaceFrame({
               ? "Connecting securely…"
               : accessStatus === "starting"
                 ? starting.title
-                : accessStatus === "upgrade-required"
-                  ? "Connection update needed"
-                  : "Couldn’t verify secure access"}
+                : accessStatus === "stalled"
+                  ? stalled.title
+                  : accessStatus === "upgrade-required"
+                    ? "Connection update needed"
+                    : "Couldn’t verify secure access"}
           </p>
           <p className="max-w-[460px] text-[13px] leading-[1.6] text-[var(--text-secondary)]">
             {accessStatus === "checking"
               ? "Checking this computer’s connection service."
               : accessStatus === "starting"
                 ? starting.detail
-                : accessStatus === "upgrade-required"
-                  ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
-                  : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
+                : accessStatus === "stalled"
+                  ? stalled.detail
+                  : accessStatus === "upgrade-required"
+                    ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
+                    : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus !== "checking" ? (
             <div className="flex flex-wrap justify-center gap-2.5">

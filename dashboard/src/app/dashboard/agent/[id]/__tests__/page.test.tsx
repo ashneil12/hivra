@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { SURFACE_NATIVE_START_LIMIT_MS } from "@/components/hivra/useSurfaceBootstrap";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
@@ -965,7 +966,7 @@ describe("AgentPage", () => {
       clock = jest.spyOn(Date, "now").mockReturnValue(now + 10_000);
     }
 
-    it("re-bootstraps a loaded terminal in place when the gateway's bootId changes", async () => {
+    it("signs a loaded terminal in again, in a new frame, when the gateway's bootId changes", async () => {
       render(<AgentPage />);
       fireEvent.click(await findSurfaceButton(/claude code session/i));
       const frame = await screen.findByTitle("Claude Code session");
@@ -977,16 +978,21 @@ describe("AgentPage", () => {
 
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
       const form = requestSubmit.mock.instances[1] as HTMLFormElement;
-      expect(form).toHaveAttribute("target", frame.getAttribute("name"));
       expect(form.querySelector('input[name="destination"]')).toHaveValue("/terminal/");
-      expect(screen.getByTitle("Claude Code session")).toBe(frame);
-      expect(frame).not.toHaveAttribute("src");
+      // A POST into the loaded ttyd frame would add a history entry, so Back
+      // would reload the terminal (a new shell) instead of leaving the page.
+      const next = screen.getByTitle("Claude Code session");
+      expect(next).not.toBe(frame);
+      expect(frame.isConnected).toBe(false);
+      expect(next).toHaveAttribute("name", frame.getAttribute("name"));
+      expect(form).toHaveAttribute("target", next.getAttribute("name"));
+      expect(next).not.toHaveAttribute("src");
     });
 
     it("leaves a loaded terminal alone while the bootId is unchanged", async () => {
       render(<AgentPage />);
       fireEvent.click(await findSurfaceButton(/claude code session/i));
-      await screen.findByTitle("Claude Code session");
+      const frame = await screen.findByTitle("Claude Code session");
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
       const probes = (global.fetch as jest.Mock).mock.calls.length;
 
@@ -994,6 +1000,7 @@ describe("AgentPage", () => {
       await act(async () => { fireEvent.focus(window); });
       await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBe(probes + 1));
       expect(requestSubmit).toHaveBeenCalledTimes(1);
+      expect(screen.getByTitle("Claude Code session")).toBe(frame);
     });
 
     it("keeps a legacy gateway without bootId exactly as before", async () => {
@@ -1027,6 +1034,7 @@ describe("AgentPage", () => {
       fireEvent.click(getSurfaceButton(/claude code session/i));
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
       expect(requestSubmit.mock.instances[2]).toHaveAttribute("target", agentFrame.getAttribute("name"));
+      expect(screen.getByTitle("Claude Code session")).not.toBe(agentFrame);
     });
 
     it("shows a DeepSeek start state instead of its 503 until the native interface is ready", async () => {
@@ -1050,6 +1058,30 @@ describe("AgentPage", () => {
       const frame = await screen.findByTitle("DeepSeek Harness · dashboard", undefined, { timeout: 4_000 });
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
       expect(frame.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/");
+    });
+
+    it("says DeepSeek hasn't started, with Try again, once its start runs past the limit", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "deepseek-harness", name: "NATIVE_AGENT", status: "running",
+        cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", bootId, nativeSurface: "/", nativeReady: false }),
+      }));
+      render(<AgentPage />);
+      expect(await screen.findByText("Starting DeepSeek…")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+
+      const now = Date.now();
+      clock = jest.spyOn(Date, "now").mockReturnValue(now + SURFACE_NATIVE_START_LIMIT_MS + 1_000);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+
+      expect(await screen.findByText("DeepSeek hasn’t started")).toBeInTheDocument();
+      expect(screen.queryByText("Starting DeepSeek…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open Manage" })).toBeInTheDocument();
+      expect(requestSubmit).not.toHaveBeenCalled();
     });
   });
 

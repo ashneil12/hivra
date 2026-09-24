@@ -165,10 +165,13 @@ function AuthenticatedSurface({
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const newTabFormRef = useRef<HTMLFormElement>(null);
   // Probes the runtime before any bearer is sent, bootstraps this frame, and
-  // re-bootstraps it when the computer's gateway restarts (see the hook).
+  // signs in again, into a new frame keyed on the generation, when the
+  // computer's gateway restarts (see the hook).
   const {
     status: accessStatus,
+    generation,
     starting,
+    stalled,
     origin: surfaceOrigin,
     bootstrapUrl,
     destination,
@@ -246,23 +249,25 @@ function AuthenticatedSurface({
         </div>
       ) : null}
       {accessStatus === "ready" ? (
-        <iframe name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
+        <iframe key={generation} name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
       ) : (
         <div className={styles.statusPanel} role="status">
           {accessStatus === "checking" || accessStatus === "starting" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
           <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 8 }}>
-            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "starting" ? starting.title : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
+            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "starting" ? starting.title : accessStatus === "stalled" ? stalled.title : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
           </div>
           <p style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
             {accessStatus === "checking"
               ? "Checking this computer’s connection service."
               : accessStatus === "starting"
                 ? starting.detail
-                : accessStatus === "upgrade-required"
-                  ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
-                  : missingToken
-                    ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update & restart, then try Terminal or Files again. Your computer and its files are unchanged."
-                    : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
+                : accessStatus === "stalled"
+                  ? stalled.detail
+                  : accessStatus === "upgrade-required"
+                    ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
+                    : missingToken
+                      ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update & restart, then try Terminal or Files again. Your computer and its files are unchanged."
+                      : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus === "upgrade-required" ? (
             <p style={{ fontSize: 13, maxWidth: 460, margin: "12px auto 0", lineHeight: 1.6 }}>
