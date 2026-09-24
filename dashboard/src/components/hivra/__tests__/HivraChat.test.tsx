@@ -678,6 +678,49 @@ describe("HivraChat", () => {
     expect(screen.getByLabelText("Response failed")).toBeInTheDocument();
   });
 
+  // While the computer swaps its agent CLI for the vetted version it refuses a
+  // new run with 503 agent_updating for a few seconds.
+  describe("while the computer is updating its agent CLI", () => {
+    const updating = () => ({ ok: false, status: 503, body: null, json: async () => ({ code: "agent_updating", error: "The agent is being updated to a new version. Send your message again in a minute." }) });
+    afterEach(() => jest.useRealTimers());
+
+    it("keeps the message, says why it waits, and sends it again with the same run", async () => {
+      jest.useFakeTimers();
+      window.localStorage.setItem("hivra:first-welcome:updatingcodex", "1");
+      const read = jest.fn().mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true },
+        { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Sent after the update." } },
+        { type: "turn.completed", usage: {} }, { type: "_done", code: 0 })).mockResolvedValue({ done: true, value: undefined });
+      const fetchMock = jest.fn().mockResolvedValueOnce(updating()).mockResolvedValueOnce(updating()).mockResolvedValue(chatResponse(read));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="updating-codex" agentName="Atlas" agentKind="codex" />);
+      await sendMessage("begin");
+
+      expect(await screen.findByLabelText("Waiting for the agent update")).toHaveTextContent("Your computer is updating Codex to a new version. Your message will send in a moment.");
+      expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+      await act(async () => { jest.advanceTimersByTime(3000); });
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(await screen.findByText(/Sent after the update\./)).toBeInTheDocument();
+      expect(screen.queryByLabelText("Waiting for the agent update")).not.toBeInTheDocument();
+      const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+      expect(bodies).toHaveLength(3);
+      expect(new Set(bodies.map((body) => body.runId)).size).toBe(1);
+      expect(bodies.every((body) => body.message === "begin")).toBe(true);
+    });
+
+    it("gives up with the computer's own reason after about two minutes", async () => {
+      jest.useFakeTimers();
+      window.localStorage.setItem("hivra:first-welcome:updatingclaude", "1");
+      const fetchMock = jest.fn().mockResolvedValue(updating());
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="updating-claude" agentName="Atlas" agentKind="claude" />);
+      await sendMessage("begin");
+      expect(await screen.findByLabelText("Waiting for the agent update")).toHaveTextContent("updating Claude Code");
+      for (let i = 0; i < 12; i += 1) await act(async () => { jest.advanceTimersByTime(20_000); });
+      expect(await screen.findByText(/being updated to a new version/)).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(11);
+    });
+  });
+
   it("judges an agent with no final event of its own by how its process exited", async () => {
     await sendWithoutWelcome("generic", [
       { type: "_stderr", text: "warning: deprecated flag, error-prone\n" },

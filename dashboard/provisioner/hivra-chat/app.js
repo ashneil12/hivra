@@ -29,6 +29,10 @@ const MAX_STORED_CHARS = 1500000;
 // Starting a run is idempotent per runId, so a start whose connection failed is
 // repeated: it attaches to the run if the first request did reach the computer.
 const START_DELAYS_MS = [0, 1000, 3000];
+// While the computer swaps its agent CLI for the vetted version it refuses a new
+// run with 503 agent_updating for a few seconds: keep the message and send it
+// again, for about two minutes.
+const UPDATING_DELAYS_MS = [3000, 5000, 5000, 10000, 10000, 15000, 15000, 20000, 20000, 20000];
 // Re-attach attempts in a row that bring nothing new from the run's log. After
 // that the page waits for focus, the network coming back, or the periodic check.
 const RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000];
@@ -549,7 +553,9 @@ function applyEvent(run, ev) {
       if (ev.text) appendText(turn, String(ev.text));
       return;
     case "_stderr": {
-      const text = String(ev.text || "").trim();
+      let raw = String(ev.text || "");
+      if (agent === AGENTS.codex) raw = withoutCodexTracing(raw);
+      const text = raw.trim();
       if (text && agent.warn.test(text)) addWarning(turn, text);
       return;
     }
@@ -863,11 +869,11 @@ function failStart(run, reason, text, status) {
   endRun(run, status || "ready");
 }
 
-async function startFailure(resp) {
+async function startFailure(resp, preread) {
   if (resp.status === 401) return SIGNED_OUT_SEND;
   let detail = "";
   try {
-    const raw = (await resp.text()).trim();
+    const raw = (preread != null ? preread : await resp.text()).trim();
     try {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.error === "string") detail = parsed.error;
@@ -1015,6 +1021,27 @@ async function follow(run) {
   suspendRun(run, OFFLINE, "offline");
 }
 
+// Codex logs its own diagnostics to stderr through tracing (a time, a level
+// padded to five, any spans, then the Rust module path), for example a skill it
+// could not load. They are not part of the reply; a problem the owner must act
+// on (sign-in, a usage limit, a model) arrives as an error event instead. The
+// dashboard's chat filters the same lines (src/lib/hivra/agent-adapters.ts).
+const CODEX_TRACING_LINE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s/;
+const CODEX_UNTIMED_TRACING_LINE = /^(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+(?:[^\s:{}]+(?:\{[^}]*\})?:)*\s*[A-Za-z_]\w*(?:::\w+)+:(?:\s|$)/;
+function withoutCodexTracing(text) {
+  const kept = [];
+  let inEvent = false;
+  for (const line of text.split(/\r?\n/)) {
+    const plain = line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+    if (CODEX_TRACING_LINE.test(plain) || CODEX_UNTIMED_TRACING_LINE.test(plain)) { inEvent = true; continue; }
+    // A tracing event's message can run on over indented or blank lines.
+    if (inEvent && (!plain.trim() || /^\s/.test(plain))) continue;
+    inEvent = false;
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
 async function send(raw) {
   if (active || sending || access !== "open") return;
   const text = String(raw != null ? raw : input.value).trim();
@@ -1073,12 +1100,39 @@ async function send(raw) {
       console.warn("hivra-chat: sending the message failed (attempt " + (attempt + 1) + ")", e);
     }
   }
+  // A body read here is handed to startFailure, since it can be read only once.
+  let preread = null;
+  for (let wait = 0; resp && resp.status === 503 && wait < UPDATING_DELAYS_MS.length && active === run; wait++) {
+    let raw = "";
+    try { raw = await resp.text(); } catch { /* no body */ }
+    let detail = null;
+    try { detail = JSON.parse(raw); } catch { /* not JSON */ }
+    if (!detail || detail.code !== "agent_updating") { preread = raw; break; }
+    setStatus("Your computer is updating " + agent.name + " to a new version. Your message will send in a moment.");
+    await sleep(UPDATING_DELAYS_MS[wait]);
+    if (active !== run) return;
+    try {
+      run.abort = newAbort();
+      run.heardAt = Date.now();
+      resp = await fetch("/api/chat", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: run.abort ? run.abort.signal : undefined,
+      });
+    } catch (e) {
+      console.warn("hivra-chat: sending the message after the agent update failed", e);
+      resp = null;
+    }
+    if (resp && resp.status !== 503) setStatus("thinking…");
+  }
   if (active !== run) return;
   // No answer at all: the message may or may not have reached the computer.
   // Keep the turn open; picking it up later finds the run or asks to send again.
   if (!resp) return suspendRun(run, UNSENT, "offline");
   if (!resp.ok) {
-    const reason = await startFailure(resp);
+    const reason = await startFailure(resp, preread);
     if (resp.status === 401) {
       failStart(run, reason, text, "signed out");
       return signedOut();

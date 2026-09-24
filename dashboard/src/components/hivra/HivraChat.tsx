@@ -230,6 +230,9 @@ interface ChatMessage {
   /** The first-contact welcome's reply, whose prompt never shows: a failed
    * one offers Retry, one that never reached the computer starts again. */
   welcome?: boolean;
+  /** Why a reply that has not started yet is waiting (the computer is moving
+   * its agent CLI to a new version); cleared once the computer takes it. */
+  pending?: string;
 }
 
 interface Session {
@@ -410,6 +413,18 @@ type RunStreamResult =
  | { kind: "superseded" };
 type RunFollowResult = RunStreamResult | { kind: "missing" } | { kind: "unreachable" };
 const RUN_RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 15000];
+// While the computer swaps its agent CLI for the vetted version it answers a new
+// run with 503 agent_updating for a few seconds. Keep the message and send it
+// again, for about two minutes before giving up.
+const AGENT_UPDATING_RETRY_MS = [3000, 5000, 5000, 10000, 10000, 15000, 15000, 20000, 20000, 20000];
+function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = window.setTimeout(done, ms);
+    function done() { window.clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); }
+    signal.addEventListener("abort", done);
+  });
+}
 
 /** A session's in-flight turn, as registered for Stop and re-attach. */
 interface TurnHandle {
@@ -1149,6 +1164,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const driveTurn = useCallback(
  async (sessionId: string, runId: string, turn: TurnHandle, post: (signal: AbortSignal) => Promise<Response>, onAccepted?: () => void): Promise<TurnEnd> => {
  let resp: Response;
+ let updatingDetail: { error?: unknown } | null = null;
+ for (let attempt = 0; ; attempt += 1) {
  try {
  resp = await post(turn.controller.signal);
  } catch (e) {
@@ -1164,10 +1181,23 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return { kind: "settled" };
  }
  if (!turn.isCurrent()) return { kind: "superseded" };
+ if (resp.status !== 503) break;
+ // The computer is moving its agent CLI to a new version: the message waits
+ // (the same runId, so a retry can never start it twice) and goes out again.
+ const detail = (await resp.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (detail?.code !== "agent_updating" || attempt >= AGENT_UPDATING_RETRY_MS.length) { updatingDetail = detail; break; }
+ const cli = agentKind === "codex" ? "Codex" : "Claude Code";
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, pending: `Your computer is updating ${cli} to a new version. Your message will send in a moment.` }));
+ await waitUnlessAborted(AGENT_UPDATING_RETRY_MS[attempt], turn.controller.signal);
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (turn.controller.signal.aborted) return { kind: "aborted" };
+ }
+ updateRunMessage(sessionId, runId, (m) => (m.pending ? { ...m, pending: undefined } : m));
  if (!resp.ok || !resp.body) {
- // 409 (this conversation is still working) and 429 (too many runs) carry a
- // reason worth showing as-is.
- const detail = resp.status === 409 || resp.status === 429 ? (await resp.json().catch(() => null)) as { error?: unknown } | null : null;
+ // 409 (this conversation is still working), 429 (too many runs) and a 503
+ // whose update outlasted the wait carry a reason worth showing as-is.
+ const detail = updatingDetail ?? (resp.status === 409 || resp.status === 429 ? (await resp.json().catch(() => null)) as { error?: unknown } | null : null);
  if (!turn.isCurrent()) return { kind: "superseded" };
  return { kind: "refused", status: resp.status, reason: typeof detail?.error === "string" ? detail.error : "" };
  }
@@ -1185,7 +1215,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
  return { kind: "settled" };
  },
- [finalizeRun, followRun, readRunStream, updateRunMessage],
+ [agentKind, finalizeRun, followRun, readRunStream, updateRunMessage],
  );
 
  const send = useCallback(
@@ -1890,6 +1920,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  )}
  </div>
  {m.role === "assistant" ? <ToolHistory message={m} /> : null}
+ {m.role === "assistant" && m.streaming && m.pending ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label="Waiting for the agent update">{m.pending}</div>
+ ) : null}
  {m.role === "assistant" && !m.streaming && m.outcome === "unknown" ? (
  <div className="hivra-chat-turn-state" role="status" aria-label="Finished while you were away">
  {historySessionId ? "Finished while you were away — open the history to see the full reply" : "Finished while you were away"}

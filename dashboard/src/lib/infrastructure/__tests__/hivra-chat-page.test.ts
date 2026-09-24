@@ -595,6 +595,51 @@ describe("the computer's own chat page", () => {
     expect(page.errors).toEqual([]);
   });
 
+  it("holds the message while the computer updates its agent CLI, then sends it with the same run id", async () => {
+    const live = new LiveStream();
+    let attempts = 0;
+    const computer = new FakeComputer({ agentKind: "codex", model: null }).on("POST", "/api/chat", () => {
+      attempts += 1;
+      if (attempts === 1) return json(503, { code: "agent_updating", error: "The agent is being updated to a new version. Send your message again in a minute." });
+      return live.response();
+    });
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Summarise notes.md");
+    await waitFor(() => page.status() === "Your computer is updating Codex to a new version. Your message will send in a moment.", "the update note");
+    expect(page.notes().filter(Boolean)).toEqual([]);
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 2, "the resend", 8000);
+    const [first, second] = computer.callsTo("POST", "/api/chat");
+    expect(second.body).toEqual(first.body);
+    expect(page.status()).toBe("thinking…");
+    live.push({ type: "_run", runId: RUN_1, detached: true },
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Done." } },
+      { type: "turn.completed", usage: {} }, { type: "_done", code: 0 });
+    live.end();
+    await waitFor(() => page.status() === "ready", "the reply");
+    expect(page.replies()).toEqual(["Done."]);
+    expect(page.errors).toEqual([]);
+  }, 20_000);
+
+  it("keeps Codex's own tracing diagnostics out of the reply, but not its real errors", async () => {
+    const live = new LiveStream();
+    const computer = new FakeComputer({ agentKind: "codex", model: null }).on("POST", "/api/chat", () => live.response());
+    const page = openPage(computer, [RUN_1]);
+    await page.opened();
+    page.send("Hello");
+    await waitFor(() => computer.callsTo("POST", "/api/chat").length === 1, "the start");
+    live.push({ type: "_run", runId: RUN_1, detached: true },
+      { type: "_stderr", text: "2026-09-24T17:59:18.578959Z ERROR codex_core::session::session: failed to load skill /home/owner/.agents/skills/x/SKILL.md: missing YAML frontmatter\n    delimited by ---\n" },
+      { type: "_stderr", text: "\u001b[2m2026-09-24T17:59:26.449919Z\u001b[0m \u001b[33m WARN\u001b[0m codex.exec{otel.kind=\"internal\"}: codex_core::mcp: server did not start\n" },
+      { type: "_stderr", text: "Error loading config.toml: invalid type\n" },
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Hi." } },
+      { type: "turn.completed", usage: {} }, { type: "_done", code: 0 });
+    live.end();
+    await waitFor(() => page.status() === "ready", "the reply");
+    expect(page.doc.querySelector(".msg.assistant")!.textContent).not.toMatch(/failed to load skill|delimited by|server did not start/);
+    expect(page.doc.querySelector(".msg.assistant")!.textContent).toContain("Error loading config.toml: invalid type");
+  });
+
   it("keeps a start with no answer open, then asks to send again once the computer says it never arrived", async () => {
     const computer = new FakeComputer().on("POST", "/api/chat", () => { throw new TypeError("Failed to fetch"); });
     const page = openPage(computer, [RUN_1]);
