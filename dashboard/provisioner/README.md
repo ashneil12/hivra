@@ -283,7 +283,34 @@ update them yet.
   redirect to a clean local URL. Terminal, browser, and native dashboard links
   never put the bearer in a URL. Older connection services without this
   capability require an explicit runtime update before those surfaces open;
-  header-authenticated API access remains unchanged.
+  header-authenticated API access remains unchanged. Surface sign-ins
+  survive a gateway restart (runtime update, crash, reboot): each one is
+  saved, before its cookie is handed out, to `~/.hivra/surface-sessions.json`
+  as a SHA-256 of the session secret plus its expiry (never the cookie, never
+  the token). The file is owner-only `0600`, replaced atomically (temp file,
+  fsync, rename, directory fsync), never read or written through a symlink,
+  only used in a non-group/world-writable `~/.hivra` owned by the gateway
+  user, pruned of expired entries on every load and save, and bounded to 1024
+  sign-ins (the one closest to expiry is revoked first, and that revocation is
+  saved too). It is bound to an HMAC of the API token, so a token rotation
+  signs every surface out. A malformed, duplicated or over-long entry makes the
+  whole file untrusted. The file browser cannot open it. `/api/meta` carries
+  the store's random epoch as `bootId` (served `no-store`): it changes only when
+  sign-ins were lost (no store yet, a rotated token, an untrusted or corrupt
+  file, or a store that cannot be kept current, which keeps sign-ins for that
+  process only and moves it to a new epoch), so an ordinary restart keeps both
+  the cookie and the `bootId`. While a surface is on screen the dashboard
+  re-reads `/api/meta` on focus, `online`, visibility and every 30 s, and when
+  `bootId` changes, appears or disappears it posts the bootstrap into a newly
+  mounted frame (never into the loaded one, which would add a browser history
+  entry). Gateways that never advertised a `bootId` keep sign-ins in memory
+  only and are never reloaded. A
+  DeepSeek surface for the native root waits for `nativeReady: true` before
+  it bootstraps, and waits again whenever a loaded one reports it false; the
+  wait ends after 3 minutes (or 20 s of an unreachable gateway) with an
+  honest failure and Try again. `hivra-update-guest-runtime.sh` refuses
+  DeepSeek, so a DeepSeek computer only gets saved sign-ins and `bootId` from a
+  fresh DeepSeek install of a bundle that contains them.
 
 ## Gotchas (do NOT reintroduce these)
 

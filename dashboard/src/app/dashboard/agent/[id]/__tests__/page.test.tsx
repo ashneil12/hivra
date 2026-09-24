@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { SURFACE_NATIVE_START_LIMIT_MS } from "@/components/hivra/useSurfaceBootstrap";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
@@ -817,40 +818,6 @@ describe("AgentPage", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
-  it("signs retained terminals in again, in place, after Manage reports a connection-service restart", async () => {
-    render(<AgentPage />);
-    fireEvent.click(await findSurfaceButton(/claude code session/i));
-    await screen.findByTitle("Claude Code session");
-    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
-    await screen.findByTitle("Claude Code session · 2");
-    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
-    fireEvent.click(getSurfaceButton("Terminal"));
-    await screen.findByTitle("Terminal");
-    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
-    const metaProbes = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
-    expect(metaProbes()).toBe(3);
-
-    // The update restarted the gateway: every cookie those frames hold is dead.
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
-    fireEvent.click(screen.getByRole("button", { name: "Finish connection update" }));
-
-    // Each retained surface probes again and re-submits its own bootstrap form,
-    // while hidden, before the owner returns to it.
-    await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(6));
-    expect(metaProbes()).toBe(6);
-    const targets = requestSubmit.mock.instances.map((form) => (form as HTMLFormElement).getAttribute("target"));
-    expect(new Set(targets.slice(3))).toEqual(new Set(targets.slice(0, 3)));
-
-    // Nothing else was torn down: both agent sessions are still there, and the
-    // one the owner left selected is the one shown.
-    fireEvent.click(getSurfaceButton(/claude code session/i));
-    expect(screen.getByRole("tab", { name: "Session 2" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByTitle("Claude Code session · 2")).toBeVisible();
-    expect(screen.getByTitle("Claude Code session")).toBeInTheDocument();
-    expect(requestSubmit).toHaveBeenCalledTimes(6);
-  });
-
   it("opens parallel terminal sessions that each keep their own shell", async () => {
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
@@ -1013,6 +980,179 @@ describe("AgentPage", () => {
     expect(nextFrame).not.toBe(oldFrame);
     expect(nextFrame.parentElement?.querySelector('input[name="token"]')).toHaveValue("rotated-token");
     expect(requestSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  // bootId is the gateway's sign-in epoch: it stays the same across an
+  // ordinary restart (sign-ins are saved) and changes when they were lost.
+  describe("after the computer's gateway restarts", () => {
+    const BOOT_A = "00000000400080000000000000000001";
+    const BOOT_B = "00000000400080000000000000000002";
+    let bootId: string | undefined;
+    let clock: jest.SpyInstance | undefined;
+
+    beforeEach(() => {
+      bootId = BOOT_A;
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1", ...(bootId ? { bootId } : {}) }),
+      }));
+    });
+    afterEach(() => clock?.mockRestore());
+
+    // Focus re-checks are throttled to one per couple of seconds.
+    function later() {
+      const now = Date.now();
+      clock = jest.spyOn(Date, "now").mockReturnValue(now + 10_000);
+    }
+
+    it("signs a loaded terminal in again, in a new frame, when the gateway lost its sign-ins (new bootId)", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const frame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+
+      bootId = BOOT_B;
+      later();
+      await act(async () => { fireEvent.focus(window); });
+
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      const form = requestSubmit.mock.instances[1] as HTMLFormElement;
+      expect(form.querySelector('input[name="destination"]')).toHaveValue("/terminal/?arg=1");
+      // A POST into the loaded ttyd frame would add a history entry, so Back
+      // would reload the terminal (a new shell) instead of leaving the page.
+      const next = screen.getByTitle("Claude Code session");
+      expect(next).not.toBe(frame);
+      expect(frame.isConnected).toBe(false);
+      expect(next).toHaveAttribute("name", frame.getAttribute("name"));
+      expect(form).toHaveAttribute("target", next.getAttribute("name"));
+      expect(next).not.toHaveAttribute("src");
+    });
+
+    // Manage's in-place update restarts the gateway. Each retained surface
+    // checks again as soon as the owner returns to it, and signs in again only
+    // when the gateway lost its sign-ins; both terminal sessions keep their place.
+    it.each([
+      ["lost its sign-ins (an older gateway that kept them in memory)", BOOT_B, 4],
+      ["kept its sign-ins", BOOT_A, 2],
+    ])("re-checks retained surfaces after a connection-service update whose gateway %s", async (_case, after, submits) => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      const metaProbes = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
+
+      fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+      bootId = after;
+      later();
+      fireEvent.click(screen.getByRole("button", { name: "Finish connection update" }));
+      const before = metaProbes();
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await waitFor(() => expect(metaProbes()).toBeGreaterThan(before));
+      clock?.mockReturnValue(Date.now() + 10_000);
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      await waitFor(() => expect(metaProbes()).toBeGreaterThan(before + 1));
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(submits));
+      expect(await screen.findByTitle("Claude Code session")).toBeVisible();
+      expect(screen.getByTitle("Terminal")).toBeInTheDocument();
+    });
+
+    it("leaves a loaded terminal alone after a restart that kept its sign-ins (same bootId)", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const frame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      const probes = (global.fetch as jest.Mock).mock.calls.length;
+
+      later();
+      await act(async () => { fireEvent.focus(window); });
+      await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBe(probes + 1));
+      expect(requestSubmit).toHaveBeenCalledTimes(1);
+      expect(screen.getByTitle("Claude Code session")).toBe(frame);
+    });
+
+    it("keeps a legacy gateway without bootId exactly as before", async () => {
+      bootId = undefined;
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      const probes = (global.fetch as jest.Mock).mock.calls.length;
+
+      later();
+      await act(async () => { fireEvent.focus(window); });
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBeGreaterThan(probes));
+      expect(requestSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-checks a retained terminal when its tab is shown again", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const agentFrame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+
+      // Sign-ins were lost while the agent session was out of view; hidden
+      // frames do not poll, so nothing happens until it is shown again.
+      bootId = BOOT_B;
+      later();
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
+      expect(requestSubmit.mock.instances[2]).toHaveAttribute("target", agentFrame.getAttribute("name"));
+      expect(screen.getByTitle("Claude Code session")).not.toBe(agentFrame);
+    });
+
+    it("shows a DeepSeek start state instead of its 503 until the native interface is ready", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "deepseek-harness", name: "NATIVE_AGENT", status: "running",
+        cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      let nativeReady = false;
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", bootId, nativeSurface: "/", nativeReady }),
+      }));
+      render(<AgentPage />);
+
+      expect(await screen.findByText("Starting DeepSeek…")).toBeInTheDocument();
+      expect(document.querySelector('iframe[title="DeepSeek Harness · dashboard"], form')).toBeNull();
+      expect(requestSubmit).not.toHaveBeenCalled();
+      expect(document.documentElement.outerHTML).not.toContain("box-token");
+
+      nativeReady = true;
+      const frame = await screen.findByTitle("DeepSeek Harness · dashboard", undefined, { timeout: 4_000 });
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(frame.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/");
+    });
+
+    it("says DeepSeek hasn't started, with Try again, once its start runs past the limit", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "deepseek-harness", name: "NATIVE_AGENT", status: "running",
+        cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", bootId, nativeSurface: "/", nativeReady: false }),
+      }));
+      render(<AgentPage />);
+      expect(await screen.findByText("Starting DeepSeek…")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+
+      const now = Date.now();
+      clock = jest.spyOn(Date, "now").mockReturnValue(now + SURFACE_NATIVE_START_LIMIT_MS + 1_000);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+
+      expect(await screen.findByText("DeepSeek hasn’t started")).toBeInTheDocument();
+      expect(screen.queryByText("Starting DeepSeek…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open Manage" })).toBeInTheDocument();
+      expect(requestSubmit).not.toHaveBeenCalled();
+    });
   });
 
   it.each([

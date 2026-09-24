@@ -24,6 +24,7 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
+import { useSurfaceBootstrap } from "@/components/hivra/useSurfaceBootstrap";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
 import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
@@ -139,11 +140,12 @@ function CanonicalizeUnavailableTab({
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
 
-// The computer's gateway keeps surface sign-ins only in memory, so restarting
-// it (an in-place connection-service update) leaves every open terminal, browser
-// and dashboard frame with a dead cookie and each reconnect with a 401. The page
-// bumps this when Manage reports such a restart; every mounted surface then
-// probes and signs in again, in its own frame, without losing its place.
+// Bumped when Manage reports a connection-service restart (an in-place update).
+// Every mounted surface then re-checks the gateway at once instead of at its
+// next focus or 30 s check: current gateways keep sign-ins across the restart
+// (same bootId, nothing reloads), while a computer moving off an older gateway
+// that kept them only in memory gets a new bootId and signs in again in its
+// own frame (see useSurfaceBootstrap).
 const SurfaceSignInEpoch = createContext(0);
 
 function AuthenticatedSurface({
@@ -173,33 +175,22 @@ function AuthenticatedSurface({
 }) {
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const signInEpoch = useContext(SurfaceSignInEpoch);
-  const formRef = useRef<HTMLFormElement>(null);
   const newTabFormRef = useRef<HTMLFormElement>(null);
-  const [probeVersion, setProbeVersion] = useState(0);
-  const [access, setAccess] = useState<{
-    key: string;
-    token: string;
-    status: "ready" | "upgrade-required" | "unavailable";
-  } | null>(null);
-  let bootstrapUrl = "";
-  let metadataUrl = "";
-  let destination = "";
-  let surfaceOrigin = "";
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
-      /[\s;*'"]/.test(parsed.origin)
-    ) {
-      throw new Error("A clean HTTPS surface endpoint is required.");
-    }
-    surfaceOrigin = parsed.origin;
-    bootstrapUrl = `${parsed.origin}/auth/bootstrap`;
-    metadataUrl = `${parsed.origin}/api/meta`;
-    destination = `${parsed.pathname}${parsed.search}`;
-  } catch {
-    // A malformed stored surface URL must fail closed instead of navigating.
-  }
+  // Probes the runtime before any bearer is sent, bootstraps this frame, and
+  // signs in again, into a new frame keyed on the generation, when the
+  // computer's gateway lost its sign-ins (see the hook).
+  const {
+    status: accessStatus,
+    generation,
+    starting,
+    stalled,
+    origin: surfaceOrigin,
+    bootstrapUrl,
+    destination,
+    formRef,
+    retry,
+  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch });
+  const missingToken = !token;
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
   // validated guest origin used for bootstrap, never a wildcard or legacy
@@ -207,49 +198,12 @@ function AuthenticatedSurface({
   const permissionsPolicy = surfaceOrigin && permissions?.length
     ? permissions.map((feature) => `${feature} ${surfaceOrigin}`).join("; ")
     : undefined;
-  const probeKey = `${metadataUrl}:${probeVersion}:${signInEpoch}`;
-  const missingToken = !token;
-  const accessStatus = !metadataUrl || missingToken
-    ? "unavailable"
-    : access?.key === probeKey && access.token === token ? access.status : "checking";
-
+  // Each sign-in of this surface (a new generation) is a verified runtime the
+  // host may now talk to with the bearer, e.g. to list terminal sessions.
   useEffect(() => {
-    if (!metadataUrl || !token) return;
-    const controller = new AbortController();
-    let cancelled = false;
-    const timeout = window.setTimeout(() => controller.abort(), 10_000);
-    // Provider ownership says nothing about the installed gateway protocol.
-    // Probe nonsecret runtime metadata before sending any bearer. An old or
-    // unreachable runtime must never fall back to putting it in a URL.
-    void fetch(metadataUrl, { cache: "no-store", credentials: "omit", signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Runtime metadata is unavailable.");
-        const metadata: unknown = await response.json();
-        if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-          throw new Error("Runtime metadata is invalid.");
-        }
-        const record = metadata as Record<string, unknown>;
-        const status = record.surfaceAuth === "post-cookie-v1"
-          ? "ready"
-          : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
-        if (!cancelled) setAccess({ key: probeKey, token, status });
-      })
-      .catch(() => {
-        if (!cancelled) setAccess({ key: probeKey, token, status: "unavailable" });
-      })
-      .finally(() => window.clearTimeout(timeout));
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [metadataUrl, probeKey, token]);
-
-  useEffect(() => {
-    if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
-    formRef.current?.requestSubmit();
+    if (accessStatus !== "ready" || generation < 1) return;
     onAccessReady?.();
-  }, [accessStatus, bootstrapUrl, destination, token, onAccessReady]);
+  }, [accessStatus, generation, onAccessReady]);
 
   const openInNewTab = useCallback(() => {
     const form = newTabFormRef.current;
@@ -313,21 +267,25 @@ function AuthenticatedSurface({
         </div>
       ) : null}
       {accessStatus === "ready" ? (
-        <iframe name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
+        <iframe key={generation} name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
       ) : (
         <div className={styles.statusPanel} role="status">
-          {accessStatus === "checking" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
+          {accessStatus === "checking" || accessStatus === "starting" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
           <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 8 }}>
-            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
+            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "starting" ? starting.title : accessStatus === "stalled" ? stalled.title : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
           </div>
           <p style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
             {accessStatus === "checking"
               ? "Checking this computer’s connection service."
-              : accessStatus === "upgrade-required"
-                ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
-                : missingToken
-                  ? "Secure access credentials for this computer aren’t available in the dashboard, so this view can’t open here. Your computer and its files are unchanged. Contact support to restore access."
-                  : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
+              : accessStatus === "starting"
+                ? starting.detail
+                : accessStatus === "stalled"
+                  ? stalled.detail
+                  : accessStatus === "upgrade-required"
+                    ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
+                    : missingToken
+                      ? "Secure access credentials for this computer aren’t available in the dashboard, so this view can’t open here. Your computer and its files are unchanged. Contact support to restore access."
+                      : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus === "upgrade-required" ? (
             <p style={{ fontSize: 13, maxWidth: 460, margin: "12px auto 0", lineHeight: 1.6 }}>
@@ -339,9 +297,11 @@ function AuthenticatedSurface({
               <button type="button" onClick={onManage} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
                 Open Manage
               </button>
-              <button type="button" onClick={() => setProbeVersion((version) => version + 1)} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
-                {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
-              </button>
+              {accessStatus === "starting" ? null : (
+                <button type="button" onClick={retry} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
+                  {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
+                </button>
+              )}
             </div>
           ) : null}
         </div>

@@ -7,7 +7,9 @@ const path = require('node:path');
 const SECRET_RE = /(\.credentials\.(?:json|ya?ml)|(?:^|\/)\.env(?:\.|$)|browser\.env|auth\.json|api-token|llm-provider\.json|\/\.ssh(?:\/|$)|token|secret|\.pem$|\.key$)/i;
 function protectedPath(filename) {
   return SECRET_RE.test(filename) || /(?:^|\/)\.dsh(?:\/|$)/.test(filename)
-    || /(?:^|\/)\.hivra\/deepseek(?:\/|$)/.test(filename);
+    || /(?:^|\/)\.hivra\/deepseek(?:\/|$)/.test(filename)
+    // The gateway's saved surface sign-ins (and its temp files while saving).
+    || /(?:^|\/)\.hivra\/\.?surface-sessions\./.test(filename);
 }
 function denied() { return Object.assign(new Error('file access denied'), { code: 'HIVRA_FILE_DENIED' }); }
 
