@@ -4,6 +4,7 @@
 // Upstream login authority never crosses this module's private closure.
 const http = require('node:http');
 const { createHash } = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 
 const REQUEST_HEADERS = ['accept', 'accept-language', 'accept-encoding', 'content-type', 'content-length', 'range'];
 const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-encoding', 'content-disposition', 'content-range', 'accept-ranges'];
@@ -80,6 +81,9 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
   // Bumped whenever the cookie changes, so a 401 answered to a request sent
   // with an older cookie cannot discard fresher authority.
   let cookieEpoch = 0;
+  // Retry backoff runs on the monotonic clock: a guest wall clock stepped
+  // backwards (NTP, a restored RTC) must not postpone the next attempt by the
+  // size of the step. Cookie lifetimes stay on the wall clock upstream uses.
   let renewNotBefore = 0;
   let generation = 0;
   let closed = false;
@@ -117,7 +121,7 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
   }
 
   function renewalDue(now) {
-    if (closed || exchanging || launchToken === null || now < renewNotBefore) return false;
+    if (closed || exchanging || launchToken === null || performance.now() < renewNotBefore) return false;
     if (cookie === null) return true;
     // Upstream cookies default to 30 days (minimum one). Renew inside the last
     // day, or the last half of a shorter lifetime, so readiness never lapses.
@@ -262,7 +266,7 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
       diagnostic('renewal_refused');
       return false;
     }
-    renewNotBefore = Date.now() + renewRetryMs;
+    renewNotBefore = performance.now() + renewRetryMs;
     diagnostic('renewal_failed');
     return false;
   }

@@ -301,6 +301,22 @@ test('the operator clock-skew check sees renewed, then one 503 with upstream_una
   f.assertDiagnosticsSecretFree();
 });
 
+test('a renewal retry is not postponed when the guest clock steps backwards', async t => {
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const f = await fixture(t, { lifetime: 30 * DAY, broker: { renewRetryMs: 50 } }); await f.launch();
+  t.mock.timers.setTime(start + 29 * DAY + 12 * HOUR);
+  await f.until(() => f.diagnostics.includes('renewed'));
+  f.failExchanges('drop', 1); f.rejectNext();
+  assert.equal((await f.request()).status, 503);
+  await f.until(() => f.diagnostics.includes('renewal_failed'));
+  // NTP (or the operator check) steps the clock back while no cookie is held.
+  t.mock.timers.setTime(start + 1000);
+  await f.until(() => f.diagnostics.at(-1) === 'renewed', 'the retry waited for the wall clock to catch up');
+  assert.deepEqual(f.diagnostics, ['renewed', 'upstream_unauthorized', 'renewal_failed', 'renewed']);
+  assert.equal((await f.request()).status, 200);
+});
+
 test('a transient renewal failure retries on the bounded schedule', async t => {
   const f = await fixture(t, { lifetime: 400, broker: { renewRetryMs: 50 } }); await f.launch();
   f.failExchanges('drop', 1);

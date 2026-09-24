@@ -113,7 +113,8 @@ it at the fixed loopback destination: proactively inside the cookie's last day
 401. A 401 clears readiness and stops live native connections; the rejected
 request is never replayed, and a 401 answered to a request that carried an
 already superseded cookie is ignored. A transient exchange failure retries after
-`renewRetryMs`. If upstream refuses its own token, the broker drops it and fails
+`renewRetryMs`, measured on the monotonic clock so a guest clock stepped
+backwards cannot postpone it. If upstream refuses its own token, the broker drops it and fails
 closed at expiry until the lifecycle owner resets it for a new child. Only fixed
 codes (`renewed`, `renewal_failed`, `renewal_refused`, `upstream_unauthorized`)
 reach the gateway journal. A long-running computer keeps its native surface
