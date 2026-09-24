@@ -127,6 +127,8 @@ type PreparingState = {
   connection: SshInfrastructureConnectionDto;
   engine: "proxmox" | "gvisor";
   mode: "prepare" | "repair";
+  /** Handed over from the connection wizard: setup carries on its progress bar. */
+  continuesHostSetup?: boolean;
 };
 
 type HetznerInventoryState = {
@@ -702,14 +704,19 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     await loadConnections();
   }
 
-  /** Close whichever inspection is open and hand over to the review dialog. */
-  function requestGvisorSetup(connection: InfrastructureConnectionDto, mode: "prepare" | "repair") {
+  /** Close whichever inspection is open and hand over to the review dialog.
+   * From the connection wizard, the review carries on the wizard's progress. */
+  function requestGvisorSetup(
+    connection: InfrastructureConnectionDto,
+    mode: "prepare" | "repair",
+    options: { continuesHostSetup?: boolean } = {},
+  ) {
     if (!isSshConnection(connection)) return;
     setWizardOpen(false);
     setEditingConnection(null);
     setWizardPrefill(null);
     setCheckDialog(null);
-    setPreparing({ connection, engine: "gvisor", mode });
+    setPreparing({ connection, engine: "gvisor", mode, continuesHostSetup: options.continuesHostSetup });
   }
 
   /** Close the inspection and open the connection's settings. */
@@ -1311,9 +1318,11 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                 setWizardOpen(false);
                 setEditingConnection(null);
                 setWizardPrefill(null);
-                if (isSshConnection(saved)) setPreparing({ connection: saved, engine: "proxmox", mode: "prepare" });
+                if (isSshConnection(saved)) {
+                  setPreparing({ connection: saved, engine: "proxmox", mode: "prepare", continuesHostSetup: true });
+                }
               }}
-              onGvisorSetupRequested={requestGvisorSetup}
+              onGvisorSetupRequested={(saved, mode) => requestGvisorSetup(saved, mode, { continuesHostSetup: true })}
               onEditRequested={requestConnectionEdit}
               onSetupCommandRequested={openServerEnrollment}
               onGvisorReady={() => void loadConnections()}
@@ -1349,6 +1358,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
               connection={preparing.connection}
               engine={preparing.engine}
               mode={preparing.mode}
+              continuesHostSetup={preparing.continuesHostSetup}
               onClose={() => {
                 setPreparing(null);
                 void loadConnections();

@@ -7,6 +7,7 @@ import { ArrowUpRight } from "lucide-react";
 import StructuredData from "@/components/StructuredData";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 export const metadata: Metadata = {
   title: "Hivra Features: Persistent AI Agent Hosting",
@@ -94,7 +95,7 @@ const quickSummary = [
 ] as const;
 
 export default function FeaturesPage() {
-  return (<PublicSite className={styles.page} data-page="features"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Features" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Platform Features</span><h1>Everything pre-configured. <strong>Nothing to set up.</strong></h1><p>Every feature your agent needs is already running when you sign up. No plugins, no config files, no docs to read first.</p></header><div className={styles.indexHead}><h2>What you get on day one</h2><Link href="/#pricing">See Pricing</Link></div><div className={styles.introGrid}>{quickSummary.map(({ title, body }) => <div key={title}><h2>{title}</h2><p>{body}</p></div>)}</div><p className={styles.directoryAction}><Link href="/get-started?plan=operator" className={styles.button}>Start Deploying <ArrowUpRight size={20} aria-hidden="true" /></Link></p>
+  return (<PublicSite className={styles.page} data-page="features"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Features" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Platform Features</span><h1>Everything pre-configured. <strong>Nothing to set up.</strong></h1><p>Every feature your agent needs is already running when you sign up. No plugins, no config files, no docs to read first.</p></header><div className={styles.indexHead}><h2>What you get on day one</h2><Link href="/#pricing">See Pricing</Link></div><div className={styles.introGrid}>{quickSummary.map(({ title, body }) => <div key={title}><h2>{title}</h2><p>{body}</p></div>)}</div><p className={styles.directoryAction}><Link href={PUBLIC_START_HREF} className={styles.button}>Start Deploying <ArrowUpRight size={20} aria-hidden="true" /></Link></p>
   <div className={styles.directory}>{features.map(({ slug, title, tagline, description }, index) => <Link key={slug} href={`/features/${slug}`}><span>{String(index + 1).padStart(2, "0")}</span><h2>{title}</h2><div><h3>{tagline}</h3><p>{description}</p><span className={styles.readLink}>Learn more<ArrowUpRight size={20} aria-hidden="true" /></span></div></Link>)}</div>
-  <section className={styles.cta}><p>7-day money-back guarantee on all plans</p><Link href="/get-started?plan=operator" className={styles.button}>Deploy My Agent — From $9.99/mo<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "Hivra vs alternatives", href: "/compare" }]} /></main></PublicSite>);
+  <section className={styles.cta}><p>Free to start. Paid plans from $9.99/mo, with a 7-day money-back guarantee.</p><Link href={PUBLIC_START_HREF} className={styles.button}>Deploy My Agent<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "Hivra vs alternatives", href: "/compare" }]} /></main></PublicSite>);
 }

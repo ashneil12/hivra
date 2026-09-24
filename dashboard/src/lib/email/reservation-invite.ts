@@ -11,6 +11,7 @@
 
 import { Resend } from "resend";
 
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 import { SITE_URL } from "@/lib/seo-urls";
 
 interface SendParams {
@@ -29,7 +30,9 @@ interface SendResult {
 }
 
 const SUBJECT = "Your Hivra access is ready";
-const SIGN_UP_URL = `${SITE_URL}/get-started`;
+// Sign-up lands in Launch, which offers Free with its own button. The plan
+// page would start Pro checkout for someone who queued for Free.
+const SIGN_UP_URL = `${SITE_URL}${PUBLIC_START_HREF}`;
 
 function claimUrl(token?: string | null): string {
   return token ? `${SIGN_UP_URL}?invite=${encodeURIComponent(token)}` : SIGN_UP_URL;
