@@ -161,8 +161,9 @@ function openEnrollments(enrollments: ServerEnrollmentDto[], dismissed: Set<stri
   return enrollments.filter((item) => {
     if (dismissed.has(item.id)) return false;
     if (item.phase === "reported") return true;
-    // A download was counted, so a run may be under way on some server.
-    if (item.phase === "issued") return item.scriptFetches > 0 && Date.parse(item.expiresAt) > now;
+    // Every open command: closing the panel doesn't cancel one, so a copied
+    // command can still be run, and a download may mean a run is under way.
+    if (item.phase === "issued") return Date.parse(item.expiresAt) > now;
     // "A server used your setup command…" stays visible for an hour.
     return item.phase === "unsupported" && item.decidedAt !== null && now - Date.parse(item.decidedAt) < 60 * 60_000;
   });
@@ -485,10 +486,11 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     return () => controller.abort();
   }, [loadEnrollments]);
 
-  // While a server may report (a counted download) or an answer is waiting,
-  // keep the list fresh. The dialog polls its own command.
+  // While any command is open (a server may still run it and report) or an
+  // answer is waiting, keep the list fresh, so "Is this your server?" appears
+  // here after the panel was closed. The dialog polls its own command.
   const waitingEnrollment = enrollments.some((item) => item.phase === "reported"
-    || (item.phase === "issued" && item.scriptFetches > 0));
+    || (item.phase === "issued" && Date.parse(item.expiresAt) > enrollmentNow));
   useEffect(() => {
     if (!waitingEnrollment || enrollmentDialogOpen) return;
     const timer = window.setInterval(() => void loadEnrollments(), 5_000);
@@ -1802,9 +1804,13 @@ function ConnectionCheckDialog({
   );
 }
 
-/** Answers still to give: "Is this your server?", a download with no
- * report yet, and recent unsupported results. Each stays until it is answered
- * or expires. */
+function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Answers still to give: "Is this your server?", every open command (used
+ * or not), and recent unsupported results. Each stays until it is answered,
+ * cancelled or expires. */
 function ServerEnrollmentAnswers({
   enrollments,
   uninstallCommand,
@@ -1836,9 +1842,17 @@ function ServerEnrollmentAnswers({
       {enrollments.map((item) => item.phase === "issued" ? (
         <div key={item.id} className={enrollmentStyles.pendingLine} role="status">
           <span>
-            The setup script was downloaded with your command at{" "}
-            {item.lastFetchedAt ? new Date(item.lastFetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "an earlier time"}.
-            {" "}No report yet.
+            {item.scriptFetches > 0 ? (
+              <>
+                The setup script was downloaded with your command at {clockTime(item.lastFetchedAt ?? item.issuedAt)}.
+                {" "}No report yet.
+              </>
+            ) : (
+              <>
+                The setup command you made at {clockTime(item.issuedAt)} hasn&apos;t been used yet. It works until
+                {" "}{clockTime(item.expiresAt)}.
+              </>
+            )}
           </span>
           <button type="button" className={styles.tertiaryButton} onClick={() => onCancel(item.id)}>Cancel this command</button>
         </div>

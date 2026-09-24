@@ -178,10 +178,12 @@ export function ServerEnrollmentCard({
   async function replace() {
     if (!known) return;
     let sshHost: string | null = null;
+    // A switch may sign in at an address the owner chose; a key-only
+    // Replace keeps the connection's address (8.1 step 3).
     if (known.offer === "switch_user" && editingAddress) {
       const parsed = ProxmoxSshHostSchema.safeParse(address);
-      if (!parsed.success) {
-        setAddressError("Enter the server's address, without a URL or port.");
+      if (!parsed.success || parsed.data.includes(":")) {
+        setAddressError("Enter the server's public IPv4 address or hostname, without a URL or port.");
         return;
       }
       sshHost = parsed.data;
@@ -287,9 +289,11 @@ export function ServerEnrollmentCard({
         </div>
       ) : null}
 
-      {!known && needsAddress ? (
+      {(!known && needsAddress) || (known?.offer === "switch_user" && editingAddress) ? (
         <div className={enrollment.addressField}>
-          <label htmlFor={addressId}>{observed ? "Connect to this address instead" : "The server's public IPv4 address"}</label>
+          <label htmlFor={addressId}>
+            {known ? "Sign in at this address instead" : observed ? "Connect to this address instead" : "The server's public IPv4 address"}
+          </label>
           <input
             id={addressId}
             value={address}
@@ -330,6 +334,12 @@ export function ServerEnrollmentCard({
             ? <>Hivra will connect to {observed} on port {report.sshPort ?? 22} as hivra.{" "}
                 <button type="button" className={enrollment.linkButton} onClick={() => setEditingAddress(true)}>Use a different address</button></>
             : <>Hivra will connect to this address on port {report.sshPort ?? 22} as hivra.</>}
+        </p>
+      ) : known?.offer === "switch_user" && !editingAddress ? (
+        <p className={enrollment.fine}>
+          <ServerCog size={13} aria-hidden="true" />{" "}
+          Hivra will sign in to {name} at {known.sshHost ?? "its address"} as hivra.{" "}
+          <button type="button" className={enrollment.linkButton} onClick={() => setEditingAddress(true)}>Use a different address</button>
         </p>
       ) : null}
     </section>

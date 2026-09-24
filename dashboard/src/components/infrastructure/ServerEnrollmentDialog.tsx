@@ -10,7 +10,6 @@ import type {
   ServerEnrollmentIssueResult,
 } from "@/lib/infrastructure/server-enrollment-contracts";
 import {
-  cancelServerEnrollment,
   getServerEnrollment,
   issueServerEnrollment,
 } from "@/lib/infrastructure/server-enrollment-client";
@@ -88,25 +87,17 @@ export function ServerEnrollmentDialog({
   const [renewError, setRenewError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const issuedOnce = useRef(false);
-  const latest = useRef<ServerEnrollmentDto | null>(null);
   const now = useNow();
 
-  // Leaving before any server downloaded the script: that command can never
-  // be used, so it is cancelled. Once a download is counted it stays open for
-  // the run under way, and the page shows it until it ends.
-  const close = useCallback(() => {
-    const current = latest.current;
-    if (current?.phase === "issued" && current.scriptFetches === 0) {
-      void cancelServerEnrollment(current.id).catch(() => undefined);
-    }
-    onClose();
-  }, [onClose]);
+  // Closing never cancels: the owner may have copied the command and be about
+  // to paste it on the server. The Capacity page lists every open command,
+  // with Cancel, until it is used or expires.
+  const close = onClose;
   const dialogRef = useInfrastructureDialog({ onClose: close, initialFocusRef: closeButtonRef, returnFocusRef });
 
   const issue = useCallback(async (replaceEnrollmentId: string | null) => {
     try {
       const issued = await issueServerEnrollment(replaceEnrollmentId);
-      latest.current = issued.enrollment;
       setState({ kind: "ready", issued, enrollment: issued.enrollment });
       setRenewError(null);
       onChanged();
@@ -132,7 +123,6 @@ export function ServerEnrollmentDialog({
     const controller = new AbortController();
     const timer = window.setInterval(() => {
       void getServerEnrollment(enrollmentId, controller.signal).then((next) => {
-        latest.current = next;
         setState((current) => (current.kind === "ready" && current.enrollment.id === next.id
           ? { ...current, enrollment: next } : current));
         if (next.phase !== "issued") onChanged();
@@ -252,6 +242,12 @@ export function ServerEnrollmentDialog({
                   <span>This command expired. Get a new command.</span>
                 )}
               </div>
+              {item.phase === "issued" && expiresIn > 0 ? (
+                <p className={enrollmentStyles.fine}>
+                  Closing this panel doesn&apos;t cancel the command. Until it&apos;s used or expires, Capacity lists it
+                  under Setup commands, where you can cancel it.
+                </p>
+              ) : null}
             </>
           ) : null}
 

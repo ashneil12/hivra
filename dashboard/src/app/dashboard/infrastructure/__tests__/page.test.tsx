@@ -345,7 +345,7 @@ describe("InfrastructureConnectionsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Choose cloud provider/i }));
     expect(screen.getByRole("button", { name: /Start with Hetzner/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Use an existing server/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Connect a server you already have/i }));
 
     // The one-line command comes first; SSH details stay one click away.
     const commandFirst = await screen.findByRole("dialog", { name: "Connect a server you already have" });

@@ -714,7 +714,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.queryByRole("heading", { name: "Hivra Cloud capacity" })).not.toBeInTheDocument();
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Use an existing server/i }));
-    fireEvent.click(within(chooser).getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
     // The setup command is the default; the SSH wizard is its advanced path.
     const command = await screen.findByRole("dialog", { name: "Connect a server you already have" });
     fireEvent.click(within(command).getByRole("button", { name: /Connect with SSH details instead \(advanced\)/ }));
@@ -2319,14 +2319,15 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose my machine/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /^Remote server/i }));
-    fireEvent.click(within(chooser).getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
 
     const commandDialog = await screen.findByRole("dialog", { name: "Connect a server you already have" });
     expect(await within(commandDialog).findByTestId("server-enrollment-command")).toHaveTextContent(ENROLLMENT_COMMAND);
     expect(within(commandDialog).getByText("K7QM-2XRA")).toBeInTheDocument();
     fireEvent.click(within(commandDialog).getByRole("button", { name: /Connect with SSH details instead \(advanced\)/ }));
-    // Closing a command no server has downloaded cancels it.
-    expect(cancelServerEnrollment).toHaveBeenCalledWith(ISSUED_ENROLLMENT.id);
+    // Choosing the advanced path doesn't cancel the command: it may have been
+    // copied, and the page lists it with Cancel until it's used or expires.
+    expect(cancelServerEnrollment).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole("dialog", { name: "Connect a host" });
     expect(dialog).toBeInTheDocument();
@@ -2343,6 +2344,62 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Close infrastructure setup" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  // Review (round 1): closing the panel used to cancel a command no server
+  // had downloaded, so a command copied, then pasted after closing, failed as
+  // "expired, already used or replaced". Now it keeps working: the page lists
+  // it with Cancel, keeps polling, and shows "Is this your server?" when the
+  // server reports.
+  it("keeps a copied command working after its panel closes, lists it with Cancel, and shows the report when it lands", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+    try {
+      const open = { ...ISSUED_ENROLLMENT, issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
+      render(<InfrastructureConnectionsPage />);
+      const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
+      fireEvent.click(within(chooser).getByRole("button", { name: /Choose my machine/i }));
+      fireEvent.click(within(chooser).getByRole("button", { name: /^Remote server/i }));
+      fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
+      const commandDialog = await screen.findByRole("dialog", { name: "Connect a server you already have" });
+      await within(commandDialog).findByTestId("server-enrollment-command");
+
+      (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [open], uninstallCommand: null });
+      fireEvent.click(within(commandDialog).getByRole("button", { name: "Close server setup" }));
+      expect(cancelServerEnrollment).not.toHaveBeenCalled();
+
+      const commands = await screen.findByRole("region", { name: "Setup commands" });
+      expect(within(commands).getByText(/The setup command you made at .+ hasn't been used yet\. It works until .+\./))
+        .toBeInTheDocument();
+      expect(within(commands).getByRole("button", { name: "Cancel this command" })).toBeInTheDocument();
+
+      // The server runs the copied command and reports: the page's poll finds it.
+      (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [{
+        ...open, phase: "reported", scriptFetches: 1, lastFetchedAt: new Date().toISOString(),
+        confirmBy: new Date(Date.now() + 30 * 60_000).toISOString(),
+        report: { kind: "enrolled", reportedAt: new Date().toISOString(), observedAddress: "203.0.113.24", sshPort: 22,
+          hostFingerprintSha256: "SHA256:" + "X".repeat(43), consent: "terminal", words: "amber-falcon-river", reenrollment: false,
+          facts: { hostname: "web-7", osId: "ubuntu", osVersionId: "24.04", architecture: "x86_64", cpuCount: 2,
+            memoryBytes: 4 * 1024 ** 3, virtualization: "kvm", proxmoxVersion: null, sshMatchRules: false } },
+      }], uninstallCommand: null });
+      await act(async () => { jest.advanceTimersByTime(5_000); });
+      expect(await screen.findByRole("heading", { name: "Is this your server?" })).toBeInTheDocument();
+      expect(screen.getByText("amber falcon river")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Yes, this is my server" })).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("cancels an open command from the page", async () => {
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [{ ...ISSUED_ENROLLMENT,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }], uninstallCommand: null });
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [], uninstallCommand: null });
+    fireEvent.click(within(commands).getByRole("button", { name: "Cancel this command" }));
+    await waitFor(() => expect(cancelServerEnrollment).toHaveBeenCalledWith(ISSUED_ENROLLMENT.id));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Setup commands" })).not.toBeInTheDocument());
   });
 
   it("keeps creation blocked and explains how to replace a read-only project token", async () => {
@@ -3097,7 +3154,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
   it.each([
     { trigger: "Start with Hetzner", title: "Connect Hetzner Cloud" },
-    { trigger: "Connect existing host", title: "Connect a server you already have" },
+    { trigger: "Connect a server you already have", title: "Connect a server you already have" },
   ])("pins $title inside the dashboard scrollport", async ({ trigger, title }) => {
     const { container, unmount } = render(<InfrastructureConnectionsPage />);
     const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });

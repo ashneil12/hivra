@@ -945,7 +945,7 @@ export function InfrastructureConnectionWizard({
                         Hivra will detect the operating system, capacity, environment, KVM access,
                         and installed isolation engines without changing the host. Today, an existing
                         Proxmox KVM installation can continue to strict readiness. On a compatible
-                        Ubuntu amd64 host with root access and cgroup v2, you can explicitly prepare
+                        Ubuntu amd64 host with root or passwordless sudo and cgroup v2, you can explicitly prepare
                         the pinned gVisor adapter for Linux terminal and Python application sandboxes.
                       </span>
                     </div>

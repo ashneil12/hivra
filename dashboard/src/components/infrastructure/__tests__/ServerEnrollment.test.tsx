@@ -138,31 +138,40 @@ describe("the command panel", () => {
     expect(screen.getByText("amber falcon river")).toBeInTheDocument();
   });
 
-  it("gets a new command in place of the old one, and cancels a never-downloaded command on close", async () => {
-    const handlers = renderDialog();
+  it("gets a new command in place of the old one", async () => {
+    renderDialog();
     await screen.findByTestId("server-enrollment-command");
     fireEvent.click(screen.getByRole("button", { name: "Get a new command" }));
     await waitFor(() => expect(issueServerEnrollment).toHaveBeenLastCalledWith(ISSUED.enrollment.id));
-    fireEvent.click(screen.getByRole("button", { name: "Close server setup" }));
-    expect(cancelServerEnrollment).toHaveBeenCalledWith(ISSUED.enrollment.id);
-    expect(handlers.onClose).toHaveBeenCalled();
   });
 
-  it("keeps a downloaded command open on close, for the run under way", async () => {
-    renderDialog();
+  // The owner may copy the command, close the panel, then paste it on the
+  // server: closing must not cancel it, used or not. The page lists it with
+  // Cancel until it is used or expires, and the panel says so.
+  it.each([
+    ["a command no server has downloaded", enrollment()],
+    ["a downloaded command", enrollment({ scriptFetches: 1, lastFetchedAt: new Date(NOW).toISOString() })],
+  ])("never cancels %s when the panel closes", async (_label, current) => {
+    const handlers = renderDialog();
     await screen.findByTestId("server-enrollment-command");
-    (getServerEnrollment as jest.Mock).mockResolvedValue(enrollment({ scriptFetches: 1, lastFetchedAt: new Date(NOW).toISOString() }));
+    (getServerEnrollment as jest.Mock).mockResolvedValue(current);
     await act(async () => { jest.advanceTimersByTime(2_000); });
+    expect(screen.getByText(/Closing this panel doesn't cancel the command\. Until it's used or expires, Capacity lists it/))
+      .toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close server setup" }));
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(cancelServerEnrollment).not.toHaveBeenCalled();
   });
 
-  it("offers the SSH details wizard as the advanced path", async () => {
+  it("never cancels the command when the owner switches to the SSH details wizard", async () => {
     const handlers = renderDialog();
     await screen.findByTestId("server-enrollment-command");
     fireEvent.click(screen.getByRole("button", { name: /Connect with SSH details instead \(advanced\)/ }));
     expect(handlers.onUseSshDetails).toHaveBeenCalledTimes(1);
+    expect(cancelServerEnrollment).not.toHaveBeenCalled();
   });
+
 });
 
 function renderCard(item: ServerEnrollmentDto) {
@@ -247,6 +256,29 @@ describe("Is this your server?", () => {
   it("offers a switch for a login connection nobody's agents use", () => {
     renderCard(reported({}, known({ offer: "switch_user", sshUser: "root" })));
     expect(screen.getByRole("button", { name: "Switch web-1 to the hivra user" })).toBeInTheDocument();
+  });
+
+  // 8.1 step 3: a switch may sign in at an address the owner chooses.
+  it("lets the owner choose the address a switch signs in at", async () => {
+    (replaceServerEnrollmentAccess as jest.Mock).mockResolvedValue({ id: known().connectionId });
+    const handlers = renderCard(reported({}, known({ offer: "switch_user", sshUser: "root" })));
+    expect(screen.getByText(/Hivra will sign in to web-1 at 198\.51\.100\.7 as hivra\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use a different address" }));
+    fireEvent.change(screen.getByLabelText("Sign in at this address instead"), { target: { value: "https://203.0.113.9/" } });
+    fireEvent.click(screen.getByRole("button", { name: "Switch web-1 to the hivra user" }));
+    expect(await screen.findByText(/Enter the server's public IPv4 address or hostname/)).toBeInTheDocument();
+    expect(replaceServerEnrollmentAccess).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Sign in at this address instead"), { target: { value: "203.0.113.9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Switch web-1 to the hivra user" }));
+    await waitFor(() => expect(handlers.onReplaced).toHaveBeenCalled());
+    expect(replaceServerEnrollmentAccess).toHaveBeenCalledWith(reported().id,
+      { connectionId: known().connectionId, connectionRevision: 3, sshHost: "203.0.113.9" });
+  });
+
+  it("keeps a key-only Replace at the connection's address, with no address control", () => {
+    renderCard(reported({}, known()));
+    expect(screen.queryByRole("button", { name: "Use a different address" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it.each([
