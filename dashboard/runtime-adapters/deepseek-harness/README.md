@@ -212,11 +212,26 @@ npm run lab:deepseek-proxmox -- --restart ...    # new boot identity, then nativ
 npm run lab:deepseek-proxmox -- --teardown ...   # VM, volumes, host artifacts and tunnel
 ```
 
-Inspect and launch refuse a host, before the allocation lock or any claim,
-unless `/root/hivra-provisioner-canary` is at the current release and every
-file matches its `BUNDLE.sha256` (exit 4 with `HIVRA_DEEPSEEK_VERSION_MISMATCH`,
-`HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING` or
-`HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH`).
+The pinned release is the `provisioner/` bundle of the checkout you run the
+harness from, sealed exactly as managed bundle sync seals the Canary directory,
+so run it from the commit Canary serves. A VERSION string alone does not
+identify a release: a bundle rebuilt without a release bump still verifies
+against the manifest its delivery wrote. Inspect and launch therefore refuse a
+host unless `/root/hivra-provisioner-canary` is at the current release, its
+`BUNDLE.sha256` is byte-identical to the pinned manifest, and every file still
+matches it. They check once before the allocation lock, to fail fast, and again
+once the lock is held, because bundle sync swaps the directory under that same
+lock; only the second check binds what is inventoried or dispatched. A refusal
+exits 4 with `HIVRA_DEEPSEEK_VERSION_MISMATCH`,
+`HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING`,
+`HIVRA_DEEPSEEK_BUNDLE_RELEASE_MISMATCH` or
+`HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH`, before any claim, secret file or
+dispatch. The provisioner releases the lock once the guest is running and
+copies the bundle into it afterwards, so launch checks the directory again after
+the provisioner returns. If the bundle changed in that window, the harness
+tears the computer and its tunnel down instead of recording the launch. The
+checks cover the files the manifest lists. They do not detect extra, unlisted
+files in the directory.
 
 ### Session renewal check (disposable computer only)
 

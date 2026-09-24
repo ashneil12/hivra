@@ -100,10 +100,15 @@ function assertExactBundle(assets: PortableProvisionerBundleAsset[]): void {
   }
 }
 
-function bundleManifest(assets: PortableProvisionerBundleAsset[]): string {
-  return assets
+/** The exact BUNDLE.sha256 bytes bundle sync writes into a managed provisioner
+ * directory: one `sha256sum` line per asset, in allowlist order. Operator
+ * harnesses compare a host's manifest to this byte for byte. */
+export function managedProvisionerBundleManifestFile(
+  assets: PortableProvisionerBundleAsset[],
+): string {
+  return `${assets
     .map((asset) => `${createHash("sha256").update(asset.content).digest("hex")}  ${asset.relativePath}`)
-    .join("\n");
+    .join("\n")}\n`;
 }
 
 export function buildManagedProvisionerBundleSyncScript(
@@ -135,7 +140,7 @@ export function buildManagedProvisionerBundleSyncScript(
     .filter((asset) => EXECUTABLE_ASSETS.has(asset.relativePath))
     .map((asset) => `chmod 0700 "$UPLOAD_DIR/${asset.relativePath}"`)
     .join("\n");
-  const manifest = bundleManifest(assets);
+  const manifestFile = managedProvisionerBundleManifestFile(assets);
   const channelConfiguration = managedHivraProvisionerChannelConfiguration(channel);
   const target = channelConfiguration.runtime.provisionerDirectory;
   const readiness = managedHivraHostReadinessScript(channel, "runtime-update");
@@ -234,8 +239,7 @@ trap 'exit 143' TERM
 ${directorySetup}
 ${writes}
 cat > "$UPLOAD_DIR/BUNDLE.sha256" <<'HIVRA_MANAGED_BUNDLE_MANIFEST'
-${manifest}
-HIVRA_MANAGED_BUNDLE_MANIFEST
+${manifestFile}HIVRA_MANAGED_BUNDLE_MANIFEST
 ${executableSetup}
 (
   cd "$UPLOAD_DIR"

@@ -31,6 +31,8 @@ import {
   shellQuote,
 } from "../src/lib/hivra/proxmox-target";
 import { managedHivraProvisionerChannelConfiguration } from "../src/lib/hivra/managed-provisioner-channel";
+import { managedProvisionerBundleManifestFile } from "../src/lib/hivra/managed-provisioner-bundle-sync";
+import { loadPortableProvisionerBundle } from "../src/lib/infrastructure/connection-preparation";
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "../src/lib/infrastructure/portable-provisioner-contract";
 import {
   createBoxTunnel,
@@ -41,28 +43,58 @@ import { deleteBoxTunnelVerified } from "../src/lib/services/cloudflare-tunnel-c
 
 // Fenced to the Canary origin, so admit the bundle the way Canary's own managed
 // launches do (managedHivraHostReadinessScript, canary provision): the canary
-// delivery directory, its VERSION at exactly the current portable provisioner
-// release, and every file still matching the BUNDLE.sha256 its delivery wrote.
-// A hard-coded release goes stale at the next sealed bundle and the harness then
-// refuses every current Canary host. The readiness script's other checks
-// (ownership-contract greps, bridge/storage presence, start-helper receipts) are
-// not repeated here: this harness checks capacity and ownership itself.
+// delivery directory and its VERSION at exactly the current portable
+// provisioner release. A hard-coded release goes stale at the next sealed bundle
+// and the harness then refuses every current Canary host. The readiness
+// script's other checks (ownership-contract greps, bridge/storage presence,
+// start-helper receipts) are not repeated here: this harness checks capacity
+// and ownership itself.
 export const DEEPSEEK_CANARY_VERSION = PORTABLE_HIVRA_PROVISIONER_VERSION;
 export const DEEPSEEK_CANARY_RUNTIME_PATHS = managedHivraProvisionerChannelConfiguration("canary").runtime;
 export const DEEPSEEK_CANARY_ORIGIN = "https://canary.hermesos.cloud";
 
-// Runs before the allocation lock, any claim, secret staging or dispatch. VERSION
-// is one text file; the manifest check refuses a hand-edited, partially replaced
-// or truncated bundle that merely carries the current release string. An empty
-// manifest is refused explicitly because not every sha256sum rejects one.
-function bundleAdmission(): string {
+const BUNDLE_MANIFEST_LINE = /^[a-f0-9]{64} {2}[A-Za-z0-9._+@/-]{1,160}$/;
+
+// A VERSION string does not identify a release: every delivery path reseals
+// BUNDLE.sha256 from the bytes it ships, so a changed bundle that kept VERSION
+// still verifies against its own manifest. The pinned release is the operator
+// checkout's bundle, sealed exactly as managed bundle sync seals the Canary
+// directory, and a host is admitted only if its manifest is those bytes.
+export async function loadDeepSeekCanaryBundleManifest(
+  bundleRoot = path.resolve(__dirname, "..", "provisioner"),
+): Promise<string> {
+  return managedProvisionerBundleManifestFile(await loadPortableProvisionerBundle(bundleRoot));
+}
+
+function assertBundleManifest(manifest: string): void {
+  const lines = manifest.endsWith("\n") ? manifest.slice(0, -1).split("\n") : [];
+  if (lines.length === 0 || !lines.every(line => BUNDLE_MANIFEST_LINE.test(line))
+    || !lines.some(line => line.endsWith("  VERSION"))) {
+    throw new Error("The pinned DeepSeek Canary bundle manifest is malformed.");
+  }
+}
+
+// Defines admit_canary_bundle; each script calls it before the allocation lock
+// (fail fast) and again once the lock is held, because bundle sync swaps the
+// directory under that same lock. Only the second call binds what the script
+// then inventories or dispatches. The host manifest must equal the pinned one
+// byte for byte, and every file must still match it, so neither a resealed
+// same-VERSION bundle nor a hand edit is admitted. An empty manifest is refused
+// explicitly because not every sha256sum rejects one.
+function bundleAdmission(manifest: string): string {
+  assertBundleManifest(manifest);
   return `PROVISIONER_DIR=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory)}
-[ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \\
-  || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
-[ -f "$PROVISIONER_DIR/BUNDLE.sha256" ] && [ ! -L "$PROVISIONER_DIR/BUNDLE.sha256" ] && [ -s "$PROVISIONER_DIR/BUNDLE.sha256" ] \\
-  || { echo "HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING" >&2; exit 4; }
-(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256) \\
-  || { echo "HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH" >&2; exit 4; }`;
+EXPECTED_BUNDLE_MANIFEST=${shellQuote(manifest)}
+admit_canary_bundle() {
+  [ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(DEEPSEEK_CANARY_VERSION)} ] \\
+    || { echo "HIVRA_DEEPSEEK_VERSION_MISMATCH" >&2; exit 4; }
+  [ -f "$PROVISIONER_DIR/BUNDLE.sha256" ] && [ ! -L "$PROVISIONER_DIR/BUNDLE.sha256" ] && [ -s "$PROVISIONER_DIR/BUNDLE.sha256" ] \\
+    || { echo "HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING" >&2; exit 4; }
+  printf '%s' "$EXPECTED_BUNDLE_MANIFEST" | cmp -s - "$PROVISIONER_DIR/BUNDLE.sha256" \\
+    || { echo "HIVRA_DEEPSEEK_BUNDLE_RELEASE_MISMATCH" >&2; exit 4; }
+  (cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256) \\
+    || { echo "HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH" >&2; exit 4; }
+}`;
 }
 
 type Phase = "planned" | "tunnel_intent" | "tunnel_created" | "launched" | "tunnel_clean" | "clean";
@@ -83,7 +115,7 @@ export interface DeepSeekCanaryLedger {
   cleanup?: { vmAbsent: boolean; volumesAbsent: boolean; hostArtifactsAbsent: boolean; tunnelAbsent: boolean };
 }
 
-interface CliArgs {
+export interface CliArgs {
   mode: "inspect" | "launch" | "read-access" | "restart" | "teardown";
   target: string;
   expectedHostname: string;
@@ -213,6 +245,7 @@ export function buildDeepSeekInventoryScript(params: {
   vmidEnd: number;
   ipLastOctetStart: number;
   subnetPrefix: string;
+  bundleManifest: string;
 }): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -222,10 +255,12 @@ VMID_END=${params.vmidEnd}
 OCTET_START=${params.ipLastOctetStart}
 SUBNET_PREFIX=${shellQuote(params.subnetPrefix)}
 [ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
-for command in qm pct pvesh pvesm flock awk sed grep sha256sum; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
-${bundleAdmission()}
+for command in qm pct pvesh pvesm flock awk sed grep sha256sum cmp; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
+${bundleAdmission(params.bundleManifest)}
+admit_canary_bundle
 exec 8>/run/lock/hivra-allocation.lock
 flock -s -w 60 8 || { echo "HIVRA_DEEPSEEK_INVENTORY_LOCK_TIMEOUT" >&2; exit 5; }
+admit_canary_bundle
 cluster_json="$(pvesh get /cluster/resources --type vm --output-format json)"
 cluster_vmids="$(printf '%s' "$cluster_json" | grep -oE '"vmid":[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | sort -un || true)"
 qm_inventory="$(qm list 2>/dev/null)" \
@@ -294,6 +329,7 @@ export function buildDeepSeekLaunchScript(params: {
   memoryMb: number;
   tunnelToken: string;
   tunnelUrl: string;
+  bundleManifest: string;
 }): string {
   const operationTag = `hivra-op-${params.operationId.replace(/-/g, "")}`;
   const claim = `${params.operationId}|${params.bindingTag}|${params.expectedHostname}|${params.vmid}|${params.ip}`;
@@ -314,12 +350,14 @@ CLAIM_FILE="$CLAIM_DIR/$VMID.claim"
 SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
 PIDFILE="/run/hivra-provision/$VMID.pid"
 [ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
-for command in qm pct pvesm flock sha256sum; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
-${bundleAdmission()}
+for command in qm pct pvesm flock sha256sum cmp; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
+${bundleAdmission(params.bundleManifest)}
+admit_canary_bundle
 install -d -m 0700 "$CLAIM_DIR"
 install -d -m 0755 /run/lock /run/hivra-provision
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "HIVRA_DEEPSEEK_ALLOCATION_LOCK_TIMEOUT" >&2; exit 5; }
+admit_canary_bundle
 qm_inventory="$(qm list 2>/dev/null)" \
   || { echo "HIVRA_DEEPSEEK_QM_INVENTORY_UNKNOWN" >&2; exit 6; }
 if printf '%s\n' "$qm_inventory" | awk -v wanted="$VMID" 'NR > 1 && $1 == wanted { found=1 } END { exit found ? 0 : 1 }'; then
@@ -397,6 +435,23 @@ exec env \
   HIVRA_WANT_BROWSER=0 \
   bash ${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/hivra-provision-on-host.sh`)} \
   "$VMID" "$OCTET" ${params.cpu} ${params.memoryMb} deepseek-harness ${params.cpu}
+`;
+}
+
+// Read-only. Run after a launch returns: the provisioner releases the allocation
+// lock once the guest is running and copies the bundle into it afterwards, so a
+// bundle sync in that window would put unadmitted bytes on the guest.
+export function buildDeepSeekBundleCheckScript(params: { expectedHostname: string; bundleManifest: string }): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+EXPECTED_HOSTNAME=${shellQuote(params.expectedHostname)}
+[ "$(hostname -s)" = "$EXPECTED_HOSTNAME" ] || { echo "HIVRA_DEEPSEEK_HOST_MISMATCH" >&2; exit 2; }
+for command in flock sha256sum cmp; do command -v "$command" >/dev/null 2>&1 || { echo "HIVRA_DEEPSEEK_MISSING_COMMAND $command" >&2; exit 3; }; done
+${bundleAdmission(params.bundleManifest)}
+exec 8>/run/lock/hivra-allocation.lock
+flock -s -w 60 8 || { echo "HIVRA_DEEPSEEK_BUNDLE_CHECK_LOCK_TIMEOUT" >&2; exit 5; }
+admit_canary_bundle
+printf 'HIVRA_DEEPSEEK_BUNDLE_ADMITTED {"provisionerVersion":"%s"}\\n' ${shellQuote(DEEPSEEK_CANARY_VERSION)}
 `;
 }
 
@@ -592,8 +647,9 @@ async function runHost(script: string, env: Record<string, string | undefined>, 
   return result.stdout;
 }
 
-async function launch(args: CliArgs): Promise<void> {
+export async function launchDeepSeekCanary(args: CliArgs): Promise<void> {
   const { target, network } = targetContext(args);
+  const bundleManifest = await loadDeepSeekCanaryBundleManifest();
   const vmid = args.vmid!;
   const operationId = randomUUID();
   const bindingTag = `hivra-bind-${randomBytes(16).toString("hex")}`;
@@ -615,11 +671,17 @@ async function launch(args: CliArgs): Promise<void> {
     const stdout = await runHost(buildDeepSeekLaunchScript({
       expectedHostname: args.expectedHostname, vmid, ip, octet: args.octet!, subnetPrefix: network.subnetPrefix,
       gateway: network.gateway, operationId, bindingTag, cpu: args.cpu, memoryMb: args.memoryMb,
-      tunnelToken: tunnel.token, tunnelUrl: tunnel.url,
+      tunnelToken: tunnel.token, tunnelUrl: tunnel.url, bundleManifest,
     }), target.env, 30 * 60_000);
     const result = JSON.parse(stdout.trim().split(/\r?\n/).filter(line => line.startsWith("{")).at(-1) || "null") as Record<string, unknown> | null;
     if (!result || result.vmid !== vmid || result.ip !== ip || result.agent_kind !== "deepseek-harness" || result.chat_url !== tunnel.url || result.ready !== true) {
       throw new Error("DeepSeek provisioner returned a mismatched launch receipt.");
+    }
+    const admitted = resultJson(await runHost(buildDeepSeekBundleCheckScript({
+      expectedHostname: args.expectedHostname, bundleManifest,
+    }), target.env, 2 * 60_000), "HIVRA_DEEPSEEK_BUNDLE_ADMITTED");
+    if (admitted.provisionerVersion !== DEEPSEEK_CANARY_VERSION) {
+      throw new Error("The Canary bundle changed while the DeepSeek computer was being set up.");
     }
     updateLedger(args.ledgerPath, ledger => ({ ...ledger, phase: "launched", launch: { url: tunnel.url, cpu: args.cpu, memoryMb: args.memoryMb } }));
     console.log(JSON.stringify({ mode: "launched", target: args.target, vmid, ip, url: tunnel.url, operationId, provisionerVersion: DEEPSEEK_CANARY_VERSION }));
@@ -637,10 +699,11 @@ async function launch(args: CliArgs): Promise<void> {
 
 async function main(): Promise<void> {
   const args = parseDeepSeekCanaryArgs();
-  if (args.mode === "launch") return launch(args);
+  if (args.mode === "launch") return launchDeepSeekCanary(args);
   const { target, network, vmidStart, vmidEnd, ipLastOctetStart } = targetContext(args);
   if (args.mode === "inspect") {
-    const stdout = await runHost(buildDeepSeekInventoryScript({ expectedHostname: args.expectedHostname, vmidStart, vmidEnd, ipLastOctetStart, subnetPrefix: network.subnetPrefix }), target.env, 60_000);
+    const bundleManifest = await loadDeepSeekCanaryBundleManifest();
+    const stdout = await runHost(buildDeepSeekInventoryScript({ expectedHostname: args.expectedHostname, vmidStart, vmidEnd, ipLastOctetStart, subnetPrefix: network.subnetPrefix, bundleManifest }), target.env, 60_000);
     console.log(JSON.stringify({ mode: "inspect", target: args.target, ...resultJson(stdout, "HIVRA_DEEPSEEK_INVENTORY") }));
     return;
   }
