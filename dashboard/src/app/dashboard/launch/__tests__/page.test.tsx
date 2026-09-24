@@ -919,6 +919,25 @@ describe("LaunchPage", () => {
     }));
   });
 
+  // Live on Canary: a Command plan with 23 of 24 CPU in use said "has 1 CPU /
+  // 16 GB left", mixing the free CPU with the per-computer memory limit.
+  it("names only the plan's shared allowance that runs short, with what is in use", async () => {
+    fetchPlanStrictMock.mockResolvedValue({
+      ...PAID_PLAN, name: "Command", maxAgents: 999, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128,
+      usage: { agentCount: 10, usedCpu: 23, usedRam: 46 },
+    });
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseTile("Codex");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    const blocker = screen.getByRole("alert");
+    expect(blocker).toHaveTextContent("Codex with a browser needs 1.5 CPU / 3 GB. Your Command plan has 1 of its 24 CPU free.");
+    expect(blocker).not.toHaveTextContent(/16 GB left/);
+  });
+
   it("states the browser shortfall with real choices and lets the owner turn the browser off", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     render(<LaunchPage />);

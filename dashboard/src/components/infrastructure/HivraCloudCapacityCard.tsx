@@ -10,12 +10,21 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+import { getAgent } from "@/lib/hivra/agent-catalog";
 import type { HivraCloudCapacityDto } from "@/lib/infrastructure/hivra-cloud-client";
 
 import styles from "./Infrastructure.module.css";
 
 function formatNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** What a managed computer is, in product words rather than its type id. A
+ * desktop row's type is shared by Ubuntu, Omarchy and Windows, so it stays generic. */
+export function managedComputerKind(computer: { source: "hermes" | "hivra"; type?: string | null }): string {
+  if (computer.source === "hermes") return "Hermes";
+  if (computer.type === "linux-desktop") return "Desktop computer";
+  return (computer.type && getAgent(computer.type)?.name) || "Agent";
 }
 
 function formatRam(megabytes: number): string {
@@ -103,7 +112,7 @@ export function HivraCloudCapacityCard({
                   <span className={styles.managedComputerState} data-state={computer.status} aria-hidden="true" />
                   <span>
                     <strong>{computer.name}</strong>
-                    <small>{computer.source === "hermes" ? "Hermes" : computer.type || "Hivra agent"}</small>
+                    <small>{managedComputerKind(computer)}</small>
                   </span>
                   <span>{formatNumber(computer.cpu)} CPU</span>
                   <span>{formatRam(computer.ram)}</span>
