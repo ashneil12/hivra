@@ -16,6 +16,8 @@ import { ArrowUpRight, Check, ChevronDown, Copy, QrCode, Wallet } from 'lucide-r
 
 import { LocalAddressQr } from '@/components/billing/LocalAddressQr';
 import { exactRawAmount } from '@/lib/billing/eip681';
+import { HERMESOS_TOKEN, platformTokenByAddress } from '@/lib/billing/token-registry';
+import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
 import styles from './touch.module.css';
 
@@ -27,7 +29,7 @@ export const COMPACT_PAYMENT_QUERY = '(max-width: 767px), (pointer: coarse)';
  * Finality disclosure for every $HermesOS payment surface (the yearly plan
  * payment and managed Venice top-ups). Same wording as the Plans footnote.
  */
-export const TOKEN_PAYMENT_FINALITY = "$HermesOS payments are final and can't be refunded.";
+export const TOKEN_PAYMENT_FINALITY = "Token payments are final, except where the law gives you a right to cancel.";
 
 function subscribeCompact(onChange: () => void) {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -145,6 +147,40 @@ export function TransferAmountField({
         <CopyButton value={copyValue} label={copyLabel} title={copyTitle} />
       </div>
       {children ? <p className={styles.fieldNote}>{children}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Which token to send, with its contract: shown under every "Send exactly"
+ * amount so a user can check the token in their wallet before sending. Only
+ * that token is credited; another token sent to the address is not.
+ * Renders nothing when the token can't be named (an unknown asset).
+ */
+export function TokenContractLine({
+  tokenAddress,
+  tokenSymbol,
+}: {
+  tokenAddress?: string | null;
+  tokenSymbol?: string | null;
+}) {
+  const token =
+    platformTokenByAddress(tokenAddress) ??
+    (!tokenAddress && displayTokenUnit(tokenSymbol) === HERMESOS_TOKEN.displayUnit ? HERMESOS_TOKEN : null);
+  if (!token) return null;
+  return (
+    <div className={styles.field} data-testid="token-contract-line">
+      <span className={`mono ${styles.fieldLabel}`}>Token · {token.displayUnit} on Base</span>
+      <code className={`mono notranslate ${styles.address}`} translate="no" style={{ overflowWrap: 'anywhere' }}>
+        {token.publishedAddress}
+      </code>
+      <div className={styles.copyRow}>
+        <CopyButton value={token.publishedAddress} label="Copy contract" />
+      </div>
+      <p className={styles.fieldNote}>
+        Send only {token.displayUnit} from this contract. Any other token sent here is not credited. Check the contract
+        against <a href="/token">the token page</a>.
+      </p>
     </div>
   );
 }

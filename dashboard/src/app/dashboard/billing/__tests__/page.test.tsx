@@ -1207,7 +1207,7 @@ describe("BillingPage", () => {
       "Base network only.",
       "Send the exact amount in one transfer.",
       "Prices lock for 20 minutes.",
-      "Token payments are final.",
+      "Token payments are final, except where the law gives you a right to cancel.",
       "Yearly access doesn't renew automatically.",
     ]) {
       expect(screen.getByText(rule)).toBeInTheDocument();
@@ -2008,7 +2008,7 @@ describe("BillingPage", () => {
     fireEvent.click(await screen.findByRole("radio", { name: "$HermesOS" }));
     expect(screen.queryByRole("radiogroup", { name: "Billing cadence" })).not.toBeInTheDocument();
     expect(screen.queryByRole("article", { name: "Free" })).not.toBeInTheDocument();
-    expect(screen.getByText("$HermesOS payments are final and can't be refunded.")).toBeInTheDocument();
+    expect(screen.getByText("Token payments are final, except where the law gives you a right to cancel.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: "Hold to qualify" }));
     const holdLinks = screen.getAllByRole("link", { name: /see how much to hold/i });

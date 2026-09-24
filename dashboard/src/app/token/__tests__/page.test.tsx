@@ -108,5 +108,9 @@ describe("/token page", () => {
     expect(main.getByRole("link", { name: "Open Billing" })).toHaveAttribute("href", "/dashboard/billing");
     expect(main.queryByText(/Billing & Access/)).not.toBeInTheDocument();
     expect(main.queryByRole("button", { name: /buy|claim|migrate/i })).not.toBeInTheDocument();
+    // Two platform token entries: $HIVRA is not launched while dormant.
+    expect(main.getByText(/Not launched yet\. There is no \$HIVRA contract yet/)).toBeInTheDocument();
+    expect(main.getByText(/Hivra never confirms contract addresses in DMs or private messages/)).toBeInTheDocument();
+    expect(main.queryByText(/Nibbii/)).not.toBeInTheDocument();
   });
 });

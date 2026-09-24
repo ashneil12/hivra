@@ -34,6 +34,9 @@ import {
   type ManagedVeniceTokenQuotePayload,
 } from "@/lib/billing/managed-venice-client";
 
+import { usePaymentTokenUnit } from "@/hooks/usePaymentToken";
+
+
 export interface DashboardVaultKey {
   id: string;
   provider: string;
@@ -195,6 +198,7 @@ export function DeployForm({
    *  action so a blocked tap never looks dead. */
   deployAlert?: ReactNode;
 }) {
+  const paymentUnit = usePaymentTokenUnit();
   const supportsLiveModels = supportsLiveModelDiscovery(selectedProvider.id);
   const supportsPublicModels = supportsPublicLiveModelDiscovery(selectedProvider.id);
   // Deploy-card redesign: the top-level `managed` toggle is the single source
@@ -362,7 +366,7 @@ export function DeployForm({
         if (!result.ok) {
           if (result.reason === "bankr_wallet_provisioning_pending") {
             setManagedVeniceTopUpNotice(
-              "Token top-ups are waiting on Bankr wallet provisioning. Once Bankr is connected, this button will show the exact $HermesOS amount, QR code, and deposit address here. Card credit top-ups are available now."
+              `Token top-ups are waiting on Bankr wallet provisioning. Once Bankr is connected, this button will show the exact ${paymentUnit} amount, QR code, and deposit address here. Card credit top-ups are available now.`
             );
             return;
           }
@@ -371,7 +375,7 @@ export function DeployForm({
         }
         setManagedVeniceTokenQuote(result.quote);
       } catch (quoteError) {
-        setManagedVeniceTopUpError("Failed to create $HermesOS quote. Please try again.");
+        setManagedVeniceTopUpError(`Failed to create ${paymentUnit} quote. Please try again.`);
         clientLog.error("Welcome managed Venice Hivra quote failed", quoteError, {
           source: "welcome-deploy-form",
           route: "/api/billing/managed-venice/hermesos/quote",
@@ -447,7 +451,7 @@ export function DeployForm({
               >
                 <Wallet size={15} style={{ marginBottom: 8 }} />
                 <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 800, marginBottom: 5 }}>
-                  Pay with $HermesOS
+                  Pay with {paymentUnit}
                 </div>
                 <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
                   Up to 20% more managed Venice credits during the launch wave, then a 10% standard bonus.
@@ -474,7 +478,7 @@ export function DeployForm({
               {managedVeniceWalletType === "hermesos" ? (
                 <>
                   <strong style={{ color: "var(--ink-black)" }}>$250 lifetime launch bonus cap.</strong>{" "}
-                  $HermesOS top-ups can earn up to 20% more managed Venice credits; that is about $1,250 in $HermesOS top-ups at the full launch rate. After the cap is used, $HermesOS top-ups receive the 10% standard bonus.
+                  {paymentUnit} top-ups can earn up to 20% more managed Venice credits; that is about $1,250 in {paymentUnit} top-ups at the full launch rate. After the cap is used, {paymentUnit} top-ups receive the 10% standard bonus.
                 </>
               ) : (
                 <>
@@ -575,7 +579,7 @@ export function DeployForm({
                   : quoteSettled
                     ? deployCtaLabel
                     : managedVeniceWalletType === "hermesos"
-                      ? "Start $HermesOS top-up"
+                      ? `Start ${paymentUnit} top-up`
                       : "Start card credit top-up"}
               {!deploying && <ArrowRight size={14} />}
             </button>
@@ -900,7 +904,7 @@ export function DeployForm({
                 Managed Venice
               </div>
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, opacity: 0.66 }}>
-                No keys to manage. Pay Venice provider rates with card credits, or use $HermesOS for bonus credits.
+                No keys to manage. Pay Venice provider rates with card credits, or use {paymentUnit} for bonus credits.
               </p>
             </button>
             <button

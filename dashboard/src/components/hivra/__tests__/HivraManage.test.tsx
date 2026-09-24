@@ -44,7 +44,7 @@ jest.mock("@/lib/hivra/agent-model-settings-api", () => ({
 }));
 
 jest.mock("@/components/instances/CookieImportModal", () => ({ CookieImportModal: () => null }));
-jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => null }));
+jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => <div>Tool picker</div> }));
 jest.mock("../HivraPrivateAccessPanel", () => ({ HivraPrivateAccessPanel: () => <div>Private access panel</div> }));
 jest.mock("@/components/billing/UpgradePaywallModal", () => ({ UpgradePaywallModal: () => null }));
 
@@ -379,6 +379,25 @@ describe("HivraManage lifecycle guidance", () => {
     expect(within(screen.getByLabelText("Maximum CPU")).getByRole("button", { name: "8 CPU" })).toBeEnabled();
     expect(screen.getByText(/Host capacity is checked before applying/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Refresh capacity" })).not.toBeInTheDocument();
+  });
+
+  it("replaces the catalog install with an honest line on an agent in the owner's own cloud", async () => {
+    // The ?tools=1 deep link must not open an install the server can only refuse.
+    window.history.replaceState(null, "", "/dashboard/agent/test-agent?tab=manage&tools=1");
+    render(<HivraManage agent={{ ...agent, chat_url: "https://box.test", computer_substrate: "provider-vm", deployment_mode: "self-managed" }} def={getAgent("codex")} plan={null} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+    expect(screen.getByText("Catalog tools aren't available on computers in your own cloud yet. Use Advanced MCP.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Browse tools/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool picker")).not.toBeInTheDocument();
+    // Advanced MCP talks to the box itself, so it stays available.
+    expect(await screen.findByText("Advanced — connect a raw MCP server")).toBeInTheDocument();
+  });
+
+  it.each(["proxmox-kvm", undefined] as const)("keeps the catalog install for a %s agent", (substrate) => {
+    window.history.replaceState(null, "", "/dashboard/agent/test-agent?tab=manage&tools=1");
+    render(<HivraManage agent={{ ...agent, chat_url: "https://box.test", computer_substrate: substrate }} def={getAgent("codex")} plan={null} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+    expect(screen.getByRole("button", { name: /Browse tools/ })).toBeInTheDocument();
+    expect(screen.getByText("Tool picker")).toBeInTheDocument();
+    expect(screen.queryByText(/Catalog tools aren't available/)).not.toBeInTheDocument();
   });
 
   it("keeps private-access support discoverable on unsupported computers", () => {

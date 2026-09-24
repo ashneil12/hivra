@@ -30,8 +30,19 @@ import { isLocalAuthMode } from "@/lib/self-host/config";
 
 type LaunchDestinationMode = AgentDeploymentDestination["mode"];
 
+/** The owner's own placement choice, as distinct from what one runtime shows. */
+export type LaunchDestinationChoice = {
+  /** Before a runtime Hivra Cloud cannot run forces self-managed placement. */
+  mode: LaunchDestinationMode;
+  /** Kept while a lookup is pending and after the target disappears. */
+  targetId: string | null;
+};
+
 export type LaunchDestinationState = {
   mode: LaunchDestinationMode;
+  /** What stays selected across runtime changes; `mode` and `selectedTarget`
+   * are what the current runtime shows of it. */
+  choice: LaunchDestinationChoice;
   setMode: (mode: LaunchDestinationMode) => void;
   readyTargets: DeploymentTargetDto[];
   incompatibleReadyTargetCount: number;
@@ -78,10 +89,14 @@ export function useLaunchDestination(
   {
     handoff = null,
     preferSelfManaged = false,
+    managedAvailable = true,
     targetKind = "any",
   }: {
     handoff?: LaunchTargetHandoff | null;
     preferSelfManaged?: boolean;
+    /** False for runtimes Hivra Cloud cannot run; placement is then always
+     * self-managed, even before any compatible host is connected. */
+    managedAvailable?: boolean;
     targetKind?: "any" | "proxmox" | "gvisor";
   } = {},
 ): LaunchDestinationState {
@@ -97,7 +112,9 @@ export function useLaunchDestination(
   const [choice, setChoice] = useState(initialChoice);
   if (choice.handoffKey !== handoffKey) setChoice(initialChoice);
   const currentChoice = choice.handoffKey === handoffKey ? choice : initialChoice;
-  const { mode } = currentChoice;
+  // Derived, not stored: switching to a runtime Hivra Cloud can run restores
+  // the owner's own choice instead of inheriting a forced one.
+  const mode: LaunchDestinationMode = managedAvailable ? currentChoice.mode : "self-managed";
   const [refreshToken, setRefreshToken] = useState(0);
   const scope = useMemo(
     () => ({ catalogRuntimeId, handoffKey, refreshToken, targetKind }),
@@ -161,9 +178,17 @@ export function useLaunchDestination(
       : selfHosted ? null : DEFAULT_AGENT_DEPLOYMENT_DESTINATION,
     [loading, mode, selectedTarget, selfHosted],
   );
+  const chosenMode = currentChoice.mode;
+  // An invalid handoff's empty ID is a blocked selection, not a target.
+  const chosenTargetId = currentChoice.targetId || null;
+  const ownerChoice = useMemo<LaunchDestinationChoice>(
+    () => ({ mode: chosenMode, targetId: chosenTargetId }),
+    [chosenMode, chosenTargetId],
+  );
 
   return {
     mode,
+    choice: ownerChoice,
     setMode,
     readyTargets: targets,
     incompatibleReadyTargetCount,
@@ -200,6 +225,8 @@ export function DeploymentDestinationControl({
   const selfHosted = isLocalAuthMode();
   const selfManagedAvailable = state.readyTargets.length > 0;
   const selectedTarget = state.selectedTarget;
+  // An unavailable destination is never shown as the pressed choice.
+  const managedSelected = managedAvailable && state.mode === "hivra-managed";
 
   return (
     <section
@@ -231,8 +258,8 @@ export function DeploymentDestinationControl({
       <div className={styles.options} role="group" aria-label={`${resourceLabel} hosting destination`}>
         {!selfHosted ? <button
           type="button"
-          className={`${styles.option} ${state.mode === "hivra-managed" ? styles.optionActive : ""}`}
-          aria-pressed={state.mode === "hivra-managed"}
+          className={`${styles.option} ${managedSelected ? styles.optionActive : ""}`}
+          aria-pressed={managedSelected}
           onClick={() => state.setMode("hivra-managed")}
           disabled={disabled || !managedAvailable}
         >
@@ -241,9 +268,9 @@ export function DeploymentDestinationControl({
             <strong>Hivra Cloud</strong>
             <small>{managedAvailable
               ? <>Hivra operates this {resourceLabel === "computer" ? "computer" : "agent computer"}. Uses your managed plan&apos;s compute pool.</>
-              : "Unavailable for this application sandbox. Connect a compatible Linux host."}</small>
+              : <>Not available for {runtimeName}. It runs only on a Linux host you connect.</>}</small>
           </span>
-          {state.mode === "hivra-managed" ? <Check size={14} className={styles.check} aria-hidden="true" /> : null}
+          {managedSelected ? <Check size={14} className={styles.check} aria-hidden="true" /> : null}
         </button> : null}
 
         <button

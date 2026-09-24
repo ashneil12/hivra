@@ -1,3 +1,4 @@
+import { resizeFloor } from "@/lib/hivra/agent-catalog";
 import type { LaunchProfileId } from "./contracts";
 
 export type ResourceEnvelope = {
@@ -14,13 +15,20 @@ export type ResourceEnvelopeLimits = {
   maximumRam: number;
 };
 
-export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, {
+export type LaunchResourceOptions = {
+  /** Codex's optional browser sidecar. Defaults on; other profiles ignore it. */
+  browser?: boolean;
+};
+
+type LaunchResourcePolicy = {
   floor: Readonly<{ cpu: number; ram: number }>;
   recommended: Readonly<ResourceEnvelope>;
-}> = {
+};
+
+export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolicy> = {
   codex: {
-    // The current Launch Journey enables Codex's accepted browser sidecar.
-    floor: { cpu: 1.5, ram: 3 },
+    // Codex with its browser sidecar (the catalog's browser-on floor).
+    floor: resizeFloor("codex", true),
     recommended: { cpu: 1.5, ram: 3, maximumCpu: 2, maximumRam: 4 },
   },
   "ubuntu-desktop": {
@@ -41,6 +49,20 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, {
   },
 };
 
+/** Codex without the browser sidecar keeps the catalog base floor and the same
+ * pinned 0.5 CPU / 1 GB size the legacy welcome launch requests. */
+const CODEX_WITHOUT_BROWSER_POLICY: LaunchResourcePolicy = {
+  floor: resizeFloor("codex", false),
+  recommended: { cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1 },
+};
+
+export function launchResourcePolicy(
+  profileId: LaunchProfileId,
+  { browser = true }: LaunchResourceOptions = {},
+): LaunchResourcePolicy {
+  return profileId === "codex" && !browser ? CODEX_WITHOUT_BROWSER_POLICY : LAUNCH_RESOURCE_POLICY[profileId];
+}
+
 export type ResourceEnvelopeResult =
   | { ok: true; envelope: ResourceEnvelope }
   | { ok: false; reason: "below_floor" | "maximum_below_guarantee" | "maximum_above_cap" };
@@ -51,8 +73,9 @@ export function validateResourceEnvelope(
   profileId: LaunchProfileId,
   input: { cpu: number; ram: number; maximumCpu?: number | null; maximumRam?: number | null },
   limits: ResourceEnvelopeLimits = { maximumCpu: 8, maximumRam: 16 },
+  options: LaunchResourceOptions = {},
 ): ResourceEnvelopeResult {
-  const floor = LAUNCH_RESOURCE_POLICY[profileId].floor;
+  const floor = launchResourcePolicy(profileId, options).floor;
   const maximumCpu = input.maximumCpu ?? input.cpu;
   const maximumRam = input.maximumRam ?? input.ram;
   if (input.cpu < floor.cpu || input.ram < floor.ram) return { ok: false, reason: "below_floor" };
@@ -61,6 +84,9 @@ export function validateResourceEnvelope(
   return { ok: true, envelope: { cpu: input.cpu, ram: input.ram, maximumCpu, maximumRam } };
 }
 
-export function recommendedResourceEnvelope(profileId: LaunchProfileId): ResourceEnvelope {
-  return { ...LAUNCH_RESOURCE_POLICY[profileId].recommended };
+export function recommendedResourceEnvelope(
+  profileId: LaunchProfileId,
+  options: LaunchResourceOptions = {},
+): ResourceEnvelope {
+  return { ...launchResourcePolicy(profileId, options).recommended };
 }
