@@ -5,6 +5,7 @@ import { agentLaunchWatchRow, agentSurfacesFor, type AgentSurfaceId } from "../a
 import { renderComputerContract } from "../computer-contract";
 import { computerContractPlanFor } from "../computer-contract-input";
 import { attachAccessRows, attachedContractInput, attachReview } from "../attach-plan";
+import { withAttachedAgentChat } from "../attached-agent-surface";
 
 const FIXTURES = {
   "Hivra Cloud Codex (browser stack)": { type: "codex", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed", browser: true },
@@ -75,8 +76,12 @@ describe("attached Codex", () => {
     computer: { ...computer, ramGb: computer.ram }, installationId, grants: { workspace } }), 1);
 
   it("puts a Chat tab on the computer's page only once the agent is ready", () => {
-    expect(agentSurfacesFor({ ...computer, attached_agent_ready: true })).toContain("chat");
+    const attached = { computerId: "c", installationId, agentName: "Codex" };
+    expect(withAttachedAgentChat(agentSurfacesFor(computer), attached)[0]).toBe("chat");
+    expect(withAttachedAgentChat(agentSurfacesFor(computer), null)).not.toContain("chat");
     expect(agentSurfacesFor(computer)).not.toContain("chat");
+    // Not before the computer's own workspace is up: no gateway, no Chat tab.
+    expect(withAttachedAgentChat(agentSurfacesFor({ ...computer, chat_url: null }), attached)).not.toContain("chat");
   });
 
   it.each([true, false])("with ~/Hivra %s, tells the agent the surfaces the owner has and the Review promises", (workspace) => {

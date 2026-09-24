@@ -60,6 +60,8 @@ import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { DigitalOceanAgentWorkspace } from "@/components/hivra/DigitalOceanAgentWorkspace";
+import { AttachedAgentChat, useAttachedAgentChat } from "@/components/hivra/AttachedAgentChat";
+import { withAttachedAgentChat } from "@/lib/agent-computers/attached-agent-surface";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
 import {
   buildWelcomePersonalizationContext,
@@ -764,6 +766,10 @@ export default function AgentPage() {
     });
   }, [id, tab]);
 
+  // An agent added to this computer (design 5.8): the computer gains a Chat
+  // tab that reaches it through the computer's gateway.
+  const attachedAgent = useAttachedAgentChat(agent, id);
+
   // Read-only capability refresh once per computer id/session.
   // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).
   // Never prepare — Omarchy autoPrepare stays prepare=1 only.
@@ -823,8 +829,8 @@ export default function AgentPage() {
   // is the durable workspace capability signal (agentSurfacesFor). The
   // surfaces handle transient gateway outages themselves so navigation does
   // not appear and disappear with live probes.
-  const computerTabs: Tab[] = isComputer ? agentSurfacesFor(agent) : [];
-  const tabs = agentSurfacesFor(agent).map((id) => ({
+  const computerTabs: Tab[] = isComputer ? withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent) : [];
+  const tabs = withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent).map((id) => ({
     id,
     // A computer's own shell is just "Terminal"; an agent's CLI is its session.
     label: agentSurfaceLabel(id, def),
@@ -1063,6 +1069,11 @@ export default function AgentPage() {
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
           )
+        ) : effectiveTab === "chat" && isComputer ? (
+          attachedAgent && agent.chat_url ? (
+            <AttachedAgentChat computerId={agent.id} computerName={agent.name} chatUrl={agent.chat_url}
+              installationId={attachedAgent.installationId} token={agent.api_token} agentName={attachedAgent.agentName} />
+          ) : <Stub title="No agent here yet" body="Add an agent to this computer in Manage." />
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
             <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />

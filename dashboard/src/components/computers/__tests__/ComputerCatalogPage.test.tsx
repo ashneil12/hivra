@@ -425,4 +425,20 @@ describe("ComputerCatalogPage", () => {
     expect(screen.queryByText("No computers yet")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
+
+  it("picks the computer for Launch's \"Put an agent on a computer I already have\" with the honest pair line", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, name: "MY_UBUNTU_DESKTOP", status: "running", cpu: 2, ram: 4 };
+    const windows = { ...desk, id: "22222222-2222-4222-8222-222222222222", computer_profile: "windows", name: "WIN_BOX" };
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200,
+      json: async () => ({ success: true, data: { agents: [desk, windows] } }) }) as Response);
+    render(<ComputerCatalogPage />);
+    const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
+    expect(row).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage&addAgent=1`);
+    expect(within(row).getByText("Adds a new Codex to MY_UBUNTU_DESKTOP. Your other agents stay as they are.")).toBeInTheDocument();
+    const other = screen.getByRole("link", { name: /WIN_BOX/ });
+    expect(within(other).getByText("Not available to add to an existing computer yet")).toBeInTheDocument();
+    expect(other.getAttribute("href")).not.toContain("addAgent");
+  });
 });

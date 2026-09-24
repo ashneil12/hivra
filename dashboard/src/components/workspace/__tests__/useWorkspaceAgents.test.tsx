@@ -80,6 +80,58 @@ describe("useWorkspaceAgents", () => {
     expect(result.current.hivraError).toBeNull();
   });
 
+  describe("an agent added to one of the owner's computers (design 5.8)", () => {
+    const COMPUTER = "11111111-1111-4111-8111-111111111111";
+    const ATTACHMENT = "44444444-4444-4444-8444-444444444444";
+    const attachedRow = (overrides: Record<string, unknown> = {}) => ({ id: ATTACHMENT, phase: "attached", agentName: "Codex",
+      computerId: COMPUTER, computerName: "MY_UBUNTU_DESKTOP", computerStatus: "running", ...overrides });
+    const withAttached = (attached: unknown) => async () => ({
+      ...hivraResult([{ ...hivraRow(COMPUTER, "MY_UBUNTU_DESKTOP"), type: "linux-desktop" }, hivraRow("other", "Aardvark")]), attached });
+
+    it("follows its computer in the shared list as a-<attachment id>, opening the computer's Chat tab", async () => {
+      const { result } = renderHook(() => useWorkspaceAgents({ fetchHermes: async () => hermesEnvelope([]),
+        fetchHivra: withAttached({ enabled: true, agents: [attachedRow()] }) }));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const uids = result.current.agents.map(({ uid }) => uid);
+      expect(uids).toEqual(["x-other", `x-${COMPUTER}`, `a-${ATTACHMENT}`]);
+      expect(result.current.agents[2]).toMatchObject({ kind: "hivra", id: COMPUTER, name: "Codex on MY_UBUNTU_DESKTOP",
+        resourceKind: "agent", surfaceKind: "chat", agentType: "codex", typeLabel: "Codex", state: "running", statusRaw: "running",
+        computerPair: null, href: `/dashboard/agent/${COMPUTER}?tab=chat`,
+        attachment: { id: ATTACHMENT, computerId: COMPUTER, computerName: "MY_UBUNTU_DESKTOP", phase: "attached" } });
+      expect(result.current.hivraError).toBeNull();
+    });
+
+    it("reads as starting while it is being added, and as its computer's state once added", async () => {
+      const { result } = renderHook(() => useWorkspaceAgents({ fetchHermes: async () => hermesEnvelope([]),
+        fetchHivra: withAttached({ enabled: true, agents: [attachedRow({ phase: "dispatched", computerStatus: "running" }),
+          attachedRow({ id: "55555555-5555-4555-8555-555555555555", computerId: "66666666-6666-4666-8666-666666666666",
+            computerName: "lab", computerStatus: "stopped" })] }) }));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const rows = result.current.agents.filter((agent) => agent.attachment);
+      expect(rows.map((agent) => [agent.name, agent.state, agent.href])).toEqual([
+        ["Codex on MY_UBUNTU_DESKTOP", "provisioning", `/dashboard/agent/${COMPUTER}?tab=manage`],
+        ["Codex on lab", "stopped", "/dashboard/agent/66666666-6666-4666-8666-666666666666?tab=chat"],
+      ]);
+    });
+
+    it("lists none where attach is not offered", async () => {
+      const { result } = renderHook(() => useWorkspaceAgents({ fetchHermes: async () => hermesEnvelope([]),
+        fetchHivra: withAttached({ enabled: false, agents: [] }) }));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.agents.some((agent) => agent.attachment)).toBe(false);
+      expect(result.current.hivraError).toBeNull();
+    });
+
+    it.each([["unreadable", null], ["malformed", { enabled: true, agents: [{ ...attachedRow(), id: "not-a-uuid" }] }]])(
+      "keeps the agents and computers and says the Hivra family couldn't all load when that list is %s", async (_label, attached) => {
+        const { result } = renderHook(() => useWorkspaceAgents({ fetchHermes: async () => hermesEnvelope([]),
+          fetchHivra: withAttached(attached) }));
+        await waitFor(() => expect(result.current.loading).toBe(false));
+        expect(result.current.agents.map(({ uid }) => uid)).toEqual(["x-other", `x-${COMPUTER}`]);
+        expect(result.current.hivraError).toBe("Some agents and computers couldn't be loaded. Retry to check again.");
+      });
+  });
+
   it("combines successful families with stable source-qualified identities", async () => {
     const { result } = renderHook(() =>
       useWorkspaceAgents({

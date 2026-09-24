@@ -37,6 +37,7 @@ import {
   unifyAll,
   type UnifiedAgent,
 } from "@/lib/hivra/unified-agent";
+import { ATTACH_NOT_AVAILABLE, attachPairLine, attachSupported } from "@/lib/agent-computers/attach-plan";
 
 import styles from "./ComputerCatalogPage.module.css";
 
@@ -68,12 +69,15 @@ function computerTypeLabel(computer: HivraAgent): string {
   );
 }
 
-function ComputerRow({ computer }: { computer: HivraAgent }) {
+function ComputerRow({ computer, addingAgent = false }: { computer: HivraAgent; addingAgent?: boolean }) {
   const isDesktop = getCatalogAgent(computer.type)?.resourceKind === "computer";
   const desktopQuery = computer.computer_profile === "windows"
     ? "?tab=desktop&open=fast"
     : "?tab=desktop";
-  const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${isDesktop ? desktopQuery : ""}`;
+  // Choosing a computer for an agent (Launch's "Put an agent on a computer I
+  // already have") opens its Manage, where Add an agent has its own gate.
+  const canTakeAgent = addingAgent && attachSupported(computer);
+  const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${canTakeAgent ? "?tab=manage&addAgent=1" : isDesktop ? desktopQuery : ""}`;
   const state = computerState(computer);
   return (
     <Link className={styles.computerRow} href={href}>
@@ -83,7 +87,8 @@ function ComputerRow({ computer }: { computer: HivraAgent }) {
       />
       <span className={styles.computerIdentity}>
         <strong>{computer.name}</strong>
-        <small>{computerTypeLabel(computer)}</small>
+        {/* Choosing a computer for an agent: the honest pair line, or why not. */}
+        <small>{addingAgent ? canTakeAgent ? attachPairLine(computer.name) : ATTACH_NOT_AVAILABLE : computerTypeLabel(computer)}</small>
       </span>
       <span className={styles.computerMeta}>
         {computer.cpu} vCPU · {computer.ram} GB
@@ -115,6 +120,7 @@ export function ComputerCatalogPage() {
   const [filter, setFilter] = useState<InventoryFilter>("all");
   const [catalogOpen, setCatalogOpen] = useState(false);
   const osGridRef = useRef<HTMLDivElement>(null);
+  const addingAgent = searchParams?.get("addAgent") === "1";
 
   useEffect(() => {
     if (searchParams?.get("launch") === "1") router.replace(launchHref);
@@ -175,7 +181,9 @@ export function ComputerCatalogPage() {
             <Monitor size={14} aria-hidden /> Your workspace
           </span>
           <h1>Computers</h1>
-          <p>Open your computer and return to its desktop or tools.</p>
+          <p>{addingAgent
+            ? "Choose the computer to add an agent to. It works there as its own user, in your Hivra folder."
+            : "Open your computer and return to its desktop or tools."}</p>
         </div>
         <Link className={styles.primaryButton} href={launchHref}>
           <Plus size={14} /> Launch computer
@@ -250,7 +258,7 @@ export function ComputerCatalogPage() {
         ) : null}
         <div className={styles.computerList}>
           {visibleComputers.map((computer) => (
-            <ComputerRow key={computer.id} computer={computer} />
+            <ComputerRow key={computer.id} computer={computer} addingAgent={addingAgent} />
           ))}
           {!loading && !loadError && total === 0 ? (
             <div className={styles.empty}>

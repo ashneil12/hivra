@@ -52,6 +52,7 @@ import {
 } from "@/lib/launch/digitalocean-launch";
 import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
 import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
+import { AttachEntryLink } from "./AttachEntryLink";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
@@ -2081,6 +2082,7 @@ export function LaunchJourney() {
         <p>An AI that works on its own computer.</p>
       </div>
       <div className={styles.tileGrid}>{agentTiles.map(renderTile)}</div>
+      {selfHosted ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
   const computerSection = (

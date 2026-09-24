@@ -14,6 +14,14 @@ export const ATTACH_RUNTIME_NAME = "Codex";
 export const ATTACH_INSTALLER_SHA256 = "77d72e2e8346cc19ef74264e8458bbca8802772d1c668c3fdffa653c4273d375";
 export const ATTACH_NOT_AVAILABLE = "Not available to add to an existing computer yet";
 
+/**
+ * The honest pair line wherever an agent is put on a computer the owner
+ * already has: it is always a new agent, and nothing else changes.
+ */
+export function attachPairLine(computerName: string, runtimeName = "Codex"): string {
+  return `Adds a new ${runtimeName} to ${computerName}. Your other agents stay as they are.`;
+}
+
 export interface AttachGrants { workspace: boolean }
 /** The access gate's defaults: ~/Hivra read and write on. */
 export const DEFAULT_ATTACH_GRANTS: Readonly<AttachGrants> = Object.freeze({ workspace: true });

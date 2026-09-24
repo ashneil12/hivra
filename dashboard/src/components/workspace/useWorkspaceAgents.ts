@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { clientLog } from "@/lib/client/logger";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
+import { fetchOwnerAttachedAgents } from "@/lib/agent-computers/attach-client";
 import {
   unifyAll,
+  type AttachedAgentLite,
   type HermesInstanceLite,
   type UnifiedAgent,
 } from "@/lib/hivra/unified-agent";
@@ -91,13 +93,46 @@ function parseHermesEnvelope(value: unknown): HermesInstanceLite[] {
   });
 }
 
-function parseHivraResult(value: unknown): HivraAgent[] {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ATTACHED_PHASES = new Set(["claimed", "dispatched", "attached"]);
+
+function requiredId(value: unknown): string {
+  if (typeof value !== "string" || !UUID.test(value)) throw new Error("invalid-source-record");
+  return value;
+}
+
+/** Agents added to the owner's computers: `undefined` when that list could not be read. */
+function parseAttached(value: unknown): AttachedAgentLite[] | undefined {
+  if (value === undefined) return [];
+  if (value === null) return undefined;
+  const list = asRecord(value);
+  if (!list || !Array.isArray(list.agents)) return undefined;
+  if (list.enabled !== true) return [];
+  try {
+    return list.agents.map((candidate) => {
+      const row = asRecord(candidate);
+      if (!row || typeof row.phase !== "string" || !ATTACHED_PHASES.has(row.phase)) throw new Error("invalid-source-record");
+      return {
+        id: requiredId(row.id),
+        phase: row.phase as AttachedAgentLite["phase"],
+        agentName: requiredString(row.agentName),
+        computerId: requiredId(row.computerId),
+        computerName: requiredString(row.computerName),
+        computerStatus: optionalString(row.computerStatus) ?? null,
+      };
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function parseHivraResult(value: unknown): { agents: HivraAgent[]; attached: AttachedAgentLite[] | undefined } {
   const result = asRecord(value);
   if (!result || result.error !== null || !Array.isArray(result.agents)) {
     throw new Error("invalid-hivra-result");
   }
 
-  return result.agents.map((candidate) => {
+  return { attached: parseAttached(result.attached), agents: result.agents.map((candidate) => {
     const row = asRecord(candidate);
     if (!row) throw new Error("invalid-source-record");
     const status = requiredString(row.status);
@@ -116,7 +151,7 @@ function parseHivraResult(value: unknown): HivraAgent[] {
       computer_substrate: knownValue<NonNullable<HivraAgent["computer_substrate"]>>(row.computer_substrate, HIVRA_SUBSTRATES),
       deployment_mode: knownValue<NonNullable<HivraAgent["deployment_mode"]>>(row.deployment_mode, HIVRA_DEPLOYMENT_MODES),
     };
-  });
+  }) };
 }
 
 async function defaultFetchHermes(): Promise<unknown> {
@@ -125,8 +160,11 @@ async function defaultFetchHermes(): Promise<unknown> {
   return response.json();
 }
 
+// Agents added to the owner's computers belong to the Hivra family: they are
+// read with it, and a list that could not be read is reported as that family's.
 async function defaultFetchHivra(): Promise<unknown> {
-  return listAgentsResult();
+  const [result, attached] = await Promise.all([listAgentsResult(), fetchOwnerAttachedAgents()]);
+  return { ...result, attached };
 }
 
 function defaultNow(): Date {
@@ -154,6 +192,7 @@ export function useWorkspaceAgents(
   const hivraGenerationRef = useRef(0);
   const [hermesRows, setHermesRows] = useState<HermesInstanceLite[]>([]);
   const [hivraRows, setHivraRows] = useState<HivraAgent[]>([]);
+  const [attachedRows, setAttachedRows] = useState<AttachedAgentLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [hermesError, setHermesError] = useState<string | null>(null);
   const [hivraError, setHivraError] = useState<string | null>(null);
@@ -183,8 +222,13 @@ export function useWorkspaceAgents(
       if (!mountedRef.current || generation !== hivraGenerationRef.current) return;
       try {
         if (result.status === "rejected") throw new Error("source-rejected");
-        setHivraRows(parseHivraResult(result.value));
-        setHivraError(null);
+        const parsed = parseHivraResult(result.value);
+        setHivraRows(parsed.agents);
+        // The agents and computers are shown; agents added to computers that
+        // could not be read keep their last known rows, and the error says so.
+        if (parsed.attached) setAttachedRows(parsed.attached);
+        setHivraError(parsed.attached ? null : HIVRA_ERROR);
+        if (!parsed.attached) logSourceFailure("hivra");
       } catch {
         setHivraError(HIVRA_ERROR);
         logSourceFailure("hivra");
@@ -243,7 +287,7 @@ export function useWorkspaceAgents(
     };
   }, [loadBoth]);
 
-  const agents = useMemo(() => unifyAll(hermesRows, hivraRows), [hermesRows, hivraRows]);
+  const agents = useMemo(() => unifyAll(hermesRows, hivraRows, attachedRows), [hermesRows, hivraRows, attachedRows]);
 
   return {
     agents,
