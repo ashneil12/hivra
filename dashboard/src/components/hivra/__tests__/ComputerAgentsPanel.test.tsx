@@ -54,7 +54,7 @@ it("walks the gate and the Review, sending one claim with the review the owner s
   render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
   fireEvent.click(await screen.findByRole("button", { name: /Add an agent/ }));
 
-  const gateGroup = screen.getByRole("group", { name: 'What can Codex use on "MY_UBUNTU_DESKTOP"?' });
+  const gateGroup = screen.getByRole("group", { name: "What can Codex use on \u201cMY_UBUNTU_DESKTOP\u201d?" });
   for (const label of ["Your Hivra folder (~/Hivra), read and write", "Its own user on this computer", "Internet",
     "This computer's other services and local network", "Chrome profile", "Desktop control", "Administrator (sudo)",
     "Your personal home folder", "Resources"]) expect(within(gateGroup).getByText(label)).toBeInTheDocument();
@@ -63,7 +63,7 @@ it("walks the gate and the Review, sending one claim with the review the owner s
   fireEvent.click(within(gateGroup).getByRole("checkbox", { name: "Your Hivra folder (~/Hivra), read and write" }));
   fireEvent.click(screen.getByRole("button", { name: "Continue to review" }));
 
-  const review = screen.getByRole("group", { name: 'Add Codex to "MY_UBUNTU_DESKTOP"' });
+  const review = screen.getByRole("group", { name: "Add Codex to \u201cMY_UBUNTU_DESKTOP\u201d" });
   expect(within(review).getByText("Isolation: a separate user on this computer. That is weaker than giving Codex its own computer."))
     .toBeInTheDocument();
   expect(within(review).getByText("Codex can: use its own terminal and reach the internet. It has no shared folder.")).toBeInTheDocument();
@@ -104,7 +104,7 @@ it("opens the gate from Launch's deep link, with the honest pair line", async ()
   window.history.replaceState(null, "", `/dashboard/agent/${COMPUTER}?tab=manage&addAgent=1`);
   try {
     render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
-    const group = await screen.findByRole("group", { name: 'What can Codex use on "MY_UBUNTU_DESKTOP"?' });
+    const group = await screen.findByRole("group", { name: "What can Codex use on \u201cMY_UBUNTU_DESKTOP\u201d?" });
     expect(within(group).getByText("Adds a new Codex to MY_UBUNTU_DESKTOP. Your other agents stay as they are.")).toBeInTheDocument();
   } finally {
     window.history.replaceState(null, "", "/");
@@ -167,20 +167,75 @@ it("shows progress only as each receipt arrives", async () => {
   expect(items.map((item) => [item.querySelector("span")!.textContent, item.getAttribute("data-done")])).toEqual([
     ["Request accepted", "true"], ["Codex installed", "false"], ["Codex started", "false"], ["Chat is ready", "false"]]);
   expect(items[0].querySelector("time")).toHaveAttribute("dateTime", accepted);
+  // "Request accepted 0:30 ago" (5.8), give or take the render.
+  expect(items[0].querySelector("time")!.textContent).toMatch(/^0:3\d ago$/);
   expect(items[3].querySelector("time")).toBeNull();
   expect(screen.queryByText(/couldn't confirm this step yet/)).not.toBeInTheDocument();
   // The step holds the computer, and Manage says so.
   expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted.")).toBeInTheDocument();
 });
 
-it("says how a step that never answers ends: only deleting the computer", async () => {
+it("says what ends a step that never answers: a stopped computer is let go, and a delete ends it", async () => {
   const accepted = new Date(Date.now() - 60 * 60_000).toISOString();
   serve(ready(gate({ available: false, reason: "agent_present", reviews: null, attachments: [attachment({ phase: "dispatched", reviews: null,
     chatPath: null, createdAt: accepted, receipts: { accepted, staged: null, started: null, chatReady: null } })] })));
   render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
   expect(await screen.findByText(/couldn't confirm this step yet/)).toBeInTheDocument();
   expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted. "
-    + "If the computer never answers, deleting the computer is the only way to end this step.")).toBeInTheDocument();
+    + "If this computer has stopped, Hivra lets it go once it sees that, so you can start it again. "
+    + "Deleting the computer also ends this step.")).toBeInTheDocument();
+  expect(screen.queryByText(/only way/)).not.toBeInTheDocument();
+});
+
+describe("a step the computer stopped under (T3)", () => {
+  const accepted = new Date(Date.now() - 5 * 60_000).toISOString();
+  const adding = (overrides: Record<string, unknown>) => ready(gate({ available: false, reason: "agent_present", reviews: null,
+    attachments: [attachment({ phase: "dispatched", reviews: null, chatPath: null, createdAt: accepted,
+      receipts: { accepted, staged: accepted, started: null, chatReady: null }, ...overrides })] }));
+
+  it("says the install is paused, the computer is free to start, and never that it is held", async () => {
+    serve(adding({ leaseReleased: true, interruptReason: "computer_not_running", interruptedAt: accepted }));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText("Adding Codex is paused: this computer stopped. Start it and Hivra removes what was installed, "
+      + "and you can add Codex again. You can also delete the computer.")).toBeInTheDocument();
+    expect(screen.queryByText(/can't be started, stopped or restarted/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't confirm this step yet/)).not.toBeInTheDocument();
+  });
+
+  it("says a delete stopped the install", async () => {
+    serve(adding({ leaseReleased: true, interruptReason: "pending_delete", interruptedAt: accepted }));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText("Adding Codex stopped because this computer is being deleted. "
+      + "If the delete hasn't finished, delete the computer again.")).toBeInTheDocument();
+  });
+
+  it("says Hivra is removing it once the computer runs again, and that the computer is held meanwhile", async () => {
+    serve(adding({ leaseReleased: false, interruptReason: "computer_not_running", interruptedAt: accepted }));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText("This computer stopped while Codex was being added. Hivra is removing what was installed."))
+      .toBeInTheDocument();
+    expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted.")).toBeInTheDocument();
+  });
+
+  it("says how it ended once the cleanup was observed", async () => {
+    serve(ready(gate({ attachments: [attachment({ phase: "failed", endReason: "install_failed", interruptReason: "computer_not_running",
+      reviews: null, chatPath: null })] })));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText("Adding Codex didn't finish because this computer stopped. Hivra removed what it had installed; "
+      + "your files in ~/Hivra were not touched.")).toBeInTheDocument();
+  });
+
+  it("says a Remove is paused and still disables the other actions", async () => {
+    serve(ready(gate({ available: false, reason: "agent_present", reviews: null, attachments: [attachment({ operation: {
+      id: "22222222-2222-4222-8222-222222222222", kind: "detach", phase: "dispatched", grants: { workspace: true },
+      createdAt: accepted, dispatchedAt: accepted, completedAt: null, failureCode: null,
+      leaseReleased: true, interruptReason: "computer_not_running", interruptedAt: accepted } })] })));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText("Removing Codex is paused: this computer stopped. Start it and Hivra finishes removing Codex. "
+      + "You can also delete the computer.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(screen.queryByText(/can't be started, stopped or restarted/)).not.toBeInTheDocument();
+  });
 });
 
 describe("an attached agent", () => {
@@ -212,7 +267,7 @@ describe("an attached agent", () => {
     expect(screen.getByText(/Restoring is unavailable while Codex is on this computer/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Change access" }));
-    const access = screen.getByRole("group", { name: 'Change what Codex can use on "MY_UBUNTU_DESKTOP"' });
+    const access = screen.getByRole("group", { name: "Change what Codex can use on \u201cMY_UBUNTU_DESKTOP\u201d" });
     expect(within(access).getByText(/Files Codex added to ~\/Hivra stay, and can still run as you/)).toBeInTheDocument();
     fireEvent.click(within(access).getByRole("button", { name: /Stop sharing ~\/Hivra/ }));
     await waitFor(() => expect(posted()).toHaveLength(1));
@@ -220,7 +275,7 @@ describe("an attached agent", () => {
     expect(JSON.parse(String(posted()[0].init!.body))).toEqual({ grants: { workspace: false }, reviewSha256: "d".repeat(64), requestId: expect.any(String) });
 
     fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
-    const remove = screen.getByRole("group", { name: 'Remove Codex from "MY_UBUNTU_DESKTOP"' });
+    const remove = screen.getByRole("group", { name: "Remove Codex from \u201cMY_UBUNTU_DESKTOP\u201d" });
     expect(within(remove).getByText("Files Codex added to ~/Hivra stay after it's removed, and can still run as you if you run them."))
       .toBeInTheDocument();
     fireEvent.click(within(remove).getByRole("button", { name: /Remove Codex/ }));

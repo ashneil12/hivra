@@ -15,7 +15,7 @@ import { ATTACHED_AGENT_PROGRAM_SHA256, ATTACHED_AGENT_TIMEOUTS, executeAttached
 import { attachedAccessPacket, attachedActivatePacket, attachedObservePacket, attachedRemovePacket,
   attachedStatePacket, type AttachedPacketInput } from "./attached-agent-packet";
 import { progressAttachmentStaging } from "./attachment-staging-coordinator";
-import { createAttachmentLifecycleStore, type AttachmentLifecycleStore, type AttachmentState,
+import { createAttachmentLifecycleStore, type AttachmentInterruptReason, type AttachmentLifecycleStore, type AttachmentState,
   type AttachmentWorkItem } from "./attachment-lifecycle-store";
 
 // The minute worker's one pass over one open attach step (design 5.5): the
@@ -23,7 +23,11 @@ import { createAttachmentLifecycleStore, type AttachmentLifecycleStore, type Att
 // access and Remove. Every guest step runs only after this pass won its
 // database compare-and-swap; a lost answer is followed by a read-only look,
 // never by a blind second install. Anything uncertain stays held, and the
-// computer page says so.
+// computer page says so. A step already sent to the computer lets the computer
+// go when the host saw the VM stopped (nothing of it can still run there) or
+// when the owner asked to delete the computer (the delete destroys the VM):
+// the step stays open, and comes back to be finished by what the computer
+// shows once the computer runs again (T3).
 
 const COMPUTER_COLUMNS = "id, user_id, name, type, cpu, ram, status, desired_state, operation_id, operation_kind, vmid, ip, chat_url, provisioned_at, "
   + "computer_profile, computer_substrate, deployment_mode, proxmox_host, infrastructure_connection_id, deployment_target_id, "
@@ -47,7 +51,8 @@ export function attachPrecondition(computer: Pick<ComputerRow, "status" | "vmid"
 
 export type AttachmentWorkProgress = {
   kind: AttachmentWorkItem["kind"]; id: string;
-  state: "attached" | "failed" | "cancelled" | "completed" | "held" | "progressing";
+  /** interrupted: the computer was let go and the step waits for it (T3). */
+  state: "attached" | "failed" | "cancelled" | "completed" | "held" | "progressing" | "interrupted";
   reason?: string;
 };
 
@@ -128,6 +133,26 @@ const fits = (deps: Dependencies, action: AttachedAgentAction) => deps.now() + A
 /** A held step's reason: the host's refusal when it gave one, else the transport code. */
 const stepCode = (result: { code: string; reason?: string }) => result.code === "target_refused" && result.reason ? result.reason : result.code;
 
+/** The host, under its allocation lock, saw the VM not running: nothing of the step can run in it now. */
+const vmStopped = (result: { ok: boolean; code?: string; reason?: string }) =>
+  !result.ok && result.code === "target_refused" && result.reason === "computer_not_running";
+
+type LetGo = (reason: AttachmentInterruptReason) => Promise<AttachmentWorkProgress>;
+
+/** Release the computer from a step that was sent to it; the step stays open. */
+function letGoOf(ownerId: string, kind: AttachmentWorkItem["kind"], id: string, deps: Dependencies): LetGo {
+  return async (reason) => {
+    if (!await deps.store.interrupt(ownerId, kind, id, reason)) return { kind, id, state: "held", reason: "interrupt_unconfirmed" };
+    log.info("attached agent step let its computer go", { source: "agent-computers/attachment-worker",
+      failureType: "attachment_step_interrupted", kind, operationId: id, reason });
+    return { kind, id, state: "interrupted", reason };
+  };
+}
+
+/** Whether Hivra's record shows the computer running, wanted running and free again. */
+const computerBack = (step: { desiredState: string | null; computerStatus: string | null; computerOperationId?: string | null }) =>
+  step.desiredState === "running" && step.computerStatus === "running" && !step.computerOperationId;
+
 const grantsLabel = (grants: { workspace: boolean }) => grants.workspace ? "~/Hivra read and write, internet" : "internet, no shared folder";
 
 /** One pass over one attach: staging, activation, readiness, completion. */
@@ -140,6 +165,24 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   const computer = await deps.loadComputer(ownerId, state.sourceId);
   if (!computer) return held("computer_unavailable");
   const architecture = "x86_64" as const;
+  const letGo = letGoOf(ownerId, "attach", id, deps);
+
+  // A step that let its computer go waits for it, then takes it back (T3).
+  if (state.leaseReleased) {
+    if (!computerBack(state)) return { kind: "attach", id, state: "interrupted", reason: state.interruptReason ?? "computer_not_running" };
+    if (!await deps.store.resume(ownerId, "attach", id)) return held("resume_unconfirmed");
+    state = await deps.store.readState(ownerId, id);
+    if (!state || state.phase !== "dispatched" || state.leaseReleased) return held("state_unavailable");
+  }
+  // A pending delete wins over a step already sent: the delete destroys the VM
+  // and whatever the step did in it.
+  if (state.phase === "dispatched" && state.desiredState === "deleted") return await letGo("pending_delete");
+  // An install the computer stopped under is removed, never finished.
+  if (state.phase === "dispatched" && state.interruptReason) {
+    const back = state.installation && target(computer, id, state.computerId, state.installation.architecture);
+    if (!back) return held("state_unavailable");
+    return await cleanUpAndFail(ownerId, state, computer, back, "computer_stopped", deps, letGo);
+  }
 
   // Nothing ran on the computer while the claim is undispatched. A pending
   // delete cancels it; a computer that is not running and ready refuses it:
@@ -163,6 +206,12 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
       ? await deps.stage(ownerId, id, architecture, { deadline: deps.deadline, now: deps.now })
       : await deps.stage(ownerId, id, architecture);
     if (staged.state !== "staging_recorded") {
+      // After the stage dispatch (in an earlier pass or this one) a stopped VM
+      // or a pending delete lets the computer go.
+      if (staged.reason === "computer_not_running" || staged.reason === "pending_delete") {
+        const latest = state.phase === "dispatched" ? state : await deps.store.readState(ownerId, id);
+        if (latest?.phase === "dispatched") return await letGo(staged.reason);
+      }
       // The host refused the VM before anything ran in it: failed, with why.
       if ((staged.reason === "computer_not_running" || staged.reason === "computer_not_ready") && state.phase === "claimed") {
         return await refuse(staged.reason);
@@ -183,7 +232,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
 
   let result: AttachedActivationResult | null = null;
   if (!state.activation) {
-    if (state.desiredState !== "running") return await cleanUpAndFail(ownerId, state, computer, hostTarget, "pending_delete", deps);
+    if (state.desiredState !== "running") return held("computer_not_wanted");
     if (!fits(deps, "activate")) return held("budget_exhausted");
     const token = deps.token();
     const built = attachedActivatePacket({ ...packetInput(state, computer, ids, id, grants, 1), bootId: state.bootId,
@@ -196,7 +245,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     // and then only observed.
     if (!granted) return held("activation_unconfirmed");
     const started = await deps.execute(ownerId, computer, "activate", hostTarget, built.packet);
-    if (!started.ok) return held("activation_" + stepCode(started));
+    if (!started.ok) return vmStopped(started) ? await letGo("computer_not_running") : held("activation_" + stepCode(started));
     result = started.result as AttachedActivationResult;
     state = await deps.store.readState(ownerId, id);
     if (!state?.activation) return held("state_unavailable");
@@ -209,7 +258,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     const observed = await deps.execute(ownerId, computer, "observe", hostTarget, attachedObservePacket({ operationId: id,
       activationId: activation.activationId, installationId: state.installation!.installationId, bootId: state.bootId,
       serviceDefinitionSha256: activation.serviceDefinitionSha256, instanceToken: token }).packet);
-    if (!observed.ok) return held("observation_" + stepCode(observed));
+    if (!observed.ok) return vmStopped(observed) ? await letGo("computer_not_running") : held("observation_" + stepCode(observed));
     result = observed.result as AttachedActivationResult;
     if (result.contract) {
       const built = attachedActivatePacket({ ...packetInput(state, computer, ids, id, grants, 1), bootId: state.bootId,
@@ -231,7 +280,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
       detail: { attachmentId: id, agentName: state.agentName, computerName: computer.name, access: grantsLabel(grants) } });
     return { kind: "attach", id, state: "attached" };
   }
-  if (result.failure) return await cleanUpAndFail(ownerId, state, computer, hostTarget, result.failure, deps);
+  if (result.failure) return await cleanUpAndFail(ownerId, state, computer, hostTarget, result.failure, deps, letGo);
   return held("readiness_unconfirmed");
 }
 
@@ -249,12 +298,12 @@ async function recordContract(ownerId: string, attachmentId: string, revision: n
 
 /** A failed install is removed from the computer first; only an observed cleanup ends it. */
 async function cleanUpAndFail(ownerId: string, state: AttachmentState, computer: ComputerRow, hostTarget: AttachedAgentTarget,
-  failureCode: string, deps: Dependencies): Promise<AttachmentWorkProgress> {
+  failureCode: string, deps: Dependencies, letGo: LetGo): Promise<AttachmentWorkProgress> {
   const held = (reason: string): AttachmentWorkProgress => ({ kind: "attach", id: state.id, state: "held", reason });
   if (!fits(deps, "remove")) return held("budget_exhausted");
   const cleaned = await deps.execute(ownerId, computer, "remove", hostTarget,
     attachedRemovePacket({ operationId: state.id, installationId: state.installation!.installationId }).packet);
-  if (!cleaned.ok) return held("cleanup_" + stepCode(cleaned));
+  if (!cleaned.ok) return vmStopped(cleaned) ? await letGo("computer_not_running") : held("cleanup_" + stepCode(cleaned));
   const receipt = cleaned.result as AttachedRemoveResult;
   if (receipt.state !== "removed") return held("cleanup_unresolved");
   if (!await deps.store.fail({ ownerId, operationId: state.id, generation: state.generation, authority: state.guestAuthority,
@@ -269,11 +318,21 @@ async function progressOperation(item: Extract<AttachmentWorkItem, { kind: "acce
 Promise<AttachmentWorkProgress> {
   const { ownerId, id, kind } = item;
   const held = (reason: string): AttachmentWorkProgress => ({ kind, id, state: "held", reason });
-  const operation = await deps.store.readOperation(ownerId, id);
+  let operation = await deps.store.readOperation(ownerId, id);
   if (!operation) return held("state_unavailable");
   if (["completed", "failed", "cancelled"].includes(operation.phase)) {
     return { kind, id, state: operation.phase === "completed" ? "completed" : operation.phase === "failed" ? "failed" : "cancelled" };
   }
+  const letGo = letGoOf(ownerId, kind, id, deps);
+  // A step that let its computer go waits for it, then takes it back and
+  // finishes by what the computer shows (T3).
+  if (operation.leaseReleased) {
+    if (!computerBack(operation)) return { kind, id, state: "interrupted", reason: operation.interruptReason ?? "computer_not_running" };
+    if (!await deps.store.resume(ownerId, kind, id)) return held("resume_unconfirmed");
+    operation = await deps.store.readOperation(ownerId, id);
+    if (!operation || operation.phase !== "dispatched" || operation.leaseReleased) return held("state_unavailable");
+  }
+  if (operation.phase === "dispatched" && operation.desiredState === "deleted") return await letGo("pending_delete");
   const state = await deps.store.readState(ownerId, operation.attachmentId);
   if (!state || state.phase !== "attached" || !state.installation) return held("state_unavailable");
   const computer = await deps.loadComputer(ownerId, state.sourceId);
@@ -299,7 +358,7 @@ Promise<AttachmentWorkProgress> {
     // pass that lost the previous answer runs it again to observe the end state.
     const removed = await deps.execute(ownerId, computer, "remove", hostTarget,
       attachedRemovePacket({ operationId: id, installationId: state.installation.installationId }).packet);
-    if (!removed.ok) return held("remove_" + stepCode(removed));
+    if (!removed.ok) return vmStopped(removed) ? await letGo("computer_not_running") : held("remove_" + stepCode(removed));
     const receipt = removed.result as AttachedRemoveResult;
     if (receipt.state !== "removed") return held(receipt.reason ?? "remove_unresolved");
     if (!await deps.store.completeOperation(ownerId, id, receipt as unknown as Record<string, unknown>)) return held("completion_unconfirmed");
@@ -314,14 +373,14 @@ Promise<AttachmentWorkProgress> {
   if (fresh) {
     const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
     const changed = await deps.execute(ownerId, computer, "access", hostTarget, built.packet);
-    if (!changed.ok) return held("access_" + stepCode(changed));
+    if (!changed.ok) return vmStopped(changed) ? await letGo("computer_not_running") : held("access_" + stepCode(changed));
     const receipt = changed.result as AttachedAccessResult;
     return await finishAccess(ownerId, id, operation.attachmentId, receipt, built.contract, revision, operation.grants, computer, state, deps);
   }
   // The answer to a dispatched change was lost: look, never change again.
   const looked = await deps.execute(ownerId, computer, "state", hostTarget,
     attachedStatePacket({ operationId: id, installationId: state.installation.installationId, instanceToken: token }).packet);
-  if (!looked.ok) return held("state_" + stepCode(looked));
+  if (!looked.ok) return vmStopped(looked) ? await letGo("computer_not_running") : held("state_" + stepCode(looked));
   const observed = looked.result as AttachedStateResult;
   const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
   if (observed.chatReady && observed.workspace === operation.grants.workspace && observed.viewMounted === operation.grants.workspace) {

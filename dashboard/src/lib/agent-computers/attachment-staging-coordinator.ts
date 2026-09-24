@@ -19,12 +19,17 @@ const OBSERVE_BOOT_MS = 90_000;
 // computer_not_running / computer_not_ready: before the stage dispatch, the
 // host refused the VM (stopped, or not the tagged VM on its address) and
 // nothing ran in it; the worker ends the claim as failed with that reason.
+// After the dispatch, computer_not_running means the host saw the VM stopped,
+// so the stage cannot be running in it; the worker lets the computer go.
 type Reason = "state_unavailable" | "pending_delete" | "reservation_unconfirmed" | "boot_unobserved" | "boot_unconfirmed"
   | "fetch_unconfirmed" | "dispatch_unconfirmed" | "staging_unconfirmed" | "result_unconfirmed"
   | "computer_not_running" | "computer_not_ready" | "budget_exhausted";
 const refusalReason = (result: { ok: boolean; code?: string; reason?: string }): Reason | null =>
   !result.ok && result.code === "target_refused"
     ? result.reason === "computer_not_running" ? "computer_not_running" : "computer_not_ready" : null;
+/** After the dispatch only a stopped VM is named; anything else stays unconfirmed. */
+const stoppedAfterDispatch = (result: { ok: boolean; code?: string; reason?: string }): boolean =>
+  !result.ok && result.code === "target_refused" && result.reason === "computer_not_running";
 export type AttachmentStagingProgress = { operationId: string; state: "staging_recorded" }
   | { operationId: string; state: "held"; reason: Reason };
 
@@ -59,6 +64,7 @@ export async function progressAttachmentStaging(
       if (!expected) return held();
       if (!fits(ATTACHMENT_ACTION_TIMEOUTS.observe.hostMs)) { reason = "budget_exhausted"; return held(); }
       const observed = await deps.execute(ownerId, attachmentExecutionAgent(snapshot), "observe", expected);
+      if (stoppedAfterDispatch(observed)) { reason = "computer_not_running"; return held(); }
       if (!observed.ok || observed.action !== "observe") return held();
       reason = "result_unconfirmed";
       return await deps.store.recordStaged(snapshot, observed.staged) === true
@@ -117,6 +123,7 @@ export async function progressAttachmentStaging(
     snapshot = current;
     reason = "staging_unconfirmed";
     const staged = await deps.execute(ownerId, attachmentExecutionAgent(snapshot), "stage", expected);
+    if (stoppedAfterDispatch(staged)) { reason = "computer_not_running"; return held(); }
     if (!staged.ok || staged.action !== "stage") return held();
     reason = "result_unconfirmed";
     return await deps.store.recordStaged(snapshot, staged.staged) === true

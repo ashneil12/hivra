@@ -55,6 +55,7 @@ function fakes() {
     complete: jest.fn().mockResolvedValue(true), fail: jest.fn().mockResolvedValue(true), recordContract: jest.fn().mockResolvedValue(true),
     readOperation: jest.fn(), dispatchOperation: jest.fn().mockResolvedValue(true), cancelOperation: jest.fn().mockResolvedValue(true),
     completeOperation: jest.fn().mockResolvedValue(true), failOperation: jest.fn().mockResolvedValue(true),
+    interrupt: jest.fn().mockResolvedValue(true), resume: jest.fn().mockResolvedValue(true),
   };
   const deps = {
     store: store as never,
@@ -213,14 +214,98 @@ describe("adding Codex", () => {
     expect(store.fail).not.toHaveBeenCalled();
   });
 
-  it("cleans up instead of starting Codex when the computer is deleted after staging", async () => {
+  it.each([
+    ["after staging", {}],
+    ["while Codex starts", { activation: { activationId: ACTIVATION, serviceDefinitionSha256: DEFINITION } }],
+  ])("lets a computer being deleted go %s, without starting Codex or waiting for the guest (T3)", async (_label, overrides) => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ desiredState: "deleted", ...overrides }));
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "interrupted", reason: "pending_delete" });
+    expect(store.interrupt).toHaveBeenCalledWith(OWNER, "attach", ID, "pending_delete");
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(store.dispatchActivation).not.toHaveBeenCalled();
+    expect(store.fail).not.toHaveBeenCalled();
+    expect(store.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["starting Codex", {}, "activate"],
+    ["looking at Codex", { activation: { activationId: ACTIVATION, serviceDefinitionSha256: DEFINITION } }, "observe"],
+  ])("lets the computer go when the host saw the VM stopped while %s, and marks nothing done (T3)", async (_label, overrides, action) => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf(overrides));
+    deps.execute.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "interrupted", reason: "computer_not_running" });
+    expect(actions(deps.execute)).toEqual([action]);
+    expect(store.interrupt).toHaveBeenCalledWith(OWNER, "attach", ID, "computer_not_running");
+    expect(store.fail).not.toHaveBeenCalled();
+    expect(store.complete).not.toHaveBeenCalled();
+  });
+
+  it("keeps a guest that does not answer held: only a stopped VM or a delete lets the computer go", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ activation: { activationId: ACTIVATION, serviceDefinitionSha256: DEFINITION } }));
+    deps.execute.mockResolvedValue({ ok: false, code: "transport_failed" });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "observation_transport_failed" });
+    expect(store.interrupt).not.toHaveBeenCalled();
+  });
+
+  it("lets the computer go when the stage was sent and the host then saw the VM stopped", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ staged: null }));
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "computer_not_running" });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "interrupted", reason: "computer_not_running" });
+    expect(store.refuse).not.toHaveBeenCalled();
+    // The stage was sent in this same pass: the claim read before it is not refused.
+    const second = fakes();
+    second.store.readState.mockResolvedValueOnce(stateOf({ phase: "claimed", staged: null })).mockResolvedValueOnce(stateOf({ staged: null }));
+    second.deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "computer_not_running" });
+    expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, second.deps)).state).toBe("interrupted");
+    expect(second.store.refuse).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unconfirmed release held, to be tried again", async () => {
     const { store, deps } = fakes();
     store.readState.mockResolvedValue(stateOf({ desiredState: "deleted" }));
+    store.interrupt.mockResolvedValue(false);
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "interrupt_unconfirmed" });
+  });
+
+  it("leaves an interrupted install alone until the computer runs again, free", async () => {
+    for (const overrides of [{ computerStatus: "stopped" }, { desiredState: "deleted", interruptReason: "pending_delete" },
+      { computerOperationId: OPERATION }]) {
+      const { store, deps } = fakes();
+      store.readState.mockResolvedValue(stateOf({ leaseReleased: true, interruptReason: "computer_not_running", ...overrides }));
+      expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).state).toBe("interrupted");
+      expect(store.resume).not.toHaveBeenCalled();
+      expect(deps.execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("takes the computer back for an interrupted install, removes it and ends it failed, never finished", async () => {
+    const { store, deps } = fakes();
+    store.readState
+      .mockResolvedValueOnce(stateOf({ leaseReleased: true, interruptReason: "computer_not_running" }))
+      .mockResolvedValueOnce(stateOf({ leaseReleased: false, interruptReason: "computer_not_running" }));
     deps.execute.mockResolvedValue({ ok: true, result: removed });
     expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
-      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "pending_delete" });
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_stopped" });
+    expect(store.resume).toHaveBeenCalledWith(OWNER, "attach", ID);
     expect(actions(deps.execute)).toEqual(["remove"]);
+    expect(store.fail).toHaveBeenCalledWith(expect.objectContaining({ failureCode: "computer_stopped", cleanup: removed }));
     expect(store.dispatchActivation).not.toHaveBeenCalled();
+    expect(store.complete).not.toHaveBeenCalled();
+    // Stopped again before the cleanup could run: let go again.
+    const again = fakes();
+    again.store.readState.mockResolvedValue(stateOf({ interruptReason: "computer_not_running" }));
+    again.deps.execute.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+    expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, again.deps)).state).toBe("interrupted");
+    expect(again.store.fail).not.toHaveBeenCalled();
   });
 
   it("holds when staging is not recorded, and turns an error into a held step", async () => {
@@ -279,6 +364,49 @@ describe("Change access and Remove", () => {
     expect((await progressAttachmentWork({ kind: "detach", ownerId: OWNER, id: OPERATION, attachmentId: ID }, deps)).reason).toBe("mount_busy");
     expect(store.dispatchOperation).not.toHaveBeenCalled();
     expect(store.completeOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["detach", "remove"],
+    ["access_change", "access"],
+  ] as const)("a %s the computer stopped under lets the computer go, and marks nothing done (T3)", async (kind, action) => {
+    const { store, deps } = fakes();
+    store.readOperation.mockResolvedValue(operationOf(kind));
+    store.readState.mockResolvedValue(attachedState());
+    deps.execute.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+    expect(await progressAttachmentWork({ kind, ownerId: OWNER, id: OPERATION, attachmentId: ID }, deps))
+      .toEqual({ kind, id: OPERATION, state: "interrupted", reason: "computer_not_running" });
+    expect(actions(deps.execute)).toEqual([action]);
+    expect(store.interrupt).toHaveBeenCalledWith(OWNER, kind, OPERATION, "computer_not_running");
+    expect(store.completeOperation).not.toHaveBeenCalled();
+    expect(store.failOperation).not.toHaveBeenCalled();
+  });
+
+  it("a Remove sent before a delete was asked for lets the computer go to the delete", async () => {
+    const { store, deps } = fakes();
+    store.readOperation.mockResolvedValue(operationOf("detach", { phase: "dispatched", desiredState: "deleted" }));
+    store.readState.mockResolvedValue(attachedState());
+    expect(await progressAttachmentWork({ kind: "detach", ownerId: OWNER, id: OPERATION, attachmentId: ID }, deps))
+      .toEqual({ kind: "detach", id: OPERATION, state: "interrupted", reason: "pending_delete" });
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("an interrupted Remove waits for the computer, then takes it back and runs again to finish", async () => {
+    const { store, deps } = fakes();
+    store.readOperation.mockResolvedValue(operationOf("detach", { phase: "dispatched", leaseReleased: true,
+      interruptReason: "computer_not_running", computerStatus: "stopped" }));
+    store.readState.mockResolvedValue(attachedState());
+    expect((await progressAttachmentWork({ kind: "detach", ownerId: OWNER, id: OPERATION, attachmentId: ID }, deps)).state).toBe("interrupted");
+    expect(store.resume).not.toHaveBeenCalled();
+    store.readOperation
+      .mockResolvedValueOnce(operationOf("detach", { phase: "dispatched", leaseReleased: true, interruptReason: "computer_not_running" }))
+      .mockResolvedValueOnce(operationOf("detach", { phase: "dispatched", interruptReason: "computer_not_running" }));
+    deps.execute.mockResolvedValue({ ok: true, result: { ...removed, operationId: OPERATION } });
+    expect(await progressAttachmentWork({ kind: "detach", ownerId: OWNER, id: OPERATION, attachmentId: ID }, deps))
+      .toEqual({ kind: "detach", id: OPERATION, state: "completed" });
+    expect(store.resume).toHaveBeenCalledWith(OWNER, "detach", OPERATION);
+    expect(store.dispatchOperation).not.toHaveBeenCalled();
+    expect(actions(deps.execute)).toEqual(["remove"]);
   });
 
   it("cancels a step on a computer that stopped, without touching it", async () => {

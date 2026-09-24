@@ -3,7 +3,8 @@
 -- the computer profile) without invalidating existing computers. The TypeScript
 -- identities and manifest ship with the release; this keeps SQL admission and
 -- the identity gates in step. The bundle digest is the manifest digest recorded
--- in provider-desktop-worker.ts and provider-native-worker.ts.
+-- in provider-desktop-worker.ts and provider-native-worker.ts. Idempotent: a
+-- function that already admits 2026.09.24.2 is left as it is.
 do $migration$
 declare signature text; definition text; anchor text; addition text;
 begin
@@ -20,6 +21,9 @@ begin
   ) as patches(signature, anchor, addition)
   loop
     definition := pg_get_functiondef(signature::regprocedure);
+    -- Applied already: the anchor is a prefix of its own addition, so it would
+    -- still match once and the admission would grow on every re-apply.
+    if position(addition in definition) > 0 then continue; end if;
     if (length(definition) - length(replace(definition, anchor, ''))) / length(anchor) <> 1 then
       raise exception 'Provider release admission anchor mismatch: %', signature;
     end if;

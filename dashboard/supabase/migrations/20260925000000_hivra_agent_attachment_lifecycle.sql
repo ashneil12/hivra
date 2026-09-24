@@ -138,12 +138,13 @@ alter table public.hivra_agent_attachment_operations enable row level security;
 revoke all on public.hivra_agent_attachment_operations from public,anon,authenticated,service_role;
 grant select on public.hivra_agent_attachment_operations to service_role;
 
+-- Every kind an earlier file allows stays allowed, private_access (20260915153000) included.
 alter table public.hivra_agents drop constraint if exists hivra_agents_operation_shape_check;
 alter table public.hivra_agents add constraint hivra_agents_operation_shape_check check (
   (operation_id is null and operation_kind is null and operation_started_at is null and operation_payload is null)
   or (operation_id is not null and operation_kind in
     ('provision','start','stop','restart','resize','snapshot','restore','delete','desktop_prepare','agent_attach',
-     'agent_access_change','agent_detach')
+     'private_access','agent_access_change','agent_detach')
     and operation_kind is not null and operation_started_at is not null
     and (operation_payload is null or jsonb_typeof(operation_payload)='object'))
 );

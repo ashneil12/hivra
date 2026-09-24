@@ -15,6 +15,12 @@
 //   finished only by its observed receipt;
 // - a restore refused while an agent is attached, a computer delete detaching
 //   the binding with a computer_deleted receipt, and a pending delete honoured;
+// - a step sent to a computer that stopped, or is being deleted, releases the
+//   computer's lease without being marked done: Stop and Delete go ahead, the
+//   step comes back only once the computer runs again, and deleting the
+//   computer ends it (T3);
+// - the worker's queue, least recently tried first;
+// - the operation kinds earlier files allow stay allowed (private_access);
 // - EXECUTE exactly for service_role on the functions the routes and worker
 //   call, never for public, anon or authenticated, and nothing for the v1
 //   admission (read from pg_proc ACLs).
@@ -24,6 +30,7 @@ const { openMigratedDatabase, readMigration } = require("./lib/pglite-all-migrat
 const LIFECYCLE = "20260925000000_hivra_agent_attachment_lifecycle.sql";
 const GRANTS = "20260925000100_hivra_agent_attachment_grants.sql";
 const READINESS = "20260925000200_hivra_agent_attach_readiness.sql";
+const INTERRUPT = "20260925000300_hivra_agent_attach_interrupt.sql";
 const OWNER = "owner";
 const INSTALLER = "77d72e2e8346cc19ef74264e8458bbca8802772d1c668c3fdffa653c4273d375";
 const WORKER = "2a0aee3e5e3fc0d4403d41a93dbece648648c8a84ab4349a71d7fe87243121ab";
@@ -49,6 +56,7 @@ async function main() {
     await db.exec(readMigration(LIFECYCLE));
     await db.exec(readMigration(GRANTS));
     await db.exec(readMigration(READINESS));
+    await db.exec(readMigration(INTERRUPT));
 
     let computers = 0;
     const computer = async (mode = "hivra-managed") => {
@@ -356,6 +364,76 @@ async function main() {
         dispatch_id=null,dispatched_at=null where id=$1`, [rop]), /hivra_agent_attachments_check/,
     "a failure without a dispatch is only a precondition refusal");
 
+    // ---- the operation kinds earlier files allow stay allowed ---------------
+    await db.query("update public.hivra_agents set operation_id=$2,operation_kind='private_access',operation_started_at=now() where id=$1",
+      [rdesk.id, pid("d", 7)]);
+    await db.query("update public.hivra_agents set operation_id=null,operation_kind=null,operation_started_at=null where id=$1", [rdesk.id]);
+
+    // ---- a step sent to a computer that stopped: the computer is freed (T3) --
+    const interrupt = (kind, id, reason, owner = OWNER) => value(
+      "select public.interrupt_hivra_agent_attachment_step($1,$2,$3,$4) as result", [owner, kind, id, reason]);
+    const resume = (kind, id, owner = OWNER) => value(
+      "select public.resume_hivra_agent_attachment_step($1,$2,$3) as result", [owner, kind, id]);
+    const stepRow = (id) => one("select phase, end_reason, lease_released, interrupt_reason from public.hivra_agent_attachments where id=$1", [id]);
+    const sdesk = await computer();
+    const sop = pid("5", 9);
+    assert.equal((await claim(sdesk, sop, intent(9))).status, "claimed");
+    assert.equal(await interrupt("attach", sop, "computer_not_running"), false, "a claim nothing was sent for is refused or cancelled instead");
+    assert.equal(await reserve(sop, 9), true);
+    assert.equal(await observe(sdesk, sop), true);
+    assert.equal(await dispatch(sdesk, sop, pid("a", 9)), true);
+    assert.equal(await interrupt("attach", sop, "pending_delete"), false, "no delete is pending");
+    assert.equal(await interrupt("attach", sop, "computer_not_running", "other"), false, "the owner comes from the step");
+    assert.equal(await interrupt("attach", sop, "other_reason"), false);
+    assert.equal(await interrupt("attach", sop, "computer_not_running"), true);
+    assert.equal(await interrupt("attach", sop, "computer_not_running"), true, "a replay of the same interruption is the same answer");
+    assert.equal(await interrupt("attach", sop, "pending_delete"), false, "an interruption is never rewritten");
+    assert.deepEqual(await lease(sdesk), { operation_id: null, operation_kind: null }, "the computer is free again");
+    assert.deepEqual(await stepRow(sop), { phase: "dispatched", end_reason: null, lease_released: true, interrupt_reason: "computer_not_running" },
+      "the step stays open: nothing is marked done or failed without evidence");
+    assert.equal((await target(sdesk)).reason, "agent_present", "no second agent while the first may still be on the computer");
+    // The owner can stop the computer now; the step does not come back meanwhile.
+    const stopOp = pid("d", 8);
+    assert.equal(await value("select public.claim_hivra_agent_operation($1,$2,$3,'stop','stopped',null) as result", [OWNER, sdesk.id, stopOp]), true,
+      "Stop is no longer refused");
+    assert.equal(await resume("attach", sop), false, "the lease is not taken back while another step holds the computer");
+    assert.equal(await value("select public.complete_hivra_agent_operation($1,$2,$3,'stopped','stopped',null,null) as result",
+      [OWNER, sdesk.id, stopOp]), true);
+    assert.equal(await resume("attach", sop), false, "nor while the computer is stopped");
+    await db.query("update public.hivra_agents set status='running',desired_state='running' where id=$1", [sdesk.id]);
+    assert.equal(await resume("attach", sop, "other"), false);
+    assert.equal(await resume("attach", sop), true, "running again: the step takes the lease back to clean up");
+    assert.equal(await resume("attach", sop), true, "a replay after the lease came back is the same answer");
+    assert.deepEqual(await lease(sdesk), { operation_id: sop, operation_kind: "agent_attach" });
+    await assert.rejects(() => db.query("update public.hivra_agents set operation_id=null,operation_kind=null,operation_started_at=null,operation_payload=null where id=$1",
+      [sdesk.id]), { code: "55000" }, "once taken back, only the step's own record releases the lease");
+    await assert.rejects(() => db.query("update public.hivra_agent_attachments set phase='attached',completed_at=now() where id=$1", [sop]),
+      /hivra_agent_attachments_interrupt_check/, "an install the computer stopped under is never finished");
+    assert.equal(await value("select public.fail_hivra_agent_attachment($1,$2,2,$3::jsonb,$4::jsonb,'computer_stopped') as result",
+      [OWNER, sop, JSON.stringify(sdesk.authority), JSON.stringify({ ...cleanup, installationId: pid("6", 9) })]), true,
+    "it ends only with an observed cleanup");
+    assert.deepEqual(await stepRow(sop), { phase: "failed", end_reason: "install_failed", lease_released: false, interrupt_reason: "computer_not_running" });
+    assert.deepEqual(await lease(sdesk), { operation_id: null, operation_kind: null });
+
+    // ---- a delete that is pending wins over a step in flight (T3) ------------
+    const xdesk = await computer();
+    const xop = pid("5", 10);
+    assert.equal((await claim(xdesk, xop, intent(10))).status, "claimed");
+    assert.equal(await reserve(xop, 10), true);
+    assert.equal(await observe(xdesk, xop), true);
+    assert.equal(await dispatch(xdesk, xop, pid("a", 10)), true);
+    assert.equal(await value("select public.request_hivra_agent_delete($1,$2,$3) as result", [OWNER, xdesk.id, pid("d", 9)]), "pending",
+      "a delete never steals the lease of a step in flight");
+    assert.equal(await interrupt("attach", xop, "pending_delete"), true, "the worker releases the computer to the delete");
+    assert.equal(await resume("attach", xop), false, "a computer being deleted is never taken back");
+    assert.equal(await value("select public.request_hivra_agent_delete($1,$2,$3) as result", [OWNER, xdesk.id, pid("d", 9)]), "claimed",
+      "the owner's delete goes ahead");
+    await db.query(`update public.hivra_agents set status='deleted',operation_id=null,operation_kind=null,operation_started_at=null,
+      operation_payload=null where id=$1`, [xdesk.id]);
+    assert.deepEqual(await stepRow(xop), { phase: "failed", end_reason: "computer_deleted", lease_released: false, interrupt_reason: "pending_delete" },
+      "the step ends with the computer");
+    assert.deepEqual(await value("select public.list_open_hivra_agent_attachment_work(20) as result"), [], "nothing of it is picked up again");
+
     // ---- deleting the computer detaches its binding (T30) -----------------
     const ddesk = await computer();
     const dop = pid("5", 6);
@@ -379,31 +457,63 @@ async function main() {
         serviceDefinitionSha256: definition, mainPid: 4343 })]), true);
     assert.equal(await value("select public.complete_hivra_agent_attachment($1,$2,2,$3::jsonb,$4) as result",
       [OWNER, dop, JSON.stringify(ddesk.authority), pid("c", 6)]), true);
+    // A Remove the computer stopped under frees the computer, comes back when
+    // it runs again, and ends with the computer when it is deleted.
+    const dremove = pid("e", 6);
+    const dbegin = (kind, operation, grants) => value("select public.begin_hivra_agent_attachment_operation($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7) as result",
+      [OWNER, dop, operation, kind, JSON.stringify(ddesk.authority), JSON.stringify(grants), "c".repeat(64)]);
+    assert.equal((await dbegin("detach", dremove, { workspace: true })).status, "claimed");
+    assert.equal(await interrupt("detach", dremove, "computer_not_running"), false, "a Remove that was never sent is cancelled instead");
+    assert.equal(await value("select public.dispatch_hivra_agent_attachment_operation($1,$2) as result", [OWNER, dremove]), true);
+    assert.equal(await interrupt("access_change", dremove, "computer_not_running"), false, "the kind is part of the step");
+    assert.equal(await interrupt("detach", dremove, "computer_not_running"), true);
+    assert.deepEqual(await lease(ddesk), { operation_id: null, operation_kind: null });
+    assert.equal((await dbegin("access_change", pid("e", 7), { workspace: false })).status, "computer_busy", "the Remove is still open");
+    assert.equal(await resume("detach", dremove), true, "running and free: the Remove takes the computer back to finish");
+    assert.deepEqual(await lease(ddesk), { operation_id: dremove, operation_kind: "agent_detach" });
+    assert.equal(await interrupt("detach", dremove, "computer_not_running"), true, "and lets it go again when it stopped again");
     await db.query("update public.hivra_agents set status='deleted',desired_state='deleted' where id=$1", [ddesk.id]);
     assert.deepEqual(await one("select phase, end_reason from public.hivra_agent_attachments where id=$1", [dop]),
       { phase: "detached", end_reason: "computer_deleted" });
+    assert.deepEqual(await one("select phase, failure_code, lease_released from public.hivra_agent_attachment_operations where id=$1", [dremove]),
+      { phase: "failed", failure_code: "computer_deleted", lease_released: false }, "the interrupted Remove ends with the computer");
     assert.equal(await value("select status as result from public.hivra_canonical_primary_bindings where id=$1", [pid("7", 6)]), "detached");
 
     // ---- the worker's queue --------------------------------------------------
     const work = await value("select public.list_open_hivra_agent_attachment_work(20) as result");
     assert.deepEqual(work, [], "nothing finished is ever picked up again");
-    // The limit is for the whole list, oldest first across both kinds. Open
-    // rows are copied from finished ones with foreign keys and triggers off.
+    // The limit is for the whole list, least recently tried first across both
+    // kinds, so steps that stay held never starve a newer one. Open rows are
+    // copied from finished ones with foreign keys and triggers off.
     await db.exec("begin; set local session_replication_role = replica;");
     for (const [n, minutes] of [[1, 5], [2, 3], [3, 1]]) {
       await db.query(`insert into public.hivra_agent_attachments select (jsonb_populate_record(p, jsonb_build_object('id',$1::text,
-        'source_id',$2::text,'computer_id',$2::text,'agent_identity_id',$2::text,'phase','claimed','completed_at',null,'dispatch_id',null,'dispatched_at',null,'ended_at',null,'end_reason',null,
+        'source_id',$5::text,'computer_id',$2::text,'agent_identity_id',$2::text,'phase','claimed','completed_at',null,'dispatch_id',null,'dispatched_at',null,'ended_at',null,'end_reason',null,
         'created_at',(now()-make_interval(mins=>$3))::text))).* from public.hivra_agent_attachments p where p.id=$4`,
-      [pid("f", n), pid("f", 10 + n), minutes * 2, op]);
+      [pid("f", n), pid("f", 10 + n), minutes * 2, op, desk.id]);
       await db.query(`insert into public.hivra_agent_attachment_operations select (jsonb_populate_record(o, jsonb_build_object('id',$1::text,
         'attachment_id',$2::text,'phase','claimed','dispatched_at',null,'completed_at',null,'receipt',null,'failure_code',null,
         'created_at',(now()-make_interval(mins=>$3))::text))).* from public.hivra_agent_attachment_operations o where o.id=$4`,
       [pid("f", 20 + n), pid("f", n), minutes * 2 - 1, access]);
     }
-    const limited = await value("select public.list_open_hivra_agent_attachment_work(2) as result");
-    assert.deepEqual(limited.map((item) => [item.kind, item.id]), [["attach", pid("f", 1)], ["access_change", pid("f", 21)]],
+    const listed2 = async () => (await value("select public.list_open_hivra_agent_attachment_work(2) as result")).map((item) => [item.kind, item.id]);
+    assert.deepEqual(await listed2(), [["attach", pid("f", 1)], ["access_change", pid("f", 21)]],
       "two items in all, the oldest two, not two of each kind");
+    assert.deepEqual(await listed2(), [["attach", pid("f", 2)], ["access_change", pid("f", 22)]],
+      "the next pass serves the ones not tried yet, not the same held two again");
+    assert.deepEqual(await listed2(), [["attach", pid("f", 3)], ["access_change", pid("f", 23)]]);
+    assert.deepEqual(await listed2(), [["attach", pid("f", 1)], ["access_change", pid("f", 21)]], "then the least recently tried");
     assert.equal((await value("select public.list_open_hivra_agent_attachment_work(20) as result")).length, 6);
+    // An interrupted step waits off the list until its computer is running and
+    // free, then is tried at most every ten minutes.
+    await db.query(`update public.hivra_agent_attachments set phase='dispatched',dispatch_id=$2,dispatched_at=now(),lease_released=true,
+      interrupted_at=now(),interrupt_reason='computer_not_running',last_attempt_at=now()-interval '11 minutes' where id=$1`, [pid("f", 1), pid("a", 30)]);
+    await db.query("update public.hivra_agents set status='stopped' where id=$1", [desk.id]);
+    const ids = async (limit) => (await value("select public.list_open_hivra_agent_attachment_work($1) as result", [limit])).map((item) => item.id);
+    assert.equal((await ids(20)).includes(pid("f", 1)), false, "not while its computer is stopped");
+    await db.query("update public.hivra_agents set status='running' where id=$1", [desk.id]);
+    assert.equal((await ids(20)).includes(pid("f", 1)), true, "listed once its computer runs");
+    assert.equal((await ids(20)).includes(pid("f", 1)), false, "and not again within ten minutes");
     await db.exec("rollback;");
     assert.deepEqual(await value("select public.list_open_hivra_agent_attachment_work(20) as result"), []);
 
@@ -419,6 +529,7 @@ async function main() {
       "read_hivra_owner_attached_agents(text)", "list_open_hivra_agent_attachment_work(integer)",
       "read_hivra_agent_attachment_state(text,uuid)", "read_hivra_agent_attachment_operation(text,uuid)",
       "refuse_hivra_agent_attachment(text,uuid,text)",
+      "interrupt_hivra_agent_attachment_step(text,text,uuid,text)", "resume_hivra_agent_attachment_step(text,text,uuid)",
       "reserve_hivra_attachment_installation(text,uuid,bigint,uuid,uuid,text)", "observe_hivra_attachment_guest(text,uuid,bigint,jsonb,uuid,text)",
       "record_hivra_attachment_staging_result(text,uuid,bigint,jsonb,uuid,jsonb)",
       "record_hivra_attachment_activation_observation(text,uuid,bigint,jsonb,jsonb,uuid,jsonb)"];

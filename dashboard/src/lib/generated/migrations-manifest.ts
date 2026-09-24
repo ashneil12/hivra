@@ -365,4 +365,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260925000000", name: "hivra_agent_attachment_lifecycle" },
   { version: "20260925000100", name: "hivra_agent_attachment_grants" },
   { version: "20260925000200", name: "hivra_agent_attach_readiness" },
+  { version: "20260925000300", name: "hivra_agent_attach_interrupt" },
 ];

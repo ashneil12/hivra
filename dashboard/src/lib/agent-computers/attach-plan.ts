@@ -22,6 +22,19 @@ export function attachPairLine(computerName: string, runtimeName = "Codex"): str
   return `Adds a new ${runtimeName} to ${computerName}. Your other agents stay as they are.`;
 }
 
+/**
+ * A computer's name in a title, as its owner typed it: on one line (control
+ * and format characters become spaces), capped at 64 characters, in curly
+ * quotes and never escaped (5.8). Only the contract text strips markup.
+ */
+export function computerTitle(name: unknown): string {
+  const cleaned = (typeof name === "string" ? name : "").normalize("NFC")
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ").replace(/\s+/gu, " ").trim();
+  const points = Array.from(cleaned);
+  const label = points.length > 64 ? `${points.slice(0, 63).join("").trimEnd()}\u2026` : cleaned;
+  return label ? `\u201c${label}\u201d` : "this computer";
+}
+
 export interface AttachGrants { workspace: boolean }
 /** The access gate's defaults: ~/Hivra read and write on. */
 export const DEFAULT_ATTACH_GRANTS: Readonly<AttachGrants> = Object.freeze({ workspace: true });
@@ -148,7 +161,6 @@ export function attachReview(input: {
   deploymentMode?: string | null;
   servicePolicySha256: string;
 }): AttachReview {
-  const computer = contractLabel(input.computerName, 64, "this computer");
   const myServer = input.deploymentMode === "self-managed";
   const can = input.grants.workspace
     ? "Codex can: read and write ~/Hivra, use its own terminal, reach the internet."
@@ -164,7 +176,7 @@ export function attachReview(input: {
     "Remove it any time. Your files in ~/Hivra stay, including anything Codex added, such as scripts or Git settings. Codex's sign-in and chat history on this computer are deleted.",
   ];
   return {
-    title: `Add Codex to ${JSON.stringify(computer)}`,
+    title: `Add Codex to ${computerTitle(input.computerName)}`,
     lines,
     isolation: "Isolation: a separate user on this computer. That is weaker than giving Codex its own computer.",
     technical: { isolationClass: "shared-kernel", installerSha256: ATTACH_INSTALLER_SHA256, servicePolicySha256: input.servicePolicySha256 },
@@ -174,20 +186,18 @@ export function attachReview(input: {
 
 /** Change access has its own review; turning ~/Hivra off repeats the warning. */
 export function attachAccessChangeReview(input: { computerName: string; from: AttachGrants; to: AttachGrants }): { title: string; lines: string[]; button: string } {
-  const computer = contractLabel(input.computerName, 64, "this computer");
   const lines = input.to.workspace
     ? ["Codex will be able to read and write ~/Hivra again. " + ATTACH_WORKSPACE_WARNING,
       "Codex stops while its access changes, then starts again."]
     : ["Codex will no longer see ~/Hivra. Files Codex added to ~/Hivra stay, and can still run as you if you run them.",
       "Codex stops while its access changes, then starts again."];
-  return { title: `Change what Codex can use on ${JSON.stringify(computer)}`, lines, button: input.to.workspace ? "Share ~/Hivra with Codex" : "Stop sharing ~/Hivra" };
+  return { title: `Change what Codex can use on ${computerTitle(input.computerName)}`, lines, button: input.to.workspace ? "Share ~/Hivra with Codex" : "Stop sharing ~/Hivra" };
 }
 
 /** Remove has its own review (5.8). */
 export function attachRemoveReview(input: { computerName: string; deploymentMode?: string | null }): { title: string; lines: string[]; button: string } {
-  const computer = contractLabel(input.computerName, 64, "this computer");
   return {
-    title: `Remove Codex from ${JSON.stringify(computer)}`,
+    title: `Remove Codex from ${computerTitle(input.computerName)}`,
     lines: [
       "Stops Codex and deletes its user, its sign-in and its chat history on this computer.",
       "Files Codex added to ~/Hivra stay after it's removed, and can still run as you if you run them.",

@@ -184,6 +184,16 @@ it.each(["stage", "observe"] as const)("keeps %s uncertainty held without anothe
   expect(deps.store.recordStaged).not.toHaveBeenCalled();
 });
 
+it.each(["stage", "observe"] as const)("names a VM the host saw stopped after the %s dispatch, and records nothing (T3)", async action => {
+  const deps = fixture();
+  if (action === "observe") deps.store.read.mockResolvedValueOnce(dispatched);
+  deps.execute.mockImplementation(async (_owner, _agent, requested) => requested === "fetch"
+    ? { ok: true, action: "fetch", artifact: {} } : { ok: false, code: "target_refused", reason: "computer_not_running" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
+  expect(deps.store.recordStaged).not.toHaveBeenCalled();
+  expect(deps.store.dispatch).toHaveBeenCalledTimes(action === "stage" ? 1 : 0);
+});
+
 it("returns a previously recorded receipt state without touching the host", async () => {
   const deps = fixture();
   deps.store.read.mockResolvedValueOnce(completed);

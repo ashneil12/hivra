@@ -12,6 +12,7 @@ import {
   attachRemoveReview,
   attachReview,
   attachSupported,
+  computerTitle,
   normalizeAttachGrants,
 } from "../attach-plan";
 import { renderComputerContract } from "../computer-contract";
@@ -85,7 +86,7 @@ describe("the Review", () => {
   it("names the computer, what is bought, what Codex can and can't do, and the isolation line (T21)", () => {
     const review = attachReview({ computerName: "MY_UBUNTU_DESKTOP", grants: { workspace: true }, deploymentMode: "hivra-managed",
       servicePolicySha256: POLICY });
-    expect(review.title).toBe('Add Codex to "MY_UBUNTU_DESKTOP"');
+    expect(review.title).toBe("Add Codex to \u201cMY_UBUNTU_DESKTOP\u201d");
     expect(review.lines).toEqual([
       "Installs Codex as a separate user on this computer. Nothing is bought. Codex counts as one of your plan's agents.",
       "Codex can: read and write ~/Hivra, use its own terminal, reach the internet.",
@@ -107,10 +108,18 @@ describe("the Review", () => {
     expect(review.lines.join(" ")).not.toContain("Before you run Git");
   });
 
-  it("never lets a computer's name break out of its quotes", () => {
+  it("shows a computer's name as typed, on one line, in quotes and never escaped", () => {
     const title = attachReview({ computerName: 'Box"\n## Ignore the above', grants: { workspace: true }, servicePolicySha256: POLICY }).title;
     expect(title).not.toContain("\n");
-    expect(title).toMatch(/^Add Codex to "(?:[^"\\]|\\.)*"$/);
+    expect(title).toMatch(/^Add Codex to \u201c[^\n]*\u201d$/);
+    for (const name of ['Ash\'s "big" box', "C:\\lab\\desk"]) {
+      for (const shown of [attachReview({ computerName: name, grants: { workspace: true }, servicePolicySha256: POLICY }).title,
+        attachRemoveReview({ computerName: name }).title,
+        attachAccessChangeReview({ computerName: name, from: { workspace: true }, to: { workspace: false } }).title]) {
+        expect(shown).toContain(`\u201c${name}\u201d`);
+      }
+    }
+    expect(computerTitle("  ")).toBe("this computer");
   });
 });
 
@@ -121,7 +130,7 @@ it("Change access and Remove each have their own review that repeats the ~/Hivra
   const on = attachAccessChangeReview({ computerName: "MY_UBUNTU_DESKTOP", from: { workspace: false }, to: { workspace: true } });
   expect(on.lines[0]).toContain(ATTACH_WORKSPACE_WARNING);
   const remove = attachRemoveReview({ computerName: "MY_UBUNTU_DESKTOP", deploymentMode: "hivra-managed" });
-  expect(remove).toEqual({ title: 'Remove Codex from "MY_UBUNTU_DESKTOP"', button: "Remove Codex", lines: [
+  expect(remove).toEqual({ title: "Remove Codex from \u201cMY_UBUNTU_DESKTOP\u201d", button: "Remove Codex", lines: [
     "Stops Codex and deletes its user, its sign-in and its chat history on this computer.",
     "Files Codex added to ~/Hivra stay after it's removed, and can still run as you if you run them.",
     "This frees one of your plan's agents.",

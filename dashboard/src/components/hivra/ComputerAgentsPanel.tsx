@@ -22,6 +22,7 @@ import {
   attachRemoveReview,
   attachPairLine,
   attachReview,
+  computerTitle,
   type AttachGrants,
 } from "@/lib/agent-computers/attach-plan";
 import { announceAttachedAgentsChanged } from "@/lib/agent-computers/attached-agent-surface";
@@ -61,10 +62,36 @@ function newRequestId(): string {
 }
 
 // While a step runs on the computer it holds the computer: Start, Stop and
-// Restart wait for it. Hivra never ends a step it has not seen finish; if the
-// computer never answers, only deleting the computer ends it.
+// Restart wait for it. Hivra never ends a step it has not seen finish. When
+// the host sees the computer stopped, or its owner asks to delete it, Hivra
+// lets the computer go and the step waits (T3).
 export const ATTACH_STEP_WAIT_NOTE = "While this step runs, this computer can't be started, stopped or restarted.";
-export const ATTACH_STEP_STUCK_NOTE = "If the computer never answers, deleting the computer is the only way to end this step.";
+export const ATTACH_STEP_STUCK_NOTE = "If this computer has stopped, Hivra lets it go once it sees that, so you can start it again. Deleting the computer also ends this step.";
+
+/** "0:05 ago": how long ago a receipt came, as in 5.8. */
+export function formatElapsed(at: string, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(at)) / 1000));
+  if (!Number.isFinite(seconds)) return "";
+  const hours = Math.floor(seconds / 3600), minutes = Math.floor((seconds % 3600) / 60), rest = seconds % 60;
+  const two = (value: number) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${two(minutes)}:${two(rest)} ago` : `${minutes}:${two(rest)} ago`;
+}
+
+/** What an interrupted step waits for, in plain words (T3). */
+function interruptedLine(kind: "attach" | "access_change" | "detach", reason: string | null | undefined, released: boolean): string {
+  const what = kind === "attach" ? `Adding ${ATTACH_RUNTIME_NAME}` : kind === "detach" ? `Removing ${ATTACH_RUNTIME_NAME}`
+    : `Changing what ${ATTACH_RUNTIME_NAME} can use`;
+  if (reason === "pending_delete") return `${what} stopped because this computer is being deleted. If the delete hasn't finished, delete the computer again.`;
+  if (!released) {
+    return kind === "attach"
+      ? `This computer stopped while ${ATTACH_RUNTIME_NAME} was being added. Hivra is removing what was installed.`
+      : `This computer stopped during this step. Hivra is finishing it now that the computer runs again.`;
+  }
+  const then = kind === "attach" ? `Hivra removes what was installed, and you can add ${ATTACH_RUNTIME_NAME} again`
+    : kind === "detach" ? `Hivra finishes removing ${ATTACH_RUNTIME_NAME}`
+      : `Hivra finishes the change, or puts ${ATTACH_RUNTIME_NAME} back as it was`;
+  return `${what} is paused: this computer stopped. Start it and ${then}. You can also delete the computer.`;
+}
 
 const ACCESS_STATE: Record<string, string> = {
   on: "On", off: "Off", "locked-on": "On · locked", "always-off": "Off · always", "not-available": "Not available yet",
@@ -91,6 +118,9 @@ function endedLine(attachment: AttachGateAttachment): string | null {
     }
     if (attachment.endReason === "computer_not_ready") {
       return `${ATTACH_RUNTIME_NAME} wasn't added: this computer wasn't ready and didn't answer Hivra. Nothing was installed. Add ${ATTACH_RUNTIME_NAME} again once it has finished starting.`;
+    }
+    if (attachment.interruptReason === "computer_not_running") {
+      return `Adding ${ATTACH_RUNTIME_NAME} didn't finish because this computer stopped. Hivra removed what it had installed; your files in ~/Hivra were not touched.`;
     }
     return `Adding ${ATTACH_RUNTIME_NAME} didn't finish. Hivra removed what it had installed; your files in ~/Hivra were not touched.`;
   }
@@ -231,7 +261,7 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
 
   if (view.step === "gate" && facts) {
     const rows = attachAccessRows(view.grants, facts);
-    const title = `What can ${ATTACH_RUNTIME_NAME} use on ${JSON.stringify(facts.name)}?`;
+    const title = `What can ${ATTACH_RUNTIME_NAME} use on ${computerTitle(facts.name)}?`;
     content = <div className={styles.flow} role="group" aria-labelledby={`attach-gate-${computerId}`}>
       <h4 id={`attach-gate-${computerId}`} className={styles.title}>{title}</h4>
       <p className={styles.body}>{attachPairLine(facts.name)}</p>
@@ -299,16 +329,19 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
   } else if (current && live(current)) {
     const steps = attachProgressSteps(current.receipts);
     const latest = [...steps].reverse().find((step) => step.at)?.at ?? current.createdAt;
-    const stale = now - Date.parse(latest) > ATTACH_UNCONFIRMED_AFTER_MS;
+    const released = current.leaseReleased === true;
+    const interrupted = Boolean(current.interruptReason);
+    const stale = !interrupted && now - Date.parse(latest) > ATTACH_UNCONFIRMED_AFTER_MS;
     content = <div className={styles.flow} aria-live="polite">
       <h4 className={styles.title}>Adding {ATTACH_RUNTIME_NAME}</h4>
       <ol className={styles.progress}>
         {steps.map((step) => <li key={step.id} data-done={Boolean(step.at)}>
-          <span>{step.label}</span>{step.at ? <time dateTime={step.at}>{formatContractTime(step.at)}</time> : null}
+          <span>{step.label}</span>{step.at ? <time dateTime={step.at} title={formatContractTime(step.at)}>{formatElapsed(step.at, now)}</time> : null}
         </li>)}
       </ol>
+      {interrupted ? <p className={styles.body} role="status">{interruptedLine("attach", current.interruptReason, released)}</p> : null}
       {stale ? <p className={styles.body}>We couldn&apos;t confirm this step yet. Check again. This won&apos;t install a second copy.</p> : null}
-      <p className={styles.note}>{ATTACH_STEP_WAIT_NOTE}{stale ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p>
+      {released ? null : <p className={styles.note}>{ATTACH_STEP_WAIT_NOTE}{stale ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p>}
       <div className={styles.actions}><button type="button" className={styles.button} onClick={() => void load()}>
         <RefreshCw size={13} aria-hidden /> Check again</button></div>
     </div>;
@@ -327,13 +360,16 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
             : "Can use its own terminal and reach the internet. It has no shared folder."}</p>
         </div>
       </div>
-      {operation ? <p className={styles.body} aria-live="polite"><Loader2 size={12} className={styles.spinner} aria-hidden /> {operation.kind === "detach"
-        ? `Removing ${ATTACH_RUNTIME_NAME}. Your files in ~/Hivra stay.`
-        : `Changing what ${ATTACH_RUNTIME_NAME} can use. It is stopped while its access changes.`}
+      {operation && operation.interruptReason ? <p className={styles.body} role="status">
+        {interruptedLine(operation.kind, operation.interruptReason, operation.leaseReleased === true)}</p>
+        : operation ? <p className={styles.body} aria-live="polite"><Loader2 size={12} className={styles.spinner} aria-hidden /> {operation.kind === "detach"
+          ? `Removing ${ATTACH_RUNTIME_NAME}. Your files in ~/Hivra stay.`
+          : `Changing what ${ATTACH_RUNTIME_NAME} can use. It is stopped while its access changes.`}
         {operation.phase === "dispatched" && now - Date.parse(operation.dispatchedAt ?? operation.createdAt) > ATTACH_UNCONFIRMED_AFTER_MS
           ? " We couldn't confirm this step yet. Check again." : null}</p> : null}
-      {operation ? <p className={styles.note}>{ATTACH_STEP_WAIT_NOTE}{operation.phase === "dispatched"
-        && now - Date.parse(operation.dispatchedAt ?? operation.createdAt) > ATTACH_UNCONFIRMED_AFTER_MS ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p> : null}
+      {operation && operation.leaseReleased !== true ? <p className={styles.note}>{ATTACH_STEP_WAIT_NOTE}{operation.phase === "dispatched"
+        && !operation.interruptReason && now - Date.parse(operation.dispatchedAt ?? operation.createdAt) > ATTACH_UNCONFIRMED_AFTER_MS
+        ? ` ${ATTACH_STEP_STUCK_NOTE}` : ""}</p> : null}
       {current.operation?.phase === "failed" && current.operation.kind === "access_change" ? <p className={styles.body}>
         The last change of access didn&apos;t finish, and {ATTACH_RUNTIME_NAME} was put back as it was.</p> : null}
       <div className={styles.contract}>

@@ -94,6 +94,14 @@ async function main() {
       ].includes(name)).sort()) {
       await db.exec(migration(file));
     }
+    // The 2026.09.24.2 admission is idempotent: applied again, nothing grows.
+    const admissionFunctions = ["public.admit_prepared_provider_computer(text,uuid,bigint,uuid,uuid,text,uuid,uuid,jsonb)",
+      "public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)", "public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)"];
+    const admissionDefinitions = async () => Promise.all(admissionFunctions.map(async (fn) =>
+      (await db.query("select pg_get_functiondef($1::regprocedure) as result", [fn])).rows[0].result));
+    const admittedOnce = await admissionDefinitions();
+    await db.exec(migration("20260924230000_provider_release_admission_2026_09_24_2.sql"));
+    assert.deepEqual(await admissionDefinitions(), admittedOnce, "re-applying the 2026.09.24.2 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

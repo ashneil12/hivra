@@ -15,6 +15,11 @@ export class AttachmentLifecycleStoreError extends Error {
 const Id = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const Grants = z.object({ workspace: z.boolean() }).strict();
 const Stamp = z.string().nullable();
+/** Why a step sent to the computer let the computer go (migration 20260925000300). */
+const InterruptReason = z.enum(["computer_not_running", "pending_delete"]);
+export type AttachmentInterruptReason = z.infer<typeof InterruptReason>;
+// Absent from a read before 20260925000300: never interrupted.
+const Interruption = { leaseReleased: z.boolean().optional(), interruptReason: InterruptReason.nullable().optional() };
 
 const Target = z.object({
   version: z.literal(1), sourceId: Id, computerId: Id.nullable(), deploymentMode: z.string().nullable(),
@@ -32,12 +37,14 @@ const ContractView = z.object({
 const OperationView = z.object({
   id: Id, kind: z.enum(["access_change", "detach"]), phase: z.enum(["claimed", "dispatched", "completed", "failed", "cancelled"]),
   grants: Grants, createdAt: z.string(), dispatchedAt: Stamp, completedAt: Stamp, failureCode: z.string().nullable(),
+  ...Interruption, interruptedAt: Stamp.optional(),
 });
 const AttachmentView = z.object({
   id: Id, phase: z.enum(["claimed", "dispatched", "cancelled", "attached", "failed", "detached"]),
   agentName: z.string().nullable(), runtimeId: z.string().nullable(), agentIdentityId: Id, grants: Grants.nullable(),
   endReason: z.string().nullable(), createdAt: z.string(), dispatchedAt: Stamp, completedAt: Stamp, endedAt: Stamp,
   deploymentMode: z.string().nullable(), installationId: Id.nullable(),
+  ...Interruption, interruptedAt: Stamp.optional(),
   receipts: z.object({ accepted: Stamp, staged: Stamp, started: Stamp, chatReady: Stamp }),
   contract: ContractView.nullable(), operation: OperationView.nullable(),
 });
@@ -47,6 +54,7 @@ const OwnerAttached = z.object({
   id: Id, phase: z.enum(["claimed", "dispatched", "attached"]), agentName: z.string().nullable(), runtimeId: z.string().nullable(),
   sourceId: Id, computerName: z.string(), computerStatus: z.string().nullable(), deploymentMode: z.string().nullable(),
   installationId: Id.nullable(), createdAt: z.string(), completedAt: Stamp,
+  interruptReason: InterruptReason.nullable().optional(),
 });
 export type OwnerAttachedAgent = z.infer<typeof OwnerAttached>;
 
@@ -67,6 +75,9 @@ const State = z.object({
   desiredState: z.string().nullable(), computerStatus: z.string().nullable(),
   /** When the claim was made (migration 20260925000200); absent from an older read. */
   createdAt: z.string().optional(),
+  /** Whether another step holds the computer (20260925000300). */
+  computerOperationId: Id.nullable().optional(),
+  ...Interruption,
 });
 export type AttachmentState = z.infer<typeof State>;
 
@@ -75,6 +86,7 @@ const OperationState = z.object({
   phase: z.enum(["claimed", "dispatched", "completed", "failed", "cancelled"]), grants: Grants, previousGrants: Grants,
   guestAuthority: z.record(z.string(), z.unknown()), reviewSha256: z.string(), installationId: Id, agentName: z.string(),
   desiredState: z.string().nullable(), computerStatus: z.string().nullable(), createdAt: z.string(),
+  computerOperationId: Id.nullable().optional(), ...Interruption,
 });
 export type AttachmentOperationState = z.infer<typeof OperationState>;
 
@@ -128,6 +140,13 @@ export function createAttachmentLifecycleStore(db: Database | null = supabaseAdm
     /** Before any dispatch: ends the claim as failed with a precondition reason, never held (20260925000200). */
     refuse: (ownerId: string, operationId: string, reason: "computer_not_running" | "computer_not_ready") =>
       boolean("refuse_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
+    /** A step sent to the computer lets the computer go: the host saw the VM not
+     * running, or a delete is pending. The step stays open (20260925000300). */
+    interrupt: (ownerId: string, kind: AttachmentWorkItem["kind"], stepId: string, reason: AttachmentInterruptReason) =>
+      boolean("interrupt_hivra_agent_attachment_step", { p_owner: ownerId, p_kind: kind, p_step_id: stepId, p_reason: reason }),
+    /** Takes the computer back for an interrupted step once it runs again, free and unchanged. */
+    resume: (ownerId: string, kind: AttachmentWorkItem["kind"], stepId: string) =>
+      boolean("resume_hivra_agent_attachment_step", { p_owner: ownerId, p_kind: kind, p_step_id: stepId }),
     listWork: async (limit: number) => (await parsed("list_open_hivra_agent_attachment_work", { p_limit: limit }, z.array(WorkItem))) ?? [],
     readState: (ownerId: string, attachmentId: string) =>
       parsed("read_hivra_agent_attachment_state", { p_owner: ownerId, p_attachment_id: attachmentId }, State, true),
