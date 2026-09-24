@@ -329,7 +329,7 @@ struct HivraBrowserWebContentTests {
             <iframe src="about:blank"></iframe>
             <iframe srcdoc="<p>inline</p>"></iframe>
             <iframe src="data:text/html,<p>data</p>"></iframe>
-            <iframe src="vnc://10.0.0.1"></iframe>
+            <iframe src="vnc://192.0.2.1"></iframe>
             <iframe id="mailframe" srcdoc="<a id='mail' href='mailto:frame@example.com'>mail</a>"></iframe>
             <script>
               document.getElementById('save').addEventListener('click', () => {

@@ -49,7 +49,7 @@ struct HivraWebContentPolicyTests {
 
     @Test("other schemes are refused, never launched")
     func unknownSchemesAreRefused() {
-        for value in ["smb://nas/share", "vnc://10.0.0.1", "file:///etc/hosts", "x-apple-helpviewer://x", "ssh://host"] {
+        for value in ["smb://nas/share", "vnc://192.0.2.1", "file:///etc/hosts", "x-apple-helpviewer://x", "ssh://host"] {
             guard case .cancel = navigation(value, link: true) else {
                 Issue.record("\(value) was not refused")
                 continue
