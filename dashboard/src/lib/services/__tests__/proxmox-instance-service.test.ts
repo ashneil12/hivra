@@ -2216,10 +2216,11 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
   });
 
   it("reads cumulative CPU from the kvm process on PVE 9, where qm status prints no cpu", () => {
-    // Real `buildProxmoxMetricsScript` output captured read-only on pve11
-    // (pve-manager 9.2.2) on 2026-09-24; only the VM name is scrubbed.
+    // Real `buildProxmoxMetricsScript` output captured read-only on a
+    // pve-manager 9.2.2 Hermes host on 2026-09-24. Scrubbed for the public
+    // tree: VM name, vmid, pid and the machine-type suffix.
     const captured = readFileSync(
-      join(__dirname, "fixtures", "pve9-qm-metrics.capture.txt"),
+      join(__dirname, "fixtures", "proxmox-9-qm-metrics.capture.txt"),
       "utf8"
     );
     // PVE 9's one-shot `qm status --verbose` has no cpu/cputime line at all.
