@@ -19,9 +19,13 @@ export const ProviderComputerSetupViewSchema = z.object({
   targetId: z.string().uuid().nullable(),
   observedAt: z.string().datetime({ offset: true }).nullable(),
   launchReady: z.boolean(),
-  /** When the one-time setup key baked into this server expires. Present only
-   * while the server has not yet connected back; the server decides expiry. */
+  /** When this server's setup must be finished by. Present only while the
+   * server has not yet connected back; the server decides expiry. For a
+   * "since_start" server it is null until Start setup has powered it on. */
   enrollmentExpiresAt: z.string().datetime({ offset: true }).nullable(),
+  /** Which rule the server was created with: 15 minutes from creation (older
+   * servers) or 15 minutes from Start setup. Null when setup was not requested. */
+  enrollmentWindow: z.enum(["since_creation", "since_start"]).nullable(),
 }).strict().refine(value => !value.launchReady || (value.stage === "environment_prepared" && value.targetId !== null && value.observedAt !== null));
 export type ProviderComputerSetupView = z.infer<typeof ProviderComputerSetupViewSchema>;
 

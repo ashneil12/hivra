@@ -7,6 +7,7 @@ import { assertServerIdentityMatchesQuote } from "./hetzner-cloud";
 import { loadHetznerCloudConnectionSecret } from "./hetzner-cloud-store";
 import { assertHetznerCreationReceiptMatchesObservation } from "./hetzner-creation-receipt";
 import { assertFirstBootCapacityEvidence, FirstBootReceiverError, loadFirstBootCapacityEvidence, type FirstBootCapacityEvidence } from "./first-boot-receiver";
+import { firstBootEnrollmentDeadline } from "./first-boot-enrollment";
 import { armFirstBootEnrollment, loadFirstBootEnrollment, type StoredFirstBootEnrollment } from "./first-boot-store";
 import {
   claimFirstBootOperation, markFirstBootFirewallDispatch, markFirstBootPowerDispatch,
@@ -89,9 +90,13 @@ export async function advanceFirstBoot(
   const { lease, operation } = claim;
   const b = lease.binding;
   let enrollment: StoredFirstBootEnrollment | null = null;
+  // The legacy recipe's window runs from creation. The current recipe has no
+  // enrollment deadline before Start setup; its one window opens in the same
+  // database step that records this coordinator's power-on (markPower).
+  let enrollmentDeadline: number | null = null;
   const fence = () => {
     if (deps.monotonicNow() >= deadline
-      || (enrollment && deps.now().getTime() >= Date.parse(enrollment.challenge.expiresAt))) {
+      || (enrollmentDeadline !== null && deps.now().getTime() >= enrollmentDeadline)) {
       throw new FirstBootCoordinatorError("deadline_expired");
     }
   };
@@ -102,6 +107,8 @@ export async function advanceFirstBoot(
     fence();
     const evidence = assertFirstBootCapacityEvidence(await deps.evidence(b), b, lease.providerServerId);
     enrollment = enrollmentMatches(await deps.enrollment(b.orderId, b.attemptId), lease);
+    try { enrollmentDeadline = firstBootEnrollmentDeadline(enrollment); }
+    catch { throw new FirstBootCoordinatorError("rejected"); }
     fence();
     if (enrollment.phase === "enrolled") return { stage: "identity_enrolled" };
     // An absent original receipt is not permission to replay a POST or adopt

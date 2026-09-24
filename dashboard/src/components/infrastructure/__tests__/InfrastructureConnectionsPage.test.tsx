@@ -541,7 +541,10 @@ function hetznerSetupView(patch: Record<string, unknown> = {}) {
     targetId: null,
     observedAt: null,
     launchReady: false,
-    enrollmentExpiresAt: new Date(Date.now() + 14 * 60_000 + 10_500).toISOString(),
+    // A newly created server: its 15 minutes start at Start setup, so the
+    // server reports no deadline before then.
+    enrollmentExpiresAt: null,
+    enrollmentWindow: "since_start" as const,
     ...patch,
   };
 }
@@ -1093,6 +1096,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.queryByText(/Open Computer setup to check agent readiness/)).not.toBeInTheDocument();
   });
 
+  it.each([["since_start", "It didn't connect back within 15 minutes of starting setup."],
+    ["since_creation", "Its one-time setup key expired."]] as const)("explains an expired %s setup window by its own rule", (window, hint) => {
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_OFF_SERVER]}
+      setups={[hetznerSetupView({ stage: "expired", enrollmentWindow: window })]} setupEvidence="loaded" loading={false}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={jest.fn()} onConnectExistingServer={jest.fn()} />);
+    const created = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(created).getByText("Setup window expired")).toBeInTheDocument();
+    expect(within(created).getByText(new RegExp(hint.replace(/[.]/g, "\\.")))).toBeInTheDocument();
+  });
+
   it("names no server as someone else's until Hivra's records have loaded", () => {
     const onConnect = jest.fn();
     const props = {
@@ -1296,7 +1309,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     ));
     expect(await within(capacityDialog).findByRole("heading", { name: "Set it up for agents" })).toBeInTheDocument();
     expect(within(capacityDialog).getByText("Server created (powered off). Billing has started.")).toBeInTheDocument();
-    expect(await within(capacityDialog).findByText(/Setup key valid for/)).toHaveTextContent(/14:(10|09)/);
+    // No countdown before Start setup: the window opens when Hivra powers it on.
+    expect(await within(capacityDialog).findByText(/Setup must finish within 15 minutes of starting/)).toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/Setup key valid for/)).not.toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/left for the server to connect back/)).not.toBeInTheDocument();
     // Start setup is the only primary action; no "Return to infrastructure" first.
     expect(within(capacityDialog).getByRole("button", { name: "Start setup" })).toBeEnabled();
     expect(within(capacityDialog).queryByRole("button", { name: /Return to infrastructure/ })).not.toBeInTheDocument();

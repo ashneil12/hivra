@@ -356,4 +356,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260924090000", name: "drop_user_bankr_key_on_agent_delete" },
   { version: "20260924101500", name: "digitalocean_token_expiry_and_forget" },
   { version: "20260924171100", name: "hetzner_same_project_token_replacement" },
+  { version: "20260924190000", name: "hetzner_first_boot_arm_at_start" },
 ];

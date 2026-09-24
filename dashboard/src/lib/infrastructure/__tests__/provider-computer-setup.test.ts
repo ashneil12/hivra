@@ -4,6 +4,7 @@ import { receiverFixture } from "./first-boot-receiver.fixtures";
 import { providerVmTarget } from "./provider-vm-target.fixtures";
 import type { StoredFirstBootEnrollment } from "../first-boot-store";
 import type { loadHetznerCloudConnectionMetadata } from "../hetzner-cloud-store";
+import { FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
 
 function harness() {
   const { order, firstBoot } = firstBootCleanupFixture();
@@ -52,21 +53,66 @@ it("fails the whole read when either half of the evidence can't be read", async 
     ...h.deps, createdServers: jest.fn(async () => { throw new Error("database down"); }),
   })).rejects.toThrow("database down");
 });
-it("shows the setup key's deadline only until the server connects back", async () => {
+it("keeps a legacy server's 15 minutes from creation, shown only until it connects back", async () => {
   const h = harness();
   h.enrollment.phase = "awaiting_identity";
-  h.enrollment.challenge = { ...h.enrollment.challenge, issuedAt: "2026-08-28T00:55:00.000Z", expiresAt: "2026-08-28T01:10:00.000Z" };
+  h.enrollment.challenge = { ...h.enrollment.challenge, binding: { ...h.enrollment.challenge.binding, recipeVersion: FIRST_BOOT_LEGACY_RECIPE_VERSION },
+    issuedAt: "2026-08-28T00:55:00.000Z", expiresAt: "2026-08-28T01:10:00.000Z" };
   h.deps.boot.mockResolvedValue(null as never);
   const [waiting] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
-  expect(waiting).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z" });
+  expect(waiting).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z", enrollmentWindow: "since_creation" });
 
   h.enrollment.phase = "enrolled";
   const [enrolled] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
-  expect(enrolled).toMatchObject({ stage: "identity_enrolled", enrollmentExpiresAt: null });
+  expect(enrolled).toMatchObject({ stage: "identity_enrolled", enrollmentExpiresAt: null, enrollmentWindow: "since_creation" });
 
   h.enrollment.phase = "awaiting_identity";
   const expired = await listProviderComputerSetups("owner", cleanupConnection, { ...h.deps, now: () => new Date("2026-08-28T01:10:00Z") });
   expect(expired[0]).toMatchObject({ stage: "expired", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z" });
+});
+it("has no deadline before Start setup, then 15 minutes from Hivra's recorded power-on", async () => {
+  const h = harness();
+  h.enrollment.phase = "awaiting_identity";
+  h.enrollment.challenge = { ...h.enrollment.challenge, binding: { ...h.enrollment.challenge.binding, recipeVersion: FIRST_BOOT_RECIPE_VERSION },
+    issuedAt: "2026-08-27T20:00:00.000Z", expiresAt: "2026-08-27T20:15:00.000Z" };
+  h.deps.boot.mockResolvedValue(null as never);
+  // Created five hours ago and never started: no countdown, not expired.
+  const [waiting] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(waiting).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: null, enrollmentWindow: "since_start" });
+  const later = await listProviderComputerSetups("owner", cleanupConnection, { ...h.deps, now: () => new Date("2026-09-20T00:00:00Z") });
+  expect(later[0]).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: null });
+  h.enrollment.phase = "staged";
+  const [staged] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(staged).toMatchObject({ enrollmentExpiresAt: null, enrollmentWindow: "since_start" });
+  expect(staged.stage).not.toBe("expired");
+
+  // Start setup powered it on at 00:58; the owner sees 15 minutes from then.
+  h.enrollment.phase = "awaiting_identity";
+  h.enrollment.armedAt = "2026-08-28T00:58:00.000Z"; h.enrollment.armedExpiresAt = "2026-08-28T01:15:00.000Z";
+  const [started] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(started).toMatchObject({ enrollmentExpiresAt: "2026-08-28T01:13:00.000Z", enrollmentWindow: "since_start" });
+  // Hivra still accepts the connection during the 2-minute boot slack...
+  const slack = await listProviderComputerSetups("owner", cleanupConnection, { ...h.deps, now: () => new Date("2026-08-28T01:14:00Z") });
+  expect(slack[0].stage).not.toBe("expired");
+  // ...and the server's own expiry decides "expired".
+  const expired = await listProviderComputerSetups("owner", cleanupConnection, { ...h.deps, now: () => new Date("2026-08-28T01:15:00Z") });
+  expect(expired[0]).toMatchObject({ stage: "expired", enrollmentWindow: "since_start" });
+
+  h.enrollment.phase = "enrolled";
+  const [enrolled] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(enrolled).toMatchObject({ stage: "identity_enrolled", enrollmentExpiresAt: null });
+});
+it("reads the original attempt of either recipe without naming one", async () => {
+  const h = harness();
+  await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(h.deps.enrollment).toHaveBeenCalledWith({ binding: { userId: "owner", connectionId: cleanupConnection,
+    connectionRevision: 7, orderId: cleanupOrder, quoteFingerprint: h.order.quoteFingerprintSha256 },
+  capacityIdempotencyKey: cleanupKey });
+});
+it("reports no window when setup was never requested", async () => {
+  const h = harness(); h.deps.enrollment.mockResolvedValue(null);
+  const [view] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(view).toMatchObject({ stage: "not_requested", enrollmentWindow: null, enrollmentExpiresAt: null });
 });
 it("prepares the original enrolled identity even after its one-time token expired", async () => {
   const h = harness();
@@ -91,7 +137,10 @@ it.each(["unconfirmed", "revoked", "expired", "retired", "different_revision"])(
   const h = harness();
   if (kind === "unconfirmed") h.deps.enrollment.mockResolvedValue(null);
   if (kind === "revoked") h.enrollment.phase = "revoked";
-  if (kind === "expired") h.enrollment.phase = "awaiting_identity";
+  if (kind === "expired") {
+    h.enrollment.phase = "awaiting_identity";
+    h.enrollment.challenge = { ...h.enrollment.challenge, binding: { ...h.enrollment.challenge.binding, recipeVersion: FIRST_BOOT_LEGACY_RECIPE_VERSION } };
+  }
   if (kind === "retired") h.order.operation.status = "cleaning";
   if (kind === "different_revision") h.request.expectedConnectionRevision = 8;
   await expect(advanceProviderComputerSetup("owner", cleanupConnection, h.request, h.deps)).rejects.toThrow();

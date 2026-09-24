@@ -4,7 +4,6 @@ import { z } from "zod";
 import { createHetznerCloudCleanupClient } from "@/lib/hetzner/client";
 import { loadHetznerCloudCleanupOrder, loadHetznerCloudConnectionSecret } from "@/lib/infrastructure/hetzner-cloud-store";
 import { loadFirstBootOperationForOrder } from "@/lib/infrastructure/first-boot-operations";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
 import { hetznerCleanupManifest } from "@/lib/infrastructure/hetzner-cleanup-policy";
 import { loadProviderAgentDeleteContext } from "./provider-agent-delete";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -47,7 +46,7 @@ export async function observeAbsentProviderDesktopProvision(
   }
   const scope = { binding: { userId: input.userId, connectionId: agent.infrastructure_connection_id,
     connectionRevision: agent.infrastructure_connection_revision, orderId: agent.provider_capacity_order_id,
-    quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION }, providerServerId: agent.provider_server_id };
+    quoteFingerprint: order.quoteFingerprintSha256 }, providerServerId: agent.provider_server_id };
   const boot = await deps.boot(scope); fence();
   if (!boot || boot.binding.attemptId !== agent.provider_enrollment_attempt_id) throw new Error("Provider absence enrollment changed");
   const manifest = hetznerCleanupManifest(order, boot);
