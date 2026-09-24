@@ -9,7 +9,7 @@ import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { log } from "@/lib/logger";
 import { ATTACHED_SERVICE_POLICY_V2_SHA256 } from "./attach-review";
-import { ATTACHED_AGENT_PROGRAM_SHA256, executeAttachedAgentStep, type AttachedAccessResult,
+import { ATTACHED_AGENT_PROGRAM_SHA256, ATTACHED_AGENT_TIMEOUTS, executeAttachedAgentStep, type AttachedAccessResult,
   type AttachedActivationResult, type AttachedAgentAction, type AttachedAgentTarget, type AttachedRemoveResult,
   type AttachedStateResult } from "./attached-agent-host";
 import { attachedAccessPacket, attachedActivatePacket, attachedObservePacket, attachedRemovePacket,
@@ -61,6 +61,8 @@ type Dependencies = {
   token: () => string;
   event: typeof logHivraAgentEvent;
   now: () => number;
+  /** The pass's own deadline (epoch ms): a host step that could outlast it is not started. */
+  deadline: number;
 };
 
 async function loadComputer(ownerId: string, sourceId: string): Promise<ComputerRow | null> {
@@ -87,7 +89,7 @@ function defaults(overrides: Partial<Dependencies>): Dependencies {
   return {
     store: createAttachmentLifecycleStore(), loadComputer, hostAddresses, stage: progressAttachmentStaging,
     execute: executeAttachedAgentStep, uuid: randomUUID, token: () => randomBytes(32).toString("hex"),
-    event: logHivraAgentEvent, now: Date.now, ...overrides,
+    event: logHivraAgentEvent, now: Date.now, deadline: Number.POSITIVE_INFINITY, ...overrides,
   };
 }
 
@@ -118,8 +120,13 @@ function packetInput(state: AttachmentState, computer: ComputerRow, ids: { uid: 
   };
 }
 
+/** Whether a host step with this worst-case duration can finish inside the pass.
+ * Checked before each dispatch compare-and-swap, so a step is never granted and
+ * then left unstarted; a later pass starts it. */
+const fits = (deps: Dependencies, action: AttachedAgentAction) => deps.now() + ATTACHED_AGENT_TIMEOUTS[action].hostMs <= deps.deadline;
+
 /** A held step's reason: the host's refusal when it gave one, else the transport code. */
-const failureCode = (result: { code: string; reason?: string }) => result.code === "target_refused" && result.reason ? result.reason : result.code;
+const stepCode = (result: { code: string; reason?: string }) => result.code === "target_refused" && result.reason ? result.reason : result.code;
 
 const grantsLabel = (grants: { workspace: boolean }) => grants.workspace ? "~/Hivra read and write, internet" : "internet, no shared folder";
 
@@ -152,7 +159,9 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     if (precondition) return await refuse(precondition);
   }
   if (!state.staged) {
-    const staged = await deps.stage(ownerId, id, architecture);
+    const staged = Number.isFinite(deps.deadline)
+      ? await deps.stage(ownerId, id, architecture, { deadline: deps.deadline, now: deps.now })
+      : await deps.stage(ownerId, id, architecture);
     if (staged.state !== "staging_recorded") {
       // The host refused the VM before anything ran in it: failed, with why.
       if ((staged.reason === "computer_not_running" || staged.reason === "computer_not_ready") && state.phase === "claimed") {
@@ -175,6 +184,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   let result: AttachedActivationResult | null = null;
   if (!state.activation) {
     if (state.desiredState !== "running") return await cleanUpAndFail(ownerId, state, computer, hostTarget, "pending_delete", deps);
+    if (!fits(deps, "activate")) return held("budget_exhausted");
     const token = deps.token();
     const built = attachedActivatePacket({ ...packetInput(state, computer, ids, id, grants, 1), bootId: state.bootId,
       activationId: deps.uuid(), instanceToken: token, hostAddresses: await deps.hostAddresses(ownerId, computer) });
@@ -186,7 +196,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     // and then only observed.
     if (!granted) return held("activation_unconfirmed");
     const started = await deps.execute(ownerId, computer, "activate", hostTarget, built.packet);
-    if (!started.ok) return held("activation_" + failureCode(started));
+    if (!started.ok) return held("activation_" + stepCode(started));
     result = started.result as AttachedActivationResult;
     state = await deps.store.readState(ownerId, id);
     if (!state?.activation) return held("state_unavailable");
@@ -195,10 +205,11 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     const token = await deps.store.readInstanceToken(ownerId, id);
     const activation = state.activation as { activationId?: string; serviceDefinitionSha256?: string };
     if (!token || !activation.activationId || !activation.serviceDefinitionSha256) return held("activation_unavailable");
+    if (!fits(deps, "observe")) return held("budget_exhausted");
     const observed = await deps.execute(ownerId, computer, "observe", hostTarget, attachedObservePacket({ operationId: id,
       activationId: activation.activationId, installationId: state.installation!.installationId, bootId: state.bootId,
       serviceDefinitionSha256: activation.serviceDefinitionSha256, instanceToken: token }).packet);
-    if (!observed.ok) return held("observation_" + failureCode(observed));
+    if (!observed.ok) return held("observation_" + stepCode(observed));
     result = observed.result as AttachedActivationResult;
     if (result.contract) {
       const built = attachedActivatePacket({ ...packetInput(state, computer, ids, id, grants, 1), bootId: state.bootId,
@@ -240,9 +251,10 @@ async function recordContract(ownerId: string, attachmentId: string, revision: n
 async function cleanUpAndFail(ownerId: string, state: AttachmentState, computer: ComputerRow, hostTarget: AttachedAgentTarget,
   failureCode: string, deps: Dependencies): Promise<AttachmentWorkProgress> {
   const held = (reason: string): AttachmentWorkProgress => ({ kind: "attach", id: state.id, state: "held", reason });
+  if (!fits(deps, "remove")) return held("budget_exhausted");
   const cleaned = await deps.execute(ownerId, computer, "remove", hostTarget,
     attachedRemovePacket({ operationId: state.id, installationId: state.installation!.installationId }).packet);
-  if (!cleaned.ok) return held("cleanup_" + failureCode(cleaned));
+  if (!cleaned.ok) return held("cleanup_" + stepCode(cleaned));
   const receipt = cleaned.result as AttachedRemoveResult;
   if (receipt.state !== "removed") return held("cleanup_unresolved");
   if (!await deps.store.fail({ ownerId, operationId: state.id, generation: state.generation, authority: state.guestAuthority,
@@ -276,16 +288,18 @@ Promise<AttachmentWorkProgress> {
     if (operation.desiredState !== "running" || operation.computerStatus !== "running") {
       return await deps.store.cancelOperation(ownerId, id) ? { kind, id, state: "cancelled" } : held("cancel_unconfirmed");
     }
+    if (!fits(deps, kind === "detach" ? "remove" : "access")) return held("budget_exhausted");
     if (!await deps.store.dispatchOperation(ownerId, id)) return held("dispatch_unconfirmed");
     fresh = true;
   }
 
+  if (!fresh && !fits(deps, kind === "detach" ? "remove" : "state")) return held("budget_exhausted");
   if (kind === "detach") {
     // Remove converges: each step removes only what is still there, so a
     // pass that lost the previous answer runs it again to observe the end state.
     const removed = await deps.execute(ownerId, computer, "remove", hostTarget,
       attachedRemovePacket({ operationId: id, installationId: state.installation.installationId }).packet);
-    if (!removed.ok) return held("remove_" + failureCode(removed));
+    if (!removed.ok) return held("remove_" + stepCode(removed));
     const receipt = removed.result as AttachedRemoveResult;
     if (receipt.state !== "removed") return held(receipt.reason ?? "remove_unresolved");
     if (!await deps.store.completeOperation(ownerId, id, receipt as unknown as Record<string, unknown>)) return held("completion_unconfirmed");
@@ -300,14 +314,14 @@ Promise<AttachmentWorkProgress> {
   if (fresh) {
     const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
     const changed = await deps.execute(ownerId, computer, "access", hostTarget, built.packet);
-    if (!changed.ok) return held("access_" + failureCode(changed));
+    if (!changed.ok) return held("access_" + stepCode(changed));
     const receipt = changed.result as AttachedAccessResult;
     return await finishAccess(ownerId, id, operation.attachmentId, receipt, built.contract, revision, operation.grants, computer, state, deps);
   }
   // The answer to a dispatched change was lost: look, never change again.
   const looked = await deps.execute(ownerId, computer, "state", hostTarget,
     attachedStatePacket({ operationId: id, installationId: state.installation.installationId, instanceToken: token }).packet);
-  if (!looked.ok) return held("state_" + failureCode(looked));
+  if (!looked.ok) return held("state_" + stepCode(looked));
   const observed = looked.result as AttachedStateResult;
   const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
   if (observed.chatReady && observed.workspace === operation.grants.workspace && observed.viewMounted === operation.grants.workspace) {

@@ -866,16 +866,20 @@ $$;
 
 -- Open work for the minute worker: attachments still installing and access or
 -- remove steps still open. Oldest first, bounded.
+-- At most p_limit items in all, oldest first across both kinds.
 create or replace function public.list_open_hivra_agent_attachment_work(p_limit integer)
 returns jsonb language sql stable security definer set search_path=pg_catalog,pg_temp as $$
-  select coalesce(jsonb_agg(item order by at),'[]'::jsonb) from (
-    (select p.created_at as at, jsonb_build_object('kind','attach','ownerId',p.user_id,'id',p.id) as item
-      from public.hivra_agent_attachments p where p.phase in ('claimed','dispatched')
-      order by p.created_at limit greatest(1,least(coalesce(p_limit,20),100)))
-    union all
-    (select o.created_at, jsonb_build_object('kind',o.kind,'ownerId',o.user_id,'id',o.id,'attachmentId',o.attachment_id)
-      from public.hivra_agent_attachment_operations o where o.phase in ('claimed','dispatched')
-      order by o.created_at limit greatest(1,least(coalesce(p_limit,20),100)))
+  select coalesce(jsonb_agg(item order by at, id),'[]'::jsonb) from (
+    select at, id, item from (
+      (select p.created_at as at, p.id, jsonb_build_object('kind','attach','ownerId',p.user_id,'id',p.id) as item
+        from public.hivra_agent_attachments p where p.phase in ('claimed','dispatched')
+        order by p.created_at, p.id limit greatest(1,least(coalesce(p_limit,20),100)))
+      union all
+      (select o.created_at, o.id, jsonb_build_object('kind',o.kind,'ownerId',o.user_id,'id',o.id,'attachmentId',o.attachment_id)
+        from public.hivra_agent_attachment_operations o where o.phase in ('claimed','dispatched')
+        order by o.created_at, o.id limit greatest(1,least(coalesce(p_limit,20),100)))
+    ) both_kinds
+    order by at, id limit greatest(1,least(coalesce(p_limit,20),100))
   ) work;
 $$;
 

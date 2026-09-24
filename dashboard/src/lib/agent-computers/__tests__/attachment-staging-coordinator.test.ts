@@ -264,3 +264,13 @@ it("names a VM the host refused before anything ran in it, at the boot read and 
   expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
   expect(deps.store.dispatch).not.toHaveBeenCalled();
 });
+
+it("does not fetch, or win the one-time stage dispatch, when fetch and stage together could outlast the pass", async () => {
+  const deps = fixture();
+  deps.store.read.mockResolvedValue(prepared);
+  const now = () => 1_000_000;
+  expect(await run({ ...deps, now, deadline: 1_000_000 + 699_999 } as never))
+    .toEqual({ operationId: dispatched.operationId, state: "held", reason: "budget_exhausted" });
+  expect(deps.execute).not.toHaveBeenCalled();
+  expect(deps.store.dispatch).not.toHaveBeenCalled();
+});

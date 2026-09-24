@@ -387,6 +387,25 @@ async function main() {
     // ---- the worker's queue --------------------------------------------------
     const work = await value("select public.list_open_hivra_agent_attachment_work(20) as result");
     assert.deepEqual(work, [], "nothing finished is ever picked up again");
+    // The limit is for the whole list, oldest first across both kinds. Open
+    // rows are copied from finished ones with foreign keys and triggers off.
+    await db.exec("begin; set local session_replication_role = replica;");
+    for (const [n, minutes] of [[1, 5], [2, 3], [3, 1]]) {
+      await db.query(`insert into public.hivra_agent_attachments select (jsonb_populate_record(p, jsonb_build_object('id',$1::text,
+        'source_id',$2::text,'computer_id',$2::text,'agent_identity_id',$2::text,'phase','claimed','completed_at',null,'dispatch_id',null,'dispatched_at',null,'ended_at',null,'end_reason',null,
+        'created_at',(now()-make_interval(mins=>$3))::text))).* from public.hivra_agent_attachments p where p.id=$4`,
+      [pid("f", n), pid("f", 10 + n), minutes * 2, op]);
+      await db.query(`insert into public.hivra_agent_attachment_operations select (jsonb_populate_record(o, jsonb_build_object('id',$1::text,
+        'attachment_id',$2::text,'phase','claimed','dispatched_at',null,'completed_at',null,'receipt',null,'failure_code',null,
+        'created_at',(now()-make_interval(mins=>$3))::text))).* from public.hivra_agent_attachment_operations o where o.id=$4`,
+      [pid("f", 20 + n), pid("f", n), minutes * 2 - 1, access]);
+    }
+    const limited = await value("select public.list_open_hivra_agent_attachment_work(2) as result");
+    assert.deepEqual(limited.map((item) => [item.kind, item.id]), [["attach", pid("f", 1)], ["access_change", pid("f", 21)]],
+      "two items in all, the oldest two, not two of each kind");
+    assert.equal((await value("select public.list_open_hivra_agent_attachment_work(20) as result")).length, 6);
+    await db.exec("rollback;");
+    assert.deepEqual(await value("select public.list_open_hivra_agent_attachment_work(20) as result"), []);
 
     // ---- grants: EXECUTE for service_role only, v1 closed ------------------
     const granted = ["read_hivra_agent_attach_target(text,uuid)", "claim_hivra_agent_attachment(text,uuid,uuid,uuid,jsonb,jsonb,integer)",

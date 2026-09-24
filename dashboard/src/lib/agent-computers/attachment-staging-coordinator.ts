@@ -6,9 +6,14 @@ import { attachmentExecutionAgent, attachmentExecutionExpectation, parseAttachme
   type AttachmentExecutionSnapshot } from "./attachment-execution-snapshot";
 import { observeAttachmentGuestBoot } from "./attachment-host-observer";
 import { executeAttachmentGuestAction } from "./attachment-host-executor";
+import { ATTACHMENT_ACTION_TIMEOUTS } from "./attachment-host-action";
 
 type Dependencies = { store: AttachmentExecutionStore; observeBoot: typeof observeAttachmentGuestBoot;
-  execute: typeof executeAttachmentGuestAction; uuid: () => string };
+  execute: typeof executeAttachmentGuestAction; uuid: () => string;
+  /** The worker pass's deadline (epoch ms) and clock: a host step that could outlast it is not started. */
+  deadline: number; now: () => number };
+// The boot read's own bound (attachment-host-observer.ts).
+const OBSERVE_BOOT_MS = 90_000;
 // boot_unobserved: the computer's guest did not answer Hivra at all, so it is
 // not ready; boot_unconfirmed: it answered and recording that was not confirmed.
 // computer_not_running / computer_not_ready: before the stage dispatch, the
@@ -16,7 +21,7 @@ type Dependencies = { store: AttachmentExecutionStore; observeBoot: typeof obser
 // nothing ran in it; the worker ends the claim as failed with that reason.
 type Reason = "state_unavailable" | "pending_delete" | "reservation_unconfirmed" | "boot_unobserved" | "boot_unconfirmed"
   | "fetch_unconfirmed" | "dispatch_unconfirmed" | "staging_unconfirmed" | "result_unconfirmed"
-  | "computer_not_running" | "computer_not_ready";
+  | "computer_not_running" | "computer_not_ready" | "budget_exhausted";
 const refusalReason = (result: { ok: boolean; code?: string; reason?: string }): Reason | null =>
   !result.ok && result.code === "target_refused"
     ? result.reason === "computer_not_running" ? "computer_not_running" : "computer_not_ready" : null;
@@ -31,7 +36,8 @@ export async function progressAttachmentStaging(
   ownerId: string, operationId: string, architecture: "x86_64" | "aarch64", overrides: Partial<Dependencies> = {},
 ): Promise<AttachmentStagingProgress> {
   const deps: Dependencies = { store: createAttachmentExecutionStore(), observeBoot: observeAttachmentGuestBoot,
-    execute: executeAttachmentGuestAction, uuid: randomUUID, ...overrides };
+    execute: executeAttachmentGuestAction, uuid: randomUUID, deadline: Number.POSITIVE_INFINITY, now: Date.now, ...overrides };
+  const fits = (ms: number) => deps.now() + ms <= deps.deadline;
   let reason: Reason = "state_unavailable";
   const held = (): AttachmentStagingProgress => ({ operationId, state: "held", reason });
   const read = async () => {
@@ -51,6 +57,7 @@ export async function progressAttachmentStaging(
       reason = "staging_unconfirmed";
       const expected = attachmentExecutionExpectation(snapshot);
       if (!expected) return held();
+      if (!fits(ATTACHMENT_ACTION_TIMEOUTS.observe.hostMs)) { reason = "budget_exhausted"; return held(); }
       const observed = await deps.execute(ownerId, attachmentExecutionAgent(snapshot), "observe", expected);
       if (!observed.ok || observed.action !== "observe") return held();
       reason = "result_unconfirmed";
@@ -69,6 +76,7 @@ export async function progressAttachmentStaging(
       snapshot = next;
     }
     if (!snapshot.observation) {
+      if (!fits(OBSERVE_BOOT_MS)) { reason = "budget_exhausted"; return held(); }
       reason = "boot_unobserved";
       const observed = await deps.observeBoot(ownerId, attachmentExecutionAgent(snapshot), {
         operationId, computerId: snapshot.computerId, sourceId: snapshot.guestAuthority.id,
@@ -82,6 +90,11 @@ export async function progressAttachmentStaging(
         || next.observation?.bootId !== observed.observation.bootId
         || JSON.stringify(next.installation) !== JSON.stringify(snapshot.installation)) return held();
       snapshot = next;
+    }
+    // Fetch and stage run back to back around the one-time dispatch: both must fit.
+    if (!fits(ATTACHMENT_ACTION_TIMEOUTS.fetch.hostMs + ATTACHMENT_ACTION_TIMEOUTS.stage.hostMs)) {
+      reason = "budget_exhausted";
+      return held();
     }
     reason = "fetch_unconfirmed";
     const dispatchId = deps.uuid();

@@ -259,6 +259,18 @@ describe("Change access and Remove", () => {
     expect(deps.event).toHaveBeenCalledWith(expect.objectContaining({ event: "agent_removed", detail: expect.objectContaining({ filesKept: true }) }));
   });
 
+  it("never dispatches a Remove or Change access that could outlast the pass", async () => {
+    for (const kind of ["detach", "access_change"] as const) {
+      const { store, deps } = fakes();
+      store.readOperation.mockResolvedValue(operationOf(kind));
+      store.readState.mockResolvedValue(attachedState());
+      expect(await progressAttachmentWork({ kind, ownerId: OWNER, id: OPERATION, attachmentId: ID }, { ...deps, deadline: NOW + 300_000 }))
+        .toEqual({ kind, id: OPERATION, state: "held", reason: "budget_exhausted" });
+      expect(store.dispatchOperation).not.toHaveBeenCalled();
+      expect(deps.execute).not.toHaveBeenCalled();
+    }
+  });
+
   it("Remove stays held until the computer confirms everything is gone", async () => {
     const { store, deps } = fakes();
     store.readOperation.mockResolvedValue(operationOf("detach", { phase: "dispatched" }));
@@ -332,5 +344,23 @@ describe("Change access and Remove", () => {
       .toEqual({ kind: "detach", id: OPERATION, state: "completed" });
     expect(store.readState).not.toHaveBeenCalled();
     expect(deps.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("the pass deadline", () => {
+  it("never grants an activation, Change access or Remove that could outlast the pass, and a later pass starts it", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "dispatched", activation: null }));
+    // 10 minutes left: less than an activation's worst case (620 s).
+    const short = { ...deps, deadline: NOW + 600_000 };
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, short))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "budget_exhausted" });
+    expect(store.dispatchActivation).not.toHaveBeenCalled();
+    expect(deps.execute).not.toHaveBeenCalled();
+    // The stage call carries the same deadline down to the staging steps.
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "budget_exhausted" });
+    await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, short);
+    expect(deps.stage).toHaveBeenLastCalledWith(OWNER, ID, "x86_64", { deadline: NOW + 600_000, now: deps.now });
   });
 });

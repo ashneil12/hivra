@@ -60,3 +60,17 @@ it("answers 503 when it cannot read its work", async () => {
   listWork.mockRejectedValue(new Error("down"));
   expect((await get()).status).toBe(503);
 });
+
+it("gives every item the pass's one deadline, inside the function's own limit", async () => {
+  const before = Date.now();
+  const work = [1, 2].map((n) => ({ kind: "attach", ownerId: "owner", id: `${n}`.repeat(8) + "-1111-4111-8111-111111111111" }));
+  jest.mocked(progressAttachmentWork).mockResolvedValue({ kind: "attach", id: "a", state: "progressing" });
+  listWork.mockResolvedValue(work);
+  await get();
+  for (const [, overrides] of jest.mocked(progressAttachmentWork).mock.calls) {
+    const { deadline } = overrides as { deadline: number };
+    expect(deadline).toBeGreaterThanOrEqual(before + 780_000);
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 780_000);
+  }
+  expect(jest.mocked(progressAttachmentWork)).toHaveBeenCalledTimes(work.length);
+});

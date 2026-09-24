@@ -19,9 +19,11 @@ import { progressAttachmentWork, type AttachmentWorkProgress } from "@/lib/agent
 export const dynamic = "force-dynamic";
 
 // An activation runs the enforcement probe and waits for Chat and the gateway;
-// a Remove sweeps the disk. Leave room for one of each.
+// a Remove sweeps the disk. The pass has one deadline, 20 s inside the
+// function's limit: each item starts a host step only if that step's own
+// worst case fits before it, so a pass is never killed with a step half done.
 export const maxDuration = 800;
-const BUDGET_MS = 600_000;
+const DEADLINE_MS = (maxDuration - 20) * 1000;
 const MAX_ITEMS = 5;
 
 export async function GET(req: NextRequest) {
@@ -35,14 +37,11 @@ export async function GET(req: NextRequest) {
   }
   if (!verifyBearerHeader(req, cronSecret)) return apiError("Unauthorized", 401);
   if (!isAgentAttachEnabled()) return apiSuccess({ enabled: false, results: [] });
-  const started = Date.now();
+  const deadline = Date.now() + DEADLINE_MS;
   try {
     const work = await createAttachmentLifecycleStore().listWork(MAX_ITEMS);
     const results: AttachmentWorkProgress[] = [];
-    for (const item of work) {
-      if (Date.now() - started > BUDGET_MS) break;
-      results.push(await progressAttachmentWork(item));
-    }
+    for (const item of work) results.push(await progressAttachmentWork(item, { deadline }));
     const held = results.filter((result) => result.state === "held");
     if (held.length) {
       log.warn("attached agent steps held", { source: "progress-agent-attachments", route: "/api/cron/progress-agent-attachments",
