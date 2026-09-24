@@ -15,6 +15,7 @@ import { ArrowLeft, Loader2, Save, Trash2, Rocket, Link2, Lock, Globe, Copy, Che
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { clientLog } from "@/lib/client/logger";
+import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 
 type Visibility = "private" | "link" | "public";
 
@@ -190,9 +191,9 @@ export default function TemplatesPage() {
   }, []);
 
   const launchFromTemplate = useCallback((template: OwnerTemplate) => {
-    // Hand off to the deploy/welcome flow with a templateId so the picker can
-    // pre-fill identity and the launch POST forks it.
-    router.push(`/dashboard/welcome?step=agent-type&templateId=${encodeURIComponent(template.id)}`);
+    // Launch opens the template's agent under its name, and the launch
+    // request names the template so the server forks it.
+    router.push(buildLaunchHref({ start: true, template: template.id }));
   }, [router]);
 
   return (

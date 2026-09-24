@@ -108,7 +108,7 @@ fires even when the box serves an error page, so the old gate would have passed 
 it never gates.
 
 **2. Observe the product, don't perturb it.** Readiness is polled through
-`GET /api/instances/[id]` — the route the welcome flow polls — **not** through
+`GET /api/instances/[id]` — the route the product polls — **not** through
 `/api/instances/[id]/health`. Both promote the row `provisioning → running`, but
 only the former fires the post-ready `SOUL.md` reconcile (canary #484). Polling
 `/health` won the race, flipped the row first, and left a freshly hired **Bea**

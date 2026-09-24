@@ -654,7 +654,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
   });
 
-  it("preserves a selected agent through capacity setup and returns to its deploy form", async () => {
+  it("preserves a selected agent through capacity setup and opens its launch on the ready server", async () => {
     const target = providerVmTarget();
     target.connectionId = HETZNER_CONNECTION.id;
     target.status = "ready";
@@ -669,7 +669,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/welcome?step=deploy&agentType=codex&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&start=1&profile=codex&targetId=${target.id}`,
     );
     expect(screen.getByText(/Capacity is ready for Codex/i)).toBeInTheDocument();
   });
@@ -699,7 +699,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/computers?launch=1&targetId=${READY_GVISOR_TARGET.id}`,
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
     expect(screen.getByText(/Capacity is ready for Linux Sandbox/i)).toBeInTheDocument();
   });
@@ -921,7 +921,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/launch?kind=agent&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&profile=codex&targetId=${target.id}`,
     );
   });
 
@@ -1334,7 +1334,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(await within(dialog).findByRole("button", { name: "Start setup" }));
 
     expect(await within(dialog).findByRole("link", { name: "Continue your launch" })).toHaveAttribute(
-      "href", "/dashboard/welcome?step=deploy&agentType=codex&targetId=00000000-0000-4000-8000-000000001099",
+      "href", "/dashboard/launch?kind=agent&start=1&profile=codex&targetId=00000000-0000-4000-8000-000000001099",
     );
     expect(advanceProviderComputerSetup).toHaveBeenCalledWith(HETZNER_CONNECTION.id, {
       orderId: "00000000-0000-4000-8000-000000001016", expectedConnectionRevision: 1,

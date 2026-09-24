@@ -8,8 +8,8 @@
  * The same components for an allowed viewer (the dormant policy) are unchanged.
  */
 import "@testing-library/jest-dom";
-import React, { useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import React from "react";
+import { render, screen, within } from "@testing-library/react";
 
 import type { TokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 
@@ -46,7 +46,6 @@ jest.mock("@/components/landing/Footer", () => function MockFooter() {
 jest.mock("@/components/ui/animate-in", () => ({
   AnimateIn: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-jest.mock("@/components/ui/StyledDropdown", () => ({ StyledDropdown: () => null }));
 jest.mock("@/lib/client/logger", () => ({ clientLog: { error: jest.fn(), warn: jest.fn(), info: jest.fn() } }));
 
 import { PlansTab } from "@/app/dashboard/billing/_components/PlansTab";
@@ -55,13 +54,11 @@ import type { BillingController } from "@/app/dashboard/billing/useBillingContro
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import { ConvertPanel } from "@/components/claim/ConvertPanel";
 import { ManagedVeniceCreditsPocket } from "@/components/dashboard/command-center/ManagedVeniceCreditsPocket";
-import { DeployForm } from "@/components/dashboard/welcome/DeployForm";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import FullTokenomicsSection from "@/components/landing/FullTokenomicsSection";
 import TokenPageClient from "@/components/token/TokenPageClient";
 import { validateHivraLaunchConfig } from "@/lib/billing/token-registry";
 import { resolveConversionState } from "@/lib/claim/conversion-state";
-import { getFeaturedProvider, PROVIDERS, type Provider } from "@/lib/models";
 import { getTokenPageEntries } from "@/lib/token-verification-content";
 
 const HERMESOS_PUBLISHED = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
@@ -148,7 +145,7 @@ describe("billing Payment methods tab", () => {
   });
 });
 
-describe("welcome managed-Venice top-up dialog", () => {
+describe("managed-Venice top-up dialog", () => {
   function renderDialog() {
     render(<ManagedVeniceDepositModal isOpen initialWalletType="hermesos" onClose={jest.fn()} />);
   }
@@ -191,78 +188,6 @@ describe("command-center credits pocket", () => {
   it("shows them to an allowed viewer", () => {
     render(<ManagedVeniceCreditsPocket summary={summary} />);
     expect(screen.getByText("Launch bonus")).toBeInTheDocument();
-  });
-});
-
-describe("welcome deploy form", () => {
-  const provider: Provider = getFeaturedProvider(PROVIDERS) ?? PROVIDERS[0];
-
-  function Harness() {
-    const [walletType, setWalletType] = useState<"hermesos" | "card">("hermesos");
-    const [managed, setManaged] = useState(true);
-    const noop = () => undefined;
-    return (
-      <DeployForm
-        agentName="AGENT"
-        setAgentName={noop}
-        managed={managed}
-        setManaged={setManaged}
-        cpuOptions={[1, 2]}
-        ramOptions={[2, 4]}
-        cpu={2}
-        setCpu={noop}
-        ramGb={4}
-        setRamGb={noop}
-        selectedProvider={provider}
-        handleProviderSelect={noop}
-        PROVIDERS={PROVIDERS}
-        model={String(provider.models?.[0]?.value ?? "")}
-        setModel={noop}
-        modelOptions={[]}
-        hasLiveModels={false}
-        isLoadingLiveModels={false}
-        liveModelsError=""
-        apiKey=""
-        setApiKey={noop}
-        customBaseUrl=""
-        setCustomBaseUrl={noop}
-        useVaultKey={false}
-        setUseVaultKey={noop}
-        matchedVaultKey={null}
-        honchoApiKey=""
-        setHonchoApiKey={noop}
-        useHonchoVaultKey={false}
-        setUseHonchoVaultKey={noop}
-        matchedHonchoVaultKey={null}
-        deploying={false}
-        handleDeploy={noop}
-        managedVeniceWalletType={walletType}
-        setManagedVeniceWalletType={setWalletType}
-        onManagedVeniceDeposit={noop}
-      />
-    );
-  }
-
-  it("drops 'use $HermesOS for bonus credits' and the token top-up for a blocked viewer", () => {
-    mockAccess = BLOCKED;
-    render(<Harness />);
-    fireEvent.click(screen.getByRole("button", { name: /advanced setup/i }));
-    expect(screen.queryByText(/for bonus credits/)).not.toBeInTheDocument();
-    expect(screen.getByText("No keys to manage. Pay Venice provider rates with card credits.")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /add credit first/i }));
-    expect(screen.queryByText(/Optional token top-up/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /pay with \$HermesOS/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/launch bonus cap/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /start card credit top-up/i })).toBeInTheDocument();
-  });
-
-  it("keeps the token top-up and its bonus copy for an allowed viewer", () => {
-    render(<Harness />);
-    fireEvent.click(screen.getByRole("button", { name: /advanced setup/i }));
-    expect(screen.getByText(/use \$HermesOS for bonus credits/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /add credit first/i }));
-    expect(screen.getByRole("button", { name: /pay with \$HermesOS/i })).toBeInTheDocument();
   });
 });
 

@@ -924,7 +924,7 @@ describe("BillingPage", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/billing/activity");
   });
 
-  it("confirms a successful checkout before routing to welcome", async () => {
+  it("confirms a successful checkout before opening Launch", async () => {
     mockGet.mockImplementation((key: string) => {
       if (key === "subscription") return "success";
       if (key === "session_id") return "cs_checkout_success";
@@ -952,7 +952,8 @@ describe("BillingPage", () => {
       });
     });
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?subscription=success&step=agent-type");
+      // With nothing to return to, Launch opens and says whether the plan shows.
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?upgraded=operator");
     });
   });
 
@@ -999,7 +1000,7 @@ describe("BillingPage", () => {
     render(<BillingPage />);
 
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?subscription=success&step=agent-type");
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?upgraded=operator");
     });
   });
 

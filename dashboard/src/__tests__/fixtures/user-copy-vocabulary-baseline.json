@@ -71,9 +71,6 @@
     "instance": 1,
     "runtime": 3
   },
-  "components/agents/AgentsPage.tsx": {
-    "runtime": 3
-  },
   "components/auth/AuthLocalSetupPanel.tsx": {
     "instance": 1
   },
@@ -96,15 +93,6 @@
   "components/dashboard/welcome/DeploymentDestinationControl.tsx": {
     "self-managed": 2
   },
-  "components/dashboard/welcome/LaunchModelControl.tsx": {
-    "runtime": 1
-  },
-  "components/dashboard/welcome/WelcomeFlow.tsx": {
-    "self-managed": 2,
-    "Command Center": 1,
-    "the box": 8,
-    "instance": 3
-  },
   "components/explorer/FileExplorer.tsx": {
     "instance": 3
   },
@@ -113,9 +101,6 @@
   },
   "components/hivra/ComputerFolderRecovery.tsx": {
     "Box Terminal": 1
-  },
-  "components/hivra/FleetControlPane.tsx": {
-    "runtime": 1
   },
   "components/hivra/HivraChat.tsx": {
     "the box": 1
@@ -156,9 +141,6 @@
   "components/hivra/ToolInstallPicker.tsx": {
     "the box": 2
   },
-  "components/infrastructure/HetznerCloudCapacityDialog.tsx": {
-    "Canary": 10
-  },
   "components/infrastructure/InfrastructureConnectionCard.tsx": {
     "self-managed": 1
   },
@@ -196,16 +178,7 @@
     "runtime": 1
   },
   "components/launch/LaunchJourney.tsx": {
-    "Canary": 3,
-    "self-managed": 1,
-    "customer-owned": 6,
-    "New resource": 1,
-    "runtime": 3,
-    "Available alpha": 1
-  },
-  "components/runtimes/DeepSeekHarnessPreviewPage.tsx": {
-    "Canary": 2,
-    "runtime": 10
+    "runtime": 1
   },
   "components/scheduled-tasks/TaskModal.tsx": {
     "instance": 1

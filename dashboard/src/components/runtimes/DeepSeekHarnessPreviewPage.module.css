@@ -57,18 +57,7 @@
 .acceptance li svg { margin-top: 1px; color: #2f9f61; }
 .acceptance li strong { display: block; color: var(--ink-black); font-size: 11px; }
 .pendingRing { width: 11px; height: 11px; margin: 2px 0 0 1px; border: 1px solid #4f7cff; border-radius: 50%; }
-.surfaces { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(0, 1.55fr); margin-top: clamp(44px, 6vw, 72px); border-top: 1px solid var(--runtime-line); border-bottom: 1px solid var(--runtime-line); }
-.surfacesIntro { padding: clamp(28px, 4vw, 42px) clamp(0px, 2vw, 28px) clamp(28px, 4vw, 42px) 0; }
-.surfacesIntro h2 { margin: 13px 0 14px; font-size: clamp(24px, 3.3vw, 40px); font-weight: 480; line-height: 1.08; letter-spacing: -.04em; }
-.surfacesIntro p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
-.surfaceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-left: 1px solid var(--runtime-line); }
-.surfaceGrid article { min-width: 0; padding: clamp(24px, 3vw, 34px); }
-.surfaceGrid article + article { border-left: 1px solid var(--runtime-line); }
-.surfaceGrid svg { color: #4f7cff; }
-.surfaceGrid h3 { margin: 25px 0 7px; font-size: 14px; }
-.surfaceGrid strong { display: block; font: 700 9px/1.4 var(--font-mono), monospace; text-transform: uppercase; letter-spacing: .06em; }
-.surfaceGrid p { margin: 18px 0 0; color: var(--text-secondary); font-size: 10.5px; line-height: 1.65; }
 .breadcrumb:focus-visible, .upstream:focus-visible, .primary:focus-visible { outline: 2px solid #4f7cff; outline-offset: 3px; }
-@media (max-width: 1000px) { .header { grid-template-columns: 1fr; align-items: start; } .runtimeBody, .surfaces { grid-template-columns: 1fr; } .acceptance { border-top: 1px solid var(--runtime-line); border-left: 0; } .surfacesIntro { padding-right: 0; } .surfaceGrid { border-top: 1px solid var(--runtime-line); border-left: 0; } }
-@media (max-width: 720px) { .inner { padding-left: 18px; padding-right: 18px; } .contract > p, .truthNotice p, .surfacesIntro p, .surfaceGrid p, .acceptance li, .acceptance li strong { font-size: 13px; } .previewLabel, .sectionKicker, .headerState > span, .requirements span, .contract dt, .surfaceGrid strong { font-size: 10px; } .contract dd { font-size: 11px; } .runtimeLead { display: grid; } .upstream { margin-left: 76px; } .requirements { grid-template-columns: repeat(2, minmax(0, 1fr)); } .requirements > div:nth-child(3) { border-top: 1px solid var(--runtime-line); border-left: 0; } .requirements > div:nth-child(4) { border-top: 1px solid var(--runtime-line); } .surfaceGrid { grid-template-columns: 1fr; } .surfaceGrid article + article { border-top: 1px solid var(--runtime-line); border-left: 0; } }
+@media (max-width: 1000px) { .header { grid-template-columns: 1fr; align-items: start; } .runtimeBody { grid-template-columns: 1fr; } .acceptance { border-top: 1px solid var(--runtime-line); border-left: 0; } }
+@media (max-width: 720px) { .inner { padding-left: 18px; padding-right: 18px; } .contract > p, .truthNotice p, .acceptance li, .acceptance li strong { font-size: 13px; } .previewLabel, .sectionKicker, .headerState > span, .requirements span, .contract dt { font-size: 10px; } .contract dd { font-size: 11px; } .runtimeLead { display: grid; } .upstream { margin-left: 76px; } .requirements { grid-template-columns: repeat(2, minmax(0, 1fr)); } .requirements > div:nth-child(3) { border-top: 1px solid var(--runtime-line); border-left: 0; } .requirements > div:nth-child(4) { border-top: 1px solid var(--runtime-line); } }
 @media (max-width: 460px) { .inner { padding-left: 14px; padding-right: 14px; } .runtimeIdentity { display: grid; } .upstream { margin-left: 0; } .contract dl { grid-template-columns: 1fr; } .contract dl > div:nth-child(odd), .contract dl > div:nth-child(even) { padding-right: 0; padding-left: 0; border-left: 0; } }

@@ -12,6 +12,7 @@ import { isPlanKey } from "@/lib/billing/plan-display";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
+import { LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import type { BillingActivityData } from "@/components/billing/BillingActivityPanel";
 import {
@@ -177,6 +178,12 @@ function useBillingSearchParams() {
 /** Where a plan change started from (a launch blocked on the plan) and
  * should land once the plan is confirmed, marked with the plan it moved to so
  * that page can check whether it shows yet. Only a same-origin dashboard path. */
+/** With nothing to return to, a confirmed plan opens Launch, which says
+ * whether the new plan shows yet. */
+function launchAfterPlanChange(planKey: unknown): string {
+  return withReturnParams(LAUNCH_ROUTE, planReturnParams(isPlanKey(planKey) ? planKey : null));
+}
+
 function planReturnDestination(
   params: { get(key: string): string | null } | null | undefined,
   planKey: unknown,
@@ -501,7 +508,7 @@ export function useBillingController() {
             return;
           }
 
-          router.replace(planReturnDestination(searchParams, data?.plan) ?? "/dashboard/welcome?subscription=success&step=agent-type");
+          router.replace(planReturnDestination(searchParams, data?.plan) ?? launchAfterPlanChange(data?.plan));
         } catch (err) {
           clientLog.error("Checkout confirmation request failed", err, {
             source: "billing-page",
@@ -666,7 +673,7 @@ export function useBillingController() {
       const result = await requestSubscriptionCheckout(planKey as PlanKey, cadence, { returnTo });
       if (result.ok) {
         if (result.activated) {
-          router.push(planReturnDestination(searchParams, planKey) ?? "/dashboard/welcome?step=agent-type");
+          router.push(planReturnDestination(searchParams, planKey) ?? launchAfterPlanChange(planKey));
           return;
         }
 
@@ -864,7 +871,7 @@ export function useBillingController() {
       const result = await requestCreditTopUpCheckout(packageCredits);
       if (result.ok) {
         if (result.activated) {
-          router.push("/dashboard/welcome?step=agent-type");
+          router.push(LAUNCH_ROUTE);
           return;
         }
 
