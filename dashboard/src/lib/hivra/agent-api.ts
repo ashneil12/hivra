@@ -736,9 +736,11 @@ export async function listBoxSessions(boxUrl: string, token?: string | null): Pr
     const r = await fetch(`${boxBase(boxUrl)}/api/sessions`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return [];
     const sessions = (((await r.json()) as { sessions?: BoxSession[] }).sessions) || [];
-    // The box persists the hidden welcome-generation turn as a session; drop it so
-    // the setup prompt never appears as a visible, readable chat in the rail.
-    return sessions.filter((s) => !isHiddenWelcomeTitle(s.title));
+    // The box titles a conversation with its first message, which for the
+    // first-contact welcome is the hidden setup prompt. That conversation is the
+    // owner's to read and continue, so it lists as "Welcome", and a computer
+    // whose only history is its welcome still counts as one with history.
+    return sessions.map((s) => (isHiddenWelcomeTitle(s.title) ? { ...s, title: "Welcome" } : s));
   } catch { return []; }
 }
 export async function readBoxSession(boxUrl: string, id: string, token?: string | null): Promise<BoxMessage[]> {

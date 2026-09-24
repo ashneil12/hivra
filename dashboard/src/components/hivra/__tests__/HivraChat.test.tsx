@@ -15,7 +15,8 @@ import posthog from "posthog-js";
 
 import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
 import { listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
-import { requestAgentWelcomeMessage } from "@/lib/hivra/agent-welcome";
+import { startAgentWelcomeRun } from "@/lib/hivra/agent-welcome";
+import { clientLog } from "@/lib/client/logger";
 
 jest.mock("posthog-js", () => ({
   __esModule: true,
@@ -51,8 +52,8 @@ jest.mock("@/lib/hivra/agent-api", () => ({
 }));
 
 jest.mock("@/lib/hivra/agent-welcome", () => ({
-  requestAgentWelcomeMessage: jest.fn(),
-  isHiddenWelcomeTitle: () => false,
+  startAgentWelcomeRun: jest.fn(),
+  isHiddenWelcomeTitle: jest.requireActual("@/lib/hivra/agent-welcome").isHiddenWelcomeTitle,
 }));
 
 jest.mock("@/lib/client/logger", () => ({
@@ -86,6 +87,25 @@ function eventChunk(...events: unknown[]) {
   return { done: false, value: new TextEncoder().encode(events.map((event) => JSON.stringify(event)).join("\n") + "\n") };
 }
 
+const WELCOME_TEXT = "Atlas here, ready to grow the SaaS.";
+const HIDDEN_WELCOME_TITLE = "This is a hidden Hivra first-contact setup message.";
+
+// The first-contact turn as a computer on the detached-run runtime streams it.
+// The text goes out as a Claude text delta and as a plain `_text` line, so one
+// fixture reads the same through the claude and the generic parsers.
+function welcomeResponse(text = WELCOME_TEXT, events: unknown[] = []) {
+  const read = jest.fn()
+    .mockResolvedValueOnce(eventChunk(
+      { type: "_run", runId: "welcome", detached: true },
+      ...events,
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } },
+      { type: "_text", text },
+      { type: "_done", code: 0 },
+    ))
+    .mockResolvedValue({ done: true, value: undefined });
+  return { ok: true, status: 200, body: { getReader: () => ({ read }) } };
+}
+
 describe("HivraChat", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -95,7 +115,7 @@ describe("HivraChat", () => {
     (stampAgentFirstUsage as jest.Mock).mockResolvedValue(undefined);
     (listBoxChatRuns as jest.Mock).mockResolvedValue(null);
     (stopBoxChatRun as jest.Mock).mockResolvedValue(true);
-    (requestAgentWelcomeMessage as jest.Mock).mockResolvedValue("Atlas here, ready to grow the SaaS.");
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(welcomeResponse()));
   });
 
   it("starts an empty regular chat with the personalized assistant first message", async () => {
@@ -118,11 +138,10 @@ describe("HivraChat", () => {
     expect(sendButton).toBeInTheDocument();
     expect(sendButton).toHaveTextContent("Send message");
     expect(screen.queryByText(/hidden Hivra first-contact/i)).not.toBeInTheDocument();
-    expect(requestAgentWelcomeMessage).toHaveBeenCalledWith(
+    expect(startAgentWelcomeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         boxUrl: "https://box.example.com",
         token: "box-token",
-        agentKind: "claude",
         agentName: "Atlas",
         goal: "grow",
         context: "I run a B2B SaaS for dentists.",
@@ -145,7 +164,7 @@ describe("HivraChat", () => {
     );
 
     await screen.findByText("Atlas here, ready to grow the SaaS.");
-    expect(requestAgentWelcomeMessage).toHaveBeenCalledWith(
+    expect(startAgentWelcomeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         firstTask: "Research the 3 best CRMs for a dental practice",
         channel: "chat",
@@ -173,7 +192,7 @@ describe("HivraChat", () => {
       expect(listBoxSessions).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect(requestAgentWelcomeMessage).not.toHaveBeenCalled();
+      expect(startAgentWelcomeRun).not.toHaveBeenCalled();
     });
   });
 
@@ -612,6 +631,104 @@ describe("HivraChat", () => {
     await sendMessage("begin");
     expect(await screen.findByLabelText("Response failed")).toBeInTheDocument();
     expect(screen.getByText(/Model unavailable/)).toBeInTheDocument();
+  });
+
+  // A reply is judged by how its run ended; a warning on the way never fails it.
+  async function sendWithoutWelcome(agentKind: "claude" | "codex" | "generic", events: unknown[]) {
+    window.localStorage.setItem(`hivra:first-welcome:outcome${agentKind}`, "1");
+    const read = jest.fn().mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, ...events)).mockResolvedValue({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey={`outcome-${agentKind}`} agentName="Atlas" agentKind={agentKind} />);
+    await sendMessage("begin");
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+  }
+
+  it("completes a Claude reply that warned on the way and ended with a successful result", async () => {
+    await sendWithoutWelcome("claude", [
+      { type: "_stderr", text: "MCP server docs: connection error\n" },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "All done." } } },
+      { type: "result", subtype: "success", is_error: false },
+      { type: "_done", code: 0 },
+    ]);
+    expect(screen.getByText(/All done\./)).toHaveTextContent("⚠ MCP server docs: connection error");
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("keeps a Codex warning under the reply that arrives after it, and completes the reply", async () => {
+    await sendWithoutWelcome("codex", [
+      { type: "thread.started", thread_id: "00000000-0000-4000-8000-000000000003" },
+      { type: "item.completed", item: { id: "item_0", type: "error", message: "Model metadata for `gpt-test` not found." } },
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Here is the summary." } },
+      { type: "turn.completed", usage: {} },
+      { type: "_done", code: 0 },
+    ]);
+    expect(screen.getByText(/Here is the summary\./)).toHaveTextContent("Here is the summary. ⚠ Model metadata for `gpt-test` not found.");
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("fails a Codex reply whose turn failed after its text, keeping the reason", async () => {
+    await sendWithoutWelcome("codex", [
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Starting on it." } },
+      { type: "error", message: "unexpected status 401 Unauthorized" },
+      { type: "turn.failed", error: { message: "unexpected status 401 Unauthorized" } },
+      { type: "_done", code: 1 },
+    ]);
+    expect(screen.getByText(/Starting on it\./)).toHaveTextContent("Starting on it. ⚠ unexpected status 401 Unauthorized");
+    expect(screen.getByText(/Starting on it\./).textContent?.match(/401/g)).toHaveLength(1);
+    expect(screen.getByLabelText("Response failed")).toBeInTheDocument();
+  });
+
+  it("judges an agent with no final event of its own by how its process exited", async () => {
+    await sendWithoutWelcome("generic", [
+      { type: "_stderr", text: "warning: deprecated flag, error-prone\n" },
+      { type: "_text", text: "Answer." },
+      { type: "_done", code: 0 },
+    ]);
+    expect(screen.getByText(/Answer\./)).toHaveTextContent("Answer. ⚠ warning: deprecated flag, error-prone");
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("fails a reply whose agent exited with an error without saying why", async () => {
+    await sendWithoutWelcome("generic", [
+      { type: "_text", text: "Half an answer" },
+      { type: "_done", code: 2 },
+    ]);
+    expect(screen.getByText("Half an answer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Response failed")).toHaveTextContent("Could not complete response");
+  });
+
+  // A computer still on the chat gateway from before detached runs, whose
+  // agent could not start, streams one line, byte for byte what that gateway's
+  // `child.on("error")` writes, and closes: no `_run`, no `_done`, and the
+  // message has no newline of its own.
+  function olderGatewaySpawnError(bin: string) {
+    return jest.fn()
+      .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(JSON.stringify({ type: "_stderr", text: `spawn error: spawn ${bin} ENOENT` }) + "\n") })
+      .mockResolvedValue({ done: true, value: undefined });
+  }
+
+  it.each([
+    ["codex", "/home/user/.npm-global/bin/codex"],
+    ["claude", "/home/user/.local/bin/claude"],
+    ["generic", "/home/user/.local/bin/agent"],
+  ] as const)("fails a %s reply whose agent could not start on a computer with the older chat gateway, and says why", async (agentKind, bin) => {
+    window.localStorage.setItem(`hivra:first-welcome:oldergateway${agentKind}`, "1");
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(olderGatewaySpawnError(bin))) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey={`older-gateway-${agentKind}`} agentName="Atlas" agentKind={agentKind} />);
+    await sendMessage("begin");
+
+    expect(await screen.findByLabelText("Response failed")).toHaveTextContent("Could not complete response");
+    expect(screen.getByText(/spawn error:/)).toHaveTextContent(`⚠ spawn error: spawn ${bin} ENOENT`);
+  });
+
+  it("keeps the reason a Codex welcome could not start on a computer with the older chat gateway", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementationOnce(() => Promise.resolve(chatResponse(olderGatewaySpawnError("/home/user/.npm-global/bin/codex"))));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-older-gateway" token="box-token" agentName="Atlas" agentKind="codex" />);
+
+    expect(await screen.findByLabelText("Response failed")).toHaveTextContent("Could not complete response");
+    expect(screen.getByText(/spawn error:/)).toHaveTextContent("⚠ spawn error: spawn /home/user/.npm-global/bin/codex ENOENT");
+    expect(screen.queryByText(/finished without replying/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("labels the composer, grows up to its cap, shrinks, and preserves IME input", async () => {
@@ -1142,6 +1259,471 @@ describe("HivraChat", () => {
     expect(await screen.findByText("Half and it finished while you were away.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(`https://box.example.com/api/chat/runs/${runId}/events`, expect.objectContaining({ headers: { Authorization: "Bearer box-token" } }));
     expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  // ── The first-contact welcome is a detached run like any send ─────────────
+
+  const runningRun = (overrides: Record<string, unknown>) => ({
+    clientRef: null, state: "running", title: "", code: null, stopped: null, interrupted: false,
+    agentSessionId: null, createdAt: "", finishedAt: null, ...overrides,
+  });
+
+  it("runs the first-contact welcome as a detached run that Stop ends on the computer", async () => {
+    const pending = deferred<{ done: boolean; value?: Uint8Array }>();
+    const read = jest.fn()
+      .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Comparing the CRMs")))
+      .mockImplementationOnce(() => pending.promise);
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(chatResponse(read)));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-run" token="box-token" agentName="Atlas" agentKind="claude" firstTask="Compare three CRMs" />);
+
+    await screen.findByText("Comparing the CRMs");
+    const args = (startAgentWelcomeRun as jest.Mock).mock.calls[0][0];
+    expect(args).toMatchObject({ boxUrl: "https://box.example.com", token: "box-token", firstTask: "Compare three CRMs", channel: "chat" });
+    expect(args.runId).toMatch(UUID);
+    expect(typeof args.clientRef).toBe("string");
+    // Only the reply shows: there is no bubble for the hidden prompt.
+    expect(screen.queryByText("YOU")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(stopBoxChatRun).toHaveBeenCalledWith("https://box.example.com", args.runId, "box-token");
+    expect((args.signal as AbortSignal).aborted).toBe(true);
+    expect(screen.getByLabelText("Response stopped")).toHaveTextContent("Stopped");
+  });
+
+  it("lets the owner carry on the welcome conversation: the next message resumes the agent's session", async () => {
+    const welcomeSession = "00000000-0000-4000-8000-000000000004";
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(
+      welcomeResponse(WELCOME_TEXT, [{ type: "system", subtype: "init", session_id: welcomeSession }]),
+    ));
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-continue" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    await screen.findByText(WELCOME_TEXT);
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    await sendMessage("yes, do that");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({ message: "yes, do that", sessionId: welcomeSession });
+  });
+
+  it("marks the welcome sent before it starts, and a reload mid-welcome re-attaches instead of asking again", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => deferred<Response>().promise);
+    const first = render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-reload" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await waitFor(() => expect(startAgentWelcomeRun).toHaveBeenCalledTimes(1));
+    expect(window.localStorage.getItem("hivra:first-welcome:welcomereload")).toBe("1");
+    const { runId, clientRef } = (startAgentWelcomeRun as jest.Mock).mock.calls[0][0];
+
+    // Leaving the chat (no pagehide) still saves the reply's run id.
+    first.unmount();
+    const saved = JSON.parse(window.localStorage.getItem("hivra_sessions_welcomereload") || "[]");
+    expect(saved[0].messages).toEqual([expect.objectContaining({ role: "assistant", runId })]);
+
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef, title: HIDDEN_WELCOME_TITLE })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Here are the three CRMs."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(replay));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-reload" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByText("Here are the three CRMs.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(`https://box.example.com/api/chat/runs/${runId}/events`, expect.anything());
+    expect(startAgentWelcomeRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the starter suggestions and tries again next visit when the welcome never starts", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, status: 502, body: null }));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-refused" token="box-token" agentName="Atlas" agentKind="claude" goal="grow" />);
+
+    await waitFor(() => expect(clientLog.warn).toHaveBeenCalledWith(
+      "agent first message generation failed",
+      expect.objectContaining({ reason: "refused", status: 502 }),
+    ));
+    expect(await screen.findByText("…or just type below.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("hivra:first-welcome:welcomerefused")).toBeNull();
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("starts the welcome again after a reload when its request never reached the computer", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementationOnce(() => deferred<Response>().promise);
+    const first = render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-lost" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await waitFor(() => expect(startAgentWelcomeRun).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    // The computer was still starting: it lists no such run and keeps no log of it.
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([]);
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, body: null }) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-lost" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByText(WELCOME_TEXT)).toBeInTheDocument();
+    expect(startAgentWelcomeRun).toHaveBeenCalledTimes(2);
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("hivra:first-welcome:welcomelost")).toBe("1");
+  });
+
+  it("keeps Retry on a retried welcome that never reached the computer, instead of dropping it", async () => {
+    const conversation = "00000000-0000-4000-8000-000000000018";
+    window.localStorage.setItem("hivra:first-welcome:welcomeretrylost", "1");
+    window.localStorage.setItem("hivra_sessions_welcomeretrylost", JSON.stringify([{
+      id: "w1", title: "Welcome", claudeSessionId: conversation, createdAt: 1,
+      messages: [{ role: "assistant", text: "", tools: [], runId: "00000000-0000-4000-8000-000000000019", welcome: true }],
+    }]));
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([]);
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, body: null }) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-retry-lost" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByLabelText("Response failed")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(WELCOME_TEXT)).toBeInTheDocument();
+    expect(startAgentWelcomeRun).toHaveBeenCalledTimes(1);
+    expect((startAgentWelcomeRun as jest.Mock).mock.calls[0][0]).toMatchObject({ resumeSessionId: conversation });
+  });
+
+  it("keeps a welcome that failed on the computer visible, with a Retry that carries on its conversation", async () => {
+    const conversation = "00000000-0000-4000-8000-000000000011";
+    const failed = jest.fn()
+      .mockResolvedValueOnce(eventChunk(
+        { type: "_run", runId: "x", detached: true },
+        { type: "system", subtype: "init", session_id: conversation },
+        { type: "result", subtype: "success", is_error: true, result: "Credit balance is too low", session_id: conversation },
+        { type: "_done", code: 1 },
+      ))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    (startAgentWelcomeRun as jest.Mock).mockImplementationOnce(() => Promise.resolve(chatResponse(failed)));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-error" token="box-token" agentName="Atlas" agentKind="claude" firstTask="Compare three CRMs" />);
+
+    expect(await screen.findByText(/Credit balance is too low/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Response failed")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText(WELCOME_TEXT)).toBeInTheDocument();
+    expect(startAgentWelcomeRun).toHaveBeenCalledTimes(2);
+    expect((startAgentWelcomeRun as jest.Mock).mock.calls[1][0]).toMatchObject({ firstTask: "Compare three CRMs", resumeSessionId: conversation });
+    expect(screen.queryByText(/Credit balance is too low/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("treats a welcome that finished without a word as failed, and keeps its Retry after a reload", async () => {
+    const empty = jest.fn()
+      .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    (startAgentWelcomeRun as jest.Mock).mockImplementationOnce(() => Promise.resolve(chatResponse(empty)));
+    const first = render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-empty" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByLabelText("Response failed")).toBeInTheDocument();
+    expect(screen.getByText(/finished without replying/)).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Retry" });
+    first.unmount();
+
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-empty" token="box-token" agentName="Atlas" agentKind="claude" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(WELCOME_TEXT)).toBeInTheDocument();
+    expect(startAgentWelcomeRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("never starts a second welcome while the computer already runs one, and opens that one in the blank chat", async () => {
+    const runId = "00000000-0000-4000-8000-00000000000f";
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "phone-session", title: HIDDEN_WELCOME_TITLE })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Atlas here. Your CRM shortlist:"), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(replay)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-elsewhere" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    // The open chat shows it; the rail is never opened.
+    expect(await screen.findByText("Atlas here. Your CRM shortlist:")).toBeInTheDocument();
+    // Once that welcome is done and the chat is idle, no other one starts.
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    expect(startAgentWelcomeRun).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("hivra:first-welcome:welcomeelsewhere")).toBe("1");
+  });
+
+  it("does not start the welcome when the computer's run list shows it already ran", async () => {
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId: "00000000-0000-4000-8000-000000000012", state: "finished", title: HIDDEN_WELCOME_TITLE })]);
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-ran" token="box-token" agentName="Atlas" agentKind="claude" goal="grow" />);
+
+    await waitFor(() => expect(window.localStorage.getItem("hivra:first-welcome:welcomeran")).toBe("1"));
+    await act(async () => { await Promise.resolve(); });
+    expect(startAgentWelcomeRun).not.toHaveBeenCalled();
+    expect(screen.getByText("…or just type below.")).toBeInTheDocument();
+  });
+
+  it("shares the welcome between the agent page and the workspace view of the same computer", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000010";
+    const agentPage = render(<HivraChat boxUrl="https://box.example.com" storageKey={agentId} token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText(WELCOME_TEXT);
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    agentPage.unmount();
+
+    render(<HivraChat boxUrl="https://box.example.com" storageKey={`x-${agentId}`} token="box-token" agentName="Atlas" agentKind="claude" />);
+    await waitFor(() => expect(listBoxChatRuns).toHaveBeenCalledTimes(2));
+    await act(async () => { await Promise.resolve(); });
+    expect(await screen.findByText("…or just type below.")).toBeInTheDocument();
+    expect(startAgentWelcomeRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an older computer's welcome, which streams without the run preface", async () => {
+    const read = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Hello from an older computer.")))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(chatResponse(read)));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-legacy" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByText("Hello from an older computer.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("saves a just-started reply's run id when the chat unmounts inside the save debounce", async () => {
+    window.localStorage.setItem("hivra:first-welcome:unmount-save", "1");
+    const pending = deferred<{ done: boolean; value?: Uint8Array }>();
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(jest.fn(() => pending.promise)));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { unmount } = render(<HivraChat boxUrl="https://box.example.com" storageKey="unmount-save" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    await sendMessage("long task");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const { runId } = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    unmount();
+
+    const saved = JSON.parse(window.localStorage.getItem("hivra_sessions_unmountsave") || "[]");
+    expect(saved[0].messages).toEqual([
+      expect.objectContaining({ role: "user", text: "long task" }),
+      expect.objectContaining({ role: "assistant", runId }),
+    ]);
+  });
+
+  // ── Replies started on another device ─────────────────────────────────────
+
+  it("adopts a running reply from another device into the conversation it belongs to", async () => {
+    window.localStorage.setItem("hivra:first-welcome:adopt-stub", "1");
+    const conversation = "00000000-0000-4000-8000-000000000005";
+    const runId = "00000000-0000-4000-8000-000000000006";
+    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: conversation, title: "Plan the week", updatedAt: 5 }]);
+    (readBoxSession as jest.Mock).mockResolvedValue([
+      { role: "user", text: "Earlier question", tools: [] },
+      { role: "assistant", text: "Earlier answer", tools: [] },
+      { role: "user", text: "Plan the week", tools: [] },
+      { role: "assistant", text: "Partial box copy", tools: [] },
+    ]);
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "phone-session", title: "Plan the week", agentSessionId: conversation })]);
+    const pending = deferred<{ done: boolean; value?: Uint8Array }>();
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Monday: gym.")))
+      .mockImplementationOnce(() => pending.promise);
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(replay));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-stub" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`https://box.example.com/api/chat/runs/${runId}/events`, expect.anything()));
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    // One chat for the conversation, marked as working.
+    expect(await screen.findAllByText("Plan the week", { selector: "span" })).toHaveLength(1);
+    expect(screen.getByLabelText("Working")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Plan the week", { selector: "span" }));
+    expect(await screen.findByText("Monday: gym.")).toBeInTheDocument();
+    expect(screen.getByText("Earlier answer")).toBeInTheDocument();
+    expect(screen.getByText("Plan the week", { selector: "div" })).toBeInTheDocument();
+    // The live reply replays the turn; the box's partial copy is not doubled.
+    expect(screen.queryByText("Partial box copy")).not.toBeInTheDocument();
+
+    // A later wake-up never follows the same run twice.
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(listBoxChatRuns).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches a reply from another device to the open chat of that conversation, under its earlier turns", async () => {
+    const conversation = "00000000-0000-4000-8000-00000000000c";
+    const runId = "00000000-0000-4000-8000-00000000000d";
+    window.localStorage.setItem("hivra:first-welcome:adopt-open", "1");
+    window.localStorage.setItem("hivra_sessions_adoptopen", JSON.stringify([
+      { id: `box-${conversation}`, title: "Plan the week", claudeSessionId: conversation, messages: [], createdAt: 5, loaded: false },
+    ]));
+    window.localStorage.setItem("hivra_sessions_adoptopen_active", `box-${conversation}`);
+    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: conversation, title: "Plan the week", updatedAt: 5 }]);
+    (readBoxSession as jest.Mock).mockResolvedValue([
+      { role: "user", text: "Earlier question", tools: [] },
+      { role: "assistant", text: "Earlier answer", tools: [] },
+      { role: "user", text: "Plan the week", tools: [] },
+    ]);
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "phone-session", title: "Plan the week", agentSessionId: conversation })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Monday: gym."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(replay)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-open" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByText("Monday: gym.")).toBeInTheDocument();
+    expect(screen.getByText("Earlier answer")).toBeInTheDocument();
+    expect(screen.getAllByText("Plan the week", { selector: "div" })).toHaveLength(1);
+    expect(readBoxSession).toHaveBeenCalledWith("https://box.example.com", conversation, "box-token");
+  });
+
+  it("adopts a running reply into a conversation opened meanwhile without doubling its prompt or partial output", async () => {
+    window.localStorage.setItem("hivra:first-welcome:adopt-opened", "1");
+    const conversation = "00000000-0000-4000-8000-000000000014";
+    const runId = "00000000-0000-4000-8000-000000000015";
+    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: conversation, title: "Plan the week", updatedAt: 5 }]);
+    (readBoxSession as jest.Mock).mockResolvedValue([
+      { role: "user", text: "Earlier question", tools: [] },
+      { role: "assistant", text: "Earlier answer", tools: [] },
+      { role: "user", text: "Plan the week", tools: [] },
+      { role: "assistant", text: "Partial box copy", tools: [] },
+    ]);
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([]);
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-opened" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    // The owner opens the conversation from its history while the phone's turn runs.
+    fireEvent.click(await screen.findByRole("button", { name: "Show chats" }));
+    fireEvent.click(await screen.findByText("Plan the week", { selector: "span" }));
+    expect(await screen.findByText("Partial box copy")).toBeInTheDocument();
+
+    // The next wake-up finds that turn running and follows it in the open chat.
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "phone-session", title: "Plan the week", agentSessionId: conversation })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Monday: gym."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(replay)) as unknown as typeof fetch;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Monday: gym.")).toBeInTheDocument();
+    expect(screen.getByText("Earlier answer")).toBeInTheDocument();
+    expect(screen.getAllByText("Plan the week", { selector: "div" })).toHaveLength(1);
+    expect(screen.queryByText("Partial box copy")).not.toBeInTheDocument();
+  });
+
+  it("opens a running reply from another device as its own chat when this device has no such conversation", async () => {
+    window.localStorage.setItem("hivra:first-welcome:adopt-new", "1");
+    const runId = "00000000-0000-4000-8000-000000000007";
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "phone-session", title: "Draft the launch post" })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Here is the draft."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(replay)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-new" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show chats" }));
+    fireEvent.click(await screen.findByText("Draft the launch post", { selector: "span" }));
+    expect(await screen.findByText("Here is the draft.")).toBeInTheDocument();
+    expect(screen.getByText("Draft the launch post", { selector: "div" })).toBeInTheDocument();
+  });
+
+  it("opens another device's running welcome as Welcome, without its hidden prompt", async () => {
+    window.localStorage.setItem("hivra:first-welcome:adopt-welcome", "1");
+    const runId = "00000000-0000-4000-8000-000000000008";
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "phone-session", title: HIDDEN_WELCOME_TITLE })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Atlas here. Your CRM shortlist:"), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(replay)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-welcome" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show chats" }));
+    fireEvent.click(await screen.findByText("Welcome", { selector: "span" }));
+    expect(await screen.findByText("Atlas here. Your CRM shortlist:")).toBeInTheDocument();
+    expect(screen.queryByText(/hidden Hivra first-contact/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("YOU")).not.toBeInTheDocument();
+  });
+
+  it("stops a reply still running unseen when its chat is deleted, and never brings it back", async () => {
+    const runId = "00000000-0000-4000-8000-00000000000e";
+    window.localStorage.setItem("hivra:first-welcome:adopt-deleted", "1");
+    window.localStorage.setItem("hivra_sessions_adoptdeleted", JSON.stringify([
+      { id: "keep", title: "Other chat", claudeSessionId: null, createdAt: 2, messages: [] },
+      { id: "gone", title: "Draft the launch post", claudeSessionId: null, createdAt: 1, messages: [
+        { role: "user", text: "Draft the launch post", tools: [] },
+        { role: "assistant", text: "Half", tools: [], runId },
+      ] },
+    ]));
+    // The computer was unreachable when the chat opened, so the reply was not re-attached.
+    (listBoxChatRuns as jest.Mock).mockResolvedValue(null);
+    global.fetch = jest.fn() as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="adopt-deleted" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show chats" }));
+    const row = screen.getByText("Draft the launch post", { selector: "span" }).closest("div")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Delete chat" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete chat" }));
+    expect(stopBoxChatRun).toHaveBeenCalledWith("https://box.example.com", runId, "box-token");
+
+    // Back online, the computer still lists it as running: it is not adopted.
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId, clientRef: "gone", title: "Draft the launch post" })]);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(listBoxChatRuns).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Draft the launch post", { selector: "span" })).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  // ── A reply whose run the computer no longer lists ────────────────────────
+
+  function storeReply(key: string, reply: Record<string, unknown>) {
+    window.localStorage.setItem(`hivra:first-welcome:${key}`, "1");
+    window.localStorage.setItem(`hivra_sessions_${key.replace(/[^a-z0-9]/gi, "")}`, JSON.stringify([{
+      id: "s1", title: "long task", claudeSessionId: "00000000-0000-4000-8000-000000000001", createdAt: 1,
+      messages: [{ role: "user", text: "long task", tools: [] }, { role: "assistant", tools: [], ...reply }],
+    }]));
+  }
+
+  // The computer keeps a run's log after the run leaves its (newest-first) list.
+  const logGone = () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, body: null }) as unknown as typeof fetch;
+  };
+
+  it("replays a reply the computer's run list no longer shows but whose log it still keeps", async () => {
+    const runId = "00000000-0000-4000-8000-000000000016";
+    storeReply("beyond-list", { text: "Half", runId });
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId: "00000000-0000-4000-8000-000000000017", state: "finished" })]);
+    const replay = jest.fn()
+      .mockResolvedValueOnce(eventChunk(replyText("Half"), replyText(" and the rest."), { type: "_done", code: 0 }))
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(replay));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="beyond-list" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByText("Half and the rest.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(`https://box.example.com/api/chat/runs/${runId}/events`, expect.anything());
+    expect(screen.queryByLabelText("Finished while you were away")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("settles a reply whose run aged out as finished while away, not failed, and opens the full reply from history", async () => {
+    storeReply("aged-out", { text: "The first half", runId: "00000000-0000-4000-8000-000000000009" });
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([runningRun({ runId: "00000000-0000-4000-8000-00000000000a", state: "finished" })]);
+    logGone();
+    (readBoxSession as jest.Mock).mockResolvedValue([
+      { role: "user", text: "long task", tools: [] },
+      { role: "assistant", text: "The first half and the second half.", tools: [] },
+    ]);
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="aged-out" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByLabelText("Finished while you were away")).toHaveTextContent("Finished while you were away — open the history to see the full reply");
+    expect(screen.getByText("The first half")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open the history" }));
+    expect(await screen.findByText("The first half and the second half.")).toBeInTheDocument();
+    expect(readBoxSession).toHaveBeenCalledWith("https://box.example.com", "00000000-0000-4000-8000-000000000001", "box-token");
+    expect(screen.queryByLabelText("Finished while you were away")).not.toBeInTheDocument();
+  });
+
+  it("keeps the failure state for a missing reply with no sign its run ever started", async () => {
+    storeReply("never-started", { text: "", runId: "00000000-0000-4000-8000-00000000000b" });
+    (listBoxChatRuns as jest.Mock).mockResolvedValue([]);
+    logGone();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="never-started" token="box-token" agentName="Atlas" agentKind="claude" />);
+
+    expect(await screen.findByLabelText("Response failed")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Finished while you were away")).not.toBeInTheDocument();
   });
 
 });

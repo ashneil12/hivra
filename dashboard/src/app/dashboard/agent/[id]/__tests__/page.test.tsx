@@ -134,7 +134,7 @@ const CONNECTED_UBUNTU = {
 const GROUP_OF_LABEL: Record<string, string> = {
   Terminal: "Computer", Files: "Computer", Browser: "Computer", Git: "Computer",
   "Claude Code session": "Chat", "Codex session": "Chat",
-  Skills: "Manage", Tasks: "Manage", Telegram: "Manage",
+  Skills: "Manage", Telegram: "Manage",
 };
 function groupFor(name: string | RegExp): string | null {
   const label = Object.keys(GROUP_OF_LABEL).find((candidate) => typeof name === "string" ? candidate === name : name.test(candidate));
@@ -607,7 +607,7 @@ describe("AgentPage", () => {
     expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Manage", "Skills", "Tasks", "Telegram"]);
+      .toEqual(["Manage", "Skills", "Telegram"]);
     // Retired: "Box Terminal", "<Agent> Terminal", the Desktop tab on an agent, and the Tools overflow.
     expect(document.body).not.toHaveTextContent(/Box Terminal|Codex Terminal/);
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
