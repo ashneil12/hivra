@@ -151,6 +151,32 @@ export async function changeManagedSession(agentId: string, action: "pause" | "r
   return (await request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}/lifecycle`, { method: "POST", body: JSON.stringify({ action }) }, z.object({ session: ManagedSessionDtoSchema }))).session;
 }
 
+export type DigitalOceanBalance =
+  | { state: "unreadable" }
+  | { state: "ok" | "empty" | "blocked"; balance: string | null; autoPrepay: boolean; checkedAt: string };
+
+const DigitalOceanBalanceSchema: z.ZodType<DigitalOceanBalance> = z.union([
+  z.object({ state: z.literal("unreadable") }),
+  z.object({
+    state: z.enum(["ok", "empty", "blocked"]),
+    balance: z.string().nullable(),
+    autoPrepay: z.boolean(),
+    checkedAt: z.string(),
+  }),
+]);
+
+export async function getDigitalOceanBalance(connectionId: string, signal?: AbortSignal): Promise<DigitalOceanBalance> {
+  return (await request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/balance`, { method: "GET", signal },
+    z.object({ balance: DigitalOceanBalanceSchema }))).balance;
+}
+
+/** "$12.34" from DigitalOcean's decimal string. */
+export function formatDigitalOceanBalance(balance: string | null): string {
+  if (balance === null) return "unknown";
+  const amount = Number(balance);
+  return Number.isFinite(amount) ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" }) : "unknown";
+}
+
 export async function listDigitalOceanModels(connectionId: string, signal?: AbortSignal): Promise<string[]> {
   return (await request(`/api/infrastructure/connections/${encodeURIComponent(connectionId)}/digitalocean/models`, { method: "GET", signal },
     z.object({ models: z.array(z.string().regex(/^[A-Za-z0-9._:/-]{1,128}$/)) }))).models;

@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockLaunch = jest.fn();
 const mockModels = jest.fn();
+const mockBalance = jest.fn();
 
 jest.mock("@/lib/hivra/managed-session-client", () => {
   const actual = jest.requireActual("@/lib/hivra/managed-session-client");
@@ -11,6 +12,7 @@ jest.mock("@/lib/hivra/managed-session-client", () => {
     ...actual,
     launchManagedSession: (...args: unknown[]) => mockLaunch(...args),
     listDigitalOceanModels: (...args: unknown[]) => mockModels(...args),
+    getDigitalOceanBalance: (...args: unknown[]) => mockBalance(...args),
   };
 });
 
@@ -30,6 +32,7 @@ const KEY = "do-model-" + "k".repeat(30);
 beforeEach(() => {
   mockLaunch.mockReset();
   mockModels.mockReset();
+  mockBalance.mockReset().mockResolvedValue({ state: "ok", balance: "25.00", autoPrepay: false, checkedAt: "2026-09-24T00:00:00.000Z" });
   (globalThis.crypto as unknown as { randomUUID: () => string }).randomUUID = () => "44444444-4444-4444-8444-444444444444";
 });
 
@@ -59,4 +62,11 @@ it("falls back to typing a model id when DigitalOcean's list is unavailable", as
   fireEvent.click(screen.getByLabelText(/Hermes/));
   expect(await screen.findByText(/Enter the model id instead/)).toBeInTheDocument();
   expect(screen.getByLabelText("Model id")).toBeInTheDocument();
+});
+
+it("warns up front when the prepaid balance is empty", async () => {
+  mockBalance.mockResolvedValueOnce({ state: "empty", balance: "0.00", autoPrepay: false, checkedAt: "2026-09-24T00:00:00.000Z" });
+  render(<DigitalOceanLaunchDialog connection={connection} target={target} onClose={jest.fn()} onLaunched={jest.fn()} />);
+  expect(await screen.findByText(/prepaid Managed Agents balance is empty/)).toBeInTheDocument();
+  expect(screen.getByText(/won’t start this agent until you add funds/)).toBeInTheDocument();
 });
