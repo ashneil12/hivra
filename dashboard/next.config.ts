@@ -171,6 +171,11 @@ const nextConfig: NextConfig = {
             permanent: false as const,
           }))
         : []),
+      // Legacy/intent URLs that the retired site served as permanent redirects
+      // and that search engines and old links still carry. The homepage FAQ
+      // section is id="faq".
+      { source: "/faq", destination: "/#faq", permanent: true },
+      { source: "/about", destination: "/why-hivra", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },

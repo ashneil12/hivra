@@ -59,7 +59,8 @@ const homepageSchema = {
         width: 512,
         height: 512,
       },
-      sameAs: [],
+      // Official profiles — keep in sync with twitter.site in layout.tsx.
+      sameAs: ["https://x.com/HivraOS", "https://github.com/ashneil12/hivra"],
     },
     {
       "@type": "WebSite",

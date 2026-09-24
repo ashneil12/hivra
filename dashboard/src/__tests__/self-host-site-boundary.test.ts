@@ -71,6 +71,17 @@ describe("self-host website boundary", () => {
     expect(await robots()).toEqual({ rules: { userAgent: "*", disallow: "/" } });
   });
 
+  it.each(["hermesos-canary.vercel.app", "hermesos.vercel.app"])(
+    "blocks crawling of the %s deployment alias in hosted mode",
+    async (host) => {
+      await loadConfig("hosted");
+      const { headers } = await import("next/headers");
+      (headers as jest.Mock).mockResolvedValue(new Headers({ host }));
+      const robots = (await import("@/app/robots")).default;
+      expect(await robots()).toEqual({ rules: { userAgent: "*", disallow: "/" } });
+    },
+  );
+
   it("preserves public discovery in hosted mode", async () => {
     await loadConfig("hosted");
     const robots = (await import("@/app/robots")).default;
