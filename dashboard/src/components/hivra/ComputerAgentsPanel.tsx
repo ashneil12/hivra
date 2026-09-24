@@ -82,6 +82,11 @@ function interruptedLine(kind: "attach" | "access_change" | "detach", reason: st
   const what = kind === "attach" ? `Adding ${ATTACH_RUNTIME_NAME}` : kind === "detach" ? `Removing ${ATTACH_RUNTIME_NAME}`
     : `Changing what ${ATTACH_RUNTIME_NAME} can use`;
   if (reason === "pending_delete") return `${what} stopped because this computer is being deleted. If the delete hasn't finished, delete the computer again.`;
+  if (reason === "computer_changed") {
+    return kind === "attach"
+      ? `This computer changed while ${ATTACH_RUNTIME_NAME} was being added (it was moved or restored). Hivra is removing what was installed.`
+      : `This computer changed while it was stopped (it was moved or restored). Hivra is finishing this step by what the computer shows.`;
+  }
   if (!released) {
     return kind === "attach"
       ? `This computer stopped while ${ATTACH_RUNTIME_NAME} was being added. Hivra is removing what was installed.`
@@ -107,6 +112,21 @@ function openOperation(attachment: AttachGateAttachment) {
   return operation && (operation.phase === "claimed" || operation.phase === "dispatched") ? operation : null;
 }
 
+/** Why an install that was sent to the computer failed, and what the owner can do (5.8). */
+const FAILURES: Record<string, { why: string; next?: string }> = {
+  computer_update_required: { why: `this computer's Hivra service is older than ${ATTACH_RUNTIME_NAME} needs`,
+    next: `In Manage, choose Update & restart, then add ${ATTACH_RUNTIME_NAME} again.` },
+  workspace_path_not_plain: { why: "~/Hivra on this computer isn't a plain folder (a link or something else is there)",
+    next: `Make ~/Hivra a plain folder, or add ${ATTACH_RUNTIME_NAME} without the shared folder.` },
+  computer_changed: { why: "this computer changed while it was stopped (it was moved or restored)",
+    next: `Add ${ATTACH_RUNTIME_NAME} again.` },
+  computer_restarted: { why: `this computer restarted while ${ATTACH_RUNTIME_NAME} was being added`, next: `Add ${ATTACH_RUNTIME_NAME} again.` },
+  staging_failed: { why: `${ATTACH_RUNTIME_NAME} couldn't be installed on this computer` },
+  network_not_enforced: { why: `Hivra couldn't confirm ${ATTACH_RUNTIME_NAME}'s network limits on this computer` },
+  chat_not_ready: { why: `${ATTACH_RUNTIME_NAME} didn't answer after it started` },
+  gateway_unreachable: { why: `this computer's Hivra service couldn't reach ${ATTACH_RUNTIME_NAME}` },
+};
+
 function endedLine(attachment: AttachGateAttachment): string | null {
   if (attachment.phase === "detached") {
     return attachment.endReason === "computer_deleted" ? null : `${ATTACH_RUNTIME_NAME} was removed. Your files in ~/Hivra were kept.`;
@@ -118,6 +138,16 @@ function endedLine(attachment: AttachGateAttachment): string | null {
     }
     if (attachment.endReason === "computer_not_ready") {
       return `${ATTACH_RUNTIME_NAME} wasn't added: this computer wasn't ready and didn't answer Hivra. Nothing was installed. Add ${ATTACH_RUNTIME_NAME} again once it has finished starting.`;
+    }
+    if (attachment.endReason === "computer_update_required") {
+      return `${ATTACH_RUNTIME_NAME} wasn't added: this computer's Hivra service is older than ${ATTACH_RUNTIME_NAME} needs. Nothing was installed. In Manage, choose Update & restart, then add ${ATTACH_RUNTIME_NAME} again.`;
+    }
+    if (attachment.endReason === "download_failed") {
+      return `${ATTACH_RUNTIME_NAME} wasn't added: this computer couldn't download it. Nothing was installed. Check that the computer can reach the internet, then add ${ATTACH_RUNTIME_NAME} again.`;
+    }
+    const failure = attachment.failureCode ? FAILURES[attachment.failureCode] : undefined;
+    if (failure) {
+      return `Adding ${ATTACH_RUNTIME_NAME} didn't finish: ${failure.why}. Hivra removed what it had installed; your files in ~/Hivra were not touched.${failure.next ? ` ${failure.next}` : ""}`;
     }
     if (attachment.interruptReason === "computer_not_running") {
       return `Adding ${ATTACH_RUNTIME_NAME} didn't finish because this computer stopped. Hivra removed what it had installed; your files in ~/Hivra were not touched.`;

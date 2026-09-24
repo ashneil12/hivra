@@ -121,6 +121,7 @@ it("does not open the gate without the deep link", async () => {
 it.each([
   ["computer_not_ready", "This computer isn't ready yet. Add Codex once it has finished starting."],
   ["computer_not_running", "Start the computer to add Codex."],
+  ["computer_update_required", "This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex."],
 ])("refuses Add on a computer that is not running and ready (%s), with no Review", async (reason, message) => {
   serve(ready(gate({ available: false, reason, message, reviews: null })));
   render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" autoOpenAdd />);
@@ -128,12 +129,19 @@ it.each([
   expect(screen.queryByRole("button", { name: /Add an agent|Continue to review|Add Codex/ })).not.toBeInTheDocument();
 });
 
-it.each([
-  ["computer_not_ready", "Codex wasn't added: this computer wasn't ready and didn't answer Hivra. Nothing was installed."],
-  ["computer_not_running", "Codex wasn't added: this computer wasn't running. Nothing was installed."],
-  ["install_failed", "Adding Codex didn't finish. Hivra removed what it had installed"],
-])("ends a refused or failed add as failed with its reason (%s), and offers Add again", async (endReason, copy) => {
-  serve(ready(gate({ attachments: [attachment({ phase: "failed", endReason, reviews: null, chatPath: null })] })));
+it.each<[string, string, string | null]>([
+  ["computer_not_ready", "Codex wasn't added: this computer wasn't ready and didn't answer Hivra. Nothing was installed.", null],
+  ["computer_not_running", "Codex wasn't added: this computer wasn't running. Nothing was installed.", null],
+  ["install_failed", "Adding Codex didn't finish. Hivra removed what it had installed", null],
+  ["computer_update_required", "Codex wasn't added: this computer's Hivra service is older than Codex needs. Nothing was installed. "
+    + "In Manage, choose Update & restart, then add Codex again.", null],
+  ["download_failed", "Codex wasn't added: this computer couldn't download it. Nothing was installed.", null],
+  ["install_failed", "Adding Codex didn't finish: this computer's Hivra service is older than Codex needs. Hivra removed what it had "
+    + "installed; your files in ~/Hivra were not touched. In Manage, choose Update & restart, then add Codex again.", "computer_update_required"],
+  ["install_failed", "Adding Codex didn't finish: ~/Hivra on this computer isn't a plain folder", "workspace_path_not_plain"],
+  ["install_failed", "Adding Codex didn't finish: this computer changed while it was stopped (it was moved or restored).", "computer_changed"],
+])("ends a refused or failed add as failed with its reason (%s), and offers Add again", async (endReason, copy, failureCode) => {
+  serve(ready(gate({ attachments: [attachment({ phase: "failed", endReason, failureCode, reviews: null, chatPath: null })] })));
   render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
   expect(await screen.findByText((text) => text.startsWith(copy))).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Add an agent/ })).toBeInTheDocument();
@@ -215,6 +223,13 @@ describe("a step the computer stopped under (T3)", () => {
     expect(await screen.findByText("This computer stopped while Codex was being added. Hivra is removing what was installed."))
       .toBeInTheDocument();
     expect(screen.getByText("While this step runs, this computer can't be started, stopped or restarted.")).toBeInTheDocument();
+  });
+
+  it("says Hivra is removing an install whose computer came back changed", async () => {
+    serve(adding({ leaseReleased: false, interruptReason: "computer_changed", interruptedAt: accepted }));
+    render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" />);
+    expect(await screen.findByText("This computer changed while Codex was being added (it was moved or restored). "
+      + "Hivra is removing what was installed.")).toBeInTheDocument();
   });
 
   it("says how it ended once the cleanup was observed", async () => {

@@ -19,6 +19,10 @@
 //   computer's lease without being marked done: Stop and Delete go ahead, the
 //   step comes back only once the computer runs again, and deleting the
 //   computer ends it (T3);
+// - a refusal the computer named ends the install failed with its code after
+//   the observed cleanup; a claim is refused for an old gateway or a failed
+//   download; a computer that came back changed is taken back to be cleaned
+//   up, never continued (T3);
 // - the worker's queue, least recently tried first;
 // - the operation kinds earlier files allow stay allowed (private_access);
 // - EXECUTE exactly for service_role on the functions the routes and worker
@@ -31,6 +35,7 @@ const LIFECYCLE = "20260925100200_hivra_agent_attachment_lifecycle.sql";
 const GRANTS = "20260925100300_hivra_agent_attachment_grants.sql";
 const READINESS = "20260925100400_hivra_agent_attach_readiness.sql";
 const INTERRUPT = "20260925100500_hivra_agent_attach_interrupt.sql";
+const REFUSALS = "20260925100600_hivra_agent_attach_refusals.sql";
 const OWNER = "owner";
 const INSTALLER = "77d72e2e8346cc19ef74264e8458bbca8802772d1c668c3fdffa653c4273d375";
 const WORKER = "2a0aee3e5e3fc0d4403d41a93dbece648648c8a84ab4349a71d7fe87243121ab";
@@ -57,6 +62,7 @@ async function main() {
     await db.exec(readMigration(GRANTS));
     await db.exec(readMigration(READINESS));
     await db.exec(readMigration(INTERRUPT));
+    await db.exec(readMigration(REFUSALS));
 
     let computers = 0;
     const computer = async (mode = "hivra-managed") => {
@@ -313,9 +319,16 @@ async function main() {
     const cleanup = { version: 1, state: "removed", operationId: pid("f", 1), installationId: pid("6", 4), workspaceTouched: false };
     assert.equal(await fail({ ...cleanup, state: "unresolved" }), false, "an uncertain cleanup keeps the attach held (5.5)");
     assert.equal(await fail({ ...cleanup, installationId: pid("6", 9) }), false);
-    assert.equal(await fail(cleanup), true);
-    assert.deepEqual(await one("select phase, end_reason from public.hivra_agent_attachments where id=$1", [fop]),
-      { phase: "failed", end_reason: "install_failed" });
+    assert.equal(await fail(cleanup, "computer_update_required"), true);
+    assert.deepEqual(await one("select phase, end_reason, failure_code from public.hivra_agent_attachments where id=$1", [fop]),
+      { phase: "failed", end_reason: "install_failed", failure_code: "computer_update_required" },
+    "a refusal the computer named is kept with the failure");
+    assert.equal((await value("select public.read_hivra_agent_attachments($1,$2) as result", [OWNER, fdesk.id]))[0].failureCode,
+      "computer_update_required", "the computer page reads why it failed");
+    assert.equal(await fail(cleanup, "other_code"), true, "a replay after the failure is harmless and rewrites nothing");
+    assert.equal(await value("select failure_code as result from public.hivra_agent_attachments where id=$1", [fop]), "computer_update_required");
+    await assert.rejects(db.query("update public.hivra_agent_attachments set failure_code='Not A Code' where id=$1", [fop]),
+      /hivra_agent_attachments_failure_code_check/);
     assert.deepEqual(await lease(fdesk), { operation_id: null, operation_kind: null });
     const cop = pid("5", 5);
     assert.equal((await claim(fdesk, cop, intent(5))).status, "claimed");
@@ -352,6 +365,14 @@ async function main() {
     assert.equal(await refuse(rop, "computer_not_ready"), true, "a replay of the same refusal is the same answer");
     assert.equal(await refuse(rop, "computer_not_running"), false, "a refusal is never rewritten");
     assert.equal((await target(rdesk)).eligible, true, "a refused claim leaves the computer free to try again");
+    for (const [n, reason] of [[11, "computer_update_required"], [12, "download_failed"]]) {
+      const claimOp = pid("5", n);
+      assert.equal((await claim(rdesk, claimOp, intent(n))).status, "claimed");
+      assert.equal(await refuse(claimOp, reason), true, `a claim nothing ran for ends failed with ${reason}`);
+      assert.deepEqual(await one("select phase, end_reason, dispatch_id from public.hivra_agent_attachments where id=$1", [claimOp]),
+        { phase: "failed", end_reason: reason, dispatch_id: null });
+      assert.deepEqual(await lease(rdesk), { operation_id: null, operation_kind: null });
+    }
     const rop2 = pid("5", 8);
     assert.equal((await claim(rdesk, rop2, intent(8))).status, "claimed");
     assert.equal(await reserve(rop2, 8), true);
@@ -415,6 +436,31 @@ async function main() {
     assert.deepEqual(await stepRow(sop), { phase: "failed", end_reason: "install_failed", lease_released: false, interrupt_reason: "computer_not_running" });
     assert.deepEqual(await lease(sdesk), { operation_id: null, operation_kind: null });
 
+    // ---- a computer that came back changed is taken back to be cleaned up ----
+    const cdesk = await computer();
+    const chop = pid("5", 13);
+    assert.equal((await claim(cdesk, chop, intent(13))).status, "claimed");
+    assert.equal(await reserve(chop, 13), true);
+    assert.equal(await observe(cdesk, chop), true);
+    assert.equal(await dispatch(cdesk, chop, pid("a", 13)), true);
+    assert.equal(await interrupt("attach", chop, "computer_not_running"), true);
+    // Stopped, then started again on a new address (a restore or a move changes it too).
+    await db.query("update public.hivra_agents set ip='10.241.9.9' where id=$1", [cdesk.id]);
+    assert.notDeepEqual(await value("select public.hivra_desktop_prepare_authority(a) as result from public.hivra_agents a where id=$1", [cdesk.id]),
+      cdesk.authority, "the computer's authority changed while the step waited");
+    assert.equal(await resume("attach", chop), true, "running and free again: the step takes it back, even changed");
+    assert.deepEqual(await lease(cdesk), { operation_id: chop, operation_kind: "agent_attach" });
+    assert.deepEqual(await stepRow(chop), { phase: "dispatched", end_reason: null, lease_released: false, interrupt_reason: "computer_changed" },
+      "marked computer_changed: it is removed, never continued");
+    await assert.rejects(() => db.query("update public.hivra_agent_attachments set phase='attached',completed_at=now() where id=$1", [chop]),
+      /hivra_agent_attachments_interrupt_check/, "an install on a computer that changed is never finished");
+    assert.equal(await value("select public.fail_hivra_agent_attachment($1,$2,2,$3::jsonb,$4::jsonb,'computer_changed') as result",
+      [OWNER, chop, JSON.stringify(cdesk.authority), JSON.stringify({ ...cleanup, installationId: pid("6", 13) })]), true);
+    assert.deepEqual(await one("select phase, end_reason, failure_code from public.hivra_agent_attachments where id=$1", [chop]),
+      { phase: "failed", end_reason: "install_failed", failure_code: "computer_changed" });
+    assert.deepEqual(await lease(cdesk), { operation_id: null, operation_kind: null }, "the computer is free and has no plan slot held");
+    assert.equal((await target(cdesk)).reason, null, "and Codex can be added again");
+
     // ---- a delete that is pending wins over a step in flight (T3) ------------
     const xdesk = await computer();
     const xop = pid("5", 10);
@@ -455,6 +501,9 @@ async function main() {
       [OWNER, dop, JSON.stringify(ddesk.authority), JSON.stringify(drequest), pid("c", 6), JSON.stringify({ version: 1, state: "native_protocol_available",
         journalPhase: "service_started", operationId: dop, activationId: pid("b", 6), installationId: pid("6", 6), bootId: boot,
         serviceDefinitionSha256: definition, mainPid: 4343 })]), true);
+    const dstate = await value("select public.read_hivra_agent_attachment_state($1,$2) as result", [OWNER, dop]);
+    assert.ok(dstate.dispatchedAt && dstate.activationDispatchedAt && Date.parse(dstate.activationDispatchedAt) >= Date.parse(dstate.dispatchedAt),
+      "the worker reads when the stage and the activation were sent, from the database clock");
     assert.equal(await value("select public.complete_hivra_agent_attachment($1,$2,2,$3::jsonb,$4) as result",
       [OWNER, dop, JSON.stringify(ddesk.authority), pid("c", 6)]), true);
     // A Remove the computer stopped under frees the computer, comes back when
@@ -469,8 +518,11 @@ async function main() {
     assert.equal(await interrupt("detach", dremove, "computer_not_running"), true);
     assert.deepEqual(await lease(ddesk), { operation_id: null, operation_kind: null });
     assert.equal((await dbegin("access_change", pid("e", 7), { workspace: false })).status, "computer_busy", "the Remove is still open");
-    assert.equal(await resume("detach", dremove), true, "running and free: the Remove takes the computer back to finish");
+    await db.query("update public.hivra_agents set chat_url='https://desk-moved.example.test' where id=$1", [ddesk.id]);
+    assert.equal(await resume("detach", dremove), true, "running and free: the Remove takes the computer back to finish, even changed");
     assert.deepEqual(await lease(ddesk), { operation_id: dremove, operation_kind: "agent_detach" });
+    assert.equal(await value("select interrupt_reason as result from public.hivra_agent_attachment_operations where id=$1", [dremove]),
+      "computer_changed", "the Remove is marked computer_changed and ends by what the computer shows");
     assert.equal(await interrupt("detach", dremove, "computer_not_running"), true, "and lets it go again when it stopped again");
     await db.query("update public.hivra_agents set status='deleted',desired_state='deleted' where id=$1", [ddesk.id]);
     assert.deepEqual(await one("select phase, end_reason from public.hivra_agent_attachments where id=$1", [dop]),

@@ -10,11 +10,12 @@ import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-install
 import { log } from "@/lib/logger";
 import { ATTACHED_SERVICE_POLICY_V2_SHA256 } from "./attach-review";
 import { ATTACHED_AGENT_PROGRAM_SHA256, ATTACHED_AGENT_TIMEOUTS, executeAttachedAgentStep, type AttachedAccessResult,
-  type AttachedActivationResult, type AttachedAgentAction, type AttachedAgentTarget, type AttachedRemoveResult,
-  type AttachedStateResult } from "./attached-agent-host";
+  type AttachedActivationResult, type AttachedAgentAction, type AttachedAgentRefusal, type AttachedAgentTarget,
+  type AttachedRemoveResult, type AttachedStateResult } from "./attached-agent-host";
+import { readAttachedGatewayProtocol } from "./attached-gateway-protocol";
 import { attachedAccessPacket, attachedActivatePacket, attachedObservePacket, attachedRemovePacket,
   attachedStatePacket, type AttachedPacketInput } from "./attached-agent-packet";
-import { progressAttachmentStaging } from "./attachment-staging-coordinator";
+import { ATTACH_STEP_SETTLE_MS, progressAttachmentStaging } from "./attachment-staging-coordinator";
 import { createAttachmentLifecycleStore, type AttachmentInterruptReason, type AttachmentLifecycleStore, type AttachmentState,
   type AttachmentWorkItem } from "./attachment-lifecycle-store";
 
@@ -27,7 +28,9 @@ import { createAttachmentLifecycleStore, type AttachmentInterruptReason, type At
 // go when the host saw the VM stopped (nothing of it can still run there) or
 // when the owner asked to delete the computer (the delete destroys the VM):
 // the step stays open, and comes back to be finished by what the computer
-// shows once the computer runs again (T3).
+// shows once the computer runs again (T3). A refusal the computer names for a
+// step already sent to it is final: what the step left is removed (an observed
+// cleanup) and the attach fails with that reason, releasing the computer.
 
 const COMPUTER_COLUMNS = "id, user_id, name, type, cpu, ram, status, desired_state, operation_id, operation_kind, vmid, ip, chat_url, provisioned_at, "
   + "computer_profile, computer_substrate, deployment_mode, proxmox_host, infrastructure_connection_id, deployment_target_id, "
@@ -38,8 +41,10 @@ type ComputerRow = RemoteDesktopAgentRow & { name: string; cpu: number | null; r
 
 /** A guest that has not answered Hivra for this long since the claim is not ready: the attach fails with that reason. */
 export const ATTACH_GUEST_ANSWER_WINDOW_MS = 3 * 60_000;
+/** A claim whose download has failed for this long ends as failed: nothing was dispatched. */
+export const ATTACH_DOWNLOAD_WINDOW_MS = 10 * 60_000;
 
-type Precondition = "computer_not_running" | "computer_not_ready";
+type Precondition = "computer_not_running" | "computer_not_ready" | "computer_update_required" | "download_failed";
 
 /** Running and ready, from the computer's own row (5.8): anything else refuses the attach before it starts. */
 export function attachPrecondition(computer: Pick<ComputerRow, "status" | "vmid" | "ip" | "chat_url" | "provisioned_at">,
@@ -62,6 +67,8 @@ type Dependencies = {
   hostAddresses: (ownerId: string, computer: ComputerRow) => Promise<string[]>;
   stage: typeof progressAttachmentStaging;
   execute: typeof executeAttachedAgentStep;
+  /** The computer gateway's public answer: whether it serves attached agents (2026.09.24.3). */
+  gatewayProtocol: typeof readAttachedGatewayProtocol;
   uuid: () => string;
   token: () => string;
   event: typeof logHivraAgentEvent;
@@ -93,7 +100,7 @@ async function hostAddresses(ownerId: string, computer: ComputerRow): Promise<st
 function defaults(overrides: Partial<Dependencies>): Dependencies {
   return {
     store: createAttachmentLifecycleStore(), loadComputer, hostAddresses, stage: progressAttachmentStaging,
-    execute: executeAttachedAgentStep, uuid: randomUUID, token: () => randomBytes(32).toString("hex"),
+    execute: executeAttachedAgentStep, gatewayProtocol: readAttachedGatewayProtocol, uuid: randomUUID, token: () => randomBytes(32).toString("hex"),
     event: logHivraAgentEvent, now: Date.now, deadline: Number.POSITIVE_INFINITY, ...overrides,
   };
 }
@@ -137,6 +144,18 @@ const stepCode = (result: { code: string; reason?: string }) => result.code === 
 const vmStopped = (result: { ok: boolean; code?: string; reason?: string }) =>
   !result.ok && result.code === "target_refused" && result.reason === "computer_not_running";
 
+/** The program ran in the VM and ended with a named refusal: the same step would be refused again. */
+const guestRefusal = (result: { ok: boolean; code?: string; reason?: string }): AttachedAgentRefusal | null =>
+  !result.ok && result.code === "guest_refused" ? result.reason as AttachedAgentRefusal : null;
+/** The failure an activation refusal ends the attach with. */
+const activationFailure = (reason: AttachedAgentRefusal) => reason === "step_refused" ? "activation_refused" : reason;
+
+/** Whether a step sent at this time has had every one of its own deadlines pass. */
+const settled = (deps: Dependencies, sentAt: string | null | undefined) => {
+  const at = sentAt ? Date.parse(sentAt) : Number.NaN;
+  return Number.isFinite(at) && deps.now() - at >= ATTACH_STEP_SETTLE_MS;
+};
+
 type LetGo = (reason: AttachmentInterruptReason) => Promise<AttachmentWorkProgress>;
 
 /** Release the computer from a step that was sent to it; the step stays open. */
@@ -177,11 +196,13 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   // A pending delete wins over a step already sent: the delete destroys the VM
   // and whatever the step did in it.
   if (state.phase === "dispatched" && state.desiredState === "deleted") return await letGo("pending_delete");
-  // An install the computer stopped under is removed, never finished.
+  // An install the computer stopped under, or that came back changed (moved,
+  // restored, its address or channel changed), is removed, never finished.
   if (state.phase === "dispatched" && state.interruptReason) {
     const back = state.installation && target(computer, id, state.computerId, state.installation.architecture);
     if (!back) return held("state_unavailable");
-    return await cleanUpAndFail(ownerId, state, computer, back, "computer_stopped", deps, letGo);
+    return await cleanUpAndFail(ownerId, state, computer, back,
+      state.interruptReason === "computer_changed" ? "computer_changed" : "computer_stopped", deps, letGo);
   }
 
   // Nothing ran on the computer while the claim is undispatched. A pending
@@ -200,11 +221,26 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     }
     const precondition = attachPrecondition(computer, state.desiredState);
     if (precondition) return await refuse(precondition);
+    // A gateway from before attached agents would refuse Codex after the
+    // download; say so now. No answer is not a refusal: the computer checks
+    // its own gateway again before it starts anything.
+    if (!state.staged && await deps.gatewayProtocol(computer.chat_url) === "update_required") {
+      return await refuse("computer_update_required");
+    }
   }
   if (!state.staged) {
+    const dispatchedAt = state.dispatchedAt ?? null;
     const staged = Number.isFinite(deps.deadline)
-      ? await deps.stage(ownerId, id, architecture, { deadline: deps.deadline, now: deps.now })
-      : await deps.stage(ownerId, id, architecture);
+      ? await deps.stage(ownerId, id, architecture, { deadline: deps.deadline, now: deps.now, dispatchedAt })
+      : await deps.stage(ownerId, id, architecture, { dispatchedAt });
+    // The stage ran and ended without a receipt: remove what it left, then fail.
+    if (staged.state === "refused") {
+      const latest = await deps.store.readState(ownerId, id);
+      const back = latest?.phase === "dispatched" && latest.installation
+        && target(computer, id, latest.computerId, latest.installation.architecture);
+      if (!latest || !back) return held("state_unavailable");
+      return await cleanUpAndFail(ownerId, latest, computer, back, staged.reason, deps, letGo);
+    }
     if (staged.state !== "staging_recorded") {
       // After the stage dispatch (in an earlier pass or this one) a stopped VM
       // or a pending delete lets the computer go.
@@ -218,8 +254,16 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
       }
       // The guest never answered: once the window has passed it is not ready.
       const claimedAt = state.createdAt ? Date.parse(state.createdAt) : Number.NaN;
-      if (staged.reason === "boot_unobserved" && state.phase === "claimed" && Number.isFinite(claimedAt)
-        && deps.now() - claimedAt >= ATTACH_GUEST_ANSWER_WINDOW_MS) return await refuse("computer_not_ready");
+      const claimAge = Number.isFinite(claimedAt) ? deps.now() - claimedAt : Number.NaN;
+      if (staged.reason === "boot_unobserved" && state.phase === "claimed" && claimAge >= ATTACH_GUEST_ANSWER_WINDOW_MS) {
+        return await refuse("computer_not_ready");
+      }
+      // The download keeps failing, or the host can't reach the guest to run
+      // it: nothing was dispatched, so the claim ends failed with why.
+      if ((staged.reason === "fetch_refused" || staged.reason === "fetch_unconfirmed") && state.phase === "claimed"
+        && claimAge >= ATTACH_DOWNLOAD_WINDOW_MS) {
+        return await refuse(staged.reason === "fetch_refused" ? "download_failed" : "computer_not_ready");
+      }
       return held(staged.reason);
     }
     state = await deps.store.readState(ownerId, id);
@@ -245,7 +289,13 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     // and then only observed.
     if (!granted) return held("activation_unconfirmed");
     const started = await deps.execute(ownerId, computer, "activate", hostTarget, built.packet);
-    if (!started.ok) return vmStopped(started) ? await letGo("computer_not_running") : held("activation_" + stepCode(started));
+    if (!started.ok) {
+      if (vmStopped(started)) return await letGo("computer_not_running");
+      // Refused before (or while) starting: remove what it wrote, then fail with why.
+      const refusal = guestRefusal(started);
+      if (refusal) return await cleanUpAndFail(ownerId, state, computer, hostTarget, activationFailure(refusal), deps, letGo);
+      return held("activation_" + stepCode(started));
+    }
     result = started.result as AttachedActivationResult;
     state = await deps.store.readState(ownerId, id);
     if (!state?.activation) return held("state_unavailable");
@@ -258,7 +308,16 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     const observed = await deps.execute(ownerId, computer, "observe", hostTarget, attachedObservePacket({ operationId: id,
       activationId: activation.activationId, installationId: state.installation!.installationId, bootId: state.bootId,
       serviceDefinitionSha256: activation.serviceDefinitionSha256, instanceToken: token }).packet);
-    if (!observed.ok) return vmStopped(observed) ? await letGo("computer_not_running") : held("observation_" + stepCode(observed));
+    if (!observed.ok) {
+      if (vmStopped(observed)) return await letGo("computer_not_running");
+      // A computer that restarted can never show this activation again; any
+      // other refusal is final once the activation's own deadlines have passed.
+      const refusal = guestRefusal(observed);
+      if (refusal && (refusal === "computer_restarted" || settled(deps, state.activationDispatchedAt))) {
+        return await cleanUpAndFail(ownerId, state, computer, hostTarget, activationFailure(refusal), deps, letGo);
+      }
+      return held("observation_" + stepCode(observed));
+    }
     result = observed.result as AttachedActivationResult;
     if (result.contract) {
       const built = attachedActivatePacket({ ...packetInput(state, computer, ids, id, grants, 1), bootId: state.bootId,
@@ -281,6 +340,17 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     return { kind: "attach", id, state: "attached" };
   }
   if (result.failure) return await cleanUpAndFail(ownerId, state, computer, hostTarget, result.failure, deps, letGo);
+  // The start failed and was stopped (an answer lost earlier, now observed).
+  if (result.observation.journalPhase === "start_failed") {
+    return await cleanUpAndFail(ownerId, state, computer, hostTarget, "start_failed", deps, letGo);
+  }
+  // The activation never finished starting, and its deadlines have all
+  // passed: it ended (refused, crashed, or never ran) without Chat. Codex
+  // running but not answering after a finished activation stays held (T3).
+  if ((result.observation.journalPhase === "preparing" || result.observation.journalPhase === "start_requested")
+    && settled(deps, state.activationDispatchedAt)) {
+    return await cleanUpAndFail(ownerId, state, computer, hostTarget, "activation_unresolved", deps, letGo);
+  }
   return held("readiness_unconfirmed");
 }
 

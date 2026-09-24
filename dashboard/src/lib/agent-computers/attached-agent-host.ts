@@ -8,7 +8,7 @@ import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-c
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { ATTACHED_HELPERS } from "./attachment-service-units";
-import { buildAttachmentHostStepScript, parseAttachmentTargetRefusal, snapshotAttachmentObservationTarget,
+import { buildAttachmentHostStepScript, parseAttachmentTargetRefusal, parseGuestStepRefusal, snapshotAttachmentObservationTarget,
   type AttachmentTargetRefusal } from "./attachment-host-observation";
 
 // The attached agent's guest steps after staging: activate, observe, change
@@ -17,7 +17,7 @@ import { buildAttachmentHostStepScript, parseAttachmentTargetRefusal, snapshotAt
 // the same fence as staging. No private-IP SSH, no caller path or command.
 
 export const ATTACHED_AGENT_PROGRAM_SHA256 = "ea761a6df567b033b7ae83158d845777f024c0b7a27843f311db71bebeb54551";
-export const ATTACHED_AGENT_RUNNER_SHA256 = "52150db37c21c3da08230d88e2c59db7b0b771c4b303d111ffb056cd194732f6";
+export const ATTACHED_AGENT_RUNNER_SHA256 = "c90d2cb65a2323d38c43fcbaecccea0084608b574b62c5b2b29f82af0ab8d90f";
 const ASSETS = {
   agent: { file: "attached-agent.py", digest: ATTACHED_AGENT_PROGRAM_SHA256 },
   workspace: { file: ATTACHED_HELPERS[0].file, digest: ATTACHED_HELPERS[0].sha256 },
@@ -134,11 +134,19 @@ export function parseAttachedAgentResult(action: AttachedAgentAction, stdout: st
 
 // ── Transport ───────────────────────────────────────────────────────────────
 
+/** What run-attached-agent-bundle.py names when the lifecycle program raised (step_refused: anything else). */
+export const ATTACHED_AGENT_REFUSALS = ["computer_update_required", "workspace_path_not_plain", "detach_mount_found",
+  "computer_restarted", "staged_installation_mismatch", "service_definition_mismatch", "gateway_group_has_members",
+  "step_refused"] as const;
+export type AttachedAgentRefusal = typeof ATTACHED_AGENT_REFUSALS[number];
+
 type Dependencies = { resolveContext: typeof resolveHivraAgentExecutionContext; runHostScript: typeof runProxmoxHostScript };
 export type AttachedAgentHostResult =
   | { ok: true; result: AttachedActivationResult | AttachedAccessResult | AttachedRemoveResult | AttachedStateResult }
   | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" }
-  | { ok: false; code: "target_refused"; reason: AttachmentTargetRefusal };
+  | { ok: false; code: "target_refused"; reason: AttachmentTargetRefusal }
+  /** The program ran in the VM and ended with this refusal: nothing is left to wait for. */
+  | { ok: false; code: "guest_refused"; reason: AttachedAgentRefusal };
 
 /** Internal transport only. The caller must hold the step's database dispatch
  * (activate, access, remove) or ask for a read-only observe. Never retried
@@ -165,7 +173,9 @@ export async function executeAttachedAgentStep(
       { timeoutMs: ATTACHED_AGENT_TIMEOUTS[action].hostMs, maxOutputBytes: 64 * 1024 });
     if (!result.ok) {
       const refused = parseAttachmentTargetRefusal(result.stdout);
-      return refused ? { ok: false, code: "target_refused", reason: refused } : { ok: false, code: "transport_failed" };
+      if (refused) return { ok: false, code: "target_refused", reason: refused };
+      const named = parseGuestStepRefusal(result.stdout, ATTACHED_AGENT_REFUSALS);
+      return named ? { ok: false, code: "guest_refused", reason: named } : { ok: false, code: "transport_failed" };
     }
     const parsed = parseAttachedAgentResult(action, result.stdout);
     return parsed ? { ok: true, result: parsed } : { ok: false, code: "invalid_result" };

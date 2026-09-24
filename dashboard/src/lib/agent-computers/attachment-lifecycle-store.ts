@@ -15,8 +15,9 @@ export class AttachmentLifecycleStoreError extends Error {
 const Id = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const Grants = z.object({ workspace: z.boolean() }).strict();
 const Stamp = z.string().nullable();
-/** Why a step sent to the computer let the computer go (migration 20260925100500). */
-const InterruptReason = z.enum(["computer_not_running", "pending_delete"]);
+/** Why a step sent to the computer let the computer go (migration 20260925100500), or
+ * that the computer came back changed when it was taken back (20260925100600). */
+const InterruptReason = z.enum(["computer_not_running", "pending_delete", "computer_changed"]);
 export type AttachmentInterruptReason = z.infer<typeof InterruptReason>;
 // Absent from a read before 20260925100500: never interrupted.
 const Interruption = { leaseReleased: z.boolean().optional(), interruptReason: InterruptReason.nullable().optional() };
@@ -45,6 +46,8 @@ const AttachmentView = z.object({
   endReason: z.string().nullable(), createdAt: z.string(), dispatchedAt: Stamp, completedAt: Stamp, endedAt: Stamp,
   deploymentMode: z.string().nullable(), installationId: Id.nullable(),
   ...Interruption, interruptedAt: Stamp.optional(),
+  /** Why an install that was sent to the computer failed (20260925100600); absent from an older read. */
+  failureCode: z.string().nullable().optional(),
   receipts: z.object({ accepted: Stamp, staged: Stamp, started: Stamp, chatReady: Stamp }),
   contract: ContractView.nullable(), operation: OperationView.nullable(),
 });
@@ -78,6 +81,8 @@ const State = z.object({
   /** Whether another step holds the computer (20260925100500). */
   computerOperationId: Id.nullable().optional(),
   ...Interruption,
+  /** When the stage and the activation were granted (20260925100600); absent from an older read. */
+  dispatchedAt: Stamp.optional(), activationDispatchedAt: Stamp.optional(),
 });
 export type AttachmentState = z.infer<typeof State>;
 
@@ -137,14 +142,17 @@ export function createAttachmentLifecycleStore(db: Database | null = supabaseAdm
         p_agent_limit: input.agentLimit }, ClaimResult) as Promise<ClaimResult>,
     cancel: (ownerId: string, operationId: string, reason: "cancelled" | "computer_not_running" | "pending_delete") =>
       boolean("cancel_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
-    /** Before any dispatch: ends the claim as failed with a precondition reason, never held (20260925100400). */
-    refuse: (ownerId: string, operationId: string, reason: "computer_not_running" | "computer_not_ready") =>
+    /** Before any dispatch: ends the claim as failed with a precondition reason, never held
+     * (20260925100400; computer_update_required and download_failed from 20260925100600). */
+    refuse: (ownerId: string, operationId: string,
+      reason: "computer_not_running" | "computer_not_ready" | "computer_update_required" | "download_failed") =>
       boolean("refuse_hivra_agent_attachment", { p_owner: ownerId, p_operation_id: operationId, p_reason: reason }),
     /** A step sent to the computer lets the computer go: the host saw the VM not
      * running, or a delete is pending. The step stays open (20260925100500). */
     interrupt: (ownerId: string, kind: AttachmentWorkItem["kind"], stepId: string, reason: AttachmentInterruptReason) =>
       boolean("interrupt_hivra_agent_attachment_step", { p_owner: ownerId, p_kind: kind, p_step_id: stepId, p_reason: reason }),
-    /** Takes the computer back for an interrupted step once it runs again, free and unchanged. */
+    /** Takes the computer back for an interrupted step once it runs again and is free; one
+     * that changed meanwhile comes back marked computer_changed, to be ended, never continued. */
     resume: (ownerId: string, kind: AttachmentWorkItem["kind"], stepId: string) =>
       boolean("resume_hivra_agent_attachment_step", { p_owner: ownerId, p_kind: kind, p_step_id: stepId }),
     listWork: async (limit: number) => (await parsed("list_open_hivra_agent_attachment_work", { p_limit: limit }, z.array(WorkItem))) ?? [],

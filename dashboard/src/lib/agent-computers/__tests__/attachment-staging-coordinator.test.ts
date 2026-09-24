@@ -284,3 +284,50 @@ it("does not fetch, or win the one-time stage dispatch, when fetch and stage tog
   expect(deps.execute).not.toHaveBeenCalled();
   expect(deps.store.dispatch).not.toHaveBeenCalled();
 });
+
+describe("a stage the computer ended without a receipt (T3)", () => {
+  const refusing = (deps: ReturnType<typeof fixture>, reason: string) => deps.execute.mockImplementation(async (_owner, _agent, requested) =>
+    requested === "fetch" ? { ok: true, action: "fetch", artifact: {} } : { ok: false, code: "guest_refused", reason });
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+
+  it("is final when the stage itself was refused: there is no receipt to wait for", async () => {
+    const deps = fixture();
+    refusing(deps, "staging_failed");
+    expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "refused", reason: "staging_failed" });
+    expect(deps.execute.mock.calls.map(call => call[2])).toEqual(["fetch", "stage"]);
+    expect(deps.store.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.store.recordStaged).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["staging_failed", 1, "refused"], ["computer_restarted", 1, "refused"],
+    ["staging_in_progress", 60, "held"],
+    ["staging_absent", 1, "held"], ["staging_absent", 15, "refused"],
+    ["staging_unresolved", 1, "held"], ["staging_unresolved", 15, "refused"],
+  ] as const)("reads an observed %s %i minutes after the dispatch as %s, and never stages again", async (reason, minutes, state) => {
+    const deps = fixture();
+    deps.store.read.mockResolvedValue(dispatched);
+    refusing(deps, reason);
+    const progress = await progressAttachmentStaging("owner", dispatched.operationId, "x86_64",
+      { ...deps, now: () => NOW, dispatchedAt: at(minutes) } as never);
+    expect(progress).toEqual(state === "refused" ? { operationId: dispatched.operationId, state, reason }
+      : { operationId: dispatched.operationId, state, reason: "staging_unconfirmed" });
+    expect(deps.execute.mock.calls.map(call => call[2])).toEqual(["observe"]);
+    expect(deps.store.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("never reads a missing journal as final without the dispatch time", async () => {
+    const deps = fixture();
+    deps.store.read.mockResolvedValue(dispatched);
+    refusing(deps, "staging_absent");
+    expect((await progressAttachmentStaging("owner", dispatched.operationId, "x86_64", { ...deps, now: () => NOW } as never)).state).toBe("held");
+  });
+
+  it("names a download the computer refused before anything was dispatched, to be tried again", async () => {
+    const deps = fixture();
+    deps.execute.mockResolvedValue({ ok: false, code: "guest_refused", reason: "fetch_failed" });
+    expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "fetch_refused" });
+    expect(deps.store.dispatch).not.toHaveBeenCalled();
+  });
+});

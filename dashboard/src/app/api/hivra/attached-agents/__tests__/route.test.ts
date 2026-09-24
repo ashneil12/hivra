@@ -9,6 +9,7 @@ jest.mock("@/lib/agent-computers/attach-flag", () => ({ isAgentAttachEnabled: je
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn() }));
 jest.mock("@/lib/agent-computers/attachment-lifecycle-store", () => ({ createAttachmentLifecycleStore: jest.fn() }));
 jest.mock("@/lib/hivra/resource-gate", () => ({ validateAgentResources: jest.fn(), resolvePlanAgentSlots: jest.fn() }));
+jest.mock("@/lib/agent-computers/attached-gateway-protocol", () => ({ readAttachedGatewayProtocol: jest.fn() }));
 const computerRows = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: () => {
   const chain = { select: () => chain, eq: () => chain, neq: () => chain, limit: () => computerRows() };
@@ -25,6 +26,7 @@ import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { validateAgentResources } from "@/lib/hivra/resource-gate";
+import { readAttachedGatewayProtocol } from "@/lib/agent-computers/attached-gateway-protocol";
 import { GET } from "../route";
 
 const readOwnerAttached = jest.fn();
@@ -41,6 +43,7 @@ beforeEach(() => {
   jest.mocked(createAttachmentLifecycleStore).mockReturnValue({ readOwnerAttached, readTarget } as unknown as ReturnType<typeof createAttachmentLifecycleStore>);
   readTarget.mockResolvedValue(eligibleTarget);
   jest.mocked(validateAgentResources).mockResolvedValue({ ok: true } as Awaited<ReturnType<typeof validateAgentResources>>);
+  jest.mocked(readAttachedGatewayProtocol).mockResolvedValue("current");
 });
 
 it("is empty where attach is not offered, without reading storage", async () => {
@@ -109,6 +112,23 @@ it("offers the pair only where the gate would open now, and says why for the oth
   const unchecked = (await (await get()).json()).data;
   expect(unchecked.eligibleComputerIds).toEqual([]);
   expect(unchecked.computerReasons[desk.id]).toBe("Hivra couldn't check this computer right now. Open it to try again.");
+});
+
+it("says a computer whose gateway predates attached agents needs Update & restart, and asks only computers the gate would open", async () => {
+  readOwnerAttached.mockResolvedValue([]);
+  const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+    computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, deployment_mode: "hivra-managed",
+    chat_url: "https://old-desk.example.test" };
+  const stopped = { ...desk, id: "22222222-2222-4222-8222-222222222222", chat_url: "https://stopped-desk.example.test" };
+  const fresh = { ...desk, id: "33333333-3333-4333-8333-333333333333", chat_url: "https://new-desk.example.test" };
+  computerRows.mockResolvedValue({ data: [desk, stopped, fresh], error: null });
+  readTarget.mockImplementation(async (_owner: string, id: string) => id === stopped.id
+    ? { version: 1, eligible: false, reason: "computer_not_running" } : eligibleTarget);
+  jest.mocked(readAttachedGatewayProtocol).mockImplementation(async (url) => url === desk.chat_url ? "update_required" : "current");
+  const body = (await (await get()).json()).data;
+  expect(body.eligibleComputerIds).toEqual([fresh.id]);
+  expect(body.computerReasons[desk.id]).toBe("This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex.");
+  expect(jest.mocked(readAttachedGatewayProtocol).mock.calls.map((call) => call[0]).sort()).toEqual([desk.chat_url, fresh.chat_url].sort());
 });
 
 it("says the list could not be loaded when storage fails", async () => {

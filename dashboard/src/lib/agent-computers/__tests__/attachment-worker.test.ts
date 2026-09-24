@@ -63,6 +63,7 @@ function fakes() {
     hostAddresses: jest.fn().mockResolvedValue(["203.0.113.7"]),
     stage: jest.fn(),
     execute: jest.fn(),
+    gatewayProtocol: jest.fn().mockResolvedValue("current"),
     uuid: jest.fn(() => ACTIVATION),
     token: jest.fn(() => TOKEN),
     event: jest.fn().mockResolvedValue(undefined),
@@ -155,7 +156,7 @@ describe("adding Codex", () => {
       contract: { sha256: "e".repeat(64), checked: true } } });
 
     expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).toEqual({ kind: "attach", id: ID, state: "attached" });
-    expect(deps.stage).toHaveBeenCalledWith(OWNER, ID, "x86_64");
+    expect(deps.stage).toHaveBeenCalledWith(OWNER, ID, "x86_64", { dispatchedAt: null });
     expect(actions(deps.execute)).toEqual(["activate"]);
     const dispatched = store.dispatchActivation.mock.calls[0][0];
     expect(dispatched).toMatchObject({ ownerId: OWNER, operationId: ID, activationId: ACTIVATION, bootId: BOOT, instanceToken: TOKEN,
@@ -317,6 +318,147 @@ describe("adding Codex", () => {
     store.readState.mockRejectedValue(new Error("database down"));
     expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
       .toEqual({ kind: "attach", id: ID, state: "held", reason: "error" });
+  });
+});
+
+describe("a refusal the computer names ends the attach as failed, never held (T3, 5.5, 5.8)", () => {
+  const activating = { activation: { activationId: ACTIVATION, serviceDefinitionSha256: DEFINITION } };
+  const minutesAgo = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+  const unresolved = (journalPhase: string, state = "activation_unresolved") =>
+    ({ ...observation(state), journalPhase, mainPid: undefined });
+
+  it("fails a claim on a computer whose gateway predates attached agents before anything runs, and goes on when it can't tell", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.gatewayProtocol.mockResolvedValue("update_required");
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_update_required" });
+    expect(deps.gatewayProtocol).toHaveBeenCalledWith(computerRow.chat_url);
+    expect(store.refuse).toHaveBeenCalledWith(OWNER, ID, "computer_update_required");
+    expect(deps.stage).not.toHaveBeenCalled();
+    const unknown = fakes();
+    unknown.store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    unknown.deps.gatewayProtocol.mockResolvedValue("unavailable");
+    unknown.deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "boot_unconfirmed" });
+    expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, unknown.deps)).state).toBe("held");
+    expect(unknown.store.refuse).not.toHaveBeenCalled();
+    expect(unknown.deps.stage).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["computer_update_required", "computer_update_required"], ["workspace_path_not_plain", "workspace_path_not_plain"],
+    ["service_definition_mismatch", "service_definition_mismatch"], ["gateway_group_has_members", "gateway_group_has_members"],
+    ["step_refused", "activation_refused"],
+  ])("removes what an activation refused with %s left, then fails it with %s and frees the computer", async (refusal, reason) => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf());
+    deps.execute.mockResolvedValueOnce({ ok: false, code: "guest_refused", reason: refusal }).mockResolvedValueOnce({ ok: true, result: removed });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).toEqual({ kind: "attach", id: ID, state: "failed", reason });
+    expect(actions(deps.execute)).toEqual(["activate", "remove"]);
+    expect(store.fail).toHaveBeenCalledWith(expect.objectContaining({ failureCode: reason, cleanup: removed }));
+    expect(deps.event).toHaveBeenCalledWith(expect.objectContaining({ event: "agent_attach_failed", detail: expect.objectContaining({ reason }) }));
+    expect(store.complete).not.toHaveBeenCalled();
+    expect(store.interrupt).not.toHaveBeenCalled();
+  });
+
+  it("keeps a refused activation held while its cleanup is not observed, and fails it on a later pass once it is", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf());
+    deps.execute.mockResolvedValueOnce({ ok: false, code: "guest_refused", reason: "computer_update_required" })
+      .mockResolvedValueOnce({ ok: false, code: "transport_failed" });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "cleanup_transport_failed" });
+    expect(store.fail).not.toHaveBeenCalled();
+    // The next pass only observes; the activation ended without starting, so once its deadlines pass it is removed.
+    store.readState.mockResolvedValue(stateOf({ ...activating, activationDispatchedAt: minutesAgo(5) }));
+    deps.execute.mockReset().mockResolvedValue({ ok: true, result: { observation: unresolved("preparing"), contract: null } });
+    expect((await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).reason).toBe("readiness_unconfirmed");
+    store.readState.mockResolvedValue(stateOf({ ...activating, activationDispatchedAt: minutesAgo(15) }));
+    deps.execute.mockReset().mockResolvedValueOnce({ ok: true, result: { observation: unresolved("preparing"), contract: null } })
+      .mockResolvedValueOnce({ ok: true, result: removed });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "activation_unresolved" });
+    expect(actions(deps.execute)).toEqual(["observe", "remove"]);
+  });
+
+  it.each([
+    ["an activation that crashed after starting", unresolved("start_requested", "process_running"), 15, "activation_unresolved"],
+    ["a start failure whose answer was lost", unresolved("start_failed", "service_inactive"), 1, "start_failed"],
+  ])("removes %s and fails it", async (_label, observed, minutes, reason) => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ ...activating, activationDispatchedAt: minutesAgo(minutes) }));
+    deps.execute.mockResolvedValueOnce({ ok: true, result: { observation: observed, contract: null } }).mockResolvedValueOnce({ ok: true, result: removed });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps)).toEqual({ kind: "attach", id: ID, state: "failed", reason });
+    expect(store.fail).toHaveBeenCalledWith(expect.objectContaining({ failureCode: reason }));
+  });
+
+  it("keeps Codex that started but does not answer yet held, with no deadline (T3)", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ ...activating, activationDispatchedAt: minutesAgo(120) }));
+    deps.execute.mockResolvedValue({ ok: true, result: { observation: observation("process_running"), contract: null } });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "readiness_unconfirmed" });
+    expect(actions(deps.execute)).toEqual(["observe"]);
+  });
+
+  it("removes an activation on a computer that restarted under it at once, and waits out any other observation refusal", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ ...activating, activationDispatchedAt: minutesAgo(2) }));
+    deps.execute.mockResolvedValueOnce({ ok: false, code: "guest_refused", reason: "computer_restarted" }).mockResolvedValueOnce({ ok: true, result: removed });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_restarted" });
+    const other = fakes();
+    other.store.readState.mockResolvedValue(stateOf({ ...activating, activationDispatchedAt: minutesAgo(2) }));
+    other.deps.execute.mockResolvedValue({ ok: false, code: "guest_refused", reason: "step_refused" });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, other.deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "observation_guest_refused" });
+    expect(other.store.fail).not.toHaveBeenCalled();
+  });
+
+  it("removes what a stage that ended without a receipt left, then fails it with that reason", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValueOnce(stateOf({ phase: "claimed", staged: null, installation: null }))
+      .mockResolvedValueOnce(stateOf({ staged: null, dispatchedAt: minutesAgo(1) }));
+    deps.stage.mockResolvedValue({ operationId: ID, state: "refused", reason: "staging_failed" });
+    deps.execute.mockResolvedValue({ ok: true, result: removed });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "staging_failed" });
+    expect(actions(deps.execute)).toEqual(["remove"]);
+    expect(deps.execute.mock.calls[0][4]).toMatchObject({ action: "remove", installationId: INSTALLATION });
+    expect(store.fail).toHaveBeenCalledWith(expect.objectContaining({ failureCode: "staging_failed", cleanup: removed }));
+    expect(store.dispatchActivation).not.toHaveBeenCalled();
+    // The worker hands the stage's dispatch time to the stager, to judge a stage that left no journal.
+    store.readState.mockReset().mockResolvedValue(stateOf({ staged: null, dispatchedAt: minutesAgo(1) }));
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "staging_unconfirmed" });
+    await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps);
+    expect(deps.stage).toHaveBeenLastCalledWith(OWNER, ID, "x86_64", { dispatchedAt: minutesAgo(1) });
+  });
+
+  it("retries a download the computer refused, then fails the claim as download_failed once the window has passed", async () => {
+    const { store, deps } = fakes();
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "fetch_refused" });
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, createdAt: minutesAgo(4) }));
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "fetch_refused" });
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, createdAt: minutesAgo(10) }));
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "download_failed" });
+    deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "fetch_unconfirmed" });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_not_ready" });
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("removes an install whose computer came back changed, and fails it as computer_changed", async () => {
+    const { store, deps } = fakes();
+    store.readState
+      .mockResolvedValueOnce(stateOf({ leaseReleased: true, interruptReason: "computer_not_running" }))
+      .mockResolvedValueOnce(stateOf({ leaseReleased: false, interruptReason: "computer_changed" }));
+    deps.execute.mockResolvedValue({ ok: true, result: removed });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_changed" });
+    expect(actions(deps.execute)).toEqual(["remove"]);
+    expect(store.fail).toHaveBeenCalledWith(expect.objectContaining({ failureCode: "computer_changed" }));
   });
 });
 
@@ -489,6 +631,6 @@ describe("the pass deadline", () => {
     store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
     deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason: "budget_exhausted" });
     await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, short);
-    expect(deps.stage).toHaveBeenLastCalledWith(OWNER, ID, "x86_64", { deadline: NOW + 600_000, now: deps.now });
+    expect(deps.stage).toHaveBeenLastCalledWith(OWNER, ID, "x86_64", { deadline: NOW + 600_000, now: deps.now, dispatchedAt: null });
   });
 });

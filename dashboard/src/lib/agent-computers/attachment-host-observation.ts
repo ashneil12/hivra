@@ -99,6 +99,20 @@ export function parseAttachmentTargetRefusal(stdout: unknown): AttachmentTargetR
   return (ATTACHMENT_TARGET_REFUSALS as readonly string[]).includes(reason) ? reason as AttachmentTargetRefusal : null;
 }
 
+/**
+ * The one line a pinned guest runner prints when its program raised: the
+ * program ran in the VM and ended there, refused, so there is no answer left
+ * to wait for. Only a fixed name from the caller's list is read; anything else
+ * is not a refusal (T3: a named refusal ends the step, it is never held).
+ */
+export function parseGuestStepRefusal<T extends string>(stdout: unknown, names: readonly T[]): T | null {
+  if (typeof stdout !== "string") return null;
+  const lines = stdout.split("\n").filter((line) => line.startsWith("HIVRA_GUEST_STEP_REFUSED "));
+  if (lines.length !== 1) return null;
+  const reason = lines[0].slice("HIVRA_GUEST_STEP_REFUSED ".length).trim();
+  return (names as readonly string[]).includes(reason) ? reason as T : null;
+}
+
 function underHostLock(body: string): string {
   return `#!/usr/bin/env bash\nset -Eeuo pipefail\nexec /usr/bin/python3 -I -B -c ${shellQuote(ATTACHMENT_HOST_LOCK_PROGRAM)} ${shellQuote(body)}\n`;
 }

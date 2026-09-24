@@ -7,6 +7,7 @@ import { ATTACH_INSTALLER_SHA256, ATTACH_NOT_AVAILABLE, attachSupported, type At
 import { ATTACH_GRANT_POLICY_SHA256, ATTACHED_SERVICE_POLICY_V2_SHA256, accessReviewSha256, attachReviewSha256,
   removeReviewSha256 } from "./attach-review";
 import { createAttachmentLifecycleStore, type AttachmentLifecycleStore, type AttachmentView, type AttachTarget } from "./attachment-lifecycle-store";
+import { readAttachedGatewayProtocol } from "./attached-gateway-protocol";
 
 // What the attach routes decide (design 5.6, 5.8): owner from auth only, the
 // computer looked up with that owner, the review recomputed here, the plan's
@@ -43,7 +44,10 @@ export async function loadOwnedComputer(ownerId: string, computerId: string): Pr
 }
 
 export type AttachReason = "unsupported_computer" | "agent_present" | "computer_not_running" | "computer_not_ready" | "computer_busy"
-  | "plan_agent_limit" | "plan_required";
+  | "computer_update_required" | "plan_agent_limit" | "plan_required";
+
+/** Where the owner updates a computer's Hivra service (Manage → Power). */
+export const ATTACH_UPDATE_RUNTIME_COPY = "This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex.";
 
 /** One sentence per refusal; nothing is bought or upgraded automatically. */
 export function attachReasonCopy(reason: AttachReason, planMessage?: string): string {
@@ -53,6 +57,7 @@ export function attachReasonCopy(reason: AttachReason, planMessage?: string): st
     case "computer_not_running": return "Start the computer to add Codex.";
     case "computer_not_ready": return "This computer isn't ready yet. Add Codex once it has finished starting.";
     case "computer_busy": return "This computer is busy with another step. Try again in a minute.";
+    case "computer_update_required": return ATTACH_UPDATE_RUNTIME_COPY;
     case "plan_required": return "Plan access is required before adding an agent.";
     case "plan_agent_limit": return planMessage ?? "Your plan's agent limit is reached. Upgrade for more slots, or remove an agent first.";
   }
@@ -79,11 +84,19 @@ export interface AttachDependencies {
   loadComputer: typeof loadOwnedComputer;
   validate: typeof validateAgentResources;
   planSlots: typeof resolvePlanAgentSlots;
+  /** Whether the computer's gateway serves attached agents (release 2026.09.24.3 on). */
+  gatewayProtocol: typeof readAttachedGatewayProtocol;
 }
 
 export function attachDependencies(overrides: Partial<AttachDependencies> = {}): AttachDependencies {
   return { store: createAttachmentLifecycleStore(), loadComputer: loadOwnedComputer, validate: validateAgentResources,
-    planSlots: resolvePlanAgentSlots, ...overrides };
+    planSlots: resolvePlanAgentSlots, gatewayProtocol: readAttachedGatewayProtocol, ...overrides };
+}
+
+/** A gateway that answered without attached agents refuses the gate; one that
+ * did not answer is left to the claim and to the computer's own check. */
+async function gatewayRefusal(chatUrl: string | null | undefined, deps: AttachDependencies): Promise<AttachReason | null> {
+  return await deps.gatewayProtocol(chatUrl) === "update_required" ? "computer_update_required" : null;
 }
 
 function subject(computer: ComputerFacts) {
@@ -117,6 +130,8 @@ export async function readAttachGate(ownerId: string, computerId: string, deps: 
   const [target, attachments] = await Promise.all([deps.store.readTarget(ownerId, computerId), deps.store.readAttachments(ownerId, computerId)]);
   if (!target) return view("unsupported_computer", null, attachments);
   if (!target.eligible) return view(target.reason ?? "unsupported_computer", target, attachments);
+  const gateway = await gatewayRefusal(computer.chatUrl, deps);
+  if (gateway) return view(gateway, target, attachments);
   // The plan limit counts only agents on Hivra Cloud; My server uses the owner's own capacity (5.1).
   if (computer.deploymentMode === "hivra-managed") {
     const gate = await deps.validate({ userId: ownerId, type: "codex", cpu: 0, ram: 0, browser: false, mode: "attach", agentLabel: "Codex" });
@@ -133,13 +148,18 @@ const MAX_CHOICES = 25;
 
 /**
  * The gate's answer for each computer the first pair supports, without the
- * owner's review: running, ready, free, no agent on it, and the plan's agent
- * limit for Hivra Cloud (checked once). The claim checks all of it again.
+ * owner's review: running, ready, free, no agent on it, a gateway that serves
+ * attached agents, and the plan's agent limit for Hivra Cloud (checked once).
+ * The claim checks all of it again.
  */
-export async function readAttachChoices(ownerId: string, computers: Array<{ id: string; deploymentMode: string | null }>,
+export async function readAttachChoices(ownerId: string,
+  computers: Array<{ id: string; deploymentMode: string | null; chatUrl?: string | null }>,
   deps: AttachDependencies): Promise<Map<string, AttachChoice>> {
   const listed = computers.slice(0, MAX_CHOICES);
   const targets = await Promise.all(listed.map((computer) => deps.store.readTarget(ownerId, computer.id)));
+  // Only a computer the gate would otherwise open is asked, all at once.
+  const gateways = await Promise.all(listed.map((computer, index) =>
+    targets[index]?.eligible ? gatewayRefusal(computer.chatUrl, deps) : Promise.resolve(null)));
   let plan: AttachChoice | null | undefined;
   const choices = new Map<string, AttachChoice>();
   for (const [index, computer] of listed.entries()) {
@@ -147,6 +167,11 @@ export async function readAttachChoices(ownerId: string, computers: Array<{ id: 
     if (!target || !target.eligible) {
       const reason = target?.reason ?? "unsupported_computer";
       choices.set(computer.id, { reason, message: attachReasonCopy(reason) });
+      continue;
+    }
+    const gateway = gateways[index];
+    if (gateway) {
+      choices.set(computer.id, { reason: gateway, message: attachReasonCopy(gateway) });
       continue;
     }
     if (computer.deploymentMode === "hivra-managed") {
@@ -213,6 +238,10 @@ export async function claimAttach(ownerId: string, computerId: string, input: { 
   if (!target.eligible && !resuming) {
     const reason = target.reason ?? "unsupported_computer";
     return { ok: false, status: 409, message: attachReasonCopy(reason), reason };
+  }
+  if (!resuming) {
+    const gateway = await gatewayRefusal(computer.chatUrl, deps);
+    if (gateway) return { ok: false, status: 409, message: attachReasonCopy(gateway), reason: gateway };
   }
   let agentLimit = 100000;
   if (computer.deploymentMode === "hivra-managed" && !resuming) {

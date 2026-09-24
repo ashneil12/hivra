@@ -7,7 +7,7 @@ jest.mock("server-only", () => ({}));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -96,6 +96,49 @@ describe("executing a step", () => {
     d.runHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_ATTACHED_AGENT_V1 ${JSON.stringify(removed)}` });
     expect(await executeAttachedAgentStep(OWNER, agent as never, "state", target, packet, d)).toEqual({ ok: false, code: "invalid_result" });
   });
+
+  it("reads the refusal the runner named when the program raised in the VM, and only a name it knows (T3)", async () => {
+    const d = deps();
+    d.runHostScript.mockResolvedValue({ ok: false, stdout: "HIVRA_GUEST_STEP_REFUSED computer_update_required\n" });
+    expect(await executeAttachedAgentStep(OWNER, agent as never, "activate", target, packet, d))
+      .toEqual({ ok: false, code: "guest_refused", reason: "computer_update_required" });
+    for (const stdout of ["HIVRA_GUEST_STEP_REFUSED /home/bux/Hivra\n", "HIVRA_GUEST_STEP_REFUSED step_refused\nHIVRA_GUEST_STEP_REFUSED step_refused\n",
+      "Attached agent step refused (computer_update_required)\n"]) {
+      d.runHostScript.mockResolvedValue({ ok: false, stdout });
+      expect(await executeAttachedAgentStep(OWNER, agent as never, "activate", target, packet, d)).toEqual({ ok: false, code: "transport_failed" });
+    }
+    // A refusal line in a successful answer is not a refusal.
+    d.runHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_GUEST_STEP_REFUSED step_refused\nHIVRA_ATTACHED_AGENT_V1 ${JSON.stringify(removed)}\n` });
+    expect(await executeAttachedAgentStep(OWNER, agent as never, "remove", target, packet, d)).toEqual({ ok: true, result: removed });
+  });
+});
+
+// The pinned runner, run for real: what it prints when the program it carries
+// raised. The names are the host's contract (ATTACHED_AGENT_REFUSALS).
+const RUNNER_PROBE = String.raw`import json,runpy,subprocess,sys
+runner=sys.argv[1]
+names=runpy.run_path(runner,run_name='hivra_probe')
+codes={message:names['refusal_code'](ValueError(message)) for message in json.loads(sys.argv[2])}
+proc=subprocess.run([sys.executable,'-I','-B',runner],input=sys.stdin.buffer.read(),capture_output=True,timeout=30)
+print(json.dumps({'codes':codes,'status':proc.returncode,'stdout':proc.stdout.decode(),'stderr':proc.stderr.decode()}))
+`;
+
+it("prints one named refusal line when the program raised, and never a path or guest bytes (T3)", () => {
+  const messages = ["computer_update_required", "workspace_path_not_plain", "detach_mount_found",
+    "the computer restarted since this step was requested", "the staged installation does not match",
+    "the service definition does not match what Hivra recorded", "the gateway group has members", "/home/bux/Hivra is a link"];
+  // A real bundle: every asset verified, then the program refuses to run off the bound guest root.
+  const { stdin } = buildAttachedAgentBundle({ ...packet, action: "activate" });
+  const run = JSON.parse(execFileSync("python3", ["-I", "-B", "-c", RUNNER_PROBE, path.join(process.cwd(), "provisioner", "run-attached-agent-bundle.py"),
+    JSON.stringify(messages)], { input: stdin, encoding: "utf8", timeout: 60_000 }));
+  expect(run.codes).toEqual({ computer_update_required: "computer_update_required", workspace_path_not_plain: "workspace_path_not_plain",
+    detach_mount_found: "detach_mount_found", "the computer restarted since this step was requested": "computer_restarted",
+    "the staged installation does not match": "staged_installation_mismatch",
+    "the service definition does not match what Hivra recorded": "service_definition_mismatch",
+    "the gateway group has members": "gateway_group_has_members", "/home/bux/Hivra is a link": "step_refused" });
+  expect(run.status).not.toBe(0);
+  expect(run.stdout).toBe("HIVRA_GUEST_STEP_REFUSED step_refused\n");
+  expect(run.stderr).toContain("Attached agent step refused (step_refused)");
 });
 
 it("never accepts a Remove that says it touched ~/Hivra, or extra fields", () => {

@@ -56,12 +56,33 @@ def execute_bundle(raw):
     return namespace['main'](packet, helpers)
 
 
+# The refusals the host may read by name. Anything else is step_refused: the
+# name never carries a path or bytes an agent could plant.
+NAMED_REFUSALS = ('computer_update_required', 'workspace_path_not_plain', 'detach_mount_found')
+REFUSAL_MESSAGES = {
+    'the computer restarted since this step was requested': 'computer_restarted',
+    'the staged installation does not match': 'staged_installation_mismatch',
+    'the staged account does not match': 'staged_installation_mismatch',
+    'the agent account belongs to another group': 'staged_installation_mismatch',
+    'the service definition does not match what Hivra recorded': 'service_definition_mismatch',
+    'the gateway group has members': 'gateway_group_has_members',
+}
+
+
+def refusal_code(error):
+    text = str(error)
+    if text in NAMED_REFUSALS:
+        return text
+    return REFUSAL_MESSAGES.get(text, 'step_refused')
+
+
 if __name__ == '__main__':
     try:
-        print('HIVRA_ATTACHED_AGENT_V1 ' + json.dumps(execute_bundle(sys.stdin.buffer.read(MAX_BUNDLE_BYTES + 1)),
-                                                    separators=(',', ':'), sort_keys=True))
+        line = 'HIVRA_ATTACHED_AGENT_V1 ' + json.dumps(execute_bundle(sys.stdin.buffer.read(MAX_BUNDLE_BYTES + 1)),
+                                                     separators=(',', ':'), sort_keys=True)
     except Exception as error:
-        # Name the refusal only; never echo paths or bytes an agent could plant.
-        code = str(error) if str(error) in ('computer_update_required', 'workspace_path_not_plain', 'detach_mount_found') \
-            else type(error).__name__
+        code = refusal_code(error)
+        # One line for the host: this program ended here, refused; there is no answer to wait for.
+        print('HIVRA_GUEST_STEP_REFUSED ' + code, flush=True)
         raise SystemExit('Attached agent step refused (' + code + '); retain the operation for reconciliation.')
+    print(line)
