@@ -1122,16 +1122,16 @@ describe("HivraChat", () => {
   });
 
   it("picks a reply that kept running while the page was closed back up from the box", async () => {
-    const runId = "3f1c2a9e-8b7d-4c6e-9a5f-1e2d3c4b5a69";
+    const runId = "00000000-0000-4000-8000-000000000002";
     window.localStorage.setItem("hivra_sessions_agentresume", JSON.stringify([{
-      id: "s1", title: "long task", claudeSessionId: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", createdAt: 1,
+      id: "s1", title: "long task", claudeSessionId: "00000000-0000-4000-8000-000000000001", createdAt: 1,
       messages: [
         { role: "user", text: "long task", tools: [] },
         { role: "assistant", text: "Half", tools: [], streaming: true, runId },
       ],
     }]));
     window.localStorage.setItem("hivra_sessions_agentresume_active", "s1");
-    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", title: "long task", updatedAt: 2 }]);
+    (listBoxSessions as jest.Mock).mockResolvedValue([{ id: "00000000-0000-4000-8000-000000000001", title: "long task", updatedAt: 2 }]);
     (listBoxChatRuns as jest.Mock).mockResolvedValue([{ runId, clientRef: "s1", state: "finished", title: "long task", code: 0, stopped: null, interrupted: false, agentSessionId: null, createdAt: "", finishedAt: "" }]);
     const replay = jest.fn()
       .mockResolvedValueOnce(eventChunk(replyText("Half"), replyText(" and it finished while you were away."), { type: "_done", code: 0 }))

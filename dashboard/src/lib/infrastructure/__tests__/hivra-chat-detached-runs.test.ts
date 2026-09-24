@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 const TOKEN = "c".repeat(64);
 const SERVER_PATH = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
 const SERVER_SOURCE = fs.readFileSync(SERVER_PATH, "utf8");
-const SESSION_ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 
 // A stand-in for the official CLI. It records its argv/prompt, prints the
 // claude stream-json shape, waits `WAIT:<ms>` from the prompt, then writes a
