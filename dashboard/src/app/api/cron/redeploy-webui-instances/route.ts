@@ -14,10 +14,20 @@ import { extractGlobalHermesSettings } from "@/lib/instance-settings";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
+  describeInFlightDeferral,
+  inFlightGateLogFields,
+  type InFlightDeferralReason,
+} from "@/lib/services/inflight-update-gate";
+import {
   applyLiveUpdate,
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
+import {
+  OPERATOR_LIVE_UPDATE,
+  systemLiveUpdate,
+  type LiveUpdateInitiator,
+} from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWebfreeBackend, WEBFREE_BACKENDS } from "@/lib/types/instance";
 
@@ -61,7 +71,16 @@ type RedeployResult = {
   success: boolean;
   status?: "redeploying";
   skipped?: boolean;
-  error?: string;
+  /**
+   * The scheduled sweep did not update the box because an agent turn is in
+   * flight (error "deferred_busy") or the box could not confirm that none is
+   * running (error "deferred_unverified"). Neither launched nor failed;
+   * retried first on the next tick.
+   */
+  deferred?: boolean;
+  /** Deferrals in the box's current streak (the gate proceeds at its cap). */
+  deferrals?: number;
+  error?: InFlightDeferralReason | string;
 };
 
 export const dynamic = "force-dynamic";
@@ -224,6 +243,7 @@ function skippedResult(
 async function redeployOne(
   instance: RedeployInstanceRow,
   getGlobalSettings: (userId: string) => Promise<Record<string, unknown>>,
+  initiator: LiveUpdateInitiator,
 ): Promise<RedeployResult> {
   const name = instance.name ?? null;
 
@@ -297,7 +317,28 @@ async function redeployOne(
   }
 
   const globalSettings = await getGlobalSettings(instance.user_id);
-  const update = await applyLiveUpdate(instance, ipv4, globalSettings, supabaseAdmin!);
+  const update = await applyLiveUpdate(instance, ipv4, globalSettings, supabaseAdmin!, { initiator });
+  if (update.deferred) {
+    // Worded from the gate's verdict: an unverified deferral (the box could not
+    // confirm it is idle) may be a failing gateway, not a running turn.
+    const deferral = describeInFlightDeferral(update.inFlightGate);
+    log.info(`webui redeploy deferred: ${deferral.summary}`, {
+      source: SOURCE,
+      route: ROUTE,
+      instanceId: instance.id,
+      userId: instance.user_id,
+      failureType: `webui_redeploy_${deferral.reason}`,
+      ...inFlightGateLogFields(update.inFlightGate),
+    });
+    return {
+      id: instance.id,
+      name,
+      success: false,
+      deferred: true,
+      deferrals: update.inFlightGate.deferrals,
+      error: deferral.reason,
+    };
+  }
   if (!update.applied) {
     log.error("webui redeploy launch failed", new Error("live_redeploy_launch_failed"), {
       source: SOURCE,
@@ -383,7 +424,8 @@ export async function POST(req: NextRequest) {
       results.push(skippedResult(id, null, "Instance not found"));
       continue;
     }
-    results.push(await redeployOne(row, getGlobalSettings));
+    // Operator-initiated targeted rescue: recreate now, no in-flight deferral.
+    results.push(await redeployOne(row, getGlobalSettings, OPERATOR_LIVE_UPDATE));
   }
 
   const launched = results.filter((result) => result.success).length;
@@ -397,6 +439,37 @@ export async function POST(req: NextRequest) {
     skipped,
     results,
   });
+}
+
+/**
+ * Put deferred rows back at the head of the fair queue. The attempt cursor was
+ * stamped for the whole batch before any work ran; left there, a deferred box
+ * would wait a full fleet cycle (days) instead of being retried by the next
+ * tick. Clearing it sorts the row first (NULLS FIRST). A box that stays busy
+ * cannot camp the head: the in-flight gate defers a busy box on at most two
+ * consecutive daily visits and updates it on the third
+ * (SYSTEM_UPDATE_DEFERRAL_POLICY.fleet_sync in inflight-update-gate.ts).
+ */
+async function requeueDeferredRows(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await supabaseAdmin!
+    .from("hermes_instances")
+    .update({ last_sync_attempt_at: null })
+    .in("id", ids);
+  if (error) {
+    log.error(
+      "fleet-sync deferred-row requeue failed",
+      new Error("fleet_sync_deferred_requeue_failed"),
+      {
+        source: SOURCE,
+        route: ROUTE,
+        method: "GET",
+        failureType: "fleet_sync_deferred_requeue_failed",
+        deferred: ids.length,
+        errorName: error instanceof Error ? error.name : typeof error,
+      },
+    );
+  }
 }
 
 /**
@@ -551,6 +624,7 @@ export async function GET(req: NextRequest) {
       launched: 0,
       failed: 0,
       skipped: 0,
+      deferred: 0,
       eligibleTotal: 0,
       results: [] as RedeployResult[],
     });
@@ -572,8 +646,11 @@ export async function GET(req: NextRequest) {
     // skip every remaining wave AND the dead-man heartbeat below, so a crash
     // would also silence the watchdog that is supposed to notice the crash.
     // Turn a rejection into a normal failed result and keep sweeping.
+    // Scheduled sweep = system-initiated: a box with an agent turn in flight,
+    // or one that cannot confirm it is idle, is deferred (bounded by the
+    // in-flight gate's cap) instead of recreated.
     const settled = await Promise.allSettled(
-      wave.map((row) => redeployOne(row, getGlobalSettings))
+      wave.map((row) => redeployOne(row, getGlobalSettings, systemLiveUpdate("fleet_sync")))
     );
     settled.forEach((outcome, index) => {
       if (outcome.status === "fulfilled") {
@@ -600,7 +677,16 @@ export async function GET(req: NextRequest) {
 
   const launched = results.filter((result) => result.success).length;
   const skipped = results.filter((result) => result.skipped).length;
-  const failed = results.filter((result) => !result.success && !result.skipped).length;
+  const deferredIds = results.filter((result) => result.deferred).map((result) => result.id);
+  const deferred = deferredIds.length;
+  const deferredUnverified = results.filter(
+    (result) => result.deferred && result.error === "deferred_unverified",
+  ).length;
+  const failed = results.filter(
+    (result) => !result.success && !result.skipped && !result.deferred,
+  ).length;
+
+  await requeueDeferredRows(deferredIds);
 
   log.info("fleet-sync completed", {
     source: SOURCE,
@@ -610,6 +696,8 @@ export async function GET(req: NextRequest) {
     launched,
     failed,
     skipped,
+    deferred,
+    deferredUnverified,
   });
 
   // Surface failures: previously a mostly-failed fleet sync returned HTTP 200
@@ -623,7 +711,9 @@ export async function GET(req: NextRequest) {
       severity: "warn",
       title: `redeploy-webui fleet-sync: ${failed} of ${rows.length} failed`,
       message:
-        `redeploy-webui-instances fleet-sync launched ${launched}, skipped ${skipped}, and FAILED ${failed} ` +
+        `redeploy-webui-instances fleet-sync launched ${launched}, skipped ${skipped}, deferred ${deferred} ` +
+        `(${deferred - deferredUnverified} with an agent turn in flight, ${deferredUnverified} that could not ` +
+        `confirm none was running), and FAILED ${failed} ` +
         `of ${rows.length} attempted VM(s). Failed rows keep their old last_synced_at (so they still read as ` +
         `stale) but DID bump last_sync_attempt_at, so they rotate to the back and are retried next cycle ` +
         `rather than camping the head of the queue. A row failing every cycle is a real broken box, not a ` +
@@ -634,8 +724,10 @@ export async function GET(req: NextRequest) {
         launched,
         failed,
         skipped,
+        deferred,
+        deferred_unverified: deferredUnverified,
         failed_instances: results
-          .filter((r) => !r.success && !r.skipped)
+          .filter((r) => !r.success && !r.skipped && !r.deferred)
           .map((r) => ({ id: r.id, error: r.error })),
       },
     });
@@ -651,6 +743,10 @@ export async function GET(req: NextRequest) {
     launched,
     failed,
     skipped,
+    // Boxes left untouched because an agent turn was running or the box could
+    // not confirm none was (deferredUnverified of them); requeued first.
+    deferred,
+    deferredUnverified,
     // Total boxes the sweep should cover; launched < eligibleTotal => run more
     // ticks. Never read coverage off failed=0 alone.
     eligibleTotal,
