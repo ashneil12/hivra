@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.09.22.2.json";
+import currentRelease from "../../../provisioner-releases/2026.09.24.1.json";
+import desktopPlannerRelease from "../../../provisioner-releases/2026.09.22.2.json";
 import activityTracingRelease from "../../../provisioner-releases/2026.09.22.1.json";
 import capacityRelease from "../../../provisioner-releases/2026.09.15.2.json";
 import omarchyCursorRelease from "../../../provisioner-releases/2026.09.21.1.json";
@@ -78,8 +79,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.09.22.2"
+  const release = identity.bundle.provisionerVersion === "2026.09.24.1"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.09.22.2"
+      ? desktopPlannerRelease
     : identity.bundle.provisionerVersion === "2026.09.22.1"
       ? activityTracingRelease
     : identity.bundle.provisionerVersion === "2026.09.21.1"

@@ -513,6 +513,18 @@ existing guest, and a reducing resize remains available on an already
 overcommitted host. Inventory and per-guest status errors fail closed, and an
 uncapped QEMU guest's CPU maximum counts every configured socket.
 
+Release `2026.09.24.1` builds on `2026.09.22.2` and makes agent chat turns
+survive the browser going away. `hivra-chat/chat-runs.cjs` runs each turn under
+a detached runner that owns the Claude Code/Codex CLI and records its stream and
+outcome under `~/.hivra/chat-runs`; the gateway tails that log, and only an
+explicit stop ends a detached run. The CLI arguments and permission flags are
+unchanged. The guest installer and runtime updater add a
+`bux-hivra-chat.service` drop-in with `KillMode=process` for chat runtimes so a
+gateway restart leaves in-flight runs alone, and `hivra-agent-shell` keeps the
+interactive agent terminal in a private tmux session so a closed tab detaches
+instead of ending the CLI. Remote-desktop assets are unchanged, so the
+remote-desktop bundle revision and every session revision are preserved.
+
 Release `2026.09.22.2` builds on `2026.09.22.1` and aligns the provider-VM
 desktop service planner with the Selkies environment the sealed desktop
 installer has written since `2026.09.15.1` (`SELKIES_SCALING_DPI=96` with
