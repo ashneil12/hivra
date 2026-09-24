@@ -24,6 +24,43 @@ export const ProviderComputerSetupViewSchema = z.object({
   enrollmentExpiresAt: z.string().datetime({ offset: true }).nullable(),
 }).strict().refine(value => !value.launchReady || (value.stage === "environment_prepared" && value.targetId !== null && value.observedAt !== null));
 export type ProviderComputerSetupView = z.infer<typeof ProviderComputerSetupViewSchema>;
+
+/**
+ * Hivra's own record that it sent a server request through this connection,
+ * for every order that may have created a server (not only the ones with a
+ * setup view). The card labels an inventory server "Created by Hivra" from
+ * this, and says "Not created by Hivra" only after this list has loaded.
+ */
+export const HETZNER_CREATED_SERVER_STATUSES = [
+  "creating", "ambiguous", "created_off", "provider_rejected", "cleaning", "cleanup_abandoned",
+] as const;
+export const HetznerCloudCreatedServerSchema = z.object({
+  orderId: z.string().uuid(),
+  serverName: z.string().min(1).max(128),
+  /** Null until Hetzner confirmed a server id; then only an id match counts. */
+  providerServerId: z.string().regex(/^[1-9][0-9]{0,15}$/).nullable(),
+  status: z.enum(HETZNER_CREATED_SERVER_STATUSES),
+}).strict();
+export type HetznerCloudCreatedServer = z.infer<typeof HetznerCloudCreatedServerSchema>;
+export const HETZNER_CREATED_SERVERS_MAX = 100;
+
+export const ProviderComputerSetupEvidenceSchema = z.object({
+  computers: z.array(ProviderComputerSetupViewSchema).max(20),
+  createdServers: z.array(HetznerCloudCreatedServerSchema).max(HETZNER_CREATED_SERVERS_MAX),
+}).strict();
+export type ProviderComputerSetupEvidence = z.infer<typeof ProviderComputerSetupEvidenceSchema>;
+
+/** Which Hivra order, if any, created this inventory server. An order with a
+ * confirmed server id matches only that id; one still being confirmed matches
+ * its own Hivra-generated name. Scoped to one connection by the caller. */
+export function hetznerCreatedServerFor(
+  createdServers: readonly HetznerCloudCreatedServer[],
+  server: { providerResourceId: string; name: string },
+): HetznerCloudCreatedServer | null {
+  return createdServers.find((order) => order.providerServerId
+    ? order.providerServerId === server.providerResourceId
+    : order.serverName === server.name) ?? null;
+}
 export type ProviderComputerSetupRequest = z.infer<typeof ProviderComputerSetupRequestSchema>;
 export type PreparedCapacityCreateRequest = z.infer<typeof PreparedCapacityCreateRequestSchema>;
 

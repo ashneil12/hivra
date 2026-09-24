@@ -20,13 +20,13 @@ const SETUP_POLL_MS = 5_000;
 const SETUP_WINDOW_MS = 10 * 60_000;
 const SETUP_MAX_STEPS = 80;
 
-/** Stages before the server has connected back with its one-time key. Only
- * these show the key's countdown; afterwards the key no longer matters. */
 /** Stages that need the user's attention rather than their next click. */
 const ATTENTION_STAGES = new Set<ProviderComputerSetupView["stage"]>([
   "not_requested", "expired", "stopped", "retired", "firewall_outcome_unknown", "power_outcome_unknown",
 ]);
 
+/** Stages before the server has connected back with its one-time key. Only
+ * these show the key's countdown; afterwards the key no longer matters. */
 const PRE_ENROLLMENT_STAGES = new Set<ProviderComputerSetupView["stage"]>([
   "waiting_for_capacity", "awaiting_setup", "busy", "firewall_requested", "waiting_for_firewall",
   "power_requested", "waiting_for_power", "waiting_for_identity",

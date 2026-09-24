@@ -31,6 +31,12 @@ import {
   type HetznerCloudCapacitySlotDto,
 } from "./hetzner-cloud-token-contracts";
 import {
+  HETZNER_CREATED_SERVER_STATUSES,
+  HETZNER_CREATED_SERVERS_MAX,
+  HetznerCloudCreatedServerSchema,
+  type HetznerCloudCreatedServer,
+} from "./provider-computer-setup-contracts";
+import {
   parseHetznerCurrentServerShapeEvidence,
   type HetznerCurrentServerShape,
 } from "./hetzner-current-server-shape";
@@ -561,6 +567,16 @@ export async function loadHetznerCloudConnectionSecret(
   }
 }
 
+/** A server request whose outcome Hivra hasn't recorded a provider id for. */
+export type HetznerCloudTokenReplacementPendingOrder = {
+  orderId: string;
+  status: "creating" | "ambiguous";
+  serverName: string;
+  /** Hivra's exact labels on the server and generated SSH key it requested. */
+  providerLabels: Record<string, string>;
+  updatedAt: string;
+};
+
 export type HetznerCloudTokenReplacementScope = {
   revision: number;
   /** Ciphertext only, compared byte-for-byte by the database swap. */
@@ -568,15 +584,24 @@ export type HetznerCloudTokenReplacementScope = {
   /** Provider ids of resources Hivra created and still holds in this project. */
   heldServerIds: string[];
   heldSshKeyIds: string[];
+  /** Server requests still being created or confirmed. Their resources, if
+   * any, are identified by Hivra's generated name and exact labels. */
+  pendingOrders: HetznerCloudTokenReplacementPendingOrder[];
+  /** Server ids the saved inventory observed through the current token. */
+  knownServerIds: string[];
 };
 
 const PROVIDER_RESOURCE_ID = /^[1-9][0-9]{0,15}$/;
+/** Every order status after Hivra first contacted Hetzner. A quote never did,
+ * and a deleted order no longer holds anything. */
+const DISPATCHED_ORDER_STATUSES = [...HETZNER_CREATED_SERVER_STATUSES];
 
 /**
  * Reads what a Replace token needs without decrypting anything: the current
- * revision, the exact envelope to compare-and-swap, and the provider ids of the
- * servers and generated SSH keys Hivra created through this connection. The
- * service proves a new token reaches at least one of those before swapping.
+ * revision, the exact envelope to compare-and-swap, the servers and generated
+ * SSH keys Hivra created through this connection (by id, or by generated name
+ * while a request is unresolved), and the server ids the saved inventory saw.
+ * The service proves a new token reaches the same project from these.
  */
 export async function loadHetznerCloudTokenReplacementScope(
   userId: string,
@@ -596,23 +621,52 @@ export async function loadHetznerCloudTokenReplacementScope(
   }
   const { data: orders, error: ordersError } = await database()
     .from("infrastructure_capacity_orders")
-    .select("id,status,provider_resource_id,provider_ssh_key_id")
+    .select("id,status,server_name,provider_labels,provider_resource_id,provider_ssh_key_id,updated_at")
     .eq("user_id", userId)
     .eq("provider", "hetzner-cloud")
     .eq("active_connection_id", connectionId)
-    .neq("status", "deleted")
+    .in("status", DISPATCHED_ORDER_STATUSES)
     .is("external_cleanup_resolution_id", null)
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(HETZNER_CREATED_SERVERS_MAX + 1);
   if (ordersError) throw databaseError(ordersError);
+  // A cut-off list could hide the one resource that proves the project.
+  if ((orders ?? []).length > HETZNER_CREATED_SERVERS_MAX) throw new InfrastructureConnectionStoreError("database_error");
   const heldServerIds = new Set<string>();
   const heldSshKeyIds = new Set<string>();
-  for (const row of (orders ?? []) as Array<{ provider_resource_id?: unknown; provider_ssh_key_id?: unknown }>) {
+  const pendingOrders: HetznerCloudTokenReplacementPendingOrder[] = [];
+  for (const row of (orders ?? []) as Array<Record<string, unknown>>) {
     if (typeof row.provider_resource_id === "string" && PROVIDER_RESOURCE_ID.test(row.provider_resource_id)) {
       heldServerIds.add(row.provider_resource_id);
     }
     if (typeof row.provider_ssh_key_id === "string" && PROVIDER_RESOURCE_ID.test(row.provider_ssh_key_id)) {
       heldSshKeyIds.add(row.provider_ssh_key_id);
+    }
+    if (row.status === "creating" || row.status === "ambiguous") {
+      const labels = HetznerProviderLabelsSchema.safeParse(row.provider_labels);
+      if (typeof row.id !== "string" || typeof row.server_name !== "string" || !labels.success
+        || typeof row.updated_at !== "string" || !Number.isFinite(Date.parse(row.updated_at))) {
+        throw new InfrastructureConnectionStoreError("database_error");
+      }
+      pendingOrders.push({
+        orderId: row.id,
+        status: row.status,
+        serverName: row.server_name,
+        providerLabels: labels.data,
+        updatedAt: row.updated_at,
+      });
+    }
+  }
+  const { data: known, error: knownError } = await database()
+    .from("infrastructure_capacity_inventory")
+    .select("provider_resource_id")
+    .eq("user_id", userId)
+    .eq("connection_id", connectionId);
+  if (knownError) throw databaseError(knownError);
+  const knownServerIds = new Set<string>();
+  for (const row of (known ?? []) as Array<{ provider_resource_id?: unknown }>) {
+    if (typeof row.provider_resource_id === "string" && PROVIDER_RESOURCE_ID.test(row.provider_resource_id)) {
+      knownServerIds.add(row.provider_resource_id);
     }
   }
   return {
@@ -620,15 +674,62 @@ export async function loadHetznerCloudTokenReplacementScope(
     encryptedEnvelope: envelope,
     heldServerIds: [...heldServerIds],
     heldSshKeyIds: [...heldSshKeyIds],
+    pendingOrders,
+    knownServerIds: [...knownServerIds],
   };
 }
+
+/**
+ * Every server request Hivra sent through this connection that isn't deleted,
+ * so the card can say which inventory servers Hivra created without relying
+ * on the setup list (which covers only created, cleaning and deleted orders).
+ * Read-only; no bootstrap or credential fields.
+ */
+export async function listHetznerCloudCreatedServers(
+  userId: string,
+  connectionId: string,
+): Promise<HetznerCloudCreatedServer[]> {
+  await loadHetznerCloudConnectionMetadata(userId, connectionId);
+  const { data, error } = await database()
+    .from("infrastructure_capacity_orders")
+    .select("id,status,server_name,provider_resource_id")
+    .eq("user_id", userId)
+    .eq("provider", "hetzner-cloud")
+    .eq("connection_id", connectionId)
+    .eq("active_connection_id", connectionId)
+    .in("status", DISPATCHED_ORDER_STATUSES)
+    .order("created_at", { ascending: false })
+    .limit(HETZNER_CREATED_SERVERS_MAX + 1);
+  if (error) throw databaseError(error);
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  // A cut-off list would label a Hivra server "Not created by Hivra".
+  if (rows.length > HETZNER_CREATED_SERVERS_MAX) throw new InfrastructureConnectionStoreError("database_error");
+  return rows.map((row) => {
+    const parsed = HetznerCloudCreatedServerSchema.safeParse({
+      orderId: row.id,
+      serverName: row.server_name,
+      providerServerId: row.provider_resource_id ?? null,
+      status: row.status,
+    });
+    if (!parsed.success) throw new InfrastructureConnectionStoreError("database_error");
+    return parsed.data;
+  });
+}
+
+/** "replaced", or why the database refused to swap while the credential is in use. */
+export type HetznerCloudTokenSwapOutcome =
+  | "replaced"
+  | "cleanup_in_progress"
+  | "setup_step_running"
+  | "server_request_in_progress";
 
 /**
  * Swap the stored token for the same connection revision. The database
  * compares the exact envelope the caller validated against, keeps the
  * revision (so every revision-bound record, generated SSH key and setup
- * enrollment stays valid) and refuses while cleanup or a setup step holds the
- * credential. Callers must prove the new token reaches the same project first.
+ * enrollment stays valid) and refuses while cleanup, a setup step or a server
+ * request in flight holds the credential. Callers must prove the new token
+ * reaches the same project first.
  */
 export async function replaceHetznerCloudConnectionToken(input: {
   userId: string;
@@ -636,7 +737,7 @@ export async function replaceHetznerCloudConnectionToken(input: {
   expectedRevision: number;
   expectedEnvelope: string;
   apiToken: string;
-}): Promise<void> {
+}): Promise<HetznerCloudTokenSwapOutcome> {
   const encryptedBundle = encryptSecret(JSON.stringify({
     version: 2,
     provider: "hetzner-cloud",
@@ -652,19 +753,20 @@ export async function replaceHetznerCloudConnectionToken(input: {
     p_expected_encrypted_bundle: input.expectedEnvelope,
     p_encrypted_bundle: encryptedBundle,
   });
-  if (isDatabaseCode(error, "55006")) throw new InfrastructureConnectionStoreError("capacity_busy");
+  // The first-boot guard trigger refuses while a setup step holds its lease.
+  if (isDatabaseCode(error, "55006")) return "setup_step_running";
   if (error) throw databaseError(error);
   switch (data) {
     case "replaced":
-      return;
+    case "cleanup_in_progress":
+    case "setup_step_running":
+    case "server_request_in_progress":
+      return data;
     case "not_found":
       throw new InfrastructureConnectionStoreError("not_found");
     case "connection_changed":
     case "envelope_changed":
       throw new InfrastructureConnectionStoreError("conflict");
-    case "cleanup_in_progress":
-    case "setup_step_running":
-      throw new InfrastructureConnectionStoreError("capacity_busy");
     default:
       throw new InfrastructureConnectionStoreError("database_error");
   }

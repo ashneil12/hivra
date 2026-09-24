@@ -75,6 +75,57 @@ export const HetznerCloudConnectResultSchema = z
   .strict();
 
 /**
+ * How Replace token knew the new token reaches the same project.
+ * - confirmed: it can see a server or generated SSH key Hivra created here, or
+ *   a server the saved list saw (Hetzner ids are unique across projects).
+ * - unconfirmed: Hivra holds nothing here and the new token can't see any
+ *   server Hivra saw before, so there was nothing to compare. Nothing Hivra
+ *   created can be stranded, so the token is saved and the user is told.
+ */
+export const HetznerCloudTokenProjectCheckSchema = z.enum(["confirmed", "unconfirmed"]);
+export type HetznerCloudTokenProjectCheck = z.infer<typeof HetznerCloudTokenProjectCheckSchema>;
+
+export const HetznerCloudTokenReplaceResultSchema = z
+  .object({
+    connection: HetznerCloudConnectResultSchema.shape.connection,
+    /** Null when the token was saved but the server list couldn't be saved or
+     * read back; the caller syncs instead of showing an empty project. */
+    inventory: z.array(HetznerCloudServerInventoryDtoSchema).nullable(),
+    writeCheck: HetznerCloudWriteCheckSchema,
+    projectCheck: HetznerCloudTokenProjectCheckSchema,
+  })
+  .strict();
+export type HetznerCloudTokenReplaceResult = z.infer<typeof HetznerCloudTokenReplaceResultSchema>;
+
+/** Why a Replace token didn't finish, beyond the token checks above. */
+export const HETZNER_CLOUD_TOKEN_REPLACE_ERROR_CODES = [
+  "token_in_use",
+  "server_request_in_progress",
+  "replaced_unconfirmed",
+] as const;
+export type HetznerCloudTokenReplaceErrorCode =
+  (typeof HETZNER_CLOUD_TOKEN_REPLACE_ERROR_CODES)[number];
+
+export function hetznerCloudTokenReplaceMessage(code: HetznerCloudTokenReplaceErrorCode): string {
+  switch (code) {
+    case "token_in_use":
+      return "A server removal or setup step is using this project's token right now. Nothing was replaced; try again when it finishes.";
+    case "server_request_in_progress":
+      return "Hivra is creating a server in this project right now. Nothing was replaced; try again in 2 minutes, once it finishes.";
+    case "replaced_unconfirmed":
+      // The swap already happened. Never say "nothing was replaced" here.
+      return "Hivra saved your new token but couldn't confirm it's the one this project uses now. It may have changed again straight after. Use Sync servers to check it.";
+  }
+}
+
+/** One line for the page once a token is replaced. */
+export function hetznerCloudTokenReplacedNotice(name: string, projectCheck: HetznerCloudTokenProjectCheck): string {
+  return projectCheck === "confirmed"
+    ? `Token replaced for ${name}. Its servers and setup carried over.`
+    : `Token replaced for ${name}. Hivra hadn't created anything in this project and can't see any server it saw before, so it couldn't confirm this is the same project. The list now shows the servers this token can see.`;
+}
+
+/**
  * The account-wide in-app Hetzner server slot, from the same predicate as the
  * database's one-capacity unique index. Observation only: the claim itself
  * stays authoritative at purchase time.

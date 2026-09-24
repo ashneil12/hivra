@@ -6,8 +6,9 @@
 // - the replacement swaps only the exact envelope at the same revision, keeps
 //   enrollments, the generated SSH key bundle and the order, and upgrades a
 //   legacy envelope to key version 2;
-// - it is refused while cleanup or a leased setup step holds the credential,
-//   and its trigger bypass does not outlive the swap;
+// - it is refused while cleanup, a leased setup step or a server request still
+//   inside its create call holds the credential (a dead request older than 2
+//   minutes does not block), and its trigger bypass does not outlive the swap;
 // - only service_role can execute it.
 // Entirely in memory: no credentials or live database.
 const assert = require("node:assert/strict");
@@ -70,7 +71,7 @@ async function main() {
     };
 
     // A created, powered-off server whose setup key has not been used yet.
-    async function reset({ keyVersion = 2, envelope = "sealed-old-token" } = {}) {
+    async function reset({ keyVersion = 2, envelope = "sealed-old-token", creating = false } = {}) {
       await db.exec("truncate public.deployment_targets,public.infrastructure_first_boot_operations,public.infrastructure_first_boot_enrollments,public.infrastructure_capacity_orders,public.infrastructure_connection_secrets,public.infrastructure_capacity_inventory,public.infrastructure_connections");
       await db.query("insert into public.infrastructure_connections(id,user_id,provider,status,revision) values($1,'owner','hetzner-cloud','ready',7)", [connection]);
       await db.query("insert into public.infrastructure_connection_secrets(connection_id,user_id,encrypted_bundle,key_version) values($1,'owner',$2,$3)", [connection, envelope, keyVersion]);
@@ -78,6 +79,7 @@ async function main() {
         [order, connection, serverName, quote, capacityKey, publicKey, fingerprint]);
       await db.query("with stamp as (select clock_timestamp() as issued) insert into public.infrastructure_first_boot_enrollments(order_id,attempt_id,user_id,connection_id,connection_revision,quote_fingerprint_sha256,capacity_idempotency_key,recipe_version,phase,issued_at,expires_at,verifier_sha256,encrypted_token) select $1,$2,'owner',$3,7,$4,$5,'2026.08.27.1','staged',issued,issued+interval '15 minutes',repeat('b',64),repeat('sealed-fixture-',10) from stamp",
         [order, attempt, connection, quote, capacityKey]);
+      if (creating) return;
       await db.query("update public.infrastructure_capacity_orders set status='created_off',server_post_attempted_at=now(),provider_server_status='accepted',provider_resource_id='42',provider_action_id='500',provider_action_command='create_server',provider_action_status='success',provider_next_actions='[]',observed_server_status='off',provider_observed_at=now(),provider_creation_receipt=$1 where id=$2", [receipt, order]);
     }
     // The same server after setup: enrolled, with a completed (unleased) step
@@ -143,6 +145,25 @@ async function main() {
     assert.equal(await replace("sealed-old-token", "sealed-new-token"), "cleanup_in_progress");
     assert.deepEqual(await secret(), { bundle: "sealed-old-token", version: 2 });
 
+    // A server request still inside its create call keeps the token it started with...
+    await reset({ creating: true });
+    assert.equal(await replace("sealed-old-token", "sealed-new-token"), "server_request_in_progress");
+    assert.deepEqual(await secret(), { bundle: "sealed-old-token", version: 2 });
+    assert.equal(await phase(), "staged");
+    // ...while a dead one (untouched for over 2 minutes) needs a working token
+    // to resolve, so it does not block the replacement.
+    await db.exec("alter table public.infrastructure_capacity_orders disable trigger infrastructure_capacity_orders_updated_at");
+    await db.exec("update public.infrastructure_capacity_orders set updated_at = clock_timestamp() - interval '3 minutes'");
+    await db.exec("alter table public.infrastructure_capacity_orders enable trigger infrastructure_capacity_orders_updated_at");
+    assert.equal(await replace("sealed-old-token", "sealed-new-token"), "replaced");
+    assert.deepEqual(await secret(), { bundle: "sealed-new-token", version: 2 });
+    // Another account's request in flight doesn't block this connection.
+    await reset({ creating: true });
+    await db.exec("alter table public.infrastructure_capacity_orders disable trigger all");
+    await db.query("update public.infrastructure_capacity_orders set user_id='someone-else'");
+    await db.exec("alter table public.infrastructure_capacity_orders enable trigger all");
+    assert.equal(await replace("sealed-old-token", "sealed-new-token"), "replaced");
+
     // A legacy envelope is upgraded to the revision-bound version.
     await reset({ keyVersion: 1, envelope: "sealed-legacy-token" });
     assert.equal(await replace("sealed-legacy-token", "sealed-new-token"), "replaced");
@@ -150,7 +171,7 @@ async function main() {
 
     const access = await value("select jsonb_build_object('anon',has_function_privilege('anon','public.replace_hetzner_cloud_connection_token(text,uuid,bigint,text,text)','execute'),'auth',has_function_privilege('authenticated','public.replace_hetzner_cloud_connection_token(text,uuid,bigint,text,text)','execute'),'service',has_function_privilege('service_role','public.replace_hetzner_cloud_connection_token(text,uuid,bigint,text,text)','execute'),'definer',(select prosecdef from pg_proc where oid='public.replace_hetzner_cloud_connection_token(text,uuid,bigint,text,text)'::regprocedure)) as result");
     assert.deepEqual(access, { anon: false, auth: false, service: true, definer: false });
-    console.log("PASS hetzner token replacement SQL: exact-envelope swap at the same revision, enrollments and generated key kept, plain changes still revoked or refused, cleanup and leased steps block, bypass scoped to the swap, legacy upgrade, service-only");
+    console.log("PASS hetzner token replacement SQL: exact-envelope swap at the same revision, enrollments and generated key kept, plain changes still revoked or refused, cleanup, leased steps and in-flight server requests block, dead requests don't, bypass scoped to the swap, legacy upgrade, service-only");
   } finally {
     await db.close();
   }

@@ -21,6 +21,7 @@ import {
   InfrastructureApiError,
   listInfrastructureConnections,
   listInfrastructureTargets,
+  listProviderComputerSetupEvidence,
   listProviderComputerSetups,
   preflightInfrastructureConnection,
   prepareInfrastructureConnection,
@@ -70,6 +71,7 @@ jest.mock("@/lib/infrastructure/client", () => ({
   getHetznerCloudCapacitySlot: jest.fn(),
   listInfrastructureConnections: jest.fn(),
   listInfrastructureTargets: jest.fn(),
+  listProviderComputerSetupEvidence: jest.fn(),
   listProviderComputerSetups: jest.fn(),
   preflightInfrastructureConnection: jest.fn(),
   prepareInfrastructureConnection: jest.fn(),
@@ -600,6 +602,11 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     });
     (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
     (listProviderComputerSetups as jest.Mock).mockResolvedValue([]);
+    // The card's evidence is the same setup list plus Hivra's created-server records.
+    (listProviderComputerSetupEvidence as jest.Mock).mockImplementation(async (connectionId: string) => ({
+      computers: await (listProviderComputerSetups as jest.Mock)(connectionId),
+      createdServers: [],
+    }));
     (getHetznerCloudCapacitySlot as jest.Mock).mockResolvedValue({ held: false, serverName: null, connectionId: null, status: null });
   });
 
@@ -1065,6 +1072,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
           stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
           observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null }),
       ]}
+      setupEvidence="loaded"
       loading={false}
       onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={onSetup} onConnectExistingServer={onConnect} />);
 
@@ -1083,6 +1091,81 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(prepared).getByRole("link", { name: "Launch on this server" }))
       .toHaveAttribute("href", "/dashboard/launch?start=1&targetId=00000000-0000-4000-8000-000000001099");
     expect(screen.queryByText(/Open Computer setup to check agent readiness/)).not.toBeInTheDocument();
+  });
+
+  it("names no server as someone else's until Hivra's records have loaded", () => {
+    const onConnect = jest.fn();
+    const props = {
+      connection: HETZNER_CONNECTION, inventory: [HETZNER_SERVER], loading: false,
+      onCreateCapacity: jest.fn(), onRefresh: jest.fn(), onDelete: jest.fn(), onConnectExistingServer: onConnect,
+    };
+    const { rerender } = render(<HetznerCloudConnectionCard {...props} />);
+    // Loading (also the default): no provenance, no SSH wizard.
+    const server = () => screen.getByText("agent-box-1").closest("article") as HTMLElement;
+    expect(within(server()).getByText("Checking whether Hivra created this server…")).toBeInTheDocument();
+    expect(screen.queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    rerender(<HetznerCloudConnectionCard {...props} setupEvidence="loaded" />);
+    expect(within(server()).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    expect(within(server()).getByRole("button", { name: "Connect this server" })).toBeInTheDocument();
+  });
+
+  it("keeps setup reachable and labels nothing when Hivra's records can't be read", () => {
+    const onRetry = jest.fn();
+    const onSetup = jest.fn();
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_SERVER, HETZNER_OFF_SERVER]}
+      setupEvidence="failed" onRetrySetupEvidence={onRetry} loading={false} onSetup={onSetup}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onConnectExistingServer={jest.fn()} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Hivra couldn't load which of these servers it created or how far their setup got.");
+    expect(screen.queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Checking whether Hivra created/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+    // Computer setup reads its own list, so the way into setup stays.
+    fireEvent.click(screen.getByRole("button", { name: "Computer setup" }));
+    expect(onSetup).toHaveBeenCalledWith();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels a server Hivra created from its order records even without a setup view", () => {
+    const abandoned = { ...HETZNER_SERVER, id: "00000000-0000-4000-8000-000000001008", providerResourceId: "4815162399", name: "hivra-abandoned" };
+    const lookalike = { ...HETZNER_SERVER, id: "00000000-0000-4000-8000-000000001009", providerResourceId: "4815162398", name: "hivra-removed-by-hand" };
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION}
+      inventory={[HETZNER_OFF_SERVER, abandoned, lookalike]}
+      createdServers={[
+        // Still being confirmed: no server id yet, so its generated name identifies it.
+        { orderId: "00000000-0000-4000-8000-000000001016", serverName: "hivra-a1b2c3d4", providerServerId: null, status: "ambiguous" },
+        { orderId: "00000000-0000-4000-8000-000000001017", serverName: "hivra-abandoned", providerServerId: "4815162399", status: "cleanup_abandoned" },
+        // Confirmed with another id: a same-named server is not this order's.
+        { orderId: "00000000-0000-4000-8000-000000001018", serverName: "hivra-removed-by-hand", providerServerId: "1", status: "created_off" },
+      ]}
+      setupEvidence="loaded" loading={false} onConnectExistingServer={jest.fn()}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+
+    const confirming = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(confirming).getByText("Created by Hivra")).toBeInTheDocument();
+    expect(within(confirming).getByText("Hivra is still confirming how this server's creation ended.")).toBeInTheDocument();
+    expect(within(confirming).queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    const stuck = screen.getByText("hivra-abandoned").closest("article") as HTMLElement;
+    expect(within(stuck).getByText("Created by Hivra")).toBeInTheDocument();
+    expect(within(stuck).getByText(/Hivra stopped removing this server/)).toBeInTheDocument();
+    expect(within(stuck).queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    const other = screen.getByText("hivra-removed-by-hand").closest("article") as HTMLElement;
+    expect(within(other).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    expect(within(other).getByRole("button", { name: "Connect this server" })).toBeInTheDocument();
+  });
+
+  it("doesn't treat a same-named server in another project as the one holding the server slot", () => {
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_SERVER]}
+      slot={{ held: true, serverName: HETZNER_SERVER.name, connectionId: "00000000-0000-4000-8000-000000009999", status: "created_off" }}
+      setupEvidence="loaded" loading={false} onConnectExistingServer={jest.fn()}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+    expect(screen.queryByText("Created by Hivra")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect this server" })).toBeInTheDocument();
   });
 
   it("disables Create with its reason once the account's server slot is used", () => {
@@ -1286,7 +1369,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([rejected]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
     (replaceHetznerCloudToken as jest.Mock).mockResolvedValue({
-      connection: HETZNER_CONNECTION, inventory: [HETZNER_OFF_SERVER], writeCheck: { strayKeyName: null },
+      connection: HETZNER_CONNECTION, inventory: [HETZNER_OFF_SERVER], writeCheck: { strayKeyName: null }, projectCheck: "confirmed",
     });
     render(<InfrastructureConnectionsPage />);
     const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
@@ -1299,9 +1382,77 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     await waitFor(() => expect(replaceHetznerCloudToken).toHaveBeenCalledWith(HETZNER_CONNECTION.id, "replacement-project-token-1234"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(await screen.findByText(/Token replaced for Personal cloud/)).toBeInTheDocument();
+    expect(await screen.findByText("Token replaced for Personal cloud. Its servers and setup carried over.")).toBeInTheDocument();
     expect(within(card).getByText("Connected")).toBeInTheDocument();
     expect(deleteInfrastructureConnection).not.toHaveBeenCalled();
+  });
+
+  it("says plainly when a replaced token couldn't be matched to the same project, and syncs a list it couldn't save", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (replaceHetznerCloudToken as jest.Mock).mockResolvedValue({
+      connection: HETZNER_CONNECTION, inventory: null, writeCheck: { strayKeyName: null }, projectCheck: "unconfirmed",
+    });
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Replace token" }));
+    const dialog = screen.getByRole("dialog", { name: "Replace Hetzner token" });
+    fireEvent.change(within(dialog).getByLabelText(/Read & Write project API token/), { target: { value: "replacement-project-token-1234" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Replace token" }));
+
+    expect(await screen.findByText(/couldn't confirm this is the same project/)).toBeInTheDocument();
+    expect(screen.queryByText(/Its servers and setup carried over/)).not.toBeInTheDocument();
+    // The token is saved but its list wasn't: read it with the new token instead of showing an empty project.
+    await waitFor(() => expect(refreshHetznerCloudInventory).toHaveBeenCalledWith(HETZNER_CONNECTION.id));
+    expect(await within(card).findByText("agent-box-1")).toBeInTheDocument();
+  });
+
+  it("re-reads the connection when a replaced token couldn't be confirmed, and never says nothing was replaced", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (replaceHetznerCloudToken as jest.Mock).mockRejectedValue(new InfrastructureApiError(
+      "Hivra saved your new token but couldn't confirm it's the one this project uses now. It may have changed again straight after. Use Sync servers to check it.",
+      409, "replaced_unconfirmed",
+    ));
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    await waitFor(() => expect(listInfrastructureConnections).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(card).getByRole("button", { name: "Replace token" }));
+    const dialog = screen.getByRole("dialog", { name: "Replace Hetzner token" });
+    const field = within(dialog).getByLabelText(/Read & Write project API token/);
+    fireEvent.change(field, { target: { value: "replacement-project-token-1234" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Replace token" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Hivra saved your new token");
+    expect(within(dialog).queryByText(/Nothing was replaced/)).not.toBeInTheDocument();
+    await waitFor(() => expect(listInfrastructureConnections).toHaveBeenCalledTimes(2));
+    expect(field).toHaveValue("");
+  });
+
+  it("labels no server until the card's evidence arrives, and offers a retry when it fails", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER, HETZNER_OFF_SERVER]);
+    let failRead!: (error: Error) => void;
+    (listProviderComputerSetupEvidence as jest.Mock).mockImplementationOnce(() => new Promise((_resolve, reject) => { failRead = reject; }));
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("hivra-a1b2c3d4")).toBeInTheDocument();
+    // Still reading Hivra's records: the server Hivra created is not called someone else's.
+    expect(within(card).queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    await act(async () => failRead(new Error("Setup evidence unavailable")));
+    const alert = await within(card).findByRole("alert");
+    expect(alert).toHaveTextContent("Hivra couldn't load which of these servers it created");
+    expect(within(card).queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Computer setup" })).toBeInTheDocument();
+
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    const created = (await within(card).findByText("Needs setup")).closest("article") as HTMLElement;
+    expect(within(created).getByText("hivra-a1b2c3d4")).toBeInTheDocument();
+    const existing = within(card).getByText("agent-box-1").closest("article") as HTMLElement;
+    expect(within(existing).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    expect(within(card).queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1312,11 +1463,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (connectHetznerCloudProject as jest.Mock).mockRejectedValue(failure);
     (replaceHetznerCloudToken as jest.Mock).mockRejectedValue(failure);
     const onConnected = jest.fn();
-    render(<HetznerCloudConnectionDialog replacing={mode === "replace" ? HETZNER_CONNECTION : undefined} onClose={jest.fn()} onConnected={onConnected} />);
+    const onReplaceUnconfirmed = jest.fn();
+    render(mode === "replace"
+      ? <HetznerCloudConnectionDialog replacing={HETZNER_CONNECTION} onClose={jest.fn()} onReplaced={onConnected} onReplaceUnconfirmed={onReplaceUnconfirmed} />
+      : <HetznerCloudConnectionDialog onClose={jest.fn()} onConnected={onConnected} />);
     fireEvent.change(screen.getByLabelText(/Read & Write project API token/), { target: { value: "some-hetzner-token-1234567" } });
     fireEvent.click(screen.getByRole("button", { name: mode === "connect" ? "Connect and choose a server" : "Replace token" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(onConnected).not.toHaveBeenCalled();
+    // A refused check replaced nothing; there's nothing to re-read.
+    expect(onReplaceUnconfirmed).not.toHaveBeenCalled();
     // Fixed on the same screen: the field is ready for the next token.
     expect(screen.getByLabelText(/Read & Write project API token/)).toBeEnabled();
   });

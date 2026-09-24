@@ -17,6 +17,8 @@ import {
   HetznerCloudConnectionError,
   HetznerCloudCapacityError,
   HetznerCloudTokenCheckError,
+  HetznerCloudTokenReplaceError,
+  HETZNER_SERVER_REQUEST_IN_FLIGHT_MS,
   quoteHetznerCloudCapacity,
   refreshHetznerCloudInventory,
   replaceHetznerCloudToken,
@@ -3463,9 +3465,23 @@ describe("Hetzner token replacement", () => {
     encryptedEnvelope: "sealed-old-envelope",
     heldServerIds: ["42"],
     heldSshKeyIds: ["777"],
+    pendingOrders: [] as Array<{ orderId: string; status: "creating" | "ambiguous"; serverName: string; providerLabels: Record<string, string>; updatedAt: string }>,
+    knownServerIds: [] as string[],
   };
+  const emptyScope = { ...scope, heldServerIds: [], heldSshKeyIds: [] };
+  const PENDING_ORDER_ID = "33333333-3333-4333-8333-333333333333";
+  const pendingLabels = { "hivra-operation": PENDING_ORDER_ID, "hivra-quote": "b".repeat(32), "hivra-managed": "true" };
+  const pending = (patch: Record<string, unknown> = {}) => ({
+    orderId: PENDING_ORDER_ID,
+    status: "ambiguous" as const,
+    serverName: "hivra-33333333333343338333",
+    providerLabels: pendingLabels,
+    updatedAt: new Date(NOW.getTime() - 10 * 60_000).toISOString(),
+    ...patch,
+  });
   const NEW_TOKEN = "replacement-project-token-value";
   const savedConnection = { id: CONNECTION_ID, status: "ready" };
+  const otherProjectServer = { ...server, id: 4242, name: "someone-elses-box", labels: {} };
 
   function harness(client: ReturnType<typeof projectClient>, overrides: Record<string, unknown> = {}) {
     const deps = {
@@ -3473,7 +3489,7 @@ describe("Hetzner token replacement", () => {
       client: jest.fn(() => client),
       writeCheckKey: () => WRITE_CHECK_PROBE,
       loadTokenReplacementScope: jest.fn().mockResolvedValue(scope),
-      replaceToken: jest.fn().mockResolvedValue(undefined),
+      replaceToken: jest.fn().mockResolvedValue("replaced"),
       reconcileInventory: jest.fn().mockResolvedValue([{ id: "inventory-row" }]),
       listInventory: jest.fn().mockResolvedValue([{ id: "saved-row" }]),
       loadSecret: jest.fn().mockResolvedValue({ connection: savedConnection, revision: 7, apiToken: NEW_TOKEN }),
@@ -3495,6 +3511,7 @@ describe("Hetzner token replacement", () => {
       connection: savedConnection,
       inventory: [{ id: "inventory-row" }],
       writeCheck: { strayKeyName: null },
+      projectCheck: "confirmed",
     });
     expect(deps.client).toHaveBeenCalledWith(NEW_TOKEN);
     expect(client.createSshKey).toHaveBeenCalledTimes(1);
@@ -3518,7 +3535,7 @@ describe("Hetzner token replacement", () => {
 
   it("refuses a token for another project before any write or swap", async () => {
     const client = writeCheckClient({
-      listServers: jest.fn().mockResolvedValue([{ ...server, id: 4242 }]),
+      listServers: jest.fn().mockResolvedValue([otherProjectServer]),
       listSshKeys: jest.fn().mockResolvedValue([{ id: 888, name: "other", fingerprint: "x", public_key: "x", labels: {}, created: NOW.toISOString() }]),
     });
     const { deps, run } = harness(client);
@@ -3534,18 +3551,113 @@ describe("Hetzner token replacement", () => {
       listSshKeys: jest.fn().mockResolvedValue([{ id: 777, name: "hivra-key-abc", fingerprint: "x", public_key: "x", labels: {}, created: NOW.toISOString() }]),
     });
     const { deps, run } = harness(client);
-    await run();
+    await expect(run()).resolves.toMatchObject({ projectCheck: "confirmed" });
     expect(deps.replaceToken).toHaveBeenCalledTimes(1);
   });
 
-  it("does not list keys or require overlap when Hivra holds nothing in the project", async () => {
-    const client = writeCheckClient({ listServers: jest.fn().mockResolvedValue([]) });
+  it("proves the project from a server the saved list saw when Hivra holds nothing there", async () => {
+    const client = writeCheckClient();
     const { deps, run } = harness(client, {
-      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...scope, heldServerIds: [], heldSshKeyIds: [] }),
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...emptyScope, knownServerIds: ["42"] }),
     });
-    await run();
+    await expect(run()).resolves.toMatchObject({ projectCheck: "confirmed" });
     expect(client.listSshKeys).not.toHaveBeenCalled();
     expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("says it couldn't compare, instead of claiming the same project, when there was nothing to compare", async () => {
+    const client = writeCheckClient({ listServers: jest.fn().mockResolvedValue([otherProjectServer]) });
+    const { deps, run } = harness(client, {
+      // Hivra created nothing here; the servers the saved list saw are gone.
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...emptyScope, knownServerIds: ["42"] }),
+    });
+    await expect(run()).resolves.toMatchObject({ projectCheck: "unconfirmed" });
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("proves the project from an unconfirmed request's server by Hivra's generated name and exact labels", async () => {
+    const client = writeCheckClient({
+      listServers: jest.fn().mockResolvedValue([{ ...server, id: 5150, name: pending().serverName, labels: pendingLabels }]),
+    });
+    const { deps, run } = harness(client, {
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...emptyScope, pendingOrders: [pending()] }),
+    });
+    await expect(run()).resolves.toMatchObject({ projectCheck: "confirmed" });
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("proves the project from an unconfirmed request's generated SSH key", async () => {
+    const client = writeCheckClient({
+      listServers: jest.fn().mockResolvedValue([]),
+      listSshKeys: jest.fn().mockResolvedValue([{
+        id: 6060, name: "hivra-key-33333333333343338333", fingerprint: "x", public_key: "x", labels: pendingLabels, created: NOW.toISOString(),
+      }]),
+    });
+    const { deps, run } = harness(client, {
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...emptyScope, pendingOrders: [pending()] }),
+    });
+    await expect(run()).resolves.toMatchObject({ projectCheck: "confirmed" });
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when an unconfirmed request is the only thing Hivra holds and the token can't see it", async () => {
+    const client = writeCheckClient({
+      // Same name, but not Hivra's labels: not proof.
+      listServers: jest.fn().mockResolvedValue([{ ...server, id: 5150, name: pending().serverName, labels: {} }]),
+      listSshKeys: jest.fn().mockResolvedValue([]),
+    });
+    const { deps, run } = harness(client, {
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...emptyScope, pendingOrders: [pending()] }),
+    });
+    await expect(run()).rejects.toMatchObject({ code: "token_project_mismatch" });
+    expect(client.createSshKey).not.toHaveBeenCalled();
+    expect(deps.replaceToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses while a server request may still be inside its create call, before touching Hetzner", async () => {
+    const client = writeCheckClient();
+    const { deps, run } = harness(client, {
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({
+        ...scope,
+        pendingOrders: [pending({ status: "creating", updatedAt: new Date(NOW.getTime() - 30_000).toISOString() })],
+      }),
+    });
+    const failure = await run().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HetznerCloudTokenReplaceError);
+    expect(failure).toMatchObject({
+      code: "server_request_in_progress",
+      message: "Hivra is creating a server in this project right now. Nothing was replaced; try again in 2 minutes, once it finishes.",
+    });
+    expect(deps.client).not.toHaveBeenCalled();
+    expect(deps.replaceToken).not.toHaveBeenCalled();
+  });
+
+  it("lets a dead server request (untouched for over 2 minutes) be resolved with the new token", async () => {
+    const client = writeCheckClient();
+    const { deps, run } = harness(client, {
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({
+        ...scope,
+        pendingOrders: [pending({ status: "creating", updatedAt: new Date(NOW.getTime() - HETZNER_SERVER_REQUEST_IN_FLIGHT_MS - 1_000).toISOString() })],
+      }),
+    });
+    await expect(run()).resolves.toMatchObject({ projectCheck: "confirmed" });
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["server_request_in_progress", "server_request_in_progress"],
+    ["cleanup_in_progress", "token_in_use"],
+    ["setup_step_running", "token_in_use"],
+  ])("maps a %s refusal from the database to %s without saving anything else", async (outcome, code) => {
+    const client = writeCheckClient();
+    const { deps, run } = harness(client, { replaceToken: jest.fn().mockResolvedValue(outcome) });
+    const failure = await run().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HetznerCloudTokenReplaceError);
+    expect(failure).toMatchObject({ code });
+    expect(String((failure as Error).message)).toContain("Nothing was replaced");
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+    expect(deps.reconcileInventory).not.toHaveBeenCalled();
+    expect(deps.loadSecret).not.toHaveBeenCalled();
   });
 
   it("keeps the old token when the new one is read-only", async () => {
@@ -3577,20 +3689,40 @@ describe("Hetzner token replacement", () => {
     expect(deps.listInventory).toHaveBeenCalledWith("user_a", CONNECTION_ID);
   });
 
-  it("fails closed when the saved envelope does not read back as the new token", async () => {
-    const client = writeCheckClient();
-    const { run } = harness(client, {
-      loadSecret: jest.fn().mockResolvedValue({ connection: savedConnection, revision: 7, apiToken: "someone-else" }),
-    });
-    await expect(run()).rejects.toMatchObject({ code: "conflict" });
+  it("still reports the replaced token when the inventory write fails after the swap", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const client = writeCheckClient();
+      const { run } = harness(client, {
+        reconcileInventory: jest.fn().mockRejectedValue(new InfrastructureConnectionStoreError("database_unavailable")),
+        listInventory: jest.fn().mockRejectedValue(new InfrastructureConnectionStoreError("database_unavailable")),
+      });
+      // Saved, but no server list: the caller syncs instead of showing an empty project.
+      await expect(run()).resolves.toEqual({
+        connection: savedConnection, inventory: null, writeCheck: { strayKeyName: null }, projectCheck: "confirmed",
+      });
+      // The real cause is logged, without the token.
+      const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).toContain("Hetzner token replaced but its inventory write failed");
+      expect(logged).toContain("database_unavailable");
+      expect(logged).not.toContain(NEW_TOKEN);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
-  it("propagates a busy credential (cleanup or a running setup step) without retrying", async () => {
+  it.each([
+    ["reads back a different token", { loadSecret: jest.fn().mockResolvedValue({ connection: savedConnection, revision: 7, apiToken: "someone-else" }) }],
+    ["reads back another revision", { loadSecret: jest.fn().mockResolvedValue({ connection: savedConnection, revision: 8, apiToken: NEW_TOKEN }) }],
+    ["can't read the envelope back", { loadSecret: jest.fn().mockRejectedValue(new InfrastructureConnectionStoreError("credential_error")) }],
+  ])("never says nothing was replaced after the swap when it %s", async (_case, overrides) => {
     const client = writeCheckClient();
-    const busy = new InfrastructureConnectionStoreError("capacity_busy");
-    const { deps, run } = harness(client, { replaceToken: jest.fn().mockRejectedValue(busy) });
-    await expect(run()).rejects.toBe(busy);
+    const { deps, run } = harness(client, overrides);
+    const failure = await run().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HetznerCloudTokenReplaceError);
+    expect(failure).toMatchObject({ code: "replaced_unconfirmed" });
+    expect(String((failure as Error).message)).toContain("Hivra saved your new token");
+    expect(String((failure as Error).message)).not.toContain("Nothing was replaced");
     expect(deps.replaceToken).toHaveBeenCalledTimes(1);
-    expect(deps.reconcileInventory).not.toHaveBeenCalled();
   });
 });

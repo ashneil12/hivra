@@ -17,6 +17,7 @@ import {
   type HetznerServer,
   type HetznerServerType,
 } from "@/lib/hetzner/client";
+import { log } from "@/lib/logger";
 
 import {
   HETZNER_CLOUD_BILLING_SEMANTICS,
@@ -47,7 +48,11 @@ import {
   HETZNER_WRITE_CHECK_LABEL,
   HetznerWriteCheckKeyNameSchema,
   hetznerCloudTokenCheckMessage,
+  hetznerCloudTokenReplaceMessage,
   type HetznerCloudTokenCheckErrorCode,
+  type HetznerCloudTokenProjectCheck,
+  type HetznerCloudTokenReplaceErrorCode,
+  type HetznerCloudTokenReplaceResult,
   type HetznerCloudWriteCheck,
 } from "./hetzner-cloud-token-contracts";
 import { resolveFirstBootCreationRecipe } from "./first-boot-creation-recipe";
@@ -80,6 +85,7 @@ import {
   upsertHetznerCloudInventoryServer,
   type SanitizedHetznerCloudServer,
   type HetznerBootstrapBundle,
+  type HetznerCloudTokenReplacementScope,
   type StoredHetznerCloudCapacityOrder,
 } from "./hetzner-cloud-store";
 import type { HetznerCurrentServerShape } from "./hetzner-current-server-shape";
@@ -101,6 +107,15 @@ export class HetznerCloudTokenCheckError extends Error {
   ) {
     super(hetznerCloudTokenCheckMessage(code, strayKeyName));
     this.name = "HetznerCloudTokenCheckError";
+  }
+}
+
+/** Replace token refused because the credential is in use, or finished in a
+ * state it can't confirm. `replaced_unconfirmed` means the swap happened. */
+export class HetznerCloudTokenReplaceError extends Error {
+  constructor(public readonly code: HetznerCloudTokenReplaceErrorCode) {
+    super(hetznerCloudTokenReplaceMessage(code));
+    this.name = "HetznerCloudTokenReplaceError";
   }
 }
 
@@ -1401,53 +1416,98 @@ export async function connectHetznerCloudProject(
   return { ...record, writeCheck };
 }
 
+/** A secret-free failure class for logs: store codes only, never messages. */
+function storeFailureType(error: unknown): string {
+  return error instanceof InfrastructureConnectionStoreError ? error.code : error instanceof Error ? error.name : typeof error;
+}
+
+/** A 'creating' order updated this recently may still be inside its create
+ * request (45-second route, 30-second dispatch budget). Mirrors the interval
+ * in replace_hetzner_cloud_connection_token. */
+export const HETZNER_SERVER_REQUEST_IN_FLIGHT_MS = 2 * 60_000;
+
 /**
- * Replace a Hetzner project token in place. The new token must authenticate,
- * see at least one server or generated SSH key Hivra created through this
- * connection (Hetzner ids are unique across projects, so this proves the same
- * project), and pass the write check. The envelope is then swapped at the same
- * revision, so the generated SSH keys, setup enrollments and targets bound to
- * that revision all carry forward. Nothing is wiped or re-created.
+ * Does the new token reach the project this connection manages? Hetzner ids
+ * are unique across projects, so seeing one server or generated SSH key Hivra
+ * created here, one server the saved list saw, or a still-unconfirmed
+ * request's server or key (by Hivra's generated name and exact labels) proves
+ * it. Refuses only when Hivra holds something here that the token can't see.
+ */
+function sameProjectCheck(
+  scope: HetznerCloudTokenReplacementScope,
+  servers: HetznerServer[],
+  sshKeys: HetznerSshKey[],
+): HetznerCloudTokenProjectCheck {
+  const serverIds = new Set(servers.map((server) => String(server.id)));
+  const keyIds = new Set(sshKeys.map((key) => String(key.id)));
+  const matched = scope.heldServerIds.some((id) => serverIds.has(id))
+    || scope.heldSshKeyIds.some((id) => keyIds.has(id))
+    || scope.knownServerIds.some((id) => serverIds.has(id))
+    || scope.pendingOrders.some((order) => (
+      servers.some((server) => server.name === order.serverName && labelsMatch(server.labels, order.providerLabels))
+      || sshKeys.some((key) => key.name === capacitySshKeyName(order.orderId)
+        && labelsMatch(key.labels, order.providerLabels))
+    ));
+  if (matched) return "confirmed";
+  const holdsResources = scope.heldServerIds.length > 0
+    || scope.heldSshKeyIds.length > 0
+    || scope.pendingOrders.length > 0;
+  if (holdsResources) throw new HetznerCloudTokenCheckError("token_project_mismatch");
+  return "unconfirmed";
+}
+
+/**
+ * Replace a Hetzner project token in place. Refused while a server request may
+ * still be running. The new token must authenticate, reach the same project
+ * (see sameProjectCheck) and pass the write check. The envelope is then
+ * swapped at the same revision, so the generated SSH keys, setup enrollments
+ * and targets bound to that revision all carry forward. Nothing is wiped or
+ * re-created. Once the swap succeeds, no later failure reports "nothing was
+ * replaced": a failed inventory write returns the saved list (or none), and a
+ * read-back that doesn't show this token is `replaced_unconfirmed`.
  */
 export async function replaceHetznerCloudToken(
   input: { userId: string; connectionId: string; apiToken: string },
   dependencies: Partial<Dependencies> = {},
-): Promise<{
-  connection: HetznerCloudConnectionDto;
-  inventory: HetznerCloudServerInventoryDto[];
-  writeCheck: HetznerCloudWriteCheck;
-}> {
+): Promise<HetznerCloudTokenReplaceResult> {
   const deps = { ...defaultDependencies, ...dependencies };
   const scope = await deps.loadTokenReplacementScope(input.userId, input.connectionId);
+  const nowMs = deps.now().getTime();
+  // A purchase in flight must finish on the token it started with. The
+  // database refuses the same window; checking first gives the real reason
+  // instead of a project mismatch for a server that doesn't have an id yet.
+  if (scope.pendingOrders.some((order) => order.status === "creating"
+    && nowMs - Date.parse(order.updatedAt) < HETZNER_SERVER_REQUEST_IN_FLIGHT_MS)) {
+    throw new HetznerCloudTokenReplaceError("server_request_in_progress");
+  }
   const discoveredAt = deps.now().toISOString();
   const provider = deps.client(input.apiToken);
+  let servers: HetznerServer[];
   let inventory: SanitizedHetznerCloudServer[];
-  let visibleServerIds: Set<string>;
-  let visibleKeyIds = new Set<string>();
+  let sshKeys: HetznerSshKey[] = [];
   try {
-    const servers = await provider.listServers();
+    servers = await provider.listServers();
     inventory = servers.map((server) => sanitizeServer(server, discoveredAt));
-    visibleServerIds = new Set(inventory.map((server) => server.providerResourceId));
-    if (scope.heldSshKeyIds.length > 0) {
-      visibleKeyIds = new Set((await provider.listSshKeys()).map((key) => String(key.id)));
+    if (scope.heldSshKeyIds.length > 0 || scope.pendingOrders.length > 0) {
+      sshKeys = await provider.listSshKeys();
     }
   } catch (error) {
     throw providerFailure(error);
   }
-  const holdsResources = scope.heldServerIds.length > 0 || scope.heldSshKeyIds.length > 0;
-  if (holdsResources && !scope.heldServerIds.some((id) => visibleServerIds.has(id))
-    && !scope.heldSshKeyIds.some((id) => visibleKeyIds.has(id))) {
-    throw new HetznerCloudTokenCheckError("token_project_mismatch");
-  }
+  const projectCheck = sameProjectCheck(scope, servers, sshKeys);
   const writeCheck = await verifyHetznerProjectWriteAccess(provider, deps);
-  await deps.replaceToken({
+  const outcome = await deps.replaceToken({
     userId: input.userId,
     connectionId: input.connectionId,
     expectedRevision: scope.revision,
     expectedEnvelope: scope.encryptedEnvelope,
     apiToken: input.apiToken,
   });
-  let reconciled: HetznerCloudServerInventoryDto[];
+  if (outcome === "server_request_in_progress") throw new HetznerCloudTokenReplaceError("server_request_in_progress");
+  if (outcome !== "replaced") throw new HetznerCloudTokenReplaceError("token_in_use");
+
+  // The token is replaced from here on.
+  let reconciled: HetznerCloudServerInventoryDto[] | null;
   try {
     reconciled = await deps.reconcileInventory({
       userId: input.userId,
@@ -1457,18 +1517,37 @@ export async function replaceHetznerCloudToken(
       inventory,
     });
   } catch (error) {
-    // The token is already replaced. A newer concurrent sync may have won the
-    // inventory write; show whichever snapshot is now saved.
-    if (!(error instanceof InfrastructureConnectionStoreError) || error.code !== "conflict") throw error;
-    reconciled = await deps.listInventory(input.userId, input.connectionId);
+    // A newer concurrent sync may have won the write (conflict), or the write
+    // failed. Show whichever snapshot is saved; with none, the caller syncs.
+    if (!(error instanceof InfrastructureConnectionStoreError && error.code === "conflict")) {
+      log.warn("Hetzner token replaced but its inventory write failed", {
+        source: "infrastructure/hetzner-cloud/token", requestId: input.connectionId, userId: input.userId,
+        failureType: storeFailureType(error),
+      });
+    }
+    reconciled = await deps.listInventory(input.userId, input.connectionId).catch(() => null);
   }
   // Read the saved envelope back through the bound-token path: this proves the
   // swap decrypts, belongs to this owner and revision, and holds this token.
-  const saved = await deps.loadSecret(input.userId, input.connectionId, { requireBoundToken: true });
-  if (saved.revision !== scope.revision || saved.apiToken !== input.apiToken) {
-    throw new InfrastructureConnectionStoreError("conflict");
+  let saved: Awaited<ReturnType<typeof deps.loadSecret>>;
+  try {
+    saved = await deps.loadSecret(input.userId, input.connectionId, { requireBoundToken: true });
+  } catch (error) {
+    log.warn("Hetzner token replaced but the saved token could not be read back", {
+      source: "infrastructure/hetzner-cloud/token", requestId: input.connectionId, userId: input.userId,
+      failureType: storeFailureType(error),
+    });
+    throw new HetznerCloudTokenReplaceError("replaced_unconfirmed");
   }
-  return { connection: saved.connection, inventory: reconciled, writeCheck };
+  if (saved.revision !== scope.revision || saved.apiToken !== input.apiToken) {
+    // Another change (most likely a second Replace token) landed straight after.
+    log.warn("Hetzner token replaced but the connection changed again before read-back", {
+      source: "infrastructure/hetzner-cloud/token", requestId: input.connectionId, userId: input.userId,
+      failureType: saved.revision !== scope.revision ? "revision_changed" : "token_changed",
+    });
+    throw new HetznerCloudTokenReplaceError("replaced_unconfirmed");
+  }
+  return { connection: saved.connection, inventory: reconciled, writeCheck, projectCheck };
 }
 
 export async function getHetznerCloudInventory(

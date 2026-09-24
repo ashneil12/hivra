@@ -25,6 +25,7 @@ import {
   loadHetznerCloudConnectionSecret,
   loadHetznerCloudTokenReplacementScope,
   hasDispatchedHetznerCapacityRequest,
+  listHetznerCloudCreatedServers,
   replaceHetznerCloudConnectionToken,
   recordHetznerCloudCapacityOrderProgress,
   recordHetznerCloudInventoryFailure,
@@ -569,10 +570,21 @@ describe("Hetzner Cloud connection store", () => {
 /** A chain that resolves at its terminal call and records every filter. */
 function listQuery(result: { data: unknown; error: unknown }) {
   const builder: Record<string, jest.Mock> = {};
-  for (const method of ["select", "eq", "neq", "is", "or", "order"]) {
+  for (const method of ["select", "eq", "neq", "is", "or", "in", "order"]) {
     builder[method] = jest.fn(() => builder);
   }
   builder.limit = jest.fn(() => Promise.resolve(result));
+  return builder;
+}
+
+/** A chain awaited directly after its last filter. */
+function awaitedQuery(result: { data: unknown; error: unknown }) {
+  const builder: Record<string, jest.Mock> & { then?: unknown } = {};
+  for (const method of ["select", "eq"]) {
+    builder[method] = jest.fn(() => builder);
+  }
+  builder.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+    Promise.resolve(result).then(resolve, reject);
   return builder;
 }
 
@@ -582,31 +594,52 @@ describe("Hetzner token replacement storage", () => {
     mockEncryptSecret.mockReturnValue("sealed-new-token");
   });
 
-  it("reads the revision, exact envelope and held provider ids without decrypting", async () => {
+  it("reads the revision, exact envelope, held ids, unconfirmed requests and known servers without decrypting", async () => {
     const connectionQuery = query({ data: connectionRow({ revision: 7 }), error: null });
     const secretQuery = query({ data: { encrypted_bundle: "sealed-old-token", key_version: 2 }, error: null });
+    const labels = { "hivra-operation": CONNECTION_ID, "hivra-quote": "c".repeat(32), "hivra-managed": "true" };
     const ordersQuery = listQuery({
       data: [
-        { id: QUOTE_ID, status: "created_off", provider_resource_id: "42", provider_ssh_key_id: "777" },
-        { id: INVENTORY_ID, status: "provider_rejected", provider_resource_id: null, provider_ssh_key_id: "778" },
-        { id: CONNECTION_ID, status: "ambiguous", provider_resource_id: "not-an-id", provider_ssh_key_id: null },
+        { id: QUOTE_ID, status: "created_off", server_name: "hivra-a", provider_labels: {}, provider_resource_id: "42", provider_ssh_key_id: "777", updated_at: NOW },
+        { id: INVENTORY_ID, status: "provider_rejected", server_name: "hivra-b", provider_labels: {}, provider_resource_id: null, provider_ssh_key_id: "778", updated_at: NOW },
+        { id: CONNECTION_ID, status: "ambiguous", server_name: "hivra-c", provider_labels: labels, provider_resource_id: "not-an-id", provider_ssh_key_id: null, updated_at: NOW },
       ],
       error: null,
     });
-    mockFrom.mockReturnValueOnce(connectionQuery).mockReturnValueOnce(secretQuery).mockReturnValueOnce(ordersQuery);
+    const inventoryQuery = awaitedQuery({ data: [{ provider_resource_id: "42" }, { provider_resource_id: "4815" }, { provider_resource_id: "x" }], error: null });
+    mockFrom.mockReturnValueOnce(connectionQuery).mockReturnValueOnce(secretQuery).mockReturnValueOnce(ordersQuery)
+      .mockReturnValueOnce(inventoryQuery);
 
     await expect(loadHetznerCloudTokenReplacementScope("user_a", CONNECTION_ID)).resolves.toEqual({
       revision: 7,
       encryptedEnvelope: "sealed-old-token",
       heldServerIds: ["42"],
       heldSshKeyIds: ["777", "778"],
+      pendingOrders: [{ orderId: CONNECTION_ID, status: "ambiguous", serverName: "hivra-c", providerLabels: labels, updatedAt: NOW }],
+      knownServerIds: ["42", "4815"],
     });
     expect(mockDecryptSecret).not.toHaveBeenCalled();
     for (const pair of [["user_id", "user_a"], ["provider", "hetzner-cloud"], ["active_connection_id", CONNECTION_ID]]) {
       expect(ordersQuery.eq).toHaveBeenCalledWith(...pair);
     }
-    expect(ordersQuery.neq).toHaveBeenCalledWith("status", "deleted");
+    // Quotes never reached Hetzner and must not crowd real orders out of the list.
+    expect(ordersQuery.in).toHaveBeenCalledWith("status", ["creating", "ambiguous", "created_off", "provider_rejected", "cleaning", "cleanup_abandoned"]);
     expect(ordersQuery.is).toHaveBeenCalledWith("external_cleanup_resolution_id", null);
+    expect(mockFrom).toHaveBeenLastCalledWith("infrastructure_capacity_inventory");
+    expect(inventoryQuery.eq).toHaveBeenCalledWith("user_id", "user_a");
+    expect(inventoryQuery.eq).toHaveBeenCalledWith("connection_id", CONNECTION_ID);
+  });
+
+  it("fails closed when the order list could be cut off", async () => {
+    mockFrom
+      .mockReturnValueOnce(query({ data: connectionRow({ revision: 7 }), error: null }))
+      .mockReturnValueOnce(query({ data: { encrypted_bundle: "sealed-old-token", key_version: 2 }, error: null }))
+      .mockReturnValueOnce(listQuery({
+        data: Array.from({ length: 101 }, () => ({ id: QUOTE_ID, status: "created_off", provider_resource_id: "42", provider_ssh_key_id: null })),
+        error: null,
+      }));
+    await expect(loadHetznerCloudTokenReplacementScope("user_a", CONNECTION_ID))
+      .rejects.toMatchObject({ code: "database_error" });
   });
 
   it("refuses to replace a connection with no stored envelope", async () => {
@@ -648,8 +681,6 @@ describe("Hetzner token replacement storage", () => {
     ["not_found", "not_found"],
     ["connection_changed", "conflict"],
     ["envelope_changed", "conflict"],
-    ["cleanup_in_progress", "capacity_busy"],
-    ["setup_step_running", "capacity_busy"],
     ["something_else", "database_error"],
   ])("maps a %s swap outcome to %s", async (outcome, code) => {
     mockRpc.mockResolvedValueOnce({ data: outcome, error: null });
@@ -659,12 +690,54 @@ describe("Hetzner token replacement storage", () => {
     })).rejects.toMatchObject({ code });
   });
 
-  it("treats a guard trigger refusal as a busy credential", async () => {
+  it.each(["replaced", "cleanup_in_progress", "setup_step_running", "server_request_in_progress"])(
+    "returns the %s outcome so the caller can say why", async (outcome) => {
+      mockRpc.mockResolvedValueOnce({ data: outcome, error: null });
+      await expect(replaceHetznerCloudConnectionToken({
+        userId: "user_a", connectionId: CONNECTION_ID, expectedRevision: 7,
+        expectedEnvelope: "sealed-old-token", apiToken: "replacement-project-token-value",
+      })).resolves.toBe(outcome);
+    },
+  );
+
+  it("treats a guard trigger refusal as a running setup step", async () => {
     mockRpc.mockResolvedValueOnce({ data: null, error: { code: "55006" } });
     await expect(replaceHetznerCloudConnectionToken({
       userId: "user_a", connectionId: CONNECTION_ID, expectedRevision: 7,
       expectedEnvelope: "sealed-old-token", apiToken: "replacement-project-token-value",
-    })).rejects.toMatchObject({ code: "capacity_busy" });
+    })).resolves.toBe("setup_step_running");
+  });
+});
+
+describe("Hetzner created-server records", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("lists every dispatched, non-deleted order on the connection with only what the card needs", async () => {
+    const ordersQuery = listQuery({
+      data: [
+        { id: QUOTE_ID, status: "cleanup_abandoned", server_name: "hivra-a1b2c3d4", provider_resource_id: "42" },
+        { id: INVENTORY_ID, status: "ambiguous", server_name: "hivra-e5f6", provider_resource_id: null },
+      ],
+      error: null,
+    });
+    mockFrom.mockReturnValueOnce(query({ data: connectionRow(), error: null })).mockReturnValueOnce(ordersQuery);
+    await expect(listHetznerCloudCreatedServers("user_a", CONNECTION_ID)).resolves.toEqual([
+      { orderId: QUOTE_ID, serverName: "hivra-a1b2c3d4", providerServerId: "42", status: "cleanup_abandoned" },
+      { orderId: INVENTORY_ID, serverName: "hivra-e5f6", providerServerId: null, status: "ambiguous" },
+    ]);
+    expect(ordersQuery.select).toHaveBeenCalledWith("id,status,server_name,provider_resource_id");
+    for (const pair of [["user_id", "user_a"], ["provider", "hetzner-cloud"], ["connection_id", CONNECTION_ID], ["active_connection_id", CONNECTION_ID]]) {
+      expect(ordersQuery.eq).toHaveBeenCalledWith(...pair);
+    }
+    expect(ordersQuery.in).toHaveBeenCalledWith("status", ["creating", "ambiguous", "created_off", "provider_rejected", "cleaning", "cleanup_abandoned"]);
+  });
+
+  it.each([
+    ["a cut-off list", Array.from({ length: 101 }, () => ({ id: QUOTE_ID, status: "created_off", server_name: "hivra-a", provider_resource_id: "42" }))],
+    ["an unreadable row", [{ id: QUOTE_ID, status: "deleted", server_name: "hivra-a", provider_resource_id: "42" }]],
+  ])("fails closed on %s rather than under-label", async (_case, data) => {
+    mockFrom.mockReturnValueOnce(query({ data: connectionRow(), error: null })).mockReturnValueOnce(listQuery({ data, error: null }));
+    await expect(listHetznerCloudCreatedServers("user_a", CONNECTION_ID)).rejects.toMatchObject({ code: "database_error" });
   });
 });
 

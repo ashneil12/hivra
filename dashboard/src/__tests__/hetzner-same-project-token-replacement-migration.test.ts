@@ -40,10 +40,19 @@ describe("Hetzner same-project token replacement migration", () => {
     expect(body).not.toContain("delete from");
   });
 
-  it("refuses while cleanup or a leased setup step holds the credential", () => {
+  it("refuses while cleanup, a leased setup step or a server request in flight holds the credential", () => {
     const body = functionBody("replace_hetzner_cloud_connection_token");
     expect(body).toContain("status = 'cleaning' ) then return 'cleanup_in_progress'");
     expect(body).toContain("lease_expires_at > clock_timestamp() ) then return 'setup_step_running'");
+    expect(body).toContain(
+      "and user_id = p_user_id and status = 'creating' and updated_at > clock_timestamp() - interval '2 minutes' ) then return 'server_request_in_progress'",
+    );
+  });
+
+  it("uses the same in-flight window as the application's pre-check", () => {
+    const service = readFileSync(path.resolve(__dirname, "../lib/infrastructure/hetzner-cloud.ts"), "utf8");
+    expect(service).toContain("export const HETZNER_SERVER_REQUEST_IN_FLIGHT_MS = 2 * 60_000;");
+    expect(normalized).toContain("interval '2 minutes'");
   });
 
   it("scopes the trigger bypass to one transaction and one connection", () => {

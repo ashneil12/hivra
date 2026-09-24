@@ -18,6 +18,7 @@ import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connect
 import {
   HetznerCloudConnectionError,
   HetznerCloudTokenCheckError,
+  HetznerCloudTokenReplaceError,
   replaceHetznerCloudToken,
 } from "@/lib/infrastructure/hetzner-cloud";
 import { HetznerCloudTokenReplaceRequestSchema } from "@/lib/infrastructure/hetzner-cloud-token-contracts";
@@ -39,6 +40,10 @@ function failure(error: unknown): Response {
   if (error instanceof HetznerCloudTokenCheckError) {
     return noStore(apiError(error.message, 422, undefined, { code: error.code }));
   }
+  if (error instanceof HetznerCloudTokenReplaceError) {
+    // replaced_unconfirmed: the swap happened; the message says so.
+    return noStore(apiError(error.message, 409, undefined, { code: error.code }));
+  }
   if (error instanceof HetznerCloudConnectionError) {
     if (error.code === "invalid_credentials") {
       return noStore(apiError("Hetzner rejected this token. Check that you copied the whole token.", 422, undefined, { code: error.code }));
@@ -48,12 +53,6 @@ function failure(error: unknown): Response {
   if (error instanceof InfrastructureConnectionStoreError) {
     if (error.code === "not_found") return noStore(apiError("Infrastructure connection not found.", 404));
     if (error.code === "invalid_request") return noStore(apiError("This is not a Hetzner Cloud connection.", 422));
-    if (error.code === "capacity_busy") {
-      return noStore(apiError(
-        "A server removal or setup step is using this project's token right now. Try again when it finishes.",
-        409, undefined, { code: "token_in_use" },
-      ));
-    }
     if (error.code === "conflict") {
       return noStore(apiError("This connection changed while the token was checked. Nothing was replaced; try again.", 409, undefined, { code: "connection_changed" }));
     }

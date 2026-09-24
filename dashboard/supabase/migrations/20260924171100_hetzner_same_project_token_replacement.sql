@@ -8,13 +8,22 @@
 -- token rotation.
 --
 -- The application now proves, before calling this function, that the new token
--- authenticates, can see at least one server or generated SSH key Hivra
--- created through this connection (Hetzner ids are unique across projects),
--- and can write (a disclosed add-then-remove SSH key). This function then
+-- authenticates, reaches the same project (it can see a server or generated
+-- SSH key Hivra created through this connection, a still-unconfirmed
+-- request's server or key by Hivra's generated name and labels, or a server
+-- the saved inventory saw; Hetzner ids are unique across projects), and can
+-- write (a disclosed add-then-remove SSH key). It refuses when Hivra holds
+-- anything in the project that the new token can't see. This function then
 -- swaps only the encrypted envelope, compared byte-for-byte with the one the
 -- caller read, and keeps the connection revision. Every revision-bound record
 -- (capacity orders and their generated SSH keys, first-boot enrollments,
 -- provider-VM targets) therefore carries forward unchanged.
+--
+-- A server request still inside its create call must finish on the token it
+-- started with: the swap is refused while a 'creating' order was updated in
+-- the last 2 minutes (the create route runs at most 45 seconds). An older
+-- 'creating' order is a dead request that only a working token can resolve,
+-- so it does not block the replacement.
 --
 -- The swap marks itself with a transaction-local setting that only the two
 -- first-boot secret triggers honour:
@@ -77,6 +86,15 @@ begin
       and lease_expires_at > clock_timestamp()
   ) then
     return 'setup_step_running';
+  end if;
+  if exists (
+    select 1 from public.infrastructure_capacity_orders
+    where active_connection_id = p_connection_id
+      and user_id = p_user_id
+      and status = 'creating'
+      and updated_at > clock_timestamp() - interval '2 minutes'
+  ) then
+    return 'server_request_in_progress';
   end if;
 
   perform set_config('hivra.same_project_token_replacement', p_connection_id::text, true);
@@ -143,4 +161,4 @@ grant execute on function public.replace_hetzner_cloud_connection_token(
 comment on function public.replace_hetzner_cloud_connection_token(
   text, uuid, bigint, text, text
 ) is
-  'Service-role-only compare-and-swap of a Hetzner project token envelope at the same connection revision, after the application proved the new token reaches the same project and can write. Keeps generated SSH keys, setup enrollments and targets; refuses during cleanup or a leased setup step.';
+  'Service-role-only compare-and-swap of a Hetzner project token envelope at the same connection revision, after the application proved the new token reaches the same project and can write. Keeps generated SSH keys, setup enrollments and targets; refuses during cleanup, a leased setup step, or a server request updated in the last 2 minutes.';

@@ -14,7 +14,12 @@ import {
 } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type RefObject } from "react";
 
-import { connectHetznerCloudProject, replaceHetznerCloudToken } from "@/lib/infrastructure/client";
+import {
+  connectHetznerCloudProject,
+  InfrastructureApiError,
+  replaceHetznerCloudToken,
+  type HetznerCloudTokenReplaceOutcome,
+} from "@/lib/infrastructure/client";
 import {
   HetznerCloudConnectionCreateSchema,
   type HetznerCloudConnectionDto,
@@ -29,16 +34,27 @@ const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
 const HETZNER_API_TOKEN_GUIDE_URL =
   "https://docs.hetzner.com/cloud/api/getting-started/generating-api-token/";
 
-type HetznerCloudConnectionDialogProps = {
-  /** When set, replace this project's token instead of connecting a new one. */
-  replacing?: HetznerCloudConnectionDto;
+type DialogBaseProps = {
   onClose: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
-  onConnected: (
-    connection: HetznerCloudConnectionDto,
-    inventory: HetznerCloudServerInventoryDto[],
-  ) => void;
 };
+
+type HetznerCloudConnectionDialogProps = DialogBaseProps & (
+  | {
+      replacing?: undefined;
+      onConnected: (
+        connection: HetznerCloudConnectionDto,
+        inventory: HetznerCloudServerInventoryDto[],
+      ) => void;
+    }
+  | {
+      /** Replace this project's token instead of connecting a new one. */
+      replacing: HetznerCloudConnectionDto;
+      onReplaced: (result: HetznerCloudTokenReplaceOutcome) => void;
+      /** The token was saved but not confirmed; re-read the connection. */
+      onReplaceUnconfirmed?: () => void;
+    }
+);
 
 type FieldErrors = {
   name?: string;
@@ -46,17 +62,13 @@ type FieldErrors = {
 };
 
 type Connected = {
-  connection: HetznerCloudConnectionDto;
-  inventory: HetznerCloudServerInventoryDto[];
+  name: string;
   strayKeyName: string;
+  finish: () => void;
 };
 
-export function HetznerCloudConnectionDialog({
-  replacing,
-  onClose,
-  returnFocusRef,
-  onConnected,
-}: HetznerCloudConnectionDialogProps) {
+export function HetznerCloudConnectionDialog(props: HetznerCloudConnectionDialogProps) {
+  const { replacing, onClose, returnFocusRef } = props;
   const [name, setName] = useState(replacing?.name ?? "My Hetzner project");
   const [apiToken, setApiToken] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -100,18 +112,36 @@ export function HetznerCloudConnectionDialog({
 
     setConnecting(true);
     try {
-      const result = replacing
-        ? await replaceHetznerCloudToken(replacing.id, parsed.data.credentials.apiToken)
-        : await connectHetznerCloudProject(parsed.data);
+      let finish: () => void;
+      let strayKeyName: string | null;
+      let savedName: string;
+      if (props.replacing) {
+        const result = await replaceHetznerCloudToken(props.replacing.id, parsed.data.credentials.apiToken);
+        const { onReplaced } = props;
+        finish = () => onReplaced(result);
+        strayKeyName = result.writeCheck.strayKeyName;
+        savedName = result.connection.name;
+      } else {
+        const result = await connectHetznerCloudProject(parsed.data);
+        const { onConnected } = props;
+        finish = () => onConnected(result.connection, result.inventory);
+        strayKeyName = result.writeCheck.strayKeyName;
+        savedName = result.connection.name;
+      }
       setApiToken("");
-      if (result.writeCheck.strayKeyName) {
+      if (strayKeyName) {
         // Write access is proven, but a test key is left in the project. Say so
         // before moving on instead of hiding it.
-        setConnected({ connection: result.connection, inventory: result.inventory, strayKeyName: result.writeCheck.strayKeyName });
+        setConnected({ name: savedName, strayKeyName, finish });
         return;
       }
-      onConnected(result.connection, result.inventory);
+      finish();
     } catch (error) {
+      if (props.replacing && error instanceof InfrastructureApiError && error.code === "replaced_unconfirmed") {
+        // The swap happened; the page re-reads what the connection holds now.
+        setApiToken("");
+        props.onReplaceUnconfirmed?.();
+      }
       setOperationError(
         error instanceof Error
           ? error.message
@@ -159,7 +189,7 @@ export function HetznerCloudConnectionDialog({
               <div className={`${styles.capacityResultHero} ${styles.capacityResult_warning}`} role="status">
                 <span aria-hidden="true"><CheckCircle2 size={24} /></span>
                 <div>
-                  <span className={styles.sectionLabel}>{connected.connection.name}</span>
+                  <span className={styles.sectionLabel}>{connected.name}</span>
                   <h2>{replacing ? "Token replaced." : "Project connected."}</h2>
                   <p>{hetznerStrayWriteCheckKeyMessage(connected.strayKeyName)}</p>
                 </div>
@@ -172,7 +202,7 @@ export function HetznerCloudConnectionDialog({
                 <button
                   type="button"
                   className={styles.primaryButton}
-                  onClick={() => onConnected(connected.connection, connected.inventory)}
+                  onClick={connected.finish}
                 >
                   Continue
                 </button>

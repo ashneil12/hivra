@@ -22,7 +22,9 @@ import type {
 import { formatInfrastructureDate } from "@/lib/infrastructure/formatters";
 import { hetznerCapacitySlotReason, type HetznerCloudCapacitySlotDto } from "@/lib/infrastructure/hetzner-cloud-token-contracts";
 import {
+  hetznerCreatedServerFor,
   isProviderComputerSetupTerminal,
+  type HetznerCloudCreatedServer,
   type ProviderComputerSetupView,
 } from "@/lib/infrastructure/provider-computer-setup-contracts";
 import { buildLaunchSetupHref, type PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
@@ -33,11 +35,19 @@ import styles from "./Infrastructure.module.css";
 
 const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
 
+/** Whether Hivra's own records of what it created here have been read. */
+export type HetznerSetupEvidenceStatus = "loading" | "loaded" | "failed";
+
 type HetznerCloudConnectionCardProps = {
   connection: HetznerCloudConnectionDto;
   inventory: HetznerCloudServerInventoryDto[];
   /** Saved setup for servers Hivra created through this connection. */
   setups?: ProviderComputerSetupView[];
+  /** Every server request Hivra sent through this connection. */
+  createdServers?: HetznerCloudCreatedServer[];
+  /** No server is called "Not created by Hivra" until this is "loaded". */
+  setupEvidence?: HetznerSetupEvidenceStatus;
+  onRetrySetupEvidence?: () => void;
   slot?: HetznerCloudCapacitySlotDto | null;
   loading: boolean;
   error?: string | null;
@@ -90,26 +100,49 @@ function persistedSyncError(
   return "The latest Hetzner server sync didn't finish.";
 }
 
-/** One truthful line about what Hivra can do with a server in this project. */
-function serverReadiness(setup: ProviderComputerSetupView | undefined, heldBySlot: boolean): {
+type Readiness = {
   label: string | null;
   tone: "connected" | "checking" | "error" | "pending";
   hint: string;
-} {
-  if (!setup && heldBySlot) {
-    return {
-      label: "Created by Hivra",
-      tone: "checking",
-      hint: "Hivra is still confirming how this server's creation ended.",
-    };
+};
+
+/**
+ * One truthful line about what Hivra can do with a server in this project,
+ * from Hivra's own records only. "Not created by Hivra" is said only once
+ * those records have loaded and none of them names this server; while they
+ * load, or when they can't be read, the server gets no provenance line.
+ */
+function serverReadiness(
+  setup: ProviderComputerSetupView | undefined,
+  createdBy: HetznerCloudCreatedServer | null,
+  evidence: HetznerSetupEvidenceStatus,
+): Readiness | null {
+  if (setup) return setupReadiness(setup);
+  if (createdBy) {
+    switch (createdBy.status) {
+      case "creating":
+      case "ambiguous":
+        return { label: "Created by Hivra", tone: "checking", hint: "Hivra is still confirming how this server's creation ended." };
+      case "cleaning":
+        return { label: "Created by Hivra", tone: "checking", hint: "Hivra is removing this server." };
+      case "cleanup_abandoned":
+        return { label: "Created by Hivra", tone: "error", hint: "Hivra stopped removing this server. Check it in Hetzner Console; Hetzner bills it until it's deleted." };
+      case "provider_rejected":
+        return { label: "Created by Hivra", tone: "error", hint: "Hetzner reported this request as refused, but a server with its name exists. Check it in Hetzner Console." };
+      default:
+        return { label: "Created by Hivra", tone: "pending", hint: "Open Computer setup to see how far its setup got." };
+    }
   }
-  if (!setup) {
-    return {
-      label: null,
-      tone: "pending",
-      hint: "Not created by Hivra — connect with the setup command.",
-    };
+  if (evidence === "loaded") {
+    return { label: null, tone: "pending", hint: "Not created by Hivra — connect with the setup command." };
   }
+  if (evidence === "loading") {
+    return { label: null, tone: "pending", hint: "Checking whether Hivra created this server…" };
+  }
+  return null;
+}
+
+function setupReadiness(setup: ProviderComputerSetupView): Readiness {
   if (setup.stage === "environment_prepared" && setup.launchReady) {
     return { label: "Ready for agents", tone: "connected", hint: "Set up by Hivra. Launch checks it again before anything starts." };
   }
@@ -134,6 +167,9 @@ export function HetznerCloudConnectionCard({
   connection,
   inventory,
   setups = [],
+  createdServers = [],
+  setupEvidence = "loading",
+  onRetrySetupEvidence,
   slot = null,
   loading,
   error,
@@ -225,6 +261,18 @@ export function HetznerCloudConnectionCard({
         </div>
       ) : null}
 
+      {setupEvidence === "failed" && inventory.length > 0 ? (
+        <div className={styles.providerInventoryError} role="alert">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>Hivra couldn&apos;t load which of these servers it created or how far their setup got.</span>
+          {onRetrySetupEvidence ? (
+            <button type="button" onClick={onRetrySetupEvidence}>
+              <RefreshCw size={13} aria-hidden="true" /> Try again
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {loading && inventory.length === 0 ? (
         <div className={styles.providerInventoryLoading} role="status">
           <Loader2 size={17} className={styles.spin} aria-hidden="true" />
@@ -235,11 +283,15 @@ export function HetznerCloudConnectionCard({
           {inventory.map((server) => {
             const state = inventoryStatus(server.status);
             const setup = setupByServer.get(server.providerResourceId);
-            const readiness = serverReadiness(setup, Boolean(slot?.held && slot.serverName === server.name));
+            const createdBy = hetznerCreatedServerFor(createdServers, server);
+            const readiness = serverReadiness(setup, createdBy, setupEvidence);
             const readyTargetId = setup?.stage === "environment_prepared" && setup.launchReady ? setup.targetId : null;
             // Setup steps need a working project token; replace it first.
             const canContinueSetup = Boolean(setup && !isProviderComputerSetupTerminal(setup) && onSetup
               && connection.status === "ready");
+            // Only a server Hivra's loaded records don't name is someone else's.
+            const canConnect = setupEvidence === "loaded" && !setup && !createdBy && onConnectExistingServer
+              && (server.publicNetwork.ipv4 || server.publicNetwork.ipv6);
             return (
               <article key={server.id} className={styles.providerServerCard}>
                 <div className={styles.providerServerHeader}>
@@ -272,31 +324,33 @@ export function HetznerCloudConnectionCard({
                     <dd>{server.location.city ?? server.location.name}</dd>
                   </div>
                 </dl>
-                <div className={styles.providerServerReadiness}>
-                  {readiness.label ? (
-                    <span className={`${styles.statusBadge} ${styles[`status_${readiness.tone}`]}`}>{readiness.label}</span>
-                  ) : null}
-                  <span>{readiness.hint}</span>
-                  {readyTargetId ? (
-                    <Link
-                      className={styles.primaryButton}
-                      href={launchResourceId
-                        ? buildLaunchSetupHref(launchResourceId, readyTargetId, { unified: unifiedLaunchReturn })
-                        : launchOnTargetHref(readyTargetId)}
-                    >
-                      {launchResourceId ? "Continue your launch" : "Launch on this server"}
-                    </Link>
-                  ) : canContinueSetup && setup ? (
-                    <button type="button" className={styles.primaryButton} onClick={() => onSetup?.(setup.orderId)}>
-                      {setup.stage === "awaiting_setup" ? "Start setup" : "Continue setup"}
-                    </button>
-                  ) : !setup && !(slot?.held && slot.serverName === server.name) && onConnectExistingServer
-                    && (server.publicNetwork.ipv4 || server.publicNetwork.ipv6) ? (
-                    <button type="button" className={styles.secondaryButton} onClick={() => onConnectExistingServer(server)}>
-                      <PlugZap size={14} aria-hidden="true" /> Connect this server
-                    </button>
-                  ) : null}
-                </div>
+                {/* A setup or a loaded record always yields a line; a failed read yields none. */}
+                {readiness ? (
+                  <div className={styles.providerServerReadiness}>
+                    {readiness.label ? (
+                      <span className={`${styles.statusBadge} ${styles[`status_${readiness.tone}`]}`}>{readiness.label}</span>
+                    ) : null}
+                    <span>{readiness.hint}</span>
+                    {readyTargetId ? (
+                      <Link
+                        className={styles.primaryButton}
+                        href={launchResourceId
+                          ? buildLaunchSetupHref(launchResourceId, readyTargetId, { unified: unifiedLaunchReturn })
+                          : launchOnTargetHref(readyTargetId)}
+                      >
+                        {launchResourceId ? "Continue your launch" : "Launch on this server"}
+                      </Link>
+                    ) : canContinueSetup && setup ? (
+                      <button type="button" className={styles.primaryButton} onClick={() => onSetup?.(setup.orderId)}>
+                        {setup.stage === "awaiting_setup" ? "Start setup" : "Continue setup"}
+                      </button>
+                    ) : canConnect ? (
+                      <button type="button" className={styles.secondaryButton} onClick={() => onConnectExistingServer?.(server)}>
+                        <PlugZap size={14} aria-hidden="true" /> Connect this server
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </article>
             );
           })}
@@ -348,7 +402,8 @@ export function HetznerCloudConnectionCard({
         {onCleanup && <button type="button" className={styles.secondaryButton} onClick={onCleanup}>
           <Trash2 size={14} aria-hidden="true" /> Remove created server
         </button>}
-        {onSetup && setups.length > 0 && <button type="button" className={styles.secondaryButton} onClick={() => onSetup()}>
+        {/* Computer setup reads its own list, so it stays reachable when the card's read failed. */}
+        {onSetup && (setups.length > 0 || setupEvidence === "failed") && <button type="button" className={styles.secondaryButton} onClick={() => onSetup()}>
           <Server size={14} aria-hidden="true" /> Computer setup
         </button>}
         {!tokenRejected && onReplaceToken ? (

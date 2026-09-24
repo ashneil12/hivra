@@ -10,6 +10,8 @@ import {
   getHetznerCloudInventory,
   getHetznerCloudOfferCatalog,
   listInfrastructureTargets,
+  listProviderComputerSetupEvidence,
+  listProviderComputerSetups,
   prepareInfrastructureConnection,
   preflightInfrastructureConnection,
   refreshHetznerCloudInventory,
@@ -237,18 +239,41 @@ describe("infrastructure browser client", () => {
     };
     const fetchMock = jest.fn(() => jsonResponse({
       success: true,
-      data: { connection: hetznerConnection, inventory: [], writeCheck: { strayKeyName: "hivra-check-0123456789ab" } },
+      data: {
+        connection: hetznerConnection, inventory: null,
+        writeCheck: { strayKeyName: "hivra-check-0123456789ab" }, projectCheck: "unconfirmed",
+      },
     }));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(replaceHetznerCloudToken(CONNECTION_ID, "new-project-scoped-token-value"))
-      .resolves.toMatchObject({ writeCheck: { strayKeyName: "hivra-check-0123456789ab" } });
+    // A saved token without a saved server list, and an unconfirmed project, both reach the page.
+    await expect(replaceHetznerCloudToken(CONNECTION_ID, "new-project-scoped-token-value")).resolves.toEqual({
+      connection: hetznerConnection, inventory: null,
+      writeCheck: { strayKeyName: "hivra-check-0123456789ab" }, projectCheck: "unconfirmed",
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/infrastructure/connections/${CONNECTION_ID}/hetzner-cloud/token`,
       expect.objectContaining({ method: "POST", body: JSON.stringify({ apiToken: "new-project-scoped-token-value" }) }),
     );
     await expect(replaceHetznerCloudToken("not-a-connection", "new-project-scoped-token-value")).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A result that doesn't say how the project was checked is not a replaced token.
+    global.fetch = jest.fn(() => jsonResponse({
+      success: true,
+      data: { connection: hetznerConnection, inventory: [], writeCheck: { strayKeyName: null } },
+    })) as typeof fetch;
+    await expect(replaceHetznerCloudToken(CONNECTION_ID, "new-project-scoped-token-value")).rejects.toThrow(/unexpected response/);
+  });
+
+  it("reads setup evidence with Hivra's created-server records", async () => {
+    const createdServers = [{ orderId: TARGET_ID, serverName: "hivra-a1b2c3d4", providerServerId: null, status: "ambiguous" }];
+    global.fetch = jest.fn(() => jsonResponse({ success: true, data: { computers: [], createdServers } })) as typeof fetch;
+    await expect(listProviderComputerSetupEvidence(CONNECTION_ID)).resolves.toEqual({ computers: [], createdServers });
+    await expect(listProviderComputerSetups(CONNECTION_ID)).resolves.toEqual([]);
+    // Without the created-server records the card can't label anything.
+    global.fetch = jest.fn(() => jsonResponse({ success: true, data: { computers: [] } })) as typeof fetch;
+    await expect(listProviderComputerSetupEvidence(CONNECTION_ID)).rejects.toThrow(/unexpected response/);
   });
 
   it("reads the account's Hetzner server slot", async () => {

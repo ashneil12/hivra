@@ -1,7 +1,12 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { POST } from "../route";
-import { replaceHetznerCloudToken, HetznerCloudTokenCheckError, HetznerCloudConnectionError } from "@/lib/infrastructure/hetzner-cloud";
+import {
+  replaceHetznerCloudToken,
+  HetznerCloudTokenCheckError,
+  HetznerCloudTokenReplaceError,
+  HetznerCloudConnectionError,
+} from "@/lib/infrastructure/hetzner-cloud";
 import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
 
 jest.mock("server-only", () => ({}));
@@ -29,7 +34,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   (auth as unknown as jest.Mock).mockResolvedValue({ userId: "owner" });
   (replaceHetznerCloudToken as jest.Mock).mockResolvedValue({
-    connection: { id: connection }, inventory: [], writeCheck: { strayKeyName: null },
+    connection: { id: connection }, inventory: [], writeCheck: { strayKeyName: null }, projectCheck: "confirmed",
   });
 });
 
@@ -59,7 +64,8 @@ it.each([
   [new HetznerCloudTokenCheckError("token_read_only"), 422, "token_read_only", /read-only/],
   [new HetznerCloudTokenCheckError("token_project_mismatch"), 422, "token_project_mismatch", /different Hetzner project/],
   [new HetznerCloudConnectionError("invalid_credentials"), 422, "invalid_credentials", /rejected this token/],
-  [new InfrastructureConnectionStoreError("capacity_busy"), 409, "token_in_use", /removal or setup step/],
+  [new HetznerCloudTokenReplaceError("token_in_use"), 409, "token_in_use", /removal or setup step.*Nothing was replaced/],
+  [new HetznerCloudTokenReplaceError("server_request_in_progress"), 409, "server_request_in_progress", /creating a server in this project right now/],
   [new InfrastructureConnectionStoreError("conflict"), 409, "connection_changed", /Nothing was replaced/],
 ])("maps %s to a fixable response", async (error, status, code, message) => {
   (replaceHetznerCloudToken as jest.Mock).mockRejectedValueOnce(error);
@@ -68,4 +74,14 @@ it.each([
   expect(response.status).toBe(status);
   expect(body.code).toBe(code);
   expect(body.error).toMatch(message);
+});
+
+it("says the token was saved when the swap happened but couldn't be confirmed", async () => {
+  (replaceHetznerCloudToken as jest.Mock).mockRejectedValueOnce(new HetznerCloudTokenReplaceError("replaced_unconfirmed"));
+  const response = await POST(request(), context);
+  const body = await response.json();
+  expect(response.status).toBe(409);
+  expect(body.code).toBe("replaced_unconfirmed");
+  expect(body.error).toMatch(/Hivra saved your new token/);
+  expect(body.error).not.toMatch(/Nothing was replaced/);
 });

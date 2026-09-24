@@ -1,4 +1,4 @@
-import { advanceProviderComputerSetup, listProviderComputerSetups } from "../provider-computer-setup";
+import { advanceProviderComputerSetup, listProviderComputerSetupEvidence, listProviderComputerSetups } from "../provider-computer-setup";
 import { cleanupConnection, cleanupKey, cleanupOrder, firstBootCleanupFixture } from "./hetzner-cleanup.fixtures";
 import { receiverFixture } from "./first-boot-receiver.fixtures";
 import { providerVmTarget } from "./provider-vm-target.fixtures";
@@ -32,6 +32,25 @@ it("reads saved setup without provider actions, SSH, token decryption or automat
   expect(h.deps.advance).not.toHaveBeenCalled(); expect(h.deps.prepare).not.toHaveBeenCalled();
   expect(JSON.stringify(views)).not.toContain(h.enrollment.challenge.verifierSha256);
   expect(views[0]).not.toHaveProperty("hostPublicKey");
+});
+it("returns setup views with Hivra's record of every server request on the connection, read-only", async () => {
+  const h = harness();
+  const createdServers = [
+    { orderId: cleanupOrder, serverName: "hivra-a1b2", providerServerId: "42", status: "created_off" as const },
+    { orderId: "00000000-0000-4000-8000-000000000123", serverName: "hivra-c3d4", providerServerId: null, status: "ambiguous" as const },
+  ];
+  const listCreated = jest.fn(async () => createdServers);
+  const evidence = await listProviderComputerSetupEvidence("owner", cleanupConnection, { ...h.deps, createdServers: listCreated });
+  expect(evidence.computers).toEqual([expect.objectContaining({ orderId: cleanupOrder, stage: "identity_enrolled" })]);
+  expect(evidence.createdServers).toEqual(createdServers);
+  expect(listCreated).toHaveBeenCalledWith("owner", cleanupConnection);
+  expect(h.deps.advance).not.toHaveBeenCalled(); expect(h.deps.prepare).not.toHaveBeenCalled();
+});
+it("fails the whole read when either half of the evidence can't be read", async () => {
+  const h = harness();
+  await expect(listProviderComputerSetupEvidence("owner", cleanupConnection, {
+    ...h.deps, createdServers: jest.fn(async () => { throw new Error("database down"); }),
+  })).rejects.toThrow("database down");
 });
 it("shows the setup key's deadline only until the server connects back", async () => {
   const h = harness();
