@@ -82,6 +82,16 @@ import {
   matchPreparedCanaryComputer,
   preparedCanaryLifecycleScript,
 } from "@/lib/hivra/prepared-canary-computers";
+import {
+  doSessionActionFor,
+  isGvisorAction,
+  isPreparedAction,
+  isPreparedProfile,
+  isProxmoxAction,
+  isWindowsOnMyServer,
+  providerRefusalFor,
+  runtimeUpdateRefusal,
+} from "@/lib/hivra/lifecycle-support";
 import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
@@ -336,7 +346,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (agent.computer_substrate === "do-managed-session") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
-      const managedAction = action === "start" ? "resume" : action === "stop" ? "pause" : action === "delete" ? "delete" : null;
+      const managedAction = doSessionActionFor(action);
       if (!managedAction) {
         return apiError("DigitalOcean sessions support start (resume), stop (pause), and delete.", 400);
       }
@@ -349,7 +359,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (agent.computer_substrate === "gvisor") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
-      if (!['start', 'stop', 'resize', 'delete'].includes(action)) {
+      if (!isGvisorAction(action)) {
         return apiError("This Linux terminal sandbox does not support that lifecycle operation.", 400);
       }
       let cpu: number | undefined;
@@ -367,7 +377,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       try {
         const updated = await mutateGvisorComputer(userId, String(agent.id), {
-          action: action as "start" | "stop" | "resize" | "delete",
+          action,
           ...(action === "resize" ? { cpu, ramGb } : {}),
         });
         return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
@@ -381,7 +391,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     }
 
-    if (!["stop", "start", "restart", "update_runtime", "resize", "snapshot", "restore"].includes(action)) {
+    if (!isProxmoxAction(action)) {
       return apiError("Unknown action", 400);
     }
     if (["update_runtime", "snapshot", "restore"].includes(action) && !isSameOriginMutationRequest(req)) {
@@ -392,7 +402,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // changing anything. Refuse here, before any lease or host call: sent to
     // the host, that refusal would read as an unverified outcome and hold the
     // lease (blocking Stop, Restart and Resize) until the reconciler clears it.
-    if (action === "update_runtime" && agent.type === "deepseek-harness") {
+    if (action === "update_runtime" && runtimeUpdateRefusal(agent) === "deepseek") {
       return apiError("DeepSeek computers can’t update their connection service here yet. Nothing was changed.", 409);
     }
 
@@ -412,17 +422,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     };
     const desktopInvalidationFailure = () => apiError("The desktop capability could not be invalidated. No lifecycle command was sent.", 503);
 
-    const preparedProfile = agent.computer_profile === "omarchy" || agent.computer_profile === "windows";
+    const preparedProfile = isPreparedProfile(agent);
     const preparedComputer = matchPreparedCanaryComputer(agent);
     // A prepared-profile row must never fall through to the general Ubuntu
     // provisioner merely because its server-side slot configuration is stale.
+    // A Windows computer on the owner's own server has no lifecycle adapter
+    // yet, and Manage shows its power controls as unavailable for that reason.
     if (preparedProfile && !preparedComputer) {
-      return apiError("This prepared computer no longer matches its admitted Canary slot. No lifecycle command was sent.", 409);
+      return apiError(isWindowsOnMyServer(agent)
+        ? "Hivra can't start, stop, restart or change a Windows computer on your own server yet. Use your server's console. Nothing was changed."
+        : "This prepared computer no longer matches the setup Hivra has on record, so no command was sent.", 409);
     }
     if (preparedComputer) {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
-      if (action !== "start" && action !== "stop" && action !== "restart") {
-        return apiError("This prepared Canary computer does not support that lifecycle operation yet. Its machine and data are unchanged.", 400);
+      if (!isPreparedAction(action)) {
+        return apiError("This prepared computer does not support that action yet. Its machine and data are unchanged.", 400);
       }
       const limited = enforceAuthenticatedRouteRateLimit(req, {
         routeKey: "prepared_computer_lifecycle",
@@ -489,13 +503,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (agent.computer_substrate === "provider-vm") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
-      if (action === "update_runtime") {
-        return apiError("Runtime updates for allocated provider computers are not supported yet. Your computer and data are unchanged.", 400);
-      }
-      if (action === "resize") return apiError("Resizing an allocated Hetzner computer is not supported yet. Its original size and data are retained.", 400);
-      if (action === "snapshot" || action === "restore") {
-        return apiError("Restore points for allocated provider computers are not supported yet. The original computer and data are unchanged.", 400);
-      }
+      const refusal = providerRefusalFor(action);
+      if (refusal) return apiError(refusal, 400);
       const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_power", userId, limit: 30, windowMs: 5 * 60_000 });
       if (limited) return limited;
       const operation = { userId, agentId: String(agent.id), operationId: randomUUID() };
