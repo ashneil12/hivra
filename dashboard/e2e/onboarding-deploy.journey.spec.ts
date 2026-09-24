@@ -41,7 +41,7 @@ test.describe('Tier 3 Journey A: Launch Readiness', () => {
 
     const continueCta = page.getByTestId('launch-primary-action');
     const capacityAlert = page.getByRole('alert').filter({
-      hasText: /no open agent slots|not have enough remaining capacity|needs a paid managed plan|could not be verified/i,
+      hasText: /no open agent slots|needs [\d.]+ CPU \/ [\d.]+ GB|is set to use up to|needs a paid (managed )?plan|could not be verified/i,
     });
     const readiness = async () => {
       if (await continueCta.isEnabled()) return 'ready';

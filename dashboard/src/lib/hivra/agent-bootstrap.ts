@@ -23,6 +23,7 @@
 
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 import { getGoal, deriveIdentity, type Identity, type GoalDef } from "./agent-identity";
+import { getAgent } from "./agent-catalog";
 import { MAX_CONTEXT_LEN } from "./agent-limits";
 import type { BoxLlmPayload } from "./agent-llm";
 import { getPersonaSoul } from "@/lib/persona-souls-accessor";
@@ -88,13 +89,19 @@ interface Resolved {
   soulPromptId: string;
 }
 
-// Each agent type ships different tools — the identity should say so honestly
-// (Claude Code has a live browser; Codex doesn't). Mirrors the per-kind base
-// persona the provisioner installs (system-prompt.md vs system-prompt-codex.md).
+// Each agent type ships different tools — the identity should say so honestly.
+// The browser is the one capability that can change after launch: agent types
+// that ship the box browser stack (catalog `browser`, e.g. Claude Code and
+// Codex) have it switched on or off per computer from Manage, box-side, with no
+// stored flag, and this identity is seeded only once. A launch-time or seed-time
+// reading would go stale on the first toggle, so for those types the line is
+// conditional (matching the provisioned base persona's "if browser automation
+// is enabled on this box"). Types without the stack never claim a browser.
 function capabilitiesFor(type?: string | null): string {
-  if (type === "codex") return "write and run code, and use a full terminal";
-  // claude-code (and any future claude-CLI agent)
-  return "drive a real browser, write and run code, and use a full terminal";
+  if (type && getAgent(type)?.browser) {
+    return "write and run code, use a full terminal, and drive a real browser when browser automation is on in Manage";
+  }
+  return "write and run code, and use a full terminal";
 }
 
 function resolve(agent: BootstrapAgent): Resolved {

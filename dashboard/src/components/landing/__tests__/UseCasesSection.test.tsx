@@ -46,4 +46,14 @@ describe("UseCasesSection", () => {
       "#computers"
     );
   });
+
+  // ATT-02 regression: the footer used to say "You don't have to attach an
+  // agent at all", implying an agent can be attached to a computer later.
+  it("says a computer runs without an agent and an agent gets its own computer", () => {
+    render(<UseCasesSection />);
+    expect(
+      screen.getByText("A computer runs fine without an agent. Launch an agent and it gets a computer of its own.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/attach/i)).not.toBeInTheDocument();
+  });
 });

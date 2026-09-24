@@ -2810,7 +2810,8 @@ describe("WelcomeFlow", () => {
     expect(payload).not.toHaveProperty("apiKey");
 
     // Deploy success now lands an honest "Deployed — booting now" beat (no
-    // auto-redirect); the route fires only when the user clicks "Open agent now".
+    // auto-redirect); the route fires only when the user clicks "Skip for now"
+    // while it boots (or "Start chatting" once it is live).
     fireEvent.click(await screen.findByRole("button", { name: /skip for now/i }));
     expect(mockPush).toHaveBeenCalledWith("/dashboard/instances/inst-venice-byok?surface=chat&welcome=1");
   });
@@ -2907,7 +2908,8 @@ describe("WelcomeFlow", () => {
     });
 
     // Deploy success now lands an honest "Deployed — booting now" beat (no
-    // auto-redirect); the route fires only when the user clicks "Open agent now".
+    // auto-redirect); the route fires only when the user clicks "Skip for now"
+    // while it boots (or "Start chatting" once it is live).
     fireEvent.click(await screen.findByRole("button", { name: /skip for now/i }));
     expect(mockPush).toHaveBeenCalledWith("/dashboard/instances/inst-funded-venice?surface=chat&welcome=1");
   });
