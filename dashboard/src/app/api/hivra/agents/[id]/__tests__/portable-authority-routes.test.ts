@@ -113,6 +113,7 @@ describe("portable Hivra guest-operation authority", () => {
       type: "codex",
       status: "running",
       ip: "10.251.20.61",
+      vmid: 1161,
       proxmox_host: "legacy-host-must-not-authorize",
       infrastructure_connection_id: connectionId,
       deployment_target_id: targetId,
@@ -194,10 +195,13 @@ describe("portable Hivra guest-operation authority", () => {
     expect(mockResolveExecutionContext.mock.invocationCallOrder[0]).toBeLessThan(
       mockProvisionBankrWallet.mock.invocationCallOrder[0],
     );
+    // The wallet key is written through the resolved target authority (the
+    // whole execution context, which pins SSH to this VMID), never the stored
+    // legacy host.
     expect(mockSeedBankrWalletEnv).toHaveBeenCalledWith(
-      { id: "agent-1", type: "codex", ip: "10.251.20.61" },
+      expect.objectContaining({ id: "agent-1", type: "codex", ip: "10.251.20.61", vmid: 1161 }),
       { BANKR_API_KEY: "secret" },
-      portableEnv,
+      expect.objectContaining({ kind: "self-managed", env: portableEnv }),
     );
   });
 

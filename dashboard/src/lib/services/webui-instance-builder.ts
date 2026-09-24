@@ -48,6 +48,7 @@ import {
   buildWebUIUsrLocalHermesShimCommand,
   WEBUI_HERMES_AGENT_DIR,
   WEBUI_HERMES_WRITE_SAFE_ROOTS,
+  WEBUI_BANKR_RUNTIME_ENV_KEYS,
   WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
   WEBUI_MANAGED_RUNTIME_ENV_KEYS,
   WEBUI_PERSISTENT_INSTALL_ENV_KEYS,
@@ -182,6 +183,8 @@ const AGENT_CDP_PORT = 9223;
 // Chrome binds 127.0.0.1 only + rejects non-localhost Host headers, so the agent
 // (a sibling container) reaches CDP through a Host-rewriting proxy on this port.
 const AGENT_CDP_PROXY_PORT = 9224;
+// A BANKR_AGENT_WALLET_ADDRESS value the update script may compare against.
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 function agentBrowserCdpEnabled(): boolean {
   // Default ON. The sidecar's entrypoint runtime-gates the Chrome supervisor on
   // AGENT_CDP_ENABLED, so this only does anything where the sidecar is itself
@@ -313,6 +316,37 @@ export interface WebUIDeployParams {
   codexAuthBundle?: CodexVaultBundle;
   /** Per-agent Bankr wallet, written transiently into VM config/env only. */
   bankr?: InstanceBankrAgentConfig | null;
+  /**
+   * Update mode only. Set by the orchestrator only when the wallet lookup
+   * definitively resolved to a user-connected wallet. `walletAddresses` is
+   * every wallet address that row has delivered: the current one, each
+   * earlier wallet from the user's own Bankr account a reconnect replaced, and
+   * a Hivra-created wallet a switch replaced. A connect or disconnect can skip
+   * the restart, so the box may still hold any of them. The script changes a
+   * file's BANKR_* only when the file's BANKR_AGENT_WALLET_ADDRESS is in this
+   * set, and never touches a file holding any other address (it may be the
+   * user's own configuration).
+   * - "clear_user_disconnected" (with `bankr` null): the user disconnected the
+   *   wallet. /state/.env's BANKR_* and config.yaml's `bankr:` blocks go only
+   *   when /state/.env holds an address in the set, and each cloned profile
+   *   .env holding one loses its BANKR_* lines. The first clear removes the
+   *   address lines, so every later run while the row stays revoked changes
+   *   nothing, including BANKR_* values the user sets afterwards for their
+   *   own use.
+   * - "replace_user_connected" (with `bankr` set): BANKR_* is upserted into
+   *   /state/.env, any BANKR_* key the new wallet doesn't set (a replaced
+   *   wallet's withdrawal destination) is dropped, the `bankr:` block is
+   *   stripped (the agent copies it over BANKR_* on every config load and it
+   *   can hold an older key), and each cloned profile .env holding an address
+   *   in the set (the delivered one included: a new key for the same wallet
+   *   replaces the old one) loses its BANKR_* lines, so the profile falls
+   *   back to the container env this run delivers.
+   * Absent (every Hivra-provisioned wallet, no wallet, a failed lookup) the
+   * script is unchanged.
+   */
+  bankrRuntimeReconcile?:
+    | { action: "clear_user_disconnected"; walletAddresses: readonly string[] }
+    | { action: "replace_user_connected"; walletAddresses: readonly string[] };
   /**
    * Pro-tier-gated. If true, the docker-compose includes a `browser-sidecar`
    * service running the deterministic Playwright HTTP API. Caller is
@@ -3519,7 +3553,145 @@ echo "[webui-update] image convergence verified (gateway+official-dashboard=$age
     ...WEBUI_PERSISTENT_INSTALL_ENV_KEYS,
     ...WEBUI_MANAGED_RUNTIME_ENV_KEYS,
   ].join(" ");
-  const clearableEnvKeys = WEBUI_CLEARABLE_RUNTIME_ENV_KEYS.join(" ");
+  // BANKR_* reconcile for a wallet from the user's own Bankr account (see
+  // bankrRuntimeReconcile and the clearable list's comment). Without the flag
+  // every piece below is empty, so the script stays byte-for-byte what it was.
+  // A set `bankr` wins over a clear: never clear keys this same run delivers.
+  // A clear without one valid wallet address clears nothing: an address is what
+  // proves a file's BANKR_* lines are the row's. Only validated, lower-cased
+  // addresses reach the script.
+  const bankrReconcile = isUpdate ? p.bankrRuntimeReconcile : undefined;
+  const bankrReconcileWalletAddresses = (candidates: readonly unknown[]): string[] => {
+    const addresses: string[] = [];
+    for (const candidate of candidates) {
+      const address = typeof candidate === "string" ? candidate.trim().toLowerCase() : "";
+      if (EVM_ADDRESS_PATTERN.test(address) && !addresses.includes(address)) addresses.push(address);
+    }
+    return addresses;
+  };
+  const bankrReconcileAddressInput: unknown = bankrReconcile?.walletAddresses;
+  const requestedBankrWalletAddresses: readonly unknown[] = Array.isArray(bankrReconcileAddressInput)
+    ? bankrReconcileAddressInput
+    : [];
+  const disconnectedBankrWalletAddresses =
+    bankrReconcile?.action === "clear_user_disconnected" && !p.bankr
+      ? bankrReconcileWalletAddresses(requestedBankrWalletAddresses)
+      : [];
+  const clearBankr = disconnectedBankrWalletAddresses.length > 0;
+  const replaceBankr = bankrReconcile?.action === "replace_user_connected" && !!p.bankr;
+  // The delivered wallet is always in a replace run's set.
+  const bankrReconcileSet = clearBankr
+    ? disconnectedBankrWalletAddresses
+    : replaceBankr
+      ? bankrReconcileWalletAddresses([p.bankr!.walletAddress, ...requestedBankrWalletAddresses])
+      : [];
+  // A replace run lists BANKR_* statically: the clear pass skips every key the
+  // generated env delivers, so only keys the new wallet doesn't set go. A clear
+  // run appends them in the shell, and only when /state/.env holds one of the
+  // row's wallets.
+  const clearableEnvKeys = [
+    ...WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
+    ...(replaceBankr ? WEBUI_BANKR_RUNTIME_ENV_KEYS : []),
+  ].join(" ");
+  const clearBankrComment = replaceBankr
+    ? `
+# Except on this run: it delivers a wallet from the user's own Bankr account, so
+# BANKR_* is listed too. The loop skips every key that wallet sets, so only a
+# BANKR_* key it doesn't set (such as a replaced wallet's withdrawal destination)
+# is dropped.`
+    : clearBankr
+      ? `
+# Except on this run: the user disconnected a wallet from their own Bankr account,
+# so BANKR_* is appended below, but only when /state/.env holds one of the wallets
+# that agent's row delivered (bankr_clear_state, set before config.yaml is copied).`
+      : "";
+  const clearBankrKeysScript = clearBankr
+    ? `
+if [ "$bankr_clear_state" = 1 ]; then
+  clearable_env_keys="$clearable_env_keys ${WEBUI_BANKR_RUNTIME_ENV_KEYS.join(" ")}"
+fi`
+    : "";
+  const bankrOwnershipDecision = clearBankr
+    ? `if bankr_wallet_address_in_set "$(bankr_env_wallet_address /state/.env)"; then
+  bankr_clear_state=1
+  echo "[webui-update] /state/.env holds a disconnected Bankr wallet: clearing its BANKR_* and config.yaml bankr: blocks"
+else
+  bankr_clear_state=0
+  echo "[webui-update] /state/.env holds no disconnected Bankr wallet: leaving its BANKR_* and config.yaml bankr: blocks alone"
+fi
+bankr_strip_config="$bankr_clear_state"`
+    : "bankr_strip_config=1";
+  const bankrReconcileStateScript =
+    clearBankr || replaceBankr
+      ? `
+# BANKR_* reconcile for a wallet from the user's own Bankr account. Hivra writes
+# BANKR_AGENT_WALLET_ADDRESS with every BANKR_* delivery, so that line says which
+# wallet a file's BANKR_* lines belong to. bankr_reconcile_wallet_addresses holds
+# every wallet this agent's row has delivered: the current one, each earlier
+# wallet a reconnect replaced and a replaced Hivra-created wallet. A connect or
+# disconnect can skip the restart, so the box may still hold any of them. Only a
+# file holding one of these addresses is changed; any other address may be the
+# user's own configuration. A disconnect's first clear removes the address lines,
+# so later runs change nothing, including BANKR_* the user sets for their own
+# use. Only addresses are read into variables; key values never are, and nothing
+# here logs a value.
+bankr_reconcile_wallet_addresses=${shellSingleQuote(bankrReconcileSet.join(" "))}
+bankr_env_wallet_address() {
+  [ -f "$1" ] || return 0
+  awk '/^BANKR_AGENT_WALLET_ADDRESS=/ { v = $0; sub(/^BANKR_AGENT_WALLET_ADDRESS=/, "", v); gsub(/[\\"\\047[:space:]]/, "", v); print tolower(v); exit }' "$1" || true
+}
+bankr_wallet_address_in_set() {
+  [ -n "$1" ] || return 1
+  for bankr_set_wallet_address in $bankr_reconcile_wallet_addresses; do
+    if [ "$1" = "$bankr_set_wallet_address" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+${bankrOwnershipDecision}
+
+# The wallet is delivered only as BANKR_* in /state/.env. Provisioning with a
+# Hivra-created wallet also wrote a top-level \`bankr:\` block (holding that key)
+# into config.yaml, and the agent copies the block over its BANKR_* env on every
+# config load, so a stale block would keep an old or disconnected key live. Strip
+# it from the base config, every profile config and the managed-Venice repair
+# backups (which copy it) before update mode copies config.yaml into /seed. Logs
+# paths only, never values. The temp file starts as a mode-preserving copy so the
+# rewrite never widens the file's permissions (it also holds the model API key).
+if [ "$bankr_strip_config" = 1 ]; then
+  for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.*; do
+    [ -f "$bankr_cfg" ] || continue
+    grep -q '^bankr:' "$bankr_cfg" || continue
+    bankr_cfg_tmp="$bankr_cfg.bankr-strip.$$"
+    if cp -p "$bankr_cfg" "$bankr_cfg_tmp" && awk 'skip && /^[^[:space:]#]/{skip=0} /^bankr:/{skip=1;next} !skip{print}' "$bankr_cfg" > "$bankr_cfg_tmp" && mv -f "$bankr_cfg_tmp" "$bankr_cfg"; then
+      echo "[webui-update] stripped bankr: block from $bankr_cfg"
+    else
+      rm -f "$bankr_cfg_tmp"
+      echo "[webui-update] WARNING: could not strip bankr: block from $bankr_cfg" >&2
+    fi
+  done
+fi
+
+# A Hermes profile clone copies the base .env, BANKR_* included, and a profile's
+# .env is loaded over the container env. Remove the BANKR_* lines from each
+# profile .env holding one of the row's wallets, and from no other. After a
+# disconnect nothing replaces them; after a connect the profile falls back to the
+# container env this run delivers, which also replaces an older key for the same
+# wallet. Same mode-preserving temp-file-then-mv rewrite; logs paths only.
+for bankr_profile_env in /state/profiles/*/.env; do
+  [ -f "$bankr_profile_env" ] || continue
+  bankr_wallet_address_in_set "$(bankr_env_wallet_address "$bankr_profile_env")" || continue
+  bankr_profile_env_tmp="$bankr_profile_env.bankr-clear.$$"
+  if cp -p "$bankr_profile_env" "$bankr_profile_env_tmp" && awk '!/^(${WEBUI_BANKR_RUNTIME_ENV_KEYS.join("|")})=/' "$bankr_profile_env" > "$bankr_profile_env_tmp" && mv -f "$bankr_profile_env_tmp" "$bankr_profile_env"; then
+    echo "[webui-update] removed BANKR_* from $bankr_profile_env"
+  else
+    rm -f "$bankr_profile_env_tmp"
+    echo "[webui-update] WARNING: could not remove BANKR_* from $bankr_profile_env" >&2
+  fi
+done
+`
+      : "";
   const retiredEnvKeys = ["HERMES_WEBUI_PASSWORD"].join(" ");
   const canaryProbeEnvKeys = ["TELEGRAM_BOT_TOKEN"].join(" ");
   // Stale provisioning-time model pins. The official-dashboard's _resolve_model()
@@ -3645,7 +3817,7 @@ docker run --rm -i \\
   busybox sh <<'SH'
 set -e
 mkdir -p /state
-${managedVeniceConfigRepairScript}
+${managedVeniceConfigRepairScript}${bankrReconcileStateScript}
 if [ -f /state/config.yaml ]; then
   cp /state/config.yaml /seed/config.yaml
 fi
@@ -3702,8 +3874,8 @@ done
 # they just removed. Only WEBUI_CLEARABLE_RUNTIME_ENV_KEYS gets this treatment —
 # absence is only safe to read as "the user cleared it" for keys whose value is a
 # pure read of the instance row. See the list's comment for why BANKR_* must not
-# be cleared here (absent can mean "the wallet lookup threw").
-clearable_env_keys='${clearableEnvKeys}'
+# be cleared here (absent can mean "the wallet lookup threw").${clearBankrComment}
+clearable_env_keys='${clearableEnvKeys}'${clearBankrKeysScript}
 echo "[webui-update] Clear dashboard-managed runtime env keys the user removed"
 for clearable_env_key in $clearable_env_keys; do
   if grep -q "^\${clearable_env_key}=" /tmp/hermes-generated.env; then
