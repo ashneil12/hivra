@@ -1236,6 +1236,31 @@ verify_native_terminals() {
   wait_for_unix_http_200 /run/hivra-box-terminal/ttyd.sock 'http://localhost/box-terminal/' \
     || die "box terminal did not pass its socket readiness check"
 }
+# The owner reaches both terminals only through the gateway, so check them the
+# same way once it answers: the gateway must report each on its owner-only
+# socket (its own owner and mode checks) and answer a proxied request with 200.
+# A check made around the gateway would pass while the gateway refused the
+# socket, since nothing listens on the old loopback ports.
+verify_terminals_through_gateway() {
+  local header meta
+  header="$(mktemp /run/hivra-terminal-check.XXXXXX)"
+  chmod 0600 "$header"
+  printf 'Authorization: Bearer %s\n' "$(cat "${AGENT_HOME}/.hivra/api-token")" > "$header"
+  for _ in $(seq 1 30); do
+    meta="$(curl -fsS --max-time 5 -H @"$header" "http://127.0.0.1:${HIVRA_CHAT_PORT}/api/meta" 2>/dev/null || true)"
+    if printf '%s' "$meta" | python3 -I -c 'import json, sys
+t = json.load(sys.stdin).get("terminals") or {}
+sys.exit(0 if t.get("terminal") == "socket" and t.get("boxTerminal") == "socket" else 1)' 2>/dev/null \
+      && [ "$(curl -sS --max-time 5 -H @"$header" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HIVRA_CHAT_PORT}/terminal/" 2>/dev/null || true)" = 200 ] \
+      && [ "$(curl -sS --max-time 5 -H @"$header" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HIVRA_CHAT_PORT}/box-terminal/" 2>/dev/null || true)" = 200 ]; then
+      rm -f -- "$header"
+      return 0
+    fi
+    sleep 2
+  done
+  rm -f -- "$header"
+  return 1
+}
 wait_for_browser_ready() {
   local env_file="$1" cdp_port="$2" cdp_code novnc_code unit units_ready
   for _ in $(seq 1 60); do
@@ -1282,6 +1307,11 @@ if ! wait_for_exact_http_200 "http://127.0.0.1:${HIVRA_CHAT_PORT}/healthz"; then
   die "hivra-chat health endpoint is not ready"
 fi
 ok "hivra-chat answering on 127.0.0.1:${HIVRA_CHAT_PORT}/healthz"
+if ! verify_terminals_through_gateway; then
+  journalctl -u bux-hivra-chat.service -u bux-ttyd.service -u bux-box-ttyd.service -n 50 --no-pager >&2 2>/dev/null || true
+  die "terminals did not answer through the gateway on their owner-only sockets"
+fi
+ok "Terminal and computer terminal answer through the gateway on their owner-only sockets"
 
 if [ "$AGENT_KIND" = "linux-desktop" ]; then
   say "Linux Desktop capability installation"

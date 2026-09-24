@@ -1813,6 +1813,16 @@ function terminalUpstream(port) {
   } catch {}
   return { port };
 }
+// Which upstream this gateway would use for each terminal right now. The guest
+// updater and the installer read it (bearer only) with a proxied request, so a
+// terminal the gateway would refuse to reach over its socket fails readiness
+// instead of being checked around the gateway.
+function terminalTransports() {
+  return {
+    terminal: terminalUpstream(7681).socketPath ? "socket" : "port",
+    boxTerminal: terminalUpstream(7682).socketPath ? "socket" : "port",
+  };
+}
 
 // ---- attached agents (design 5.4) -------------------------------------------
 // Computers only. The owner's browser reaches an attached agent's own sandboxed
@@ -2328,7 +2338,7 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
   }
-  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
+  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });

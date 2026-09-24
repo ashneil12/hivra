@@ -214,6 +214,83 @@ wait_for_unix_http_200() { [ "$1" != '${socket}' ] || [ "$2" != '${url}' ]; }
 `);
     expect(result.status).toBe(1); expect(result.stdout).toBe(""); expect(result.stderr).toContain("readiness check");
   });
+  describe("readiness through the gateway", () => {
+    // The owner reaches both terminals only through the gateway, which uses a
+    // socket only after its own owner and mode checks. Readiness must go the
+    // same way: nothing listens on the old loopback ports, so a check made
+    // around the gateway would pass while Terminal stayed broken.
+    function gatewayCheck(meta: string, codes: Record<string, string>) {
+      const dir = mkdtempSync(path.join(tmpdir(), "hivra-gateway-check-"));
+      writeFileSync(path.join(dir, "api-token"), "f".repeat(64));
+      const result = executeHelper("verify_terminals_through_gateway", `
+AGENT_HOME=${dir}; mkdir -p ${dir}/.hivra; cp ${dir}/api-token ${dir}/.hivra/api-token
+HIVRA_CHAT_PORT=8080
+mktemp() { : > ${dir}/header; printf '%s\n' ${dir}/header; }
+sleep() { :; }
+curl() {
+  printf 'CURL %s\n' "$*" >> ${dir}/calls
+  case "$*" in
+    *"/api/meta"*) printf '%s' '${meta}' ;;
+    *"/box-terminal/"*) printf '%s' '${codes.box}' ;;
+    *"/terminal/"*) printf '%s' '${codes.terminal}' ;;
+  esac
+}
+`);
+      const calls = existsSync(path.join(dir, "calls")) ? readFileSync(path.join(dir, "calls"), "utf8") : "";
+      const headerLeft = existsSync(path.join(dir, "header"));
+      rmSync(dir, { recursive: true, force: true });
+      return { result, calls, headerLeft };
+    }
+    const SOCKETS = '{"terminals":{"terminal":"socket","boxTerminal":"socket"}}';
+    it("passes only when the gateway reports both sockets and proxies both terminals", () => {
+      const { result, calls, headerLeft } = gatewayCheck(SOCKETS, { terminal: "200", box: "200" });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toBe("DONE\n");
+      expect(calls).toContain("http://127.0.0.1:8080/api/meta");
+      expect(calls).toContain("http://127.0.0.1:8080/terminal/");
+      expect(calls).toContain("http://127.0.0.1:8080/box-terminal/");
+      // The bearer comes from a root-only header file, never the command line.
+      expect(calls).toMatch(/-H @\S+\/header/);
+      expect(calls).not.toContain("f".repeat(64));
+      expect(calls).not.toContain("--unix-socket");
+      expect(headerLeft).toBe(false);
+    });
+    it.each([
+      ["the gateway would fall back to the agent terminal's loopback port", '{"terminals":{"terminal":"port","boxTerminal":"socket"}}', "200", "200"],
+      ["the gateway would fall back to the computer terminal's loopback port", '{"terminals":{"terminal":"socket","boxTerminal":"port"}}', "200", "200"],
+      ["the gateway reports no terminal transport (an older gateway)", '{"agentKind":"codex"}', "200", "200"],
+      ["the proxied agent terminal fails", SOCKETS, "502", "200"],
+      ["the proxied computer terminal fails", SOCKETS, "200", "502"],
+    ])("fails when %s", (_label, meta, terminal, box) => {
+      const { result, headerLeft } = gatewayCheck(meta, { terminal, box });
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("DONE");
+      expect(headerLeft).toBe(false);
+    });
+    it("runs in the installer once the gateway answers, and fails the install otherwise", () => {
+      const text = installer();
+      const health = text.indexOf('ok "hivra-chat answering on 127.0.0.1:${HIVRA_CHAT_PORT}/healthz"');
+      const check = text.indexOf("if ! verify_terminals_through_gateway; then");
+      expect(health).toBeGreaterThan(0);
+      expect(check).toBeGreaterThan(health);
+      expect(text.slice(check, check + 400)).toContain('die "terminals did not answer through the gateway on their owner-only sockets"');
+    });
+    it("is what the guest runtime updater checks after moving existing terminals onto their sockets", () => {
+      const updater = readFileSync(path.join(bundle, "hivra-update-guest-runtime.sh"), "utf8");
+      const restart = updater.indexOf("if ! systemctl restart bux-ttyd.service bux-box-ttyd.service; then rollback; exit 1; fi");
+      const committed = updater.indexOf("COMMITTED=1");
+      const check = updater.slice(restart, committed);
+      expect(restart).toBeGreaterThan(0);
+      expect(check).toContain(`-H @"$AUTH_HEADER" "http://127.0.0.1:\${CHAT_PORT}/api/meta"`);
+      expect(check).toContain('t.terminal === "socket" && t.boxTerminal === "socket"');
+      expect(check).toContain(`"http://127.0.0.1:\${CHAT_PORT}/terminal/"`);
+      expect(check).toContain(`"http://127.0.0.1:\${CHAT_PORT}/box-terminal/"`);
+      expect(check).toContain('then rollback; echo "terminals did not answer through the gateway on their owner-only sockets"');
+      // No check around the gateway, and the bearer never on a command line.
+      expect(updater).not.toContain("--unix-socket");
+      expect(updater).not.toMatch(/curl[^\n]*Bearer/);
+    });
+  });
   it("checks all terminal artifacts before package installation and starts them after daemon reload", () => {
     const text = installer();
     const packageStart = text.indexOf('say "1/7  base packages"');

@@ -174,8 +174,8 @@
     },
     {
       "path": "hivra-chat/server.js",
-      "bytes": 144051,
-      "sha256": "b585138ff1971c262000a305882ca4abfb81cbb990ac64b10b89a0ed59a84399"
+      "bytes": 144608,
+      "sha256": "bee91c09fef568774bb0866b99f577fd4bfdb85d08cd8d1f9a69f72a47b03fa6"
     },
     {
       "path": "hivra-chat/workspace-access-policy.cjs",
@@ -214,8 +214,8 @@
     },
     {
       "path": "hivra-update-guest-runtime.sh",
-      "bytes": 11845,
-      "sha256": "9cc5a910238894eb1746af6a788711841308f6584555431815765e44bbd5adb6"
+      "bytes": 12793,
+      "sha256": "ca4f57fd0656b88f5a765542835e66d9adf97b48e8b99f65647ada0ff7e0c13a"
     },
     {
       "path": "hivra-tg-apply",
@@ -234,8 +234,8 @@
     },
     {
       "path": "provision-claude-code-box.sh",
-      "bytes": 74119,
-      "sha256": "417fede7d48be84d8acd8dc6994d7302907e356b528240379aaae2376be46cf0"
+      "bytes": 75844,
+      "sha256": "16bd7b25a92e396140f482737f4e94b4bb0ccf80a667f1733ed02157f67a84b2"
     },
     {
       "path": "remote-desktop/broker.cjs",

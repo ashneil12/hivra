@@ -207,15 +207,30 @@ esac
 # Restart the terminals onto their sockets only after the new gateway can
 # proxy to them; until then it falls back to the loopback ports.
 if ! systemctl restart bux-ttyd.service bux-box-ttyd.service; then rollback; exit 1; fi
+# Check the terminals the way the owner reaches them: through the gateway. The
+# gateway must report both on their owner-only sockets (its own owner and mode
+# checks), and a proxied request to each must answer 200. Nothing listens on the
+# old loopback ports any more, so a check made around the gateway would pass
+# while the gateway refused the socket and Terminal stayed broken.
+AUTH_HEADER="$WORK/gateway-auth.header"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN")" > "$AUTH_HEADER"
 TERMINALS=0
 for _ in $(seq 1 30); do
-  if [ "$(curl -sS --max-time 5 --unix-socket /run/hivra-terminal/ttyd.sock -o /dev/null -w '%{http_code}' http://localhost/terminal/ 2>/dev/null || true)" = 200 ] \
-    && [ "$(curl -sS --max-time 5 --unix-socket /run/hivra-box-terminal/ttyd.sock -o /dev/null -w '%{http_code}' http://localhost/box-terminal/ 2>/dev/null || true)" = 200 ]; then
+  META="$(curl -fsS --max-time 5 -H @"$AUTH_HEADER" "http://127.0.0.1:${CHAT_PORT}/api/meta" 2>/dev/null || true)"
+  if printf '%s' "$META" | node -e '
+    let value=""; process.stdin.on("data", chunk => value += chunk);
+    process.stdin.on("end", () => {
+      try { const t=JSON.parse(value).terminals || {}; process.exit(t.terminal === "socket" && t.boxTerminal === "socket" ? 0 : 1); }
+      catch { process.exit(1); }
+    });
+  ' && [ "$(curl -sS --max-time 5 -H @"$AUTH_HEADER" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${CHAT_PORT}/terminal/" 2>/dev/null || true)" = 200 ] \
+    && [ "$(curl -sS --max-time 5 -H @"$AUTH_HEADER" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${CHAT_PORT}/box-terminal/" 2>/dev/null || true)" = 200 ]; then
     TERMINALS=1; break
   fi
   sleep 1
 done
-if [ "$TERMINALS" != 1 ]; then rollback; echo "terminals did not answer on their owner-only sockets" >&2; exit 1; fi
+rm -f -- "$AUTH_HEADER"
+if [ "$TERMINALS" != 1 ]; then rollback; echo "terminals did not answer through the gateway on their owner-only sockets" >&2; exit 1; fi
 
 TOKEN_HASH_AFTER="$(sha256sum "$TOKEN" | awk '{print $1}')"
 TOKEN_INODE_AFTER="$(stat -c '%d:%i:%u:%g:%a' "$TOKEN")"
