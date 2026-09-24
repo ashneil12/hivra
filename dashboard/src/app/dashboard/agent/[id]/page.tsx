@@ -828,7 +828,6 @@ export default function AgentPage() {
       agentType: agent.type,
       status: agent.status,
       vmid: agent.vmid ?? null,
-      proxmoxHost: agent.proxmox_host ?? null,
       hasChatUrl: Boolean(agent.chat_url),
       error: agent.error || null,
     });

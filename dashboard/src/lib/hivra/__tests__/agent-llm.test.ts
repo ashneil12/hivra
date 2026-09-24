@@ -144,6 +144,14 @@ describe("sanitizeHivraAgentRow", () => {
     expect(out).not.toHaveProperty("managed_provisioner_channel");
   });
 
+  it("keeps internal host topology (proxmox_host, private bridge ip) server-side", () => {
+    const out = sanitizeHivraAgentRow({ id: "agent", vmid: 163, proxmox_host: "pve11", ip: "10.70.20.63" });
+    expect(out).not.toHaveProperty("proxmox_host");
+    expect(out).not.toHaveProperty("ip");
+    expect(JSON.stringify(out)).not.toMatch(/pve11|10\.70\.20\.63/);
+    expect(out).toMatchObject({ id: "agent", vmid: 163 });
+  });
+
   it.each(["provider_install_not_after", "provider_install_identity", "provider_install_dispatched_at", "provider_install_stopped_at", "provider_install_outcome"])("keeps private installer journal %s server-side", field => {
     const out = sanitizeHivraAgentRow({ id: "agent", status: "provisioning", operation_kind: "provision", [field]: { operationId: "private-install-identity" } });
     expect(out).not.toHaveProperty(field);
