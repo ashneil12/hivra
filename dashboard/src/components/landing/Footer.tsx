@@ -20,7 +20,6 @@ const COLUMNS = [
     { label: "Download the app", href: "/download" },
     { label: "Ecosystem", href: "/ecosystem" },
     { label: "Token", href: "/token" },
-    { label: "Nibbii", href: "https://nibbii.pet/" },
   ] },
   { title: "Company", links: [
     { label: "Why I’m building Hivra", href: "/why-hivra" },
