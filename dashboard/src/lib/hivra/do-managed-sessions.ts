@@ -18,6 +18,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   createDigitalOceanManagedAgentsClient,
   DigitalOceanApiError,
+  listDigitalOceanInferenceModels,
   type DigitalOceanManagedAgentsClient,
   type DigitalOceanSandboxSize,
   type DigitalOceanSession,
@@ -26,12 +27,20 @@ import {
   DIGITALOCEAN_HARNESSES,
   DIGITALOCEAN_MANAGED_AGENTS_ADAPTER_VERSION,
   DIGITALOCEAN_SANDBOX_SIZES,
+  type CredentialExpiryDto,
   type DigitalOceanConnectionDto,
   type DigitalOceanConnectionErrorCode,
   type DigitalOceanDeploymentTargetDto,
   type DigitalOceanHarness,
   type DigitalOceanSandboxSize as DigitalOceanSizeSlug,
+  type ProviderTokenExpiryInput,
 } from "@/lib/infrastructure/contracts";
+import {
+  clearCredentialExpiry,
+  loadCredentialExpiries,
+  recordCredentialExpiry,
+  validateDeclaredExpiry,
+} from "@/lib/infrastructure/credential-expiry-store";
 import {
   createDigitalOceanConnectionRecord,
   loadDigitalOceanConnectionSecret,
@@ -47,7 +56,14 @@ import {
   sanitizeManagedSessionEvent,
   type ManagedSessionEvent,
 } from "@/lib/hivra/managed-session-transcript";
-import type { ManagedSessionDto, ManagedSessionLaunchInput } from "@/lib/hivra/managed-session-contracts";
+import {
+  MANAGED_WORKSPACE_ROOT,
+  normalizeManagedWorkspacePath,
+  type ManagedSessionDto,
+  type ManagedSessionLaunchInput,
+  type ManagedWorkspaceEntry,
+  type ManagedWorkspaceListing,
+} from "@/lib/hivra/managed-session-contracts";
 
 const LOG_SOURCE = "do-managed-sessions";
 const SUBSTRATE = "do-managed-session";
@@ -58,11 +74,17 @@ const POLL_INTERVAL_MS = 1_000;
 const HISTORY_EVENT_LIMIT = 1_000;
 const HISTORY_PROMPT_LIMIT = 200;
 const AMBIGUOUS_CREATE_WINDOW_MS = 2 * 60_000;
+/** One listing returns at most this much raw `find` output (a few thousand entries). */
+const WORKSPACE_LIST_MAX_BYTES = 256 * 1024;
+/** Downloads stream through Hivra; larger files belong in DigitalOcean's own tools. */
+export const WORKSPACE_DOWNLOAD_MAX_BYTES = 250 * 1024 * 1024;
 
 export type ManagedSessionErrorCode =
   | "not_found"
   | "invalid_request"
   | "not_ready"
+  | "session_paused"
+  | "connection_changed"
   | "conflict"
   | "invalid_credentials"
   | "provider_forbidden"
@@ -110,6 +132,7 @@ const AGENT_SELECT = [
 
 type Dependencies = {
   client(apiToken: string): DigitalOceanManagedAgentsClient;
+  inferenceModels(apiToken: string): Promise<string[]>;
   now(): Date;
   sleep(ms: number): Promise<void>;
   fetch: typeof fetch;
@@ -117,6 +140,7 @@ type Dependencies = {
 
 const defaultDependencies: Dependencies = {
   client: (apiToken) => createDigitalOceanManagedAgentsClient(apiToken),
+  inferenceModels: (apiToken) => listDigitalOceanInferenceModels(apiToken),
   now: () => new Date(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   fetch: (...args) => fetch(...args),
@@ -170,7 +194,7 @@ function providerError(error: unknown, action: string, agentId?: string): Manage
   if (error instanceof DigitalOceanApiError) {
     switch (error.code) {
       case "unauthorized":
-        return new ManagedSessionError("invalid_credentials", "DigitalOcean rejected the saved token. Replace the token on this connection's Infrastructure card.", agentId);
+        return new ManagedSessionError("invalid_credentials", "DigitalOcean rejected the saved token. Replace the token on this connection's card in Capacity.", agentId);
       case "forbidden":
         return new ManagedSessionError("provider_forbidden", "This DigitalOcean token cannot manage Managed Agents. Use a token with write access to a team enrolled in the Managed Agents preview.", agentId);
       case "payment_required":
@@ -219,10 +243,11 @@ function targetEvidence(sizes: DigitalOceanSandboxSize[]): DigitalOceanTargetEvi
  * a free, read-only call that fails for tokens without Managed Agents access —
  * then store the encrypted token and its single target together.
  */
-export async function connectDigitalOcean(userId: string, input: { name: string; apiToken: string }): Promise<{
+export async function connectDigitalOcean(userId: string, input: { name: string; apiToken: string; tokenExpiry?: ProviderTokenExpiryInput }): Promise<{
   connection: DigitalOceanConnectionDto;
   target: DigitalOceanDeploymentTargetDto;
 }> {
+  assertDeclaredExpiry(input.tokenExpiry);
   let sizes: DigitalOceanSandboxSize[];
   try {
     sizes = await deps.client(input.apiToken).listSandboxSizes();
@@ -241,12 +266,57 @@ export async function connectDigitalOcean(userId: string, input: { name: string;
   if (!evidence.capabilities.launchReady) {
     throw new ManagedSessionError("provider_forbidden", "DigitalOcean did not offer any sandbox size Hivra supports for this team.");
   }
+  let created: { connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto };
   try {
-    return await createDigitalOceanConnectionRecord({
+    created = await createDigitalOceanConnectionRecord({
       userId, name: input.name, apiToken: input.apiToken, checkedAt: deps.now().toISOString(), target: evidence,
     });
   } catch (error) {
     throw providerError(error, "connection");
+  }
+  return { ...created, connection: await withDeclaredExpiry(userId, created.connection, input.tokenExpiry) };
+}
+
+function assertDeclaredExpiry(expiry: ProviderTokenExpiryInput | undefined) {
+  if (!expiry) return;
+  const problem = validateDeclaredExpiry(expiry, deps.now());
+  if (problem) throw new ManagedSessionError("invalid_request", problem);
+}
+
+/**
+ * Record what the owner said about the token's expiry, or clear a date that
+ * described a token this connection no longer uses. The token itself is
+ * already saved, so a failed reminder write leaves the card showing
+ * "Expiry not recorded" instead of failing the connection.
+ */
+async function withDeclaredExpiry(
+  userId: string,
+  connection: DigitalOceanConnectionDto,
+  expiry: ProviderTokenExpiryInput | undefined | null,
+): Promise<DigitalOceanConnectionDto> {
+  let credentialExpiry: CredentialExpiryDto | null = null;
+  try {
+    if (expiry) {
+      credentialExpiry = await recordCredentialExpiry({ userId, connectionId: connection.id, expiry, now: deps.now() });
+    } else if (expiry === null) {
+      await clearCredentialExpiry(userId, connection.id);
+    } else {
+      credentialExpiry = (await loadCredentialExpiries(userId, [connection.id])).get(connection.id) ?? null;
+    }
+  } catch {
+    credentialExpiry = null;
+  }
+  return { ...connection, credentialExpiry };
+}
+
+/** Record or change the owner-declared expiry without touching the token. */
+export async function setDigitalOceanTokenExpiry(userId: string, connectionId: string, expiry: ProviderTokenExpiryInput) {
+  assertDeclaredExpiry(expiry);
+  await connectionRevision(userId, connectionId);
+  try {
+    return await recordCredentialExpiry({ userId, connectionId, expiry, now: deps.now() });
+  } catch (error) {
+    throw providerError(error, "reminder");
   }
 }
 
@@ -261,14 +331,16 @@ export async function refreshDigitalOceanConnection(userId: string, connectionId
   } catch (error) {
     errorCode = connectionErrorFor(error);
   }
+  let refreshed: { connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto };
   try {
-    return await refreshDigitalOceanTargetRecord({
+    refreshed = await refreshDigitalOceanTargetRecord({
       userId, connectionId, expectedRevision: loaded.revision, checkedAt: deps.now().toISOString(),
       target: errorCode ? null : evidence, errorCode,
     });
   } catch (error) {
     throw providerError(error, "refresh");
   }
+  return { ...refreshed, connection: await withDeclaredExpiry(userId, refreshed.connection, undefined) };
 }
 
 /**
@@ -277,7 +349,13 @@ export async function refreshDigitalOceanConnection(userId: string, connectionId
  * connection, which proves it belongs to the same DigitalOcean team; a token
  * from another team is refused rather than orphaning those sessions.
  */
-export async function replaceDigitalOceanToken(userId: string, connectionId: string, apiToken: string) {
+export async function replaceDigitalOceanToken(
+  userId: string,
+  connectionId: string,
+  apiToken: string,
+  tokenExpiry?: ProviderTokenExpiryInput,
+) {
+  assertDeclaredExpiry(tokenExpiry);
   const loaded = await loadDigitalOceanConnectionSecret(userId, connectionId).catch((error) => {
     // An unreadable old token is exactly the case this repairs; only a missing
     // or foreign connection stops here.
@@ -318,7 +396,9 @@ export async function replaceDigitalOceanToken(userId: string, connectionId: str
   } catch (error) {
     throw providerError(error, "token replacement");
   }
-  return refreshDigitalOceanConnection(userId, connectionId);
+  const refreshed = await refreshDigitalOceanConnection(userId, connectionId);
+  // A date declared for the old token says nothing about the new one.
+  return { ...refreshed, connection: await withDeclaredExpiry(userId, refreshed.connection, tokenExpiry ?? null) };
 }
 
 async function connectionRevision(userId: string, connectionId: string): Promise<number> {
@@ -628,7 +708,7 @@ async function clientFor(row: AgentRow): Promise<DigitalOceanManagedAgentsClient
   const loaded = await loadDigitalOceanConnectionSecret(row.user_id, row.infrastructure_connection_id)
     .catch((error) => { throw providerError(error, "request", row.id); });
   if (loaded.revision !== row.infrastructure_connection_revision) {
-    throw new ManagedSessionError("not_ready", "The DigitalOcean connection changed. Reconnect it to manage this agent.", row.id);
+    throw new ManagedSessionError("connection_changed", "The DigitalOcean connection changed. Reconnect it to manage this agent.", row.id);
   }
   return deps.client(loaded.apiToken);
 }
@@ -781,4 +861,198 @@ export async function readManagedSessionHistory(userId: string, agentId: string)
     createdAt: String((prompt as { created_at: unknown }).created_at),
   }));
   return { events, prompts };
+}
+
+type ForgetReason = "token_rejected" | "token_forbidden" | "token_unreadable" | "connection_changed";
+
+/**
+ * Can Hivra still manage this session? Returns the observed session when it
+ * can, or why the saved credential cannot reach it. Any other failure (for
+ * example DigitalOcean being briefly unreachable) is thrown, because it says
+ * nothing about whether the credential works.
+ */
+async function credentialReach(row: AgentRow): Promise<
+  { reachable: true; client: DigitalOceanManagedAgentsClient; session: DigitalOceanSession | null }
+  | { reachable: false; reason: ForgetReason }
+> {
+  let client: DigitalOceanManagedAgentsClient;
+  try {
+    client = await clientFor(row);
+  } catch (error) {
+    if (error instanceof ManagedSessionError && error.code === "invalid_credentials") return { reachable: false, reason: "token_unreadable" };
+    if (error instanceof ManagedSessionError && error.code === "connection_changed") return { reachable: false, reason: "connection_changed" };
+    throw error;
+  }
+  try {
+    return { reachable: true, client, session: await observeSession(client, row) };
+  } catch (error) {
+    if (error instanceof DigitalOceanApiError && error.code === "unauthorized") return { reachable: false, reason: "token_rejected" };
+    if (error instanceof DigitalOceanApiError && error.code === "forbidden") return { reachable: false, reason: "token_forbidden" };
+    throw providerError(error, "status check", row.id);
+  }
+}
+
+/**
+ * Release a DigitalOcean agent whose saved token can no longer reach its
+ * session, so the owner is never stuck with an agent they cannot delete or a
+ * connection they cannot disconnect. Nothing is deleted at DigitalOcean: the
+ * receipt records that the session may still exist (and bill) there. While
+ * Hivra can still reach the session the owner is sent to Delete instead, and
+ * a session DigitalOcean reports gone gets the ordinary absence receipt.
+ */
+export async function forgetManagedSession(userId: string, agentId: string): Promise<ManagedSessionDto> {
+  let row = await loadAgent(userId, agentId);
+  if (row.status === "deleted") return toDto(row);
+  const reach = await credentialReach(row);
+  if (reach.reachable) {
+    if (reach.session && reach.session.status !== "SESSION_STATUS_DESTROYED") {
+      throw new ManagedSessionError("conflict",
+        "Hivra can still reach this session at DigitalOcean. Delete it instead so DigitalOcean stops billing for it.", agentId);
+    }
+    if (row.desired_state !== "deleted") row = await updateAgent(row, { desired_state: "deleted" });
+    row = await applyObservation(row, reach.session);
+    if (row.status !== "deleted") {
+      throw new ManagedSessionError("not_ready", "This session may still be starting at DigitalOcean. Try again in two minutes.", agentId);
+    }
+    return toDto(row);
+  }
+  const observed = row.do_session_observation ?? {};
+  const receipt = {
+    state: "forgotten",
+    sessionName: row.do_session_name,
+    ...(row.do_session_id ? { sessionId: row.do_session_id } : {}),
+    reason: reach.reason,
+    acknowledgedAt: deps.now().toISOString(),
+    lastObservedStatus: typeof observed.status === "string" ? observed.status : null,
+    binding: {
+      connectionId: row.infrastructure_connection_id,
+      targetId: row.deployment_target_id,
+      connectionRevision: String(row.infrastructure_connection_revision),
+    },
+  };
+  row = await updateAgent(row, {
+    status: "deleted", desired_state: "deleted", error: null,
+    infrastructure_connection_id: null, deployment_target_id: null, infrastructure_connection_revision: null,
+    do_cleanup_receipt: receipt,
+  });
+  log.info("DigitalOcean agent forgotten without provider deletion", {
+    source: LOG_SOURCE, agentId, reason: reach.reason, hadProviderId: Boolean(receipt.sessionId),
+  });
+  return toDto(row);
+}
+
+async function runningSession(userId: string, agentId: string) {
+  const live = await liveSession(userId, agentId);
+  if (live.row.status === "stopped") {
+    throw new ManagedSessionError("session_paused", "This session is paused. Resume it to open its files.", agentId);
+  }
+  if (live.row.status !== "running") {
+    throw new ManagedSessionError("not_ready", live.row.error ?? "This session is not running yet.", agentId);
+  }
+  return live;
+}
+
+// The path is passed as "$1", never spliced into the script. GNU find is
+// required for -printf; a sandbox without it is reported, not shown as empty.
+const WORKSPACE_LIST_SCRIPT = [
+  '[ -d "$1" ] || exit 3',
+  'find "$1" -maxdepth 0 -printf "" 2>/dev/null || exit 4',
+  `find "$1" -mindepth 1 -maxdepth 1 -printf '%y\\t%s\\t%T@\\t%f\\0' 2>/dev/null | head -c ${WORKSPACE_LIST_MAX_BYTES}`,
+].join("\n");
+
+function parseWorkspaceListing(stdout: string): { entries: ManagedWorkspaceEntry[]; truncated: boolean } {
+  const truncated = Buffer.byteLength(stdout, "utf8") >= WORKSPACE_LIST_MAX_BYTES - 4;
+  const records = stdout.split("\u0000");
+  // The last record is empty after a complete listing, or cut short by the cap.
+  records.pop();
+  const entries: ManagedWorkspaceEntry[] = [];
+  for (const record of records) {
+    const parts = record.split("\t");
+    if (parts.length < 4) continue;
+    const [type, size, mtime] = parts;
+    const name = parts.slice(3).join("\t");
+    if (!name || name.includes("/") || /[\u0000-\u001f\u007f]/.test(name)) continue;
+    const kind = type === "f" ? "file" : type === "d" ? "directory" : type === "l" ? "symlink" : "other";
+    const bytes = Number.parseInt(size, 10);
+    const seconds = Number.parseFloat(mtime);
+    entries.push({
+      name,
+      kind,
+      sizeBytes: kind === "file" && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null,
+      modifiedAt: Number.isFinite(seconds) && seconds > 0 ? new Date(Math.round(seconds * 1000)).toISOString() : null,
+    });
+  }
+  entries.sort((left, right) => (left.kind === "directory" ? 0 : 1) - (right.kind === "directory" ? 0 : 1)
+    || left.name.localeCompare(right.name));
+  return { entries, truncated };
+}
+
+/** One folder of the session's /workspace, read with the sandbox exec API. */
+export async function listManagedSessionWorkspace(userId: string, agentId: string, rawPath: string): Promise<ManagedWorkspaceListing> {
+  const path = normalizeManagedWorkspacePath(rawPath);
+  if (path === null) throw new ManagedSessionError("invalid_request", "Choose a folder inside /workspace.", agentId);
+  const { client, sessionId } = await runningSession(userId, agentId);
+  const absolute = path ? `${MANAGED_WORKSPACE_ROOT}/${path}` : MANAGED_WORKSPACE_ROOT;
+  let result: Awaited<ReturnType<DigitalOceanManagedAgentsClient["execInSandbox"]>>;
+  try {
+    result = await client.execInSandbox(sessionId, { argv: ["sh", "-c", WORKSPACE_LIST_SCRIPT, "hivra-list", absolute], timeoutSeconds: 15 });
+  } catch (error) {
+    throw providerError(error, "file listing", agentId);
+  }
+  if (result.exitCode === 3) throw new ManagedSessionError("not_found", "That folder is no longer in the workspace.", agentId);
+  if (result.exitCode === 4) {
+    throw new ManagedSessionError("provider_rejected", "This session's sandbox can't list files for Hivra (it has no GNU find).", agentId);
+  }
+  if (result.exitCode !== 0) {
+    log.warn("DigitalOcean workspace listing failed", { source: LOG_SOURCE, failureType: "do_workspace_list_failed", agentId, exitCode: result.exitCode });
+    throw new ManagedSessionError("provider_rejected", "DigitalOcean could not list this folder.", agentId);
+  }
+  return { path, ...parseWorkspaceListing(result.stdout) };
+}
+
+/** Stream a workspace file, or a folder as a tar, verified against DigitalOcean's checksum. */
+export async function downloadManagedSessionWorkspace(
+  userId: string,
+  agentId: string,
+  rawPath: string,
+  options: { archive: boolean; signal?: AbortSignal },
+): Promise<{ body: ReadableStream<Uint8Array>; fileName: string; isArchive: boolean; sizeBytes: number | null }> {
+  const path = normalizeManagedWorkspacePath(rawPath);
+  if (path === null || (!path && !options.archive)) {
+    throw new ManagedSessionError("invalid_request", "Choose a file inside /workspace.", agentId);
+  }
+  const { client, sessionId } = await runningSession(userId, agentId);
+  let download: Awaited<ReturnType<DigitalOceanManagedAgentsClient["downloadWorkspace"]>>;
+  try {
+    download = await client.downloadWorkspace(sessionId, {
+      path: path || ".",
+      asArchive: options.archive,
+      maxBytes: WORKSPACE_DOWNLOAD_MAX_BYTES,
+      signal: options.signal,
+    });
+  } catch (error) {
+    throw providerError(error, "download", agentId);
+  }
+  if (download.sizeBytes !== null && download.sizeBytes > WORKSPACE_DOWNLOAD_MAX_BYTES) {
+    await download.body.cancel().catch(() => undefined);
+    throw new ManagedSessionError("invalid_request",
+      "This is larger than 250 MB, which is more than Hivra downloads at once. Ask the agent to split or compress it.", agentId);
+  }
+  const base = path.split("/").at(-1) || "workspace";
+  return {
+    body: download.body,
+    fileName: download.isArchive ? `${base}.tar` : base,
+    isArchive: download.isArchive,
+    sizeBytes: download.sizeBytes,
+  };
+}
+
+/** Models DigitalOcean Serverless Inference offers the connection's team, for the launch picker. */
+export async function listDigitalOceanModelsForConnection(userId: string, connectionId: string): Promise<string[]> {
+  const loaded = await loadDigitalOceanConnectionSecret(userId, connectionId).catch((error) => { throw providerError(error, "model list"); });
+  try {
+    return await deps.inferenceModels(loaded.apiToken);
+  } catch (error) {
+    throw providerError(error, "model list");
+  }
 }
