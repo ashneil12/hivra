@@ -12,6 +12,7 @@ import {
 import { sendResourceWatchdogCustomerEmail } from "@/lib/email/resource-watchdog-customer";
 import { sendFreeRamPressureEmail } from "@/lib/email/resource-watchdog-free-ram";
 import { sendResourceWatchdogAdminEmail } from "@/lib/email/resource-watchdog-admin";
+import { cumulativeCounterIncrease } from "@/lib/services/instance-metering";
 
 const LOG_SOURCE = "resource-watchdog";
 
@@ -368,19 +369,26 @@ function evaluatePaidCpu(
   samples: MeteringSample[],
   cpuLimit: number
 ): Record<string, number> | null {
-  if (samples.length < 2) return null;
   if (cpuLimit <= 0) return null;
 
-  const first = samples[0];
-  const last = samples[samples.length - 1];
+  // Only samples with a real CPU reading count. Rows sampled before the kvm
+  // /proc CPU source landed read 0 on PVE 9; using one as the baseline would
+  // make CPU-since-VM-start look like one window of load and flag the box.
+  const measured = samples.filter((sample) => Number(sample.cpu_seconds_total) > 0);
+  if (measured.length < 2) return null;
+
+  const first = measured[0];
+  const last = measured[measured.length - 1];
   const deltaSeconds =
     (new Date(last.sampled_at).getTime() -
       new Date(first.sampled_at).getTime()) /
     1000;
   if (deltaSeconds < CPU_MIN_INTERVAL_HOURS * 60 * 60) return null;
 
-  const cpuDelta = last.cpu_seconds_total - first.cpu_seconds_total;
-  // Negative = VM was rebooted between samples (counter reset). Skip.
+  // Reboots reset the counter; the helper counts growth since the restart.
+  const cpuDelta = cumulativeCounterIncrease(
+    measured.map((sample) => sample.cpu_seconds_total)
+  );
   if (cpuDelta <= 0) return null;
 
   const maxCpu = deltaSeconds * cpuLimit;
