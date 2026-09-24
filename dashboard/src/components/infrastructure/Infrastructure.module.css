@@ -2162,6 +2162,7 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
+  container: connection-card / inline-size;
   padding: 24px;
   border: 1px solid var(--infra-line);
   background:
@@ -2200,6 +2201,15 @@
 
 .connectionIdentity {
   min-width: 0;
+}
+
+/* A narrow card (two columns beside the sidebar) gives the server's name the
+   full row and puts its status badge underneath. */
+@container connection-card (max-width: 400px) {
+  .connectionCardHeader > .statusBadge {
+    grid-column: 1 / -1;
+    width: fit-content;
+  }
 }
 
 .connectionIdentity .eyebrow::before {
@@ -2382,6 +2392,7 @@
 
 .cardActions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   margin-top: 18px;
@@ -2389,6 +2400,16 @@
 
 .actionSpacer {
   flex: 1;
+}
+
+/* A card's one primary action leads on its own row, so the secondary
+   actions and the delete control never get pushed out of a narrow card. */
+.connectionCard:not(.providerConnectionCard) .cardActions > .primaryButton {
+  flex: 1 1 100%;
+}
+
+.cardActions > .disconnectIcon {
+  margin-left: auto;
 }
 
 /* Narrow cards label the connection-level disconnect instead of relying on
@@ -2750,6 +2771,171 @@
   flex: 0 0 auto;
   margin-top: 1px;
   color: var(--hivra-red);
+}
+
+/* The shared host setup dialog lists every named step up front, then marks
+   only what it observed. */
+.prepareSteps {
+  display: grid;
+  gap: 0;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--infra-line-soft);
+  counter-reset: none;
+}
+
+.prepareSteps > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+  padding: 11px 13px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.prepareSteps > li + li {
+  border-top: 1px solid var(--infra-line-soft);
+}
+
+.prepareStepMarker {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--infra-line);
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prepareSteps > li[data-state="done"] {
+  color: var(--ink-black);
+}
+
+.prepareSteps > li[data-state="done"] .prepareStepMarker {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+  color: var(--skills-success-text);
+}
+
+.prepareSteps > li[data-state="failed"],
+.prepareSteps > li[data-state="attention"] {
+  color: var(--ink-black);
+  background: color-mix(in srgb, var(--skills-danger-bg) 55%, transparent);
+}
+
+.prepareSteps > li[data-state="failed"] .prepareStepMarker,
+.prepareSteps > li[data-state="attention"] .prepareStepMarker {
+  border-color: var(--skills-danger-border);
+  background: var(--skills-danger-bg);
+  color: var(--skills-danger-text);
+}
+
+.prepareElapsed {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 16px;
+  padding: 11px 13px;
+  border: 1px solid var(--infra-line);
+  background: color-mix(in srgb, var(--bg-elevated) 64%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.prepareElapsed > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hivra-red);
+}
+
+.prepareElapsed strong {
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Raw inspection evidence, one click away from the single outcome. */
+.technicalDetails {
+  margin-top: 20px;
+  border: 1px solid var(--infra-line-soft);
+  background: color-mix(in srgb, var(--bg-elevated) 48%, transparent);
+}
+
+.technicalDetails > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.technicalDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.technicalDetails > summary::after {
+  content: "+";
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.technicalDetails[open] > summary::after {
+  content: "−";
+}
+
+.technicalDetails > summary:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: -2px;
+}
+
+.technicalDetailsBody {
+  padding: 0 14px 16px;
+}
+
+.technicalDetailsBody > .discoveryIdentity,
+.technicalDetailsBody > .targetIdentity,
+.technicalDetailsBody > .metricGrid {
+  margin-top: 0;
+}
+
+.technicalDetailsBody > .metricGrid {
+  margin-top: 12px;
+}
+
+.technicalFacts {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.technicalFacts strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.technicalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .prepareReceipt {
@@ -4252,7 +4438,8 @@
     flex-wrap: wrap;
   }
 
-  .cardActions .secondaryButton {
+  .cardActions .secondaryButton,
+  .cardActions .primaryButton {
     width: 100%;
   }
 

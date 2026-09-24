@@ -232,6 +232,38 @@ describe("read-only host discovery", () => {
     });
   });
 
+  // Every reason a Hivra path is unsupported must be a named requirement, so
+  // the owner is told the fix instead of seeing a silent refusal.
+  it("names x86 and apt as unmet when Linux Sandbox or Proxmox can't run on this processor", () => {
+    const input = {
+      discoveryId: RUN_ID, connectionId: CONNECTION_ID, connectionRevision: 3,
+      connectionProvider: "host" as const, normalizedHostFingerprint: "ab".repeat(32), observedAt: NOW,
+    };
+    const arm = parseHostDiscoveryOutput({
+      ...input,
+      output: protocolOutput({ OS_ID_B64: b64("ubuntu"), OS_VERSION_ID_B64: b64("24.04"), ARCH_B64: b64("aarch64") }),
+    });
+    expect(arm.engines.find((engine) => engine.id === "gvisor")).toMatchObject({
+      supported: false,
+      unmetRequirements: expect.arrayContaining(["SUPPORTED_ARCH_REQUIRED"]),
+    });
+    expect(arm.engines.find((engine) => engine.id === "proxmox-kvm")).toMatchObject({
+      supported: false,
+      unmetRequirements: expect.arrayContaining(["SUPPORTED_ARCH_REQUIRED"]),
+    });
+    // Other engines keep their broader arm64 support.
+    expect(arm.engines.find((engine) => engine.id === "docker")?.unmetRequirements).not.toContain("SUPPORTED_ARCH_REQUIRED");
+
+    const noApt = parseHostDiscoveryOutput({
+      ...input,
+      output: protocolOutput({ OS_ID_B64: b64("ubuntu"), OS_VERSION_ID_B64: b64("22.04"), PACKAGE_MANAGERS: "dnf" }),
+    });
+    expect(noApt.engines.find((engine) => engine.id === "gvisor")).toMatchObject({
+      supported: false,
+      unmetRequirements: expect.arrayContaining(["PACKAGE_MANAGER_REQUIRED"]),
+    });
+  });
+
   it("rejects duplicate, noncanonical, and oversized protocol evidence", () => {
     const input = {
       discoveryId: RUN_ID,

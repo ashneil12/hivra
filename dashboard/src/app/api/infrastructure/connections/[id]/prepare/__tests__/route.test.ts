@@ -3,14 +3,16 @@
 import { NextRequest } from "next/server";
 
 const mockAuth = jest.fn();
-const mockRateLimit = jest.fn();
+const mockReserve = jest.fn();
+const mockSettle = jest.fn();
 const mockPrepare = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: (...args: unknown[]) => mockAuth(...args),
 }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({
-  enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args),
+  ...jest.requireActual("@/lib/authenticated-rate-limit"),
+  reserveAuthenticatedRouteRateLimit: (...args: unknown[]) => mockReserve(...args),
 }));
 jest.mock("@/lib/infrastructure/connection-preparation", () => ({
   prepareSimpleProxmoxConnection: (...args: unknown[]) => mockPrepare(...args),
@@ -29,7 +31,7 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockAuth.mockResolvedValue({ userId: "user_1" });
-    mockRateLimit.mockReturnValue(null);
+    mockReserve.mockReturnValue({ limited: null, settle: mockSettle });
     mockPrepare.mockResolvedValue({
       ok: true,
       connectionId: CONNECTION_ID,
@@ -57,7 +59,7 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
 
     expect(response.status).toBe(401);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockReserve).not.toHaveBeenCalled();
     expect(mockPrepare).not.toHaveBeenCalled();
   });
 
@@ -65,24 +67,102 @@ describe("POST /api/infrastructure/connections/[id]/prepare", () => {
     const response = await POST(request(), context("not-a-uuid"));
 
     expect(response.status).toBe(404);
-    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockReserve).not.toHaveBeenCalled();
     expect(mockPrepare).not.toHaveBeenCalled();
   });
 
-  it("enforces a connection-scoped one-per-fifteen-minute limit", async () => {
-    mockRateLimit.mockReturnValue(new Response("limited", { status: 429 }));
+  // Retired: the limit used to count every attempt and answer a bare "Too
+  // Many Requests". It now counts only a run still going or one that
+  // succeeded, and says when to try again.
+  it("refuses a second run within fifteen minutes of a success with a Retry-After", async () => {
+    mockReserve.mockReturnValue({ limited: { retryAfterMs: 11 * 60_000 + 5_000, inFlight: false, reason: "recent_success" }, settle: null });
 
     const response = await POST(request(), context());
+    const body = await response.json();
 
     expect(response.status).toBe(429);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(mockRateLimit).toHaveBeenCalledWith(expect.any(NextRequest), {
+    expect(response.headers.get("retry-after")).toBe("665");
+    expect(body).toMatchObject({
+      success: false,
+      error: "This server was set up in the last 15 minutes. You can try again in 12 minutes.",
+      code: "PREPARATION_RATE_LIMITED",
+      retryAfterSeconds: 665,
+    });
+    expect(mockReserve).toHaveBeenCalledWith(expect.any(NextRequest), {
       routeKey: `infrastructure_connection_prepare:${CONNECTION_ID}`,
       userId: "user_1",
       limit: 1,
       windowMs: 900_000,
+      failureLimit: 5,
     });
     expect(mockPrepare).not.toHaveBeenCalled();
+  });
+
+  it("says setup failed several times when the failure cap refuses a run", async () => {
+    mockReserve.mockReturnValue({ limited: { retryAfterMs: 9 * 60_000, inFlight: false, reason: "repeated_failures" }, settle: null });
+
+    const response = await POST(request(), context());
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("540");
+    expect(body).toMatchObject({
+      success: false,
+      error: "Setup failed on this server 5 times in the last 15 minutes. You can try again in 9 minutes.",
+      code: "PREPARATION_FAILURES_LIMITED",
+      retryAfterSeconds: 540,
+    });
+    expect(mockPrepare).not.toHaveBeenCalled();
+  });
+
+  it("refuses a concurrent run as in progress rather than rate limited", async () => {
+    mockReserve.mockReturnValue({ limited: { retryAfterMs: 14 * 60_000, inFlight: true, reason: "in_flight" }, settle: null });
+
+    const response = await POST(request(), context());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(body).toMatchObject({ success: false, code: "PREPARATION_IN_PROGRESS" });
+    expect(body.error).toMatch(/already running on this server/);
+    expect(mockPrepare).not.toHaveBeenCalled();
+  });
+
+  it("gives a failed run's slot back and keeps a successful one", async () => {
+    mockPrepare.mockResolvedValueOnce({
+      ok: true,
+      connectionId: CONNECTION_ID,
+      provisionerVersion: "2026.08.26.3",
+      preflight: { ok: true, connectionId: CONNECTION_ID, checkedAt: "2026-08-26T12:00:00.000Z",
+        target: { launchReady: true }, warnings: [], unmetRequirements: [] },
+    });
+    await POST(request(), context());
+    expect(mockSettle).toHaveBeenLastCalledWith("succeeded");
+
+    // Setup ran, but its check says the server isn't ready for agents yet. The
+    // fix text asks for setup again, so the slot must not block it.
+    await POST(request(), context());
+    expect(mockSettle).toHaveBeenLastCalledWith("failed");
+
+    mockPrepare.mockResolvedValueOnce({
+      ok: false,
+      connectionId: CONNECTION_ID,
+      error: { code: "PREPARATION_FAILED", message: "Setup couldn't find active Proxmox storage for virtual machines.", cause: "storage_unavailable" },
+    });
+    const failed = await POST(request(), context());
+    expect(mockSettle).toHaveBeenLastCalledWith("failed");
+    expect(await failed.json()).toEqual({
+      success: false,
+      error: "Setup couldn't find active Proxmox storage for virtual machines.",
+      code: "PREPARATION_FAILED",
+      cause: "storage_unavailable",
+    });
+
+    mockPrepare.mockRejectedValueOnce(new Error("unexpected"));
+    await POST(request(), context());
+    expect(mockSettle).toHaveBeenLastCalledWith("failed");
+    expect(mockSettle).toHaveBeenCalledTimes(4);
   });
 
   it("returns versioned preparation plus truthful read-only preflight evidence", async () => {

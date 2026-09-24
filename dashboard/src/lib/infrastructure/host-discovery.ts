@@ -17,6 +17,7 @@ import {
   loadInfrastructureConnectionSecret,
   type LoadedInfrastructureConnection,
 } from "./connection-store";
+import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
 import {
   HOST_DISCOVERY_CONTRACT_VERSION,
   HOST_DISCOVERY_PROTOCOL,
@@ -113,7 +114,7 @@ const PUBLIC_ERROR_COPY: Record<
   },
   HOST_ADDRESS_BLOCKED: {
     message: "The SSH host resolves to an address this control plane cannot reach.",
-    remediation: "Use an allowed address or explicitly enable private networking on a self-hosted control plane.",
+    // Mode-dependent; see discoveryErrorCopy.
   },
   SSH_HOST_KEY_MISMATCH: {
     message: "The server identity did not match the pinned SSH fingerprint.",
@@ -141,9 +142,17 @@ const PUBLIC_ERROR_COPY: Record<
   },
   DISCOVERY_INTERNAL_ERROR: {
     message: "Host discovery could not be completed.",
-    remediation: "Try again. If the problem continues, inspect the self-hosted server logs.",
+    // Mode-dependent; see discoveryErrorCopy.
   },
 };
+
+/** Hosted owners are never told to read server logs or change network policy. */
+function discoveryErrorCopy(code: HostDiscoveryErrorCode): { message: string; remediation?: string } {
+  const copy = PUBLIC_ERROR_COPY[code];
+  if (code === "HOST_ADDRESS_BLOCKED") return { ...copy, remediation: blockedAddressRemediation() };
+  if (code === "DISCOVERY_INTERNAL_ERROR") return { ...copy, remediation: internalFailureRemediation() };
+  return copy;
+}
 
 type DiscoveryDependencies = {
   loadConnection: typeof loadInfrastructureConnectionSecret;
@@ -176,7 +185,7 @@ function failure(
     ok: false,
     connectionId,
     attemptedAt,
-    error: { code, ...PUBLIC_ERROR_COPY[code] },
+    error: { code, ...discoveryErrorCopy(code) },
   });
 }
 
@@ -454,7 +463,9 @@ function requirementsForEngine(input: {
   linux: boolean;
   root: boolean;
   supportedArchitecture: boolean;
+  amd64: boolean;
   packageManager: boolean;
+  apt: boolean;
   kvmReady: boolean;
   proxmoxVersionSupported: boolean;
   cgroupV2: boolean;
@@ -462,10 +473,16 @@ function requirementsForEngine(input: {
   supportedGvisorOs: boolean;
 }): HostEngineRequirement[] {
   const requirements: HostEngineRequirement[] = [];
+  // Hivra's two supported paths, Proxmox KVM and gVisor, run on x86 (amd64)
+  // with apt only. Name those here so every reason `supported` is false is an
+  // unmet requirement the owner can read, not a silent refusal.
+  const hivraPath = input.id === "proxmox-kvm" || input.id === "gvisor";
   if (!input.linux) requirements.push("LINUX_REQUIRED");
   if (!input.root) requirements.push("ROOT_REQUIRED");
-  if (!input.supportedArchitecture) requirements.push("SUPPORTED_ARCH_REQUIRED");
-  if (!input.installed && !input.packageManager) requirements.push("PACKAGE_MANAGER_REQUIRED");
+  if (hivraPath ? !input.amd64 : !input.supportedArchitecture) requirements.push("SUPPORTED_ARCH_REQUIRED");
+  if ((!input.installed && !input.packageManager) || (input.id === "gvisor" && !input.apt)) {
+    requirements.push("PACKAGE_MANAGER_REQUIRED");
+  }
   if ((input.id === "proxmox-kvm" || input.id === "qemu-kvm") && !input.kvmReady) {
     requirements.push("KVM_REQUIRED");
   }
@@ -512,7 +529,9 @@ function engineEvidence(input: {
     linux: input.linux,
     root: input.root,
     supportedArchitecture,
+    amd64: input.architecture === "amd64",
     packageManager,
+    apt: input.packageManagers.includes("apt"),
     kvmReady: input.kvmReady,
     proxmoxVersionSupported,
     cgroupV2: input.cgroupVersion === 2,
