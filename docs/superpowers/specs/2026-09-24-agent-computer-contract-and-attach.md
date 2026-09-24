@@ -643,7 +643,13 @@ surfaces, placements and sizes come from enums, never from free text.
       owner's Promote) before migration B, which revokes v1 and v2 EXECUTE and
       creates the trigger, is applied. A launch smoke test runs on the served
       revision between A and B and again after B. Undoing B (drop the trigger,
-      restore the grants) is the rollback; A stays.
+      restore the grants) is the rollback; A stays. **As built:** B is queued
+      in `supabase/_pending_destructive_migrations/`, outside the migrations
+      folder, so no "apply every pending migration" run can apply it early; the
+      release doc lists it under "Queued database steps". Its trigger covers
+      inserts and updates that move a row into a slot (into Hivra-managed mode,
+      or from `error` or `deleted` back to a slot-holding status). No app path
+      makes such an update today; a future restore or retry must take the lock.
     - The Hermes lane keeps its own limit. `/api/instances`
       (`instance-service.ts:2451-2467`) counts only `hermes_instances` of its
       own product surface and never counts `hivra_agents` or attachments, by

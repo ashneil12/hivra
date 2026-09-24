@@ -7,8 +7,11 @@
 -- adds a Hivra-managed agent counts under one per-owner advisory lock.
 --
 -- Rollout: apply this migration BEFORE the code that calls these functions.
--- Migration B (20260924221000) revokes the unlocked reservations and adds the
--- writer trigger; apply it only once that code is serving on the environment.
+-- Migration B (supabase/_pending_destructive_migrations/
+-- hivra_agent_slot_writer_guard.sql) revokes the unlocked reservations and adds
+-- the writer trigger. It is queued outside the migrations folder and is applied
+-- only once that code is serving on the environment (release doc, "Queued
+-- database steps").
 
 -- The owner's agent slots, exactly as loadCurrentComputeUsage() counted them
 -- (Hivra-managed hivra_agents rows and legacy hermes_instances rows that hold

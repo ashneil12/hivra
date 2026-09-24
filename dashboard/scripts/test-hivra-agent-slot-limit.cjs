@@ -8,14 +8,22 @@
 //   the limit and write nothing, keep defaults, and answer a replay without
 //   counting it twice;
 // - every slot writer takes the owner's slot lock before it counts;
-// - migration B refuses a Hivra-managed row written without the lock, closes
-//   the unlocked reservations to the application and leaves other writers alone;
+// - migration B is never auto-applied (it is queued outside the migrations
+//   folder), refuses a Hivra-managed row written or moved into a slot without
+//   the lock, closes the unlocked reservations to the application and leaves
+//   other writers and slot-to-slot moves alone;
+// - deployment_mode cannot be NULL, so counting only 'hivra-managed' rows
+//   matches the old billing filter that also accepted NULL;
 // - the new functions are closed to public, anon and authenticated.
 const assert = require("node:assert/strict");
-const { openMigratedDatabase, readMigration } = require("./lib/pglite-all-migrations.cjs");
+const fs = require("node:fs");
+const path = require("node:path");
+const { openMigratedDatabase, readMigration, MIGRATIONS } = require("./lib/pglite-all-migrations.cjs");
 
 const MIGRATION_A = "20260924220000_hivra_agent_slot_limit.sql";
-const MIGRATION_B = "20260924221000_hivra_agent_slot_writer_guard.sql";
+// Migration B is queued outside the migrations folder until the code serves.
+const MIGRATION_B = path.resolve(__dirname, "../supabase/_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql");
+const readQueued = (file) => fs.readFileSync(file, "utf8");
 const OWNER = "owner";
 // Placeholder ids the public-tree hygiene allows: the 00000000-0000-4xxx-8xxx- family.
 const pid = (group, n) => `00000000-0000-4${group}00-8000-${String(n).padStart(12, "0")}`;
@@ -145,12 +153,35 @@ async function main() {
     assert.match((await one("select pg_get_functiondef('public.lock_hivra_owner_agent_slots(text)'::regprocedure) as def")).def,
       /pg_advisory_xact_lock\(hashtextextended\('hivra-agent-slots-v1:' \|\| p_owner, 0\)\)/);
 
+    // The old billing filter also counted deployment_mode NULL as managed. The
+    // column is NOT NULL (backfilled in 20260826130000), so no such row exists.
+    assert.equal((await one(`select attnotnull from pg_attribute where attrelid='public.hivra_agents'::regclass
+      and attname='deployment_mode'`)).attnotnull, true, "deployment_mode is NOT NULL");
+
+    // Migration B is queued, never in the auto-applied folder.
+    assert.equal(fs.readdirSync(MIGRATIONS).some((name) => /slot_writer_guard/.test(name)), false,
+      "the writer guard is not in the migrations folder");
+    assert.equal((await one(`select count(*)::int as n from pg_trigger where tgname='hivra_managed_agent_slot_writer_guard'`)).n, 0,
+      "applying every migration leaves the writer guard off");
+
     // Migration B: the writer trigger and the closed unlocked reservations.
-    await db.exec(readMigration(MIGRATION_B));
-    await db.exec(readMigration(MIGRATION_B));
+    await db.exec(readQueued(MIGRATION_B));
+    await db.exec(readQueued(MIGRATION_B));
     await assert.rejects(() => agent(pid("1", 9), { status: "running" }), { code: "55000" },
       "a Hivra-managed row written without the slot lock is refused");
     await agent(pid("1", 10), { status: "running", mode: "self-managed" });
+    // Updates: moving into a slot needs the lock; slot-to-slot and out-of-slot moves do not.
+    await assert.rejects(() => db.query("update public.hivra_agents set status='provisioning' where id=$1", [pid("1", 4)]),
+      { code: "55000" }, "an error row moved back into a slot without the lock is refused");
+    await assert.rejects(() => db.query("update public.hivra_agents set status='running',desired_state='running' where id=$1", [pid("1", 5)]),
+      { code: "55000" }, "a deleted row restored without the lock is refused");
+    await assert.rejects(() => db.query(`update public.hivra_agents set deployment_mode='hivra-managed',proxmox_host='local',
+      infrastructure_connection_id=null,deployment_target_id=null,infrastructure_connection_revision=null where id=$1`, [pid("1", 6)]),
+      { code: "55000" }, "a My server row moved to Hivra-managed without the lock is refused");
+    await db.query("update public.hivra_agents set status='provisioning' where id=$1", [pid("1", 2)]);
+    await db.query("update public.hivra_agents set status='stopped' where id=$1", [pid("1", 2)]);
+    await db.query("update public.hivra_agents set status='error' where id=$1", [pid("1", 3)]);
+    await db.query("update public.hivra_agents set name='Renamed' where id=$1", [pid("1", 4)]);
     assert.equal((await insert(row, 99)).r.status, "inserted", "the locked writer still writes");
     const secondRequest = pid("6", 3);
     assert.equal((await reservation(3, secondRequest, 99)).r.status, "reserved",

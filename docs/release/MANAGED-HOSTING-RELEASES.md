@@ -89,6 +89,20 @@ can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database
 migrations or external side effects; those require a separately reviewed plan.
 
+## Queued database steps
+
+Some database changes break the code that is serving until the new code serves.
+They are kept in `dashboard/supabase/_pending_destructive_migrations/`, outside
+`dashboard/supabase/migrations/`, so no "apply every pending migration" run
+(including the production schema catch-up at the first Promote) can apply one
+early. Each is an explicit, ordered step in the Canary release record and in the
+Promote packet, applied per environment only after the code it needs serves
+there, following the steps in the file's header.
+
+| Queued file | Apply only after | Check before and after |
+|---|---|---|
+| `hivra_agent_slot_writer_guard.sql` (plan agent limit, migration B) | `*_hivra_agent_slot_limit.sql` is applied and the code that writes Hivra-managed agents through `insert_hivra_managed_agent` and `reserve_hivra_launch_model_request_v3` is serving on that environment | Launch smoke test; start and restart of an existing agent |
+
 ## Feature acceptance
 
 A contributor may propose a new adapter or optional capability without it becoming
