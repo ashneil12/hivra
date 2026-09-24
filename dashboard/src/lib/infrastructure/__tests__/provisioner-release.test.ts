@@ -95,7 +95,7 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   // Regression: 2026.09.15.1, .15.2 and .21.1 shipped TypeScript identities but
   // SQL admission stopped at 2026.09.08.3, so their provider computers could
   // never be admitted or keep a valid identity.
-  const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924130000_provider_release_admission_2026_09_24.sql"]
+  const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
   for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;

@@ -6,12 +6,16 @@ import {
   createInfrastructureConnection,
   discoverInfrastructureHost,
   forceForgetHetznerCloudConnection,
+  getHetznerCloudCapacitySlot,
   getHetznerCloudInventory,
   getHetznerCloudOfferCatalog,
   listInfrastructureTargets,
+  listProviderComputerSetupEvidence,
+  listProviderComputerSetups,
   prepareInfrastructureConnection,
   preflightInfrastructureConnection,
   refreshHetznerCloudInventory,
+  replaceHetznerCloudToken,
 } from "../client";
 import {
   HETZNER_CLOUD_BILLING_SEMANTICS,
@@ -197,7 +201,7 @@ describe("infrastructure browser client", () => {
     }];
     global.fetch = jest.fn(() => jsonResponse({
       success: true,
-      data: { connection: hetznerConnection, inventory },
+      data: { connection: hetznerConnection, inventory, writeCheck: { strayKeyName: null } },
     }, 201)) as typeof fetch;
 
     await expect(connectHetznerCloudProject({
@@ -206,7 +210,85 @@ describe("infrastructure browser client", () => {
       operatingMode: "self-managed",
       setupMode: "simple",
       credentials: { apiToken: "project-scoped-owner-token-value" },
-    })).resolves.toEqual({ connection: hetznerConnection, inventory });
+    })).resolves.toEqual({ connection: hetznerConnection, inventory, writeCheck: { strayKeyName: null } });
+
+    // A response without the write-check result is not a connected project.
+    global.fetch = jest.fn(() => jsonResponse({
+      success: true,
+      data: { connection: hetznerConnection, inventory },
+    }, 201)) as typeof fetch;
+    await expect(connectHetznerCloudProject({
+      name: "My Hetzner",
+      provider: "hetzner-cloud",
+      operatingMode: "self-managed",
+      setupMode: "simple",
+      credentials: { apiToken: "project-scoped-owner-token-value" },
+    })).rejects.toThrow(/unexpected response/);
+  });
+
+  it("replaces a Hetzner token through its own endpoint and surfaces a stray test key", async () => {
+    const hetznerConnection = {
+      ...connection,
+      name: "My Hetzner",
+      provider: "hetzner-cloud" as const,
+      status: "ready" as const,
+      endpoint: null,
+      configuration: null,
+      capabilities: HETZNER_CLOUD_CONNECTION_CAPABILITIES,
+      lastCheckedAt: CHECKED_AT,
+    };
+    const fetchMock = jest.fn(() => jsonResponse({
+      success: true,
+      data: {
+        connection: hetznerConnection, inventory: null,
+        writeCheck: { strayKeyName: "hivra-check-0123456789ab" }, projectCheck: "unconfirmed",
+      },
+    }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // A saved token without a saved server list, and an unconfirmed project, both reach the page.
+    await expect(replaceHetznerCloudToken(CONNECTION_ID, "new-project-scoped-token-value")).resolves.toEqual({
+      connection: hetznerConnection, inventory: null,
+      writeCheck: { strayKeyName: "hivra-check-0123456789ab" }, projectCheck: "unconfirmed",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/infrastructure/connections/${CONNECTION_ID}/hetzner-cloud/token`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ apiToken: "new-project-scoped-token-value" }) }),
+    );
+    await expect(replaceHetznerCloudToken("not-a-connection", "new-project-scoped-token-value")).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A result that doesn't say how the project was checked is not a replaced token.
+    global.fetch = jest.fn(() => jsonResponse({
+      success: true,
+      data: { connection: hetznerConnection, inventory: [], writeCheck: { strayKeyName: null } },
+    })) as typeof fetch;
+    await expect(replaceHetznerCloudToken(CONNECTION_ID, "new-project-scoped-token-value")).rejects.toThrow(/unexpected response/);
+  });
+
+  it("reads setup evidence with Hivra's created-server records", async () => {
+    const createdServers = [{ orderId: TARGET_ID, serverName: "hivra-a1b2c3d4", providerServerId: null, status: "ambiguous" }];
+    global.fetch = jest.fn(() => jsonResponse({ success: true, data: { computers: [], createdServers } })) as typeof fetch;
+    await expect(listProviderComputerSetupEvidence(CONNECTION_ID)).resolves.toEqual({ computers: [], createdServers });
+    await expect(listProviderComputerSetups(CONNECTION_ID)).resolves.toEqual([]);
+    // Without the created-server records the card can't label anything.
+    global.fetch = jest.fn(() => jsonResponse({ success: true, data: { computers: [] } })) as typeof fetch;
+    await expect(listProviderComputerSetupEvidence(CONNECTION_ID)).rejects.toThrow(/unexpected response/);
+  });
+
+  it("reads the account's Hetzner server slot", async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      success: true,
+      data: { slot: { held: true, serverName: "hivra-a1b2c3d4", connectionId: CONNECTION_ID, status: "created_off" } },
+    })) as typeof fetch;
+    await expect(getHetznerCloudCapacitySlot()).resolves.toEqual({
+      held: true, serverName: "hivra-a1b2c3d4", connectionId: CONNECTION_ID, status: "created_off",
+    });
+    global.fetch = jest.fn(() => jsonResponse({
+      success: true,
+      data: { slot: { held: false, serverName: "leaked", connectionId: null, status: null } },
+    })) as typeof fetch;
+    await expect(getHetznerCloudCapacitySlot()).rejects.toThrow(/unexpected response/);
   });
 
   it("loads, refreshes, and validates a Hetzner offer catalog with location availability", async () => {

@@ -355,5 +355,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260923204000", name: "managed_venice_token_lots_unique_quote_any_token" },
   { version: "20260924090000", name: "drop_user_bankr_key_on_agent_delete" },
   { version: "20260924101500", name: "digitalocean_token_expiry_and_forget" },
-  { version: "20260924130000", name: "provider_release_admission_2026_09_24" },
+  { version: "20260924171100", name: "hetzner_same_project_token_replacement" },
+  { version: "20260924180000", name: "provider_release_admission_2026_09_24" },
 ];

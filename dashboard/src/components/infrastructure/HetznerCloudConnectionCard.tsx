@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -7,6 +8,7 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
+  PlugZap,
   RefreshCw,
   Server,
   Trash2,
@@ -18,19 +20,44 @@ import type {
   HetznerCloudServerInventoryDto,
 } from "@/lib/infrastructure/contracts";
 import { formatInfrastructureDate } from "@/lib/infrastructure/formatters";
+import { hetznerCapacitySlotReason, type HetznerCloudCapacitySlotDto } from "@/lib/infrastructure/hetzner-cloud-token-contracts";
+import {
+  hetznerCreatedServerFor,
+  isProviderComputerSetupTerminal,
+  type HetznerCloudCreatedServer,
+  type ProviderComputerSetupView,
+} from "@/lib/infrastructure/provider-computer-setup-contracts";
+import { buildLaunchSetupHref, type PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 
+import { hasSavedCapacityRequest } from "./HetznerCloudCapacityDialog";
+import { launchOnTargetHref } from "./ProviderComputerSetupPanel";
 import styles from "./Infrastructure.module.css";
 
 const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
 
+/** Whether Hivra's own records of what it created here have been read. */
+export type HetznerSetupEvidenceStatus = "loading" | "loaded" | "failed";
+
 type HetznerCloudConnectionCardProps = {
   connection: HetznerCloudConnectionDto;
   inventory: HetznerCloudServerInventoryDto[];
+  /** Saved setup for servers Hivra created through this connection. */
+  setups?: ProviderComputerSetupView[];
+  /** Every server request Hivra sent through this connection. */
+  createdServers?: HetznerCloudCreatedServer[];
+  /** No server is called "Not created by Hivra" until this is "loaded". */
+  setupEvidence?: HetznerSetupEvidenceStatus;
+  onRetrySetupEvidence?: () => void;
+  slot?: HetznerCloudCapacitySlotDto | null;
   loading: boolean;
   error?: string | null;
+  launchResourceId?: PortableLaunchResourceId | null;
+  unifiedLaunchReturn?: boolean;
   onCreateCapacity: () => void;
   onCleanup?: () => void;
-  onSetup?: () => void;
+  onSetup?: (orderId?: string) => void;
+  onReplaceToken?: () => void;
+  onConnectExistingServer?: (server: HetznerCloudServerInventoryDto) => void;
   onRefresh: () => void;
   onDelete: () => void;
 };
@@ -65,22 +92,94 @@ function persistedSyncError(
   code: HetznerCloudConnectionDto["lastErrorCode"],
 ): string {
   if (code === "invalid_credentials") {
-    return "Hetzner rejected this project token. Replace or reconnect the credential before the next sync.";
+    return "Hetzner rejected this project token. Replace it with a new Read & Write token from the same project; your servers keep running.";
   }
   if (code === "provider_response_invalid") {
-    return "Hetzner returned an inventory response Hivra could not safely accept.";
+    return "Hetzner returned a server list Hivra couldn't safely accept.";
   }
-  return "The latest Hetzner inventory sync did not complete.";
+  return "The latest Hetzner server sync didn't finish.";
+}
+
+type Readiness = {
+  label: string | null;
+  tone: "connected" | "checking" | "error" | "pending";
+  hint: string;
+};
+
+/**
+ * One truthful line about what Hivra can do with a server in this project,
+ * from Hivra's own records only. "Not created by Hivra" is said only once
+ * those records have loaded and none of them names this server; while they
+ * load, or when they can't be read, the server gets no provenance line.
+ */
+function serverReadiness(
+  setup: ProviderComputerSetupView | undefined,
+  createdBy: HetznerCloudCreatedServer | null,
+  evidence: HetznerSetupEvidenceStatus,
+): Readiness | null {
+  if (setup) return setupReadiness(setup);
+  if (createdBy) {
+    switch (createdBy.status) {
+      case "creating":
+      case "ambiguous":
+        return { label: "Created by Hivra", tone: "checking", hint: "Hivra is still confirming how this server's creation ended." };
+      case "cleaning":
+        return { label: "Created by Hivra", tone: "checking", hint: "Hivra is removing this server." };
+      case "cleanup_abandoned":
+        return { label: "Created by Hivra", tone: "error", hint: "Hivra stopped removing this server. Check it in Hetzner Console; Hetzner bills it until it's deleted." };
+      case "provider_rejected":
+        return { label: "Created by Hivra", tone: "error", hint: "Hetzner reported this request as refused, but a server with its name exists. Check it in Hetzner Console." };
+      default:
+        return { label: "Created by Hivra", tone: "pending", hint: "Open Computer setup to see how far its setup got." };
+    }
+  }
+  if (evidence === "loaded") {
+    return { label: null, tone: "pending", hint: "Not created by Hivra — connect with the setup command." };
+  }
+  if (evidence === "loading") {
+    return { label: null, tone: "pending", hint: "Checking whether Hivra created this server…" };
+  }
+  return null;
+}
+
+function setupReadiness(setup: ProviderComputerSetupView): Readiness {
+  if (setup.stage === "environment_prepared" && setup.launchReady) {
+    return { label: "Ready for agents", tone: "connected", hint: "Set up by Hivra. Launch checks it again before anything starts." };
+  }
+  switch (setup.stage) {
+    case "not_requested":
+      return { label: "No agent setup", tone: "pending", hint: "Created as a plain server. Hivra won't set it up for agents." };
+    case "expired":
+      return { label: "Setup window expired", tone: "error", hint: "Its one-time setup key expired. Remove it with Remove created server before creating another." };
+    case "stopped":
+      return { label: "Setup stopped", tone: "error", hint: "Setup was stopped. The server and its saved state are kept." };
+    case "retired":
+      return { label: "Removed", tone: "pending", hint: "Removed through Hivra. Reference only." };
+    case "firewall_outcome_unknown":
+    case "power_outcome_unknown":
+      return { label: "Needs a check", tone: "error", hint: "Hetzner didn't confirm the last setup step. Check the server in Hetzner Console." };
+    default:
+      return { label: "Needs setup", tone: "checking", hint: "Created by Hivra. Finish setup so agents can run here." };
+  }
 }
 
 export function HetznerCloudConnectionCard({
   connection,
   inventory,
+  setups = [],
+  createdServers = [],
+  setupEvidence = "loading",
+  onRetrySetupEvidence,
+  slot = null,
   loading,
   error,
+  launchResourceId = null,
+  unifiedLaunchReturn = false,
   onCreateCapacity,
   onCleanup,
   onSetup,
+  onReplaceToken,
+  onConnectExistingServer,
   onRefresh,
   onDelete,
 }: HetznerCloudConnectionCardProps) {
@@ -91,11 +190,19 @@ export function HetznerCloudConnectionCard({
     return latest;
   }, connection.lastCheckedAt);
   const syncIssue = connection.status === "error" || Boolean(error);
+  const tokenRejected = connection.status === "error" && connection.lastErrorCode === "invalid_credentials";
   const visibleError = error ?? (
     connection.status === "error"
       ? persistedSyncError(connection.lastErrorCode)
       : null
   );
+  const setupByServer = new Map(setups
+    .filter((setup) => setup.providerServerId)
+    .map((setup) => [setup.providerServerId as string, setup]));
+  const slotUsed = Boolean(slot?.held);
+  // A request this browser sent but never resolved stays checkable even while
+  // it holds the slot; checking it can't buy a second server.
+  const savedRequest = hasSavedCapacityRequest(connection.id);
 
   return (
     <article className={`${styles.connectionCard} ${styles.providerConnectionCard}`}>
@@ -111,7 +218,7 @@ export function HetznerCloudConnectionCard({
           {syncIssue
             ? <AlertTriangle size={12} aria-hidden="true" />
             : <CheckCircle2 size={12} aria-hidden="true" />}
-          {syncIssue ? "Sync issue" : "Connected"}
+          {tokenRejected ? "Token rejected" : syncIssue ? "Sync issue" : "Connected"}
         </span>
       </div>
 
@@ -137,9 +244,9 @@ export function HetznerCloudConnectionCard({
         <div>
           <strong>Encrypted project access</strong>
           <span>
-            Hivra asks for a Read &amp; Write token, which can mutate this Hetzner project.
-            Write scope is confirmed only by an approved mutation. The token is never
-            returned to the browser and can be revoked in Hetzner.
+            Hivra uses a Read &amp; Write token, which can change this Hetzner project.
+            It is never returned to the browser. Replace it here any time, or revoke it
+            in Hetzner.
           </span>
         </div>
       </div>
@@ -154,6 +261,18 @@ export function HetznerCloudConnectionCard({
         </div>
       ) : null}
 
+      {setupEvidence === "failed" && inventory.length > 0 ? (
+        <div className={styles.providerInventoryError} role="alert">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>Hivra couldn&apos;t load which of these servers it created or how far their setup got.</span>
+          {onRetrySetupEvidence ? (
+            <button type="button" onClick={onRetrySetupEvidence}>
+              <RefreshCw size={13} aria-hidden="true" /> Try again
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {loading && inventory.length === 0 ? (
         <div className={styles.providerInventoryLoading} role="status">
           <Loader2 size={17} className={styles.spin} aria-hidden="true" />
@@ -163,6 +282,16 @@ export function HetznerCloudConnectionCard({
         <div className={styles.providerInventory} aria-label={`${connection.name} servers`}>
           {inventory.map((server) => {
             const state = inventoryStatus(server.status);
+            const setup = setupByServer.get(server.providerResourceId);
+            const createdBy = hetznerCreatedServerFor(createdServers, server);
+            const readiness = serverReadiness(setup, createdBy, setupEvidence);
+            const readyTargetId = setup?.stage === "environment_prepared" && setup.launchReady ? setup.targetId : null;
+            // Setup steps need a working project token; replace it first.
+            const canContinueSetup = Boolean(setup && !isProviderComputerSetupTerminal(setup) && onSetup
+              && connection.status === "ready");
+            // Only a server Hivra's loaded records don't name is someone else's.
+            const canConnect = setupEvidence === "loaded" && !setup && !createdBy && onConnectExistingServer
+              && (server.publicNetwork.ipv4 || server.publicNetwork.ipv6);
             return (
               <article key={server.id} className={styles.providerServerCard}>
                 <div className={styles.providerServerHeader}>
@@ -195,9 +324,33 @@ export function HetznerCloudConnectionCard({
                     <dd>{server.location.city ?? server.location.name}</dd>
                   </div>
                 </dl>
-                <div className={styles.providerLaunchBoundary}>
-                  Provider inventory · Open Computer setup to check agent readiness
-                </div>
+                {/* A setup or a loaded record always yields a line; a failed read yields none. */}
+                {readiness ? (
+                  <div className={styles.providerServerReadiness}>
+                    {readiness.label ? (
+                      <span className={`${styles.statusBadge} ${styles[`status_${readiness.tone}`]}`}>{readiness.label}</span>
+                    ) : null}
+                    <span>{readiness.hint}</span>
+                    {readyTargetId ? (
+                      <Link
+                        className={styles.primaryButton}
+                        href={launchResourceId
+                          ? buildLaunchSetupHref(launchResourceId, readyTargetId, { unified: unifiedLaunchReturn })
+                          : launchOnTargetHref(readyTargetId)}
+                      >
+                        {launchResourceId ? "Continue your launch" : "Launch on this server"}
+                      </Link>
+                    ) : canContinueSetup && setup ? (
+                      <button type="button" className={styles.primaryButton} onClick={() => onSetup?.(setup.orderId)}>
+                        {setup.stage === "awaiting_setup" ? "Start setup" : "Continue setup"}
+                      </button>
+                    ) : canConnect ? (
+                      <button type="button" className={styles.secondaryButton} onClick={() => onConnectExistingServer?.(server)}>
+                        <PlugZap size={14} aria-hidden="true" /> Connect this server
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </article>
             );
           })}
@@ -208,20 +361,30 @@ export function HetznerCloudConnectionCard({
           <div>
             <strong>No servers in this project yet.</strong>
             <span>
-              Choose a live Hetzner size, location, and Ubuntu image in Hivra, then
-              review the provider price before creating a powered-off server.
+              Choose a size and location in Hivra and review Hetzner&apos;s price. Hivra
+              creates the server and sets it up for agents.
             </span>
           </div>
         </div>
       )}
 
+      {slotUsed && !savedRequest ? (
+        <p className={styles.providerCreateReason} role="note">{hetznerCapacitySlotReason(slot)}</p>
+      ) : null}
+
       <div className={styles.cardActions}>
+        {tokenRejected && onReplaceToken ? (
+          <button type="button" className={styles.primaryButton} onClick={onReplaceToken}>
+            <KeyRound size={14} aria-hidden="true" /> Replace token
+          </button>
+        ) : null}
         <button
           type="button"
-          className={styles.primaryButton}
+          className={tokenRejected ? styles.secondaryButton : styles.primaryButton}
           onClick={onCreateCapacity}
+          disabled={slotUsed && !savedRequest}
         >
-          <Cloud size={14} aria-hidden="true" /> Create cloud server
+          <Cloud size={14} aria-hidden="true" /> {savedRequest ? "Check saved request" : "Create cloud server"}
         </button>
         <button
           type="button"
@@ -239,9 +402,15 @@ export function HetznerCloudConnectionCard({
         {onCleanup && <button type="button" className={styles.secondaryButton} onClick={onCleanup}>
           <Trash2 size={14} aria-hidden="true" /> Remove created server
         </button>}
-        {onSetup && <button type="button" className={styles.secondaryButton} onClick={onSetup}>
+        {/* Computer setup reads its own list, so it stays reachable when the card's read failed. */}
+        {onSetup && (setups.length > 0 || setupEvidence === "failed") && <button type="button" className={styles.secondaryButton} onClick={() => onSetup()}>
           <Server size={14} aria-hidden="true" /> Computer setup
         </button>}
+        {!tokenRejected && onReplaceToken ? (
+          <button type="button" className={styles.secondaryButton} onClick={onReplaceToken}>
+            <KeyRound size={14} aria-hidden="true" /> Replace token
+          </button>
+        ) : null}
         <a
           className={styles.tertiaryButton}
           href={HETZNER_PROJECTS_URL}

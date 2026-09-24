@@ -7,8 +7,10 @@ import type { NextRequest } from "next/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import {
+  isPinnableHivraWalletBox,
   loadOwnedHivraWalletAgent,
   syncBankrEnvToRunningHivraAgent,
+  type HivraWalletEnvSync,
   type OwnedHivraWalletAgent,
 } from "@/lib/agent-wallets/hivra-lane";
 import {
@@ -65,15 +67,55 @@ async function loadAgentForWallet(id: string, userId: string): Promise<AgentGate
   return { ok: true, agent, executionContext };
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The gate only resolves a context for a box that was running when the request
+ * began. A start that finished while the wallet row was being written may have
+ * run its boot reconcile before the write and missed this change, so re-read
+ * the box and sync to it if it is up now.
+ */
+async function syncEnvToBox(
+  gate: Extract<AgentGate, { ok: true }>,
+  userId: string,
+  record: InstanceBankrWalletRecord
+): Promise<HivraWalletEnvSync> {
+  let { agent, executionContext } = gate;
+  if (!executionContext) {
+    const fresh = await loadOwnedHivraWalletAgent(agent.id, userId);
+    if (!fresh || fresh.status !== "running" || !fresh.ip) {
+      // A stopped box gets the change from its boot reconcile, but only if it
+      // can be pinned to its VM then. Say so now instead of promising a
+      // delivery that will fail closed at start.
+      return isPinnableHivraWalletBox(fresh ?? agent)
+        ? { status: "skipped" }
+        : {
+            status: "failed",
+            reason: "identity_unverifiable",
+            error: "this box can't be verified as its VM, so it won't receive wallet changes",
+          };
+    }
+    agent = fresh;
+    executionContext = await resolveHivraAgentExecutionContext(userId, fresh);
+  }
+  return syncBankrEnvToRunningHivraAgent({ agent, record, executionContext });
+}
+
+// Best effort: the wallet row is already written, so a sync failure is
+// reported as envSync "failed" and never fails the response.
 async function syncEnv(
   gate: Extract<AgentGate, { ok: true }>,
+  userId: string,
   record: InstanceBankrWalletRecord
-): Promise<"synced" | "skipped" | "failed"> {
-  const sync = await syncBankrEnvToRunningHivraAgent({
-    agent: gate.agent,
-    record,
-    executionContext: gate.executionContext,
-  });
+): Promise<{ envSync: "synced" | "skipped" | "failed"; envSyncReason?: "identity_unverifiable" }> {
+  let sync: HivraWalletEnvSync;
+  try {
+    sync = await syncEnvToBox(gate, userId, record);
+  } catch (error) {
+    sync = { status: "failed", error: errorMessage(error) };
+  }
   if (sync.status === "failed") {
     log.warn("hivra agent wallet env sync failed after connect change", {
       source: LOG_SOURCE,
@@ -82,7 +124,9 @@ async function syncEnv(
       error: sync.error,
     });
   }
-  return sync.status;
+  return sync.status === "failed" && sync.reason
+    ? { envSync: sync.status, envSyncReason: sync.reason }
+    : { envSync: sync.status };
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -124,13 +168,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         failureType: `${FAILURE_PREFIX}_old_keys_not_revoked`,
       });
     }
-    const envSync = await syncEnv(gate, record);
+    const delivery = await syncEnv(gate, userId, record);
 
     return apiSuccess({
       wallet: instanceBankrWalletPublicSummary(record),
       replacedProvisionedWallet,
       oldKeysRevoked,
-      envSync,
+      ...delivery,
     });
   } catch (err) {
     return connectErrorResponse(err, FAILURE_PREFIX) ?? handleApiError(err);
@@ -154,9 +198,9 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
       agentType: gate.agent.type,
       userId,
     });
-    const envSync = await syncEnv(gate, record);
+    const delivery = await syncEnv(gate, userId, record);
 
-    return apiSuccess({ wallet: instanceBankrWalletPublicSummary(record), envSync });
+    return apiSuccess({ wallet: instanceBankrWalletPublicSummary(record), ...delivery });
   } catch (err) {
     return connectErrorResponse(err, "hivra_agent_wallet_disconnect") ?? handleApiError(err);
   }
