@@ -194,7 +194,9 @@ attempt("mv_agents_md", lambda: os.rename(view + "/AGENTS.md", view + "/AGENTS.o
 attempt("ln_agents_md", lambda: os.symlink("/etc/hostname", view + "/AGENTS.override.md"))
 attempt("create_in_starting_folder", lambda: open(view + "/new-file", "x").close())
 attempt("chmod_setuid_in_home", lambda: (open(home + "/suid", "w").close(), os.chmod(home + "/suid", 0o4755)))
-out["groups"] = sorted(os.getgroups()) + [os.getgid()]
+# The set of groups the process holds. systemd 249 lists the primary group
+# again as a supplementary group and systemd 255 lists none, so compare sets.
+out["groups"] = sorted(set(os.getgroups()) | {os.getgid()})
 out["uid"] = os.getuid()
 def run(args):
     try:
@@ -603,8 +605,8 @@ def matrix(installation):
     check("T6_system_bus", denied(files.get("connect_system_bus")), files.get("connect_system_bus"))
     # The setuid refusal is RestrictSUIDSGID, a seccomp filter only the unit's
     # own processes carry; it is checked from Codex's tool below.
-    check("T9_no_sudo_own_group_only", files.get("sudo_n_true") not in (0,) and files.get("groups") == [user.pw_gid, user.pw_gid],
-          {k: files.get(k) for k in ("sudo_n_true", "groups")})
+    check("T9_no_sudo_own_group_only", files.get("sudo_n_true") not in (0,) and files.get("groups") == [user.pw_gid],
+          dict({k: files.get(k) for k in ("sudo_n_true", "groups")}, agentGid=user.pw_gid))
     check("T15_agent_cannot_open_or_replace_chat_socket", denied(files.get("connect_own_chat_socket")) and denied(files.get("replace_own_chat_socket")),
           {k: files.get(k) for k in ("connect_own_chat_socket", "replace_own_chat_socket")})
     check("T32_no_work_outside_unit", all(files.get(k) != 0 for k in ("crontab", "at_now", "systemd_run_user", "loginctl_linger")),
