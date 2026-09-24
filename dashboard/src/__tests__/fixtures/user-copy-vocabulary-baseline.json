@@ -109,7 +109,7 @@
     "instance": 3
   },
   "components/hivra/BuzzConnectionsPage.tsx": {
-    "runtime": 21
+    "runtime": 2
   },
   "components/hivra/ComputerFolderRecovery.tsx": {
     "Box Terminal": 1
