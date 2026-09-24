@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { TextEncoder } from "node:util";
 
 import { HivraRemoteDesktop } from "../HivraRemoteDesktop";
@@ -200,9 +200,12 @@ describe("HivraRemoteDesktop", () => {
     await screen.findByText("Connected");
     const prepareCalls = () => fetchMock.mock.calls.filter(([, init]) => init?.body && JSON.parse(String(init.body)).action === "prepare");
     expect(prepareCalls()).toHaveLength(0);
-    fireEvent.click(screen.getByLabelText("Desktop settings"));
+    const details = screen.getByLabelText("Desktop settings").closest("details")!;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
     expect(screen.getByText(/optional maintenance.*interrupts this stream/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Update runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update runtime…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
     await waitFor(() => expect(prepareCalls()).toHaveLength(1));
     expect(prepareCalls()[0]).toEqual([
       `/api/hivra/agents/${COMPUTER_ID}/remote-desktop`,
@@ -1589,6 +1592,53 @@ describe("HivraRemoteDesktop", () => {
     const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
     expect(frame.getAttribute("src")).toBe(`${ORIGIN}/desktop/handoff`);
     expect(fetchMock.mock.calls.some(([url]) => String(url) === `${ORIGIN}/desktop/handoff`)).toBe(true);
+  });
+
+  it("asks before Update runtime, since it can restart the desktop and close its apps", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") {
+        return response(201, { success: true, data: session("018f6d3c-1d91-7c65-9d86-37fc915b8377") });
+      }
+      return response(200, { success: true, data: { prepared: true } });
+    });
+    render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+    const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+    dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+    dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1" });
+    await screen.findByText("Connected");
+    const prepareCalls = () => fetchMock.mock.calls.filter(([, init]) => init?.body && JSON.parse(String(init.body)).action === "prepare");
+    const revokes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE");
+    const details = screen.getByLabelText("Desktop settings").closest("details")!;
+    const openMenu = () => {
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+    };
+
+    openMenu();
+    fireEvent.click(screen.getByRole("button", { name: /update runtime/i }));
+    // Asking changes nothing: no preparation and the stream stays open.
+    expect(prepareCalls()).toHaveLength(0);
+    expect(revokes()).toHaveLength(0);
+    expect(screen.getByText("Connected")).toBeTruthy();
+    const confirm = screen.getByRole("group", { name: "Confirm update" });
+    expect(confirm.textContent).toContain("Updating ends this stream and can restart the desktop, which closes its open apps.");
+    expect(confirm.textContent).toContain("Files in ~/Hivra are kept.");
+
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Confirm update" })).toBeNull();
+    // Closing the panel also withdraws the question.
+    fireEvent.click(screen.getByRole("button", { name: /update runtime/i }));
+    fireEvent.pointerDown(document.body);
+    openMenu();
+    expect(screen.queryByRole("group", { name: "Confirm update" })).toBeNull();
+    await act(async () => { await Promise.resolve(); });
+    expect(prepareCalls()).toHaveLength(0);
+    expect(revokes()).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /update runtime/i }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Confirm update" })).getByRole("button", { name: "Update" }));
+    await waitFor(() => expect(prepareCalls()).toHaveLength(1));
+    expect(revokes()).toHaveLength(1);
   });
 
   describe("after the stream drops", () => {

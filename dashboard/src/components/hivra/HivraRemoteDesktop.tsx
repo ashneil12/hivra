@@ -245,6 +245,9 @@ export function HivraRemoteDesktop({
   useWorkspaceModalLayer("surface", immersive);
   useInertOutside(fullscreenRef, immersive);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Update runtime asks first: it can restart the desktop and close its apps.
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
+  if (!menuOpen && confirmingUpdate) setConfirmingUpdate(false);
   const menuRef = useRef<HTMLDetailsElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const [fitDesktop, setFitDesktop] = useState(true);
@@ -1379,12 +1382,41 @@ export function HivraRemoteDesktop({
                   <small>Off shows it at exact size — larger text, scrolls.</small>
                 </span>
               </label>
-              <button type="button" onClick={() => void prepareDesktop()} className={styles.stripMenuAction}>
-                <RefreshCw size={12} /> Update runtime
-              </button>
-              <p className={styles.stripMenuNote}>
-                Optional maintenance. Updating the runtime interrupts this stream.
-              </p>
+              {confirmingUpdate ? (
+                // Update re-runs desktop preparation ({ action: "prepare" }).
+                // When that reinstalls an Ubuntu desktop, its container
+                // restarts and its apps close; ~/Hivra is a mounted folder and
+                // is kept. A healthy desktop may only be re-proved, hence "can".
+                <div role="group" aria-label="Confirm update" className={styles.stripMenuConfirm}>
+                  <p className={styles.stripMenuNote}>
+                    Updating ends this stream and can restart the desktop, which closes its open apps. Files in ~/Hivra are kept.
+                  </p>
+                  <div className={styles.stripMenuConfirmActions}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void prepareDesktop();
+                      }}
+                      className={styles.stripMenuAction}
+                    >
+                      <RefreshCw size={12} /> Update
+                    </button>
+                    <button type="button" onClick={() => setConfirmingUpdate(false)} className={styles.stripMenuAction}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button type="button" onClick={() => setConfirmingUpdate(true)} className={styles.stripMenuAction}>
+                    <RefreshCw size={12} /> Update runtime…
+                  </button>
+                  <p className={styles.stripMenuNote}>
+                    Optional maintenance. Updating the runtime interrupts this stream.
+                  </p>
+                </>
+              )}
               <div className={styles.stripEvidence} aria-label="Session performance evidence">
                 <p><span>Transport</span><strong>WebSocket + WebCodecs</strong></p>
                 <p><span>Setup</span><strong>{secureSetupMs == null ? "Measuring…" : formatDuration(secureSetupMs)}</strong></p>

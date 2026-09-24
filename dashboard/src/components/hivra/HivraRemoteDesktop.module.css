@@ -196,6 +196,24 @@
   line-height: 1.45;
 }
 
+/* Update runtime can close the desktop's apps, so its warning reads at body
+   size rather than as a footnote. */
+.stripMenuConfirm {
+  margin-top: 10px;
+}
+
+.stripMenuConfirm .stripMenuNote {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: 12px;
+}
+
+.stripMenuConfirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* The evidence grid, folded in rather than sitting above the desktop. */
 .stripEvidence {
   margin-top: 10px;
