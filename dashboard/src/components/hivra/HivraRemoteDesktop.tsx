@@ -117,13 +117,27 @@ const RELEASING_CONTROLLER_RETRY_WINDOW_MS = 40_000;
 // A re-sent revoke normally answers in well under a second. On a link that
 // hangs it, the open goes ahead after this and the conflict wait covers it.
 const UNRELEASED_REVOKE_WAIT_MS = 5_000;
-// The handoff document has this long to load and say it is ready.
-const HANDOFF_READY_TIMEOUT_MS = 30_000;
-// Once it has the handoff, the document exchanges it (retrying a slow control
-// plane for up to about 18 s) and gives the stream 30 s after it loads to
-// paint a frame, reporting either failure itself. This only catches a
-// document that went silent.
-const STREAM_OPEN_AFTER_HANDOFF_TIMEOUT_MS = 60_000;
+// The handoff document says it is ready as its only script runs, before its
+// load event. While it is still loading it is waited for this long, so a slow
+// first connect is not ended on a timing boundary: a Canary first connect
+// exchanged about 30 s after its document was mounted, and which step was slow
+// is not known yet. Its session lasts four minutes, well past this plus the
+// exchange below.
+const HANDOFF_DOCUMENT_TIMEOUT_MS = 90_000;
+// A document that finished loading without saying it is ready (an error page
+// from a gateway, a document built for another control origin) will not say
+// it later; this only covers message delivery racing the load event.
+const HANDOFF_READY_AFTER_LOAD_MS = 5_000;
+// Past this, a still-loading document is reported as slow while it is waited for.
+const HANDOFF_SLOW_NOTICE_MS = 20_000;
+// Once it has the handoff, the document reports its own outcome: its exchange
+// takes at most about 18 s (three tries with 5 s control-plane timeouts and
+// 1 s and 2 s pauses) before it reports failure; it then loads the stream
+// page through the computer's broker, which drops an upstream that stays
+// idle for 30 s, and reports stream-unavailable 30 s after that page's load
+// event. That is about 80 s in the slowest case it still reports. A stream
+// page that keeps loading longer gives no signal, so this backstop ends it.
+const STREAM_OPEN_AFTER_HANDOFF_TIMEOUT_MS = 120_000;
 // Losing the stream does not stop the desktop or the apps open on it. While
 // this page is visible and online, reconnect on our own a few times, spaced out
 // so a restarting desktop gateway or a network change can settle; after that,
@@ -444,6 +458,7 @@ export function HivraRemoteDesktop({
   const repairableUnavailableRef = useRef(false);
   const lastTelemetrySequenceRef = useRef(0);
   const conflictWaitRef = useRef<{ timeout: number; finish: () => void } | null>(null);
+  const handoffDocumentLoadedRef = useRef<(() => void) | null>(null);
   const [state, setState] = useState<ConnectionState>("connecting");
   const [controllerConflict, setControllerConflict] = useState(false);
   const [brokerOrigin, setBrokerOrigin] = useState<string | null>(null);
@@ -1038,6 +1053,8 @@ export function HivraRemoteDesktop({
   useEffect(() => {
     if (!brokerOrigin) return;
     let timeout = 0;
+    let slowNotice = 0;
+    let documentReady = false;
     const liveHandoff = () => {
       const sessionId = sessionIdRef.current;
       const handoff = handoffRef.current;
@@ -1050,6 +1067,7 @@ export function HivraRemoteDesktop({
       lastFailureRef.current = { code: reason, status: null };
       settleRecoveryBudget(recoveryRef.current);
       window.clearTimeout(timeout);
+      window.clearTimeout(slowNotice);
       attemptRef.current += 1;
       sessionIdRef.current = null;
       handoffRef.current = null;
@@ -1064,10 +1082,23 @@ export function HivraRemoteDesktop({
       setMessage(nextMessage);
       void releaseSession(sessionId, unreleasedSessionsRef.current);
     };
-    const openTimedOut = () => {
-      if (liveHandoff()) endSession("failed", "The computer answered, but its desktop stream did not finish opening.", "stream-open-timeout");
+    const openTimedOut = (reason: "stream-open-timeout" | "handoff-not-ready") => {
+      if (!liveHandoff()) return;
+      endSession("failed", reason === "handoff-not-ready"
+        ? "The computer answered, but its desktop did not start opening."
+        : "The computer answered, but its desktop stream did not finish opening.", reason);
     };
-    timeout = window.setTimeout(openTimedOut, HANDOFF_READY_TIMEOUT_MS);
+    timeout = window.setTimeout(() => openTimedOut("stream-open-timeout"), HANDOFF_DOCUMENT_TIMEOUT_MS);
+    slowNotice = window.setTimeout(() => {
+      if (!documentReady && liveHandoff()) setMessage("This computer’s desktop is taking longer than usual to answer. Still opening…");
+    }, HANDOFF_SLOW_NOTICE_MS);
+    // The document's load event (see the iframe's onLoad). Only a document
+    // from the broker's origin counts: the initial about:blank is this page's.
+    handoffDocumentLoadedRef.current = () => {
+      if (documentReady || !liveHandoff()) return;
+      window.clearTimeout(timeout);
+      timeout = window.setTimeout(() => openTimedOut("handoff-not-ready"), HANDOFF_READY_AFTER_LOAD_MS);
+    };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== brokerOrigin || event.source !== frameRef.current?.contentWindow) return;
       const type = event.data && typeof event.data === "object" ? (event.data as { type?: unknown }).type : null;
@@ -1087,12 +1118,15 @@ export function HivraRemoteDesktop({
           streamingMode: current.handoff.streamingMode,
         }, brokerOrigin);
         current.handoff.sent = true;
+        documentReady = true;
         // The handoff document is alive and now exchanges the session. Give
         // that and the first frame their own time rather than what is left of
-        // the document's: a document that took 29.9 s to load must not have
-        // its just-exchanged session revoked 0.1 s later.
+        // the document's: a slow document must not have its just-exchanged
+        // session revoked moments later.
+        window.clearTimeout(slowNotice);
         window.clearTimeout(timeout);
-        timeout = window.setTimeout(openTimedOut, STREAM_OPEN_AFTER_HANDOFF_TIMEOUT_MS);
+        timeout = window.setTimeout(() => openTimedOut("stream-open-timeout"), STREAM_OPEN_AFTER_HANDOFF_TIMEOUT_MS);
+        setMessage("Opening the low-latency desktop stream…");
       } else if (type === "hivra.remote-desktop.connected.v1") {
         const current = liveHandoff();
         if (!current?.handoff.sent || Object.keys(event.data).length !== 2) return;
@@ -1201,6 +1235,8 @@ export function HivraRemoteDesktop({
     setHandoffListenerReady(true);
     return () => {
       window.clearTimeout(timeout);
+      window.clearTimeout(slowNotice);
+      handoffDocumentLoadedRef.current = null;
       window.removeEventListener("message", onMessage);
     };
   }, [brokerOrigin]);
@@ -1664,6 +1700,8 @@ export function HivraRemoteDesktop({
             sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads"
             allow={`clipboard-read ${brokerOrigin}; clipboard-write ${brokerOrigin}; fullscreen ${brokerOrigin}`}
             referrerPolicy="no-referrer"
+            // A cross-origin document hides its own; the initial about:blank does not.
+            onLoad={event => { if (event.currentTarget.contentDocument === null) handoffDocumentLoadedRef.current?.(); }}
             style={{ display: "block", height: "100%", width: "100%", border: 0, background: "#090909" }}
           />
         </HivraDesktopViewport>

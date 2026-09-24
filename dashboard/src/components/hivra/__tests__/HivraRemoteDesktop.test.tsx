@@ -1963,11 +1963,12 @@ describe("HivraRemoteDesktop", () => {
         fireEvent.click(screen.getByRole("button", { name: /reconnect/i }));
         await waitFor(() => expect(counts.issued).toBe(2));
         expect(counts.refresh).toBe(0);
-        // Even when that stream never opens (the 30 s handoff timeout), the
-        // cancelled automatic attempt does not come back.
-        await advance(31_000);
+        // Even when that stream never opens (a handoff document that never
+        // loads is waited for 90 s), the cancelled automatic attempt does not
+        // come back.
+        await advance(91_000);
         expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
-        await advance(30_000);
+        await advance(60_000);
         expect(counts.issued).toBe(2);
       } finally {
         jest.useRealTimers();
@@ -2596,38 +2597,99 @@ describe("HivraRemoteDesktop", () => {
       expect(bodies[1].unansweredPkceChallenges).toEqual(named ? [bodies[0].pkceChallenge] : undefined);
     });
 
-    it("keeps a session the handoff document just exchanged when that document was slow to load", async () => {
+    function firstOpenServer() {
+      const calls = track();
+      fetchMock.mockImplementation((input, init) => {
+        const url = String(input);
+        if (init?.method === "DELETE") {
+          calls.revoked.push(url.split("/").at(-1) ?? "");
+          return response(200, { success: true });
+        }
+        if (url === "/api/remote-desktop/sessions") {
+          calls.issue += 1;
+          return response(201, { success: true, data: session(SESSION_A) });
+        }
+        return response(200, { success: true, data: { prepared: true } });
+      });
+      return calls;
+    }
+
+    /** The handoff document finished loading: its cross-origin document is hidden from this page. */
+    function documentLoaded(frame: HTMLIFrameElement) {
+      Object.defineProperty(frame, "contentDocument", { configurable: true, get: () => null });
+      fireEvent.load(frame);
+    }
+
+    it.each([29_900, 30_100, 60_000])(
+      "keeps a first open whose handoff document is ready only after %s ms, and the session it exchanges",
+      async readyAt => {
+        jest.useFakeTimers();
+        try {
+          const calls = firstOpenServer();
+          render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+          const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+          const posted = jest.spyOn(frame.contentWindow!, "postMessage");
+          await advance(readyAt);
+          expect(calls.revoked).toEqual([]);
+          if (readyAt > 20_000) {
+            expect(screen.getByTitle("This computer’s desktop is taking longer than usual to answer. Still opening…")).toBeTruthy();
+          }
+          dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+          documentLoaded(frame);
+          expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: "hivra.remote-desktop.handoff.v2", sessionId: SESSION_A }), ORIGIN);
+          expect(screen.getByTitle("Opening the low-latency desktop stream…")).toBeTruthy();
+          // The exchange and the first frame take their own time, however late the document was.
+          await advance(80_000);
+          expect(calls.revoked).toEqual([]);
+          expect(screen.queryByText(/did not finish opening/)).toBeNull();
+          dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: SESSION_A });
+          expect(screen.getByText("Connected")).toBeTruthy();
+          expect(calls.revoked).toEqual([]);
+          expect(calls.issue).toBe(1);
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+    );
+
+    it("ends at once, not 30 s later, a handoff document that loaded without saying it is ready", async () => {
       jest.useFakeTimers();
       try {
-        const calls = track();
-        fetchMock.mockImplementation((input, init) => {
-          const url = String(input);
-          if (init?.method === "DELETE") {
-            calls.revoked.push(url.split("/").at(-1) ?? "");
-            return response(200, { success: true });
-          }
-          if (url === "/api/remote-desktop/sessions") {
-            calls.issue += 1;
-            return response(201, { success: true, data: session(SESSION_A) });
-          }
-          return response(200, { success: true, data: { prepared: true } });
-        });
+        const calls = firstOpenServer();
         render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
         const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
-        const posted = jest.spyOn(frame.contentWindow!, "postMessage");
-
-        // The document says it is ready just inside its 30 s and exchanges.
-        await advance(29_900);
-        dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
-        expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: "hivra.remote-desktop.handoff.v2", sessionId: SESSION_A }), ORIGIN);
-        await advance(200);
+        // The initial about:blank is this page's own document and does not count.
+        fireEvent.load(frame);
+        await advance(10_000);
         expect(calls.revoked).toEqual([]);
-        expect(screen.queryByText(/did not finish opening/)).toBeNull();
-
-        await advance(15_000);
-        dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: SESSION_A });
-        expect(screen.getByText("Connected")).toBeTruthy();
+        // A gateway error page, say: loaded, and silent.
+        documentLoaded(frame);
+        await advance(4_900);
         expect(calls.revoked).toEqual([]);
+        await advance(100);
+        expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+        expect(screen.getByTitle("The computer answered, but its desktop did not start opening.")).toBeTruthy();
+        await advance(0);
+        expect(calls.revoked).toEqual([SESSION_A]);
+        expect(calls.issue).toBe(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("ends, once, a handoff document that never loads", async () => {
+      jest.useFakeTimers();
+      try {
+        const calls = firstOpenServer();
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        await screen.findByTitle("Codex remote desktop");
+        await advance(89_900);
+        expect(calls.revoked).toEqual([]);
+        await advance(100);
+        expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+        expect(screen.getByTitle("The computer answered, but its desktop stream did not finish opening.")).toBeTruthy();
+        await advance(0);
+        expect(calls.revoked).toEqual([SESSION_A]);
         expect(calls.issue).toBe(1);
       } finally {
         jest.useRealTimers();
@@ -2637,24 +2699,13 @@ describe("HivraRemoteDesktop", () => {
     it("still ends, once, a handoff whose document goes silent after it was sent", async () => {
       jest.useFakeTimers();
       try {
-        const calls = track();
-        fetchMock.mockImplementation((input, init) => {
-          const url = String(input);
-          if (init?.method === "DELETE") {
-            calls.revoked.push(url.split("/").at(-1) ?? "");
-            return response(200, { success: true });
-          }
-          if (url === "/api/remote-desktop/sessions") {
-            calls.issue += 1;
-            return response(201, { success: true, data: session(SESSION_A) });
-          }
-          return response(200, { success: true, data: { prepared: true } });
-        });
+        const calls = firstOpenServer();
         render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
         const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
         await advance(1_000);
         dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
-        await advance(59_000);
+        documentLoaded(frame);
+        await advance(119_000);
         expect(calls.revoked).toEqual([]);
         await advance(1_000);
         expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
