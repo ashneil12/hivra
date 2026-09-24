@@ -1,4 +1,5 @@
 import {
+  agentComputerPair,
   agentComputerPairLabel,
   agentLaunchReviewRows,
   agentSurfaceGroupOf,
@@ -101,8 +102,16 @@ describe("agentLaunchReviewRows (ATT-15)", () => {
       canUse: "A terminal, files and Git on its own computer, with administrator (sudo) access, and Chrome, which you can turn off in Manage.",
       canSee: "Chat, Codex session, Terminal, Files, Browser (view-only) and Git",
     });
-    expect(agentLaunchReviewRows(codex, { browser: false }).canUse)
-      .toBe("A terminal, files and Git on its own computer, with administrator (sudo) access. No browser.");
+    // Off at launch: nothing to watch in Browser yet, and Review's Browser row says it is off.
+    expect(agentLaunchReviewRows(codex, { browser: false })).toEqual({
+      canUse: "A terminal, files and Git on its own computer, with administrator (sudo) access.",
+      canSee: "Chat, Codex session, Terminal, Files and Git",
+    });
+  });
+
+  it("describes a computer in the owner's own cloud with the same tabs", () => {
+    expect(agentLaunchReviewRows({ ...codex, computer_substrate: "provider-vm", deployment_mode: "self-managed" }, { browser: true }).canSee)
+      .toBe("Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
   });
 
   it("describes a DigitalOcean session honestly", () => {
@@ -110,5 +119,20 @@ describe("agentLaunchReviewRows (ATT-15)", () => {
       canUse: "A shell and the files in /workspace, in a session DigitalOcean runs. Every consequential action waits for your approval in Hivra.",
       canSee: "Chat and Files",
     });
+  });
+});
+
+describe("agentComputerPair (ATT-11)", () => {
+  it("names placement and size from the stored binding", () => {
+    expect(agentComputerPair({ computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed", cpu: 1.5, ram: 3 }))
+      .toEqual({ relation: "On its own computer", placement: "Hivra Cloud", size: "1.5 CPU / 3 GB" });
+    expect(agentComputerPairLabel({ computer_substrate: "provider-vm", deployment_mode: "self-managed", cpu: 2, ram: 4 }))
+      .toBe("on its own computer (My cloud · 2 CPU / 4 GB)");
+  });
+
+  it("claims no placement a row doesn't carry", () => {
+    expect(agentComputerPair({ cpu: 2, ram: 4 }).placement).toBeNull();
+    expect(agentComputerPairLabel({ cpu: 2, ram: 4 })).toBe("on its own computer (2 CPU / 4 GB)");
+    expect(agentComputerPairLabel({})).toBe("on its own computer");
   });
 });

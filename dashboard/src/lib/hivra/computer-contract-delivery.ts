@@ -223,7 +223,7 @@ export async function prepareDigitalOceanComputerContract(userId: string, rawAge
 }
 
 /** DigitalOcean accepted the message and returned its run. Not "delivered". */
-export async function recordDigitalOceanComputerContractSent(row: ComputerContractRow, runId: string, at: Date): Promise<ComputerContractRow> {
+export async function recordDigitalOceanComputerContractSent(row: ComputerContractRow, runId: string | null, at: Date): Promise<ComputerContractRow> {
   return recordComputerContractDelivered(row, "sent", { channel: "do-setup-message", runId, revision: row.revision, contentSha256: row.content_sha256 }, at);
 }
 

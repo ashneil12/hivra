@@ -413,8 +413,8 @@ export function ComputerCatalogPage() {
       <section className={styles.agentNote}>
         <Bot size={18} />
         <div>
-          <strong>Looking for Codex, Hermes, or DeepSeek Harness?</strong>
-          <span>Those are agent runtimes, not operating systems.</span>
+          <strong>Looking for Codex, Claude Code or Hermes?</strong>
+          <span>Agents run on their own computer. Open them, and their computer, from Agents.</span>
         </div>
         <Link href="/dashboard/agents">
           Open Agents <ArrowRight size={13} />

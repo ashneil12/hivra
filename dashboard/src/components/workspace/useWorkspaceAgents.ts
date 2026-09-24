@@ -32,6 +32,13 @@ export interface UseWorkspaceAgentsResult {
 const HERMES_ERROR = "Hermes agents are unavailable. Retry Hermes.";
 const HIVRA_ERROR = "Hivra agents are unavailable. Retry Hivra.";
 const HIVRA_STATUSES = new Set(["provisioning", "running", "stopped", "error", "deleted"]);
+const HIVRA_SUBSTRATES = new Set(["proxmox-kvm", "provider-vm", "gvisor", "do-managed-session"]);
+const HIVRA_DEPLOYMENT_MODES = new Set(["hivra-managed", "self-managed"]);
+
+/** A known enum value, or undefined for anything else (never a guess). */
+function knownValue<T extends string>(value: unknown, known: Set<string>): T | undefined {
+  return typeof value === "string" && known.has(value) ? value as T : undefined;
+}
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -104,6 +111,9 @@ function parseHivraResult(value: unknown): HivraAgent[] {
       ram: finiteNumber(row.ram),
       emoji: optionalString(row.emoji),
       provisioned_at: optionalString(row.provisioned_at),
+      // Where the agent's computer runs, for its linked-pair line (ATT-11).
+      computer_substrate: knownValue<NonNullable<HivraAgent["computer_substrate"]>>(row.computer_substrate, HIVRA_SUBSTRATES),
+      deployment_mode: knownValue<NonNullable<HivraAgent["deployment_mode"]>>(row.deployment_mode, HIVRA_DEPLOYMENT_MODES),
     };
   });
 }

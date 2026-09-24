@@ -26,6 +26,7 @@ import {
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
 import { isProxmoxDeploymentTarget, type DeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { agentLaunchReviewRows } from "@/lib/agent-computers/agent-surfaces";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
 import {
   fetchPlanStrict,
@@ -233,6 +234,11 @@ function managedCapacityShortfall(
       : `${label} needs ${formatSize(resources.cpu, resources.ram)}. Your ${plan.name} plan has ${formatSize(cpu, ram)} left.`;
   }
   return `${label} is set to use up to ${formatSize(resources.maximumCpu ?? resources.cpu, resources.maximumRam ?? resources.ram)}. Your ${plan.name} plan allows up to ${formatSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for each ${resourceKind}.`;
+}
+
+/** Where an agent's new computer will run, as the stored row will record it. */
+function reviewSubstrate(destination: ReturnType<typeof useLaunchDestination>): "proxmox-kvm" | "provider-vm" {
+  return destination.mode === "self-managed" && isWholeProviderComputer(destination.selectedTarget) ? "provider-vm" : "proxmox-kvm";
 }
 
 function displayIsolation(destination: ReturnType<typeof useLaunchDestination>): string {
@@ -1313,6 +1319,16 @@ export function LaunchJourney() {
             <div><dt>Name</dt><dd>{draft.name}</dd></div>
             <div><dt>Runs on</dt><dd>{destination.mode === "hivra-managed" ? "Hivra Cloud" : destination.selectedTarget?.displayName ?? "Unavailable target"}</dd></div>
             {draft.profileId === "codex" ? <div><dt>Browser</dt><dd>{draft.browser ? "On · Codex can use a web browser on its computer" : "Off · Codex runs without a browser"}</dd></div> : null}
+            {draft.resourceKind === "agent" && draft.profileId ? (() => {
+              // The same decision that draws the agent page's tabs and the
+              // note Hivra gives the agent about its computer (ATT-15).
+              const rows = agentLaunchReviewRows({ type: draft.profileId, computer_substrate: reviewSubstrate(destination), deployment_mode: destination.mode },
+                { browser: draft.browser });
+              return <>
+                <div><dt>Your agent can use</dt><dd>{rows.canUse}</dd></div>
+                <div><dt>You can see its work in</dt><dd>{rows.canSee}</dd></div>
+              </>;
+            })() : null}
             <div><dt>Resources</dt><dd>{wholeProviderComputer ? "Entire prepared provider computer · existing CPU and RAM unchanged" : gvisorComputer ? `${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved and enforced maximum` : `${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved · up to ${draft.resources.maximumCpu ?? draft.resources.cpu} CPU / ${draft.resources.maximumRam ?? draft.resources.ram} GB`}</dd></div>
             <div><dt>Isolation</dt><dd>{displayIsolation(destination)}</dd></div>
             <div><dt>Cost</dt><dd>{destination.mode === "hivra-managed" ? `Uses the included ${plan?.name ?? "managed"} plan allowance.` : "Uses capacity you already connected. No server purchase."}</dd></div>

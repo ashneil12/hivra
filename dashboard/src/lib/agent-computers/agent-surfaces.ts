@@ -156,15 +156,37 @@ export function computerSizeLabel(subject: { cpu?: number | null; ram?: number |
   return `${formatAmount(cpu)} CPU / ${formatAmount(ram)} GB`;
 }
 
+/** Where an agent's computer runs and how big it is, for list cards. */
+export interface AgentComputerPair {
+  /** Fixed until attach exists: every agent has its own computer. */
+  relation: "On its own computer";
+  /** Null when the row carries no placement at all: nothing is guessed. */
+  placement: string | null;
+  size: string | null;
+}
+
+export function agentComputerPair(subject: ComputerPlacementSubject & { cpu?: number | null; ram?: number | null }): AgentComputerPair {
+  const placed = Boolean(subject.deployment_mode || subject.computer_substrate);
+  return {
+    relation: "On its own computer",
+    placement: placed ? COMPUTER_PLACEMENT_LABEL[computerPlacementFor(subject)] : null,
+    size: computerSizeLabel(subject),
+  };
+}
+
+/** "Hivra Cloud · 1.5 CPU / 3 GB", or whichever parts the row has. */
+export function agentComputerPairDetail(pair: Pick<AgentComputerPair, "placement" | "size">): string {
+  return [pair.placement, pair.size].filter(Boolean).join(" · ");
+}
+
 /**
  * The linked pair, told from the agent's side: "on its own computer (Hivra
  * Cloud · 1.5 CPU / 3 GB)". Every agent has its own computer until attach
  * exists, so the relation is fixed; placement and size come from the row.
  */
 export function agentComputerPairLabel(subject: ComputerPlacementSubject & { cpu?: number | null; ram?: number | null }): string {
-  const size = computerSizeLabel(subject);
-  const placement = COMPUTER_PLACEMENT_LABEL[computerPlacementFor(subject)];
-  return `on its own computer (${size ? `${placement} · ${size}` : placement})`;
+  const detail = agentComputerPairDetail(agentComputerPair(subject));
+  return detail ? `on its own computer (${detail})` : "on its own computer";
 }
 
 // ── Launch Review ──────────────────────────────────────────────────────────
@@ -180,7 +202,9 @@ function listPhrase(items: readonly string[]): string {
 /**
  * The launch Review's "Your agent can use" and "You can see its work in"
  * rows, built from the same surfaces the agent page will show (ATT-15).
- * `browser` is the owner's launch choice for browser-capable agents.
+ * `browser` is the owner's launch choice for browser-capable agents: with it
+ * off the Browser tab only explains how to turn it on, so Review doesn't
+ * offer it as a place to watch the agent work.
  */
 export function agentLaunchReviewRows(
   subject: AgentSurfaceSubject & ComputerPlacementSubject,
@@ -188,7 +212,7 @@ export function agentLaunchReviewRows(
 ): { canUse: string; canSee: string } {
   const def = catalogAgent(subject.type);
   const surfaces = agentSurfacesFor(subject);
-  const canSee = listPhrase(WATCH_ORDER.filter((id) => surfaces.includes(id))
+  const canSee = listPhrase(WATCH_ORDER.filter((id) => surfaces.includes(id) && (id !== "browser" || options.browser))
     .map((id) => id === "browser" ? "Browser (view-only)" : agentSurfaceLabel(id, def)));
   if (computerPlacementFor(subject) === "digitalocean") {
     return {
@@ -196,8 +220,7 @@ export function agentLaunchReviewRows(
       canSee,
     };
   }
-  const browser = def?.browser
-    ? options.browser ? ", and Chrome, which you can turn off in Manage" : ". No browser"
-    : "";
+  // Review's own Browser row says when it is off.
+  const browser = def?.browser && options.browser ? ", and Chrome, which you can turn off in Manage" : "";
   return { canUse: `A terminal, files and Git on its own computer, with administrator (sudo) access${browser}.`, canSee };
 }

@@ -97,3 +97,38 @@ it("asks for confirmation before deleting the session", async () => {
   await waitFor(() => expect(onDeleted).toHaveBeenCalled());
   expect(mockChange).toHaveBeenCalledWith(session.agentId, "delete");
 });
+
+it("shows Hivra's setup note as a labelled Hivra card, not as a message the owner typed (ATT-13)", async () => {
+  const note = [
+    "<!-- HIVRA:COMPUTER:START v1 rev=1 -->",
+    "## Your computer (from Hivra, revision 1)",
+    "",
+    "**Who and where.** You are the Claude Code agent \"Builder\".",
+    "<!-- HIVRA:COMPUTER:END -->",
+    "",
+    "This is a setup note from Hivra, not a task. Reply only \"Ready.\" and don't run any tools.",
+  ].join("\n");
+  mockHistory.mockResolvedValue({
+    events: [
+      { id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "Ready.", isReasoning: false } },
+      { id: "e2", runId: "run_2", type: "run.token_delta", at: null, data: { text: "Looking at the repo.", isReasoning: false } },
+    ],
+    prompts: [
+      { runId: "run_1", text: note, createdAt: "2026-09-23T10:00:01Z", source: "hivra-setup" },
+      { runId: "run_2", text: "Run the tests", createdAt: "2026-09-23T10:00:02Z", source: "user" },
+    ],
+  });
+  const { container } = render(<ManagedSessionChat initialSession={session} />);
+  expect(await screen.findByText("Hivra setup")).toBeInTheDocument();
+  expect(screen.getByText("Hivra told Builder where it runs and how you see its work.")).toBeInTheDocument();
+  // The exact note is one click away, without Hivra's block markers.
+  const card = screen.getByText("Hivra setup").closest("details")!;
+  expect(card).not.toHaveAttribute("open");
+  expect(card).toHaveTextContent("You are the Claude Code agent \"Builder\".");
+  expect(card).not.toHaveTextContent("HIVRA:COMPUTER");
+  // Only the owner's own message is drawn as an owner bubble.
+  const bubbles = Array.from(container.querySelectorAll("div")).filter((element) => element.textContent === "Run the tests" && element.children.length === 0);
+  expect(bubbles).toHaveLength(1);
+  expect(screen.queryByText(note)).not.toBeInTheDocument();
+  expect(screen.getByText("Ready.")).toBeInTheDocument();
+});

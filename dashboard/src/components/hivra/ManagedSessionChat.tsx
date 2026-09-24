@@ -9,9 +9,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle, Check, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Info, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
 
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { computerContractDisplayText } from "@/lib/agent-computers/computer-contract";
 import {
   answerManagedSessionApproval,
   changeManagedSession,
@@ -58,19 +59,44 @@ function statusCopy(session: ManagedSessionDto, transcript: ManagedTranscript): 
   return { label: "Ready", dot: styles.dotReady };
 }
 
+/**
+ * Hivra's setup note, exactly as sent, as a Hivra card rather than as a
+ * message the owner typed. Collapsed: it is context, not the conversation.
+ */
+function HivraSetupNote({ text, agentName }: { text: string; agentName: string }) {
+  return (
+    <details className={styles.setupNote}>
+      <summary>
+        <Info size={13} aria-hidden />
+        <span className={styles.setupTitle}>Hivra setup</span>
+        <span className={styles.setupSummary}>Hivra told {agentName} where it runs and how you see its work.</span>
+      </summary>
+      <div className={styles.setupBody}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{computerContractDisplayText(text)}</ReactMarkdown>
+      </div>
+    </details>
+  );
+}
+
 function RunView({
   run,
+  agentName,
   submitting,
   onAnswer,
 }: {
   run: ManagedTranscriptRun;
+  agentName: string;
   submitting: Record<string, "approve" | "reject">;
   onAnswer: (requestId: string, outcome: "approve" | "reject") => void;
 }) {
   const hasOutput = run.text || run.tools.length || run.approvals.length || run.reasoning;
   return (
     <>
-      {run.prompt ? <div className={styles.userBubble}>{run.prompt}</div> : null}
+      {run.prompt
+        ? run.promptSource === "hivra-setup"
+          ? <HivraSetupNote text={run.prompt} agentName={agentName} />
+          : <div className={styles.userBubble}>{run.prompt}</div>
+        : null}
       <div className={styles.assistant}>
         {run.reasoning ? (
           <details className={styles.reasoning}>
@@ -192,7 +218,7 @@ export function ManagedSessionChat({
       .then(({ events, prompts }) => {
         let next = emptyManagedTranscript();
         for (const event of events) next = applyManagedSessionEvent(next, event);
-        for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text);
+        for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text, prompt.source);
         setTranscript(next);
         setHistoryLoaded(true);
       })
@@ -362,7 +388,7 @@ export function ManagedSessionChat({
             </div>
           ) : null}
           {transcript.runs.map((run) => (
-            <RunView key={run.runId} run={run} submitting={submitting} onAnswer={(id, outcome) => void answer(id, outcome)} />
+            <RunView key={run.runId} run={run} agentName={session.name} submitting={submitting} onAnswer={(id, outcome) => void answer(id, outcome)} />
           ))}
           {orphanPrompts.map((prompt, index) => <div key={`orphan-${index}`} className={styles.userBubble}>{prompt}</div>)}
         </div>

@@ -43,7 +43,10 @@ describe.each(Object.entries(FIXTURES))("%s", (_name, fixture) => {
   });
 
   it.each(Object.keys(REVIEW_LABEL) as AgentSurfaceId[])("lists %s in Review only when the page shows it", (surface) => {
-    if (surfaces.includes(surface)) expect(review.canSee).toMatch(REVIEW_LABEL[surface]!);
+    // A browser switched off at launch has nothing to watch yet, although its
+    // tab stays on the page to explain how to turn it on.
+    const watchable = surfaces.includes(surface) && (surface !== "browser" || fixture.browser);
+    if (watchable) expect(review.canSee).toMatch(REVIEW_LABEL[surface]!);
     else expect(review.canSee).not.toMatch(REVIEW_LABEL[surface]!);
   });
 

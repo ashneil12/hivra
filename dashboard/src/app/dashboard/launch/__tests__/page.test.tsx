@@ -332,6 +332,12 @@ describe("LaunchPage", () => {
     expect(within(review).getByText("Creates one isolated VM and installs the Codex runtime.")).toBeInTheDocument();
     expect(within(review).getByText(/ChatGPT sign-in happens inside Codex/i)).toBeInTheDocument();
     expect(within(review).getByText("On · Codex can use a web browser on its computer")).toBeInTheDocument();
+    // What the agent's computer gives it and where the owner watches, from the
+    // same decision as the agent page's tabs (ATT-15).
+    expect(within(review).getByText("Your agent can use").nextElementSibling).toHaveTextContent(
+      "A terminal, files and Git on its own computer, with administrator (sudo) access, and Chrome, which you can turn off in Manage.");
+    expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
+      "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
 
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
 

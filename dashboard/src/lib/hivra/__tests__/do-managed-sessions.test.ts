@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 const mockLoadSecret = jest.fn();
 const mockLoadTarget = jest.fn();
 const mockCreateRecord = jest.fn();
@@ -25,7 +27,7 @@ jest.mock("@/lib/infrastructure/credential-expiry-store", () => ({
 }));
 
 type Row = Record<string, unknown>;
-const tables: Record<string, Row[]> = { hivra_agents: [], hivra_do_session_inputs: [], infrastructure_connections: [] };
+const tables: Record<string, Row[]> = { hivra_agents: [], hivra_do_session_inputs: [], infrastructure_connections: [], hivra_computer_contracts: [] };
 
 class Query {
   private filters: Array<(row: Row) => boolean> = [];
@@ -42,7 +44,7 @@ class Query {
   private run(): { data: unknown; error: unknown } {
     const rows = tables[this.table];
     if (this.inserted) {
-      const row: Row = { created_at: new Date().toISOString(), error: null, provisioned_at: null, do_session_id: null, do_session_observation: null, ...this.inserted };
+      const row: Row = { id: randomUUID(), created_at: new Date().toISOString(), error: null, provisioned_at: null, do_session_id: null, do_session_observation: null, ...this.inserted };
       if (this.table === "hivra_do_session_inputs" && rows.some((existing) => existing.agent_id === row.agent_id && existing.run_id === row.run_id)) {
         return { data: null, error: { code: "23505" } };
       }
@@ -78,6 +80,7 @@ import {
   readManagedSessionHistory,
   resolveManagedSessionApproval,
   sendManagedSessionInput,
+  sendManagedSessionSetupNote,
   setManagedSessionDependenciesForTest,
 } from "../do-managed-sessions";
 import { FakeDigitalOcean } from "./helpers/fake-digitalocean";
@@ -109,6 +112,7 @@ function launchInput(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   tables.hivra_agents = [];
   tables.hivra_do_session_inputs = [];
+  tables.hivra_computer_contracts = [];
   tables.infrastructure_connections = [{ id: connectionId, user_id: userId, provider: "digitalocean", revision: 1 }];
   fake = new FakeDigitalOcean();
   vendorFetch = jest.fn(async () => new Response("{}", { status: 200 }));
@@ -154,8 +158,53 @@ describe("launchDigitalOceanSession", () => {
     });
     // The model key is a write-only session secret: Hivra never persists it.
     expect(JSON.stringify(tables.hivra_agents)).not.toContain(ANTHROPIC_KEY);
+    // The visible Hivra setup note goes first, then the owner's first task.
+    expect(fake.inputs).toEqual([
+      { sessionId: "sess_1", text: expect.stringContaining("## Your computer (from Hivra, revision 1)") },
+      { sessionId: "sess_1", text: "Summarize the repo" },
+    ]);
+    expect(tables.hivra_do_session_inputs).toEqual([
+      expect.objectContaining({ run_id: "run_1", source: "hivra-setup", text: expect.stringContaining("Reply only \"Ready.\"") }),
+      expect.objectContaining({ run_id: "run_2", text: "Summarize the repo" }),
+    ]);
+    expect(tables.hivra_do_session_inputs[1]).not.toHaveProperty("source");
+  });
+
+  it("tells the agent where it runs in a visible setup note and records it as sent, never delivered", async () => {
+    await launchDigitalOceanSession(userId, launchInput({ harness: "codex", model: { mode: "vendor", apiKey: "sk-" + "o".repeat(40) } }));
+    const [setup] = fake.inputs;
+    expect(setup.text).toContain("You are the Codex agent \"Builder\". You run in a DigitalOcean Managed Agents session");
+    expect(setup.text).toContain("a sandbox with 2 CPU and 4 GB of memory");
+    expect(setup.text).toContain("Keep your work in /workspace.");
+    expect(tables.hivra_computer_contracts).toEqual([expect.objectContaining({
+      revision: 1, channel: "do-setup-message", delivery_state: "sent",
+      receipt: expect.objectContaining({ channel: "do-setup-message", runId: "run_1", revision: 1 }),
+    })]);
+    expect(tables.hivra_computer_contracts[0].delivery_state).not.toBe("delivered");
+  });
+
+  it("still launches and sends the first task when the setup note cannot be sent", async () => {
+    const sendInput = fake.client;
+    let calls = 0;
+    restore();
+    restore = setManagedSessionDependenciesForTest({
+      client: (token: string) => {
+        const client = sendInput(token);
+        return { ...client, sendInput: async (sessionId: string, text: string) => {
+          calls += 1;
+          if (calls === 1) throw new DigitalOceanApiError("timeout", null, "POST", "/v2/agents/sessions/input");
+          return client.sendInput(sessionId, text);
+        } };
+      },
+      sleep: async () => undefined, fetch: vendorFetch as unknown as typeof fetch,
+    });
+    const session = await launchDigitalOceanSession(userId, launchInput({ firstTask: "Summarize the repo" }));
+    expect(session.status).toBe("ready");
     expect(fake.inputs).toEqual([{ sessionId: "sess_1", text: "Summarize the repo" }]);
-    expect(tables.hivra_do_session_inputs).toEqual([expect.objectContaining({ run_id: "run_1", text: "Summarize the repo" })]);
+    const contract = tables.hivra_computer_contracts[0];
+    expect(contract).toMatchObject({ last_error: "send_failed" });
+    expect(contract.delivery_state).not.toBe("sent");
+    expect(contract.delivered_at ?? null).toBeNull();
   });
 
   it("replays the same launch request instead of creating a second billable session", async () => {
@@ -224,9 +273,13 @@ describe("session lifecycle", () => {
   it("forwards input to a paused session, which DigitalOcean resumes, and records the prompt", async () => {
     const agentId = await launched();
     await managedSessionAction(userId, agentId, "pause");
-    await expect(sendManagedSessionInput(userId, agentId, "keep going")).resolves.toEqual({ runId: "run_1" });
+    // run_1 is the launch's setup note.
+    await expect(sendManagedSessionInput(userId, agentId, "keep going")).resolves.toEqual({ runId: "run_2" });
     expect(tables.hivra_agents[0].status).toBe("running");
-    expect(tables.hivra_do_session_inputs).toEqual([expect.objectContaining({ run_id: "run_1", text: "keep going" })]);
+    expect(tables.hivra_do_session_inputs).toEqual([
+      expect.objectContaining({ run_id: "run_1", source: "hivra-setup" }),
+      expect.objectContaining({ run_id: "run_2", text: "keep going" }),
+    ]);
   });
 
   it("sends approvals out of band and returns sanitized history with recorded prompts", async () => {
@@ -240,7 +293,21 @@ describe("session lifecycle", () => {
     ];
     const history = await readManagedSessionHistory(userId, agentId);
     expect(history.events).toEqual([{ id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "hi", isReasoning: false } }]);
-    expect(history.prompts).toEqual([expect.objectContaining({ runId: "run_1", text: "hello" })]);
+    // The in-memory store ignores ordering; the real query is chronological.
+    expect(history.prompts).toHaveLength(2);
+    expect(history.prompts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: "run_1", source: "hivra-setup", text: expect.stringContaining("Hivra") }),
+      expect.objectContaining({ runId: "run_2", text: "hello", source: "user" }),
+    ]));
+  });
+
+  it("sends the current setup note again only when the owner asks, as one more visible message", async () => {
+    const agentId = await launched();
+    tables.hivra_agents[0].name = "Builder 2";
+    await expect(sendManagedSessionSetupNote(userId, agentId)).resolves.toEqual({ runId: "run_2", revision: 2 });
+    expect(fake.inputs[1].text).toContain("\"Builder 2\"");
+    expect(tables.hivra_computer_contracts.map((row) => [row.revision, row.delivery_state])).toEqual([[1, "sent"], [2, "sent"]]);
+    expect(tables.hivra_do_session_inputs[1]).toMatchObject({ run_id: "run_2", source: "hivra-setup" });
   });
 
   it("deletes only after DigitalOcean reports the session gone", async () => {

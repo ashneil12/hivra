@@ -247,7 +247,9 @@ describe("ComputerCatalogPage", () => {
       screen.getByRole("link", { name: /Capacity/i }),
     ).toHaveAttribute("href", "/dashboard/infrastructure");
     expect(
-      screen.getByText(/Those are agent runtimes, not operating systems/i),
+      // An agent's computer is its own: point there instead of calling agents
+      // "not operating systems" (ATT-11).
+      screen.getByText("Agents run on their own computer. Open them, and their computer, from Agents."),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open Agents/i })).toHaveAttribute(
       "href",
