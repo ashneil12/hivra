@@ -50,6 +50,9 @@ import { SleepWakeUpgradePrompt } from "@/components/billing/SleepWakeUpgradePro
 import { ArchiveUpgradeWall } from "@/components/billing/ArchiveUpgradeWall";
 import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hivra/archive-countdown";
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
+import { useRecordVisit } from "@/components/workspace/useRecordVisit";
+import { hermesRuntimeUid } from "@/lib/workspace/runtime-selection";
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
 
 interface Instance {
   id: string;
@@ -679,6 +682,12 @@ export default function InstanceDetailPage() {
     document.cookie = `hermes_last_chat=${id}; path=/; max-age=31536000`;
   }, [id, instance?.id]);
 
+  // Remember this agent for Home's "Pick up where you left off" and the
+  // switchers' Recent group, once it has loaded here. A Hermes agent has one
+  // surface, its chat, which is also what this page opens on.
+  const visited = Boolean(id && instance?.id === id);
+  useRecordVisit(visited ? hermesRuntimeUid(id) : null, visited ? "chat" : null);
+
   useEffect(() => {
     if (!id) return;
     if (!instance?.id || instance.id !== id) return;
@@ -806,6 +815,9 @@ export default function InstanceDetailPage() {
     setActionLoading(true);
     try {
       const res = await fetch(`/api/instances/${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      // Answered, so the agent's status may have changed: the sidebar, ⌘K and
+      // Home stop reusing the list of agents read before it.
+      resourceInventory.invalidate("hermes");
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "Unknown error" }));
         const startFailure = action === "start"

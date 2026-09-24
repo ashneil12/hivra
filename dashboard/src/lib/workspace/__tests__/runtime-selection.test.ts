@@ -1,5 +1,4 @@
 import {
-  agentTabSurface,
   hermesRuntimeUid,
   hivraRuntimeUid,
   surfaceTab,
@@ -18,41 +17,17 @@ describe("runtime selection", () => {
     });
   });
 
-  describe("agentTabSurface", () => {
+  describe("surfaceTab", () => {
     it.each([
-      ["chat", "conversation"],
-      ["aeon", "workspace"],
+      ["conversation", "chat"],
+      ["workspace", "aeon"],
       ["desktop", "desktop"],
       ["files", "files"],
       ["git", "git"],
       ["terminal", "terminal"],
       ["browser", "browser"],
-      // Both terminal tabs are the same place in the workspace vocabulary.
-      ["box", "terminal"],
-    ] as const)("maps the %s tab onto the %s surface", (tab, surface) => {
-      expect(agentTabSurface(tab)).toBe(surface);
-    });
-
-    it("resolves a runtime's own settings tabs to the conversation", () => {
-      // skills/telegram/tasks/manage configure the runtime rather than being a
-      // place within it. An unstated surface means the conversation here, which
-      // is the same answer the route parser gives.
-      for (const tab of ["skills", "telegram", "tasks", "manage", "not-a-tab"]) {
-        expect(agentTabSurface(tab)).toBe("conversation");
-      }
-    });
-  });
-
-  describe("surfaceTab", () => {
-    it("round-trips every surface a tab can produce", () => {
-      const surfaces = ["conversation", "workspace", "files", "git", "terminal", "browser", "desktop"] as const;
-      for (const surface of surfaces) {
-        expect(agentTabSurface(surfaceTab(surface))).toBe(surface);
-      }
-    });
-
-    it("names the runtime's own primary view for a conversation", () => {
-      expect(surfaceTab("conversation")).toBe("chat");
+    ] as const)("names the agent route tab for the %s surface", (surface, tab) => {
+      expect(surfaceTab(surface)).toBe(tab);
     });
   });
 });

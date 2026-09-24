@@ -13,6 +13,7 @@ import InteractiveBackground from '@/components/InteractiveBackground';
 import { useWorkspaceViewport } from './useWorkspaceViewport';
 import { NativeWorkspaceProvider, useNativeWorkspace, useNativeWorkspaceEnabled } from './NativeWorkspaceBridge';
 import { accountCode } from '@/lib/account-code';
+import { WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -90,6 +91,9 @@ export function ClientLayoutWrapper({
 
   return (
     <NativeWorkspaceProvider enabled={nativeWorkspace} pathname={pathname} ownerKey={owner}>
+    {/* Home and the agent switchers scope the shared list to this account, as
+        the sidebar does with the same key. */}
+    <WorkspaceOwnerContext.Provider value={owner}>
     <WorkspaceModalLayerProvider onActiveChange={setWorkspaceModalOpen}>
       <div data-testid="dashboard-viewport" data-keyboard-open={keyboardOpen} className={`flex flex-col md:flex-row w-full overflow-hidden relative ${styles.viewport}`}>
       {/* ServiceWorkerRegistration now mounts in the root layout so the offline
@@ -175,6 +179,7 @@ export function ClientLayoutWrapper({
       </div>
       </div>
     </WorkspaceModalLayerProvider>
+    </WorkspaceOwnerContext.Provider>
     </NativeWorkspaceProvider>
   );
 }
