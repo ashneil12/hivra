@@ -543,6 +543,7 @@ function browserCopy(profileId: LaunchProfileId): string {
 
 /** Plain words for the receipt phase a launch in flight last reported. */
 function observedLaunchText(observation: LaunchObservation | null, resend: boolean): string {
+  if (observation?.kind === "checking-host") return "Checking your Linux host is still ready before Hivra starts the sandbox.";
   if (observation?.kind === "receipt") {
     if (observation.phase === "reserved") return "Hivra has recorded the request and is creating the computer.";
     if (observation.phase === "bound") return "The computer exists. Hivra is finishing the launch record.";
@@ -1923,6 +1924,7 @@ export function LaunchJourney() {
         balance: creditsBalance,
         onObserved: setObservation,
         digitalOceanTarget,
+        selfManagedTarget: destination.selectedTarget,
         onKeySaved: (vaultKeyId, saved) => {
           savedKeyId = vaultKeyId;
           setSavedKeys(keys => [...keys.filter(key => key.provider !== saved.provider), saved]);
