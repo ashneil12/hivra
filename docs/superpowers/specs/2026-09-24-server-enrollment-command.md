@@ -5,8 +5,9 @@ Status: Design and threat model for slice 13. Revision 4 is implemented on
 branch `claude/capacity-connect` (code, migration `20260924213000`, script
 `2026.09.24.1`) and was checked on disposable Ubuntu 22.04 and 24.04 servers
 (section 21). It is not merged, deployed or accepted on Canary: section 18
-lists what the Canary run must still show, and until it passes nothing here
-claims a working enrollment for users.
+lists what the Canary run must still show, section 22 is that run on a
+disposable Hetzner server, and until it passes nothing here claims a working
+enrollment for users.
 Revision 2 (2026-09-24) fixes the first review: the gVisor authority rule no
 longer depends on a discovery snapshot for existing computers (9.5), the
 terminal prompt can't be skipped with `--yes` when a terminal exists (6.1),
@@ -1710,10 +1711,13 @@ tests above are new coverage, not updates.
 The slice is done only when all of these pass on Canary's Git-built deployment
 at the merge SHA:
 
-- A real AWS Ubuntu 24.04 instance, signed in as `ubuntu`: run the command →
-  terminal prompt → words match → Yes → "Ready for Linux Sandbox" → launch an
-  agent → chat. (This is the proposal's slice-13 acceptance. Creating paid
-  capacity needs the owner's approval for that exact target.)
+- A real Ubuntu 24.04 server Hivra didn't create, signed in as a non-root
+  `ubuntu` user with passwordless sudo and root login off: run the command →
+  terminal prompt → words match → Yes → "Ready for Linux Sandbox" → launch a
+  Linux Sandbox → its terminal works. Section 22 does this on a disposable
+  Hetzner server made through the Hetzner API. The proposal named an AWS
+  instance and an agent chat; that stays optional, because creating paid AWS
+  capacity needs the owner's approval for that exact target.
 - Same instance: `… | sudo bash -s -- --yes` in the terminal still asks.
 - Same instance, after more than 15 minutes without an inspection: the agent's
   computer still opens and runs a command (T36).
@@ -1726,8 +1730,8 @@ at the merge SHA:
   terminal does not, and No leaves nothing trusted. The terminal of each run
   shows the account code of the account that issued the command, and it matches
   that account's menu.
-- Replace drill on the AWS instance: run a new command on the connected
-  instance; the card offers Replace, not Yes; Replace signs in, then the agent's
+- Replace drill on the test server: run a new command on the connected
+  server; the card offers Replace, not Yes; Replace signs in, then the agent's
   computer opens again after the check. Then a forged report: from a second
   machine, with a second code in the same account, post a hand-made report
   that claims the instance's host key (read with `ssh-keyscan`); Replace fails
@@ -1859,68 +1863,158 @@ probe (the enrollment key accepted, another key refused), early finish, and
 gVisor Prepare through sudo followed by the strict readiness check.
 
 What the runs found and this revision fixed: the transport's `PATH` (9.2) and
-the uninstall's race with the user manager on 24.04 (6.7). One observation
-not resolved: on 22.04, in two of four Prepare-then-check runs through sudo
+the uninstall's race with the user manager on 24.04 (6.7). One more
+observation: on 22.04, in two of four Prepare-then-check runs through sudo
 (after the `PATH` fix), the strict gVisor check failed right after a repeat
-Prepare had re-registered the runtime and restarted Docker, and passed when run
-again; one root-login run of the same sequence passed, and the one run on
-24.04 passed. It was not reproduced with output captured, so whether it is a race in
-Prepare itself (and so in the root lane too) is unverified.
+Prepare and passed when run again; one root-login run of the same sequence
+passed, and the one run on 24.04 passed. The output wasn't captured. Reading
+the check found a race that fits: it read runsc's version with
+`runsc --version | head -n 1` under `pipefail`, runsc writes its version in
+two writes, and when `head` exited after the first line the second write
+killed runsc with SIGPIPE, failing the whole check (exit 141) in either lane.
+The check now reads with `sed -n 1p`, which reads to the end; a regression
+test runs the check's own line against a runsc stub that writes its second
+line late (exit 141 before the fix). That this was the race the servers hit is
+likely but not proven on a server: the Canary run below does Prepare then the
+check, and a repeat of the failure there would mean a second cause.
 
 ## 22. Canary acceptance run (after merge)
 
-Prerequisites: the migration applied to the Canary database; Canary serving a
-Git deployment at the merge SHA (check the served SHA first); a Canary test
-account; the owner's approval for the exact paid AWS instance (section 18
-needs one) and for one disposable Hetzner server for the IPv6-only and
-forged-report steps.
+This is the run the release owner does after the branch is merged into
+`canary`. The primary target is a disposable Hetzner Cloud server made
+directly through the Hetzner API (so Hivra sees a server it didn't create),
+which needs no new paid provider. The AWS instance in section 18 is the
+proposal's original target and stays optional, for the owner to approve.
 
-1. `curl -sS -o /dev/null -w '%{http_code} %{content_type} %{redirect_url}\n' https://canary.hermesos.cloud/enroll`
-   → `200 text/plain; charset=utf-8` and no redirect; the body ends in
-   `{ hivra_refuse 'missing_code'; }`. `curl -sS https://canary.hermesos.cloud/enroll/script.sha256`
-   → `e1ec492a…` (the pinned value). Capacity → Add capacity → My server shows a
-   command, not "Setup commands aren't available on this deployment".
-2. Record whether the Canary origin is proxied by Cloudflare
-   (`dig +short canary.hermesos.cloud`, and whether the answer is in the
-   Cloudflare ranges in `trusted-client-address.ts`).
-3. AWS Ubuntu 24.04, signed in as `ubuntu`: paste the command. The terminal
-   shows the plan and the account code, which matches the account menu; answer
-   `y`; the words print. In Hivra, "Is this your server?" shows the instance's
-   public IPv4 under "Connected from" (or "Hivra couldn't see this server's
-   address" if step 2 found Cloudflare), the same words and the identity.
-   Yes → inspection → "can run Linux Sandbox after a short setup" → Review
-   setup → Prepare → ready → Launch on this server → an agent → chat.
-4. Same instance: `… | sudo bash -s -- --yes` still asks on the terminal
+### 22.1 Before the run
+
+1. Apply the migration to the Canary database (`hermesos-canary`,
+   `srrwbdvxlqvqjuexitaf`), before or with the Git build (section 20):
+   `20260924213000_server_enrollment_command.sql` (additive + compatible
+   function replacements, not blocking). It is the only migration this slice
+   adds, and nothing is parked in `_pending_destructive_migrations/`. After
+   applying, check by objects, not only the ledger: tables
+   `infrastructure_server_enrollments` and
+   `infrastructure_server_enrollment_events` exist with RLS on; columns
+   `infrastructure_connections.ssh_privilege` and `ssh_host_key_type`; the
+   check `infrastructure_host_discovery_snapshots_contract_version_check`
+   allows 1 and 2; `issue_server_enrollment`, `report_server_enrollment`,
+   `confirm_server_enrollment` and the replacement functions are SECURITY
+   DEFINER with EXECUTE only for `service_role`; the security advisor shows
+   nothing new.
+2. Canary serves a Git deployment at the merge SHA (check the served SHA and
+   that its source is Git before anything else).
+3. `curl -sS -o /dev/null -w '%{http_code} %{content_type} %{redirect_url}\n' https://canary.hermesos.cloud/enroll`
+   gives `200 text/plain; charset=utf-8` and no redirect; the body ends in
+   `{ hivra_refuse 'missing_code'; }`.
+   `curl -sS https://canary.hermesos.cloud/enroll/script.sha256` gives
+   `e1ec492a165f21addfa515883b06bad3693e9234c99c63ea5191b9ed46689cfe`.
+4. Record whether the Canary origin is proxied by Cloudflare
+   (`dig +short canary.hermesos.cloud`, compared with the ranges in
+   `trusted-client-address.ts`).
+
+### 22.2 The server
+
+Create `hivra-spike-<workstream>-accept-1` through the Hetzner API: `cx23`,
+`fsn1`, image `ubuntu-24.04`, an SSH key made for the run, and this cloud-init
+user data, so the owner signs in as a non-root user with passwordless sudo and
+root login is off:
+
+```yaml
+#cloud-config
+users:
+  - name: ubuntu
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys: [<the run's public key>]
+disable_root: true
+ssh_pwauth: false
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-no-root.conf
+    content: "PermitRootLogin no\n"
+runcmd:
+  - [systemctl, reload, ssh]
+```
+
+Add a row to the live ledger. Record the server's public IPv4 and, from the
+Hetzner console or `ssh-keyscan -t ed25519`, its Ed25519 fingerprint. Check
+`ssh root@<ip>` is refused and `ssh ubuntu@<ip> sudo -n true` works.
+
+### 22.3 The owner flow (a Canary test account, in the browser)
+
+1. Capacity → Add capacity → My server → "Connect a server you already have".
+   The panel shows the one-line command with Copy, "Single use · expires in
+   14:5x", View the script first, Get a new command, and the account code,
+   which matches the account menu. View the script first shows the script
+   version `2026.09.24.1`, the published sha256 (as in 22.1 step 3), "your
+   download" sha256 and the dry-run recipe. The waiting line reads "Waiting for
+   your server… no contact yet · 0:xx", counting up.
+2. Dry run on the server as `ubuntu`: paste the "Try it without changing
+   anything" line. It prints the plan and changes nothing (`id hivra` fails),
+   and the panel's waiting line becomes "The setup script was downloaded with
+   your command at <time>. Waiting for its report · 0:xx".
+3. Get a new command: the old command stops working (`curl` of it prints the
+   refusal line); copy the new one.
+4. On the server as `ubuntu`, paste the copied command. The terminal shows the
+   plan and the account code; answer `y`; the three words print.
+5. In Hivra, "Is this your server?" shows the hostname, "Connected from" the
+   server's public IPv4 (or "Hivra couldn't see this server's address" if 22.1
+   step 4 found Cloudflare), Ubuntu 24.04, the CPU count, RAM, the same three
+   words and the Ed25519 identity matching 22.2. Yes and No, cancel are
+   separate buttons.
+6. Yes, this is my server. Hivra inspects the server and says it can run Linux
+   Sandbox after a short setup. Review setup → Prepare (gVisor) → ready.
+7. Launch on this server → launch a Linux Sandbox → its terminal opens and runs
+   `id; uname -a; echo ok`.
+8. On the server: `sudo journalctl -t sudo` shows one constant Hivra command
+   line per operation and no script body; `sudo -l -U hivra` shows the one
+   rule; `/etc/sudoers.d/hivra-enrollment` is `root:root` mode 0440.
+9. Same server: `… | sudo bash -s -- --yes` in the terminal still asks
    (answer `n`, nothing changes).
-5. Spoof check: from the instance, `curl` the report endpoint with a made-up
-   code and `cf-connecting-ip`, `x-real-ip` and `x-forwarded-for` set: the
-   refusal is the constant 401. With a real second command's code, a report
-   carrying the same spoofed headers shows the instance's real address as
-   "Connected from"; then choose No.
-6. Wait more than 15 minutes without inspecting; the agent's computer still
-   opens and runs a command (T36).
-7. On the instance, `sudo journalctl -t sudo` (or `/var/log/auth.log`) shows
-   one constant Hivra command line per operation and no script body.
-8. Replace drill: run a new command on the instance; the card offers
-   "Replace <name>'s access", not Yes; Replace; the computer opens again after
-   the check. Forged report: from a second machine, post a hand-made report
-   with a third code that claims the instance's host key (`ssh-keyscan -t
-   ed25519`); Replace fails at the sign-in and the instance's connection,
-   revision and computer are unchanged.
-9. Leaked-code drill with two Canary accounts: account B's machine reports
-   first with account A's code; A's own run then says the command was
-   already used; A's card shows words A's terminal doesn't; No leaves nothing
-   trusted. Each terminal shows the account code of the account that issued
-   its command.
-10. IPv6-only Hetzner server: the command gets the `ipv4_required` text in the
-    terminal and on the panel; nothing is kept on the server.
-11. A Proxmox VE 8 host (if one is available): the command prints the Proxmox
-    line and sends nothing; the advanced wizard with a root login reaches
-    preflight as before.
-12. Uninstall on the AWS instance; Hivra's next check says it can't sign in as
-    hivra; Disconnect removes the connection and shows the uninstall command.
-13. Paste the command in one provider web console (AWS EC2 Instance Connect or
-    the Hetzner console): paste works and the `/dev/tty` prompt appears.
-14. Clean up: delete the agent, disconnect, terminate the AWS instance and the
-    Hetzner server, verify each is gone at the provider, and record each in
-    the live ledger.
+10. Spoof check: from the server, `curl` the report endpoint with a made-up
+    code and `cf-connecting-ip`, `x-real-ip` and `x-forwarded-for` set: the
+    constant 401. With a second real command's code, a report carrying the
+    same headers shows the server's real address as "Connected from"; choose
+    No, cancel.
+11. Replace drill: run a third command on the connected server; the card offers
+    "Replace <name>'s access", not Yes; Replace; after the check the Linux
+    Sandbox terminal opens again. Forged report: from a second machine (the
+    run's own laptop is fine), post a hand-made report with a fourth code that
+    claims the server's host key (`ssh-keyscan -t ed25519 <ip>`); Replace fails
+    at the sign-in, and the connection, its revision and the Linux Sandbox are
+    unchanged.
+12. Wait more than 15 minutes without inspecting; the Linux Sandbox terminal
+    still opens and runs a command (T36).
+13. Uninstall: delete the Linux Sandbox in Hivra, then run the uninstall
+    command on the server (`curl -fsS --proto '=https'
+    https://canary.hermesos.cloud/enroll/uninstall | sudo bash`). `id hivra`
+    fails and `/etc/sudoers.d/hivra-enrollment` is gone. Hivra's next check says it can't sign
+    in as hivra; Disconnect removes the connection and shows the uninstall
+    command.
+
+### 22.4 The rest of section 18
+
+The slice is accepted only when these pass too; record any that can't be run
+as not run, never as passed.
+
+- Leaked-code drill with two Canary accounts: account B's machine reports
+  first with account A's code; A's own run says the command was already used;
+  A's card shows words A's terminal doesn't; No leaves nothing trusted; each
+  terminal shows the account code of the account that issued its command.
+- An IPv6-only Hetzner server gets the `ipv4_required` text in the terminal
+  and on the panel, and nothing is kept.
+- A Proxmox VE 8 host, if one is available: the command prints the Proxmox
+  line and sends nothing; the advanced wizard with a root login reaches
+  preflight as before.
+- Paste the command in the Hetzner web console: paste works and the
+  `/dev/tty` prompt appears.
+- Optional, the owner's call: the AWS Ubuntu 24.04 instance signed in as
+  `ubuntu`, with the owner's approval for that exact instance.
+
+### 22.5 Clean up
+
+Delete every Canary agent the run made, disconnect, delete the Hetzner server
+and its SSH key, verify both return 404, and close the ledger rows. Record the
+served SHA, each step's result and anything not run.
