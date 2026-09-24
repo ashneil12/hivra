@@ -248,7 +248,13 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   redirect to a clean local URL. Terminal, browser, and native dashboard links
   never put the bearer in a URL. Older connection services without this
   capability require an explicit runtime update before those surfaces open;
-  header-authenticated API access remains unchanged.
+  header-authenticated API access remains unchanged. Surface sessions live
+  only in the gateway process, so `/api/meta` also carries a random
+  per-process `bootId` (served `no-store`). While a surface is on screen the
+  dashboard re-reads it on focus, `online`, visibility and every 30 s, and
+  re-submits the bootstrap into the same frame when it changes. Gateways
+  without `bootId` keep the old behaviour. A DeepSeek surface for the native
+  root waits for `nativeReady: true` before it bootstraps.
 
 ## Gotchas (do NOT reintroduce these)
 

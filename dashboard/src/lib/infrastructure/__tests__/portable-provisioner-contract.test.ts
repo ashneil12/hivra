@@ -532,6 +532,11 @@ describe("portable provisioner source contract", () => {
       path.join(process.cwd(), "src/app/dashboard/agent/[id]/page.tsx"),
       "utf8",
     );
+    // The page's embedded surfaces share one bootstrap handshake.
+    const surfaceBootstrap = readFileSync(
+      path.join(process.cwd(), "src/components/hivra/useSurfaceBootstrap.ts"),
+      "utf8",
+    );
 
     expect(server).toContain('req.method === "POST" && u === "/auth/bootstrap"');
     expect(server).toContain('const AUTH_COOKIE = "__Host-hivra_auth"');
@@ -542,11 +547,16 @@ describe("portable provisioner source contract", () => {
     expect(server).not.toContain("?token=");
     expect(server).toContain('surfaceAuth: "post-cookie-v1"');
     expect(page).toContain('method="POST"');
-    expect(page).toContain('/auth/bootstrap');
-    expect(page).toContain('record.surfaceAuth === "post-cookie-v1"');
-    expect(page).not.toContain('legacyQueryToken');
-    expect(page).not.toContain('encodeURIComponent(token)');
-    expect(page).not.toContain('searchParams.set("token"');
+    expect(page).toContain("useSurfaceBootstrap({ url, token, active })");
+    expect(surfaceBootstrap).toContain('/auth/bootstrap');
+    expect(surfaceBootstrap).toContain('record.surfaceAuth === "post-cookie-v1"');
+    expect(surfaceBootstrap).toContain('credentials: "omit"');
+    for (const client of [page, surfaceBootstrap]) {
+      expect(client).not.toContain('legacyQueryToken');
+      expect(client).not.toContain('encodeURIComponent(token)');
+      expect(client).not.toContain('searchParams.set("token"');
+      expect(client).not.toContain("postMessage");
+    }
     expect(provision).not.toMatch(/sudo env[^\n]*HIVRA_MODEL_KEY/);
     expect(provision).not.toMatch(/HIVRA_TUNNEL_TOKEN_B64=[^\n]*bash -s/);
     expect(provision).toContain("guest_launch_document |");

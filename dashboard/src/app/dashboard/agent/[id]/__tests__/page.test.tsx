@@ -944,6 +944,115 @@ describe("AgentPage", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
+  describe("after the computer's gateway restarts", () => {
+    const BOOT_A = "00000000400080000000000000000001";
+    const BOOT_B = "00000000400080000000000000000002";
+    let bootId: string | undefined;
+    let clock: jest.SpyInstance | undefined;
+
+    beforeEach(() => {
+      bootId = BOOT_A;
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1", ...(bootId ? { bootId } : {}) }),
+      }));
+    });
+    afterEach(() => clock?.mockRestore());
+
+    // Focus re-checks are throttled to one per couple of seconds.
+    function later() {
+      const now = Date.now();
+      clock = jest.spyOn(Date, "now").mockReturnValue(now + 10_000);
+    }
+
+    it("re-bootstraps a loaded terminal in place when the gateway's bootId changes", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const frame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+
+      bootId = BOOT_B;
+      later();
+      await act(async () => { fireEvent.focus(window); });
+
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      const form = requestSubmit.mock.instances[1] as HTMLFormElement;
+      expect(form).toHaveAttribute("target", frame.getAttribute("name"));
+      expect(form.querySelector('input[name="destination"]')).toHaveValue("/terminal/");
+      expect(screen.getByTitle("Claude Code session")).toBe(frame);
+      expect(frame).not.toHaveAttribute("src");
+    });
+
+    it("leaves a loaded terminal alone while the bootId is unchanged", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      const probes = (global.fetch as jest.Mock).mock.calls.length;
+
+      later();
+      await act(async () => { fireEvent.focus(window); });
+      await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBe(probes + 1));
+      expect(requestSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a legacy gateway without bootId exactly as before", async () => {
+      bootId = undefined;
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      const probes = (global.fetch as jest.Mock).mock.calls.length;
+
+      later();
+      await act(async () => { fireEvent.focus(window); });
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBeGreaterThan(probes));
+      expect(requestSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-checks a retained terminal when its tab is shown again", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const agentFrame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+
+      // Restarted while the agent session was out of view; hidden frames do
+      // not poll, so nothing happens until it is shown again.
+      bootId = BOOT_B;
+      later();
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
+      expect(requestSubmit.mock.instances[2]).toHaveAttribute("target", agentFrame.getAttribute("name"));
+    });
+
+    it("shows a DeepSeek start state instead of its 503 until the native interface is ready", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "deepseek-harness", name: "NATIVE_AGENT", status: "running",
+        cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      let nativeReady = false;
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", bootId, nativeSurface: "/", nativeReady }),
+      }));
+      render(<AgentPage />);
+
+      expect(await screen.findByText("Starting DeepSeek…")).toBeInTheDocument();
+      expect(document.querySelector('iframe[title="DeepSeek Harness · dashboard"], form')).toBeNull();
+      expect(requestSubmit).not.toHaveBeenCalled();
+      expect(document.documentElement.outerHTML).not.toContain("box-token");
+
+      nativeReady = true;
+      const frame = await screen.findByTitle("DeepSeek Harness · dashboard", undefined, { timeout: 4_000 });
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(frame.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/");
+    });
+  });
+
   it.each([
     { tab: "terminal", title: "Claude Code session", destination: "/terminal/" },
     { tab: "box", title: "Terminal", destination: "/box-terminal/" },
