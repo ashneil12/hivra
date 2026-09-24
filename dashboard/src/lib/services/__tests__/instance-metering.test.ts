@@ -1,4 +1,5 @@
 import {
+  cumulativeCounterIncrease,
   getInstanceMeteringRollup,
   recordInstanceMeteringSample,
   type MeteringDb,
@@ -357,7 +358,7 @@ describe("getInstanceMeteringRollup", () => {
     expect(rollup.runtime_seconds).toBe(1800);
   });
 
-  it("clamps negative deltas to zero (defensive against counter resets)", async () => {
+  it("clamps negative net/runtime deltas and counts CPU growth after a counter reset", async () => {
     const rows: InstanceMeteringSampleRow[] = [
       {
         sampled_at: "2026-04-29T10:00:00.000Z",
@@ -380,11 +381,37 @@ describe("getInstanceMeteringRollup", () => {
 
     const rollup = await getInstanceMeteringRollup("inst_reset", null, db);
 
-    expect(rollup.cpu_seconds_total).toBe(0);
+    // CPU is reset-aware: after a restart the new counter value IS the growth.
+    expect(rollup.cpu_seconds_total).toBe(50);
     expect(rollup.net_out_bytes).toBe(0);
     expect(rollup.runtime_seconds).toBe(0);
     expect(rollup.ram_peak_bytes).toBe(2048);
     expect(rollup.disk_used_bytes_last).toBe(2048);
+  });
+
+  it("ignores pre-fix zero CPU rows instead of using them as the baseline", async () => {
+    // PVE 9 rows sampled before the kvm /proc source carry cpu_seconds_total=0.
+    // The first real reading is CPU since VM start, not usage in this window.
+    const base = { ram_peak_bytes: 1024, disk_used_bytes: 2048, net_out_bytes: 0 };
+    const rows: InstanceMeteringSampleRow[] = [
+      { ...base, sampled_at: "2026-09-24T22:00:00.000Z", cpu_seconds_total: 0, runtime_seconds: 4_773_000 },
+      { ...base, sampled_at: "2026-09-24T22:30:00.000Z", cpu_seconds_total: 0, runtime_seconds: 4_774_800 },
+      { ...base, sampled_at: "2026-09-24T23:00:00.000Z", cpu_seconds_total: 228_359.06, runtime_seconds: 4_776_600 },
+      { ...base, sampled_at: "2026-09-24T23:30:00.000Z", cpu_seconds_total: 228_400.06, runtime_seconds: 4_778_400 },
+    ];
+    const { db } = createFakeDb(rows);
+
+    const rollup = await getInstanceMeteringRollup("inst_transition", null, db);
+
+    expect(rollup.cpu_seconds_total).toBeCloseTo(41, 6);
+  });
+
+  it("cumulativeCounterIncrease skips no-reading zeros and handles restarts", () => {
+    expect(cumulativeCounterIncrease([])).toBe(0);
+    expect(cumulativeCounterIncrease([0, 0, 100])).toBe(0);
+    expect(cumulativeCounterIncrease([100, 0, 150])).toBe(50);
+    expect(cumulativeCounterIncrease([100, 160, 10, 40])).toBe(100);
+    expect(cumulativeCounterIncrease(["10.5", "20.5", null, "bad"])).toBe(10);
   });
 
   it("parses numeric strings (Postgres numeric/bigint) safely", async () => {
