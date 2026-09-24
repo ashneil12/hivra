@@ -10,6 +10,11 @@ import { clientLog } from "@/lib/client/logger";
 
 import { HivraDesktopViewport } from "./HivraDesktopViewport";
 import {
+  desktopProofSuccesses,
+  refreshDesktopCapability,
+  runDesktopIssue,
+} from "@/lib/remote-computers/desktop-session-lane";
+import {
   DESKTOP_STREAMING_MODE_DETAILS,
   DESKTOP_STREAMING_MODES,
   readStreamModePreference,
@@ -261,6 +266,18 @@ async function releaseSession(sessionId: string, unreleased: Set<string>): Promi
   else unreleased.add(sessionId);
 }
 
+/** Wait for `work`, but never longer than `milliseconds`. */
+async function atMost(work: Promise<unknown>, milliseconds: number): Promise<void> {
+  let wait = 0;
+  await Promise.race([work, new Promise<void>(resolve => { wait = window.setTimeout(resolve, milliseconds); })]);
+  window.clearTimeout(wait);
+}
+
+/** An open this page replaced while its session request waited or ran. */
+class ReplacedOpen extends Error {
+  constructor() { super("replaced_open"); }
+}
+
 /** Speculative TLS/document warm for the handoff origin. Never mounts the iframe. */
 function warmHandoffOrigin(origin: string | null | undefined): void {
   if (!origin) return;
@@ -420,7 +437,6 @@ export function HivraRemoteDesktop({
   const attemptRef = useRef(0);
   const initialConnectionStartedRef = useRef(false);
   const setupStartedAtRef = useRef<number | null>(null);
-  const refreshAttemptedRef = useRef(false);
   const autoPrepareAttemptedRef = useRef(false);
   const repairableUnavailableRef = useRef(false);
   const lastTelemetrySequenceRef = useRef(0);
@@ -505,17 +521,14 @@ export function HivraRemoteDesktop({
       if (options.allowPrepare === false && options.proveFirst !== false) {
         // A foreground recovery proves current owner/runtime readiness BEFORE
         // requesting any new authority. It never installs or resumes a repair.
-        const response = await fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
-          method: "POST", credentials: "same-origin",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "refresh" }),
-        });
-        const proof = await response.json().catch(() => null) as { success?: boolean; code?: string; error?: string; data?: { prepared?: boolean } } | null;
+        // A proof already running in this tab is joined, never run twice.
+        const { ok, status, payload: proof } = await refreshDesktopCapability(computerId);
         if (attempt !== attemptRef.current) return;
-        if (!response.ok || !proof?.success || proof.data?.prepared !== true) {
+        if (!ok || !proof?.success || proof.data?.prepared !== true) {
           const blocked = isLifecycleBlocked(proof?.code);
-          fail(proof?.code, response.status);
+          fail(proof?.code, status);
           transientProofFailureRef.current = !blocked
-            && (response.status >= 500 || TRANSIENT_PROOF_FAILURE_CODES.has(proof?.code ?? ""));
+            && (status >= 500 || TRANSIENT_PROOF_FAILURE_CODES.has(proof?.code ?? ""));
           setState(blocked ? "blocked" : "unavailable");
           setMessage(scrubDesktopUserMessage(proof?.error || "The desktop's current runtime proof could not be verified."));
           return;
@@ -524,19 +537,23 @@ export function HivraRemoteDesktop({
       // Replacing an active controller requires an explicit action here. Normal
       // opening, retries and foreground recovery must never revoke another tab.
       let ownerHandoff = options.ownerHandoff === true;
-      const issue = async () => {
+      // One session request per computer at a time in this tab (see
+      // runDesktopIssue). An open this page replaced asks for nothing once its
+      // turn comes, and gives back a session it was granted before the next
+      // ask, which would otherwise meet it as another controller.
+      const issue = () => runDesktopIssue(computerId, async () => {
+        if (attempt !== attemptRef.current) throw new ReplacedOpen();
         // Leases this page ended but could not revoke go first (see releaseSession).
         if (unreleased.size) {
-          let wait = 0;
-          await Promise.race([
-            Promise.all([...unreleased].map(id => releaseSession(id, unreleased))),
-            new Promise<void>(resolve => { wait = window.setTimeout(resolve, UNRELEASED_REVOKE_WAIT_MS); }),
-          ]);
-          window.clearTimeout(wait);
+          await atMost(Promise.all([...unreleased].map(id => releaseSession(id, unreleased))), UNRELEASED_REVOKE_WAIT_MS);
         }
         const requestOwnerHandoff = ownerHandoff;
         ownerHandoff = false;
         const { verifier, challenge } = await newPkce();
+        if (attempt !== attemptRef.current) throw new ReplacedOpen();
+        // A proof that succeeds after this point may have landed after the
+        // server read this computer's capability for the request below.
+        const proofSuccesses = desktopProofSuccesses(computerId);
         const response = await fetch("/api/remote-desktop/sessions", {
           method: "POST",
           credentials: "same-origin",
@@ -555,8 +572,13 @@ export function HivraRemoteDesktop({
           }),
         });
         const payload = await response.json().catch(() => null) as SessionResponsePayload | null;
-        return { response, payload, verifier };
-      };
+        const grantedId = payload?.data?.id;
+        if (attempt !== attemptRef.current) {
+          if (grantedId) await atMost(releaseSession(grantedId, unreleased), UNRELEASED_REVOKE_WAIT_MS);
+          throw new ReplacedOpen();
+        }
+        return { response, payload, verifier, proofSuccesses };
+      });
 
       let issued = await issue();
       if (attempt !== attemptRef.current) {
@@ -609,28 +631,17 @@ export function HivraRemoteDesktop({
         conflictDelay = CONTROLLER_CONFLICT_RETRY_INTERVAL_MS;
       }
       let unavailableMessage = "This computer has not proved a current remote-desktop runtime yet. Its agent, chat, terminal, and files are unchanged.";
-      if (
-        issued.response.status === 409
-        && issued.payload?.code === "capability_unavailable"
-        && !refreshAttemptedRef.current
-      ) {
-        refreshAttemptedRef.current = true;
+      // Once per open: the proof ran out (it lasts eight minutes). The page's
+      // own prefetch is usually proving it already; join that proof, or use
+      // one that landed while the request above was on its way, rather than
+      // running the guest inspection a second time.
+      if (issued.response.status === 409 && issued.payload?.code === "capability_unavailable") {
         setMessage("Rechecking this computer’s installed desktop runtime…");
-        const refreshResponse = await fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "refresh" }),
-        });
-        const refreshPayload = await refreshResponse.json().catch(() => null) as {
-          success?: boolean;
-          code?: string;
-          error?: string;
-          data?: { prepared?: boolean };
-        } | null;
+        const refresh = await refreshDesktopCapability(computerId, { reuseSuccessAfter: issued.proofSuccesses });
+        const refreshPayload = refresh.payload;
         if (attempt !== attemptRef.current) return;
-        const refreshed = refreshResponse.ok && refreshPayload?.success && refreshPayload.data?.prepared === true;
-        if (!refreshed) fail(refreshPayload?.code, refreshResponse.status);
+        const refreshed = refresh.ok && refreshPayload?.success && refreshPayload.data?.prepared === true;
+        if (!refreshed) fail(refreshPayload?.code, refresh.status);
         if (refreshed) {
           issued = await issue();
         } else if (isLifecycleBlocked(refreshPayload?.code)) {
@@ -726,16 +737,8 @@ export function HivraRemoteDesktop({
               });
               if (attempt !== attemptRef.current) return;
               // Prefer a cheap refresh before burning another prepare slot.
-              const bridgeRefresh = await fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ action: "refresh" }),
-              });
-              const bridgePayload = await bridgeRefresh.json().catch(() => null) as {
-                success?: boolean;
-                data?: { prepared?: boolean };
-              } | null;
+              const bridgeRefresh = await refreshDesktopCapability(computerId);
+              const bridgePayload = bridgeRefresh.payload;
               if (attempt !== attemptRef.current) return;
               if (bridgeRefresh.ok && bridgePayload?.success && bridgePayload.data?.prepared === true) {
                 prepareOk = true;
@@ -913,10 +916,7 @@ export function HivraRemoteDesktop({
       } else if (stateRef.current === "connected" && !episode.refreshed && Date.now() - episode.startedAt >= CAPABILITY_REFRESH_INTERVAL_MS) {
         episode.refreshed = true;
         // Still-live authority needs only a fresh proof, not another session.
-        void fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
-          method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "refresh" }),
-        }).catch(() => undefined);
+        void refreshDesktopCapability(computerId).catch(() => undefined);
       }
     };
     const visibility = () => {
@@ -1241,14 +1241,8 @@ export function HivraRemoteDesktop({
     let stopped = false;
     const refreshCapability = async () => {
       try {
-        const response = await fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "refresh" }),
-        });
-        const payload = await response.json().catch(() => null) as { error?: string } | null;
-        if (!stopped && !response.ok) {
+        const { ok, payload } = await refreshDesktopCapability(computerId);
+        if (!stopped && !ok) {
           setMessage(scrubDesktopUserMessage(payload?.error || "Desktop is connected, but its runtime proof could not be refreshed."));
         }
       } catch {
@@ -1337,16 +1331,8 @@ export function HivraRemoteDesktop({
           conflictWaitRef.current = { timeout, finish };
         });
         if (attempt !== attemptRef.current) return;
-        const bridgeRefresh = await fetch(`/api/hivra/agents/${encodeURIComponent(computerId)}/remote-desktop`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "refresh" }),
-        });
-        const bridgePayload = await bridgeRefresh.json().catch(() => null) as {
-          success?: boolean;
-          data?: { prepared?: boolean };
-        } | null;
+        const bridgeRefresh = await refreshDesktopCapability(computerId);
+        const bridgePayload = bridgeRefresh.payload;
         if (attempt !== attemptRef.current) return;
         if (bridgeRefresh.ok && bridgePayload?.success && bridgePayload.data?.prepared === true) {
           preparedOk = true;
@@ -1369,7 +1355,6 @@ export function HivraRemoteDesktop({
         ));
         return;
       }
-      refreshAttemptedRef.current = false;
       await connect();
     } catch {
       if (attempt !== attemptRef.current) return;
@@ -1398,7 +1383,6 @@ export function HivraRemoteDesktop({
   };
 
   const retryDesktop = useCallback(() => {
-    refreshAttemptedRef.current = false;
     autoPrepareAttemptedRef.current = false;
     repairableUnavailableRef.current = false;
     void prepareDesktop();

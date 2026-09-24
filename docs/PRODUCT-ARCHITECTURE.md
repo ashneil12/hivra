@@ -46,8 +46,10 @@ decoder/input session. This does not yet prove optical latency, a native client,
 Sunshine/Moonlight, Omarchy capture or regional daily-driver performance.
 An owner preparation checkpoint
 adds the missing in-product install action for current identity-bound Proxmox
-computers. The Desktop surface first attempts one owner-scoped, read-only
-capability refresh and issues a fresh session when the guest is already ready;
+computers. The Desktop surface asks for a session first; when the eight-minute
+capability proof has lapsed it joins the one owner-scoped, read-only refresh
+the agent page already started for that computer in the tab (a tab never runs
+two refreshes of one computer at once) and then issues a fresh session;
 only an explicit owner action may install missing capability. Legacy unbound
 computers fail closed with a current-launch message; the path does not silently
 rebind or mutate them. An exchanged Selkies controller now uses rolling

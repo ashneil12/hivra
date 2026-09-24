@@ -7,6 +7,7 @@ import { HivraRemoteDesktop } from "../HivraRemoteDesktop";
 import { WorkspaceModalLayerProvider } from "@/components/workspace/WorkspaceModalLayerContext";
 import { clientLog } from "@/lib/client/logger";
 import { streamModeStorageKey } from "@/lib/remote-computers/streaming-mode-preference";
+import { refreshDesktopCapability, resetDesktopSessionLaneForTests } from "@/lib/remote-computers/desktop-session-lane";
 
 // The real client logger forwards warnings through fetch, which these tests
 // count; keep its calls observable instead.
@@ -54,6 +55,8 @@ describe("HivraRemoteDesktop", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Proofs and session requests are coordinated per tab; each test is a new tab.
+    resetDesktopSessionLaneForTests();
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     window.localStorage.clear();
     Object.defineProperty(window, "crypto", { configurable: true, value: {
@@ -2208,16 +2211,202 @@ describe("HivraRemoteDesktop", () => {
         }
       },
     );
+
+    it("a reconnect after a network drop never revokes its own new session, even when the network flaps mid-request", async () => {
+      jest.useFakeTimers();
+      let online = true;
+      Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => online });
+      try {
+        let answerReconnect!: () => void;
+        const reconnectAnswered = new Promise<void>(resolve => { answerReconnect = resolve; });
+        const counts = mockDesktop({
+          revoke: sessionId => sessionId === SESSION_IDS[0] && !online ? Promise.reject(new TypeError("Failed to fetch")) : undefined,
+          issue: attempt => attempt === 2
+            ? reconnectAnswered.then(() => response(201, { success: true, data: session(SESSION_IDS[1]) }))
+            : undefined,
+        });
+        render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+        const frame = await openStream(SESSION_IDS[0]);
+        online = false;
+        act(() => { window.dispatchEvent(new Event("offline")); });
+        dropStream(frame, SESSION_IDS[0]);
+        online = true;
+        act(() => { window.dispatchEvent(new Event("online")); });
+        await advance(2_000);
+        await waitFor(() => expect(counts.issued).toBe(2));
+        // The link flaps while the reconnect's request is out.
+        online = false;
+        act(() => { window.dispatchEvent(new Event("offline")); });
+        online = true;
+        act(() => { window.dispatchEvent(new Event("online")); });
+        fireEvent(document, new Event("visibilitychange"));
+        await act(async () => { answerReconnect(); });
+        const reconnected = await openStream(SESSION_IDS[1]);
+        expect(reconnected).toBeTruthy();
+        await advance(60_000);
+        expect(counts.issued).toBe(2);
+        expect(counts.revoked).not.toContain(SESSION_IDS[1]);
+        expect(counts.revoked.every(sessionId => sessionId === SESSION_IDS[0])).toBe(true);
+        expect(screen.getByText("Connected")).toBeTruthy();
+      } finally {
+        delete (window.navigator as { onLine?: boolean }).onLine;
+        jest.useRealTimers();
+      }
+    });
+
+    it("rechecks a proof that ran out while the stream was down when Reconnect is clicked, instead of stopping at unavailable", async () => {
+      // The first open needed a fresh proof; the drop then outlasted the next
+      // one. Each open may recheck once, and a Reconnect never installs.
+      const counts = mockDesktop({
+        issue: attempt => attempt === 1 || attempt === 3
+          ? response(409, { success: false, code: "capability_unavailable", error: "The computer has no current remote-desktop capability." })
+          : undefined,
+      });
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      const frame = await openStream(SESSION_IDS[1]);
+      expect(counts.refresh).toBe(1);
+      dropStream(frame, SESSION_IDS[1]);
+      fireEvent.click(await screen.findByRole("button", { name: /reconnect/i }));
+      await waitFor(() => expect(counts.issued).toBe(4));
+      await openStream(SESSION_IDS[3]);
+      expect(counts.refresh).toBe(2);
+      expect(counts.prepare).toBe(0);
+      expect(screen.queryByText("Unavailable")).toBeNull();
+    });
   });
 
   describe("on a first open", () => {
     const SESSION_A = "00000000-0000-4000-8000-00000000000a";
+    const SESSION_B = "00000000-0000-4000-8000-00000000000b";
+    const proofUrl = `/api/hivra/agents/${COMPUTER_ID}/remote-desktop`;
     const advance = (milliseconds: number) => act(async () => { jest.advanceTimersByTime(milliseconds); });
 
     function track() {
       const calls = { refresh: 0, prepare: 0, issue: 0, revoked: [] as string[], order: [] as string[] };
       return calls;
     }
+
+    it("joins the page's proof when its first request finds the proof expired: one inspection, one session, no repair", async () => {
+      const calls = track();
+      let landPageProof!: () => void;
+      const pageProof = new Promise<void>(resolve => { landPageProof = resolve; });
+      fetchMock.mockImplementation((input, init) => {
+        const url = String(input);
+        if (init?.method === "DELETE") {
+          calls.revoked.push(url.split("/").at(-1) ?? "");
+          return response(200, { success: true });
+        }
+        if (url === "/api/remote-desktop/sessions") {
+          calls.issue += 1;
+          return calls.issue === 1
+            ? response(409, { success: false, code: "capability_unavailable", error: "The computer has no current remote-desktop capability." })
+            : response(201, { success: true, data: session(SESSION_A) });
+        }
+        if (url === proofUrl) {
+          const action = JSON.parse(String(init?.body)).action;
+          if (action === "prepare") {
+            calls.prepare += 1;
+            return response(200, { success: true, data: { prepared: true } });
+          }
+          calls.refresh += 1;
+          // A second inspection of the same guest running beside the first
+          // loses the ledger's ordering on Proxmox and is refused as stale.
+          return calls.refresh === 1
+            ? pageProof.then(() => response(200, { success: true, data: { prepared: true } }))
+            : response(409, { success: false, code: "capability_refresh_failed", error: "This computer's current desktop runtime could not be verified." });
+        }
+        return response(200, { success: true });
+      });
+
+      // The agent page starts this proof as soon as it knows the computer.
+      const prefetch = refreshDesktopCapability(COMPUTER_ID);
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      await waitFor(() => expect(calls.issue).toBe(1));
+      await screen.findByTitle("Rechecking this computer’s installed desktop runtime…");
+      expect(calls.refresh).toBe(1);
+
+      await act(async () => { landPageProof(); await prefetch; });
+      expect(await screen.findByTitle("Codex remote desktop")).toBeTruthy();
+      expect(calls.refresh).toBe(1);
+      expect(calls.issue).toBe(2);
+      expect(calls.prepare).toBe(0);
+      expect(calls.revoked).toEqual([]);
+    });
+
+    it("uses a proof that landed while its first request was on the way instead of inspecting again", async () => {
+      const calls = track();
+      let landPageProof!: () => void;
+      const pageProof = new Promise<void>(resolve => { landPageProof = resolve; });
+      fetchMock.mockImplementation((input) => {
+        const url = String(input);
+        if (url === "/api/remote-desktop/sessions") {
+          calls.issue += 1;
+          if (calls.issue > 1) return response(201, { success: true, data: session(SESSION_A) });
+          // The server read the expired proof, then the page's proof landed
+          // before this answer reached the page.
+          landPageProof();
+          return pageProof.then(() => new Promise(resolve => setTimeout(resolve, 0)))
+            .then(() => response(409, { success: false, code: "capability_unavailable", error: "The computer has no current remote-desktop capability." }));
+        }
+        if (url === proofUrl) {
+          calls.refresh += 1;
+          return calls.refresh === 1
+            ? pageProof.then(() => response(200, { success: true, data: { prepared: true } }))
+            : response(200, { success: true, data: { prepared: true } });
+        }
+        return response(200, { success: true });
+      });
+
+      void refreshDesktopCapability(COMPUTER_ID);
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      expect(await screen.findByTitle("Codex remote desktop")).toBeTruthy();
+      expect(calls.issue).toBe(2);
+      expect(calls.refresh).toBe(1);
+    });
+
+    it("an open that replaces an earlier one in this tab waits for it and gives back its session before asking", async () => {
+      const calls = track();
+      let answerFirst!: () => void;
+      const firstAnswered = new Promise<void>(resolve => { answerFirst = resolve; });
+      fetchMock.mockImplementation((input, init) => {
+        const url = String(input);
+        if (init?.method === "DELETE") {
+          const id = url.split("/").at(-1) ?? "";
+          calls.revoked.push(id);
+          calls.order.push(`revoke ${id}`);
+          return response(200, { success: true });
+        }
+        if (url === "/api/remote-desktop/sessions") {
+          calls.issue += 1;
+          calls.order.push(`issue ${calls.issue}`);
+          if (calls.issue === 1) return firstAnswered.then(() => response(201, { success: true, data: session(SESSION_A) }));
+          // The server's one-controller fence: a lease this tab still holds
+          // blocks the next one until it is revoked.
+          return calls.revoked.includes(SESSION_A)
+            ? response(201, { success: true, data: session(SESSION_B) })
+            : response(409, { success: false, code: "controller_conflict", error: "Another human controller still owns this computer input lease." });
+        }
+        return response(200, { success: true, data: { prepared: true } });
+      });
+
+      const first = render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      await waitFor(() => expect(calls.issue).toBe(1));
+      // The surface remounts (a route change, a retained surface rebuilt)
+      // while its request is still out.
+      first.unmount();
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+      expect(calls.issue).toBe(1);
+
+      await act(async () => { answerFirst(); });
+      const frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+      expect(calls.order).toEqual(["issue 1", `revoke ${SESSION_A}`, "issue 2"]);
+      expect(calls.revoked).toEqual([SESSION_A]);
+      expect(screen.queryByText(/Waiting briefly for the existing controller/)).toBeNull();
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: SESSION_B });
+      expect(screen.getByText("Connected")).toBeTruthy();
+    });
 
     it("keeps a session the handoff document just exchanged when that document was slow to load", async () => {
       jest.useFakeTimers();

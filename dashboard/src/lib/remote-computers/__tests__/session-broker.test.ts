@@ -179,6 +179,17 @@ describe("remote desktop session broker", () => {
     expect(await issueRemoteDesktopSession(handoffParams())).toMatchObject({ code: "controller_conflict" });
     expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(1);
   });
+  it("never revokes the same owner's own fresh lease for an ordinary open, only for an explicit take-over", async () => {
+    // A second ordinary open from the same owner (another tab, or the same
+    // page opening twice) meets the first one's just-issued lease. Only the
+    // owner's explicit "Take over here" (ownerHandoff) may revoke it.
+    controllerConflictLookup([handoffController({ input_state: "takeover-pending" })]);
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue({ data: { status: "controller_conflict" }, error: null });
+    expect(await issueRemoteDesktopSession({ ...handoffParams(), ownerHandoff: false })).toMatchObject({ ok: false, code: "controller_conflict" });
+    expect(await issueRemoteDesktopSession({ ...handoffParams(), ownerHandoff: undefined })).toMatchObject({ ok: false, code: "controller_conflict" });
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(2);
+    expect(supabaseAdmin!.rpc).not.toHaveBeenCalledWith("revoke_hivra_remote_desktop_session", expect.anything());
+  });
   it("fails closed when the owned controller cannot be revoked", async () => {
     controllerConflictLookup([handoffController()]);
     (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: { status: "controller_conflict" }, error: null })
