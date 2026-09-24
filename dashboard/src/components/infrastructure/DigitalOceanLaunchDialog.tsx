@@ -267,7 +267,7 @@ export function DigitalOceanLaunchDialog({
             <div className={styles.formSection}>
               <div className={styles.formSectionHeading}>
                 <span className={styles.sectionNumber}>03</span>
-                <div><h2>First task (optional)</h2><p>Sent as the first message once the session is ready.</p></div>
+                <div><h2>First task (optional)</h2><p>Sent once the session is ready, right after Hivra&apos;s setup note.</p></div>
               </div>
               <label className={`${styles.field} ${styles.fullField}`} htmlFor={ids.task}>
                 <span className={styles.srOnly}>First task</span>
@@ -283,6 +283,11 @@ export function DigitalOceanLaunchDialog({
                   DigitalOcean charges per active vCPU-second and peak memory while the session runs, plus workspace
                   storage while it is paused. Sessions pause after 15 minutes idle. Model usage bills separately.
                   Commands, file writes outside the workspace, and GitHub pushes wait for your approval in Hivra.
+                </span>
+                <span data-testid="digitalocean-setup-note-disclosure">
+                  Hivra first sends the agent a short setup note, as a visible message in the chat: where it runs, its
+                  /workspace and how you see its work. The agent replies once, which uses a little of your DigitalOcean
+                  and model usage.
                 </span>
               </div>
             </div>

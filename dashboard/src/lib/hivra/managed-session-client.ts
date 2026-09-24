@@ -224,7 +224,9 @@ export async function answerManagedSessionApproval(agentId: string, requestId: s
 export async function readManagedSessionHistory(agentId: string, signal?: AbortSignal) {
   return request(`/api/hivra/managed-sessions/${encodeURIComponent(agentId)}/history`, { method: "GET", signal }, z.object({
     events: z.array(SanitizedEventSchema),
-    prompts: z.array(z.object({ runId: z.string(), text: z.string(), createdAt: z.string() })),
+    // Rows recorded before the source column existed are the owner's.
+    prompts: z.array(z.object({ runId: z.string(), text: z.string(), createdAt: z.string(),
+      source: z.enum(["user", "hivra-setup"]).default("user") })),
   }));
 }
 

@@ -407,6 +407,10 @@ describe("LaunchPage", () => {
     expect(within(review).getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
     expect(within(review).getByText("Your agent can use")).toBeInTheDocument();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
+    // Where the owner watches it work, from the same decision as the agent
+    // page's tabs and the note Hivra gives the agent (ATT-15).
+    expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
+      "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
     expect(within(review).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
     expect(within(review).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
     expect(within(review).getByText("Creates one computer and installs Codex. Nothing is bought.")).toBeInTheDocument();

@@ -23,6 +23,11 @@ const Identity = z.object({ version: z.literal(1), agentId: Uuid, operationId: U
     bundleSha256: Digest, provisionerVersion: ProviderGuestWorkerVersion }).strict(),
 }).strict();
 export type ProviderGuestWorkerIdentity = z.infer<typeof Identity>;
+/** A journaled installer identity, parsed strictly; anything else throws. */
+export function parseProviderGuestWorkerIdentity(value: unknown): ProviderGuestWorkerIdentity {
+  try { return Identity.parse(value); }
+  catch { throw new Error("Invalid provider guest worker identity"); }
+}
 const Receipt = z.object({ version: z.literal(1), identity: Identity,
   state: z.enum(["unknown", "running", "stopping", "cancelled", "failed", "succeeded"]), stopped: z.boolean(),
 }).strict().refine(value => value.stopped === ["cancelled", "failed", "succeeded"].includes(value.state));

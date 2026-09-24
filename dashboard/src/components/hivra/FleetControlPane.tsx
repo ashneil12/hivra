@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Bot, Monitor, Clock, Plus, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, Bot, Link2, Monitor, Clock, Plus, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLayoutEffect, useMemo, useState } from "react";
@@ -17,6 +17,7 @@ import styles from "./HomeWorkspace.module.css";
 import { surfaceTab } from "@/lib/workspace/runtime-selection";
 import { restoreWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
 
 /** Home resumes the last available working surface. The explicit list stays put. */
 export function FleetControlPane({ requested = false, attentionRequested = false }: { requested?: boolean; attentionRequested?: boolean }) {
@@ -257,6 +258,16 @@ function FleetEntry({
         <span className="mono block truncate text-[11px] leading-[1.35] text-[var(--text-muted)]">
           {agent.typeLabel} · {stale ? `Last known: ${unifiedStateLabel(agent.state)}` : agent.attention ? attentionLabel(agent.attention) : unifiedStateLabel(agent.state)}
         </span>
+        {/* The linked pair: an agent and the computer it runs on (ATT-11). */}
+        {agent.computerPair ? (
+          <span data-testid="fleet-computer-pair" className="mt-1 flex min-w-0 items-start gap-1.5 text-[11.5px] leading-[1.35] text-[var(--text-secondary)]">
+            <Link2 aria-hidden="true" size={11} className="mt-[2px] shrink-0 text-[var(--text-muted)]" />
+            {/* Wraps rather than truncates: the size is the part that matters. */}
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {[agent.computerPair.relation, agentComputerPairDetail(agent.computerPair)].filter(Boolean).join(" · ")}
+            </span>
+          </span>
+        ) : null}
         <span className="mt-3 block text-[12px] font-medium text-[var(--text-secondary)] group-hover:text-[var(--ink-black)]">
           {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : agent.state !== "running" ? "View details" : fleetEntryOpenLabel(agent)} <span aria-hidden="true">→</span>
         </span>

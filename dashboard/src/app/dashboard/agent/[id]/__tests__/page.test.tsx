@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
@@ -60,7 +60,9 @@ jest.mock("@/components/hivra/HivraChat", () => ({
 }));
 
 jest.mock("@/components/hivra/DigitalOceanAgentWorkspace", () => ({
-  DigitalOceanAgentWorkspace: ({ agentId }: { agentId: string }) => <div>DigitalOcean session {agentId}</div>,
+  DigitalOceanAgentWorkspace: ({ agentId, firstTask }: { agentId: string; firstTask?: string | null }) => (
+    <div>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</div>
+  ),
 }));
 
 jest.mock("@/components/hivra/HivraLogin", () => ({
@@ -119,10 +121,37 @@ const CONNECTED_UBUNTU = {
   chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
 };
 
-// Exercise the same disclosure path owners use for advanced surfaces.
+// Agent pages group their surfaces as Chat · Computer · Manage, each view a
+// tab in its group's row; computers keep one flat bar with a Tools menu.
+// Reach a surface the way an owner does: its tab, then its group, then Tools.
+const GROUP_OF_LABEL: Record<string, string> = {
+  Terminal: "Computer", Files: "Computer", Browser: "Computer", Git: "Computer",
+  "Claude Code session": "Chat", "Codex session": "Chat",
+  Skills: "Manage", Tasks: "Manage", Telegram: "Manage",
+};
+function groupFor(name: string | RegExp): string | null {
+  const label = Object.keys(GROUP_OF_LABEL).find((candidate) => typeof name === "string" ? candidate === name : name.test(candidate));
+  return label ? GROUP_OF_LABEL[label] : null;
+}
+/** Not hidden by any ancestor: what the owner can actually see. */
+function shownToOwner(element: Element): boolean {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if ((node as HTMLElement).hidden || style.display === "none" || style.visibility === "hidden") return false;
+  }
+  return true;
+}
 function getSurfaceButton(name: string | RegExp) {
+  const tab = screen.queryByRole("tab", { name });
+  if (tab) return tab;
   const visible = screen.queryByRole("button", { name });
   if (visible) return visible;
+  const group = groupFor(name);
+  const groupButton = group ? screen.queryByRole("button", { name: group }) : null;
+  if (groupButton) {
+    fireEvent.click(groupButton);
+    return screen.getByRole("tab", { name });
+  }
   fireEvent.click(screen.getByRole("button", { name: /^Tools(?:$|:)/ }));
   return screen.getByRole("button", { name });
 }
@@ -238,9 +267,11 @@ describe("AgentPage", () => {
 
   it("opens a DigitalOcean agent in its session workspace, never the box chat or login", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "claude-code", name: "DO_AGENT", cpu: 2, ram: 4,
-      status: "running", computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null });
+      status: "running", computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null,
+      first_task: "Summarize the repo" });
     render(<AgentPage />);
-    expect(await screen.findByText("DigitalOcean session agent_123")).toBeInTheDocument();
+    // The workspace gets the launch's first task, so an unsent one is offered back.
+    expect(await screen.findByText("DigitalOcean session agent_123 · first task: Summarize the repo")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
     expect(mockBrowserStatus).not.toHaveBeenCalled();
@@ -399,7 +430,7 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: /^(?:Box )?Terminal$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desktop" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Manage" })).toBeInTheDocument();
-    expect(document.querySelector('iframe[title="Box · shell"], form[action*="windows-box"]')).toBeNull();
+    expect(document.querySelector('iframe[title="Terminal"], form[action*="windows-box"]')).toBeNull();
   });
 
   it("hides Terminal and Files for disconnected Omarchy", async () => {
@@ -414,7 +445,7 @@ describe("AgentPage", () => {
     if (tools) fireEvent.click(tools);
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
-    expect(document.querySelector('iframe[title="Box · shell"], form[action*="auth/bootstrap"]')).toBeNull();
+    expect(document.querySelector('iframe[title="Terminal"], form[action*="auth/bootstrap"]')).toBeNull();
   });
 
   it.each(["omarchy", "ubuntu-desktop"])("hides Terminal and Files for stopped %s even with a retained chat URL", async profile => {
@@ -429,7 +460,7 @@ describe("AgentPage", () => {
     if (tools) fireEvent.click(tools);
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
-    expect(document.querySelector('iframe[title="Box · shell"], form[action*="stale-box"]')).toBeNull();
+    expect(document.querySelector('iframe[title="Terminal"], form[action*="stale-box"]')).toBeNull();
   });
 
   it.each([
@@ -453,7 +484,7 @@ describe("AgentPage", () => {
     expect(new URLSearchParams(window.location.search).get("prepare")).toBe("1");
     expect(window.location.hash).toBe("#workspace");
     expect(screen.queryByText(/Use (?:Windows|Files|Terminal)/)).not.toBeInTheDocument();
-    expect(document.querySelector('iframe[title="Box · shell"], form[action*="auth/bootstrap"]')).toBeNull();
+    expect(document.querySelector('iframe[title="Terminal"], form[action*="auth/bootstrap"]')).toBeNull();
   });
 
   it("keeps Terminal and Files for a connected Ubuntu computer", async () => {
@@ -466,7 +497,7 @@ describe("AgentPage", () => {
     fireEvent.click(await findSurfaceButton("Files"));
     expect(await screen.findByText("Files panel")).toHaveAttribute("data-workspace-root", "true");
     fireEvent.click(getSurfaceButton(/^Terminal$/));
-    expect(await screen.findByTitle("Box · shell")).toBeVisible();
+    expect(await screen.findByTitle("Terminal")).toBeVisible();
   });
 
   it("keeps the selected surface in the URL without reloading or adding history entries", async () => {
@@ -555,10 +586,31 @@ describe("AgentPage", () => {
     requestSubmit.mockRestore();
   });
 
+  it("groups an agent's surfaces as Chat · Computer · Manage and names its computer (ATT-11, ATT-12)", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
+    render(<AgentPage />);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Chat", "Computer", "Manage"]);
+    expect(within(screen.getByRole("tablist", { name: "Chat views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Chat", "Codex session"]);
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Terminal", "Files", "Browser", "Git"]);
+    expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Manage", "Skills", "Tasks", "Telegram"]);
+    // Retired: "Box Terminal", "<Agent> Terminal", the Desktop tab on an agent, and the Tools overflow.
+    expect(document.body).not.toHaveTextContent(/Box Terminal|Codex Terminal/);
+    expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Desktop" })).not.toBeInTheDocument();
+  });
+
   it("keeps the Browser tab exposed for browser-capable agents even when browser automation is off", async () => {
     render(<AgentPage />);
 
-    expect(await screen.findByRole("button", { name: /claude code terminal/i })).toBeInTheDocument();
+    expect(await findSurfaceButton(/claude code session/i)).toBeInTheDocument();
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalledWith("https://box.example.com", "box-token"));
 
     expect(getSurfaceButton(/^browser$/i)).toBeInTheDocument();
@@ -578,9 +630,9 @@ describe("AgentPage", () => {
     });
 
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
 
-    const frame = await screen.findByTitle("Claude Code · terminal");
+    const frame = await screen.findByTitle("Claude Code session");
     expect(frame.tagName).toBe("IFRAME");
     const form = frame.parentElement?.querySelector("form");
     expect(frame).not.toHaveAttribute("src");
@@ -616,7 +668,7 @@ describe("AgentPage", () => {
       json: async () => ({ agentKind: "claude", model: null }),
     });
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Connection update needed")).toBeInTheDocument();
     expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update & restart");
@@ -628,8 +680,8 @@ describe("AgentPage", () => {
   });
 
   it.each([
-    { name: "legacy terminal", tab: /claude code terminal/i, metadata: { agentKind: "claude" }, heading: "Connection update needed" },
-    { name: "unreachable box terminal", tab: /^box terminal$/i, metadata: null, heading: "Couldn’t verify secure access" },
+    { name: "legacy terminal", tab: /claude code session/i, metadata: { agentKind: "claude" }, heading: "Connection update needed" },
+    { name: "unreachable box terminal", tab: /^terminal$/i, metadata: null, heading: "Couldn’t verify secure access" },
     { name: "legacy browser", tab: /^browser$/i, metadata: { agentKind: "claude" }, heading: "Connection update needed" },
     { name: "legacy dashboard", tab: /^dashboard$/i, type: "agent-zero", metadata: { agentKind: "agent-zero" }, heading: "Connection update needed" },
   ])("opens Manage directly from the $name without starting an update", async ({ tab, metadata, heading, type }) => {
@@ -641,7 +693,9 @@ describe("AgentPage", () => {
     (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => metadata });
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(tab));
-    expect(await screen.findByText(heading)).toBeInTheDocument();
+    // Reaching Browser through Computer opens Terminal first; that surface
+    // stays mounted (hidden), so check the heading the owner can see.
+    await waitFor(() => expect(screen.getAllByText(heading).filter(shownToOwner)).toHaveLength(1));
 
     const requestsBeforeNavigation = (global.fetch as jest.Mock).mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
@@ -660,7 +714,7 @@ describe("AgentPage", () => {
   ])("fails closed on $label and can retry without a bearer URL", async ({ response }) => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(response);
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
     expect(document.querySelector("iframe, form")).toBeNull();
@@ -668,14 +722,14 @@ describe("AgentPage", () => {
     expect(requestSubmit).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByTitle("Claude Code · terminal")).toBeInTheDocument();
+    expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
   });
 
   it("does not fall back to a bearer URL on network failure", async () => {
     (global.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network failed"));
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
     expect(document.querySelector("iframe, form")).toBeNull();
@@ -688,7 +742,7 @@ describe("AgentPage", () => {
       cpu: 2, ram: 4, chat_url: chatUrl, api_token: "box-token",
     });
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
     expect(global.fetch).not.toHaveBeenCalled();
@@ -701,7 +755,7 @@ describe("AgentPage", () => {
       ? new Promise((resolve) => { resolveOld = resolve; })
       : Promise.resolve({ ok: true, json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1" }) }));
     const view = render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
     expect(await screen.findByText("Connecting securely…")).toBeInTheDocument();
     expect(requestSubmit).not.toHaveBeenCalled();
 
@@ -711,7 +765,7 @@ describe("AgentPage", () => {
       cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
     });
     view.rerender(<AgentPage />);
-    const frame = await screen.findByTitle("Claude Code · terminal");
+    const frame = await screen.findByTitle("Claude Code session");
     expect(frame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
     await act(async () => {
       resolveOld({ ok: true, json: async () => ({ agentKind: "claude" }) });
@@ -724,13 +778,13 @@ describe("AgentPage", () => {
   it("retains distinct native terminal sessions when switching tabs", async () => {
     render(<AgentPage />);
     expect(document.querySelector("iframe")).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
-    const agentFrame = await screen.findByTitle("Claude Code · terminal");
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    const agentFrame = await screen.findByTitle("Claude Code session");
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
     const agentName = agentFrame.getAttribute("name");
 
-    fireEvent.click(getSurfaceButton("Box Terminal"));
-    const boxFrame = await screen.findByTitle("Box · shell");
+    fireEvent.click(getSurfaceButton("Terminal"));
+    const boxFrame = await screen.findByTitle("Terminal");
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
     expect(boxFrame).not.toBe(agentFrame);
     expect(boxFrame.getAttribute("name")).not.toBe(agentName);
@@ -739,8 +793,8 @@ describe("AgentPage", () => {
     expect(agentFrame.closest("[inert]")).not.toBeNull();
     expect(boxFrame).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: /claude code terminal/i }));
-    expect(screen.getByTitle("Claude Code · terminal")).toBe(agentFrame);
+    fireEvent.click(getSurfaceButton(/claude code session/i));
+    expect(screen.getByTitle("Claude Code session")).toBe(agentFrame);
     expect(agentFrame).toBeVisible();
     expect(boxFrame).not.toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
@@ -750,20 +804,20 @@ describe("AgentPage", () => {
     expect(boxFrame).toBeInTheDocument();
     expect(agentFrame).not.toBeVisible();
     expect(boxFrame).not.toBeVisible();
-    fireEvent.click(getSurfaceButton("Box Terminal"));
-    expect(screen.getByTitle("Box · shell")).toBe(boxFrame);
+    fireEvent.click(getSurfaceButton("Terminal"));
+    expect(screen.getByTitle("Terminal")).toBe(boxFrame);
     expect(boxFrame).toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
   it("opens parallel terminal sessions that each keep their own shell", async () => {
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
-    const first = await screen.findByTitle("Claude Code · terminal");
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    const first = await screen.findByTitle("Claude Code session");
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
-    const second = await screen.findByTitle("Claude Code · terminal · 2");
+    const second = await screen.findByTitle("Claude Code session · 2");
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
     expect(second.getAttribute("name")).not.toBe(first.getAttribute("name"));
     expect(second).toBeVisible();
@@ -773,7 +827,7 @@ describe("AgentPage", () => {
 
     // Switching back is a view change, not a new shell.
     fireEvent.click(screen.getByRole("tab", { name: "Session 1" }));
-    expect(screen.getByTitle("Claude Code · terminal")).toBe(first);
+    expect(screen.getByTitle("Claude Code session")).toBe(first);
     expect(first).toBeVisible();
     expect(second).not.toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
@@ -787,12 +841,13 @@ describe("AgentPage", () => {
 
   it("caps parallel terminal sessions per surface", async () => {
     render(<AgentPage />);
-    await screen.findByRole("button", { name: /claude code terminal/i });
-    fireEvent.click(getSurfaceButton("Box Terminal"));
-    await screen.findByTitle("Box · shell");
+    await findSurfaceButton(/claude code session/i);
+    fireEvent.click(getSurfaceButton("Terminal"));
+    await screen.findByTitle("Terminal");
     const add = screen.getByRole("button", { name: "New terminal session" });
     for (let i = 0; i < 10; i += 1) fireEvent.click(add);
-    expect(screen.getAllByRole("tab")).toHaveLength(8);
+    // Session tabs only; the Computer views row is its own tablist.
+    expect(within(screen.getByRole("tablist", { name: "Terminal sessions" })).getAllByRole("tab")).toHaveLength(8);
     expect(add).toBeDisabled();
   });
 
@@ -803,8 +858,8 @@ describe("AgentPage", () => {
     const chat = await screen.findByText("Chat panel");
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /claude code terminal/i }));
-    await screen.findByTitle("Claude Code · terminal");
+    fireEvent.click(getSurfaceButton(/claude code session/i));
+    await screen.findByTitle("Claude Code session");
     expect(chat).toBeInTheDocument();
     expect(chat).not.toBeVisible();
 
@@ -816,8 +871,8 @@ describe("AgentPage", () => {
 
   it("disposes retained terminals immediately when changing computers", async () => {
     const view = render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
-    const oldFrame = await screen.findByTitle("Claude Code · terminal");
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    const oldFrame = await screen.findByTitle("Claude Code session");
     mockAgentId = "agent_next";
     mockGetAgent.mockReturnValue(new Promise(() => undefined));
     await act(async () => { view.rerender(<AgentPage />); });
@@ -827,10 +882,10 @@ describe("AgentPage", () => {
 
   it("does not retain terminal sessions while the computer is stopped", async () => {
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
-    const agentFrame = await screen.findByTitle("Claude Code · terminal");
-    fireEvent.click(getSurfaceButton("Box Terminal"));
-    const boxFrame = await screen.findByTitle("Box · shell");
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    const agentFrame = await screen.findByTitle("Claude Code session");
+    fireEvent.click(getSurfaceButton("Terminal"));
+    const boxFrame = await screen.findByTitle("Terminal");
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     mockGetAgent.mockResolvedValue({
       id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT", status: "stopped",
@@ -839,8 +894,8 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh capacity" }));
     await waitFor(() => expect(agentFrame).not.toBeInTheDocument());
     expect(boxFrame).not.toBeInTheDocument();
-    fireEvent.click(getSurfaceButton("Box Terminal"));
-    expect(screen.getByText("The box isn't reachable yet.")).toBeInTheDocument();
+    fireEvent.click(getSurfaceButton("Terminal"));
+    expect(screen.getByText("The computer isn't reachable yet.")).toBeInTheDocument();
     expect(document.querySelector("iframe, form")).toBeNull();
   });
 
@@ -848,8 +903,8 @@ describe("AgentPage", () => {
     jest.useFakeTimers();
     try {
       const view = render(<AgentPage />);
-      fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
-      const oldFrame = await screen.findByTitle("Claude Code · terminal");
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const oldFrame = await screen.findByTitle("Claude Code session");
       mockAgentId = "agent_next";
       mockGetAgent.mockResolvedValueOnce(null).mockResolvedValue({
         id: "agent_next", type: "claude-code", name: "NEXT_AGENT", status: "running",
@@ -859,7 +914,7 @@ describe("AgentPage", () => {
       expect(oldFrame).not.toBeInTheDocument();
       await act(async () => { jest.advanceTimersByTime(2000); });
       expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
-      const nextFrame = await screen.findByTitle("Claude Code · terminal");
+      const nextFrame = await screen.findByTitle("Claude Code session");
       expect(nextFrame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
     } finally {
       jest.useRealTimers();
@@ -868,8 +923,8 @@ describe("AgentPage", () => {
 
   it("revalidates rotated credentials before restoring a retained terminal", async () => {
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /claude code terminal/i }));
-    const oldFrame = await screen.findByTitle("Claude Code · terminal");
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    const oldFrame = await screen.findByTitle("Claude Code session");
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     let resolveMetadata: (value: unknown) => void = () => undefined;
     (global.fetch as jest.Mock).mockImplementation(() => new Promise(resolve => { resolveMetadata = resolve; }));
@@ -880,18 +935,18 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh capacity" }));
     await waitFor(() => expect(oldFrame).not.toBeInTheDocument());
     expect(document.querySelector("iframe, form")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /claude code terminal/i }));
+    fireEvent.click(getSurfaceButton(/claude code session/i));
     expect(screen.getByText("Connecting securely…")).toBeVisible();
     await act(async () => { resolveMetadata({ ok: true, json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1" }) }); });
-    const nextFrame = await screen.findByTitle("Claude Code · terminal");
+    const nextFrame = await screen.findByTitle("Claude Code session");
     expect(nextFrame).not.toBe(oldFrame);
     expect(nextFrame.parentElement?.querySelector('input[name="token"]')).toHaveValue("rotated-token");
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
   it.each([
-    { tab: "terminal", title: "Claude Code · terminal", destination: "/terminal/" },
-    { tab: "box", title: "Box · shell", destination: "/box-terminal/" },
+    { tab: "terminal", title: "Claude Code session", destination: "/terminal/" },
+    { tab: "box", title: "Terminal", destination: "/box-terminal/" },
     { tab: "browser", title: "Live browser", destination: "/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true" },
   ])("keeps the $tab bootstrap destination local and clean", async ({ tab, title, destination }) => {
     mockSearchGet.mockImplementation((key: string) => key === "tab" ? tab : null);
@@ -1233,7 +1288,7 @@ describe("AgentPage", () => {
 
     render(<AgentPage />);
 
-    expect(await screen.findByRole("button", { name: /codex terminal/i })).toBeInTheDocument();
+    expect(await findSurfaceButton(/codex session/i)).toBeInTheDocument();
     expect(getSurfaceButton(/^browser$/i)).toBeInTheDocument();
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
   });

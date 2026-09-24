@@ -111,6 +111,12 @@ export interface ManagedSessionDto {
   createdAt: string;
 }
 
+/** "mars-2vcpu-4gb" → 2 CPU / 4 GB of memory; null for a slug Hivra doesn't know. */
+export function digitalOceanSandboxResources(size: string): { cpu: number; ram: number } | null {
+  const match = /^mars-(\d+)vcpu-(\d+)gb$/.exec(size);
+  return match ? { cpu: Number(match[1]), ram: Number(match[2]) } : null;
+}
+
 export const DIGITALOCEAN_HARNESS_LABELS: Record<DigitalOceanHarness, { name: string; vendorKey: string | null }> = {
   "claude-code": { name: "Claude Code", vendorKey: "Anthropic API key" },
   codex: { name: "Codex", vendorKey: "OpenAI API key" },

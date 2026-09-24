@@ -64,6 +64,14 @@ it("falls back to typing a model id when DigitalOcean's list is unavailable", as
   expect(screen.getByLabelText("Model id")).toBeInTheDocument();
 });
 
+it("says before launch that Hivra sends a visible setup note that uses a little usage (ATT-13)", () => {
+  render(<DigitalOceanLaunchDialog connection={connection} target={target} onClose={jest.fn()} onLaunched={jest.fn()} />);
+  expect(screen.getByTestId("digitalocean-setup-note-disclosure")).toHaveTextContent(
+    "Hivra first sends the agent a short setup note, as a visible message in the chat: where it runs, its /workspace and how you see its work. The agent replies once, which uses a little of your DigitalOcean and model usage.",
+  );
+  expect(screen.getByText("Sent once the session is ready, right after Hivra's setup note.")).toBeInTheDocument();
+});
+
 it("warns up front when the prepaid balance is empty", async () => {
   mockBalance.mockResolvedValueOnce({ state: "empty", balance: "0.00", autoPrepay: false, checkedAt: "2026-09-24T00:00:00.000Z" });
   render(<DigitalOceanLaunchDialog connection={connection} target={target} onClose={jest.fn()} onLaunched={jest.fn()} />);

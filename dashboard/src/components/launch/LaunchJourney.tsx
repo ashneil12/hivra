@@ -38,6 +38,7 @@ import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
 import {
@@ -2167,6 +2168,11 @@ export function LaunchJourney() {
                 ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved and enforced maximum`
                 : sizeSummary}</dd></div>
             <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{whatItCanUse}</dd></div>
+            {draft.resourceKind === "agent" && draft.profileId ? <div><dt>You can see its work in</dt><dd>{
+              // The same decision that draws the agent page's tabs and the note
+              // Hivra gives the agent about its computer (ATT-15).
+              agentLaunchWatchRow({ type: draft.profileId, computer_substrate: substrate === "provider-vm" ? "provider-vm" : "proxmox-kvm",
+                deployment_mode: destination.mode }, { browser: browserOn })}</dd></div> : null}
             {modelSummary ? <div><dt>Model</dt><dd>{modelSummary}</dd></div> : null}
             {hermesMemoryKey && draft.sendMemoryKey
               ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>

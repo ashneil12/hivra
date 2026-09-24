@@ -103,6 +103,18 @@ describe("FleetControlPane", () => {
     );
   });
 
+  it("shows each agent with the computer it runs on, and nothing of the kind for a computer (ATT-11)", () => {
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [
+      agent("x-codex", "CODEX_AGENT", { resourceKind: "agent", computerPair: { relation: "On its own computer", placement: "Hivra Cloud", size: "1.5 CPU / 3 GB" } }),
+      ubuntu,
+    ] }));
+    render(<FleetControlPane />);
+    const pairs = screen.getAllByTestId("fleet-computer-pair");
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]).toHaveTextContent("On its own computer · Hivra Cloud · 1.5 CPU / 3 GB");
+    expect(screen.getByRole("link", { name: /CODEX_AGENT/ })).toContainElement(pairs[0]);
+  });
+
   it("filters across both families as you type", () => {
     render(<FleetControlPane />);
     const search = screen.getByRole("searchbox", { name: "Search agents and computers" });
