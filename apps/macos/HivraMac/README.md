@@ -17,6 +17,20 @@ remain usable in the embedded pane. Native metadata contains resource names,
 observed status and safe dashboard routes; it carries no guest tokens or keys.
 The adapter does not add a lifecycle API or replace an existing runtime.
 
+Every web view in the app adds `HivraMac/<version>` (today `HivraMac/0.1`) to
+its user agent. The dashboard reads that token as "inside the app": it never
+assumes analytics consent there, and Home does not reopen the last resource on
+its own. Only the web views the native workspace wraps (the connection browser
+and resource tabs, including popped-out resources) also get the workspace
+marker, and only there does the dashboard leave out its sidebar, phone header,
+bottom bar and environment banner; Settings then shows account and sign-out in
+the page. URL-based separate windows and web pop-ups get the token but not the
+marker, so they keep the dashboard's own navigation. A later desktop shell
+(none exists yet; it would send `HivraDesktop/<version>`) follows the same
+rule: the user-agent token alone never hides web navigation, and a shell that
+injects the marker must provide navigation and account/sign-out itself. Both
+signals are presentation only and grant no bridge or other capability.
+
 ## Build and open
 
 Requirements: macOS 14 or newer and Xcode with the Swift toolchain installed.

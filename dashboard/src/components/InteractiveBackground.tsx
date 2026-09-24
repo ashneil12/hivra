@@ -131,7 +131,8 @@ function InteractiveBackground({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    // A desktop app hides the canvas (globals.css); do not animate it unseen.
+    // A desktop app's wrapped view hides the canvas (globals.css); do not
+    // animate it unseen.
     if (!canvas || isDesktopShell()) return;
 
     const ctx = getCanvasRenderingContext(canvas);

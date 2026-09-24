@@ -77,7 +77,7 @@ describe('ClientLayoutWrapper', () => {
     delete host.webkit;
   });
 
-  it('leaves web chrome to any desktop app, but opens the metadata bridge only with both injected capabilities', () => {
+  it('leaves web chrome to a desktop app that wraps the page, but opens the metadata bridge only with both injected capabilities', () => {
     const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown; webkit?: unknown };
     host.__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
     const view = render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
@@ -124,9 +124,10 @@ describe('ClientLayoutWrapper', () => {
     expect(screen.queryByRole('region', { name: 'Account' })).not.toBeInTheDocument();
   });
 
-  it('leaves the sidebar, phone chrome and environment banner to a desktop app identified only by user agent', () => {
+  it('leaves the sidebar, phone chrome and environment banner to a desktop app that wraps the page in its own navigation', () => {
     process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV = 'canary';
-    Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 Chrome/140.0 HivraDesktop/0.1.0', configurable: true });
+    Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 AppleWebKit/605.1.15 HivraMac/0.1', configurable: true });
+    (window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown }).__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
     try {
       render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
       expect(screen.queryByTestId('dashboard-sidebar-chrome')).not.toBeInTheDocument();
@@ -135,8 +136,28 @@ describe('ClientLayoutWrapper', () => {
       expect(screen.queryByTestId('environment-banner')).not.toBeInTheDocument();
       expect(screen.getByRole('main')).not.toHaveClass('hermes-pwa-bottom-nav-offset');
       expect(screen.getByTestId('test-content')).toBeInTheDocument();
-      // A user agent is not a capability: no bridge, no inventory for it.
-      expect(useDashboardResources).not.toHaveBeenCalled();
+    } finally {
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    }
+  });
+
+  it('keeps web navigation in a desktop app window with no native navigation around it', () => {
+    // The Mac alpha's detached surfaces and pop-ups send its user-agent token
+    // but get no workspace marker: the page is all the window has.
+    process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV = 'canary';
+    (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+    Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 AppleWebKit/605.1.15 HivraMac/0.1', configurable: true });
+    try {
+      render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
+      const sidebar = within(screen.getByTestId('dashboard-sidebar-chrome'));
+      expect(sidebar.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
+      expect(sidebar.getByRole('button', { name: 'Switch agent or computer' })).toBeInTheDocument();
+      expect(sidebar.getByTestId('mock-user-button')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-mobile-header')).toBeInTheDocument();
+      expect(screen.getByTestId('environment-banner')).toBeInTheDocument();
+      // Account and sign-out stay in the sidebar, once.
+      expect(screen.queryByRole('region', { name: 'Account' })).not.toBeInTheDocument();
+      expect(screen.getAllByTestId('mock-user-button')).toHaveLength(1);
     } finally {
       delete (window.navigator as unknown as Record<string, unknown>).userAgent;
     }
@@ -144,15 +165,13 @@ describe('ClientLayoutWrapper', () => {
 
   it('keeps account and sign-out reachable on Settings in a desktop app without the web sidebar', () => {
     (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
-    Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 AppleWebKit/605.1.15 HivraMac/0.2.1', configurable: true });
-    try {
-      render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
-      const account = within(screen.getByRole('region', { name: 'Account' }));
-      expect(account.getByTestId('mock-user-button')).toBeInTheDocument();
-      expect(screen.getAllByTestId('mock-user-button')).toHaveLength(1);
-    } finally {
-      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
-    }
+    // The marker without the message handler: wrapped by the app, no bridge.
+    (window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown }).__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
+    render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
+    expect(screen.queryByTestId('dashboard-sidebar-chrome')).not.toBeInTheDocument();
+    const account = within(screen.getByRole('region', { name: 'Account' }));
+    expect(account.getByTestId('mock-user-button')).toBeInTheDocument();
+    expect(screen.getAllByTestId('mock-user-button')).toHaveLength(1);
   });
 
   it('marks every piece of server-rendered web chrome so a desktop app can hide it before hydration', () => {

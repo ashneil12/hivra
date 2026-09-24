@@ -16,10 +16,10 @@
 //     so grant it and show a notice whose primary action is Accept; the opt-out
 //     lives one layer deeper inside "Manage preferences" (stickier than a bare
 //     full-opt-out button, which is the standard opt-out-region pattern).
-//   - inside a Hivra desktop app -> never auto-shown and never granted: the web
-//     banner does not belong in the app's window, and consent is not assumed
-//     from geo there. Analytics stays off unless a choice is already stored;
-//     "Cookie settings" still opens the panel, as an opt-in.
+//   - in any window of a Hivra desktop app -> never auto-shown and never
+//     granted: the web banner does not belong in the app, and consent is not
+//     assumed from geo there. Analytics stays off unless a choice is already
+//     stored; "Cookie settings" still opens the panel, as an opt-in.
 //
 // There is a single non-essential bucket — product analytics + session replay —
 // because that is exactly what PostHog's one consent gate controls. "Strictly
@@ -42,7 +42,7 @@ import {
   writeStoredConsent,
   type GeoConsentSignal,
 } from '@/lib/consent/cookie-consent';
-import { isDesktopShell } from '@/lib/desktop-shell';
+import { isDesktopApp } from '@/lib/desktop-shell';
 
 type BannerMode = 'hidden' | 'required' | 'notice';
 
@@ -64,7 +64,7 @@ export function CookieConsentBanner() {
     // handler below, so there is nothing to set here.
     if (readStoredConsent()) return;
     // A desktop app stays opted out (the init default) without prompting.
-    if (isDesktopShell()) return;
+    if (isDesktopApp()) return;
 
     let cancelled = false;
     (async () => {
@@ -113,7 +113,7 @@ export function CookieConsentBanner() {
       const stored = readStoredConsent();
       // A desktop app with nothing stored never resolved an opt-out region, so
       // it asks as a consent-required region does: off until the person opts in.
-      const askFirst = !stored && isDesktopShell();
+      const askFirst = !stored && isDesktopApp();
       setAnalyticsOn(stored ? stored.choice === 'accepted' : !askFirst);
       setShowPrefs(true);
       // If the banner had already self-hidden, bring it back as a notice so the

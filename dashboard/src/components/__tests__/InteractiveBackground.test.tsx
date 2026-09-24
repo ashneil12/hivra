@@ -132,10 +132,7 @@ describe('InteractiveBackground', () => {
       configurable: true,
       value: jest.fn(() => ({ matches: false })),
     });
-    Object.defineProperty(window.navigator, 'userAgent', {
-      configurable: true,
-      value: 'Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) HivraMac/0.2.1',
-    });
+    (window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown }).__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
     const addListener = jest.spyOn(window, 'addEventListener');
     try {
       const { container } = render(<InteractiveBackground />);
@@ -143,6 +140,25 @@ describe('InteractiveBackground', () => {
       expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
       expect(window.requestAnimationFrame).not.toHaveBeenCalled();
       expect(addListener).not.toHaveBeenCalledWith('mousemove', expect.any(Function));
+    } finally {
+      delete (window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown }).__HIVRA_NATIVE_WORKSPACE__;
+    }
+  });
+
+  it('still animates in a desktop app window the app does not wrap, where it stays visible', () => {
+    mockCanvasContext();
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: jest.fn(() => ({ matches: false })),
+    });
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) HivraMac/0.1',
+    });
+    try {
+      render(<InteractiveBackground />);
+      expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled();
+      expect(window.requestAnimationFrame).toHaveBeenCalled();
     } finally {
       delete (window.navigator as unknown as Record<string, unknown>).userAgent;
     }

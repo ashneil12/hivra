@@ -145,6 +145,8 @@ describe("CookieConsentBanner", () => {
 
   describe("inside a Hivra desktop app", () => {
     beforeEach(() => {
+      // The user agent alone, as in every app window, including the Mac alpha's
+      // detached ones that get no workspace marker.
       Object.defineProperty(window.navigator, "userAgent", {
         value: "Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) HivraMac/0.2.1",
         configurable: true,

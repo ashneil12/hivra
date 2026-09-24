@@ -61,8 +61,10 @@ export function ClientLayoutWrapper({
   const [attention, setAttention] = useState<{ owner: string; count: number } | null>(null);
   const pathname = usePathname();
   const nativeWorkspace = useNativeWorkspaceEnabled();
-  // A desktop app draws its own sidebar, navigation and environment badge.
-  // Presentation only: the metadata bridge keeps its own capability check.
+  // A desktop app view wrapped in native navigation leaves out the web sidebar,
+  // phone chrome and environment badge; a window without it (the Mac alpha's
+  // detached surfaces) keeps them. Presentation only: the metadata bridge
+  // keeps its own capability check.
   const desktopShell = useDesktopShell();
   const { keyboardOpen } = useWorkspaceViewport();
   const owner = resourceOwnerKey ?? userEmail;

@@ -17,8 +17,9 @@
   .mobileHeader { display: none; }
   .withMobileHeader { padding-top: env(safe-area-inset-top, 0px); --dashboard-mobile-header-height: env(safe-area-inset-top, 0px); }
 }
-/* A desktop app hides the phone header before hydration (globals.css), so
-   nothing reserves its space either; `initial` restores each reader's default. */
+/* A desktop app's wrapped view hides the phone header before hydration
+   (globals.css), so nothing reserves its space either; `initial` restores each
+   reader's default. */
 :global(:root[data-shell="desktop"]) .withMobileHeader { padding-top: 0; --dashboard-mobile-header-height: initial; --dashboard-page-safe-top: initial; }
 .nativeAccount {
   display: flex;

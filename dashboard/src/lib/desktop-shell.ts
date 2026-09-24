@@ -1,17 +1,24 @@
 /**
- * Desktop shell presentation mode.
+ * Desktop app signals.
  *
- * A Hivra desktop app draws its own window chrome (sidebar, toolbar, tabs,
- * account menu) around the dashboard, so the page leaves its own chrome out.
- * The app announces itself in two ways, and either one is enough:
+ * A Hivra desktop app loads the dashboard in its own web views, and two
+ * signals answer two different questions about the page:
  *
- * - the macOS alpha injects `window.__HIVRA_NATIVE_WORKSPACE__` at document
- *   start, in the main frame of its trusted origin only;
- * - every desktop web view adds a user-agent product token: `HivraMac/<version>`
- *   on the macOS alpha, `HivraDesktop/<version>` on later shells.
+ * - Is this page in one of the app's web views? Each one adds a user-agent
+ *   product token: `HivraMac/<version>` on the macOS alpha,
+ *   `HivraDesktop/<version>` on later shells. That includes windows with no
+ *   native navigation around them, such as the macOS alpha's detached
+ *   surfaces and pop-ups. What holds for the whole app (analytics consent is
+ *   never assumed, Home never resumes on its own) follows this: isDesktopApp.
+ * - Does the app draw its own navigation around this view? Only then does the
+ *   app inject `window.__HIVRA_NATIVE_WORKSPACE__` at document start, in the
+ *   main frame of its trusted origin, and only then does the page leave its
+ *   own chrome out: isDesktopShell and html[data-shell="desktop"]. A window
+ *   without native navigation keeps the web sidebar, or it could not reach
+ *   another page, Settings or sign-out. A user agent alone never hides it.
  *
- * This is presentation only. A page script can forge both signals, so nothing
- * may use them for trust, auth or metadata. The message-handler bridge in
+ * Both are presentation only. A page script can forge either, so nothing may
+ * use them for trust, auth or metadata. The message-handler bridge in
  * native-workspace.ts stays the only gate for data sent to the app.
  */
 
@@ -21,39 +28,52 @@ export const DESKTOP_SHELL_VALUE = "desktop" as const;
 /** A whole product token, so "NotHivraMac/1.0" is not a desktop app. */
 const DESKTOP_USER_AGENT = /(?:^|\s)Hivra(?:Mac|Desktop)\//;
 
-type DesktopShellHost = {
+type DesktopHost = {
   __HIVRA_NATIVE_WORKSPACE__?: unknown;
   navigator?: { userAgent?: unknown };
 };
 
-/** Whether this window belongs to a desktop app. Presentation only. */
-export function detectDesktopShell(host: DesktopShellHost): boolean {
-  // Any marker object counts: a later bridge version is still the desktop app.
+/** Whether the app wraps this view in its own navigation. Presentation only. */
+export function detectDesktopShell(host: DesktopHost): boolean {
+  // Any marker object counts: a later bridge version still wraps the view.
   const marker = host.__HIVRA_NATIVE_WORKSPACE__;
-  if (typeof marker === "object" && marker !== null) return true;
+  return typeof marker === "object" && marker !== null;
+}
+
+/** Whether this page is in any of a desktop app's web views. Presentation only. */
+export function detectDesktopApp(host: DesktopHost): boolean {
+  if (detectDesktopShell(host)) return true;
   const userAgent = host.navigator?.userAgent;
   return typeof userAgent === "string" && DESKTOP_USER_AGENT.test(userAgent);
 }
 
-/** Client helper, with the same answer as the pre-paint script below. */
-export function isDesktopShell(): boolean {
+function detectInWindow(detect: (host: DesktopHost) => boolean): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return detectDesktopShell(window as unknown as DesktopShellHost);
+    return detect(window as unknown as DesktopHost);
   } catch {
     return false;
   }
+}
+
+/** Client helper, with the same answer as the pre-paint script below. */
+export function isDesktopShell(): boolean {
+  return detectInWindow(detectDesktopShell);
+}
+
+/** Client helper: any window of a desktop app, with or without native navigation. */
+export function isDesktopApp(): boolean {
+  return detectInWindow(detectDesktopApp);
 }
 
 /**
  * Runs from the root layout's <head>, before the body is parsed, so CSS can
  * hide web chrome on first paint instead of after hydration. It must stay
  * inline and synchronous: a deferred script paints the chrome first, and the
- * server cannot see the injected marker (a user-agent read would also have to
- * vary every cached page by user agent). Keep it in step with
+ * server cannot see the injected marker. Keep it in step with
  * detectDesktopShell; desktop-shell.test.ts runs both against the same cases.
  */
 export const DESKTOP_SHELL_BOOTSTRAP = `(function(){try{var m=window.__HIVRA_NATIVE_WORKSPACE__;`
-  + `if((typeof m==="object"&&m!==null)||${String(DESKTOP_USER_AGENT)}.test(navigator.userAgent||""))`
+  + `if(typeof m==="object"&&m!==null)`
   + `document.documentElement.setAttribute(${JSON.stringify(DESKTOP_SHELL_ATTRIBUTE)},${JSON.stringify(DESKTOP_SHELL_VALUE)})`
   + `}catch(e){}})();`;

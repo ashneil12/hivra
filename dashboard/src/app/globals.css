@@ -260,8 +260,8 @@ select,
 }
 
 /* Scrollbars. Any ::-webkit-scrollbar rule replaces the platform's overlay
-   scrollbars, so a desktop app's web view is left out entirely. :where() keeps
-   the specificity these rules had before the scope was added. */
+   scrollbars, so a desktop app's wrapped view is left out entirely. :where()
+   keeps the specificity these rules had before the scope was added. */
 :where(:root:not([data-shell="desktop"]))::-webkit-scrollbar,
 :where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar { width: 4px; height: 4px; }
 :where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-track,
@@ -273,9 +273,10 @@ select,
 
 /* ── Desktop shell ───────────────────────────────────────────────────
    html[data-shell="desktop"] is set before first paint by the root layout's
-   head script (lib/desktop-shell.ts) inside a Hivra desktop app, which draws
-   its own sidebar, toolbar and account menu. Presentation only: ordinary
-   browsers never get the attribute, so none of this applies to them.
+   head script (lib/desktop-shell.ts) in a Hivra desktop app view that the app
+   wraps in its own sidebar, toolbar and account menu. App windows without
+   that navigation, and ordinary browsers, never get the attribute, so none of
+   this applies to them. Presentation only.
 
    [data-web-chrome] marks web-only chrome and decoration the app replaces.
    !important because some of it sets display inline (the phone bottom bar).

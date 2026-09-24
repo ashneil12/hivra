@@ -9,9 +9,10 @@ const subscribe = () => () => {};
 const serverSnapshot = () => false;
 
 /**
- * True inside a desktop app, after hydration. The first client render matches
- * the server (false); CSS keyed on html[data-shell="desktop"] already hides the
- * chrome before then. Presentation only: never gate data or trust on it.
+ * True in a desktop app view wrapped in the app's own navigation, after
+ * hydration. The first client render matches the server (false); CSS keyed on
+ * html[data-shell="desktop"] already hides the chrome before then.
+ * Presentation only: never gate data or trust on it.
  */
 export function useDesktopShell(): boolean {
   return useSyncExternalStore(subscribe, isDesktopShell, serverSnapshot);
