@@ -4,7 +4,8 @@
 Every output is a plain resize of docs/brand/hivra-logo.jpg (4096x4096, square,
 opaque). Nothing is cropped, padded, recoloured, redrawn or made transparent:
 the dark field is part of the approved mark, so the same full-bleed square is
-used for the token image, the favicon, the Apple touch icon and the PWA icons.
+used for the token image, the listing-site logos, the favicon, the Apple touch
+icon and the PWA icons.
 
 Requires Pillow. Run from the repository root:
 
@@ -12,11 +13,18 @@ Requires Pillow. Run from the repository root:
 
 The script refuses to run if the source logo is not the approved file, so the
 outputs are always derived from the exact bytes recorded in docs/brand/README.md.
+
+It never overwrites a published export. A missing output is written. An output
+that already exists is compared with a fresh export: identical bytes are left
+alone, and different bytes stop the script without touching the file. A changed
+mark therefore gets a new file name instead of silently replacing a URL that a
+token launch or a listing site may already point at.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import sys
 from pathlib import Path
 
@@ -36,7 +44,12 @@ PNG_OUTPUTS = [
     (PUBLIC_BRAND / "hivra-token-1024.png", 1024),
     (PUBLIC_BRAND / "hivra-token-512.png", 512),
     (PUBLIC_BRAND / "hivra-token-256.png", 256),
-    # Installable-app (web manifest) icons, also used by the Open Graph card.
+    # Listing-site logos: 200px for CoinGecko, 64px and 32px for BaseScan.
+    (PUBLIC_BRAND / "hivra-token-200.png", 200),
+    (PUBLIC_BRAND / "hivra-token-64.png", 64),
+    (PUBLIC_BRAND / "hivra-token-32.png", 32),
+    # Installable-app (web manifest) icons, also used by the Open Graph card
+    # and the site header mark.
     (PUBLIC_BRAND / "hivra-icon-192.png", 192),
     (PUBLIC_BRAND / "hivra-icon-512.png", 512),
     # Next.js metadata file conventions (<link rel="icon"> / apple-touch-icon).
@@ -62,25 +75,48 @@ def resized(source: Image.Image, edge: int) -> Image.Image:
     return source.resize((edge, edge), Image.Resampling.LANCZOS)
 
 
-def main() -> None:
-    source = load_source()
-    PUBLIC_BRAND.mkdir(parents=True, exist_ok=True)
-    for path, edge in PNG_OUTPUTS:
-        resized(source, edge).save(path, format="PNG", optimize=True)
+def png_bytes(source: Image.Image, edge: int) -> bytes:
+    buffer = io.BytesIO()
+    resized(source, edge).save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+def favicon_bytes(source: Image.Image) -> bytes:
     # Each favicon frame is resampled from the full-size source, not from a
     # smaller intermediate, so the 16px frame keeps as much of the mark as it can.
     # Next.js only decodes RGBA frames inside an .ico; the alpha channel is fully
     # opaque, so this adds no transparency.
     frames = [resized(source, edge).convert("RGBA") for edge in FAVICON_SIZES]
+    buffer = io.BytesIO()
     frames[-1].save(
-        FAVICON,
+        buffer,
         format="ICO",
         sizes=[(edge, edge) for edge in FAVICON_SIZES],
         append_images=frames[:-1],
     )
-    for path in [p for p, _ in PNG_OUTPUTS] + [FAVICON]:
-        data = path.read_bytes()
-        print(f"{hashlib.sha256(data).hexdigest()}  {len(data):>7}  {path.relative_to(ROOT)}")
+    return buffer.getvalue()
+
+
+def main() -> None:
+    source = load_source()
+    PUBLIC_BRAND.mkdir(parents=True, exist_ok=True)
+    exports = [(path, png_bytes(source, edge)) for path, edge in PNG_OUTPUTS]
+    exports.append((FAVICON, favicon_bytes(source)))
+    # Check every existing file before writing anything, so a mismatch leaves
+    # the tree exactly as it was.
+    changed = [path for path, data in exports if path.exists() and path.read_bytes() != data]
+    if changed:
+        names = ", ".join(str(path.relative_to(ROOT)) for path in changed)
+        sys.exit(
+            f"Refusing to overwrite published exports whose bytes would change: {names}. "
+            "Export a changed mark under a new file name."
+        )
+    for path, data in exports:
+        status = "kept" if path.exists() else "wrote"
+        if status == "wrote":
+            path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        print(f"{digest}  {len(data):>7}  {status:<5}  {path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
