@@ -76,13 +76,11 @@ export function useLaunchDestination(
   catalogRuntimeId: string | null,
   {
     handoff = null,
-    preferSelfManaged = false,
     managedAvailable = true,
     selfManagedAvailable = true,
     targetKind = "any",
   }: {
     handoff?: LaunchTargetHandoff | null;
-    preferSelfManaged?: boolean;
     /** False for runtimes Hivra Cloud cannot run; placement is then always
      * self-managed, even before any compatible host is connected. */
     managedAvailable?: boolean;
@@ -96,7 +94,9 @@ export function useLaunchDestination(
   const handoffKey = handoff?.key ?? null;
   const initialChoice = {
     handoffKey,
-    mode: (handoff || selfHosted || preferSelfManaged ? "self-managed" : "hivra-managed") as LaunchDestinationMode,
+    // Hivra Cloud unless a server was handed over or there is no Hivra Cloud.
+    // The owner's own server is never picked for them.
+    mode: (handoff || selfHosted ? "self-managed" : "hivra-managed") as LaunchDestinationMode,
     // null means no selection yet; an invalid handoff is an explicit blocked
     // selection, not permission to auto-pick a different computer.
     targetId: handoff ? handoff.targetId ?? "" : null as string | null,
@@ -207,7 +207,6 @@ export function useLaunchDestination(
 
 export function DeploymentDestinationControl({
   state,
-  disabled = false,
   managedAvailable = true,
   ownServerSupported = true,
   runtimeName = "this agent",
@@ -215,7 +214,6 @@ export function DeploymentDestinationControl({
   capacitySetupHref = "/dashboard/infrastructure",
 }: {
   state: LaunchDestinationState;
-  disabled?: boolean;
   managedAvailable?: boolean;
   /** False for runtimes that run on Hivra Cloud only. The owner's servers are
    * still shown, with why they can't be used, never as a pressed choice. */
@@ -247,7 +245,7 @@ export function DeploymentDestinationControl({
           type="button"
           className={styles.refreshButton}
           onClick={state.refresh}
-          disabled={state.loading || disabled}
+          disabled={state.loading}
           aria-label="Refresh ready hosts"
           title="Refresh ready hosts"
         >
@@ -263,7 +261,7 @@ export function DeploymentDestinationControl({
           className={`${styles.option} ${managedSelected ? styles.optionActive : ""}`}
           aria-pressed={managedSelected}
           onClick={() => state.setMode("hivra-managed")}
-          disabled={disabled || !managedAvailable}
+          disabled={!managedAvailable}
         >
           <Cloud size={16} aria-hidden="true" />
           <span>
@@ -280,7 +278,7 @@ export function DeploymentDestinationControl({
           className={`${styles.option} ${state.mode === "self-managed" ? styles.optionActive : ""}`}
           aria-pressed={state.mode === "self-managed"}
           onClick={() => state.setMode("self-managed")}
-          disabled={disabled || state.loading || !selfManagedAvailable}
+          disabled={state.loading || !selfManagedAvailable}
         >
           <Server size={16} aria-hidden="true" />
           <span>
@@ -329,7 +327,6 @@ export function DeploymentDestinationControl({
               className={styles.targetSelect}
               value={state.selectedTargetId}
               onChange={(event) => state.setSelectedTargetId(event.target.value)}
-              disabled={disabled}
             >
               {!selectedTarget ? <option value="" disabled>Choose a host</option> : null}
               {state.readyTargets.map((target) => (

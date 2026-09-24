@@ -154,6 +154,12 @@ async function submitWithReceipt(
   throw outcome.error;
 }
 
+/** A Hivra agent launch started from a saved template names it; the server
+ * applies the template's identity and skills under the fields sent here. */
+function withTemplate<T extends CreateAgentInput>(input: T, draft: LaunchDraft): T {
+  return draft.template ? { ...input, templateId: draft.template.id } : input;
+}
+
 /** A draft's model choice; drafts from before it existed sign in natively. */
 function accessOf(draft: LaunchDraft): LaunchModelAccess {
   return draft.modelAccess ?? DEFAULT_MODEL_ACCESS;
@@ -355,13 +361,13 @@ async function submitCodex(draft: LaunchDraft, deployment: AgentDeploymentDestin
     launchRequestId: draft.launchRequestId,
   };
   if (access.mode === "native") {
-    return submitWithReceipt({ type: "codex", ...shared }, options.onObserved);
+    return submitWithReceipt(withTemplate({ type: "codex", ...shared }, draft), options.onObserved);
   }
   const model = effectiveModel("codex", access);
   const llm = access.mode === "credits"
     ? { mode: "managed" as const, model, walletType: creditsWallet(access, options.balance ?? { state: "unknown" }) }
     : { mode: "byok" as const, model, ...(await launchKey(draft, options)) };
-  return submitWithReceipt(codexModelRequest({ ...shared, llm }), options.onObserved);
+  return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options.onObserved);
 }
 
 export async function submitLaunchDraft(
@@ -469,21 +475,21 @@ export async function submitLaunchDraft(
     return submitHermes(draft, options);
   }
   if (profileId === "claude-code") {
-    return submitObserved(nativeCliAgentRequest({
+    return submitObserved(withTemplate(nativeCliAgentRequest({
       type: "claude-code",
       name: draft.name.trim(),
       cpu: draft.resources.cpu,
       ram: draft.resources.ram,
       browser: draft.browser,
       deployment,
-    }), draft, options);
+    }), draft), draft, options);
   }
   // OpenClaw, Agent Zero and Aeon, as their setup form launched them.
   const access = accessOf(draft);
   const credits = access.mode === "credits"
     ? { walletType: creditsWallet(access, options.balance ?? { state: "unknown" }) }
     : null;
-  return submitObserved(dashboardAgentRequest({
+  return submitObserved(withTemplate(dashboardAgentRequest({
     type: profileId,
     name: draft.name.trim(),
     cpu: draft.resources.cpu,
@@ -491,7 +497,7 @@ export async function submitLaunchDraft(
     browser: profileId === "openclaw" && draft.browser,
     credits,
     deployment,
-  }), draft, options);
+  }), draft), draft, options);
 }
 
 /** Looks, without sending anything, for the computer a launch whose answer

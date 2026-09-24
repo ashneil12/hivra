@@ -22,15 +22,15 @@ describe("app manifest", () => {
     expect(result.background_color).toBe("#0d0d0d");
     expect(result.theme_color).toBe("#0d0d0d");
     expect(result.start_url).not.toMatch(/[?#]|token|secret|key/i);
-    expect(result.shortcuts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "Agents", url: "/dashboard" }),
-        expect.objectContaining({ name: "Chat", url: "/dashboard/chat" }),
-        expect.objectContaining({ name: "Workspace preview", url: "/dashboard/workspace" }),
-        expect.objectContaining({ name: "Wallet", url: "/dashboard/wallet" }),
-        expect.objectContaining({ name: "Billing", url: "/dashboard/billing" }),
-      ])
-    );
+    // Agents, Computers and Launch, never the Hermes-only chat or the
+    // workspace preview that only redirected Home.
+    expect(result.shortcuts?.map(({ name, url }) => [name, url])).toEqual([
+      ["Agents", "/dashboard/agents"],
+      ["Computers", "/dashboard/computers"],
+      ["Launch", "/dashboard/launch"],
+      ["Wallet", "/dashboard/wallet"],
+      ["Billing", "/dashboard/billing"],
+    ]);
     expect(result.shortcuts?.every(({ url }) => url.startsWith("/dashboard"))).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/bearer|api[_-]?token|secret|api[_-]?key/i);
     expect(result.icons).toEqual([

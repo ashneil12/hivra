@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, Cpu, Loader2, MemoryStick, RefreshCw } from 'lucide-react';
 import styles from '../console.module.css';
+import { buildAgentLaunchHref } from '@/lib/hivra/launch-navigation';
 
 type Feedback = { tone: 'success' | 'error'; message: string } | null;
 
@@ -275,7 +276,7 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
               <strong>{canLaunch ? 'Capacity is available for another agent' : slotsUsed >= maxAgents ? 'All agent slots are in use' : 'Shrink an allocation to make room'}</strong>
               <span style={subtleStyle}>{canLaunch ? `${formatNumber(freeCpu)} vCPU and ${formatNumber(freeRamGb)} GB RAM are currently free.` : 'The launch flow will enforce the minimum size and your remaining pool.'}</span>
             </div>
-            {canLaunch ? <Link href="/dashboard/welcome?step=agent-type" style={primaryLinkStyle}>Launch another agent <ArrowUpRight size={14} /></Link> : null}
+            {canLaunch ? <Link href={buildAgentLaunchHref()} style={primaryLinkStyle}>Launch another agent <ArrowUpRight size={14} /></Link> : null}
           </div>
         </>
       ) : null}

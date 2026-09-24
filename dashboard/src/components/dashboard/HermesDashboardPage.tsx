@@ -21,10 +21,6 @@ import {
 } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { useUser } from "@clerk/nextjs";
-// /dashboard/welcome was the v1 tier subscription picker. It's now a
-// redirect to /dashboard/wallet, so we can't import it as an inline
-// component. Empty-state visitors are sent to the wallet page below
-// where the V2 deposit flow lives.
 import { TelemetryGrid } from "@/components/TelemetryGrid";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { buildHermesFadeSlideVariants } from "@/components/ui/motion";
@@ -50,6 +46,7 @@ import {
   requestInstanceActivityDigest,
 } from "@/lib/command-center/activity-client";
 import type { InstanceActivityDigest } from "@/lib/command-center/activity";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 
 interface Instance {
   id: string;
@@ -132,6 +129,9 @@ type CommandCenterV2FlagResponse = {
 // these rules use !important: card actions are always visible (and labelled)
 // without hover, action buttons reach 44px on coarse pointers, and the host
 // instance indent collapses on narrow phones.
+/** Where an account with no agents starts: Launch, agents first. */
+const FIRST_LAUNCH_HREF = buildAgentLaunchHref();
+
 const HERMES_DASHBOARD_TOUCH_CSS = `
 .hermes-card-action-label { display: none; }
 @media (hover: none) {
@@ -1741,9 +1741,9 @@ function CommandCenterV2Surface({
             </div>
           ) : instances.length === 0 ? (
             <div style={{ padding: "18px 0", display: "grid", gap: 14, justifyItems: "start" }}>
-              <span style={{ color: "var(--text-secondary)", fontSize: 14 }}>No agents are deployed yet.</span>
+              <span style={{ color: "var(--text-secondary)", fontSize: 14 }}>No agents yet.</span>
               <a
-                href="/dashboard/welcome"
+                href={FIRST_LAUNCH_HREF}
                 onClick={(event) => {
                   event.preventDefault();
                   onDeployAgent();
@@ -1765,7 +1765,7 @@ function CommandCenterV2Surface({
                   textDecoration: "none",
                 }}
               >
-                Deploy an agent <ArrowRight size={14} aria-hidden="true" />
+                Launch an agent <ArrowRight size={14} aria-hidden="true" />
               </a>
             </div>
           ) : (
@@ -2232,11 +2232,9 @@ export function HermesDashboardPage() {
     };
   }, [mounted, userId, liveWebUIInstanceIds, liveWebUIInstances]);
 
-  // Empty state: route to /dashboard/welcome. The welcome flow now
-  // owns the loading → plan → deploy state machine and skips the
-  // picker for subscribed/eligible users, so it no longer redirects
-  // back here on entitlement — the redirect loop that hammered
-  // /api/billing/wallet/eligibility is dead.
+  // Empty state: an account with no agents opens Launch, the one place to
+  // start an agent or a computer. A new account turns its Free plan on
+  // there; nothing redirects back here, so there is no loop.
   const showOnboarding =
     !loading &&
     mounted &&
@@ -2250,7 +2248,7 @@ export function HermesDashboardPage() {
 
   useEffect(() => {
     if (!showOnboarding) return;
-    router.replace("/dashboard/welcome");
+    router.replace(FIRST_LAUNCH_HREF);
   }, [showOnboarding, router]);
 
   if (showOnboarding) {
@@ -2299,7 +2297,7 @@ export function HermesDashboardPage() {
         onStartColdRestore={startColdStorageRestore}
         onTopUpCredits={() => router.push("/dashboard/billing?managedVenice=deposit&wallet=hermesos")}
         onManageCredits={() => router.push("/dashboard/billing#managed-venice")}
-        onDeployAgent={() => router.push("/dashboard/welcome")}
+        onDeployAgent={() => router.push(FIRST_LAUNCH_HREF)}
         showHivra={false}
       />
     );

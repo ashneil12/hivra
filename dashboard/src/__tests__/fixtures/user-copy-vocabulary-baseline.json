@@ -69,9 +69,6 @@
     "instance": 1,
     "runtime": 3
   },
-  "components/agents/AgentsPage.tsx": {
-    "runtime": 3
-  },
   "components/auth/AuthLocalSetupPanel.tsx": {
     "instance": 1
   },
@@ -93,15 +90,6 @@
   },
   "components/dashboard/welcome/DeploymentDestinationControl.tsx": {
     "self-managed": 2
-  },
-  "components/dashboard/welcome/LaunchModelControl.tsx": {
-    "runtime": 1
-  },
-  "components/dashboard/welcome/WelcomeFlow.tsx": {
-    "self-managed": 2,
-    "Command Center": 1,
-    "the box": 8,
-    "instance": 3
   },
   "components/explorer/FileExplorer.tsx": {
     "instance": 3
@@ -175,10 +163,6 @@
   },
   "components/launch/LaunchJourney.tsx": {
     "runtime": 1
-  },
-  "components/runtimes/DeepSeekHarnessPreviewPage.tsx": {
-    "Canary": 2,
-    "runtime": 10
   },
   "components/scheduled-tasks/TaskModal.tsx": {
     "instance": 1

@@ -147,6 +147,9 @@ export interface CreateAgentInput {
   /** Stable owner-generated receipt key for native Codex and Ubuntu launches.
    * Reuse this exact UUID after an uncertain response; never mint one per retry. */
   launchRequestId?: string;
+  /** A saved template to start from (id or slug). The server checks the owner
+   * may use it and applies its identity and skills; fields sent here win. */
+  templateId?: string;
 }
 
 export class HivraLaunchInProgressError extends Error {
@@ -377,7 +380,24 @@ export interface PlanInfo {
   poolRam: number;
   /** Account-wide managed usage from billing, including Hermes. RAM is GB here. */
   usage?: { agentCount: number; usedCpu: number; usedRam: number };
+  /** Billing reports no plan at all yet: a new account before the Free plan
+   * is turned on. Hivra Cloud launches need a plan first. */
+  needsActivation?: boolean;
+  /** Billing reports no active plan because this paid one holds the account
+   * without granting anything: a payment didn't go through, or it has no
+   * agent slots. Free can't be turned on over it; it is settled in Billing.
+   * The plan itself stays Free's shape, so nothing reads it as paid. Never
+   * set together with `needsActivation`. */
+  onHold?: PlanOnHold;
 }
+
+export type PlanOnHold = {
+  key: string;
+  name: string;
+  reason: "payment_overdue" | "no_slots";
+  /** The billing portal can settle it (a live Stripe subscription bills it). */
+  billingPortal: boolean;
+};
 
 const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxAgents: 1, maxCpuPerAgent: 0.5, maxRamPerAgent: 1, poolCpu: 0.5, poolRam: 1 };
 
@@ -399,6 +419,34 @@ const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxA
  */
 export function isFreePlanInfo(plan: PlanInfo | null | undefined): boolean {
   return !!plan && (!plan.subscribed || plan.key === "free");
+}
+
+/** Usage billing observed, with RAM converted from MB to GB; undefined when
+ * it is missing or malformed. */
+function observedUsage(value: unknown): PlanInfo["usage"] {
+  if (!value || typeof value !== "object") return undefined;
+  const observed = value as { agentCount?: unknown; usedCpu?: unknown; usedRam?: unknown };
+  return typeof observed.agentCount === "number" && Number.isInteger(observed.agentCount) && observed.agentCount >= 0 &&
+    typeof observed.usedCpu === "number" && Number.isFinite(observed.usedCpu) && observed.usedCpu >= 0 &&
+    typeof observed.usedRam === "number" && Number.isFinite(observed.usedRam) && observed.usedRam >= 0
+    ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
+    : undefined;
+}
+
+const PLAN_ON_HOLD_REASONS = new Set(["payment_overdue", "no_slots"]);
+
+/** The paid plan billing says holds an account that has no active plan. */
+function planOnHold(value: unknown): PlanOnHold | null {
+  if (!value || typeof value !== "object") return null;
+  const hold = value as { key?: unknown; name?: unknown; reason?: unknown; billingPortal?: unknown };
+  if (typeof hold.key !== "string" || !hold.key.trim() || typeof hold.name !== "string" || !hold.name.trim()) return null;
+  if (typeof hold.reason !== "string" || !PLAN_ON_HOLD_REASONS.has(hold.reason)) return null;
+  return {
+    key: hold.key,
+    name: hold.name,
+    reason: hold.reason as "payment_overdue" | "no_slots",
+    billingPortal: hold.billingPortal === true,
+  };
 }
 
 // Agent slot counts come from the authoritative source (subscription/agent-slots)
@@ -427,18 +475,32 @@ export async function fetchPlanStrict(): Promise<PlanInfo | null> {
     const r = await fetch("/api/billing/usage", { cache: "no-store" });
     const j = await readJson(r);
     if (!r.ok || !j || j.success !== true) return null;
-    const d = j.data as { subscribed?: boolean; usage?: { agentCount?: unknown; usedCpu?: unknown; usedRam?: unknown } | null; plan?: { name?: string; key?: string; maxAgents?: number; maxCpuPerAgent?: number; maxRamPerAgent?: number; totalCpu?: number; totalRam?: number } | null };
-    const observed = d.usage;
+    const d = j.data as {
+      subscribed?: boolean;
+      usage?: unknown;
+      managedUsage?: unknown;
+      planOnHold?: unknown;
+      plan?: { name?: string; key?: string; maxAgents?: number; maxCpuPerAgent?: number; maxRamPerAgent?: number; totalCpu?: number; totalRam?: number } | null;
+    };
+    if (!d.subscribed) {
+      // No plan. What the account already runs on Hivra Cloud is reported
+      // separately (it counts against Free once Free is on); left out when
+      // billing couldn't read it, so it stays unknown rather than zero.
+      const running = observedUsage(d.managedUsage);
+      const runningFields = running ? { usage: running } : {};
+      const onHold = planOnHold(d.planOnHold);
+      // A paid plan holds the account, and is settled in Billing. Everything
+      // else stays Free's, so no caller reads the account as paid or plans
+      // beyond what it could get without that plan.
+      if (onHold) return { ...FREE_PLAN, ...runningFields, onHold };
+      // A new account: Free is what turning a plan on would give.
+      return { ...FREE_PLAN, ...runningFields, needsActivation: true };
+    }
     // Missing or malformed usage is unknown, not an empty pool. Launch callers
     // require this evidence; plan-only callers keep their existing behavior.
-    const usage = observed &&
-      typeof observed.agentCount === "number" && Number.isInteger(observed.agentCount) && observed.agentCount >= 0 &&
-      typeof observed.usedCpu === "number" && Number.isFinite(observed.usedCpu) && observed.usedCpu >= 0 &&
-      typeof observed.usedRam === "number" && Number.isFinite(observed.usedRam) && observed.usedRam >= 0
-      ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
-      : undefined;
+    const usage = observedUsage(d.usage);
     const usageFields = usage ? { usage } : {};
-    if (!d.subscribed || !d.plan) return { ...FREE_PLAN, ...usageFields };
+    if (!d.plan) return { ...FREE_PLAN, ...usageFields };
     const key = d.plan.key || "paid";
     if (key === "free") return { ...FREE_PLAN, ...usageFields }; // the free row is subscribed:true but is NOT paid
     const ramGb = Math.max(1, Math.round((Number(d.plan.maxRamPerAgent) || 8192) / 1024)); // plan RAM is MB

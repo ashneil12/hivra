@@ -165,7 +165,9 @@ describe("GetStartedPage", () => {
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith("/get-started/activate?plan=operator&agentType=claude-code");
     });
-    expect(window.localStorage.getItem("hermes:welcome_agent_type")).toBe("claude-code");
+    // The URL carries the agent all the way to Launch; nothing reads a
+    // stored copy any more.
+    expect(window.localStorage.getItem("hermes:welcome_agent_type")).toBeNull();
   });
 
   it("preserves plan intent across sign-up and sign-in redirects", () => {

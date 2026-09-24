@@ -12,6 +12,19 @@ AEON `posthog-session-analyzer` recent capped snapshot:
 
 No raw person identifiers belong in this doc.
 
+> **Update 2026-09-24.** The first run moved to Launch (`/dashboard/launch`).
+> `WelcomeFlow.tsx`, `DeployingState.tsx` and `DeployedCelebration.tsx` are
+> deleted, and `/dashboard/welcome` only redirects. The activation events named
+> below (`activation_page_viewed`, `activation_started`,
+> `activation_dashboard_reached`, `activation_instance_requested`,
+> `launch_request_accepted`, `activation_card_required`, `activation_failed`,
+> `free_limit_hit`, `paywall_viewed`, `upgrade_clicked`, and Hermes'
+> `activation_instance_ready`) are now sent from
+> `dashboard/src/components/launch/LaunchJourney.tsx` through
+> `dashboard/src/lib/launch/launch-telemetry.ts` with `source: launch-journey`.
+> Hivra agents' `activation_instance_ready` still comes from the server when
+> the agent answers. The findings below describe the old surfaces as they were.
+
 ## Verdict
 
 **ACTION.** The product has three near-term leaks that matter more than new surface area:

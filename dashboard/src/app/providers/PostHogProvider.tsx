@@ -167,6 +167,8 @@ const SENSITIVE_RECORDING_ROUTES: RegExp[] = [
   /\/sign-in/,
   /\/sign-up/,
   /\/dashboard\/welcome/,
+  // Launch takes model API keys, credit top-ups and card checks.
+  /\/dashboard\/launch/,
   /\/dashboard\/billing/,
   /\/dashboard\/wallet/,
   /\/dashboard\/settings/,

@@ -16,12 +16,23 @@ import { attentionLabel } from "@/lib/hivra/resource-attention";
 import styles from "./HomeWorkspace.module.css";
 import { surfaceTab } from "@/lib/workspace/runtime-selection";
 import { restoreWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
 
-/** Home resumes the last available working surface. The explicit list stays put. */
+/** Home lists your agents and computers, with a Continue link to the one you
+ * were last in. Only opening the app at Home resumes it straight away; the
+ * Home link and the logo inside the app always show the list. */
 export function FleetControlPane({ requested = false, attentionRequested = false }: { requested?: boolean; attentionRequested?: boolean }) {
   const router = useRouter();
+  // Whether this view opened the app. Decided before paint, after the first
+  // render, so the server and the first client render agree on the list.
+  const [appOpen, setAppOpen] = useState(false);
+  useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate post-hydration flip of a render-gating flag read from browser-only state.
+    if (isAppOpenAtHome()) setAppOpen(true);
+    markHomeOpened();
+  }, []);
   const { agents, loading, hermesError, hivraError, retryHermes, retryHivra } =
     useWorkspaceAgents();
   const [query, setQuery] = useState("");
@@ -70,17 +81,17 @@ export function FleetControlPane({ requested = false, attentionRequested = false
     return { agent, href: `${fleetEntryHref(agent).split("?")[0]}?tab=${surfaceTab(lastSelection.surface)}` };
   }, [currentAgents, lastSelection]);
 
-  // Resume only after both inventory sources have settled. Explicit browsing
-  // stays on the list even when a saved working surface is available.
+  // Opening the app at Home resumes, once both inventory sources have
+  // settled. Everywhere else the saved surface is offered, never followed.
   useLayoutEffect(() => {
-    if (requested || attentionRequested || loading || !resume) return;
+    if (!appOpen || requested || attentionRequested || loading || !resume) return;
     router.replace(resume.href);
-  }, [requested, attentionRequested, loading, resume, router]);
+  }, [appOpen, requested, attentionRequested, loading, resume, router]);
 
 
-  // Home is a doorway to the working surface. Do not paint the chooser while
-  // inventory is loading or while its validated resume navigation is pending.
-  if (!requested && !attentionRequested && (loading || resume)) {
+  // Opening the app at Home is a doorway to the working surface: do not paint
+  // the list while inventory loads or while the resume navigation is pending.
+  if (appOpen && !requested && !attentionRequested && (loading || resume)) {
     return <div className={styles.opening} role="status">
       <span>{resume && !loading ? `Opening ${resume.agent.name}…` : "Loading your agents and computers…"}</span>
       <Link href="/dashboard?runtimes=1">Choose another agent or computer</Link>

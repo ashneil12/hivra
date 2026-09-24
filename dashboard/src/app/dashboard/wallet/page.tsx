@@ -10,6 +10,8 @@ import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
 import { useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
+import { LAUNCH_ROUTE } from '@/lib/hivra/launch-navigation';
+import { planReturnParams, withReturnParams } from '@/lib/safe-return-path';
 import {
   describeMissingWalletEnvironment,
   describeWalletProviderError,
@@ -809,17 +811,17 @@ export default function WalletPage() {
     return () => window.clearInterval(handle);
   }, [connectedSelfCustodyAddress, isLegacyCustody, load, loadQuotes]);
 
-  // When the user arrived from /dashboard/welcome to deposit, drop them
-  // back into the welcome flow's deploy step the moment a qualifying
-  // balance is detected. The ref guards against double-firing if the
-  // wallet is later refetched while still on this page.
+  // An older first-run link sent the owner here to qualify for a plan by
+  // holding tokens (?from=welcome). Once a qualifying balance is detected,
+  // Launch opens and says whether the plan shows yet. The ref guards
+  // against double-firing if the wallet is later refetched on this page.
   useEffect(() => {
     if (!fromWelcome || welcomeRedirectFiredRef.current || !eligibility) return;
     const proOk = Boolean(eligibility.tiers?.pro?.currentlyEligible);
     const powerOk = Boolean(eligibility.tiers?.power?.currentlyEligible);
     if (proOk || powerOk) {
       welcomeRedirectFiredRef.current = true;
-      router.replace('/dashboard/welcome?step=deploy');
+      router.replace(withReturnParams(LAUNCH_ROUTE, planReturnParams(null)));
     }
   }, [eligibility, fromWelcome, router]);
 
