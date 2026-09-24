@@ -958,7 +958,11 @@ fi` : ""}`;
     // resize mints a new revision, and delivery is compare-and-swap with a
     // read-back receipt. It runs after this response and never fails it.
     const contractPlan = computerContractPlanFor(current as Parameters<typeof computerContractPlanFor>[0]);
-    if (current.status === "running" && current.ip && contractPlan.status === "deliverable" && contractPlan.channel === "proxmox-seed") {
+    // It waits for the confirmed bootstrap, which rewrites the same
+    // system-prompt.md: a bootstrap retry on the next poll could otherwise
+    // overwrite a contract block this poll just delivered.
+    if (current.status === "running" && current.ip && current.bootstrapped_at
+      && contractPlan.status === "deliverable" && contractPlan.channel === "proxmox-seed") {
       const snapshot = current;
       // The owner-scoped host environment is resolved only when a round trip
       // is due, not on every page load.

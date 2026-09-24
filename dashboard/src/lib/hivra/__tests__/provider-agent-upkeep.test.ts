@@ -101,9 +101,17 @@ it("claims the attempt, stamps only what the computer confirmed, then keeps the 
     expect.objectContaining({ deadline: NOW + 110_000 }));
 });
 
-it("makes no connection while another page load holds the attempt or the wait isn't over", async () => {
+it("makes no connection, and holds the contract, while another page load may be sending the bootstrap", async () => {
   claimAvailable = false;
   await run();
+  expect(seed).not.toHaveBeenCalled();
+  // The bootstrap rewrites system-prompt.md; a contract written meanwhile could be lost.
+  expect(contract).not.toHaveBeenCalled();
+});
+
+it("keeps the contract current while only seeds that don't touch system-prompt.md are due", async () => {
+  claimAvailable = false;
+  await run({ ...agentRow, bootstrapped_at: "2026-09-24T11:00:00.000Z" });
   expect(seed).not.toHaveBeenCalled();
   expect(contract).toHaveBeenCalledTimes(1);
 });
@@ -119,12 +127,15 @@ it("leaves the seeds for the next page load when the request has no room for a c
   await run(agentRow, NOW + 30_000);
   expect(updates).toHaveLength(0);
   expect(seed).not.toHaveBeenCalled();
+  // The bootstrap is still due, so the contract waits for it too.
+  expect(contract).not.toHaveBeenCalled();
+  await run({ ...agentRow, bootstrapped_at: "2026-09-24T11:00:00.000Z" }, NOW + 30_000);
   expect(contract).toHaveBeenCalledWith(USER, expect.anything(), "auto", expect.objectContaining({ deadline: NOW + 30_000 }));
 });
 
-it("still keeps the contract current when the seed step throws", async () => {
+it("still keeps the contract current when a seed after the bootstrap throws", async () => {
   seed.mockRejectedValueOnce(new Error("provider unreachable"));
-  await run();
+  await run({ ...agentRow, bootstrapped_at: "2026-09-24T11:00:00.000Z" });
   expect(mockWarn).toHaveBeenCalledWith("provider agent seed step skipped", expect.objectContaining({ errorMessage: "provider unreachable" }));
   expect(contract).toHaveBeenCalledTimes(1);
 });

@@ -2157,7 +2157,7 @@ export function LaunchJourney() {
               // The same decision that draws the agent page's tabs and the note
               // Hivra gives the agent about its computer (ATT-15).
               agentLaunchWatchRow({ type: draft.profileId, computer_substrate: substrate === "provider-vm" ? "provider-vm" : "proxmox-kvm",
-                deployment_mode: destination.mode }, { browser: codexBrowser })}</dd></div> : null}
+                deployment_mode: destination.mode }, { browser: browserOn })}</dd></div> : null}
             {modelSummary ? <div><dt>Model</dt><dd>{modelSummary}</dd></div> : null}
             {hermesMemoryKey && draft.sendMemoryKey
               ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>

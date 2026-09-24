@@ -142,21 +142,21 @@ describe("the launch's first task", () => {
   it("goes back in the message box, unsent, when the conversation holds nothing from the owner", async () => {
     mockHistory.mockResolvedValue(setupOnly);
     render(<ManagedSessionChat initialSession={session} firstTask="  Summarize the repo  " />);
-    expect(await screen.findByText("Your first task hasn't been sent to Builder yet. It's in the message box. Send it when you're ready.")).toBeInTheDocument();
+    expect(await screen.findByText("Hivra can't find your first task in this conversation with Builder. It's in the message box; check the conversation, then send it if it's missing.")).toBeInTheDocument();
     expect(screen.getByLabelText("Message Builder")).toHaveValue("Summarize the repo");
     expect(mockSend).not.toHaveBeenCalled();
     // Only the owner's Send sends it.
     mockSend.mockResolvedValue({ runId: "run_2" });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(mockSend).toHaveBeenCalledWith(session.agentId, "Summarize the repo"));
-    expect(screen.queryByText(/Your first task hasn't been sent/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/can't find your first task/)).not.toBeInTheDocument();
   });
 
   it("stays out of the way once the owner's first task reached the session", async () => {
     render(<ManagedSessionChat initialSession={session} firstTask="Run the tests" />);
     expect(await screen.findByText("Looking at the repo.")).toBeInTheDocument();
     expect(screen.getByLabelText("Message Builder")).toHaveValue("");
-    expect(screen.queryByText(/Your first task hasn't been sent/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/can't find your first task/)).not.toBeInTheDocument();
   });
 });
 

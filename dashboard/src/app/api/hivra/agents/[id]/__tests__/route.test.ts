@@ -1270,6 +1270,25 @@ describe("GET /api/hivra/agents/[id]", () => {
       await expect(environment()).resolves.toEqual(expect.objectContaining({ PROXMOX_NODE: "fixturenode10" }));
     });
 
+    // Review of D1: a bootstrap retry on the next poll rewrites the same
+    // system-prompt.md and could drop a contract block delivered meanwhile.
+    it("waits for the confirmed bootstrap before keeping the contract current", async () => {
+      mockAgentRow = { ...mockAgentRow, bootstrapped_at: null };
+      mockSeedAgentBox.mockResolvedValueOnce({ ok: false, error: "guest unreachable" });
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockSeedAgentBox).toHaveBeenCalled();
+      expect(mockAfterResponse.mock.calls.map(call => call[1]?.failureType)).not.toContain("computer_contract_step_skipped");
+      await runAfterResponseTasks();
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+
+      // Once the bootstrap is confirmed, the next poll delivers the contract.
+      mockAfterResponse.mockReset();
+      await GET(makeGetRequest() as never, params);
+      await runAfterResponseTasks();
+      expect(mockAdvanceComputerContract).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
       ["a dashboard runtime that reads its own instructions", { type: "openclaw" }],
       ["a computer without an agent", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }],

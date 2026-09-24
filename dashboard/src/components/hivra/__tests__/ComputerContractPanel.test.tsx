@@ -176,6 +176,14 @@ it("offers a DigitalOcean update as one more visible message after a rename", as
   expect(screen.getByRole("button", { name: "Send update to Codex 1" })).toBeInTheDocument();
 });
 
+it("doesn't offer a DigitalOcean update the session can't take yet", async () => {
+  await renderWith(tracked({ channel: "do-setup-message", state: "pending", deliveredAt: null, lastDelivered: { revision: 2, deliveredAt: NOW } }),
+    { ...AGENT, status: "starting", computer_substrate: "do-managed-session" });
+  expect(screen.getByText("Update not sent")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Send update to|Send setup note/ })).not.toBeInTheDocument();
+  expect(screen.getByText("You can send it once Codex 1 is running.")).toBeInTheDocument();
+});
+
 it("reports delivery to a computer in the owner's own cloud the same way, from its read-back (ATT-05)", async () => {
   await renderWith(tracked({ channel: "provider-seed" }), { ...AGENT, computer_substrate: "provider-vm", deployment_mode: "self-managed", cpu: 2, ram: 4 });
   expect(screen.getByText(/runs on its own computer \(My cloud · 2 CPU \/ 4 GB\)/)).toBeInTheDocument();

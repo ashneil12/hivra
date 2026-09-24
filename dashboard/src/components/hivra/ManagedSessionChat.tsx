@@ -248,7 +248,9 @@ export function ManagedSessionChat({
         const task = (firstTaskRef.current ?? "").trim();
         if (!firstTaskOfferedRef.current && task && !next.runs.some((run) => run.promptSource !== "hivra-setup")) {
           setDraft((current) => current || task);
-          setNotice({ tone: "info", text: `Your first task hasn't been sent to ${nameRef.current} yet. It's in the message box. Send it when you're ready.` });
+          // Only the conversation's absence is observed: the send may have
+          // reached the computer without being recorded, so don't claim it wasn't.
+          setNotice({ tone: "info", text: `Hivra can't find your first task in this conversation with ${nameRef.current}. It's in the message box; check the conversation, then send it if it's missing.` });
         }
         firstTaskOfferedRef.current = true;
       })
