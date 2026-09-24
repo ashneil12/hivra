@@ -1576,6 +1576,49 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(quoteHetznerCloudCapacity).not.toHaveBeenCalled();
   });
 
+  // Live test of INF02 on Canary: a server Hivra had just set up sat on the
+  // card as "Off" beside "Ready for agents", because Start setup powered it on
+  // after the last inventory sync, until the owner pressed Sync servers.
+  it("syncs a set-up server's power state once instead of showing it Off beside Ready for agents", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, status: "running", discoveredAt: "2026-08-26T15:31:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Running")).toBeInTheDocument();
+    expect(within(server).getByText("Ready for agents")).toBeInTheDocument();
+    expect(within(server).queryByText("Off")).not.toBeInTheDocument();
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a set-up server that really is off as Off after one sync, without syncing again", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, discoveredAt: "2026-08-26T16:00:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    await waitFor(() => expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1));
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Off")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
+  });
+
   it("replaces a rejected project token from the card without disconnecting", async () => {
     const rejected = { ...HETZNER_CONNECTION, status: "error" as const, lastErrorCode: "invalid_credentials" as const };
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([rejected]);
