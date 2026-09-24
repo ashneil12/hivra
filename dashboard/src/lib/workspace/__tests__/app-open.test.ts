@@ -47,6 +47,25 @@ describe("app open at Home", () => {
     expect(isAppOpenAtHome()).toBe(false);
   });
 
+  it("is never inside a desktop app, which reopens what you were in itself", () => {
+    const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown };
+    try {
+      // Each connection browser the macOS app creates is a fresh /dashboard load.
+      openedAt(`${window.location.origin}/dashboard`);
+      host.__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
+      expect(isAppOpenAtHome()).toBe(false);
+
+      delete host.__HIVRA_NATIVE_WORKSPACE__;
+      Object.defineProperty(window.navigator, "userAgent", { value: "Mozilla/5.0 Chrome/140.0 HivraDesktop/0.1.0", configurable: true });
+      expect(isAppOpenAtHome()).toBe(false);
+    } finally {
+      delete host.__HIVRA_NATIVE_WORKSPACE__;
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    }
+    // The same load in a browser tab still resumes.
+    expect(isAppOpenAtHome()).toBe(true);
+  });
+
   it("is not without navigation timing or session storage to tell the two apart", () => {
     navigationEntries([]);
     expect(isAppOpenAtHome()).toBe(false);

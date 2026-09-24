@@ -9,7 +9,13 @@
  * /dashboard (not a reload, not back/forward), and Home has not been shown
  * since in this tab. Client-side moves never create a new document, so they
  * never count as opening the app.
+ *
+ * Inside a Hivra desktop app, the app itself reopens what you were in: its
+ * web views load /dashboard freshly whenever it needs one (each with empty
+ * session storage), so the web page must never resume on its own there.
  */
+
+import { isDesktopShell } from "@/lib/desktop-shell";
 
 export const HOME_OPENED_STORAGE_KEY = "hivra.home.opened" as const;
 
@@ -26,7 +32,7 @@ function openingNavigation(): PerformanceNavigationTiming | null {
 
 /** Whether this is the app being opened at Home. Reads only; see markHomeOpened. */
 export function isAppOpenAtHome(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined" || isDesktopShell()) return false;
   const entry = openingNavigation();
   if (!entry || entry.type !== "navigate") return false;
   let pathname: string;
