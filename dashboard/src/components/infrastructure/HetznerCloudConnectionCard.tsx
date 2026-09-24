@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -27,10 +26,11 @@ import {
   type HetznerCloudCreatedServer,
   type ProviderComputerSetupView,
 } from "@/lib/infrastructure/provider-computer-setup-contracts";
-import { buildLaunchSetupHref, type PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import type { PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { launchOnProviderServer } from "@/lib/infrastructure/launch-on-server";
 
 import { hasSavedCapacityRequest } from "./HetznerCloudCapacityDialog";
-import { launchOnTargetHref } from "./ProviderComputerSetupPanel";
+import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 
 const HETZNER_PROJECTS_URL = "https://console.hetzner.com/projects";
@@ -188,6 +188,7 @@ export function HetznerCloudConnectionCard({
   onRefresh,
   onDelete,
 }: HetznerCloudConnectionCardProps) {
+  const launch = useLaunchOnServer();
   const lastCheckedAt = inventory.reduce<string | null>((latest, server) => {
     if (!latest || Date.parse(server.discoveredAt) > Date.parse(latest)) {
       return server.discoveredAt;
@@ -337,14 +338,11 @@ export function HetznerCloudConnectionCard({
                     ) : null}
                     <span>{readiness.hint}</span>
                     {readyTargetId ? (
-                      <Link
-                        className={styles.primaryButton}
-                        href={launchResourceId
-                          ? buildLaunchSetupHref(launchResourceId, readyTargetId, { unified: unifiedLaunchReturn })
-                          : launchOnTargetHref(readyTargetId)}
-                      >
-                        {launchResourceId ? "Continue your launch" : "Launch on this server"}
-                      </Link>
+                      <LaunchOnServerLink
+                        action={launchResourceId
+                          ? launchOnProviderServer(readyTargetId, { source: "handoff", resourceId: launchResourceId, unified: unifiedLaunchReturn })
+                          : launch.forProviderServer(readyTargetId)}
+                      />
                     ) : canContinueSetup && setup ? (
                       <button type="button" className={styles.primaryButton} onClick={() => onSetup?.(setup.orderId)}>
                         {setup.stage === "awaiting_setup" ? "Start setup" : "Continue setup"}

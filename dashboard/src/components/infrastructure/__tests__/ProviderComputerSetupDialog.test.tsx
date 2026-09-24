@@ -60,7 +60,7 @@ it("returns a prepared computer to the originally selected agent launch", async 
     onClose={jest.fn()}
     onChanged={jest.fn()}
   />);
-  expect(await screen.findByRole("link", { name: "Continue your launch" })).toHaveAttribute(
+  expect(await screen.findByRole("link", { name: "Continue launch" })).toHaveAttribute(
     "href",
     "/dashboard/welcome?step=deploy&agentType=codex&targetId=33333333-3333-4333-8333-333333333333",
   );
@@ -81,7 +81,7 @@ it("returns unified setup to the saved launch journey when requested", async () 
     onClose={jest.fn()}
     onChanged={jest.fn()}
   />);
-  expect(await screen.findByRole("link", { name: "Continue your launch" })).toHaveAttribute(
+  expect(await screen.findByRole("link", { name: "Continue launch" })).toHaveAttribute(
     "href",
     "/dashboard/launch?kind=agent&targetId=33333333-3333-4333-8333-333333333333",
   );
@@ -103,7 +103,7 @@ it.each([false, true])("returns Ubuntu to launch for fresh compatibility checks 
   expect(screen.getByText(/Launch checks it again before anything starts/)).toBeInTheDocument();
   expect(screen.queryByText(/Nothing has been launched yet/)).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Continue your launch" })).toHaveAttribute("href",
+  expect(screen.getByRole("link", { name: "Continue launch" })).toHaveAttribute("href",
     unifiedLaunchReturn ? "/dashboard/launch?kind=computer&targetId=33333333-3333-4333-8333-333333333333"
       : "/dashboard/computers?launch=1&targetId=33333333-3333-4333-8333-333333333333");
   expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ it("does not start or offer desktop launch before setup is prepared", async () =
     onClose={jest.fn()} onChanged={jest.fn()} />);
   await screen.findByRole("button", { name: "Start setup" });
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: "Continue your launch" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Continue launch" })).not.toBeInTheDocument();
   expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
 });
 it("never offers launch from a retired record even with stale ready fields", async () => {
@@ -121,7 +121,7 @@ it("never offers launch from a retired record even with stale ready fields", asy
     targetId: "33333333-3333-4333-8333-333333333333" }]);
   render(<ProviderComputerSetupDialog connection={connection} launchResourceId="codex" onClose={jest.fn()} onChanged={jest.fn()} />);
   await screen.findByRole("heading", { name: "Computer retired" });
-  expect(screen.queryByRole("link", { name: "Continue your launch" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Continue launch" })).not.toBeInTheDocument();
 });
 it("stops after an uncertain result and offers explicit resume", async () => {
   (advanceProviderComputerSetup as jest.Mock).mockRejectedValue(new Error("This setup step could not be confirmed."));

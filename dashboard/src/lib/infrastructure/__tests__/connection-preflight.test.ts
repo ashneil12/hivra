@@ -861,4 +861,69 @@ describe("preflightInfrastructureConnection", () => {
       }),
     );
   });
+
+  // INF-13: fix text used to send every owner to an "Advanced mode" that new
+  // hosts can't open, and hosted owners to self-hosted server logs.
+  it.each([
+    ["BRIDGE_UNAVAILABLE", "PROXMOX_BRIDGE_NOT_FOUND", /Review setup/],
+    ["STORAGE_UNAVAILABLE", "PROXMOX_STORAGE_NOT_VM_CAPABLE", /Datacenter → Storage/],
+    ["VMID_RANGE_UNAVAILABLE", "PROXMOX_VMID_RANGE_EXHAUSTED", /Remove VMs you no longer need/],
+    ["TEMPLATE_UNAVAILABLE", "PROXMOX_TEMPLATE_NOT_TEMPLATE", /Convert to template/],
+  ])("gives %s real steps instead of Advanced mode", async (code, issue, steps) => {
+    const deps = dependencies(report({
+      connectionReady: false,
+      unmetRequirements: [{ code: issue as ProxmoxPreflightReport["unmetRequirements"][number]["code"], message: "Detected issue" }],
+    }));
+
+    const result = await preflightInfrastructureConnection("user_1", CONNECTION_ID, deps);
+
+    expect(result).toMatchObject({ ok: false, error: { code } });
+    if (result.ok) throw new Error("expected a failure");
+    expect(result.error.remediation).toMatch(steps);
+    expect(result.error.remediation).not.toMatch(/Advanced mode/);
+  });
+
+  it("points a custom Advanced connection at its own bridge instead of Review setup", async () => {
+    const deps = dependencies(report({
+      connectionReady: false,
+      unmetRequirements: [{ code: "PROXMOX_BRIDGE_NOT_FOUND", message: "Bridge vmbr9 was not found" }],
+    }));
+    deps.loadConnection.mockResolvedValue(connection({ setupMode: "advanced", configuration: { bridge: "vmbr9" } }));
+
+    const result = await preflightInfrastructureConnection("user_1", CONNECTION_ID, deps);
+
+    if (result.ok) throw new Error("expected a failure");
+    expect(result.error.remediation).toMatch(/Create the bridge this connection names/);
+    expect(result.error.remediation).not.toMatch(/Review setup/);
+  });
+
+  it.each([
+    [undefined, /contact support/, /server's logs|private networks/],
+    ["local", /check your Hivra server's logs/, /contact support/],
+  ])("words internal and address fixes for how Hivra is run (auth mode %s)", async (mode, expected, absent) => {
+    const previous = process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+    const previousServer = process.env.HIVRA_AUTH_MODE;
+    delete process.env.HIVRA_AUTH_MODE;
+    if (mode) process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = mode;
+    else delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+    try {
+      const deps = dependencies();
+      deps.runPreflight.mockRejectedValue(new Error("unexpected"));
+      const internal = await preflightInfrastructureConnection("user_1", CONNECTION_ID, deps);
+      if (internal.ok) throw new Error("expected a failure");
+      expect(internal.error.code).toBe("PREFLIGHT_INTERNAL_ERROR");
+      expect(internal.error.remediation).toMatch(expected);
+      expect(internal.error.remediation).not.toMatch(absent);
+
+      const blockedDeps = dependencies();
+      blockedDeps.resolveDestination.mockRejectedValue(new InfrastructureNetworkError("ssh_host_forbidden", "raw"));
+      const blocked = await preflightInfrastructureConnection("user_1", CONNECTION_ID, blockedDeps);
+      if (blocked.ok) throw new Error("expected a failure");
+      expect(blocked.error.remediation).toMatch(mode ? /self-hosted Hivra/ : /Hosted Hivra can't reach home or office networks/);
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
+      else process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = previous;
+      if (previousServer !== undefined) process.env.HIVRA_AUTH_MODE = previousServer;
+    }
+  });
 });

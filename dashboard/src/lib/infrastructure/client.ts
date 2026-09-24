@@ -2,6 +2,8 @@
 
 import { z } from "zod";
 
+import { tryAgainInMinutes } from "@/lib/retry-after-copy";
+
 import {
   DeploymentTargetDtoSchema,
   HetznerCloudCapacityOperationDtoSchema,
@@ -51,6 +53,8 @@ const ApiErrorSchema = z
   .object({
     error: z.string().trim().min(1).optional(),
     code: z.string().trim().min(1).optional(),
+    cause: z.string().regex(/^[a-z_]{1,48}$/).optional(),
+    stage: z.string().regex(/^[a-z-]{1,48}$/).optional(),
   })
   .passthrough();
 
@@ -180,15 +184,55 @@ const PreparationResponseSchema = z
 
 export type InfrastructurePreparation = z.infer<typeof InfrastructurePreparationSchema>;
 
+// The gVisor routes return the saved deployment_targets row. The dialog needs
+// only which target it is and whether it came back ready; launch reloads the
+// full owner-scoped target before anything starts.
+const GvisorTargetResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: z
+      .object({
+        target: z.object({ id: z.string().uuid(), status: z.string() }).passthrough(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+export type GvisorTargetResult = { targetId: string; ready: boolean };
+
 export class InfrastructureApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly code?: string,
+    /** Seconds until the server accepts this request again, from Retry-After. */
+    public readonly retryAfterSeconds: number | null = null,
+    /** A fixed failure cause or step name the server reported, if any. */
+    public readonly detail: { cause?: string; stage?: string } = {},
   ) {
     super(message);
     this.name = "InfrastructureApiError";
   }
+}
+
+/** Retry-After as whole seconds: either delta-seconds or an HTTP date. */
+export function parseRetryAfterSeconds(value: string | null, now = Date.now()): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isSafeInteger(seconds) ? seconds : null;
+  }
+  const at = Date.parse(trimmed);
+  return Number.isFinite(at) ? Math.max(0, Math.ceil((at - now) / 1_000)) : null;
+}
+
+const GENERIC_RATE_LIMIT_MESSAGE = "Too Many Requests";
+
+function rateLimitedMessage(retryAfterSeconds: number | null): string {
+  return `Too many tries in a row. ${retryAfterSeconds !== null
+    ? tryAgainInMinutes(retryAfterSeconds)
+    : "Wait a minute, then try again."}`;
 }
 
 async function responseJson(response: Response): Promise<unknown> {
@@ -224,12 +268,18 @@ async function requestJson<T>(
   const body = await responseJson(response);
   if (!response.ok) {
     const parsedError = ApiErrorSchema.safeParse(body);
+    const serverMessage = parsedError.success ? parsedError.data.error : undefined;
+    const retryAfterSeconds = parseRetryAfterSeconds(response.headers?.get?.("Retry-After") ?? null);
     throw new InfrastructureApiError(
-      parsedError.success && parsedError.data.error
-        ? parsedError.data.error
-        : `Infrastructure request failed (${response.status}).`,
+      // A bare limiter refusal says only "Too Many Requests"; say when the
+      // owner can try again instead.
+      response.status === 429 && (!serverMessage || serverMessage === GENERIC_RATE_LIMIT_MESSAGE)
+        ? rateLimitedMessage(retryAfterSeconds)
+        : serverMessage ?? `Infrastructure request failed (${response.status}).`,
       response.status,
       parsedError.success ? parsedError.data.code : undefined,
+      retryAfterSeconds,
+      parsedError.success ? { cause: parsedError.data.cause, stage: parsedError.data.stage } : {},
     );
   }
 
@@ -506,4 +556,24 @@ export async function prepareInfrastructureConnection(
     PreparationResponseSchema,
   );
   return body.data.preparation;
+}
+
+async function gvisorTargetRequest(id: string, operation: "preflight" | "prepare"): Promise<GvisorTargetResult> {
+  const body = await requestJson(
+    `/api/infrastructure/connections/${encodeURIComponent(id)}/gvisor/${operation}`,
+    { method: "POST", body: "{}" },
+    GvisorTargetResponseSchema,
+  );
+  return { targetId: body.data.target.id.toLowerCase(), ready: body.data.target.status === "ready" };
+}
+
+/** Read-only strict check of an installed gVisor setup. */
+export function checkGvisorConnection(id: string): Promise<GvisorTargetResult> {
+  return gvisorTargetRequest(id, "preflight");
+}
+
+/** Installs Hivra's pinned gVisor setup on the host, then runs the strict
+ * check. This changes the host; call it only from the reviewed dialog. */
+export function prepareGvisorConnection(id: string): Promise<GvisorTargetResult> {
+  return gvisorTargetRequest(id, "prepare");
 }
