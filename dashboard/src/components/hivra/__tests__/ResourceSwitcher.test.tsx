@@ -70,13 +70,13 @@ describe("ResourceSwitcher", () => {
     render(<ResourceSwitcher currentUid="abc" />);
 
     expect(mockedUseWorkspaceAgents).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Switch runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
     expect(mockedUseWorkspaceAgents).toHaveBeenCalled();
   });
 
   it("navigates to the selected resource's own route by family", () => {
     render(<ResourceSwitcher currentUid="abc" />);
-    fireEvent.click(screen.getByRole("button", { name: "Switch runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
 
     fireEvent.click(screen.getAllByRole("option")[1]);
 
@@ -86,7 +86,7 @@ describe("ResourceSwitcher", () => {
 
   it("routes a Hivra selection to the agent page with the raw id", () => {
     render(<ResourceSwitcher currentUid="xyz" />);
-    fireEvent.click(screen.getByRole("button", { name: "Switch runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
 
     fireEvent.click(screen.getAllByRole("option")[0]);
 
@@ -97,7 +97,7 @@ describe("ResourceSwitcher", () => {
     // The route gives `abc`; the list speaks `x-abc`. Without the id fallback
     // the menu opens with nothing marked and no way to see where you are.
     render(<ResourceSwitcher currentUid="abc" />);
-    fireEvent.click(screen.getByRole("button", { name: "Switch runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
 
     expect(screen.getAllByRole("option")[0]).toHaveAttribute(
       "aria-selected",
@@ -120,11 +120,11 @@ describe("ResourceSwitcher", () => {
     });
 
     render(<ResourceSwitcher currentUid="abc" />);
-    const trigger = screen.getByRole("button", { name: "Switch runtime" });
+    const trigger = screen.getByRole("button", { name: "Switch agent or computer" });
     fireEvent.click(trigger);
 
-    const dialog = screen.getByRole("dialog", { name: "Switch runtime" });
-    expect(screen.getByRole("combobox", { name: "Search your runtimes" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Switch agent or computer" });
+    expect(screen.getByRole("combobox", { name: "Search your agents and computers" })).toBeInTheDocument();
     // The set-wide noun must be "runtimes" — the word the Chat control pane and
     // the owner use. "agents" contradicts the computers listed below it, and a
     // third synonym ("fleet", "resources") would split the vocabulary again.
@@ -136,10 +136,10 @@ describe("ResourceSwitcher", () => {
 
   it("keeps choosing an existing resource separate from launching a new one", () => {
     render(<ResourceSwitcher currentUid="abc" />);
-    fireEvent.click(screen.getByRole("button", { name: "Switch runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
     expect(screen.queryByRole("button", { name: "Test guide" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "All agents and computers" })).toHaveAttribute("href", "/dashboard?runtimes=1");
-    expect(screen.getByRole("link", { name: "Launch a runtime" })).toHaveAttribute("href", "/dashboard/launch");
+    expect(screen.getByRole("link", { name: "Launch an agent or computer" })).toHaveAttribute("href", "/dashboard/launch");
   });
 
   it("uses the visible resource name as the switcher and keeps its status beside it", () => {
@@ -154,15 +154,15 @@ describe("ResourceSwitcher", () => {
     // A resource mid-provision may not be in the list yet; the switcher must
     // not become unusable just because nothing matches.
     render(<ResourceSwitcher currentUid="not-listed" />);
-    const trigger = screen.getByRole("button", { name: "Switch runtime" });
+    const trigger = screen.getByRole("button", { name: "Switch agent or computer" });
     fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Switch runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Switch agent or computer" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
 
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "Switch runtime" }),
+        screen.queryByRole("dialog", { name: "Switch agent or computer" }),
       ).not.toBeInTheDocument(),
     );
   });
@@ -170,7 +170,7 @@ describe("ResourceSwitcher", () => {
     jest.useFakeTimers();
     try {
       render(<ResourceSwitcher currentUid="abc" />);
-      const trigger = screen.getByRole("button", { name: "Switch runtime" });
+      const trigger = screen.getByRole("button", { name: "Switch agent or computer" });
       fireEvent.click(trigger);
       screen.getByRole("combobox").focus();
       fireEvent.keyDown(window, { key: "Escape" });
@@ -190,7 +190,7 @@ describe("ResourceSwitcher", () => {
     document.body.append(frame);
     try {
       render(<ResourceSwitcher currentUid="abc" />);
-      const trigger = screen.getByRole("button", { name: "Switch runtime" });
+      const trigger = screen.getByRole("button", { name: "Switch agent or computer" });
       fireEvent.click(trigger);
       frame.focus();
       act(() => { window.dispatchEvent(new Event("blur")); });
@@ -210,7 +210,7 @@ describe("ResourceSwitcher", () => {
     document.body.append(other);
     try {
       render(<ResourceSwitcher currentUid="abc" />);
-      const trigger = screen.getByRole("button", { name: "Switch runtime" });
+      const trigger = screen.getByRole("button", { name: "Switch agent or computer" });
       fireEvent.click(trigger);
       fireEvent.pointerDown(other);
       other.focus();
@@ -223,10 +223,10 @@ describe("ResourceSwitcher", () => {
     }
   });
 
-  it.each(['All agents and computers', 'Launch a runtime'])(
+  it.each(['All agents and computers', 'Launch an agent or computer'])(
     'lets Enter activate %s without selecting a resource', (name) => {
       render(<ResourceSwitcher currentUid="abc" />);
-      fireEvent.click(screen.getByRole('button', { name: 'Switch runtime' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
       const link = screen.getByRole('link', { name });
       link.focus();
       expect(fireEvent.keyDown(link, { key: 'Enter' })).toBe(true);
@@ -237,7 +237,7 @@ describe("ResourceSwitcher", () => {
 
   it('still selects the highlighted resource from the search field', () => {
     render(<ResourceSwitcher currentUid="abc" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Switch runtime' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
     expect(push).toHaveBeenCalledWith('/dashboard/instances/xyz');
@@ -248,7 +248,7 @@ describe("ResourceSwitcher", () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 390 });
     try {
       render(<ResourceSwitcher currentUid="abc" />);
-      const trigger = screen.getByRole('button', { name: 'Switch runtime' });
+      const trigger = screen.getByRole('button', { name: 'Switch agent or computer' });
       trigger.getBoundingClientRect = () => ({ left: 92, right: 280, top: 50, bottom: 101, width: 188, height: 51 }) as DOMRect;
       fireEvent.click(trigger);
       const menu = screen.getByRole('dialog');

@@ -62,6 +62,24 @@ describe("useWorkspaceAgents", () => {
     jest.clearAllMocks();
   });
 
+  it("keeps where each agent's computer runs, and drops placement values it does not know (ATT-11)", async () => {
+    const { result } = renderHook(() =>
+      useWorkspaceAgents({
+        fetchHermes: async () => hermesEnvelope([]),
+        fetchHivra: async () => hivraResult([
+          { ...hivraRow("cloud"), computer_substrate: "provider-vm", deployment_mode: "self-managed" },
+          { ...hivraRow("managed"), computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" },
+          { ...hivraRow("odd"), computer_substrate: "mainframe", deployment_mode: 7 },
+        ]),
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const pairs = Object.fromEntries(result.current.agents.map((agent) => [agent.id, agent.computerPair?.placement]));
+    // An unknown placement is not guessed as Hivra Cloud.
+    expect(pairs).toEqual({ cloud: "My cloud", managed: "Hivra Cloud", odd: null });
+    expect(result.current.hivraError).toBeNull();
+  });
+
   it("combines successful families with stable source-qualified identities", async () => {
     const { result } = renderHook(() =>
       useWorkspaceAgents({
@@ -105,7 +123,7 @@ describe("useWorkspaceAgents", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.agents.map(({ uid }) => uid)).toEqual(["x-x-1"]);
-    expect(result.current.hermesError).toMatch(/Hermes agents are unavailable/);
+    expect(result.current.hermesError).toBe("Some agents couldn't be loaded. Retry to check again.");
     expect(result.current.hivraError).toBeNull();
     expect(JSON.stringify(result.current)).not.toContain(rawFailure.message);
     expect(mockedWarn).toHaveBeenCalledWith(
@@ -130,7 +148,7 @@ describe("useWorkspaceAgents", () => {
 
     expect(result.current.agents.map(({ uid }) => uid)).toEqual(["h-h-1"]);
     expect(result.current.hermesError).toBeNull();
-    expect(result.current.hivraError).toMatch(/Hivra agents are unavailable/);
+    expect(result.current.hivraError).toBe("Some agents and computers couldn't be loaded. Retry to check again.");
     expect(JSON.stringify(result.current)).not.toContain("DO_NOT_RETURN_HIVRA_ERROR_BODY");
   });
 

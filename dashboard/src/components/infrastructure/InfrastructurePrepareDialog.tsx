@@ -139,7 +139,9 @@ export function InfrastructurePrepareDialog({
     ? null
     : engine === "gvisor"
       ? gvisorLaunchAction
-      : launch.forProxmoxConnection(connection.id);
+      : preparation?.preflight.ok
+        ? launch.forProxmoxConnection(connection.id, preparation.preflight.target.externalId)
+        : null;
 
   const failedIndex = failure?.failedStepId ? steps.findIndex((step) => step.id === failure.failedStepId) : -1;
   const stepState = (index: number): StepState => {
@@ -172,7 +174,7 @@ export function InfrastructurePrepareDialog({
         ? "Hivra installs its pinned setup again, then checks it. Use this when the readiness check keeps failing. It doesn't create a computer or buy anything."
         : "Hivra will install this software on the server, in this order. It doesn't create a computer or buy anything."
     : phase === "running"
-      ? "Keep this window open. Setup can take up to 5 minutes."
+      ? `Keep this window open. Setup can take up to ${engine === "gvisor" ? 6 : 4} minutes.`
       : phase === "success"
         ? engine === "proxmox" && preparation
           ? preflightHeadline(preparation.preflight).detail

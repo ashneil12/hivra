@@ -54,9 +54,13 @@ export interface ManagedTranscriptApproval {
 
 export type ManagedRunState = "running" | "awaiting_approval" | "paused" | "completed" | "failed";
 
+/** Who wrote a run's prompt: the owner, or Hivra's visible setup note. */
+export type ManagedPromptSource = "user" | "hivra-setup";
+
 export interface ManagedTranscriptRun {
   runId: string;
   prompt: string | null;
+  promptSource: ManagedPromptSource;
   text: string;
   reasoning: string;
   tools: ManagedTranscriptTool[];
@@ -268,7 +272,7 @@ export function sanitizeManagedSessionEvent(event: {
 
 function newRun(runId: string, prompt: string | null = null): ManagedTranscriptRun {
   return {
-    runId, prompt, text: "", reasoning: "", tools: [], approvals: [], logs: [],
+    runId, prompt, promptSource: "user", text: "", reasoning: "", tools: [], approvals: [], logs: [],
     state: "running", error: null, tokensIn: null, tokensOut: null, costMicros: null,
   };
 }
@@ -285,9 +289,13 @@ function withRun(
   return { ...transcript, runs };
 }
 
-/** Record the prompt Hivra forwarded for a run (history rows or a live send). */
-export function addManagedPrompt(transcript: ManagedTranscript, runId: string, prompt: string): ManagedTranscript {
-  return withRun(transcript, runId, (run) => ({ ...run, prompt }));
+/**
+ * Record the prompt Hivra forwarded for a run (history rows or a live send).
+ * A "hivra-setup" prompt is Hivra's own note, shown as a Hivra card rather
+ * than as something the owner typed.
+ */
+export function addManagedPrompt(transcript: ManagedTranscript, runId: string, prompt: string, source: ManagedPromptSource = "user"): ManagedTranscript {
+  return withRun(transcript, runId, (run) => ({ ...run, prompt, promptSource: source }));
 }
 
 const FAILURE_CODES: Record<string, string> = {

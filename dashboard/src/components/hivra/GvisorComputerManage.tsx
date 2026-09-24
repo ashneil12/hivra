@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Play, Square, TerminalSquare, Trash2 } from "lucide-react";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { gvisorIsolationDisclosure } from "@/lib/hivra/gvisor-computer-contract";
+import { ComputerAgentSlot } from "./ComputerContractPanel";
 
 type Observation = { state: "running" | "stopped" | "absent"; cpu?: number; memoryMb?: number; adapterVersion?: string;
   isolationClass?: "application-kernel"; isolationDriver?: "gvisor-runsc"; outerHostBoundary?: "operator-owned-host";
@@ -102,6 +103,8 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
       </div>
       {errorFor("computer")}
     </section>
+
+    <ComputerAgentSlot />
 
     <div style={label}>Isolation</div>
     <section style={box}>

@@ -174,13 +174,13 @@ describe("ActivatePage", () => {
       });
     });
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?step=agent-type");
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1");
     });
     expect(captureClient).toHaveBeenCalledWith("activation_dashboard_reached", {
       source: "get-started-activate",
       route: "/get-started/activate",
       plan: "free",
-      destination: "/dashboard/welcome?step=agent-type",
+      destination: "/dashboard/launch?kind=agent&start=1",
       outcome: "free_plan_activated",
     });
     expect(assignMock).not.toHaveBeenCalled();
@@ -202,7 +202,8 @@ describe("ActivatePage", () => {
     render(<ActivatePage />);
 
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?step=agent-type&agentType=claude-code");
+      // The agent picked on the way in opens its own plan in Launch.
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1&profile=claude-code");
     });
   });
 

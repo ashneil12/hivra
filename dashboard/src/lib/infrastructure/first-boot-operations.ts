@@ -3,7 +3,8 @@ import "server-only";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { firstBootPowerOnAction, parseFirstBootFirewallReceipt, type FirstBootFirewallReceipt } from "@/lib/hetzner/first-boot-firewall";
-import { FIRST_BOOT_RECIPE_VERSION, type FirstBootBinding } from "./first-boot-enrollment";
+import { FIRST_BOOT_RECIPE_VERSIONS, type FirstBootBinding } from "./first-boot-enrollment";
+import { FirstBootStoreError, loadFirstBootRecipeVersion } from "./first-boot-store";
 
 const UUID = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 const DIGEST = z.string().regex(/^[0-9a-f]{64}$/);
@@ -11,10 +12,12 @@ const DATE = z.string().datetime({ offset: true }).transform(value => new Date(v
 const ID = z.string().regex(/^[1-9][0-9]{0,15}$/).refine(value => Number.isSafeInteger(Number(value)));
 const BindingSchema = z.object({
   userId: z.string().min(1).max(256), connectionId: UUID, connectionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  orderId: UUID, attemptId: UUID, quoteFingerprint: DIGEST, recipeVersion: z.literal(FIRST_BOOT_RECIPE_VERSION),
+  orderId: UUID, attemptId: UUID, quoteFingerprint: DIGEST, recipeVersion: z.enum(FIRST_BOOT_RECIPE_VERSIONS),
 }).strict();
 const ScopeSchema = z.object({ binding: BindingSchema, providerServerId: ID }).strict();
-const OrderScopeSchema = ScopeSchema.extend({ binding: BindingSchema.omit({ attemptId: true }) });
+// Order-only callers know neither the attempt nor its recipe; both are read
+// from the original records, never assumed from the current recipe.
+const OrderScopeSchema = ScopeSchema.extend({ binding: BindingSchema.omit({ attemptId: true, recipeVersion: true }) });
 const LeaseSchema = ScopeSchema.extend({ leaseId: UUID });
 export type FirstBootOperationScope = { binding: FirstBootBinding; providerServerId: string };
 export type FirstBootOrderScope = z.infer<typeof OrderScopeSchema>;
@@ -87,8 +90,10 @@ function record(raw: unknown, expected: FirstBootOperationScope): FirstBootOpera
   const parsed = RowSchema.safeParse(raw);
   if (!parsed.success) throw new FirstBootOperationError("invalid_record");
   const r = parsed.data;
+  // The operation row does not carry the recipe; the caller's scope does, and
+  // it came from the enrollment (or loadFirstBootRecipeVersion) for this attempt.
   const actual = { binding: { userId: r.user_id, connectionId: r.connection_id, connectionRevision: r.connection_revision,
-    orderId: r.order_id, attemptId: r.attempt_id, quoteFingerprint: r.quote_fingerprint_sha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION },
+    orderId: r.order_id, attemptId: r.attempt_id, quoteFingerprint: r.quote_fingerprint_sha256, recipeVersion: expected.binding.recipeVersion },
   providerServerId: r.provider_server_id };
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new FirstBootOperationError("invalid_record");
   let firewallReceipt: FirstBootFirewallReceipt | null = null;
@@ -143,7 +148,14 @@ export async function loadFirstBootOperationForOrder(input: FirstBootOrderScope)
     if (data === null) return null;
     const row = RowSchema.safeParse(data);
     if (!row.success) throw new FirstBootOperationError("invalid_record");
-    return record(data, ScopeSchema.parse({ ...current, binding: { ...b, attemptId: row.data.attempt_id } }));
+    const attempt = { ...b, attemptId: row.data.attempt_id };
+    let recipeVersion: FirstBootBinding["recipeVersion"];
+    try { recipeVersion = await loadFirstBootRecipeVersion(attempt); }
+    catch (error) {
+      throw new FirstBootOperationError(error instanceof FirstBootStoreError
+        && ["database_error", "database_unavailable"].includes(error.code) ? "database_error" : "invalid_record");
+    }
+    return record(data, ScopeSchema.parse({ ...current, binding: { ...attempt, recipeVersion } }));
   } catch (error) {
     if (error instanceof FirstBootOperationError) throw error;
     throw new FirstBootOperationError("database_error");

@@ -1,7 +1,9 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-export const maxDuration = 300;
+// Longer than the setup script's 360-second SSH limit (gvisor-computer-service),
+// so a slow setup ends with its real result instead of a platform timeout.
+export const maxDuration = 420;
 
 import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";

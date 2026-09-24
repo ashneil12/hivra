@@ -129,6 +129,13 @@ export function launchReadyUntil(target: DeploymentTargetDto): number {
   return Number.isFinite(checkedAt) ? checkedAt + HIVRA_GVISOR_PREFLIGHT_TTL_MS : -Infinity;
 }
 
+/** A gVisor host whose Linux Sandbox setup came from an older Hivra release.
+ * Its readiness has lapsed for that reason, not because of the check's age. */
+export function gvisorAdapterOutdated(target: DeploymentTargetDto): boolean {
+  return hasReadyEvidence(target) && isGvisorDeploymentTarget(target)
+    && target.capabilities.adapter.version !== HIVRA_GVISOR_ADAPTER_VERSION;
+}
+
 /** When a strict gVisor check that passed in this browser stops authorizing
  * a launch. */
 export function gvisorCheckReadyUntil(checkedAt: number): number {

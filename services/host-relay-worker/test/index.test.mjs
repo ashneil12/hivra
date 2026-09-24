@@ -248,3 +248,14 @@ test('closes a client whose machine never joins', { timeout: 20_000 }, async (t)
   while (!client.closed && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(client.closed?.code, 4504);
 });
+
+test('reports whether the machine is connected, to the control plane only', async (t) => {
+  const mf = await relay(t);
+  const url = `${BASE}/v1/hosts/${HOST_A}/status`;
+  assert.equal((await mf.dispatchFetch(url)).status, 401);
+  const offline = await mf.dispatchFetch(url, { headers: { authorization: `Bearer ${adminToken()}` } });
+  assert.deepEqual(await offline.json(), { online: false, generation: null, minGeneration: 1, sessions: 0 });
+  await agent(mf, HOST_A, { generation: 3 });
+  const online = await mf.dispatchFetch(url, { headers: { authorization: `Bearer ${adminToken()}` } });
+  assert.deepEqual(await online.json(), { online: true, generation: 3, minGeneration: 1, sessions: 0 });
+});

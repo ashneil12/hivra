@@ -53,7 +53,9 @@ import {
   InfrastructureHostDiscoveryResult,
   supportsStrictProxmoxDiscovery,
 } from "./InfrastructureHostDiscoveryResult";
+import { gvisorCheckReadyUntil } from "@/lib/infrastructure/launch-on-server";
 import { InfrastructurePreflightResult } from "./InfrastructurePreflightResult";
+import { useDeadlinePassed } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -311,7 +313,12 @@ export function InfrastructureConnectionWizard({
   const [discovery, setDiscovery] = useState<HostDiscoveryResult | null>(null);
   const [preflight, setPreflight] = useState<ProxmoxPreflightResult | null>(null);
   // Set when this wizard's Linux Sandbox check passed: the host is ready.
-  const [gvisorReady, setGvisorReady] = useState(false);
+  // When the Linux Sandbox check passed in this browser. Like the card, the
+  // header stops saying ready once that check is more than 15 minutes old.
+  const [gvisorReadyAt, setGvisorReadyAt] = useState<number | null>(null);
+  const gvisorCheckLapsed = useDeadlinePassed(gvisorReadyAt === null ? -Infinity : gvisorCheckReadyUntil(gvisorReadyAt));
+  const gvisorReady = gvisorReadyAt !== null && !gvisorCheckLapsed;
+  const gvisorNeedsCheck = gvisorReadyAt !== null && gvisorCheckLapsed;
   const [operationError, setOperationError] = useState<string | null>(null);
   const [privateKeyFileName, setPrivateKeyFileName] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -382,7 +389,7 @@ export function InfrastructureConnectionWizard({
     setOperationError(null);
     setDiscovery(null);
     setPreflight(null);
-    setGvisorReady(false);
+    setGvisorReadyAt(null);
     try {
       const result = await discoverInfrastructureHost(targetConnection.id);
       setDiscovery(result);
@@ -506,7 +513,7 @@ export function InfrastructureConnectionWizard({
     : phase === "discovering"
       ? `Inspecting ${savedConnection?.name ?? form.name}`
       : phase === "discovery"
-        ? gvisorReady ? "Ready for Linux Sandbox" : "Host recommendation"
+        ? gvisorReady ? "Ready for Linux Sandbox" : gvisorNeedsCheck ? "Needs a check" : "Host recommendation"
         : phase === "preflighting"
           ? "Checking readiness"
           : preflight?.ok && preflight.target.launchReady
@@ -804,7 +811,7 @@ export function InfrastructureConnectionWizard({
                 ? () => onEditRequested(savedConnection)
                 : undefined}
               onGvisorReady={() => {
-                setGvisorReady(true);
+                setGvisorReadyAt(Date.now());
                 if (savedConnection) onGvisorReady?.(savedConnection.id);
               }}
             />

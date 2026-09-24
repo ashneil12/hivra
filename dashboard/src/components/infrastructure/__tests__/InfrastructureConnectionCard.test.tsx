@@ -142,6 +142,24 @@ describe("a Linux Sandbox (gVisor) host", () => {
     expect(onCheckReadiness).toHaveBeenCalledTimes(1);
   });
 
+  // Review of slice 5: an adapter from an older release lapses readiness at
+  // once, and the card blamed the check's age even when it ran a minute ago.
+  it("says an older Hivra release set it up when that, not time, lapsed readiness", () => {
+    jest.useFakeTimers({ now: Date.parse("2026-09-15T12:01:00.000Z") });
+    const target = gvisorTarget();
+    // Today's schema pins the current adapter version, so this is the saved
+    // evidence a later release would read after bumping it.
+    const outdated = { ...target, capabilities: { ...target.capabilities,
+      adapter: { version: "2026.08.01.1", sha256: "d".repeat(64) } } } as unknown as DeploymentTargetDto;
+    render(<InfrastructureConnectionCard connection={connection} savedTarget={outdated}
+      onCheck={jest.fn()} onCheckReadiness={jest.fn()} onPrepare={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} />);
+
+    expect(screen.getByText("Needs a check")).toBeInTheDocument();
+    expect(screen.getByText(/set up by an older Hivra release/)).toBeInTheDocument();
+    expect(screen.queryByText(/more than 15 minutes old/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Launch on this server|Continue launch/ })).not.toBeInTheDocument();
+  });
+
   it("drops the launch action the moment the check lapses while the page is open", () => {
     jest.useFakeTimers({ now: Date.parse("2026-09-15T12:14:00.000Z") });
     render(<InfrastructureConnectionCard connection={connection} savedTarget={gvisorTarget()}

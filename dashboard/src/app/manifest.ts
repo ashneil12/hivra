@@ -40,24 +40,26 @@ export default function manifest(): MetadataRoute.Manifest {
         purpose: "maskable",
       },
     ],
+    // Where the installed app's long-press menu goes: the two inventories,
+    // the one place to start something new, then money.
     shortcuts: [
       {
         name: "Agents",
         short_name: "Agents",
-        description: "Open your Hivra agents",
-        url: "/dashboard",
+        description: "Open your agents",
+        url: "/dashboard/agents",
       },
       {
-        name: "Chat",
-        short_name: "Chat",
-        description: "Open the original chat flow",
-        url: "/dashboard/chat",
+        name: "Computers",
+        short_name: "Computers",
+        description: "Open your computers",
+        url: "/dashboard/computers",
       },
       {
-        name: "Workspace preview",
-        short_name: "Workspace",
-        description: "Open the optional Hivra workspace preview",
-        url: "/dashboard/workspace",
+        name: "Launch",
+        short_name: "Launch",
+        description: "Launch an agent or a computer",
+        url: "/dashboard/launch",
       },
       {
         name: "Wallet",

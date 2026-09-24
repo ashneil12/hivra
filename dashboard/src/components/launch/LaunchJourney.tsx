@@ -15,6 +15,7 @@ import {
   Cloud,
   Code2,
   Cpu,
+  Droplet,
   Loader2,
   Monitor,
   Orbit,
@@ -26,14 +27,34 @@ import {
 
 import {
   DeploymentDestinationControl,
+  DestinationOption,
   measuredTargetCapacity,
   useLaunchDestination,
   type LaunchDestinationChoice,
   type LaunchDestinationState,
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
-import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { useHermesWorkspaceReadiness } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
+import { FreeTierCardVerification } from "@/components/billing/FreeTierCardVerification";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
+import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
+import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { formatDigitalOceanBalance, listManagedSessions } from "@/lib/hivra/managed-session-client";
+import { useDigitalOceanBalance } from "@/components/infrastructure/useDigitalOceanBalance";
+import {
+  digitalOceanHarnessFor,
+  digitalOceanModelProblem,
+  digitalOceanSizeFor,
+  digitalOceanSizeLabel,
+  digitalOceanTargetRuns,
+  digitalOceanVendorKey,
+  effectiveDigitalOceanModelMode,
+} from "@/lib/launch/digitalocean-launch";
+import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
+import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
+import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
 import {
   fetchPlanStrict,
@@ -42,14 +63,20 @@ import {
   listAgentsResult,
   type PlanInfo,
 } from "@/lib/hivra/agent-api";
-import { buildInfrastructureSetupHref, buildLaunchSetupHref } from "@/lib/hivra/launch-navigation";
+import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
+import { requestSubscriptionCheckout } from "@/lib/billing/client";
+import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
+import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
+  HERMES_NAME_MAX_LENGTH,
   isLaunchProfileId,
   LAUNCH_NAME_MAX_LENGTH,
   PROFILE_DETAILS,
+  profileHasBrowser,
   type LaunchCapacityChoice,
   type LaunchDraft,
+  type LaunchModelAccess,
   type LaunchProfileId,
   type LaunchResourceKind,
   type LaunchStage,
@@ -61,10 +88,32 @@ import {
   readLaunchDraft,
   writeLaunchDraft,
 } from "@/lib/launch/draft-store";
-import { launchResultHref, submitLaunchDraft } from "@/lib/launch/launch-adapter";
+import {
+  LaunchCorrectableError,
+  launchResultHref,
+  launchResumeModeFor,
+  opensOnAcceptanceFor,
+  reconcileLaunchDraft,
+  savedMemoryKey,
+  submitLaunchDraft,
+  type LaunchObservation,
+} from "@/lib/launch/launch-adapter";
+import {
+  apiKeyProviders,
+  freshModelAccess,
+  hasModelAccess,
+  modelAccessOptions,
+  modelAccessProblem,
+  modelAccessSummary,
+  modelCostNote,
+  recommendedModelAccessMode,
+  savedKeyHint,
+  withModelAccessDefault,
+  type CreditsBalance,
+  type SavedModelKey,
+} from "@/lib/launch/model-access";
 import {
   capabilitySummary,
-  catalogAgentFitSubject,
   cheapestPlanForSize,
   costSummary,
   defaultLaunchName,
@@ -81,9 +130,10 @@ import {
   launchReturnPath,
   launchSubstrate,
   matchingSizePreset,
-  modelAccessSummary,
   ownCapacityLabel,
   parseLaunchArrival,
+  planHoldAction,
+  planHoldMessage,
   recommendedLaunchSize,
   sameLaunchSize,
   sizeLabel,
@@ -95,21 +145,41 @@ import {
   type LaunchArrival,
   type LaunchFit,
   type LaunchFitEvidence,
-  type LaunchFitSubject,
+  type PlanHold,
   type SizeLimits,
   type SizePreset,
 } from "@/lib/launch/launch-plan";
 import { launchResourcePolicy } from "@/lib/launch/resource-envelope";
+import {
+  captureLaunchEvent,
+  captureLaunchEventOnce,
+  launchErrorMessage,
+  launchEventContext,
+  launchFailureStage,
+  type LaunchFunnelEvent,
+} from "@/lib/launch/launch-telemetry";
+import {
+  loadLaunchTemplate,
+  safeTemplateRef,
+  type LaunchTemplate,
+  type LaunchTemplateLookup,
+} from "@/lib/launch/launch-template";
 import { PLANS } from "@/lib/subscription/plans";
 
 import styles from "./LaunchJourney.module.css";
+import { ModelAccessControl } from "./ModelAccessControl";
 
-function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"]): boolean {
+function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"], poolExempt = false): boolean {
   if (!plan?.usage) return false;
   return plan.maxCpuPerAgent >= (resources.maximumCpu ?? resources.cpu)
     && plan.maxRamPerAgent >= (resources.maximumRam ?? resources.ram)
-    && plan.poolCpu - plan.usage.usedCpu >= resources.cpu
-    && plan.poolRam - plan.usage.usedRam >= resources.ram;
+    // A pool-exempt agent (Aeon) uses an agent slot, not the CPU and memory pool.
+    && (poolExempt || (plan.poolCpu - plan.usage.usedCpu >= resources.cpu
+      && plan.poolRam - plan.usage.usedRam >= resources.ram));
+}
+
+function isPoolExempt(profileId: LaunchProfileId | null): boolean {
+  return profileId !== null && launchProfileFitSubject(profileId).poolExempt;
 }
 
 /** What the plan lets one launch use, or null until its usage is known. */
@@ -123,8 +193,8 @@ function recommendedForPlan(profileId: LaunchProfileId, plan: PlanInfo | null, b
   return recommendedLaunchSize(profileId, planSizeLimits(plan), { browser });
 }
 
-/** Hivra's size for a profile at the chosen destination. Codex also follows
- * its browser choice; withCodexBrowserDefault owns that. */
+/** Hivra's size for a profile at the chosen destination. Profiles with a
+ * browser also follow their browser choice; withBrowserDefault owns that. */
 function recommendedHere(
   profileId: LaunchProfileId,
   mode: LaunchDestinationState["mode"],
@@ -136,14 +206,14 @@ function recommendedHere(
 }
 
 /** The draft with Hivra's own size fitted to where it runs. A pure function
- * of the draft and its destination, like the Codex browser default: a size
- * Hivra picked follows the plan and the host (so a draft restored after an
- * upgrade gets the new plan's size), and a size the owner chose never moves. */
+ * of the draft and its destination, like the browser default: a size Hivra
+ * picked follows the plan and the host (so a draft restored after an upgrade
+ * gets the new plan's size), and a size the owner chose never moves. */
 function withRecommendedSize(
   current: LaunchDraft,
-  context: Omit<CodexBrowserDefaultContext, "browserDefault"> & { loading: boolean },
+  context: Omit<BrowserDefaultContext, "browserDefault"> & { loading: boolean },
 ): LaunchDraft {
-  if (!current.profileId || current.profileId === "codex") return current;
+  if (!current.profileId || profileHasBrowser(current.profileId)) return current;
   if (current.resources.source !== "recommended" || current.submittedDeployment || current.stage === "launch") return current;
   // A host list that is still loading reports no host; keep the size until
   // the evidence is back instead of flickering through the recommendation.
@@ -152,13 +222,18 @@ function withRecommendedSize(
   return sameLaunchSize(resources, current.resources) ? current : { ...current, resources };
 }
 
-const CODEX_BROWSER_FLOOR = launchResourcePolicy("codex", { browser: true }).floor;
-const CODEX_BASE_FLOOR = launchResourcePolicy("codex", { browser: false }).floor;
+function browserFloorFor(profileId: LaunchProfileId) {
+  return launchResourcePolicy(profileId, { browser: true }).floor;
+}
 
-/** Mirrors the legacy welcome default: Codex's browser starts on only when a
- * paid plan can hold its floor. Hivra Cloud refuses browser automation on Free. */
-function planFitsCodexBrowser(plan: PlanInfo | null): boolean {
-  const floor = CODEX_BROWSER_FLOOR;
+function baseFloorFor(profileId: LaunchProfileId) {
+  return launchResourcePolicy(profileId, { browser: false }).floor;
+}
+
+/** Mirrors the welcome forms' default: a browser starts on only when a paid
+ * plan can hold its floor. Hivra Cloud refuses browser automation on Free. */
+function planFitsBrowser(profileId: LaunchProfileId, plan: PlanInfo | null): boolean {
+  const floor = browserFloorFor(profileId);
   return isPaidPlan(plan)
     && planCanFit(plan, { ...floor, maximumCpu: floor.cpu, maximumRam: floor.ram, source: "recommended" });
 }
@@ -171,8 +246,8 @@ function sameResources(a: LaunchDraft["resources"], b: LaunchDraft["resources"])
     && (a.maximumRam ?? a.ram) === (b.maximumRam ?? b.ram);
 }
 
-function meetsCodexFloor(resources: LaunchDraft["resources"], browser: boolean): boolean {
-  const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
+function meetsFloor(profileId: LaunchProfileId, resources: LaunchDraft["resources"], browser: boolean): boolean {
+  const floor = browser ? browserFloorFor(profileId) : baseFloorFor(profileId);
   return resources.cpu >= floor.cpu && resources.ram >= floor.ram;
 }
 
@@ -180,19 +255,24 @@ function isWholeProviderComputer(target: DeploymentTargetDto | null): boolean {
   return target !== null && (target.capabilities as unknown as { kind?: string }).kind === "provider-vm";
 }
 
-/** Codex's browser default for the chosen destination. Hivra Cloud follows the
- * plan; the owner's own capacity mirrors the welcome form's host check, so the
- * browser starts on whenever the selected host's measured capacity holds its
- * floor. Null while the plan or the selected host is not known yet. */
-function recommendedCodexBrowser(
+/** A profile's browser default for the chosen destination. A browser that
+ * follows the destination starts on for Hivra Cloud when the plan holds it,
+ * and on the owner's own capacity when the selected host's measured capacity
+ * holds its floor, as the welcome forms did. OpenClaw's starts off. Null while
+ * the plan or the selected host is not known yet. */
+function recommendedBrowser(
+  profileId: LaunchProfileId,
   mode: LaunchDestinationState["mode"],
   selectedTarget: DeploymentTargetDto | null,
   plan: PlanInfo | null,
 ): boolean | null {
-  if (mode === "hivra-managed") return plan ? planFitsCodexBrowser(plan) : null;
+  const browser = PROFILE_DETAILS[profileId].browser;
+  if (browser === "none" || browser === "opt-in") return false;
+  if (mode === "hivra-managed") return plan ? planFitsBrowser(profileId, plan) : null;
   if (!selectedTarget) return null;
   const capacity = measuredTargetCapacity(selectedTarget);
-  return capacity.cpu >= CODEX_BROWSER_FLOOR.cpu && capacity.ramGb >= CODEX_BROWSER_FLOOR.ram;
+  const floor = browserFloorFor(profileId);
+  return capacity.cpu >= floor.cpu && capacity.ramGb >= floor.ram;
 }
 
 /** Whether the chosen destination can hold this size. Unknown capacity counts
@@ -202,43 +282,46 @@ function destinationHolds(
   selectedTarget: DeploymentTargetDto | null,
   plan: PlanInfo | null,
   resources: LaunchDraft["resources"],
+  poolExempt = false,
 ): boolean {
-  if (mode === "hivra-managed") return !plan?.usage || planCanFit(plan, resources);
+  if (mode === "hivra-managed") return !plan?.usage || planCanFit(plan, resources, poolExempt);
   // A provider computer is used whole; the requested size is not a slice of it.
   if (!selectedTarget || isWholeProviderComputer(selectedTarget)) return true;
   const capacity = measuredTargetCapacity(selectedTarget);
   return capacity.cpu >= resources.cpu && capacity.ramGb >= resources.ram;
 }
 
-/** Codex resources for a browser choice. Turning the browser off never shrinks
- * a size that meets the base floor and still fits, and turning it on raises
+/** Resources for a browser choice. Turning the browser off never shrinks a
+ * size that meets the base floor and still fits, and turning it on raises
  * only what is below the browser floor. A recommended size the destination can
  * no longer hold falls back to the recommendation for that choice. */
-function codexResourcesFor(
+function resourcesForBrowser(
+  profileId: LaunchProfileId,
   resources: LaunchDraft["resources"],
   browser: boolean,
   plan: PlanInfo | null,
   holds: (resources: LaunchDraft["resources"]) => boolean,
 ): LaunchDraft["resources"] {
-  const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
-  const meetsFloor = meetsCodexFloor(resources, browser);
+  const floor = browser ? browserFloorFor(profileId) : baseFloorFor(profileId);
+  const fits = meetsFloor(profileId, resources, browser);
+  const pinned = PROFILE_DETAILS[profileId].sizing === "pinned";
   if (resources.source === "custom") {
-    if (meetsFloor) return resources;
+    if (fits) return resources;
     const cpu = Math.max(resources.cpu, floor.cpu);
     const ram = Math.max(resources.ram, floor.ram);
     return {
       ...resources,
       cpu,
       ram,
-      maximumCpu: Math.max(resources.maximumCpu ?? cpu, cpu),
-      maximumRam: Math.max(resources.maximumRam ?? ram, ram),
+      maximumCpu: pinned ? cpu : Math.max(resources.maximumCpu ?? cpu, cpu),
+      maximumRam: pinned ? ram : Math.max(resources.maximumRam ?? ram, ram),
     };
   }
-  if (meetsFloor && (browser || holds(resources))) return resources;
-  return recommendedForPlan("codex", plan, browser);
+  if (fits && (browser || holds(resources))) return resources;
+  return recommendedForPlan(profileId, plan, browser);
 }
 
-type CodexBrowserDefaultContext = {
+type BrowserDefaultContext = {
   /** The draft whose saved destination has been restored, if any. */
   restoredFor: string | null;
   browserDefault: boolean | null;
@@ -247,23 +330,25 @@ type CodexBrowserDefaultContext = {
   plan: PlanInfo | null;
 };
 
-/** The draft with Codex's browser default applied. A pure function of the
- * draft and its destination: applying it twice changes nothing, and it
- * returns the same draft when nothing changes. Until the owner chooses, the
- * browser follows the destination's default, but only a size that holds the
- * browser floor holds it: a custom size below the floor keeps the browser off
- * and is never raised, while a recommended size follows the default. */
-function withCodexBrowserDefault(current: LaunchDraft, context: CodexBrowserDefaultContext): LaunchDraft {
-  if (current.profileId !== "codex" || current.submittedDeployment) return current;
+/** The draft with its browser default applied. A pure function of the draft
+ * and its destination: applying it twice changes nothing, and it returns the
+ * same draft when nothing changes. Until the owner chooses, the browser
+ * follows the destination's default, but only a size that holds the browser
+ * floor holds it: a custom size below the floor keeps the browser off and is
+ * never raised, while a recommended size follows the default. */
+function withBrowserDefault(current: LaunchDraft, context: BrowserDefaultContext): LaunchDraft {
+  if (!current.profileId || !profileHasBrowser(current.profileId) || current.submittedDeployment) return current;
+  const profileId = current.profileId;
   // Until a resumed draft's saved destination is restored, the hook still
   // reports its initial Hivra Cloud choice; a default derived from it would
   // be for a destination the owner did not pick.
   if (current.launchRequestId !== context.restoredFor) return current;
   const custom = current.resources.source === "custom";
   const browser = current.browserSource === "recommended" && context.browserDefault !== null
-    ? context.browserDefault && (!custom || meetsCodexFloor(current.resources, true))
+    ? context.browserDefault && (!custom || meetsFloor(profileId, current.resources, true))
     : current.browser;
-  const resources = custom ? current.resources : codexResourcesFor(
+  const resources = custom ? current.resources : resourcesForBrowser(
+    profileId,
     current.resources,
     browser,
     context.plan,
@@ -284,7 +369,10 @@ function freshDraftCapacity(choice: LaunchDestinationChoice): LaunchCapacityChoi
     : { mode: "hivra-managed", targetId: null };
 }
 
-/** States what this launch needs next to what the plan can still hold for it. */
+/** States what this launch needs next to what the plan can still hold for it:
+ * the per-computer limit when that is what it exceeds, otherwise how much of
+ * the plan's shared CPU or memory is still free. The two are never mixed into
+ * one "left" figure (a per-computer cap is not what is left). */
 function managedCapacityShortfall(
   label: string,
   resourceKind: LaunchResourceKind,
@@ -292,12 +380,24 @@ function managedCapacityShortfall(
   plan: PlanInfo & { usage: NonNullable<PlanInfo["usage"]> },
 ): string {
   const { usedCpu, usedRam } = plan.usage;
-  const cpu = Math.max(0, Math.min(plan.maxCpuPerAgent, plan.poolCpu - usedCpu));
-  const ram = Math.max(0, Math.min(plan.maxRamPerAgent, plan.poolRam - usedRam));
-  if (resources.cpu > cpu || resources.ram > ram) {
-    return usedCpu === 0 && usedRam === 0
-      ? `${label} needs ${formatLaunchSize(resources.cpu, resources.ram)}. Your ${plan.name} plan includes ${formatLaunchSize(cpu, ram)}.`
-      : `${label} needs ${formatLaunchSize(resources.cpu, resources.ram)}. Your ${plan.name} plan has ${formatLaunchSize(cpu, ram)} left.`;
+  const amount = (value: number) => Math.floor(value * 10 + 1e-9) / 10;
+  const freeCpu = Math.max(0, plan.poolCpu - usedCpu);
+  const freeRam = Math.max(0, plan.poolRam - usedRam);
+  const needs = `${label} needs ${formatLaunchSize(resources.cpu, resources.ram)}.`;
+  const overCap = resources.cpu > plan.maxCpuPerAgent || resources.ram > plan.maxRamPerAgent;
+  const overPool = resources.cpu > freeCpu || resources.ram > freeRam;
+  // On plans whose per-computer limit is the whole allowance (Free), "includes" says both.
+  const capIsPool = plan.maxCpuPerAgent >= plan.poolCpu && plan.maxRamPerAgent >= plan.poolRam;
+  if (overCap && !capIsPool) {
+    return `${needs} Your ${plan.name} plan allows up to ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for each ${resourceKind}.`;
+  }
+  if (overCap || overPool) {
+    if (usedCpu === 0 && usedRam === 0) return `${needs} Your ${plan.name} plan includes ${formatLaunchSize(plan.poolCpu, plan.poolRam)}.`;
+    const free = [
+      resources.cpu > freeCpu ? `${amount(freeCpu)} of its ${amount(plan.poolCpu)} CPU free` : null,
+      resources.ram > freeRam ? `${amount(freeRam)} of its ${amount(plan.poolRam)} GB free` : null,
+    ].filter((part): part is string => part !== null);
+    return `${needs} Your ${plan.name} plan has ${free.join(" and ")}.`;
   }
   return `${label} is set to use up to ${formatLaunchSize(resources.maximumCpu ?? resources.cpu, resources.maximumRam ?? resources.ram)}. Your ${plan.name} plan allows up to ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for each ${resourceKind}.`;
 }
@@ -396,35 +496,80 @@ function visibleStep(stage: LaunchStage): number {
 
 // ── Choose ──────────────────────────────────────────────────────────────────
 
-type LinkedAgentId = "claude-code" | "hermes" | "openclaw" | "agent-zero" | "aeon";
-
-type ChooseTile =
-  | { kind: "launch"; id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null }
-  | { kind: "link"; id: LinkedAgentId; name: string; description: string; icon: LucideIcon; href: string };
-
-/** Agents that still launch from their own setup page keep a way back here. */
-function fromLaunch(href: string): string {
-  return `${href}${href.includes("?") ? "&" : "?"}from=launch`;
-}
+type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
 
 const AGENT_TILES: readonly ChooseTile[] = ([
-  { kind: "link", id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Use your own Claude login.", icon: Code2, href: fromLaunch(buildLaunchSetupHref("claude-code")) },
-  { kind: "launch", id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },
-  { kind: "link", id: "hermes", name: "Hermes", description: "A general-purpose agent for research and automation.", icon: Bot, href: fromLaunch("/dashboard/welcome?step=deploy&agentType=general") },
-  { kind: "link", id: "openclaw", name: "OpenClaw", description: "An always-on agent you reach from your messaging apps.", icon: Cpu, href: fromLaunch(buildLaunchSetupHref("openclaw")) },
-  { kind: "link", id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit, href: fromLaunch(buildLaunchSetupHref("agent-zero")) },
-  { kind: "link", id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle, href: fromLaunch(buildLaunchSetupHref("aeon")) },
-] satisfies ChooseTile[]).filter(tile => tile.kind === "launch" || getAgent(tile.id)?.available === true);
+  { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account after it opens.", icon: Code2 },
+  { id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },
+  { id: "hermes", name: "Hermes", description: "A general-purpose agent for research and automation.", icon: Bot },
+  { id: "openclaw", name: "OpenClaw", description: "An always-on agent you reach from your messaging apps.", icon: Cpu },
+  { id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit },
+  { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
+] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
 
 const COMPUTER_TILES: readonly ChooseTile[] = [
-  { kind: "launch", id: "ubuntu-desktop", name: "Ubuntu Desktop", description: "A desktop, terminal and files you open in your browser.", icon: Monitor },
-  { kind: "launch", id: "linux-terminal", name: "Linux Sandbox", description: "A lightweight terminal workspace on a Linux server you connected.", icon: TerminalSquare },
-  { kind: "launch", id: "omarchy", name: "Omarchy (Preview)", description: "A prepared Omarchy desktop with a setup console.", icon: null },
-  { kind: "launch", id: "windows", name: "Windows (your ISO)", description: "Install Windows from your own ISO on a server you connected.", icon: AppWindow },
+  { id: "ubuntu-desktop", name: "Ubuntu Desktop", description: "A desktop, terminal and files you open in your browser.", icon: Monitor },
+  { id: "linux-terminal", name: "Linux Sandbox", description: "A lightweight terminal workspace on a Linux server you connected.", icon: TerminalSquare },
+  { id: "omarchy", name: "Omarchy (Preview)", description: "A prepared Omarchy desktop with a setup console.", icon: null },
+  { id: "windows", name: "Windows (your ISO)", description: "Install Windows from your own ISO on a server you connected.", icon: AppWindow },
 ];
 
-function tileSubject(tile: ChooseTile): LaunchFitSubject {
-  return tile.kind === "launch" ? launchProfileFitSubject(tile.id) : catalogAgentFitSubject(tile.id);
+/** The owner's Capacity page, opened for this runtime when it can use a
+ * server they connect. */
+function capacitySetupHrefFor(profileId: LaunchProfileId | null): string {
+  if (!profileId) return "/dashboard/infrastructure";
+  const runtime = PROFILE_DETAILS[profileId].placementRuntimeId;
+  if (runtime === "windows-installer") return buildInfrastructureSetupHref("windows", { unified: true });
+  if (runtime === "linux-desktop" || runtime === "linux-terminal" || isPortableAgentLaunchId(runtime)) {
+    return buildInfrastructureSetupHref(runtime, { unified: true });
+  }
+  return "/dashboard/infrastructure";
+}
+
+/** What the capacity sheet sets up for: the launch's own runtime, when a server can run it. */
+function capacityResourceFor(profileId: LaunchProfileId | null) {
+  if (!profileId) return null;
+  const runtime = PROFILE_DETAILS[profileId].placementRuntimeId;
+  return parsePortableLaunchResourceId(runtime === "windows-installer" ? "windows" : runtime);
+}
+
+/** Copy for a profile's optional browser. */
+function browserCopy(profileId: LaunchProfileId): string {
+  const name = PROFILE_DETAILS[profileId].name;
+  return profileId === "openclaw"
+    ? "A real Chrome with a live view you can watch and sign in to. OpenClaw acts in that signed-in session."
+    : `Lets ${name} open and use a web browser on its computer.`;
+}
+
+/** Plain words for the receipt phase a launch in flight last reported. */
+function observedLaunchText(observation: LaunchObservation | null, resend: boolean): string {
+  if (observation?.kind === "receipt") {
+    if (observation.phase === "reserved") return "Hivra has recorded the request and is creating the computer.";
+    if (observation.phase === "bound") return "The computer exists. Hivra is finishing the launch record.";
+    return "Hivra is checking the computer's state with its server.";
+  }
+  return resend
+    ? "Sent to Hivra. Waiting for Hivra to record the request."
+    : "Sent to Hivra. It answers once the computer is created, which can take a few minutes.";
+}
+
+function elapsedSince(at: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** Records a funnel moment once it is on screen, once per key: later
+ * renders with the same key describe the same moment. */
+function FunnelMoment({ momentKey, event, properties }: {
+  momentKey: string;
+  event: LaunchFunnelEvent;
+  properties: Record<string, unknown>;
+}) {
+  useEffect(() => {
+    captureLaunchEventOnce(momentKey, event, properties);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the moment, not on each render's copy of its properties
+  }, [momentKey]);
+  return null;
 }
 
 function FitBadge({ fit }: { fit: LaunchFit | null }) {
@@ -457,6 +602,58 @@ function Stepper({ current }: { current: number }) {
 
 type ResumeChoice = { stored: LaunchDraft; fresh: LaunchDraft };
 
+/** A Hermes agent the launch created. Its computer exists; the screen says
+ * so, and offers Start chatting once its workspace actually answers. */
+function HermesLaunched({
+  name,
+  instanceId,
+  href,
+  onLeave,
+  onStartNew,
+}: {
+  name: string;
+  instanceId: string;
+  href: string;
+  onLeave: () => void;
+  onStartNew: () => void;
+}) {
+  const { ready, checking, recheck } = useHermesWorkspaceReadiness(instanceId);
+  const telegramHref = `${href}${href.includes("?") ? "&" : "?"}connect=telegram`;
+  return (
+    <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading" aria-live="polite">
+      <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
+      <span className={styles.eyebrow}>{ready ? "Ready to chat" : "Launch accepted"}</span>
+      <h1 id="launch-accepted-heading">{ready ? `${name} is ready.` : `${name} has its own computer and is starting.`}</h1>
+      <p>{ready
+        ? "Its workspace answered. Start your first chat."
+        : "Hivra is waiting for its workspace to answer. This usually takes a few minutes; you can open it now and watch it start."}</p>
+      {ready ? (
+        <>
+          <Link className={styles.primaryAction} data-testid="launch-primary-action" href={href} onClick={onLeave}>
+            Start chatting <ArrowRight size={15} aria-hidden />
+          </Link>
+          <Link className={styles.outcomeLink} href={telegramHref} onClick={onLeave}>Also chat from Telegram</Link>
+        </>
+      ) : (
+        <>
+          {checking ? (
+            <p className={styles.observed} role="status"><Loader2 size={13} className={styles.spin} aria-hidden /> Waiting for the workspace to answer</p>
+          ) : (
+            <p className={styles.observed} role="status">
+              The workspace hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
+              <button type="button" className={styles.outcomeLink} onClick={recheck}>Check again</button>
+            </p>
+          )}
+          <Link className={styles.secondaryAction} data-testid="launch-primary-action" href={href} onClick={onLeave}>
+            Open {name} now
+          </Link>
+        </>
+      )}
+      <button type="button" className={styles.outcomeLink} onClick={onStartNew}>Launch something else</button>
+    </section>
+  );
+}
+
 export function LaunchJourney() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -471,6 +668,15 @@ export function LaunchJourney() {
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [planChecked, setPlanChecked] = useState(false);
   const [planCheckRevision, setPlanCheckRevision] = useState(0);
+  // Turning the Free plan on from the launch: its own button, never implied.
+  // "paid-plan-found": billing refused Free because a paid plan holds the
+  // account; the plan is read again to show which, and how to settle it.
+  const [freeActivation, setFreeActivation] = useState<
+    { state: "idle" | "activating" | "activated" | "paid-plan-found" } | { state: "failed"; message: string }
+  >({ state: "idle" });
+  // The first-run funnel's "activation page" is Launch for an account with
+  // no plan; recorded once per visit.
+  const activationViewRecordedRef = useRef(false);
   const [existingNames, setExistingNames] = useState<string[] | null>(null);
   const [whereExpanded, setWhereExpanded] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -485,9 +691,33 @@ export function LaunchJourney() {
   const [windowsDownloadTask, setWindowsDownloadTask] = useState<{ taskId: string; state: "queued" | "running" | "succeeded" | "failed"; bytesDownloaded: number; message: string | null } | null>(null);
   const [windowsDownloadStarting, setWindowsDownloadStarting] = useState(false);
   // The draft whose saved destination has been restored into the destination
-  // hook. State, not a ref: the Codex browser default waits on it and must
-  // re-run once it lands.
+  // hook. State, not a ref: the browser default waits on it and must re-run
+  // once it lands.
   const [restoredDestinationFor, setRestoredDestinationFor] = useState<string | null>(null);
+  // Model access evidence: the owner's Hivra credit balance and the keys saved
+  // in their Vault (listed without the keys themselves).
+  const [observedCredits, setCreditsBalance] = useState<CreditsBalance>({ state: "loading" });
+  // Token geo-policy: a viewer it blocks (or while it is still checking) sees
+  // and bills card credits only, as the welcome deploy form does. "allowed"
+  // at once while the policy is dormant.
+  const tokenPaymentsShown = useTokenGeoAccess().status === "allowed";
+  const creditsBalance = useMemo<CreditsBalance>(
+    () => tokenPaymentsShown || observedCredits.state !== "known"
+      ? observedCredits
+      : { ...observedCredits, hermesosMicroUsd: 0 },
+    [observedCredits, tokenPaymentsShown],
+  );
+  const [creditsRevision, setCreditsRevision] = useState(0);
+  const [savedKeys, setSavedKeys] = useState<SavedModelKey[]>([]);
+  // A key pasted for one launch, held only in this page's memory. It is never
+  // written to the draft, and it belongs to the launch it was typed for.
+  const [pastedKey, setPastedKey] = useState<{ launchRequestId: string; value: string } | null>(null);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [cardCheckOpen, setCardCheckOpen] = useState(false);
+  const [observation, setObservation] = useState<LaunchObservation | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileNote, setReconcileNote] = useState<string | null>(null);
   // The name Hivra picked for a draft before the owner's existing names had
   // loaded, so it can be renumbered once they do if the owner kept it.
   const autoNameRef = useRef<{ launchRequestId: string; name: string } | null>(null);
@@ -515,6 +745,27 @@ export function LaunchJourney() {
   const startParam = searchParams?.get("start") ?? null;
   const draftParam = searchParams?.get("draft") ?? null;
   const upgradedParam = searchParams?.get("upgraded") ?? null;
+  // "Start from a template": the template's own agent, under its name.
+  const templateParam = safeTemplateRef(searchParams?.get("template"));
+  const templateTokenParam = safeTemplateRef(searchParams?.get("templateToken"));
+  const [templateLookup, setTemplateLookup] = useState<{ ref: string; result: LaunchTemplateLookup | null } | null>(null);
+  const [templateLookupRevision, setTemplateLookupRevision] = useState(0);
+  useEffect(() => {
+    if (!templateParam) {
+      setTemplateLookup(null);
+      return;
+    }
+    let active = true;
+    setTemplateLookup({ ref: templateParam, result: null });
+    void loadLaunchTemplate(templateParam, templateTokenParam).then(result => {
+      if (active) setTemplateLookup({ ref: templateParam, result });
+    });
+    return () => { active = false; };
+  }, [templateParam, templateTokenParam, templateLookupRevision]);
+  // Settled for the template this link names; null while it loads.
+  const templateResult = templateParam && templateLookup?.ref === templateParam ? templateLookup.result : null;
+  const linkedTemplate: LaunchTemplate | null = templateResult?.status === "found" ? templateResult.template : null;
+  const templateProblem = templateResult && templateResult.status !== "found" ? templateResult : null;
   // Read on arrival and kept: the journey's own history writes drop these
   // params, and the draft and notice they describe must not change with them.
   const [arrival, setArrival] = useState<LaunchArrival | null>(() => parseLaunchArrival(draftParam, upgradedParam));
@@ -540,8 +791,44 @@ export function LaunchJourney() {
     // A self-managed-only profile opens on the owner's infrastructure even
     // before a compatible host exists; Hivra Cloud is never its selection.
     managedAvailable: profile?.managedCapacity !== "self-managed-only",
+    // Hermes runs on Hivra Cloud only, whatever was chosen for another agent.
+    selfManagedAvailable: profile?.lane !== "hermes-instance",
     targetKind: profile?.placementRuntimeId === "linux-terminal" ? "gvisor" : "any",
   });
+
+  // DigitalOcean Managed Agents teams the owner connected. They run a
+  // DigitalOcean sandbox, not a host, so they are read on their own and never
+  // enter the host destination list.
+  const [digitalOceanTeams, setDigitalOceanTeams] = useState<{ state: "loading" | "ready" | "failed"; targets: DigitalOceanDeploymentTargetDto[] }>(
+    () => ({ state: selfHosted ? "ready" : "loading", targets: [] }),
+  );
+  useEffect(() => {
+    if (selfHosted) return;
+    const controller = new AbortController();
+    listManagedSessions(controller.signal)
+      .then(result => { if (!controller.signal.aborted) setDigitalOceanTeams({ state: "ready", targets: result.targets }); })
+      .catch(() => { if (!controller.signal.aborted) setDigitalOceanTeams({ state: "failed", targets: [] }); });
+    return () => controller.abort();
+  }, [selfHosted]);
+  // Capacity set up without leaving the launch (slice 10).
+  const [capacitySheetOpen, setCapacitySheetOpen] = useState(false);
+  const digitalOceanHarness = digitalOceanHarnessFor(draft?.profileId ?? null);
+  const digitalOceanChoices = digitalOceanHarness
+    ? digitalOceanTeams.targets.filter(target => digitalOceanTargetRuns(target, digitalOceanHarness))
+    : [];
+  const digitalOceanLane = draft?.capacity.mode === "digitalocean";
+  const digitalOceanTarget = digitalOceanLane
+    ? digitalOceanChoices.find(target => target.id === draft?.capacity.targetId) ?? null
+    : null;
+  const digitalOceanBalance = useDigitalOceanBalance(digitalOceanTarget?.connectionId ?? "",
+    Boolean(digitalOceanTarget) && draft?.stage !== "launch");
+  /** The DigitalOcean team a profile can run on, from an earlier choice or the card that handed it over. */
+  const digitalOceanTeamFor = (profileId: LaunchProfileId, targetId: string | null | undefined) => {
+    const harness = digitalOceanHarnessFor(profileId);
+    return harness && targetId
+      ? digitalOceanTeams.targets.find(target => target.id === targetId && digitalOceanTargetRuns(target, harness)) ?? null
+      : null;
+  };
 
   useEffect(() => {
     const selected = destination.deployment;
@@ -647,14 +934,17 @@ export function LaunchJourney() {
   // for the signed-in owner, whose drafts are the only ones it may read.
   useEffect(() => {
     if (ownerId === undefined) return;
+    // A template link decides once the template has been read.
+    if (templateParam && !templateResult) return;
     const stored = readLaunchDraft(ownerId);
-    const requestedProfile = isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null;
+    const requestedProfile = linkedTemplate?.profileId
+      ?? (isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null);
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
       const details = PROFILE_DETAILS[requestedProfile];
-      const name = defaultLaunchName(requestedProfile, []);
-      autoNameRef.current = { launchRequestId: next.launchRequestId, name };
+      const name = linkedTemplate?.name ?? defaultLaunchName(requestedProfile, []);
+      if (!linkedTemplate?.name) autoNameRef.current = { launchRequestId: next.launchRequestId, name };
       return {
         ...next,
         stage: "plan",
@@ -662,6 +952,7 @@ export function LaunchJourney() {
         profileId: requestedProfile,
         name,
         resources: { ...details.recommended },
+        template: linkedTemplate ? { id: linkedTemplate.id, name: linkedTemplate.name } : null,
       };
     };
     let initial: LaunchDraft;
@@ -672,7 +963,8 @@ export function LaunchJourney() {
       // Back from an upgrade this draft started.
       initial = stored;
     } else if (startParam === "1" || requestedProfile) {
-      if (isUnfinishedLaunchDraft(stored) && startParam !== "1" && stored.profileId === requestedProfile) {
+      if (isUnfinishedLaunchDraft(stored) && startParam !== "1" && stored.profileId === requestedProfile
+        && (stored.template?.id ?? null) === (linkedTemplate?.id ?? null)) {
         initial = stored;
       } else if (isUnfinishedLaunchDraft(stored)) {
         setDraft(null);
@@ -691,12 +983,20 @@ export function LaunchJourney() {
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [ownerId, requestedProfileParam, returningDraftId, startParam, targetValuesKey]);
+  }, [linkedTemplate, ownerId, requestedProfileParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
 
   useEffect(() => {
     let active = true;
-    void listAgentsResult().then(({ agents }) => {
-      if (active) setExistingNames(agents.map(agent => agent.name).filter((name): name is string => typeof name === "string"));
+    // Hermes agents live in their own list; their names count too, so a new
+    // "Hermes 1" is never a second one.
+    const hermesNames = fetch("/api/instances?summary=true", { cache: "no-store", credentials: "same-origin" })
+      .then(response => response.json())
+      .then((body: { data?: unknown }) => Array.isArray(body?.data)
+        ? body.data.map(row => (row as { name?: unknown })?.name).filter((name): name is string => typeof name === "string")
+        : [])
+      .catch(() => [] as string[]);
+    void Promise.all([listAgentsResult(), hermesNames]).then(([{ agents }, hermes]) => {
+      if (active) setExistingNames([...agents.map(agent => agent.name).filter((name): name is string => typeof name === "string"), ...hermes]);
     });
     return () => { active = false; };
   }, []);
@@ -754,7 +1054,68 @@ export function LaunchJourney() {
     return () => { active = false; };
   }, [planCheckRevision]);
 
-  // Until the owner chooses, Codex's browser follows the plan on Hivra Cloud
+  useEffect(() => {
+    if (selfHosted || !planChecked || !plan?.needsActivation || activationViewRecordedRef.current) return;
+    activationViewRecordedRef.current = true;
+    captureLaunchEvent("activation_page_viewed", { plan: "free", authState: "signed_in" });
+  }, [plan, planChecked, selfHosted]);
+
+  // Hivra credits pay for models; the balance decides whether Hermes starts on
+  // them and whether the credits choice can be picked at all.
+  useEffect(() => {
+    if (selfHosted) {
+      setCreditsBalance({ state: "unknown" });
+      return;
+    }
+    let active = true;
+    setCreditsBalance({ state: "loading" });
+    void requestManagedVeniceSummary().then(result => {
+      if (!active) return;
+      setCreditsBalance(result.ok
+        ? { state: "known", cardMicroUsd: result.summary.wallets.card.availableMicroUsd, hermesosMicroUsd: result.summary.wallets.hermesos.availableMicroUsd }
+        : { state: "unknown" });
+    }).catch(() => {
+      if (active) setCreditsBalance({ state: "unknown" });
+    });
+    return () => { active = false; };
+  }, [creditsRevision, selfHosted]);
+
+  // Saved Vault keys, listed without the keys themselves. A launch sends one
+  // only after the owner confirms it for that launch.
+  useEffect(() => {
+    let active = true;
+    fetch("/api/vault", { cache: "no-store", credentials: "same-origin" })
+      .then(response => response.json())
+      .then((body: { success?: boolean; data?: unknown }) => {
+        if (!active || body?.success !== true || !Array.isArray(body.data)) return;
+        setSavedKeys(body.data.filter((key): key is SavedModelKey =>
+          Boolean(key) && typeof key === "object"
+          && typeof (key as SavedModelKey).id === "string"
+          && typeof (key as SavedModelKey).provider === "string"));
+      })
+      .catch(() => { /* No saved keys to offer; pasting still works. */ });
+    return () => { active = false; };
+  }, []);
+
+  // Until the owner chooses, Hermes runs on Hivra credits when they have
+  // some, and every other agent signs in inside itself after it opens.
+  useLayoutEffect(() => {
+    const context = { balance: creditsBalance, selfHosted };
+    if (!draft || withModelAccessDefault(draft, context) === draft) return;
+    setDraft(current => current ? withModelAccessDefault(current, context) : current);
+  }, [creditsBalance, draft, selfHosted]);
+
+  // The launching screen counts time from when the request was sent: an
+  // observed fact, never a guess at progress.
+  const launchInFlight = draft?.stage === "launch" && draft.launchState === "submitting";
+  useEffect(() => {
+    if (!launchInFlight) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [launchInFlight]);
+
+  // Until the owner chooses, a browser follows the plan on Hivra Cloud
   // and the selected host's measured capacity on their own infrastructure.
   // It is re-evaluated on every draft change as well as destination changes,
   // so a size the owner raises past the browser floor turns the default on at
@@ -765,20 +1126,23 @@ export function LaunchJourney() {
   const destinationMode = destination.mode;
   const destinationLoading = destination.loading;
   const selectedTarget = destination.selectedTarget;
-  const codexBrowserDefault = recommendedCodexBrowser(destinationMode, selectedTarget, plan);
+  const draftProfileId = draft?.profileId ?? null;
+  const browserDefault = draftProfileId && profileHasBrowser(draftProfileId)
+    ? recommendedBrowser(draftProfileId, destinationMode, selectedTarget, plan)
+    : null;
   useLayoutEffect(() => {
-    const context: CodexBrowserDefaultContext = {
+    const context: BrowserDefaultContext = {
       restoredFor: restoredDestinationFor,
-      browserDefault: codexBrowserDefault,
+      browserDefault,
       mode: destinationMode,
       selectedTarget,
       plan,
     };
     // Most draft edits (a name, a stage) leave the default as it is; skip the
     // state update for those.
-    if (!draft || withCodexBrowserDefault(draft, context) === draft) return;
-    setDraft(current => current ? withCodexBrowserDefault(current, context) : current);
-  }, [codexBrowserDefault, destinationMode, draft, plan, restoredDestinationFor, selectedTarget]);
+    if (!draft || withBrowserDefault(draft, context) === draft) return;
+    setDraft(current => current ? withBrowserDefault(current, context) : current);
+  }, [browserDefault, destinationMode, draft, plan, restoredDestinationFor, selectedTarget]);
 
   // The same for every other profile's size: Hivra's own pick follows the
   // plan and the selected host whenever either changes, including a plan
@@ -818,15 +1182,78 @@ export function LaunchJourney() {
 
   useEffect(() => {
     if (draft?.launchState !== "accepted" || !draft.result) return;
+    // Hermes stays here to show when its workspace answers (Start chatting).
+    if (!opensOnAcceptanceFor(draft)) return;
     const href = launchResultHref(draft, draft.result.id);
     clearLaunchDraft(storageOwner);
     router.push(href);
   }, [draft, router, storageOwner]);
 
+  // A pasted key belongs to the launch it was typed for.
+  const draftRequestId = draft?.launchRequestId ?? null;
+  const currentPastedKey = pastedKey && pastedKey.launchRequestId === draftRequestId ? pastedKey.value : "";
+  const setCurrentPastedKey = (value: string) => {
+    if (!draftRequestId) return;
+    setPastedKey(value ? { launchRequestId: draftRequestId, value } : null);
+  };
+
   const recheckPlan = () => {
     setPlanChecked(false);
     setPlanCheckRevision(value => value + 1);
   };
+
+  // A new account turns the Free plan on here, with its own button. Nothing
+  // is bought; the plan is read again afterwards and only then counts.
+  const activateFree = async () => {
+    if (freeActivation.state === "activating") return;
+    setFreeActivation({ state: "activating" });
+    captureLaunchEvent("activation_started", { plan: "free", authState: "signed_in" });
+    const result = await requestSubscriptionCheckout("free");
+    if (result.ok) {
+      captureLaunchEvent("activation_dashboard_reached", { plan: "free", destination: "/dashboard/launch", outcome: "free_plan_activated" });
+      setFreeActivation({ state: "activated" });
+      recheckPlan();
+      return;
+    }
+    if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
+      // A paid plan holds the account, so Free isn't turned on over it. Read
+      // the plan again: it shows as active, or as on hold with the way to
+      // settle it. Nothing here says Free is on.
+      captureLaunchEvent("activation_dashboard_reached", { plan: "free", destination: "/dashboard/launch", outcome: "active_subscription" });
+      setFreeActivation({ state: "paid-plan-found" });
+      recheckPlan();
+      return;
+    }
+    captureLaunchEvent("activation_failed", {
+      plan: "free",
+      stage: "free_plan_activation",
+      failureType: result.reason ?? "subscribe_request_failed",
+      errorCategory: result.status >= 500 || result.status === 0 ? "server" : "request",
+      status: result.status,
+      recoverable: true,
+    });
+    // Launch's own words: this step takes no payment, whatever the billing
+    // client calls a request it couldn't complete.
+    setFreeActivation({ state: "failed", message: "Couldn't turn on the Free plan. Nothing was charged. Try again in a moment." });
+  };
+  // Said once the plan read back shows it, never from the click alone.
+  const planActiveAfterActivation = (freeActivation.state === "activated" || freeActivation.state === "paid-plan-found")
+    && planChecked && plan && !plan.needsActivation && !plan.onHold;
+  const freeActiveNotice = planActiveAfterActivation ? (
+    <div className={styles.notice} role="status">
+      <Check size={16} aria-hidden />
+      <span>{`${plan.name} is active.`}</span>
+    </div>
+  ) : null;
+  // A paid plan holds the account without granting anything: billing said
+  // so, or turning Free on found one billing didn't describe. Hivra Cloud
+  // waits until it is settled in Billing; the owner's servers don't.
+  const planHold: PlanHold | null = selfHosted || !planChecked || !plan ? null
+    : plan.onHold ? { reason: plan.onHold.reason, planName: plan.onHold.name }
+      : plan.needsActivation && freeActivation.state === "paid-plan-found" ? { reason: "unconfirmed" }
+        : null;
+  const billingSettleHref = (launchRequestId: string) =>
+    `/dashboard/billing?tab=overview&returnTo=${encodeURIComponent(launchReturnPath(launchRequestId))}`;
 
   // Back from an upgrade: say what the plan is now, from the plan itself,
   // never from the URL that brought the owner here. The URL only names the
@@ -914,34 +1341,44 @@ export function LaunchJourney() {
   const managedEntitlementRequired = currentProfile?.managedCapacity === "entitlement-required";
   const selfManagedOnly = currentProfile?.managedCapacity === "self-managed-only";
   const gvisorComputer = draft.profileId === "linux-terminal";
-  const codexBrowser = draft.profileId === "codex" && draft.browser;
+  // The profile always keeps its size and never uses more (its launch sends
+  // no maxima): gVisor sandboxes, and the agents whose setup never did.
+  const pinnedSize = currentProfile?.sizing === "pinned";
+  const hasBrowser = profileHasBrowser(draft.profileId);
+  const browserOn = hasBrowser && draft.browser;
+  const poolExempt = isPoolExempt(draft.profileId);
+  const fitSubject = draft.profileId ? launchProfileFitSubject(draft.profileId) : null;
+  const hermes = draft.profileId === "hermes";
   const resourceFloor = draft.profileId ? launchResourcePolicy(draft.profileId, { browser: draft.browser }).floor : null;
   const targetCapacity = measuredTargetCapacity(destination.selectedTarget);
   const wholeProviderComputer = destination.mode === "self-managed" && isWholeProviderComputer(destination.selectedTarget);
   // A provider VM is exclusive, not a requested slice of its free memory.
   // Match the runtime headroom check; the server still re-inspects at launch.
   const requiredCapacity = wholeProviderComputer && currentProfile
-    ? providerComputerResourceFloor(currentProfile.runtimeId, codexBrowser)
+    ? providerComputerResourceFloor(currentProfile.runtimeId, browserOn)
     : draft.resources;
   const selectedTargetFits = Boolean(
     destination.deployment?.mode === "self-managed"
       && targetCapacity.cpu >= requiredCapacity.cpu
       && targetCapacity.ramGb >= requiredCapacity.ram,
   );
-  const managedPaidRequired = draft.profileId === "ubuntu-desktop";
+  // Ubuntu Desktop, OpenClaw and Agent Zero need a paid plan on Hivra Cloud.
+  const managedPaidRequired = fitSubject !== null && fitSubject.hivraCloud === "plan" && fitSubject.minPlan !== "free";
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
-  const managedFits = planCanFit(plan, draft.resources);
+  const managedFits = planCanFit(plan, draft.resources, poolExempt);
   const managedPlanAllowed = !managedPaidRequired || isPaidPlan(plan);
-  // Codex resources after a browser change, sized against the chosen destination.
-  const holdsHere = (resources: LaunchDraft["resources"]) => destinationHolds(destination.mode, destination.selectedTarget, plan, resources);
+  // Resources after a browser change, sized against the chosen destination.
+  const holdsHere = (resources: LaunchDraft["resources"]) => destinationHolds(destination.mode, destination.selectedTarget, plan, resources, poolExempt);
   const resourcesWithBrowser = (browser: boolean): LaunchDraft["resources"] => {
+    if (!draft.profileId || !hasBrowser) return draft.resources;
+    const profileId = draft.profileId;
     const raisedFrom = draft.browserRaisedFrom;
     // Turning off a browser the owner turned on undoes the raise it made, as
     // long as the owner has not changed the size since.
-    if (!browser && raisedFrom && sameResources(draft.resources, codexResourcesFor(raisedFrom, true, plan, holdsHere))) {
+    if (!browser && raisedFrom && sameResources(draft.resources, resourcesForBrowser(profileId, raisedFrom, true, plan, holdsHere))) {
       return raisedFrom;
     }
-    return codexResourcesFor(draft.resources, browser, plan, holdsHere);
+    return resourcesForBrowser(profileId, draft.resources, browser, plan, holdsHere);
   };
   const sizeWithoutBrowser = wholeProviderComputer && currentProfile
     ? providerComputerResourceFloor(currentProfile.runtimeId, false)
@@ -949,9 +1386,7 @@ export function LaunchJourney() {
   const targetFitsWithoutBrowser = destination.deployment?.mode === "self-managed"
     && targetCapacity.cpu >= sizeWithoutBrowser.cpu
     && targetCapacity.ramGb >= sizeWithoutBrowser.ram;
-  const capacitySetupHref = currentProfile
-    ? buildInfrastructureSetupHref(currentProfile.placementRuntimeId === "windows-installer" ? "windows" : currentProfile.placementRuntimeId, { unified: true })
-    : "/dashboard/infrastructure";
+  const capacitySetupHref = capacitySetupHrefFor(draft.profileId);
   // What one launch may use here: the plan on Hivra Cloud, the selected
   // host's measured capacity on the owner's own.
   const sizeLimits = destinationSizeLimits(destination.mode, destination.selectedTarget, plan);
@@ -963,7 +1398,7 @@ export function LaunchJourney() {
   // Small / Medium / Large as they run here: a preset whose reservation fits
   // stays available with its maximum brought down to what each one may reach.
   const presetOptions = draft.profileId && currentProfile
-    ? fitSizePresets(sizePresets(draft.profileId, { browser: codexBrowser }), sizeLimits, currentProfile)
+    ? fitSizePresets(sizePresets(draft.profileId, { browser: browserOn }), sizeLimits, currentProfile)
     : [];
   const currentPreset = matchingSizePreset(draft.resources, presetOptions);
   const currentSizeLabel = sizeLabel(draft.resources, presetOptions);
@@ -979,14 +1414,16 @@ export function LaunchJourney() {
   const upgrade = currentProfile && plan?.usage ? cheapestPlanForSize({
     ...upgradeSize,
     // Browser automation is never part of a Free plan on Hivra Cloud.
-    minPlan: codexBrowser ? "pro" : launchProfileFitSubject(draft.profileId!).minPlan,
-    poolExempt: false,
+    minPlan: browserOn ? "pro" : fitSubject?.minPlan ?? "free",
+    poolExempt,
   }, plan) : null;
   const upgradeHref = `/dashboard/billing?from=launch&returnTo=${encodeURIComponent(launchReturnPath(draft.launchRequestId))}`;
 
   let capacityBlocker: string | null = null;
   // The real next steps a managed blocker can offer.
-  let blockerRemedy: "check-plan" | "managed-plan" | null = null;
+  let blockerRemedy: "check-plan" | "managed-plan" | "activate-free" | "settle-plan" | null = null;
+  // Which paywall a managed-plan blocker is, for the upgrade funnel.
+  let paywall: "paid_profile" | "agent_limit" | "capacity" | "browser" | null = null;
   let offerBrowserOff = false;
   // A size blocker can offer the preset that runs here instead.
   let offerFittingPreset = false;
@@ -995,7 +1432,18 @@ export function LaunchJourney() {
     && image.modifiedAtSeconds === draft.windowsIsoEvidence?.modifiedAtSeconds
     && image.fileIdentitySha256 === draft.windowsIsoEvidence?.fileIdentitySha256
     && image.source === draft.windowsIsoSource);
-  if (destination.loading) capacityBlocker = "Checking compatible capacity…";
+  if (digitalOceanLane) {
+    // A DigitalOcean sandbox needs neither a Hivra plan nor a host: only a
+    // ready team that runs this agent, and DigitalOcean not blocking it.
+    capacityBlocker = !digitalOceanHarness
+      ? `${currentProfile?.name ?? "This launch"} can't run on DigitalOcean. Choose where it runs again.`
+      : digitalOceanTeams.state === "loading"
+        ? "Checking your DigitalOcean team…"
+        : !digitalOceanTarget
+          ? `That DigitalOcean team isn't ready for ${currentProfile?.name ?? "this agent"}. Choose where it runs again.`
+          : digitalOceanBalanceProblem(digitalOceanBalance.balance);
+  }
+  else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
   else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "This preview computer runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) capacityBlocker = "No compatible capacity is ready for this profile.";
@@ -1008,7 +1456,7 @@ export function LaunchJourney() {
     capacityBlocker = smallerSizeFits
       ? "The selected host does not have enough measured capacity for this size. Choose a smaller size, or choose another host."
       : "The selected host does not have enough measured capacity for this size.";
-    offerBrowserOff = codexBrowser && targetFitsWithoutBrowser;
+    offerBrowserOff = browserOn && targetFitsWithoutBrowser;
     offerFittingPreset = true;
   }
   else if (destination.mode === "hivra-managed" && managedEntitlementRequired) capacityBlocker = "Hivra Cloud isn't available for Windows. Choose a server you connected.";
@@ -1019,33 +1467,129 @@ export function LaunchJourney() {
   else if (draft.profileId === "windows" && (!draft.windowsIsoEvidence || !selectedWindowsImage)) capacityBlocker = "Refresh and choose the exact host-observed Windows ISO again.";
   else if (draft.profileId === "windows" && !draft.windowsRightsAttested) capacityBlocker = "Confirm your Windows installation and use rights before review.";
   else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !planChecked) capacityBlocker = "Checking your managed plan…";
+  else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && planHold) {
+    // Nothing else can open Hivra Cloud until the plan is settled: not Free,
+    // not a smaller size, not turning the browser off.
+    capacityBlocker = planHoldMessage(planHold, currentProfile?.name ?? null);
+    blockerRemedy = "settle-plan";
+  }
   else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !plan?.usage) {
     capacityBlocker = "Managed capacity could not be verified.";
     blockerRemedy = "check-plan";
   } else if (destination.mode === "hivra-managed" && !managedPlanAllowed) {
-    capacityBlocker = "Ubuntu Desktop needs a paid plan on Hivra Cloud, or a server you connected.";
+    capacityBlocker = `${currentProfile?.name ?? "This launch"} needs a paid plan on Hivra Cloud, or a server you connected.`;
     blockerRemedy = "managed-plan";
+    paywall = "paid_profile";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && atSlotLimit) {
-    capacityBlocker = "Your current plan has no open agent slots.";
+    // An account without a plan yet is told what Free would hold, from what
+    // it already runs there, instead of about a plan it doesn't have.
+    capacityBlocker = plan?.needsActivation && plan.usage
+      ? `The Free plan runs ${plan.maxAgents === 1 ? "one agent or computer" : `${plan.maxAgents} agents or computers`} on Hivra Cloud, and your account already has ${plan.usage.agentCount} there.`
+      : "Your current plan has no open agent slots.";
     blockerRemedy = "managed-plan";
+    paywall = "agent_limit";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !managedFits && plan?.usage) {
     capacityBlocker = managedCapacityShortfall(
-      codexBrowser ? "Codex with a browser" : currentProfile?.name ?? "This launch",
+      browserOn ? `${currentProfile?.name ?? "This launch"} with a browser` : currentProfile?.name ?? "This launch",
       draft.resourceKind ?? "agent",
       draft.resources,
       { ...plan, usage: plan.usage },
     );
     blockerRemedy = "managed-plan";
-    offerBrowserOff = codexBrowser && planCanFit(plan, resourcesWithBrowser(false));
+    paywall = "capacity";
+    offerBrowserOff = browserOn && planCanFit(plan, resourcesWithBrowser(false), poolExempt);
     offerFittingPreset = true;
-  } else if (destination.mode === "hivra-managed" && codexBrowser && !isPaidPlan(plan)) {
-    capacityBlocker = "Codex with a browser needs a paid plan on Hivra Cloud.";
+  } else if (destination.mode === "hivra-managed" && browserOn && !isPaidPlan(plan)) {
+    capacityBlocker = `${currentProfile?.name ?? "This agent"} with a browser needs a paid plan on Hivra Cloud.`;
     blockerRemedy = "managed-plan";
+    paywall = "browser";
     offerBrowserOff = true;
+  } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && plan?.needsActivation) {
+    // It fits Free. Free is turned on by the owner, with its own button.
+    capacityBlocker = `Turn on the Free plan to run ${currentProfile?.name ?? "it"} on Hivra Cloud. Free includes ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for one ${draft.resourceKind ?? "agent"} and costs nothing.`;
+    blockerRemedy = "activate-free";
   }
+  const recordUpgradeClick = (via: "plan_blocker" | "free_activation") => {
+    captureLaunchEvent("upgrade_clicked", {
+      ...launchEventContext(draft),
+      via,
+      paywall,
+      from_plan: plan?.needsActivation ? null : plan?.key ?? null,
+      to_plan: upgrade?.key ?? null,
+    });
+  };
+  // The upgrade funnel's paywall moments, recorded once per launch when the
+  // blocker is first on screen. A Free account out of agent slots is also
+  // the free-limit moment the welcome flow reported.
+  const paywallMoments = paywall && draft.stage === "plan" && !destination.loading ? (
+    <>
+      <FunnelMoment
+        momentKey={`paywall:${draft.launchRequestId}:${paywall}`}
+        event="paywall_viewed"
+        properties={{ ...launchEventContext(draft), paywall, from_plan: plan?.needsActivation ? null : plan?.key ?? null, to_plan: upgrade?.key ?? null }}
+      />
+      {paywall === "agent_limit" && !isPaidPlan(plan) ? (
+        <FunnelMoment
+          momentKey={`free_limit:${draft.launchRequestId}`}
+          event="free_limit_hit"
+          properties={{ ...launchEventContext(draft), limit_type: "agents", from_plan: "free", to_plan: upgrade?.key ?? null }}
+        />
+      ) : null}
+    </>
+  ) : null;
+
+  // ── Model access ──
+  // Codex on the owner's server takes a model key only when that server said
+  // it can hold one safely.
+  const modelSettingsSupported = destination.mode !== "self-managed"
+    || targetSupportsLaunchModelSettings(destination.selectedTarget, currentProfile?.runtimeId);
+  const modelAccessShown = hasModelAccess(draft.profileId);
+  const modelOptions = draft.profileId && modelAccessShown ? modelAccessOptions(draft.profileId, {
+    selfHosted,
+    providerComputer: wholeProviderComputer,
+    selfManaged: destination.mode === "self-managed",
+    modelSettingsSupported,
+    balance: creditsBalance,
+  }) : [];
+  // Hermes' default waits for the balance: it starts on credits only when
+  // there are some.
+  const modelDefaultPending = Boolean(draft.profileId && modelAccessShown
+    && draft.modelAccess.source === "recommended"
+    && recommendedModelAccessMode(draft.profileId, creditsBalance, selfHosted) === null);
+  const modelProblem = digitalOceanLane
+    ? digitalOceanHarness ? digitalOceanModelProblem(digitalOceanHarness, draft.digitalOcean, currentPastedKey) : null
+    : !draft.profileId || !modelAccessShown
+    ? null
+    : modelDefaultPending || (draft.modelAccess.mode === "credits" && creditsBalance.state === "loading")
+      ? "Checking your Hivra credits…"
+      : modelAccessProblem(draft.profileId, draft.modelAccess, {
+        name: draft.name,
+        pastedKey: currentPastedKey,
+        savedKeys,
+        options: modelOptions,
+      });
+  const keyProviders = draft.profileId ? apiKeyProviders(draft.profileId, savedKeys) : [];
+  const modelSummary = digitalOceanLane && digitalOceanHarness
+    ? effectiveDigitalOceanModelMode(digitalOceanHarness, draft.digitalOcean) === "vendor"
+      ? `Your ${digitalOceanVendorKey(digitalOceanHarness)}, sent to DigitalOcean for this sandbox`
+      : `DigitalOcean Inference · ${draft.digitalOcean.model || "no model chosen"}, billed to your team`
+    : draft.profileId
+    ? modelAccessSummary(draft.profileId, draft.modelAccess, { name: draft.name, balance: creditsBalance, savedKeys })
+    : null;
+  // Hermes' memory can use the owner's saved Honcho key. Like a model key, it
+  // is sent to the agent's computer only when the owner ticks it for this
+  // launch; Review says so.
+  const hermesMemoryKey = hermes ? savedMemoryKey(savedKeys) : null;
+  const resumeMode = launchResumeModeFor(draft);
+  // A resend that needs the pasted key again (it isn't kept across a reload).
+  const resendNeedsKey = draft.launchState === "uncertain" && resumeMode === "resend"
+    && draft.modelAccess.mode === "api-key" && draft.modelAccess.keySource === "paste" && !currentPastedKey.trim();
 
   const updateDraft = (change: Partial<LaunchDraft>) => setDraft(current => current ? { ...current, ...change } : current);
-  const chooseCodexBrowser = (browser: boolean) => {
+  const updateModelAccess = (change: Partial<LaunchModelAccess>) => setDraft(current => current
+    ? { ...current, modelAccess: { ...current.modelAccess, ...change, source: "custom" } }
+    : current);
+  const chooseBrowser = (browser: boolean) => {
     const resources = resourcesWithBrowser(browser);
     const raised = browser && draft.resources.source === "custom" && !sameResources(resources, draft.resources);
     updateDraft({
@@ -1070,24 +1614,36 @@ export function LaunchJourney() {
     }
     const details = PROFILE_DETAILS[profileId];
     const fresh = createLaunchDraft();
-    const browser = profileId === "codex"
-      && (recommendedCodexBrowser(destination.mode, destination.selectedTarget, plan) ?? false);
+    // Hermes runs on Hivra Cloud only, whatever the last profile used.
+    const mode = details.lane === "hermes-instance" ? "hivra-managed" as const : destination.mode;
+    const browser = profileHasBrowser(profileId)
+      && (recommendedBrowser(profileId, mode, destination.selectedTarget, plan) ?? false);
     const name = defaultLaunchName(profileId, existingNames ?? []);
     autoNameRef.current = existingNames ? null : { launchRequestId: fresh.launchRequestId, name };
     setWhereExpanded(false);
     setCustomizeOpen(false);
+    // A DigitalOcean team stays chosen across agents it runs, and the team a
+    // DigitalOcean card handed over is chosen for the first one.
+    const keptTeam = digitalOceanTeamFor(profileId, draft.capacity.mode === "digitalocean"
+      ? draft.capacity.targetId : handoff?.targetId ?? null);
     setDraft({
       ...fresh,
-      capacity: freshDraftCapacity(destination.choice),
+      capacity: keptTeam ? { mode: "digitalocean", targetId: keptTeam.id }
+        : details.lane === "hermes-instance" ? { mode: "hivra-managed", targetId: null } : freshDraftCapacity(destination.choice),
+      digitalOcean: keptTeam ? draft.digitalOcean : fresh.digitalOcean,
       stage: "plan",
       resourceKind: details.resourceKind,
       profileId,
       name,
       browser,
       browserSource: "recommended",
-      resources: profileId === "codex"
+      resources: profileHasBrowser(profileId)
         ? recommendedForPlan(profileId, plan, browser)
-        : recommendedHere(profileId, destination.mode, destination.selectedTarget, plan),
+        : recommendedHere(profileId, mode, destination.selectedTarget, plan),
+      modelAccess: {
+        ...freshModelAccess(),
+        mode: recommendedModelAccessMode(profileId, creditsBalance, selfHosted) ?? "native",
+      },
       windowsIsoVolume: null,
       windowsIsoEvidence: null,
       windowsIsoSource: "unknown",
@@ -1095,6 +1651,37 @@ export function LaunchJourney() {
       windowsRightsAttested: false,
     });
     setRestoredDestinationFor(null);
+  };
+  const chooseDigitalOcean = (targetId: string) => {
+    setWindowsDownloadTask(null);
+    updateDraft({ capacity: { mode: "digitalocean", targetId } });
+  };
+  const updateDigitalOcean = (change: Partial<LaunchDraft["digitalOcean"]>) => {
+    updateDraft({ digitalOcean: { ...draft.digitalOcean, ...change } });
+  };
+  const refreshPlaces = () => {
+    destination.refresh();
+    listManagedSessions()
+      .then(result => setDigitalOceanTeams({ state: "ready", targets: result.targets }))
+      .catch(() => undefined);
+  };
+  // A place the owner made ready in the capacity sheet is chosen for this
+  // launch: a DigitalOcean team as itself, anything else as a server.
+  const chooseCapacityTarget = async (targetId: string) => {
+    setCapacitySheetOpen(false);
+    setWhereExpanded(true);
+    let teams = digitalOceanTeams.targets;
+    try {
+      teams = (await listManagedSessions()).targets;
+      setDigitalOceanTeams({ state: "ready", targets: teams });
+    } catch { /* keep the teams already read */ }
+    if (teams.some(team => team.id === targetId)) chooseDigitalOcean(targetId);
+    else chooseTarget(targetId);
+    destination.refresh();
+  };
+  const closeCapacitySheet = () => {
+    setCapacitySheetOpen(false);
+    refreshPlaces();
   };
   const choosePreset = (preset: SizePreset) => {
     updateDraft({ resources: { ...preset.resources, source: "custom" } });
@@ -1198,8 +1785,98 @@ export function LaunchJourney() {
       stage: "review",
       launchState: "idle",
       submittedDeployment: null,
+      submittedAt: null,
       result: null,
       error: null,
+      errorAction: null,
+    });
+  };
+
+  const accept = (
+    submitted: LaunchDraft,
+    created: { id: string; name: string; status: string },
+    outcome: "accepted" | "found_on_check",
+  ) => {
+    const context = {
+      ...launchEventContext(submitted),
+      deploymentMode: submitted.submittedDeployment?.mode ?? null,
+    };
+    captureLaunchEvent("launch_request_accepted", { ...context, agentId: created.id, acceptedStatus: created.status, outcome });
+    // Hivra agents and computers report readiness from the server once they
+    // answer. Hermes' instance lane has no such report, so its funnel step is
+    // recorded here, when Hivra accepts the launch, as the welcome flow did.
+    if (submitted.profileId === "hermes") {
+      captureLaunchEvent("activation_instance_ready", {
+        ...context,
+        hasInstanceId: true,
+        outcome: outcome === "accepted" ? "created_instance" : "recovered_existing_instance",
+      });
+    }
+    const accepted = {
+      ...submitted,
+      stage: "launch" as const,
+      launchState: "accepted" as const,
+      result: { id: created.id, name: created.name, status: created.status },
+      error: null,
+      errorAction: null,
+    };
+    writeLaunchDraft(accepted, storageOwner);
+    setDraft(accepted);
+    // The launch has the key now; the page lets go of it.
+    setPastedKey(null);
+  };
+
+  // What a launch that didn't go ahead tells the first-run funnel, in the
+  // fields the welcome flow sent (stage, failureType, errorCategory,
+  // errorMessage, recoverable). A lost answer is not a failure: nothing is
+  // known yet, so it is reported as uncertain.
+  const recordLaunchFailure = (submitting: LaunchDraft, context: Record<string, unknown>, error: unknown) => {
+    const stage = launchFailureStage(submitting);
+    if (error instanceof LaunchCorrectableError && error.action?.kind === "verify-card") {
+      captureLaunchEvent("activation_card_required", context);
+      captureLaunchEvent("paywall_viewed", { ...context, paywall: "card_required" });
+      return;
+    }
+    if (error instanceof HivraLaunchCorrectableError) {
+      if (error.code === "FREE_INSTANCE_LIMIT_REACHED") {
+        const existing = error instanceof LaunchCorrectableError && error.action?.kind === "open" ? error.action.href : null;
+        captureLaunchEvent("free_limit_hit", {
+          ...context,
+          limit_type: "agents",
+          from_plan: "free",
+          to_plan: "operator",
+          has_existing_instance: Boolean(existing),
+        });
+      }
+      captureLaunchEvent("activation_failed", {
+        ...context,
+        stage,
+        failureType: error.code ?? "launch_needs_change",
+        errorCategory: "needs_change",
+        errorMessage: launchErrorMessage(error, [submitting.name]),
+        status: error.status,
+        recoverable: true,
+      });
+      return;
+    }
+    if (error instanceof HivraLaunchRejectedError) {
+      captureLaunchEvent("activation_failed", {
+        ...context,
+        stage,
+        failureType: "launch_rejected",
+        errorCategory: "rejected",
+        errorMessage: launchErrorMessage(error, [submitting.name]),
+        status: error.status,
+        serverFailureType: error.code ?? null,
+        recoverable: true,
+      });
+      return;
+    }
+    captureLaunchEvent("launch_outcome_uncertain", {
+      ...context,
+      stage,
+      errorMessage: launchErrorMessage(error, [submitting.name]),
+      resumeMode: submitting.profileId ? launchResumeModeFor(submitting) : null,
     });
   };
 
@@ -1207,11 +1884,13 @@ export function LaunchJourney() {
     const resumingUncertain = draft.launchState === "uncertain";
     const submissionDeployment = resumingUncertain
       ? draft.submittedDeployment
-      : destination.deployment;
+      : digitalOceanLane
+        ? digitalOceanTarget ? { mode: "digitalocean" as const, connectionId: digitalOceanTarget.connectionId, targetId: digitalOceanTarget.id } : null
+        : destination.deployment;
     if (
       !submissionDeployment
       || !draft.profileId
-      || (!resumingUncertain && capacityBlocker)
+      || (!resumingUncertain && (capacityBlocker || modelProblem))
       || draft.launchState === "submitting"
     ) return;
     const submitting = {
@@ -1219,46 +1898,98 @@ export function LaunchJourney() {
       stage: "launch" as const,
       launchState: "submitting" as const,
       submittedDeployment: submissionDeployment,
+      // A resumed launch keeps the moment its first request was sent.
+      submittedAt: resumingUncertain && draft.submittedAt ? draft.submittedAt : new Date().toISOString(),
       result: null,
       error: null,
+      errorAction: null,
     };
     writeLaunchDraft(submitting, storageOwner);
     setDraft(submitting);
+    setObservation(null);
+    setReconcileNote(null);
+    const eventContext = { ...launchEventContext(submitting), deploymentMode: submissionDeployment.mode };
+    captureLaunchEvent("activation_instance_requested", { ...eventContext, resumed: resumingUncertain });
+    // A pasted key the owner saved is referred to from then on, so a resumed
+    // or corrected launch never needs it typed again.
+    let savedKeyId: string | null = null;
+    const withSavedKey = <T extends LaunchDraft>(next: T): T => savedKeyId
+      ? { ...next, modelAccess: { ...next.modelAccess, keySource: "saved", vaultKeyId: savedKeyId, sendSavedKey: true } }
+      : next;
     try {
-      const created = await submitLaunchDraft(submitting, submissionDeployment);
-      const accepted = {
-        ...submitting,
-        launchState: "accepted" as const,
-        result: { id: created.id, name: created.name, status: created.status },
-        error: null,
-      };
-      writeLaunchDraft(accepted, storageOwner);
-      setDraft(accepted);
+      const created = await submitLaunchDraft(submitting, submissionDeployment, {
+        apiKey: currentPastedKey,
+        savedKeys,
+        balance: creditsBalance,
+        onObserved: setObservation,
+        digitalOceanTarget,
+        onKeySaved: (vaultKeyId, saved) => {
+          savedKeyId = vaultKeyId;
+          setSavedKeys(keys => [...keys.filter(key => key.provider !== saved.provider), saved]);
+        },
+      });
+      accept(withSavedKey(submitting), created, "accepted");
     } catch (error) {
+      recordLaunchFailure(submitting, eventContext, error);
       if (error instanceof HivraLaunchRejectedError) {
-        const failed = { ...submitting, launchState: "failed" as const, error: error.message };
+        const failed = withSavedKey({ ...submitting, launchState: "failed" as const, error: error.message });
         writeLaunchDraft(failed, storageOwner);
         setDraft(failed);
       } else if (error instanceof HivraLaunchCorrectableError) {
-        const correctable = {
+        const correctable = withSavedKey({
           ...submitting,
           stage: "review" as const,
           launchState: "idle" as const,
           submittedDeployment: null,
+          submittedAt: null,
           result: error.computerId ? { id: error.computerId, name: submitting.name, status: "error" } : null,
           error: error.message,
+          errorAction: error instanceof LaunchCorrectableError ? error.action : null,
+        });
+        writeLaunchDraft(correctable, storageOwner);
+        setDraft(correctable);
+        if (correctable.errorAction?.kind === "verify-card") setCardCheckOpen(true);
+      } else {
+        const uncertain = withSavedKey({
+          ...submitting,
+          launchState: "uncertain" as const,
+          error: error instanceof Error ? error.message : "The launch acknowledgement was lost.",
+        });
+        writeLaunchDraft(uncertain, storageOwner);
+        setDraft(uncertain);
+      }
+    }
+  };
+
+  // A launch whose lane takes no receipt is only ever looked for again,
+  // never resent: that can't start a second computer.
+  const checkAgain = async () => {
+    if (reconciling || draft.launchState !== "uncertain") return;
+    setReconciling(true);
+    setReconcileNote(null);
+    try {
+      const found = await reconcileLaunchDraft(draft);
+      if (found) accept(draft, found, "found_on_check");
+      else setReconcileNote(`Hivra can't see ${draft.name.trim()} yet. If you launched it a while ago and it still isn't here, start a new launch.`);
+    } catch (error) {
+      if (error instanceof HivraLaunchCorrectableError) {
+        const correctable = {
+          ...draft,
+          stage: "review" as const,
+          launchState: "idle" as const,
+          submittedDeployment: null,
+          submittedAt: null,
+          result: error.computerId ? { id: error.computerId, name: draft.name, status: "error" } : null,
+          error: error.message,
+          errorAction: null,
         };
         writeLaunchDraft(correctable, storageOwner);
         setDraft(correctable);
       } else {
-        const uncertain = {
-          ...submitting,
-          launchState: "uncertain" as const,
-          error: error instanceof Error ? error.message : "The launch acknowledgement was lost.",
-        };
-        writeLaunchDraft(uncertain, storageOwner);
-        setDraft(uncertain);
+        setReconcileNote("Hivra couldn't check right now. Nothing new was started; try again in a moment.");
       }
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -1270,12 +2001,21 @@ export function LaunchJourney() {
           Use {presetOffer.label} ({formatLaunchSize(presetOffer.resources.cpu, presetOffer.resources.ram)})
         </button>
       ) : null}
-      {offerBrowserOff ? <button type="button" onClick={() => chooseCodexBrowser(false)}>Turn off the browser</button> : null}
-      {destination.mode === "self-managed" ? <Link href={capacitySetupHref}>Set up capacity</Link>
+      {offerBrowserOff ? <button type="button" onClick={() => chooseBrowser(false)}>Turn off the browser</button> : null}
+      {destination.mode === "self-managed" ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up capacity</button>
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
-          <Link href={upgradeHref}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
-          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+          <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
+          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
+        </> : blockerRemedy === "activate-free" ? <>
+          <button type="button" onClick={() => void activateFree()} disabled={freeActivation.state === "activating"}>
+            {freeActivation.state === "activating" ? "Turning on Free…" : "Turn on Free"}
+          </button>
+          <Link href={upgradeHref} onClick={() => recordUpgradeClick("free_activation")}>See paid plans</Link>
+          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
+        </> : blockerRemedy === "settle-plan" && planHold ? <>
+          <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
+          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
         </> : null}
     </span>
   ) : null;
@@ -1312,18 +2052,9 @@ export function LaunchJourney() {
     selfHosted,
   };
   const renderTile = (tile: ChooseTile) => {
-    const fit = launchFit(tileSubject(tile), fitEvidence);
+    const fit = launchFit(launchProfileFitSubject(tile.id), fitEvidence);
     const Icon = tile.icon;
-    const body = <>
-      {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
-      <span className={styles.tileText}>
-        <strong>{tile.name}</strong>
-        <small>{tile.description}</small>
-        {tile.kind === "link" ? <small className={styles.tileHint}>Sets up on its own page</small> : null}
-      </span>
-      <FitBadge fit={fit} />
-    </>;
-    return tile.kind === "launch" ? (
+    return (
       <button
         key={tile.id}
         type="button"
@@ -1331,19 +2062,25 @@ export function LaunchJourney() {
         data-selected={draft.profileId === tile.id}
         onClick={() => chooseProfile(tile.id)}
       >
-        {body}
+        {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
+        <span className={styles.tileText}>
+          <strong>{tile.name}</strong>
+          <small>{tile.description}</small>
+        </span>
+        <FitBadge fit={fit} />
       </button>
-    ) : (
-      <Link key={tile.id} className={styles.tile} href={tile.href}>{body}</Link>
     );
   };
+  // A self-hosted installation has no Hivra Cloud, so an agent that runs only
+  // there isn't offered.
+  const agentTiles = AGENT_TILES.filter(tile => !selfHosted || PROFILE_DETAILS[tile.id].ownServer);
   const agentSection = (
     <section key="agents" className={styles.chooseSection} aria-labelledby="launch-agents-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-agents-heading">An agent</h2>
         <p>An AI that works on its own computer.</p>
       </div>
-      <div className={styles.tileGrid}>{AGENT_TILES.map(renderTile)}</div>
+      <div className={styles.tileGrid}>{agentTiles.map(renderTile)}</div>
     </section>
   );
   const computerSection = (
@@ -1358,31 +2095,48 @@ export function LaunchJourney() {
 
   const selfHostedTargetLabel = "Connected host";
   const whereForcedOpen = draft.profileId === "windows"
+    || (digitalOceanLane && !digitalOceanTarget && digitalOceanTeams.state !== "loading")
     || (destination.mode === "self-managed" && !destination.loading && !destination.selectedTarget)
     || (destination.mode === "self-managed" && Boolean(destination.error));
   const whereOpen = whereForcedOpen || whereExpanded;
-  const whereTitle = destination.mode === "hivra-managed" && !selfHosted
+  const whereTitle = digitalOceanLane
+    ? digitalOceanTarget ? `DigitalOcean · ${digitalOceanTarget.displayName}` : "DigitalOcean team unavailable"
+    : destination.mode === "hivra-managed" && !selfHosted
     ? "Hivra Cloud"
     : destination.selectedTarget?.displayName
       ?? (destination.loading ? "Checking your servers…" : "No server selected");
-  const whereDetail = destination.mode === "hivra-managed" && !selfHosted
-    ? plan ? `${plan.name} plan` : null
+  const whereDetail = digitalOceanLane
+    ? "A sandbox on your own DigitalOcean team. DigitalOcean bills it."
+    : destination.mode === "hivra-managed" && !selfHosted
+    ? planHold?.reason === "unconfirmed" ? "Paid plan · not active"
+      : plan?.onHold ? `${plan.onHold.name} plan · on hold`
+        : plan ? plan.needsActivation ? `${plan.name} plan · not turned on yet` : `${plan.name} plan` : null
     : destination.selectedTarget ? (selfHosted ? selfHostedTargetLabel : ownCapacityLabel(substrate)) : null;
-  const sizeSummary = draft.profileId === "omarchy" || draft.profileId === "windows"
+  const sizeSummary = currentProfile?.sizing === "fixed"
     ? `${draft.resources.cpu} CPU / ${draft.resources.ram} GB · fixed size`
     : gvisorComputer
       ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB enforced limit`
-      : `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved · up to ${draft.resources.maximumCpu ?? draft.resources.cpu} CPU / ${draft.resources.maximumRam ?? draft.resources.ram} GB`;
+      : pinnedSize
+        ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB`
+        : `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved · up to ${draft.resources.maximumCpu ?? draft.resources.cpu} CPU / ${draft.resources.maximumRam ?? draft.resources.ram} GB`;
   // Why the chosen preset's maximum is lower here than elsewhere.
   const cappedNote = currentFittedPreset?.capped
     ? destination.mode === "hivra-managed" && plan
       ? `Your ${plan.name} plan lets each ${draft.resourceKind ?? "agent"} use up to ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)}, so ${currentFittedPreset.label}'s maximum stops there.`
       : `This server has ${formatLaunchSize(maximumCpuLimit, maximumRamLimit)} in total, so ${currentFittedPreset.label}'s maximum stops there.`
     : null;
-  const modelAccess = draft.profileId ? modelAccessSummary(draft.profileId) : null;
-  const cost = draft.profileId ? costSummary({ profileId: draft.profileId, substrate, planName: plan?.name ?? null }) : "";
-  const whatItCanUse = draft.profileId ? capabilitySummary(draft.profileId, { browser: codexBrowser }) : "";
-  const launchLabel = draft.profileId === "windows" ? "Start Windows setup" : `Launch ${currentProfile?.name ?? ""}`.trim();
+  const cost = draft.profileId ? costSummary({
+    profileId: draft.profileId,
+    substrate,
+    planName: plan?.name ?? null,
+    modelNote: modelCostNote(draft.profileId, draft.modelAccess),
+    planPending: Boolean(plan?.needsActivation) && !planHold,
+    planOnHold: planHold ? planHold.reason === "unconfirmed" ? "paid" : planHold.planName : null,
+  }) : "";
+  const whatItCanUse = draft.profileId ? capabilitySummary(draft.profileId, { browser: browserOn }) : "";
+  const launchLabel = draft.profileId === "windows" ? "Start Windows setup"
+    : digitalOceanLane ? "Launch and start billing"
+    : `Launch ${currentProfile?.name ?? ""}`.trim();
 
   const windowsCapacity = draft.profileId === "windows" ? (
     <section className={styles.windowsCapacity} aria-labelledby="windows-capacity-heading">
@@ -1503,7 +2257,7 @@ export function LaunchJourney() {
           {destination.incompatibleReadyTargetCount > 0
             ? "Your ready hosts do not have current Windows compatibility evidence. "
             : "No compatible Windows host is ready. "}
-          <Link href={buildInfrastructureSetupHref("windows", { unified: true })}>Open Infrastructure</Link>
+          <button type="button" className={styles.inlineAction} onClick={() => setCapacitySheetOpen(true)}>Add capacity</button>
         </small>
       ) : null}
     </section>
@@ -1524,6 +2278,34 @@ export function LaunchJourney() {
             <p>Pick an agent or a computer. Hivra suggests where it runs and how big it is, and you review everything before anything starts.</p>
           </div>
           {upgradeNotice}
+          {freeActiveNotice}
+          {templateProblem ? (
+            <div className={styles.blocker} role="alert">
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{templateProblem.message}</strong>
+                {templateProblem.status === "failed" ? (
+                  <span className={styles.blockerActions}>
+                    <button type="button" onClick={() => setTemplateLookupRevision(value => value + 1)}>Try again</button>
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
+          {planHold ? (
+            <div className={styles.blocker} role="alert">
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{planHoldMessage(planHold)}</strong>
+                <span className={styles.blockerActions}>
+                  <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
+                </span>
+              </span>
+            </div>
+          ) : planChecked && plan?.needsActivation && !selfHosted ? (
+            <div className={styles.notice} role="status">
+              <Cloud size={16} aria-hidden />
+              <span>{`The Free plan runs one agent or computer with ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} on Hivra Cloud at no cost. You turn it on before you launch.`}</span>
+            </div>
+          ) : null}
           {planChecked && !plan?.usage && !selfHosted ? (
             <div className={styles.blocker} role="alert">
               <AlertTriangle size={16} aria-hidden />
@@ -1533,6 +2315,9 @@ export function LaunchJourney() {
             </div>
           ) : null}
           {requestedKindParam === "computer" ? [computerSection, agentSection] : [agentSection, computerSection]}
+          <p className={styles.chooseAside}>
+            Saved an agent as a template? <Link href="/dashboard/templates">Start from a template</Link>
+          </p>
           {footer(null, false)}
         </section>
       ) : null}
@@ -1549,6 +2334,13 @@ export function LaunchJourney() {
                 : "Hivra picked where it runs and how big it is. Change anything, then review before anything starts."}</p>
           </div>
           {upgradeNotice}
+          {freeActiveNotice}
+          {draft.template ? (
+            <div className={styles.notice} role="status">
+              <Check size={16} aria-hidden />
+              <span>{`Starting from the template “${draft.template.name ?? currentProfile.name}”. Its focus, personality and skills come with it.`}</span>
+            </div>
+          ) : null}
           <div className={styles.planCard} role="group" aria-label="Launch plan">
             <label className={`${styles.planRow} ${styles.nameField}`}>
               <span className={styles.planLabel}>{draft.resourceKind === "computer" ? "Computer name" : "Agent name"}</span>
@@ -1558,7 +2350,7 @@ export function LaunchJourney() {
                   aria-invalid={nameProblem ? true : undefined}
                   aria-describedby="launch-name-hint"
                   value={draft.name}
-                  maxLength={LAUNCH_NAME_MAX_LENGTH}
+                  maxLength={hermes ? HERMES_NAME_MAX_LENGTH : LAUNCH_NAME_MAX_LENGTH}
                   autoCapitalize="none"
                   autoComplete="off"
                   autoCorrect="off"
@@ -1601,13 +2393,39 @@ export function LaunchJourney() {
                 <DeploymentDestinationControl
                   state={{ ...destination, setMode: chooseDestinationMode, setSelectedTargetId: chooseTarget }}
                   managedAvailable={!selfManagedOnly}
+                  ownServerSupported={currentProfile.lane !== "hermes-instance"}
                   runtimeName={currentProfile.name}
                   resourceLabel={draft.resourceKind ?? "agent"}
                   capacitySetupHref={capacitySetupHref}
+                  onSetUpCapacity={() => setCapacitySheetOpen(true)}
+                  otherSelected={digitalOceanLane}
+                  otherOptions={digitalOceanChoices.map(team => (
+                    <DestinationOption
+                      key={team.id}
+                      selected={digitalOceanLane && digitalOceanTarget?.id === team.id}
+                      onClick={() => chooseDigitalOcean(team.id)}
+                      icon={<Droplet size={16} aria-hidden="true" />}
+                      title={`DigitalOcean · ${team.displayName}`}
+                      detail="A sandbox on your own DigitalOcean team. DigitalOcean bills it per second."
+                    />
+                  ))}
                 />
               </div>
             ) : null}
 
+            {digitalOceanLane ? (digitalOceanTarget && digitalOceanHarness ? (
+              <DigitalOceanLaunchPlan
+                target={digitalOceanTarget}
+                harness={digitalOceanHarness}
+                agentName={draft.name}
+                choice={draft.digitalOcean}
+                onChange={updateDigitalOcean}
+                pastedKey={currentPastedKey}
+                onPastedKeyChange={setCurrentPastedKey}
+                problem={modelProblem}
+                balance={digitalOceanBalance}
+              />
+            ) : null) : (<>
             <div className={styles.planRow}>
               <span className={styles.planLabel}>Size</span>
               <span className={styles.planValue}>
@@ -1645,7 +2463,9 @@ export function LaunchJourney() {
                     {cappedNote ? <small>{cappedNote}</small> : null}
                     <small>{gvisorComputer
                       ? "The sandbox always keeps its full CPU and memory, and never uses more."
-                      : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>
+                      : pinnedSize
+                        ? `${currentProfile.name} always keeps this CPU and memory, and never uses more.`
+                        : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>
                     <button
                       type="button"
                       className={styles.inlineAction}
@@ -1668,10 +2488,10 @@ export function LaunchJourney() {
                   <fieldset aria-label="Reserved CPU">
                     <legend>Reserved CPU</legend>
                     <div>{currentProfile.cpuOptions.filter(cpu => cpu >= (resourceFloor?.cpu ?? 0)).map(cpu => (
-                      <button key={cpu} type="button" disabled={cpu > reservedCpuLimit} aria-pressed={draft.resources.cpu === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, cpu, maximumCpu: gvisorComputer ? cpu : Math.max(cpu, draft.resources.maximumCpu ?? draft.resources.cpu), source: "custom" } })}>{cpu} CPU</button>
+                      <button key={cpu} type="button" disabled={cpu > reservedCpuLimit} aria-pressed={draft.resources.cpu === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, cpu, maximumCpu: pinnedSize ? cpu : Math.max(cpu, draft.resources.maximumCpu ?? draft.resources.cpu), source: "custom" } })}>{cpu} CPU</button>
                     ))}</div>
                   </fieldset>
-                  {!gvisorComputer ? <fieldset aria-label="Maximum CPU">
+                  {!pinnedSize ? <fieldset aria-label="Maximum CPU">
                     <legend>Maximum CPU</legend>
                     <div>{currentProfile.cpuOptions.filter(cpu => cpu >= draft.resources.cpu).map(cpu => (
                       <button key={cpu} type="button" disabled={cpu > maximumCpuLimit} aria-pressed={(draft.resources.maximumCpu ?? draft.resources.cpu) === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, maximumCpu: cpu, source: "custom" } })}>{cpu} CPU</button>
@@ -1680,10 +2500,10 @@ export function LaunchJourney() {
                   <fieldset aria-label="Reserved memory">
                     <legend>Reserved memory</legend>
                     <div>{currentProfile.ramOptions.filter(ram => ram >= (resourceFloor?.ram ?? 0)).map(ram => (
-                      <button key={ram} type="button" disabled={ram > reservedRamLimit} aria-pressed={draft.resources.ram === ram} onClick={() => updateDraft({ resources: { ...draft.resources, ram, maximumRam: gvisorComputer ? ram : Math.max(ram, draft.resources.maximumRam ?? draft.resources.ram), source: "custom" } })}>{ram} GB</button>
+                      <button key={ram} type="button" disabled={ram > reservedRamLimit} aria-pressed={draft.resources.ram === ram} onClick={() => updateDraft({ resources: { ...draft.resources, ram, maximumRam: pinnedSize ? ram : Math.max(ram, draft.resources.maximumRam ?? draft.resources.ram), source: "custom" } })}>{ram} GB</button>
                     ))}</div>
                   </fieldset>
-                  {!gvisorComputer ? <fieldset aria-label="Maximum memory">
+                  {!pinnedSize ? <fieldset aria-label="Maximum memory">
                     <legend>Maximum memory</legend>
                     <div>{currentProfile.ramOptions.filter(ram => ram >= draft.resources.ram).map(ram => (
                       <button key={ram} type="button" disabled={ram > maximumRamLimit} aria-pressed={(draft.resources.maximumRam ?? draft.resources.ram) === ram} onClick={() => updateDraft({ resources: { ...draft.resources, maximumRam: ram, source: "custom" } })}>{ram} GB</button>
@@ -1693,17 +2513,17 @@ export function LaunchJourney() {
               </div>
             ) : null}
 
-            {draft.profileId === "codex" ? (
+            {hasBrowser && draft.profileId ? (
               <label className={`${styles.planRow} ${styles.browserToggle}`}>
                 <span className={styles.planLabel}>Browser</span>
                 <span className={styles.planValue}>
                   <span className={styles.browserChoice}>
-                    <input type="checkbox" checked={draft.browser} onChange={event => chooseCodexBrowser(event.target.checked)} />
+                    <input type="checkbox" checked={draft.browser} onChange={event => chooseBrowser(event.target.checked)} />
                     <span>
-                      <strong>Browser for Codex</strong>
+                      <strong>Browser for {currentProfile.name}</strong>
                       <small>
-                        Lets Codex open and use a web browser on its computer. Needs at least {formatLaunchSize(CODEX_BROWSER_FLOOR.cpu, CODEX_BROWSER_FLOOR.ram)} with
-                        the browser, or {formatLaunchSize(CODEX_BASE_FLOOR.cpu, CODEX_BASE_FLOOR.ram)} without it.
+                        {browserCopy(draft.profileId)} Needs at least {formatLaunchSize(browserFloorFor(draft.profileId).cpu, browserFloorFor(draft.profileId).ram)} with
+                        the browser, or {formatLaunchSize(baseFloorFor(draft.profileId).cpu, baseFloorFor(draft.profileId).ram)} without it.
                         {destination.mode === "hivra-managed" && plan && !isPaidPlan(plan) ? " On Hivra Cloud, the browser needs a paid plan." : null}
                       </small>
                     </span>
@@ -1712,11 +2532,44 @@ export function LaunchJourney() {
               </label>
             ) : null}
 
-            {modelAccess ? (
+            {modelAccessShown && draft.profileId ? (
               <div className={styles.planRow}>
-                <span className={styles.planLabel}>Model access</span>
-                <span className={styles.planValue}><span className={styles.planSummary}><strong>{modelAccess}</strong></span></span>
+                <span className={styles.planLabel} aria-hidden>Model access</span>
+                <span className={styles.planValue}>
+                  <ModelAccessControl
+                    profileId={draft.profileId}
+                    agentName={draft.name}
+                    access={draft.modelAccess}
+                    options={modelOptions}
+                    onChange={updateModelAccess}
+                    pastedKey={currentPastedKey}
+                    onPastedKeyChange={setCurrentPastedKey}
+                    savedKeys={savedKeys}
+                    providers={keyProviders}
+                    balance={creditsBalance}
+                    onAddCredit={() => setDepositOpen(true)}
+                    problem={modelProblem}
+                  />
+                </span>
               </div>
+            ) : null}
+            {hermesMemoryKey ? (
+              <label className={`${styles.planRow} ${styles.browserToggle}`}>
+                <span className={styles.planLabel}>Memory</span>
+                <span className={styles.planValue}>
+                  <span className={styles.browserChoice}>
+                    <input
+                      type="checkbox"
+                      checked={draft.sendMemoryKey}
+                      onChange={event => updateDraft({ sendMemoryKey: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Send my saved Honcho key {savedKeyHint(hermesMemoryKey)} to {draft.name.trim() || "Hermes"}&apos;s computer</strong>
+                      <small>It gives Hermes long-term memory in your Honcho account, for this launch only. Leave it off to launch without it.</small>
+                    </span>
+                  </span>
+                </span>
+              </label>
             ) : null}
             <div className={styles.planRow}>
               <span className={styles.planLabel}>Cost</span>
@@ -1726,18 +2579,29 @@ export function LaunchJourney() {
               <span className={styles.planLabel}>What it can use</span>
               <span className={styles.planValue}><span className={styles.planSummary}><strong>{whatItCanUse}</strong></span></span>
             </div>
+            </>)}
           </div>
           {capacityBlocker ? (
             <div className={styles.blocker} role={destination.loading || !planChecked ? "status" : "alert"}>
               <AlertTriangle size={16} aria-hidden />
               <span><strong>{capacityBlocker}</strong>{blockerActions}</span>
+              {paywallMoments}
+            </div>
+          ) : null}
+          {freeActivation.state === "failed" && plan?.needsActivation ? (
+            <div className={styles.blocker} role="alert">
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{freeActivation.message}</strong></span>
             </div>
           ) : null}
           {footer(primary("Review launch", () => advanceTo("review", {
-            capacity: destination.mode === "hivra-managed"
-              ? { mode: "hivra-managed", targetId: null }
-              : { mode: "self-managed", targetId: destination.selectedTarget?.id ?? null },
-          }), Boolean(capacityBlocker || nameProblem)))}
+            // A DigitalOcean team is its own choice; the host destination only
+            // speaks for Hivra Cloud and the owner's servers.
+            capacity: digitalOceanLane ? draft.capacity
+              : destination.mode === "hivra-managed"
+                ? { mode: "hivra-managed", targetId: null }
+                : { mode: "self-managed", targetId: destination.selectedTarget?.id ?? null },
+          }), Boolean(capacityBlocker || nameProblem || modelProblem)))}
         </section>
       ) : null}
 
@@ -1751,20 +2615,48 @@ export function LaunchJourney() {
           {upgradeNotice}
           <dl className={styles.review} aria-label="Launch review">
             <div><dt>Runs on</dt><dd>
-              {destination.mode === "hivra-managed" && !selfHosted
+              {digitalOceanLane
+                ? <>DigitalOcean · {digitalOceanTarget?.displayName ?? "team unavailable"}<small>A sandbox on your own DigitalOcean team</small></>
+                : destination.mode === "hivra-managed" && !selfHosted
                 ? <>Hivra Cloud<small>Private virtual machine</small></>
                 : <>{destination.selectedTarget?.displayName ?? "Unavailable server"}{destination.selectedTarget
                   ? <small>{selfHosted ? selfHostedTargetLabel : ownCapacityLabel(substrate)}</small> : null}</>}
             </dd></div>
-            <div><dt>Size</dt><dd>{wholeProviderComputer
+            <div><dt>Size</dt><dd>{digitalOceanLane
+              ? (() => { const size = digitalOceanTarget ? digitalOceanSizeFor(digitalOceanTarget, draft.digitalOcean) : null;
+                return size ? `${digitalOceanSizeLabel(size)} DigitalOcean sandbox` : "No size available"; })()
+              : wholeProviderComputer
               ? "The whole server · its CPU and memory stay as they are"
               : gvisorComputer
                 ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved and enforced maximum`
                 : sizeSummary}</dd></div>
-            <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{whatItCanUse}</dd></div>
-            {modelAccess ? <div><dt>Model</dt><dd>{modelAccess}</dd></div> : null}
-            <div><dt>Cost</dt><dd>{cost}</dd></div>
-            <div><dt>Changes</dt><dd>{launchChangesSummary({
+            <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{digitalOceanLane
+              ? "Its own DigitalOcean sandbox and /workspace. Chat and files through Hivra. No browser, desktop or terminal."
+              : whatItCanUse}</dd></div>
+            {draft.resourceKind === "agent" && draft.profileId ? <div><dt>You can see its work in</dt><dd>{
+              // The same decision that draws the agent page's tabs and the note
+              // Hivra gives the agent about its computer (ATT-15).
+              agentLaunchWatchRow(digitalOceanLane
+                ? { type: draft.profileId, computer_substrate: "do-managed-session", deployment_mode: "self-managed" }
+                : { type: draft.profileId, computer_substrate: substrate === "provider-vm" ? "provider-vm" : "proxmox-kvm",
+                  deployment_mode: destination.mode }, { browser: digitalOceanLane ? false : browserOn })}</dd></div> : null}
+            {modelSummary ? <div><dt>Model</dt><dd>{modelSummary}</dd></div> : null}
+            {hermesMemoryKey && draft.sendMemoryKey && !digitalOceanLane
+              ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>
+              : null}
+            {draft.template ? <div><dt>Template</dt><dd>{draft.template.name ?? "Saved template"}<small>{digitalOceanLane
+              ? "Not applied on DigitalOcean: its sandbox starts from DigitalOcean's own setup."
+              : "Its focus, personality and skills are applied when it launches."}</small></dd></div> : null}
+            <div><dt>Cost</dt><dd>{digitalOceanLane
+              ? <>DigitalOcean bills this sandbox per second while it runs, to your team.{digitalOceanBalance.balance && digitalOceanBalance.balance.state !== "unreadable"
+                ? <small>Prepaid balance {formatDigitalOceanBalance(digitalOceanBalance.balance.balance)}</small> : null}</>
+              : cost}</dd></div>
+            {digitalOceanLane && draft.digitalOcean.firstTask.trim()
+              ? <div><dt>First task</dt><dd>{draft.digitalOcean.firstTask.trim()}<small>Sent right after Hivra&apos;s setup note.</small></dd></div>
+              : null}
+            <div><dt>Changes</dt><dd>{digitalOceanLane
+              ? `Creates one DigitalOcean sandbox on ${digitalOceanTarget?.displayName ?? "your team"} and starts it. DigitalOcean bills from now. Hivra sends it a short setup note as the first chat message. Nothing is bought from Hivra.`
+              : launchChangesSummary({
               profileId: draft.profileId,
               substrate,
               targetName: destination.selectedTarget?.displayName ?? null,
@@ -1777,21 +2669,37 @@ export function LaunchJourney() {
           <details className={styles.technical}>
             <summary>Technical details</summary>
             <dl aria-label="Technical details">
-              <div><dt>Isolation</dt><dd>{isolationDetail(substrate)}</dd></div>
-              <div><dt>Runtime</dt><dd>{currentProfile.runtimeId}{draft.profileId === "codex" ? ` · browser ${draft.browser ? "on" : "off"}` : ""}</dd></div>
-              {destination.mode === "self-managed" && destination.selectedTarget ? <div><dt>Server id</dt><dd>{destination.selectedTarget.id}</dd></div> : null}
+              {digitalOceanLane ? <>
+                <div><dt>Isolation</dt><dd>DigitalOcean sandbox microVM</dd></div>
+                <div><dt>Agent</dt><dd>{digitalOceanHarness ?? currentProfile.runtimeId} on DigitalOcean Managed Agents</dd></div>
+                {digitalOceanTarget ? <div><dt>Team id</dt><dd>{digitalOceanTarget.id}</dd></div> : null}
+              </> : <>
+                <div><dt>Isolation</dt><dd>{isolationDetail(substrate)}</dd></div>
+                <div><dt>Runtime</dt><dd>{currentProfile.runtimeId}{hasBrowser ? ` · browser ${draft.browser ? "on" : "off"}` : ""}</dd></div>
+                {destination.mode === "self-managed" && destination.selectedTarget ? <div><dt>Server id</dt><dd>{destination.selectedTarget.id}</dd></div> : null}
+              </>}
               <div><dt>Launch request</dt><dd>{draft.launchRequestId}</dd></div>
             </dl>
           </details>
           {capacityBlocker ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{capacityBlocker}</strong>{blockerActions}</span></div> : null}
-          {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><strong>{draft.error}</strong></div> : null}
+          {modelProblem && !capacityBlocker ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><span><strong>{modelProblem}</strong>
+            <span className={styles.blockerActions}><button type="button" onClick={goBack}>Change model access</button></span>
+          </span></div> : null}
+          {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{draft.error}</strong>
+            {draft.errorAction ? <span className={styles.blockerActions}>
+              {draft.errorAction.kind === "verify-card"
+                ? <button type="button" onClick={() => setCardCheckOpen(true)}>Add a card to continue</button>
+                : <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>}
+            </span> : null}
+          </span></div> : null}
           {draft.result?.status === "error" ? <div className={styles.blocker}>
             <AlertTriangle size={16} aria-hidden />
             <span><strong>Part of this launch was created and can be removed.</strong>
               <Link href={`/dashboard/agent/${encodeURIComponent(draft.result.id)}?tab=manage`}>Open it to delete</Link>
             </span>
           </div> : null}
-          {footer(primary(launchLabel, () => void submit(), Boolean(capacityBlocker || !destination.deployment || nameProblem)))}
+          {footer(primary(launchLabel, () => void submit(), Boolean(capacityBlocker
+            || (digitalOceanLane ? !digitalOceanTarget : !destination.deployment) || nameProblem || modelProblem)))}
         </section>
       ) : null}
 
@@ -1801,10 +2709,24 @@ export function LaunchJourney() {
           <span className={styles.eyebrow}>Launch in progress</span>
           <h1 id="launch-progress-heading">Confirming your launch…</h1>
           <p>Hivra is checking the request for {draft.name.trim()}. We’ll open it as soon as the launch is confirmed.</p>
+          <p className={styles.observed}>
+            {observedLaunchText(observation, resumeMode === "resend")}
+            {draft.submittedAt ? <> · Sent {elapsedSince(Date.parse(draft.submittedAt), now)} ago</> : null}
+          </p>
         </section>
       ) : null}
 
-      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result ? (
+      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && hermes && !digitalOceanLane ? (
+        <HermesLaunched
+          name={draft.result.name || draft.name.trim()}
+          instanceId={draft.result.id}
+          href={launchResultHref(draft, draft.result.id)}
+          onLeave={() => clearLaunchDraft(storageOwner)}
+          onStartNew={startNew}
+        />
+      ) : null}
+
+      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && (!hermes || digitalOceanLane) ? (
         <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading">
           <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
           <span className={styles.eyebrow}>Launch accepted</span>
@@ -1822,19 +2744,52 @@ export function LaunchJourney() {
         <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-uncertain-heading">
           <span className={styles.warningIcon}><AlertTriangle size={24} aria-hidden /></span>
           <span className={styles.eyebrow}>Not confirmed yet</span>
-          <h1 id="launch-uncertain-heading">Launch could not be confirmed.</h1>
-          <p>The request may already have reached Hivra. Checking again uses the same request, so it won&apos;t start a second one.</p>
+          <h1 id="launch-uncertain-heading">{resumeMode === "observe" ? "We couldn't confirm the launch yet." : "Launch could not be confirmed."}</h1>
+          <p>{resumeMode === "observe"
+            ? `The request may already have reached Hivra. Check again looks for ${draft.name.trim()}; it won't start a second one.`
+            : "The request may already have reached Hivra. Checking again uses the same request, so it won't start a second one."}</p>
           {draft.error ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><strong>{draft.error}</strong></div> : null}
-          <button
-            type="button"
-            className={styles.primaryAction}
-            data-testid="launch-primary-action"
-            onClick={() => void submit()}
-            disabled={!draft.submittedDeployment}
-          >
-            Resume same launch <ArrowRight size={15} aria-hidden />
-          </button>
-          {!draft.submittedDeployment ? (
+          {reconcileNote ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><strong>{reconcileNote}</strong></div> : null}
+          {resendNeedsKey ? (
+            <label className={styles.resendKey}>
+              <span>Paste your API key again to check this same launch. It isn&apos;t kept in this browser.</span>
+              <input
+                type="password"
+                value={currentPastedKey}
+                onChange={event => setCurrentPastedKey(event.target.value)}
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="done"
+                data-ph-no-capture="true"
+                className="ph-no-capture"
+                aria-label="API key"
+              />
+            </label>
+          ) : null}
+          {resumeMode === "observe" ? (
+            <button
+              type="button"
+              className={styles.primaryAction}
+              data-testid="launch-primary-action"
+              onClick={() => void checkAgain()}
+              disabled={reconciling}
+            >
+              {reconciling ? "Checking…" : "Check again"} <ArrowRight size={15} aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.primaryAction}
+              data-testid="launch-primary-action"
+              onClick={() => void submit()}
+              disabled={!draft.submittedDeployment || resendNeedsKey}
+            >
+              Resume same launch <ArrowRight size={15} aria-hidden />
+            </button>
+          )}
+          {!draft.submittedDeployment || (resumeMode === "observe" && reconcileNote) ? (
             <button type="button" className={styles.outcomeLink} onClick={startNew}>Start a new launch</button>
           ) : null}
           <Link className={styles.outcomeLink} href="/dashboard">Check Home</Link>
@@ -1845,13 +2800,38 @@ export function LaunchJourney() {
         <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-failed-heading">
           <span className={styles.warningIcon}><AlertTriangle size={24} aria-hidden /></span>
           <span className={styles.eyebrow}>Launch stopped</span>
-          <h1 id="launch-failed-heading">Nothing new will be started from this receipt.</h1>
+          <h1 id="launch-failed-heading">{resumeMode === "observe" ? "This launch didn't go through." : "Nothing new will be started from this receipt."}</h1>
           <p>{draft.error || "The launch was rejected before it could be accepted."}</p>
           <button type="button" className={styles.primaryAction} onClick={reviewFailedLaunch}>
             Review launch <ArrowRight size={15} aria-hidden />
           </button>
           <button type="button" className={styles.outcomeLink} onClick={startNew}>Start a new launch</button>
         </section>
+      ) : null}
+
+      {depositOpen ? (
+        <ManagedVeniceDepositModal
+          isOpen
+          initialWalletType="card"
+          onClose={() => setDepositOpen(false)}
+          onRefreshSummary={() => setCreditsRevision(value => value + 1)}
+        />
+      ) : null}
+      <FreeTierCardVerification
+        open={cardCheckOpen}
+        message={draft.errorAction?.kind === "verify-card" ? draft.error : null}
+        onClose={() => setCardCheckOpen(false)}
+        onVerified={async () => {
+          setCardCheckOpen(false);
+          await submit();
+        }}
+      />
+      {capacitySheetOpen ? (
+        <LaunchCapacitySheet
+          launchResourceId={capacityResourceFor(draft.profileId)}
+          onLaunchTarget={targetId => void chooseCapacityTarget(targetId)}
+          onClose={closeCapacitySheet}
+        />
       ) : null}
     </main>
   );

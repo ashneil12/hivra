@@ -1,7 +1,7 @@
 "use client";
 
-// Hivra per-agent view — Chat (live) · <Agent> Terminal · Box Terminal ·
-// Manage. Server-backed: polls the agent until provisioning finishes, then the
+// Hivra per-agent view — Chat (Chat, <Agent> session) · Computer (Terminal,
+// Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -10,9 +10,18 @@ import styles from "./ResourceWorkspace.module.css";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X } from "lucide-react";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import {
+  AGENT_SURFACE_IDS,
+  agentComputerPairLabel,
+  agentSurfaceGroups,
+  agentSurfaceLabel,
+  agentSurfacesFor,
+  type AgentSurfaceGroupId,
+  type AgentSurfaceId,
+} from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
@@ -59,13 +68,10 @@ import {
 
 const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
 
-type Tab = "chat" | "aeon" | "desktop" | "files" | "git" | "skills" | "telegram" | "tasks" | "terminal" | "box" | "browser" | "manage";
-
-// Tabs shown for dashboard-surface agents (Aeon): the embedded dashboard + the
-// box shell + files + manage. No chat/browser/skills/telegram. Desktop belongs
-// to computers only: the desktop service refuses agent resources.
-const DASHBOARD_TABS: Tab[] = ["aeon", "files", "box", "manage"];
-const COMPUTER_BASE_TABS: Tab[] = ["desktop", "manage"];
+// Which tabs a resource has is one shared decision (agentSurfacesFor): the
+// Computer Contract and the launch Review read it too, so what the agent is
+// told and what its owner can open cannot drift apart.
+type Tab = AgentSurfaceId;
 const COMPUTER_WORKSPACE_TABS: Tab[] = ["files", "box"];
 
 const labelStyle: React.CSSProperties = {
@@ -77,20 +83,28 @@ const labelStyle: React.CSSProperties = {
   color: "var(--text-muted)",
 };
 
-const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "chat", label: "Chat", icon: <MessageSquareText size={14} /> },
-  { id: "aeon", label: "Dashboard", icon: <LayoutDashboard size={14} /> },
-  { id: "desktop", label: "Desktop", icon: <Monitor size={14} /> },
-  { id: "terminal", label: "Claude Code Terminal", icon: <TerminalSquare size={14} /> },
-  { id: "browser", label: "Browser", icon: <Monitor size={14} /> },
-  { id: "box", label: "Box Terminal", icon: <SquareTerminal size={14} /> },
-  { id: "files", label: "Files", icon: <FolderTree size={14} /> },
-  { id: "git", label: "Git", icon: <GitBranch size={14} /> },
-  { id: "skills", label: "Skills", icon: <Sparkles size={14} /> },
-  { id: "telegram", label: "Telegram", icon: <Send size={14} /> },
-  { id: "tasks", label: "Tasks", icon: <CalendarClock size={14} /> },
-  { id: "manage", label: "Manage", icon: <Settings2 size={14} /> },
-];
+const TAB_ICONS: Record<Tab, React.ReactNode> = {
+  chat: <MessageSquareText size={14} />,
+  aeon: <LayoutDashboard size={14} />,
+  desktop: <Monitor size={14} />,
+  terminal: <TerminalSquare size={14} />,
+  browser: <Globe size={14} />,
+  box: <SquareTerminal size={14} />,
+  files: <FolderTree size={14} />,
+  git: <GitBranch size={14} />,
+  skills: <Sparkles size={14} />,
+  telegram: <Send size={14} />,
+  tasks: <CalendarClock size={14} />,
+  manage: <Settings2 size={14} />,
+};
+const TABS: { id: Tab }[] = AGENT_SURFACE_IDS.map((id) => ({ id }));
+const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
+  work: <MessageSquareText size={14} />,
+  computer: <Computer size={14} />,
+  manage: <Settings2 size={14} />,
+};
+const WORK_PANE_ID = "agent-work-pane";
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 // The chat/terminal pick is remembered (global) — whichever the user looked at
 // last sticks across refreshes and navigating away. Other tabs don't persist.
@@ -740,8 +754,8 @@ export default function AgentPage() {
   // writer once the workspace route became a door — the only one was
   // `UnifiedWorkspace`, which stopped being imported. This route is where the
   // visit actually happens, so it is where the record belongs. Recording is
-  // fire-and-forget and cannot navigate: a stored selection is offered on Home,
-  // never followed.
+  // fire-and-forget and cannot navigate: Home offers the stored selection as
+  // "Continue", and follows it only when the app itself is opened at Home.
   useEffect(() => {
     if (!id) return;
     persistWorkspaceSelection({
@@ -792,8 +806,9 @@ export default function AgentPage() {
   }
   if (agent.computer_substrate === "do-managed-session") {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
-    // surface. Box tabs (files, git, terminal, skills) do not apply.
-    return <DigitalOceanAgentWorkspace agentId={agent.id} onDeleted={() => go("/dashboard")} />;
+    // surface, with its own Chat, Files and Manage views. The computer tabs
+    // (Terminal, Browser, Git) and Skills do not apply.
+    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => go("/dashboard")} />;
   }
 
   const def = catalogAgent(agent.type);
@@ -804,36 +819,25 @@ export default function AgentPage() {
   const isGvisorComputer = isComputer && agent.computer_substrate === "gvisor";
   const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
     && agent.computer_profile === "ubuntu-desktop";
-  // A running lifecycle record plus its provisioned chat_url is the durable
-  // workspace capability signal. The surfaces handle transient gateway outages
-  // themselves so navigation does not appear and disappear with live probes.
-  const hasComputerWorkspace = isComputer
-    && agent.status === "running"
-    && agent.computer_profile !== "windows"
-    && Boolean(agent.chat_url?.trim());
-  const computerTabs: Tab[] = isGvisorComputer
-    ? ["manage"]
-    : hasComputerWorkspace
-      ? [...COMPUTER_BASE_TABS, ...COMPUTER_WORKSPACE_TABS]
-      : COMPUTER_BASE_TABS;
-  const termLabel = `${def?.name || "Agent"} Terminal`;
-  const tabs = TABS
-    .filter((t) =>
-      isComputer
-        ? computerTabs.includes(t.id)
-        : isDashboard
-        // Dashboard-surface agents (Aeon, OpenClaw) get the embedded dashboard +
-        // box shell + files, plus the live Browser tab for browser-capable ones
-        // (OpenClaw drives the box's CDP Chrome shown there).
-        ? DASHBOARD_TABS.includes(t.id) || (t.id === "browser" && Boolean(def?.browser))
-        // CLI-chat agents: no dashboard or desktop tab (Desktop is a computer
-        // surface); keep Browser discoverable for browser-capable agents even
-        // when the runtime has it toggled off.
-        : t.id !== "aeon" && t.id !== "desktop" && (t.id !== "browser" || Boolean(def?.browser)),
-    )
-    .map((t) => t.id === "terminal"
-      ? { ...t, label: termLabel }
-      : isComputer && t.id === "box" ? { ...t, label: "Terminal" } : t);
+  // For a computer, a running lifecycle record plus its provisioned chat_url
+  // is the durable workspace capability signal (agentSurfacesFor). The
+  // surfaces handle transient gateway outages themselves so navigation does
+  // not appear and disappear with live probes.
+  const computerTabs: Tab[] = isComputer ? agentSurfacesFor(agent) : [];
+  const tabs = agentSurfacesFor(agent).map((id) => ({
+    id,
+    // A computer's own shell is just "Terminal"; an agent's CLI is its session.
+    label: agentSurfaceLabel(id, def),
+    icon: TAB_ICONS[id],
+  }));
+  // Agent pages group their surfaces: Chat · Computer (Terminal, Files,
+  // Browser, Git) · Manage. Computers keep their short flat list.
+  const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
+    id: group.id,
+    label: group.label,
+    icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
+    surfaces: group.surfaces,
+  }));
   // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
   // falls back to the dashboard surface.
   // One shared decision with the workspace: resource-landing owns "what does
@@ -857,7 +861,7 @@ export default function AgentPage() {
         ? tab
         : landing.landing === "desktop" ? "desktop" : "manage"
     : isDashboard
-      ? ((DASHBOARD_TABS.includes(tab) || (tab === "browser" && Boolean(def?.browser))) ? tab : "aeon")
+      ? (tabs.some((t) => t.id === tab) ? tab : "aeon")
       // A stale or shared link can name a surface this agent lacks (Desktop,
       // Dashboard); land on Chat rather than an empty pane.
       : tabs.some((t) => t.id === tab) ? tab : "chat";
@@ -901,6 +905,10 @@ export default function AgentPage() {
           identity on native clients; the existing session components stay below. */}
       <ResourceSurfaceNavigation
         surfaces={tabs}
+        groups={surfaceGroups}
+        panelId={WORK_PANE_ID}
+        // The linked pair, where the owner is looking at the computer.
+        groupNotes={isComputer ? undefined : { computer: `${capitalize(agentComputerPairLabel(agent))}` }}
         active={effectiveTab}
         onSelect={selectTab}
         exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
@@ -927,7 +935,7 @@ export default function AgentPage() {
         />
       ) : null}
 
-      <div className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
+      <div id={WORK_PANE_ID} className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
             among local surfaces. Only computers have a desktop. */}
@@ -968,7 +976,7 @@ export default function AgentPage() {
                 surfaceId="terminal"
                 url={`${agent.chat_url.replace(/\/$/, "")}/terminal/`}
                 token={tok}
-                label={`${def?.name || "Agent"} · terminal`}
+                label={`${def?.name || "Agent"} session`}
                 onManage={() => selectTab("manage")}
               />
             ) : null}
@@ -983,7 +991,7 @@ export default function AgentPage() {
               surfaceId="box"
               url={`${agent.chat_url.replace(/\/$/, "")}/box-terminal/`}
               token={tok}
-              label="Box · shell"
+              label="Terminal"
               onManage={() => selectTab("manage")}
             />}
           </>
@@ -1037,10 +1045,10 @@ export default function AgentPage() {
         ) : effectiveTab === "manage" ? (
           managePanel
         ) : agent.status === "error" ? (
-          <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the box. Destroy it and try again."} />
+          <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
         ) : effectiveTab === "aeon" ? (
           !agent.chat_url ? (
-            <Stub title="Dashboard not reachable" body="The box is up but its dashboard endpoint isn't connected yet. Give it a moment." />
+            <Stub title="Dashboard not reachable" body="The computer is up but its dashboard isn't connected yet. Give it a moment." />
           ) : loggedIn === null && def?.connect === "github" ? (
             <LoadingState compact label="Checking access…" />
           ) : loggedIn || def?.connect !== "github" ? (
@@ -1057,7 +1065,7 @@ export default function AgentPage() {
           )
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
-            <Stub title="Runtime not reachable" body="The box is up but its chat endpoint isn't connected yet. Give it a moment." />
+            <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />
           ) : chatReadiness === "upgrade_required" ? (
             <div className={styles.statusPanel} role="status">
               <h3>This computer needs a Chat update</h3>
@@ -1078,14 +1086,14 @@ export default function AgentPage() {
         ) : effectiveTab === "desktop" ? (
           agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
         ) : effectiveTab === "git" ? (
-          agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "files" ? (
           providerWorkspace && agent.status === "running" && agent.chat_url ? null
-            : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+            : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "skills" ? (
-          agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "telegram" ? (
-          agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "tasks" ? (
           agent.status === "running" ? (
             <TasksPanel
@@ -1096,10 +1104,10 @@ export default function AgentPage() {
               currentPlan={plan?.key ?? null}
             />
           ) : (
-            <Stub title="Not ready" body="The box isn't running yet — scheduled tasks become available once it's online." />
+            <Stub title="Not ready" body="The computer isn't running yet. Scheduled tasks become available once it's online." />
           )
         ) : effectiveTab === "terminal" || effectiveTab === "box" ? (
-          agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The box isn't reachable yet." />
+          agent.status === "running" && agent.chat_url ? null : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "browser" ? (
           browserOn === false ? (
             <BrowserDisabledView
@@ -1110,7 +1118,7 @@ export default function AgentPage() {
           ) : agent.chat_url ? (
             <BrowserView url={`${agent.chat_url.replace(/\/$/, "")}/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true`} token={tok} surfaceId="browser" active={effectiveTab === "browser"} onManage={() => selectTab("manage")} />
           ) : (
-            <Stub title="Not ready" body="The box isn't reachable yet." />
+            <Stub title="Not ready" body="The computer isn't reachable yet." />
           )
         ) : managePanel}
       </div>

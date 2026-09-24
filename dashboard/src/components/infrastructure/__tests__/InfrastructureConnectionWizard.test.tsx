@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 
 import {
@@ -518,6 +518,30 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Ready, current" })).toHaveAttribute("aria-current", "step");
     expect(onGvisorReady).toHaveBeenCalledWith(savedHost.id);
+  });
+
+  // Review of slice 5: the header kept saying ready after the check lapsed.
+  it("stops calling the host ready once this wizard's Linux Sandbox check is 15 minutes old", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+    try {
+      (discoverInfrastructureHost as jest.Mock).mockResolvedValue(gvisorDiscovery(true));
+      (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: "44444444-4444-4444-8444-444444444444", ready: true });
+      render(
+        <InfrastructureConnectionWizard
+          onClose={jest.fn()}
+          onConnectionSaved={jest.fn()}
+          onPreflightComplete={jest.fn()}
+          onGvisorReady={jest.fn()}
+        />,
+      );
+      fillAndConnect();
+      fireEvent.click(await screen.findByRole("button", { name: "Check readiness" }));
+      expect(await screen.findByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(15 * 60_000 + 1_000); });
+      expect(screen.getByRole("heading", { level: 1, name: "Needs a check" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).not.toBeInTheDocument();
+    } finally { jest.useRealTimers(); }
   });
 
   it("offers Connect as root when discovery signed in without root", async () => {

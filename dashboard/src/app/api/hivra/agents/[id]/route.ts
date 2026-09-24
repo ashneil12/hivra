@@ -31,6 +31,10 @@ import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { seedAgentBox } from "@/lib/hivra/agent-bootstrap";
+import { advanceProxmoxComputerContract } from "@/lib/hivra/computer-contract-delivery";
+import { advanceProviderAgentUpkeep, providerAgentUpkeepApplies } from "@/lib/hivra/provider-agent-upkeep";
+import { runAfterResponse } from "@/lib/hivra/after-response";
+import { computerContractPlanFor } from "@/lib/agent-computers/computer-contract-input";
 import { getAccountMemory } from "@/lib/account-memory";
 import { bankrSkillsDirForType, seedBankrSkillsOntoBox } from "@/lib/hivra/bankr-skills-seed";
 import { installCuratedSkillsOnBox } from "@/lib/hivra/skill-install";
@@ -336,7 +340,14 @@ async function maybeSeedTemplateSkills(
   return updated || agent;
 }
 
+// Upkeep that reaches the computer (the provider launch seeds and the Computer
+// Contract) runs after this poll's response, never before it. It shares the
+// invocation's maxDuration (120 s), so every round trip it starts must be able
+// to finish by this deadline, measured from the start of the poll.
+const BACKGROUND_UPKEEP_DEADLINE_MS = 110_000;
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const pollStartedAt = Date.now();
   try {
     if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
@@ -386,7 +397,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         latest = observed;
       }
       // Provider computers have no Proxmox VMID or host-side bootstrap lane.
-      // Never pass them to the legacy poll, seed or managed-fleet fallback.
+      // Never pass them to the legacy poll, seed or managed-fleet fallback;
+      // their seeds and contract use the enrolled provider pin instead, after
+      // this response, so an unreachable computer never holds up the page.
+      if (providerAgentUpkeepApplies(latest)) {
+        const snapshot = latest;
+        runAfterResponse(
+          () => advanceProviderAgentUpkeep(userId, snapshot, { deadline: pollStartedAt + BACKGROUND_UPKEEP_DEADLINE_MS }),
+          { source: "hivra/agents/[id]", failureType: "provider_agent_upkeep_failed", userId, agentId: String(snapshot.id) },
+        );
+      }
       const sameOperation = latest.operation_id === agent.operation_id && latest.operation_kind === agent.operation_kind;
       const response = apiSuccess({ agent: { ...sanitizeHivraAgentRow(latest),
         ...(sameOperation && latest.status === "provisioning" && readiness ? { readiness_stage: readiness } : {}),
@@ -931,6 +951,26 @@ fi` : ""}`;
       if (needsBootstrap) current = await maybeSeedBootstrap(current, userId, context.env);
       if (needsBankrSkills) current = await maybeSeedBankrSkills(current, userId, context.env);
       if (needsTemplateSkills) current = await maybeSeedTemplateSkills(current, userId, context.env);
+    }
+
+    // Computer Contract: keep what the agent is told about its computer
+    // current. Unlike the one-shot identity seed it is revisioned: a rename or
+    // resize mints a new revision, and delivery is compare-and-swap with a
+    // read-back receipt. It runs after this response and never fails it.
+    const contractPlan = computerContractPlanFor(current as Parameters<typeof computerContractPlanFor>[0]);
+    // It waits for the confirmed bootstrap, which rewrites the same
+    // system-prompt.md: a bootstrap retry on the next poll could otherwise
+    // overwrite a contract block this poll just delivered.
+    if (current.status === "running" && current.ip && current.bootstrapped_at
+      && contractPlan.status === "deliverable" && contractPlan.channel === "proxmox-seed") {
+      const snapshot = current;
+      // The owner-scoped host environment is resolved only when a round trip
+      // is due, not on every page load.
+      runAfterResponse(
+        () => advanceProxmoxComputerContract(userId, snapshot, async () => (await getExecutionContext()).env, "auto",
+          { deadline: pollStartedAt + BACKGROUND_UPKEEP_DEADLINE_MS }),
+        { source: "hivra/agents/[id]", failureType: "computer_contract_step_skipped", userId, agentId: String(snapshot.id) },
+      );
     }
 
     return apiSuccess({ agent: sanitizeHivraAgentRow(current) });

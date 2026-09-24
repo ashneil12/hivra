@@ -331,14 +331,14 @@ describe("LaunchPage", () => {
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
     expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Preview");
 
-    // Other agents still launch from their own setup page, with a way back here.
-    expect(within(agents).getByRole("link", { name: /^Claude Code/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=claude-code&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
-    expect(within(agents).getByRole("link", { name: /^Hermes/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=general&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
-    expect(within(agents).getByRole("link", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
-    expect(within(agents).getByRole("link", { name: /^Agent Zero/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=agent-zero&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    // Every catalog agent launches here; none hands off to another page.
+    expect(within(agents).queryAllByRole("link")).toHaveLength(0);
+    expect(within(agents).getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
+    expect(within(agents).getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
+    expect(within(agents).getByRole("button", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Agent Zero/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    expect(screen.queryByText(/Sets up on its own page/i)).not.toBeInTheDocument();
 
     chooseTile("Codex");
     expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
@@ -385,7 +385,12 @@ describe("LaunchPage", () => {
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Customize" })).toHaveAttribute("aria-expanded", "false");
     expect(within(card).getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
-    expect(within(card).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
+    // Codex signs in inside itself by default; a key or Hivra credits are the
+    // other two choices, in the same control every agent uses.
+    const modelAccess = within(card).getByRole("group", { name: "Model access" });
+    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(modelAccess).getByRole("button", { name: /^Use my API key/ })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(card).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
     expect(within(card).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     expect(screen.queryByText(/balloon|opportunistic|shared scheduling/i)).not.toBeInTheDocument();
@@ -402,6 +407,10 @@ describe("LaunchPage", () => {
     expect(within(review).getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
     expect(within(review).getByText("Your agent can use")).toBeInTheDocument();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
+    // Where the owner watches it work, from the same decision as the agent
+    // page's tabs and the note Hivra gives the agent (ATT-15).
+    expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
+      "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
     expect(within(review).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
     expect(within(review).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
     expect(within(review).getByText("Creates one computer and installs Codex. Nothing is bought.")).toBeInTheDocument();
@@ -621,10 +630,8 @@ describe("LaunchPage", () => {
     expect(whereButton(/Hivra Cloud/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /^My server/ })).toBeDisabled();
     expect(screen.queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Infrastructure" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=windows&returnTo=unified-launch",
-    );
+    // Capacity opens in a sheet over the launch (slice 10), not on another page.
+    expect(screen.getByRole("button", { name: "Add capacity" })).toBeInTheDocument();
     expect(screen.queryByText(/private|test|evaluation|licen[cs]e|legal/i)).not.toBeInTheDocument();
   });
 
@@ -910,6 +917,25 @@ describe("LaunchPage", () => {
     }));
   });
 
+  // Live on Canary: a Command plan with 23 of 24 CPU in use said "has 1 CPU /
+  // 16 GB left", mixing the free CPU with the per-computer memory limit.
+  it("names only the plan's shared allowance that runs short, with what is in use", async () => {
+    fetchPlanStrictMock.mockResolvedValue({
+      ...PAID_PLAN, name: "Command", maxAgents: 999, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128,
+      usage: { agentCount: 10, usedCpu: 23, usedRam: 46 },
+    });
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
+    chooseTile("Codex");
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+    const blocker = screen.getByRole("alert");
+    expect(blocker).toHaveTextContent("Codex with a browser needs 1.5 CPU / 3 GB. Your Command plan has 1 of its 24 CPU free.");
+    expect(blocker).not.toHaveTextContent(/16 GB left/);
+  });
+
   it("states the browser shortfall with real choices and lets the owner turn the browser off", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     render(<LaunchPage />);
@@ -927,10 +953,7 @@ describe("LaunchPage", () => {
       "href",
       `/dashboard/billing?from=launch&returnTo=${encodeURIComponent(`/dashboard/launch?draft=${storedDraftJson().launchRequestId}`)}`,
     );
-    expect(within(blocker).getByRole("link", { name: "Set up your own capacity" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
-    );
+    expect(within(blocker).getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
     expect(screen.queryByText(/does not have enough remaining capacity/)).not.toBeInTheDocument();
 
     fireEvent.click(within(blocker).getByRole("button", { name: "Turn off the browser" }));
@@ -1086,10 +1109,7 @@ describe("LaunchPage", () => {
     expect(browser).toBeChecked();
     const blocker = screen.getByRole("alert");
     expect(blocker).toHaveTextContent("The selected host does not have enough measured capacity for this size.");
-    expect(within(blocker).getByRole("link", { name: "Set up capacity" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
-    );
+    expect(within(blocker).getByRole("button", { name: "Set up capacity" })).toBeInTheDocument();
     expect(within(blocker).queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
 
@@ -1497,10 +1517,7 @@ describe("LaunchPage", () => {
     expect(whereButton(/My infrastructure/i)).toHaveAttribute("aria-pressed", "true");
     const blocker = await screen.findByRole("alert");
     expect(blocker).toHaveTextContent("Linux Sandbox requires a compatible gVisor host you connected.");
-    expect(within(blocker).getByRole("link", { name: "Set up capacity" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=linux-terminal&returnTo=unified-launch",
-    );
+    expect(within(blocker).getByRole("button", { name: "Set up capacity" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
   });
@@ -1549,10 +1566,7 @@ describe("LaunchPage", () => {
 
       expect(await screen.findByText(/No compatible capacity is ready/i)).toBeInTheDocument();
       expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
-      expect(screen.getByRole("link", { name: /Set up capacity/i })).toHaveAttribute(
-        "href",
-        "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
-      );
+      expect(screen.getByRole("button", { name: /Set up capacity/i })).toBeInTheDocument();
 
       view.unmount();
       process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "hosted";

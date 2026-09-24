@@ -269,6 +269,46 @@ describe("createAgent receipt handling", () => {
 
     await expect(createAgent(input)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
   });
+
+  it("accepts a model launch from its own admission record, which names the request but has no launch state", async () => {
+    const agent = { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 };
+    const modelInput = { ...input, llm: { provider: "venice" as const, mode: "managed" as const, model: "deepseek-v4-pro", walletType: "card" as const } };
+    for (const status of [200, 201]) {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status,
+        json: async () => ({ success: true, data: { agent, launchRequestId } }),
+      } as Response);
+      await expect(createAgent(modelInput)).resolves.toEqual(agent);
+    }
+  });
+
+  it("still needs an accepted launch state for a launch without a model key", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ success: true, data: {
+        agent: { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 },
+        launchRequestId,
+      } }),
+    } as Response);
+
+    await expect(createAgent(input)).rejects.toThrow("Provision returned an invalid receipt (201)");
+  });
+
+  it("never accepts a model launch answered for another request", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: {
+        agent: { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 },
+        launchRequestId: "22222222-2222-4222-8222-222222222222",
+      } }),
+    } as Response);
+
+    await expect(createAgent({ ...input, llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key" } }))
+      .rejects.toThrow("Provision returned an invalid receipt (200)");
+  });
 });
 
 describe("deleteAgent", () => {
@@ -451,6 +491,59 @@ describe("fetchPlanStrict managed usage", () => {
   it("preserves usage even for a free-tier subscriber", async () => {
     response({ agentCount: 1, usedCpu: 0.5, usedRam: 1024 }, "free");
     await expect(fetchPlanStrict()).resolves.toMatchObject({ key: "free", subscribed: false, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
+  });
+
+  function noPlan(extra: Record<string, unknown>) {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: {
+      subscribed: false, plan: null, usage: null, ...extra,
+    } }) });
+  }
+
+  it("marks an account billing reports no plan for as needing the Free plan turned on, with what it already runs", async () => {
+    noPlan({ planOnHold: null, managedUsage: { agentCount: 1, usedCpu: 0.5, usedRam: 1024 } });
+    const plan = await fetchPlanStrict();
+    expect(plan).toMatchObject({ key: "free", subscribed: false, needsActivation: true, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
+    expect(plan?.onHold).toBeUndefined();
+  });
+
+  it("leaves an account without a plan unknown, never empty, when billing couldn't read what it runs", async () => {
+    noPlan({});
+    const plan = await fetchPlanStrict();
+    expect(plan).toMatchObject({ key: "free", needsActivation: true });
+    expect(plan?.usage).toBeUndefined();
+    noPlan({ managedUsage: { agentCount: -1, usedCpu: 0, usedRam: 0 } });
+    expect((await fetchPlanStrict())?.usage).toBeUndefined();
+  });
+
+  it("reads a paid plan on hold as that plan, never as an account that can turn Free on", async () => {
+    noPlan({
+      planOnHold: { key: "operator", name: "Pro", status: "past_due", reason: "payment_overdue", billingPortal: true },
+      managedUsage: { agentCount: 2, usedCpu: 1, usedRam: 2048 },
+    });
+    const plan = await fetchPlanStrict();
+    expect(plan?.needsActivation).toBeUndefined();
+    expect(plan?.onHold).toEqual({ key: "operator", name: "Pro", reason: "payment_overdue", billingPortal: true });
+    // Everything else stays Free's shape: nothing reads the account as paid.
+    expect(plan).toMatchObject({ key: "free", name: "Free", subscribed: false, usage: { agentCount: 2, usedCpu: 1, usedRam: 2 } });
+  });
+
+  it.each([
+    { key: "operator", name: "Pro", reason: "unknown_reason" },
+    { key: "", name: "Pro", reason: "no_slots" },
+    { key: "operator", reason: "no_slots" },
+    "operator",
+  ])("treats a malformed plan hold as no hold: %j", async (planOnHold) => {
+    noPlan({ planOnHold });
+    const plan = await fetchPlanStrict();
+    expect(plan?.onHold).toBeUndefined();
+    expect(plan?.needsActivation).toBe(true);
+  });
+
+  it("never marks an active plan, Free included, as needing activation", async () => {
+    response({ agentCount: 0, usedCpu: 0, usedRam: 0 }, "free");
+    expect((await fetchPlanStrict())?.needsActivation).toBeUndefined();
+    response({ agentCount: 0, usedCpu: 0, usedRam: 0 }, "operator");
+    expect((await fetchPlanStrict())?.needsActivation).toBeUndefined();
   });
 
   it.each([null, {}, { agentCount: 0 }, { agentCount: -1, usedCpu: 0, usedRam: 0 }, { agentCount: 1, usedCpu: "2", usedRam: 4096 }, { agentCount: 1, usedCpu: 2, usedRam: -1 }])("does not invent empty capacity from invalid usage: %j", async (usage) => {

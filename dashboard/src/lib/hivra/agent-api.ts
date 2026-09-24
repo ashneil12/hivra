@@ -105,6 +105,9 @@ export interface AgentLlmInput {
   mode: "byok" | "managed";
   /** BYOK only. */
   apiKey?: string;
+  /** BYOK only: a Venice key saved in the owner's Vault, read by the server
+   * instead of being sent again. Never combined with apiKey. */
+  vaultKeyId?: string;
   model?: string;
   /** Managed only. */
   walletType?: "hermesos" | "card";
@@ -144,6 +147,9 @@ export interface CreateAgentInput {
   /** Stable owner-generated receipt key for native Codex and Ubuntu launches.
    * Reuse this exact UUID after an uncertain response; never mint one per retry. */
   launchRequestId?: string;
+  /** A saved template to start from (id or slug). The server checks the owner
+   * may use it and applies its identity and skills; fields sent here win. */
+  templateId?: string;
 }
 
 export class HivraLaunchInProgressError extends Error {
@@ -270,8 +276,10 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
   if (input.launchRequestId) {
     if (
       data?.agent
-      && data.launch?.state === "accepted"
       && data.launchRequestId === input.launchRequestId
+      // A launch with a model key answers from its own admission record,
+      // which names the request but has no launch-operation state.
+      && (data.launch?.state === "accepted" || (input.llm !== undefined && data.launch === undefined))
     ) return data.agent;
     throw new Error(`Provision returned an invalid receipt (${r.status})`);
   }
@@ -372,7 +380,24 @@ export interface PlanInfo {
   poolRam: number;
   /** Account-wide managed usage from billing, including Hermes. RAM is GB here. */
   usage?: { agentCount: number; usedCpu: number; usedRam: number };
+  /** Billing reports no plan at all yet: a new account before the Free plan
+   * is turned on. Hivra Cloud launches need a plan first. */
+  needsActivation?: boolean;
+  /** Billing reports no active plan because this paid one holds the account
+   * without granting anything: a payment didn't go through, or it has no
+   * agent slots. Free can't be turned on over it; it is settled in Billing.
+   * The plan itself stays Free's shape, so nothing reads it as paid. Never
+   * set together with `needsActivation`. */
+  onHold?: PlanOnHold;
 }
+
+export type PlanOnHold = {
+  key: string;
+  name: string;
+  reason: "payment_overdue" | "no_slots";
+  /** The billing portal can settle it (a live Stripe subscription bills it). */
+  billingPortal: boolean;
+};
 
 const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxAgents: 1, maxCpuPerAgent: 0.5, maxRamPerAgent: 1, poolCpu: 0.5, poolRam: 1 };
 
@@ -394,6 +419,34 @@ const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxA
  */
 export function isFreePlanInfo(plan: PlanInfo | null | undefined): boolean {
   return !!plan && (!plan.subscribed || plan.key === "free");
+}
+
+/** Usage billing observed, with RAM converted from MB to GB; undefined when
+ * it is missing or malformed. */
+function observedUsage(value: unknown): PlanInfo["usage"] {
+  if (!value || typeof value !== "object") return undefined;
+  const observed = value as { agentCount?: unknown; usedCpu?: unknown; usedRam?: unknown };
+  return typeof observed.agentCount === "number" && Number.isInteger(observed.agentCount) && observed.agentCount >= 0 &&
+    typeof observed.usedCpu === "number" && Number.isFinite(observed.usedCpu) && observed.usedCpu >= 0 &&
+    typeof observed.usedRam === "number" && Number.isFinite(observed.usedRam) && observed.usedRam >= 0
+    ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
+    : undefined;
+}
+
+const PLAN_ON_HOLD_REASONS = new Set(["payment_overdue", "no_slots"]);
+
+/** The paid plan billing says holds an account that has no active plan. */
+function planOnHold(value: unknown): PlanOnHold | null {
+  if (!value || typeof value !== "object") return null;
+  const hold = value as { key?: unknown; name?: unknown; reason?: unknown; billingPortal?: unknown };
+  if (typeof hold.key !== "string" || !hold.key.trim() || typeof hold.name !== "string" || !hold.name.trim()) return null;
+  if (typeof hold.reason !== "string" || !PLAN_ON_HOLD_REASONS.has(hold.reason)) return null;
+  return {
+    key: hold.key,
+    name: hold.name,
+    reason: hold.reason as "payment_overdue" | "no_slots",
+    billingPortal: hold.billingPortal === true,
+  };
 }
 
 // Agent slot counts come from the authoritative source (subscription/agent-slots)
@@ -422,18 +475,32 @@ export async function fetchPlanStrict(): Promise<PlanInfo | null> {
     const r = await fetch("/api/billing/usage", { cache: "no-store" });
     const j = await readJson(r);
     if (!r.ok || !j || j.success !== true) return null;
-    const d = j.data as { subscribed?: boolean; usage?: { agentCount?: unknown; usedCpu?: unknown; usedRam?: unknown } | null; plan?: { name?: string; key?: string; maxAgents?: number; maxCpuPerAgent?: number; maxRamPerAgent?: number; totalCpu?: number; totalRam?: number } | null };
-    const observed = d.usage;
+    const d = j.data as {
+      subscribed?: boolean;
+      usage?: unknown;
+      managedUsage?: unknown;
+      planOnHold?: unknown;
+      plan?: { name?: string; key?: string; maxAgents?: number; maxCpuPerAgent?: number; maxRamPerAgent?: number; totalCpu?: number; totalRam?: number } | null;
+    };
+    if (!d.subscribed) {
+      // No plan. What the account already runs on Hivra Cloud is reported
+      // separately (it counts against Free once Free is on); left out when
+      // billing couldn't read it, so it stays unknown rather than zero.
+      const running = observedUsage(d.managedUsage);
+      const runningFields = running ? { usage: running } : {};
+      const onHold = planOnHold(d.planOnHold);
+      // A paid plan holds the account, and is settled in Billing. Everything
+      // else stays Free's, so no caller reads the account as paid or plans
+      // beyond what it could get without that plan.
+      if (onHold) return { ...FREE_PLAN, ...runningFields, onHold };
+      // A new account: Free is what turning a plan on would give.
+      return { ...FREE_PLAN, ...runningFields, needsActivation: true };
+    }
     // Missing or malformed usage is unknown, not an empty pool. Launch callers
     // require this evidence; plan-only callers keep their existing behavior.
-    const usage = observed &&
-      typeof observed.agentCount === "number" && Number.isInteger(observed.agentCount) && observed.agentCount >= 0 &&
-      typeof observed.usedCpu === "number" && Number.isFinite(observed.usedCpu) && observed.usedCpu >= 0 &&
-      typeof observed.usedRam === "number" && Number.isFinite(observed.usedRam) && observed.usedRam >= 0
-      ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
-      : undefined;
+    const usage = observedUsage(d.usage);
     const usageFields = usage ? { usage } : {};
-    if (!d.subscribed || !d.plan) return { ...FREE_PLAN, ...usageFields };
+    if (!d.plan) return { ...FREE_PLAN, ...usageFields };
     const key = d.plan.key || "paid";
     if (key === "free") return { ...FREE_PLAN, ...usageFields }; // the free row is subscribed:true but is NOT paid
     const ramGb = Math.max(1, Math.round((Number(d.plan.maxRamPerAgent) || 8192) / 1024)); // plan RAM is MB
@@ -671,6 +738,45 @@ export async function readBoxSession(boxUrl: string, id: string, token?: string 
     return (((await r.json()) as { messages?: BoxMessage[] }).messages) || [];
   } catch { return []; }
 }
+// ---- Detached chat runs ----
+// A chat turn runs on the box independently of the browser request that started
+// it, so closing the tab or losing the network does not end the agent's work.
+// These let the chat stop a run explicitly and find runs that kept going while
+// the page was closed or offline. Boxes on an older runtime have no run API.
+export interface BoxChatRun {
+  runId: string;
+  clientRef: string | null;
+  state: "running" | "finished";
+  title: string;
+  code: number | null;
+  stopped: "user" | "disconnect" | null;
+  interrupted: boolean;
+  agentSessionId: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+/** Recent runs, newest first; null when the box predates detached runs or is unreachable. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null): Promise<BoxChatRun[] | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token) });
+    if (!r.ok) return null;
+    const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
+    return Array.isArray(runs) ? runs : null;
+  } catch { return null; }
+}
+export function boxChatRunEventsUrl(boxUrl: string, runId: string): string {
+  return `${boxBase(boxUrl)}/api/chat/runs/${encodeURIComponent(runId)}/events`;
+}
+/** Ask the box to end a run. Resolves false when the box could not confirm it. */
+export async function stopBoxChatRun(boxUrl: string, runId: string, token?: string | null): Promise<boolean> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs/${encodeURIComponent(runId)}/stop`, {
+      method: "POST", headers: boxHeaders(token), keepalive: true,
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
 export async function listBoxFiles(boxUrl: string, dir: string, token?: string | null): Promise<{ path: string; entries: BoxFileEntry[]; error: string | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/files?path=${encodeURIComponent(dir)}`, { cache: "no-store", headers: boxHeaders(token) });

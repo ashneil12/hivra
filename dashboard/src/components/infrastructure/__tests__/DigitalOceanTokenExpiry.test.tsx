@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 const mockConnect = jest.fn();
 const mockReplace = jest.fn();
 const mockSetExpiry = jest.fn();
+const mockBalance = jest.fn();
 
 jest.mock("@/lib/hivra/managed-session-client", () => {
   const actual = jest.requireActual("@/lib/hivra/managed-session-client");
@@ -13,6 +14,7 @@ jest.mock("@/lib/hivra/managed-session-client", () => {
     connectDigitalOceanAccount: (...args: unknown[]) => mockConnect(...args),
     replaceDigitalOceanAccountToken: (...args: unknown[]) => mockReplace(...args),
     setDigitalOceanAccountTokenExpiry: (...args: unknown[]) => mockSetExpiry(...args),
+    getDigitalOceanBalance: (...args: unknown[]) => mockBalance(...args),
   };
 });
 
@@ -45,7 +47,6 @@ function card(connection: Partial<DigitalOceanConnectionDto>, onExpiryChanged = 
       target={target}
       sessions={[]}
       refreshing={false}
-      onLaunch={jest.fn()}
       onRefresh={jest.fn()}
       onReplaceToken={jest.fn()}
       onDelete={jest.fn()}
@@ -56,7 +57,37 @@ function card(connection: Partial<DigitalOceanConnectionDto>, onExpiryChanged = 
 }
 
 beforeEach(() => {
-  for (const mock of [mockConnect, mockReplace, mockSetExpiry]) mock.mockReset();
+  for (const mock of [mockConnect, mockReplace, mockSetExpiry, mockBalance]) mock.mockReset();
+  mockBalance.mockResolvedValue({ state: "ok", balance: "25.00", autoPrepay: false, checkedAt: "2026-09-24T00:00:00.000Z" });
+});
+
+describe("DigitalOceanConnectionCard prepaid balance", () => {
+  it("shows the observed balance", async () => {
+    card({ credentialExpiry: null });
+    expect(await screen.findByText("$25.00")).toBeInTheDocument();
+    expect(mockBalance).toHaveBeenCalledWith(CONNECTION, expect.anything());
+  });
+
+  it("warns before launch when DigitalOcean is blocking sessions, and re-checks on request", async () => {
+    mockBalance.mockResolvedValueOnce({ state: "blocked", balance: "0.00", autoPrepay: false, checkedAt: "2026-09-24T00:00:00.000Z" });
+    card({ credentialExpiry: null });
+    expect(await screen.findByText(/not starting Managed Agents sessions for this team/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Add funds in DigitalOcean/ })).toHaveAttribute("href", "https://cloud.digitalocean.com/account/billing");
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(mockBalance).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("$25.00")).toBeInTheDocument();
+  });
+
+  it("says when the token cannot see billing instead of guessing", async () => {
+    mockBalance.mockResolvedValueOnce({ state: "unreadable" });
+    card({ credentialExpiry: null });
+    expect(await screen.findByText("Not visible to this token")).toBeInTheDocument();
+  });
+
+  it("does not check the balance for a rejected token", () => {
+    card({ status: "error", lastErrorCode: "invalid_credentials", credentialExpiry: null });
+    expect(mockBalance).not.toHaveBeenCalled();
+  });
 });
 
 describe("DigitalOceanConnectionCard token expiry", () => {

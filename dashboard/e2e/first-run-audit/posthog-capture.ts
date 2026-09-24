@@ -115,14 +115,15 @@ export class PostHogCapture {
       'activation_started',
       'activation_page_viewed',
       'activation_dashboard_reached',
-      'welcome_agent_type_selected',
-      'welcome_persona_selected',
+      // Launch sends these (source: launch-journey); the welcome flow's own
+      // selection events retired with it.
       'activation_instance_requested',
+      'launch_request_accepted',
+      'launch_outcome_uncertain',
       'activation_card_required',
       'paywall_viewed',
       'activation_instance_ready',
       'activation_failed',
-      'welcome_dead_click_candidate',
       'webui_handoff_mint',
       'webui_iframe_loaded',
       'webui_iframe_error',

@@ -154,9 +154,8 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const railLabel = (item: DashboardNavigationItem, label: string) =>
     effectivelyExpanded ? null : <span className={styles.railLabel} aria-hidden>{label === item.label ? DASHBOARD_RAIL_SHORT_LABELS[item.id] ?? label : label}</span>;
   const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
-  // /dashboard can resume the last runtime (server shell flag, which self-host
-  // builds hide from the client); from inside a runtime that reopens the one you
-  // are leaving, so Home goes to the list. The legacy page ignores ?runtimes=1.
+  // Home is the list. From inside an agent or computer the link asks for it
+  // explicitly as well; the legacy page ignores ?runtimes=1.
   const homeHref = pathname && isRuntimeDetailPath(pathname) ? DASHBOARD_RUNTIME_LIST_HREF : '/dashboard';
   const primaryNavigation = filterDashboardNavigation(
     DASHBOARD_PRIMARY_NAVIGATION,

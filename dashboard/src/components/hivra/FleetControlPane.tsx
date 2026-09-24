@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Bot, Monitor, Clock, Plus, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, Bot, Link2, Monitor, Clock, Plus, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLayoutEffect, useMemo, useState } from "react";
@@ -9,17 +9,30 @@ import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import {
   duplicateFleetNames,
   fleetEntryHref,
+  fleetEntryOpenLabel,
   fleetSections,
 } from "@/lib/hivra/fleet-sections";
 import { attentionLabel } from "@/lib/hivra/resource-attention";
 import styles from "./HomeWorkspace.module.css";
 import { surfaceTab } from "@/lib/workspace/runtime-selection";
 import { restoreWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
 
-/** Home resumes the last available working surface. The explicit list stays put. */
+/** Home lists your agents and computers, with a Continue link to the one you
+ * were last in. Only opening the app at Home resumes it straight away; the
+ * Home link and the logo inside the app always show the list. */
 export function FleetControlPane({ requested = false, attentionRequested = false }: { requested?: boolean; attentionRequested?: boolean }) {
   const router = useRouter();
+  // Whether this view opened the app. Decided before paint, after the first
+  // render, so the server and the first client render agree on the list.
+  const [appOpen, setAppOpen] = useState(false);
+  useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate post-hydration flip of a render-gating flag read from browser-only state.
+    if (isAppOpenAtHome()) setAppOpen(true);
+    markHomeOpened();
+  }, []);
   const { agents, loading, hermesError, hivraError, retryHermes, retryHivra } =
     useWorkspaceAgents();
   const [query, setQuery] = useState("");
@@ -68,17 +81,17 @@ export function FleetControlPane({ requested = false, attentionRequested = false
     return { agent, href: `${fleetEntryHref(agent).split("?")[0]}?tab=${surfaceTab(lastSelection.surface)}` };
   }, [currentAgents, lastSelection]);
 
-  // Resume only after both inventory sources have settled. Explicit browsing
-  // stays on the list even when a saved working surface is available.
+  // Opening the app at Home resumes, once both inventory sources have
+  // settled. Everywhere else the saved surface is offered, never followed.
   useLayoutEffect(() => {
-    if (requested || attentionRequested || loading || !resume) return;
+    if (!appOpen || requested || attentionRequested || loading || !resume) return;
     router.replace(resume.href);
-  }, [requested, attentionRequested, loading, resume, router]);
+  }, [appOpen, requested, attentionRequested, loading, resume, router]);
 
 
-  // Home is a doorway to the working surface. Do not paint the chooser while
-  // inventory is loading or while its validated resume navigation is pending.
-  if (!requested && !attentionRequested && (loading || resume)) {
+  // Opening the app at Home is a doorway to the working surface: do not paint
+  // the list while inventory loads or while the resume navigation is pending.
+  if (appOpen && !requested && !attentionRequested && (loading || resume)) {
     return <div className={styles.opening} role="status">
       <span>{resume && !loading ? `Opening ${resume.agent.name}…` : "Loading your agents and computers…"}</span>
       <Link href="/dashboard?runtimes=1">Choose another agent or computer</Link>
@@ -166,11 +179,13 @@ export function FleetControlPane({ requested = false, attentionRequested = false
         </div>
       ) : null}
 
-      {hermesError ? (
-        <SourceFailure source="Hermes" onRetry={() => void retryHermes()} />
-      ) : null}
-      {hivraError ? (
-        <SourceFailure source="Hivra" onRetry={() => void retryHivra()} />
+      {/* One message, whichever list failed: how Hivra stores an agent is
+          not something the owner should have to know (FTUE-03). */}
+      {hermesError || hivraError ? (
+        <SourceFailure onRetry={() => {
+          if (hermesError) void retryHermes();
+          if (hivraError) void retryHivra();
+        }} />
       ) : null}
 
       {/* The attention filter must be escapable — a view you cannot leave is
@@ -256,25 +271,29 @@ function FleetEntry({
         <span className="mono block truncate text-[11px] leading-[1.35] text-[var(--text-muted)]">
           {agent.typeLabel} · {stale ? `Last known: ${unifiedStateLabel(agent.state)}` : agent.attention ? attentionLabel(agent.attention) : unifiedStateLabel(agent.state)}
         </span>
+        {/* The linked pair: an agent and the computer it runs on (ATT-11). */}
+        {agent.computerPair ? (
+          <span data-testid="fleet-computer-pair" className="mt-1 flex min-w-0 items-start gap-1.5 text-[11.5px] leading-[1.35] text-[var(--text-secondary)]">
+            <Link2 aria-hidden="true" size={11} className="mt-[2px] shrink-0 text-[var(--text-muted)]" />
+            {/* Wraps rather than truncates: the size is the part that matters. */}
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {[agent.computerPair.relation, agentComputerPairDetail(agent.computerPair)].filter(Boolean).join(" · ")}
+            </span>
+          </span>
+        ) : null}
         <span className="mt-3 block text-[12px] font-medium text-[var(--text-secondary)] group-hover:text-[var(--ink-black)]">
-          {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : agent.state !== "running" ? "View details" : agent.resourceKind === "computer" ? "Open desktop" : "Open agent"} <span aria-hidden="true">→</span>
+          {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : agent.state !== "running" ? "View details" : fleetEntryOpenLabel(agent)} <span aria-hidden="true">→</span>
         </span>
       </span>
     </Link>
   );
 }
 
-function SourceFailure({
-  source,
-  onRetry,
-}: {
-  source: "Hermes" | "Hivra";
-  onRetry: () => void;
-}) {
+function SourceFailure({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border border-[color:var(--yellow)]/40 bg-[var(--bg-elevated)] px-3 py-2">
       <p className="text-[12px] leading-[1.4] text-[var(--yellow)]">
-        {source} runtimes are unavailable. Your others are still listed.
+        Some agents and computers couldn&apos;t be loaded. The rest are listed.
       </p>
       <button
         type="button"
@@ -282,7 +301,7 @@ function SourceFailure({
         className="mono inline-flex min-h-[28px] pointer-coarse:min-h-[44px] items-center gap-1.5 pointer-coarse:px-2 text-[11px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
       >
         <RotateCcw aria-hidden="true" size={12} />
-        Retry {source}
+        Retry
       </button>
     </div>
   );

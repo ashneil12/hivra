@@ -87,6 +87,9 @@ async function main() {
         "20260908080000_first_frame_streaming_profile_release.sql",
         "20260908090000_desktop_handoff_latency_release.sql",
         "20260922201510_provider_release_admission_2026_09_22.sql",
+        "20260924180000_provider_release_admission_2026_09_24.sql",
+        // Legacy (2026.08.27.1) computers must keep every check after arm-at-start.
+        "20260924190000_hetzner_first_boot_arm_at_start.sql",
       ].includes(name)).sort()) {
       await db.exec(migration(file));
     }

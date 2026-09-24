@@ -4,6 +4,7 @@ import { FunnelHeader } from "@/components/layout/LandingHeader";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { PLANS, type PlanKey } from "@/lib/subscription";
 import { isLocalAuthMode } from "@/lib/self-host/config";
+import { buildAgentLaunchHref, launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
 import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 
 function safeInternalRedirect(value: string | string[] | undefined): string | undefined {
@@ -23,10 +24,16 @@ export default async function SignInPage({
   const agentTypeParam = typeof resolvedParams?.agentType === "string" ? resolvedParams.agentType : undefined;
   const agentTypeQuery = buildAgentTypeQuery(resolveWelcomeAgentTypeKey(agentTypeParam));
   const requestedRedirect = safeInternalRedirect(resolvedParams?.redirect_url);
+  // An agent a link asked for opens its plan in Launch. Otherwise Home: it
+  // lists a returning owner's agents and computers, and offers Launch to an
+  // account that has none yet.
+  const agentLaunch = !plan && launchProfileForAgentType(agentTypeParam) ? buildAgentLaunchHref(agentTypeParam) : undefined;
   const redirectUrl = plan
     ? `/get-started/activate?plan=${plan}${agentTypeQuery}`
-    : requestedRedirect ?? (isLocalAuthMode() ? "/dashboard" : "/dashboard/welcome");
-  const signUpUrl = plan ? `/get-started?plan=${plan}${agentTypeQuery}` : "/sign-up";
+    : requestedRedirect ?? agentLaunch ?? "/dashboard";
+  const signUpUrl = plan
+    ? `/get-started?plan=${plan}${agentTypeQuery}`
+    : agentLaunch ? `/sign-up?agentType=${encodeURIComponent(agentTypeParam ?? "")}` : "/sign-up";
 
   return (
     <>
@@ -34,7 +41,7 @@ export default async function SignInPage({
       <div className={`flex flex-col items-center justify-center w-full relative p-4 md:p-8 ${funnelStyles.funnelPage}`}>
         <div className="relative z-10 flex flex-col items-center w-full max-w-md">
           <SignIn
-            {...(plan || requestedRedirect ? { forceRedirectUrl: redirectUrl } : {})}
+            {...(plan || requestedRedirect || agentLaunch ? { forceRedirectUrl: redirectUrl } : {})}
             fallbackRedirectUrl={redirectUrl}
             signUpUrl={signUpUrl}
             appearance={{

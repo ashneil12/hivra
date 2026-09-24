@@ -40,7 +40,7 @@ import {
 
 import styles from "./ComputerCatalogPage.module.css";
 
-const PROFILE_ANCHORS = ["#omarchy", "#windows"];
+const PROFILE_ANCHORS = ["#linux-sandbox", "#omarchy", "#windows"];
 // Height of the opened catalog that must already show before it is scrolled to.
 const CATALOG_PEEK = 120;
 
@@ -102,7 +102,7 @@ export function ComputerCatalogPage() {
     launchQuery.append("targetId", targetId);
   const launchHref = `/dashboard/launch?${launchQuery.toString()}`;
   const profileLaunchHref = (
-    profile: "ubuntu-desktop" | "omarchy" | "windows",
+    profile: "ubuntu-desktop" | "linux-terminal" | "omarchy" | "windows",
   ) => {
     const query = new URLSearchParams(launchQuery);
     query.set("profile", profile);
@@ -349,6 +349,31 @@ export function ComputerCatalogPage() {
             </Link>
           </article>
 
+          <article id="linux-sandbox" className={styles.osCard}>
+            <div className={styles.osIcon}>
+              <SquareTerminal size={21} />
+            </div>
+            <span className={styles.availableBadge}>Available</span>
+            <h3>Linux Sandbox</h3>
+            <p>A small Linux computer with a terminal and no desktop, for scripts, builds and agents that only need a shell.</p>
+            <div className={styles.osFacts}>
+              <span>From 0.5 CPU</span>
+              <span>From 1 GB RAM</span>
+              <span>Terminal only</span>
+            </div>
+            <p>Runs on your own server once it is ready for Linux Sandbox. Add one in Capacity first.</p>
+            <details className={styles.technical}>
+              <summary>Technical details</summary>
+              <p>Runs in a gVisor application-kernel sandbox on a server you connect.</p>
+            </details>
+            <Link
+              className={styles.primaryButton}
+              href={profileLaunchHref("linux-terminal")}
+            >
+              Launch Linux Sandbox <ArrowRight size={14} />
+            </Link>
+          </article>
+
           <article
             id="omarchy"
             className={`${styles.osCard} ${styles.previewCard}`}
@@ -367,7 +392,7 @@ export function ComputerCatalogPage() {
               <div className={styles.omarchyTruth}>
                 <ShieldCheck size={15} aria-hidden />
                 <span>
-                  <strong>Prepared Canary computer.</strong> Opens the pinned{" "}
+                  <strong>Prepared computer.</strong> Opens the pinned{" "}
                   {OMARCHY_TEMPLATE.upstream.release} desktop through an
                   interactive browser setup console. Runs on Proxmox KVM.
                 </span>
@@ -395,7 +420,7 @@ export function ComputerCatalogPage() {
               <span>{WINDOWS_TEMPLATE.requirements.ramGb} GB RAM</span>
               <span>Remote Windows desktop</span>
             </div>
-            <p>Connect compatible customer-owned or self-hosted capacity to continue.</p>
+            <p>Needs your own server that can run Windows. Add one in Capacity first.</p>
             <details className={styles.technical}>
               <summary>Technical details</summary>
               <p>Browser access uses RDP through Guacamole.</p>
@@ -413,8 +438,8 @@ export function ComputerCatalogPage() {
       <section className={styles.agentNote}>
         <Bot size={18} />
         <div>
-          <strong>Looking for Codex, Hermes, or DeepSeek Harness?</strong>
-          <span>Those are agent runtimes, not operating systems.</span>
+          <strong>Looking for Codex, Claude Code or Hermes?</strong>
+          <span>Agents run on their own computer. Open them, and their computer, from Agents.</span>
         </div>
         <Link href="/dashboard/agents">
           Open Agents <ArrowRight size={13} />

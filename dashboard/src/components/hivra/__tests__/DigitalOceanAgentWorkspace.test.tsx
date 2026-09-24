@@ -6,9 +6,20 @@ const mockGetWithExpiry = jest.fn();
 const mockForget = jest.fn();
 const mockList = jest.fn();
 const mockChange = jest.fn();
+const mockChatProps = jest.fn();
+const mockContractFetch = jest.fn();
+const mockContractAction = jest.fn();
 
 jest.mock("@/components/hivra/ManagedSessionChat", () => ({
-  ManagedSessionChat: () => <div>chat surface</div>,
+  ManagedSessionChat: (props: Record<string, unknown>) => {
+    mockChatProps(props);
+    return <div>chat surface</div>;
+  },
+}));
+// The real Manage panel, over a stand-in for its API client.
+jest.mock("@/lib/hivra/computer-contract-client", () => ({
+  fetchComputerContract: (...args: unknown[]) => mockContractFetch(...args),
+  runComputerContractAction: (...args: unknown[]) => mockContractAction(...args),
 }));
 jest.mock("@/lib/hivra/managed-session-client", () => {
   const actual = jest.requireActual("@/lib/hivra/managed-session-client");
@@ -21,7 +32,8 @@ jest.mock("@/lib/hivra/managed-session-client", () => {
   };
 });
 
-import { DigitalOceanAgentWorkspace } from "../DigitalOceanAgentWorkspace";
+import { DigitalOceanAgentWorkspace, setupNoteReminder } from "../DigitalOceanAgentWorkspace";
+import { formatContractTime } from "../ComputerContractPanel";
 import { ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
 import type { ManagedSessionDto } from "@/lib/hivra/managed-session-contracts";
 
@@ -39,8 +51,102 @@ function isoDaysFromNow(days: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+const SENT_AT = new Date().toISOString();
+function note(overrides: Record<string, unknown> = {}) {
+  return { kind: "tracked", channel: "do-setup-message", revision: 1, content: "<!-- HIVRA:COMPUTER:START v1 rev=1 -->\n## Your computer\n<!-- HIVRA:COMPUTER:END -->",
+    state: "sent", deliveredAt: SENT_AT, checkedAt: SENT_AT, lastAttemptAt: SENT_AT, lastError: null, lastDelivered: null,
+    appliesTo: "new-chats", ...overrides };
+}
+
 beforeEach(() => {
-  for (const mock of [mockGetWithExpiry, mockForget, mockList, mockChange]) mock.mockReset();
+  for (const mock of [mockGetWithExpiry, mockForget, mockList, mockChange, mockChatProps, mockContractFetch, mockContractAction]) mock.mockReset();
+  mockContractFetch.mockResolvedValue(note());
+  window.localStorage.clear();
+});
+
+describe("Hivra's setup note (ATT-13)", () => {
+  const lastChatProps = () => mockChatProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  it("gives a DigitalOcean agent a Manage tab where the owner sends the setup note, and the chat reloads to show it", async () => {
+    mockGetWithExpiry.mockResolvedValueOnce({ session, credentialExpiry: null });
+    mockContractFetch.mockReset().mockResolvedValue({ kind: "not_started", channel: "do-setup-message" });
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={jest.fn()} />);
+    await screen.findByText("chat surface");
+    expect(lastChatProps().historyVersion).toBe(0);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    expect(screen.getByRole("tab", { name: "Manage" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/runs on its own computer \(My cloud · DigitalOcean · 2 CPU \/ 4 GB\)/)).toBeInTheDocument();
+    expect(screen.getByText("Not sent yet")).toBeInTheDocument();
+    expect(screen.getByText(/uses a little of your DigitalOcean and model usage/)).toBeInTheDocument();
+    expect(mockContractAction).not.toHaveBeenCalled();
+
+    mockContractAction.mockResolvedValueOnce(note());
+    fireEvent.click(screen.getByRole("button", { name: "Send setup note" }));
+    await waitFor(() => expect(mockContractAction).toHaveBeenCalledWith(AGENT, "send"));
+    expect(await screen.findByText(`Sent in chat ${formatContractTime(SENT_AT)}`)).toBeInTheDocument();
+    expect(lastChatProps().historyVersion).toBe(1);
+  });
+
+  it("offers the owner's own Send update after what Hivra would say changed", async () => {
+    mockGetWithExpiry.mockResolvedValueOnce({ session, credentialExpiry: null });
+    mockContractFetch.mockReset().mockResolvedValue(note({ revision: 2, state: "pending", deliveredAt: null, lastDelivered: { revision: 1, deliveredAt: SENT_AT } }));
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={jest.fn()} />);
+    expect(await screen.findByText("What Hivra tells Builder about its computer changed.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review in Manage" }));
+    expect(screen.getByRole("tab", { name: "Manage" })).toHaveAttribute("aria-selected", "true");
+    mockContractAction.mockResolvedValueOnce(note({ revision: 2 }));
+    fireEvent.click(screen.getByRole("button", { name: "Send update to Builder" }));
+    await waitFor(() => expect(mockContractAction).toHaveBeenCalledWith(AGENT, "send"));
+  });
+
+  it("says in the chat when the launch's setup note didn't reach the agent", async () => {
+    mockGetWithExpiry.mockResolvedValueOnce({ session, credentialExpiry: null });
+    mockContractFetch.mockReset().mockResolvedValue(note({ state: "pending", deliveredAt: null, lastError: "send_failed" }));
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={jest.fn()} />);
+    expect(await screen.findByText("Hivra's setup note didn't reach Builder.")).toBeInTheDocument();
+    expect(screen.getByText("DigitalOcean didn't accept it. You can send it again from Manage.")).toBeInTheDocument();
+    // Nothing is sent from the reminder itself.
+    expect(mockContractAction).not.toHaveBeenCalled();
+  });
+
+  it("hides the reminder for that revision when the owner says Not now, and shows the next one", async () => {
+    mockGetWithExpiry.mockResolvedValue({ session, credentialExpiry: null });
+    mockContractFetch.mockReset().mockResolvedValue(note({ state: "pending", deliveredAt: null }));
+    const { unmount } = render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
+    expect(screen.queryByText("Hivra hasn't sent Builder its setup note.")).not.toBeInTheDocument();
+    unmount();
+
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={jest.fn()} />);
+    await screen.findByText("chat surface");
+    await waitFor(() => expect(mockContractFetch).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Hivra hasn't sent Builder its setup note.")).not.toBeInTheDocument();
+  });
+
+  it("shows no reminder once the note was sent", async () => {
+    mockGetWithExpiry.mockResolvedValueOnce({ session, credentialExpiry: null });
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={jest.fn()} />);
+    await screen.findByText("chat surface");
+    await waitFor(() => expect(mockContractFetch).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Review in Manage" })).not.toBeInTheDocument();
+  });
+
+  it("hands the launch's first task to the chat, which offers it back only if it was never sent", async () => {
+    mockGetWithExpiry.mockResolvedValueOnce({ session, credentialExpiry: null });
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} firstTask="Summarize the repo" onDeleted={jest.fn()} />);
+    await screen.findByText("chat surface");
+    expect(lastChatProps().firstTask).toBe("Summarize the repo");
+  });
+});
+
+describe("setupNoteReminder", () => {
+  it("names nothing for a note that was sent, a Hivra Cloud agent, or an unknown status", () => {
+    expect(setupNoteReminder(note() as never, "Builder")).toBeNull();
+    expect(setupNoteReminder(note({ channel: "proxmox-seed", state: "pending" }) as never, "Builder")).toBeNull();
+    expect(setupNoteReminder(null, "Builder")).toBeNull();
+    expect(setupNoteReminder({ kind: "not_started", channel: "do-setup-message" }, "Builder")).toMatchObject({ revision: 0 });
+  });
 });
 
 it("offers Replace token and a confirmed Forget when the saved token is rejected", async () => {

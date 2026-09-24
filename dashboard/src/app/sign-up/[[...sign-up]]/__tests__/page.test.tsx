@@ -28,6 +28,14 @@ jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
 }));
 
+const mockSignUp = jest.fn();
+jest.mock("@clerk/nextjs", () => ({
+  SignUp: (props: Record<string, unknown>) => {
+    mockSignUp(props);
+    return <div data-testid="mock-sign-up">Sign Up</div>;
+  },
+}));
+
 describe("SignUpPage", () => {
   const originalAuthMode = process.env.HIVRA_AUTH_MODE;
 
@@ -79,15 +87,31 @@ describe("SignUpPage", () => {
     expect(screen.queryByRole("link", { name: /back/i })).not.toBeInTheDocument();
   });
 
-  it("shows the same three-step count as get-started and a Hivra home bar", async () => {
+  it("shows no step counter before the product, and a Hivra home bar", async () => {
     const ui = await SignUpPage({
       searchParams: Promise.resolve({}),
     });
 
     render(ui);
 
-    expect(screen.getByText("Step 1 of 3 — Create Account")).toBeInTheDocument();
-    expect(screen.queryByText(/of 2/)).not.toBeInTheDocument();
+    // Launch has the only step counter; a count here contradicted it.
+    expect(screen.queryByText(/step \d+ of \d+/i)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+  });
+
+  it("sends a new account straight to Launch, not the retired welcome flow", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1",
+    }));
+  });
+
+  it("opens the agent a link asked for in Launch after sign-up", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({ agentType: "general" }) }));
+
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1&profile=hermes",
+    }));
   });
 });

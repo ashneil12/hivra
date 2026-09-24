@@ -13,11 +13,7 @@ import { captureClient } from "@/lib/telemetry/posthog-client";
 import {
   PLANS, ACTIVE_PLAN_KEYS, formatPrice, type PlanKey, type Cadence,
 } from "@/lib/subscription";
-import {
-  WELCOME_AGENT_TYPE_STORAGE_KEY,
-  buildAgentTypeQuery,
-  resolveWelcomeAgentTypeKey,
-} from "@/lib/welcome-agent-catalog";
+import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { LanguageSwitcher, LocaleProvider, useLocale } from "@/components/i18n/LocaleProvider";
 import { FunnelHeader } from "@/components/layout/LandingHeader";
@@ -119,15 +115,6 @@ function GetStartedPageContent() {
     "{dollars}",
     String(saveDollars)
   );
-
-  useEffect(() => {
-    if (!agentTypeKey) return;
-    try {
-      window.localStorage.setItem(WELCOME_AGENT_TYPE_STORAGE_KEY, agentTypeKey);
-    } catch {
-      // The URL still carries agentType; localStorage is only a checkout-return hint.
-    }
-  }, [agentTypeKey]);
 
   // Funnel step 1: a prospective user is shown the signup page. Fire once, only
   // for signed-out visitors — already-signed-in users are redirected straight to

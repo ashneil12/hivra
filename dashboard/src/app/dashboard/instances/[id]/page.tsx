@@ -126,9 +126,9 @@ function describePowerAction(action: PowerAction): string {
     case "restart_gateway":
       return "restart gateway";
     case "repair_runtime":
-      return "repair runtime";
+      return "repair agent";
     case "rebuild_runtime":
-      return "rebuild runtime";
+      return "rebuild agent";
     default:
       return action;
   }
@@ -622,7 +622,7 @@ export default function InstanceDetailPage() {
         setError(data.error);
       }
     } catch {
-      setError("Failed to load instance");
+      setError("Failed to load this agent");
     } finally {
       setLoading(false);
     }
@@ -951,7 +951,7 @@ export default function InstanceDetailPage() {
       <div data-testid="instance-load-error" style={{ display: "grid", gap: 14, border: "1px solid #fca5a5", background: "#fef2f2", padding: 20, width: "min(480px, 100%)", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <AlertTriangle size={16} style={{ color: "#ef4444", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#dc2626", fontWeight: 500, overflowWrap: "anywhere" }}>{error || "Instance not found"}</span>
+          <span style={{ fontSize: 13, color: "#dc2626", fontWeight: 500, overflowWrap: "anywhere" }}>{error || "Agent not found"}</span>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
@@ -1667,8 +1667,8 @@ export default function InstanceDetailPage() {
                 </span>
                 <span style={{ fontSize: 13, color: "var(--ink-black)" }}>
                   {instance.updateAlert.runType === "scheduled"
-                    ? "The last auto-update failed. Hermes kept your Docker volumes in place, but this instance needs attention."
-                    : "The last manual update failed. Hermes kept your Docker volumes in place, but this instance needs attention."}
+                    ? "The last auto-update failed. Hermes kept your Docker volumes in place, but this agent needs attention."
+                    : "The last manual update failed. Hermes kept your Docker volumes in place, but this agent needs attention."}
                 </span>
               </div>
             </div>
@@ -1691,7 +1691,7 @@ export default function InstanceDetailPage() {
                   opacity: actionLoading ? 0.7 : 1,
                 }}
               >
-                {actionLoading ? "Repairing..." : "Repair Runtime"}
+                {actionLoading ? "Repairing..." : "Repair agent"}
               </button>
               <button
                 type="button"

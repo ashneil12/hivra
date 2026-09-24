@@ -87,10 +87,10 @@ function statusLabel(status: Binding["status"]) {
 }
 
 function runtimeLabel(status: Binding["runtimeAdapter"]) {
-  return status === "active" ? "Buzz runtime active"
-    : status === "install_pending" ? "Runtime installation pending"
-    : status === "remove_pending" ? "Runtime removal pending"
-    : status === "removed" ? "Runtime removed" : "Runtime not installed";
+  return status === "active" ? "Buzz connector active"
+    : status === "install_pending" ? "Installing the Buzz connector"
+    : status === "remove_pending" ? "Removing the Buzz connector"
+    : status === "removed" ? "Buzz connector removed" : "Buzz connector not installed";
 }
 
 type RuntimeDraft = {
@@ -230,13 +230,13 @@ export function BuzzConnectionsPage() {
         updateRuntimeDraft(binding.id, { apiKey: "" });
       }
       setNotice(kind === "health"
-        ? outcome.healthy ? "The pinned Buzz sidecar is active on this computer." : "The runtime could not be confirmed."
-        : kind === "remove" && outcome.status === "removed" ? "Buzz runtime and its in-guest secret file were removed."
-        : outcome.status === "active" ? "Buzz runtime is active and restricted to its owner identity."
-        : "The runtime operation is safely saved and can be resumed.");
+        ? outcome.healthy ? "The pinned Buzz connector is active on this computer." : "The Buzz connector could not be confirmed."
+        : kind === "remove" && outcome.status === "removed" ? "The Buzz connector and its secret file on the computer were removed."
+        : outcome.status === "active" ? "The Buzz connector is active and restricted to its owner identity."
+        : "The Buzz connector change is saved and can be resumed.");
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Buzz runtime operation could not be completed.");
+      setError(caught instanceof Error ? caught.message : "The Buzz connector change could not be completed.");
     } finally { setBusy(null); }
   }
 
@@ -380,11 +380,11 @@ export function BuzzConnectionsPage() {
                           {canInstall && (
                             <div className={styles.runtimePanel}>
                               <div className={styles.runtimeCopy}>
-                                <div><span>03</span><h4>Activate the in-computer runtime</h4></div>
+                                <div><span>03</span><h4>Turn on the Buzz connector in the computer</h4></div>
                                 <p>This creates a separate Buzz ACP sidecar. It uses this provider key and does not reuse the agent&apos;s existing vendor login or conversation.</p>
                               </div>
                               <div className={styles.runtimeForm}>
-                                <label><span>Provider</span><select aria-label={`Buzz runtime provider for ${binding.agentName}`} value={draft.provider}
+                                <label><span>Provider</span><select aria-label={`Buzz connector provider for ${binding.agentName}`} value={draft.provider}
                                   onChange={(event) => updateRuntimeDraft(binding.id, {
                                     provider: event.target.value as RuntimeDraft["provider"],
                                     model: event.target.value === "anthropic" ? "claude-sonnet-4-5"
@@ -393,14 +393,14 @@ export function BuzzConnectionsPage() {
                                   <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option>
                                   <option value="venice">Venice · saved API key</option>
                                 </select></label>
-                                <label><span>Model</span><input aria-label={`Buzz runtime model for ${binding.agentName}`} value={draft.model}
+                                <label><span>Model</span><input aria-label={`Buzz connector model for ${binding.agentName}`} value={draft.model}
                                   autoCapitalize="none" autoCorrect="off" spellCheck={false}
                                   onChange={(event) => updateRuntimeDraft(binding.id, { model: event.target.value })} /></label>
                                 {draft.provider === "venice" ? (
                                   <div className={styles.vaultCredential}><span>Credential</span><strong>Venice key from your API keys</strong>
                                     <Link href="/dashboard/vault">Manage key <ArrowUpRight size={12} /></Link></div>
                                 ) : (
-                                  <label><span>Provider API key</span><input aria-label={`Buzz runtime API key for ${binding.agentName}`} type="password"
+                                  <label><span>Provider API key</span><input aria-label={`Buzz connector API key for ${binding.agentName}`} type="password"
                                     value={draft.apiKey} autoComplete="off" onChange={(event) => updateRuntimeDraft(binding.id, { apiKey: event.target.value })} /></label>
                                 )}
                                 <label className={styles.ownerField}><span>Buzz owner public key</span><input aria-label={`Buzz owner public key for ${binding.agentName}`}
@@ -409,7 +409,7 @@ export function BuzzConnectionsPage() {
                                 <button className={styles.primary} onClick={() => void runtimeAction(binding, "install")} disabled={busy !== null
                                   || (draft.provider !== "venice" && !draft.apiKey) || !draft.model.trim()
                                   || !/^[a-f0-9]{64}$/.test(draft.ownerPublicKey)}>
-                                  {busy === `runtime:install:${binding.id}` ? <Loader2 className={styles.spinner} size={14} /> : <KeyRound size={14} />} Activate runtime
+                                  {busy === `runtime:install:${binding.id}` ? <Loader2 className={styles.spinner} size={14} /> : <KeyRound size={14} />} Turn on connector
                                 </button>
                               </div>
                               <small className={styles.secretNote}>The provider key is write-only: encrypted while installation is pending, then erased after the exact guest receipt is verified.</small>
@@ -420,14 +420,14 @@ export function BuzzConnectionsPage() {
                           )}
                           {binding.status === "joined" && binding.runtimeAdapter === "active" && (
                             <div className={styles.runtimeBar}><span><span className={styles.healthyDot} /> Owner-only Buzz sidecar active{binding.runtimeLastObservedAt ? ` · checked ${new Date(binding.runtimeLastObservedAt).toLocaleString()}` : ""}</span><div>
-                              <button onClick={() => void runtimeAction(binding, "health")} disabled={busy !== null}>Check runtime</button>
+                              <button onClick={() => void runtimeAction(binding, "health")} disabled={busy !== null}>Check connector</button>
                               {/* Remove becomes Cancel in place, so it keeps focus and a double tap cannot confirm. */}
-                              <button aria-label={confirmingRemove === binding.id ? `Cancel Buzz runtime removal for ${binding.agentName}` : undefined}
+                              <button aria-label={confirmingRemove === binding.id ? `Cancel Buzz connector removal for ${binding.agentName}` : undefined}
                                 onClick={() => setConfirmingRemove(confirmingRemove === binding.id ? null : binding.id)} disabled={busy !== null}>
-                                {confirmingRemove === binding.id ? "Cancel" : "Remove runtime"}
+                                {confirmingRemove === binding.id ? "Cancel" : "Remove connector"}
                               </button>
                               {confirmingRemove === binding.id && (
-                                <button aria-label={`Confirm remove runtime for ${binding.agentName}`} className={styles.dangerButton}
+                                <button aria-label={`Confirm remove connector for ${binding.agentName}`} className={styles.dangerButton}
                                   onClick={() => { setConfirmingRemove(null); void runtimeAction(binding, "remove"); }} disabled={busy !== null}>Confirm remove</button>
                               )}
                             </div></div>

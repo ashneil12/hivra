@@ -41,6 +41,19 @@ export function availableModelCreditsMicroUsd(summary: {
   return summary.wallets.card.availableMicroUsd + summary.wallets.hermesos.availableMicroUsd;
 }
 
+/** Why a paid plan that holds the account runs nothing, and how it is
+ * settled. Only what billing observed: the row's status. */
+export function planOnHoldText(hold: { reason: "payment_overdue" | "no_slots"; billingPortal: boolean }): string {
+  if (hold.reason === "payment_overdue") {
+    return hold.billingPortal
+      ? "A payment didn't go through, so this plan isn't active right now. Pay the open invoice or update your card in the billing portal."
+      : "A payment didn't go through, so this plan isn't active right now. Contact support to settle it.";
+  }
+  return hold.billingPortal
+    ? "This plan has no agent slots right now. Check your subscription in the billing portal."
+    : "This plan has no agent slots right now. Contact support to check it.";
+}
+
 /** True when the card controls (Stripe portal) apply to this plan. */
 export function paysByCard(plan: { key: string; source?: string } | null | undefined): boolean {
   if (!plan || plan.key === "free") return false;
@@ -63,6 +76,7 @@ export function OverviewTab({
   const plan = c.data?.plan ?? null;
   const usage = c.data?.usage ?? null;
   const hasPlan = Boolean(c.data?.subscribed && plan && usage);
+  const planOnHold = hasPlan ? null : c.data?.planOnHold ?? null;
   const management = c.subscriptionManagement;
   const showPortal = management.showStripePortalButton && paysByCard(plan);
 
@@ -150,6 +164,43 @@ export function OverviewTab({
                   onClick={() => c.setShowCancelSaveFlow(true)}
                 >
                   Cancel subscription
+                </button>
+              )}
+            </>
+          }
+        />
+      ) : planOnHold ? (
+        <EmptyPlate
+          eyebrow={copy.plateEyebrow}
+          title={`${planOnHold.name} plan on hold`}
+          text={planOnHoldText(planOnHold)}
+          action={
+            <>
+              {planOnHold.billingPortal ? (
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.primary}`}
+                  onClick={() => void c.handlePortal()}
+                  disabled={c.portalLoading}
+                >
+                  {c.portalLoading ? (
+                    <Loader2 size={14} className={styles.spin} aria-hidden="true" />
+                  ) : (
+                    <CreditCard size={14} aria-hidden="true" />
+                  )}
+                  {c.portalLoading ? copy.opening : "Open billing portal"}
+                </button>
+              ) : (
+                // A live Stripe subscription still bills this plan, so a new
+                // plan would be refused until it is settled in the portal.
+                // Without one (a manual or token plan), Checkout still works.
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.primary}`}
+                  onClick={() => onGoTo("plans")}
+                >
+                  See plans
+                  <ArrowRight size={14} aria-hidden="true" />
                 </button>
               )}
             </>

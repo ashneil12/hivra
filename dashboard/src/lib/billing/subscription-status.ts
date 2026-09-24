@@ -4,6 +4,17 @@ export function hasPlanAccessStatus(status: string | null | undefined) {
   return typeof status === "string" && PLAN_ACCESS_STATUSES.has(status);
 }
 
+/**
+ * A paid subscription row that still holds the account: not Free, and in a
+ * status Stripe may yet collect (active, trialing or past_due). The account
+ * can't switch to Free over it, so /api/billing/subscribe refuses a Free
+ * activation (ACTIVE_SUBSCRIPTION) while it stands, even when the row no
+ * longer entitles anything (dunning).
+ */
+export function holdsPaidPlan(row: { plan?: string | null; status?: string | null } | null | undefined): boolean {
+  return Boolean(row && hasPlanAccessStatus(row.status) && row.plan !== "free");
+}
+
 export function isLiveStripeSubscriptionId(subscriptionId: string | null | undefined) {
   return typeof subscriptionId === "string" && subscriptionId.startsWith("sub_");
 }

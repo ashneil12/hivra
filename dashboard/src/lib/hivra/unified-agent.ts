@@ -10,6 +10,7 @@
 import { resourceAttention, type ResourceAttention } from "./resource-attention";
 import type { HivraAgent } from "./agent-api";
 import { getAgent as catalogAgent } from "./agent-catalog";
+import { agentComputerPair, type AgentComputerPair } from "@/lib/agent-computers/agent-surfaces";
 
 export type UnifiedKind = "hermes" | "hivra";
 type UnifiedState = "running" | "updating" | "provisioning" | "stopped" | "error" | "other";
@@ -58,6 +59,9 @@ export interface UnifiedAgent {
    *  chat agent from a dashboard runtime from a computer without a second
    *  catalog lookup. Undefined for Hermes. */
   surfaceKind?: "chat" | "dashboard" | "computer";
+  /** An agent's linked computer: where it runs and its size, from the stored
+   *  lifecycle binding (ATT-11). Null for computers and Hermes. */
+  computerPair?: AgentComputerPair | null;
 }
 
 const STATE_LABELS: Record<UnifiedState, string> = {
@@ -99,16 +103,17 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
   // "updating", distinct from a first-time launch ("provisioning").
   let state = hivraState(a.status);
   if (state === "provisioning" && a.provisioned_at) state = "updating";
+  const resourceKind = a.computer_profile || def?.resourceKind === "computer" ? "computer" : "agent";
   return {
     uid: `x-${a.id}`, kind: "hivra", id: a.id, name: a.name, emoji: a.emoji ?? null,
     attention: resourceAttention(a.status),
     statusRaw: a.status, state, dot: HIVRA_DOT[state],
     vendor: def?.vendor || a.type, typeLabel: def?.name || a.type,
-    resourceKind:
-      a.computer_profile || def?.resourceKind === "computer" ? "computer" : "agent",
+    resourceKind,
     computerProfile: a.computer_profile ?? null,
     surfaceKind: def?.surface,
     cpu: a.cpu, ram: a.ram, model: null, provider: null, agentType: a.type,
+    computerPair: resourceKind === "agent" ? agentComputerPair(a) : null,
   };
 }
 

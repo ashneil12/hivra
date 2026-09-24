@@ -46,8 +46,10 @@ import {
 
 const mockSearchParamsGet = jest.fn();
 
+const mockRouterPush = jest.fn();
 jest.mock("next/navigation", () => ({
   useSearchParams: () => ({ get: mockSearchParamsGet }),
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 
 jest.mock("@/lib/infrastructure/client", () => ({
@@ -553,7 +555,10 @@ function hetznerSetupView(patch: Record<string, unknown> = {}) {
     targetId: null,
     observedAt: null,
     launchReady: false,
-    enrollmentExpiresAt: new Date(Date.now() + 14 * 60_000 + 10_500).toISOString(),
+    // A newly created server: its 15 minutes start at Start setup, so the
+    // server reports no deadline before then.
+    enrollmentExpiresAt: null, enrollmentClosesAt: null,
+    enrollmentWindow: "since_start" as const,
     ...patch,
   };
 }
@@ -626,7 +631,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     expect(screen.queryByLabelText("Infrastructure summary")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Available infrastructure" })).not.toBeInTheDocument();
@@ -649,7 +654,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHivraCloudCapacity as jest.Mock).mockRejectedValueOnce(new Error("Usage temporarily unavailable"));
     render(<InfrastructureConnectionsPage />);
 
-    const chooser = await screen.findByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
     expect(screen.getByRole("button", { name: "Retry Hivra Cloud capacity" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Hivra Cloud capacity" })).not.toBeInTheDocument();
@@ -666,7 +671,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
   });
 
-  it("preserves a selected agent through capacity setup and returns to its deploy form", async () => {
+  it("preserves a selected agent through capacity setup and opens its launch on the ready server", async () => {
     const target = providerVmTarget();
     target.connectionId = HETZNER_CONNECTION.id;
     target.status = "ready";
@@ -681,7 +686,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/welcome?step=deploy&agentType=codex&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&start=1&profile=codex&targetId=${target.id}`,
     );
     expect(screen.getByText(/Capacity is ready for Codex/i)).toBeInTheDocument();
   });
@@ -712,7 +717,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const banner = (await screen.findByText(/Capacity is ready for Linux Sandbox/i)).closest('[role="status"]') as HTMLElement;
     expect(within(banner).getByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/computers?launch=1&targetId=${READY_GVISOR_TARGET.id}`,
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
     // The ready host's own card continues the same launch, with a truthful badge.
     const card = screen.getByRole("heading", { name: "Linux host" }).closest("article") as HTMLElement;
@@ -720,7 +725,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(card).queryByText("Inspected")).not.toBeInTheDocument();
     expect(within(card).getByRole("link", { name: "Continue launch" })).toHaveAttribute(
       "href",
-      `/dashboard/computers?launch=1&targetId=${READY_GVISOR_TARGET.id}`,
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
   });
 
@@ -758,6 +763,69 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       "href",
       `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
     );
+  });
+
+  // Slice 10: inside Launch's capacity sheet, a ready server goes back to the
+  // launch that opened it instead of opening Launch again.
+  it("inside Launch, hands the ready server back to the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    expect(await screen.findByRole("heading", { name: "Add capacity for your launch" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    const launch = await within(card).findByRole("link", { name: /^(Launch on this server|Continue launch)$/ });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    launch.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it("inside Launch, names the ready server and uses it for the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    const banner = (await screen.findByText(`${READY_GVISOR_TARGET.displayName} is ready for Linux Sandbox.`)).closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(banner).getByRole("button", { name: "Use it for this launch" }));
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+  });
+
+  // Live test of slice 10: the sheet said "Capacity is ready" for the Hivra
+  // Cloud plan the launch had just outgrown, and its "Continue launch" link
+  // (no server in it) left the sheet open over the launch.
+  it("inside Launch, returns to the launch from any Launch link and doesn't offer Hivra Cloud back as news", async () => {
+    (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
+    const onLaunchTarget = jest.fn();
+    const onClose = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "codex", onLaunchTarget, onClose }} />);
+
+    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    screen.getByRole("link", { name: /Launch an agent/i }).dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onLaunchTarget).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   // Review of slice 5: an owner who set up Linux Sandbox and came back an
@@ -907,7 +975,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
-    expect(await screen.findByRole("heading", { name: "Linux host has Linux Sandbox set up." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Linux host already has gVisor, which Linux Sandbox runs on." })).toBeInTheDocument();
     await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(2));
 
     // Repair is a host change, so it goes through the same review dialog.
@@ -1081,7 +1149,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/launch?kind=agent&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&profile=codex&targetId=${target.id}`,
     );
   });
 
@@ -1092,7 +1160,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       render(<InfrastructureConnectionsPage />);
 
       const chooser = await screen.findByRole("region", {
-        name: "How would you like to add infrastructure?",
+        name: "How would you like to add capacity?",
       });
       expect(screen.getByText(/Connect a cloud project or bring a computer you control/i)).toBeInTheDocument();
       expect(screen.queryByText(/Managed capacity appears here as soon as your plan is active/i)).not.toBeInTheDocument();
@@ -1116,7 +1184,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "How would you like to add infrastructure?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "How would you like to add capacity?" })).not.toBeInTheDocument();
     const cloudCard = screen.getByRole("heading", { name: "Hivra Cloud" }).closest("article") as HTMLElement;
     expect(within(cloudCard).getByText(/Your plan's CPU and RAM allowance/i)).toHaveTextContent("The servers that host them have separate capacity.");
     expect(within(cloudCard).getByText("1.5 vCPU allocated")).toBeInTheDocument();
@@ -1145,7 +1213,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Add capacity" }));
-    const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     expect(within(chooser).getByText("Pro is active. Review plan options in Billing.")).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
     expect(within(chooser).getByRole("link", { name: /Manage Hivra Cloud/i })).toHaveAttribute(
@@ -1173,7 +1241,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose Hivra Cloud/i }));
 
@@ -1205,7 +1273,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose Hivra Cloud/i }));
     fireEvent.click(screen.getByRole("button", { name: /Continue to secure checkout/i }));
@@ -1240,7 +1308,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
         hetznerSetupView(),
         hetznerSetupView({ orderId: "00000000-0000-4000-8000-000000001017", providerServerId: "4815162344", serverName: "hivra-ready",
           stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
-          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null }),
+          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null }),
       ]}
       setupEvidence="loaded"
       loading={false}
@@ -1261,6 +1329,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(prepared).getByRole("link", { name: "Launch on this server" }))
       .toHaveAttribute("href", "/dashboard/launch?start=1&targetId=00000000-0000-4000-8000-000000001099");
     expect(screen.queryByText(/Open Computer setup to check agent readiness/)).not.toBeInTheDocument();
+  });
+
+  it.each([["since_start", "It didn't connect back within 15 minutes of starting setup."],
+    ["since_creation", "Its one-time setup key expired."]] as const)("explains an expired %s setup window by its own rule", (window, hint) => {
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_OFF_SERVER]}
+      setups={[hetznerSetupView({ stage: "expired", enrollmentWindow: window })]} setupEvidence="loaded" loading={false}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={jest.fn()} onConnectExistingServer={jest.fn()} />);
+    const created = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(created).getByText("Setup window expired")).toBeInTheDocument();
+    expect(within(created).getByText(new RegExp(hint.replace(/[.]/g, "\\.")))).toBeInTheDocument();
   });
 
   it("names no server as someone else's until Hivra's records have loaded", () => {
@@ -1386,7 +1464,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Start with Hetzner/i }));
@@ -1466,7 +1544,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     ));
     expect(await within(capacityDialog).findByRole("heading", { name: "Set it up for agents" })).toBeInTheDocument();
     expect(within(capacityDialog).getByText("Server created (powered off). Billing has started.")).toBeInTheDocument();
-    expect(await within(capacityDialog).findByText(/Setup key valid for/)).toHaveTextContent(/14:(10|09)/);
+    // No countdown before Start setup: the window opens when Hivra powers it on.
+    expect(await within(capacityDialog).findByText(/Setup must finish within 15 minutes of starting/)).toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/Setup key valid for/)).not.toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/left for the server to connect back/)).not.toBeInTheDocument();
     // Start setup is the only primary action; no "Return to infrastructure" first.
     expect(within(capacityDialog).getByRole("button", { name: "Start setup" })).toBeEnabled();
     expect(within(capacityDialog).queryByRole("button", { name: /Return to infrastructure/ })).not.toBeInTheDocument();
@@ -1480,7 +1561,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
     (advanceProviderComputerSetup as jest.Mock).mockResolvedValue(hetznerSetupView({
       stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
-      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null,
+      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null,
     }));
     render(<InfrastructureConnectionsPage />);
     const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
@@ -1494,7 +1575,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(await within(dialog).findByRole("button", { name: "Start setup" }));
 
     expect(await within(dialog).findByRole("link", { name: "Continue launch" })).toHaveAttribute(
-      "href", "/dashboard/welcome?step=deploy&agentType=codex&targetId=00000000-0000-4000-8000-000000001099",
+      "href", "/dashboard/launch?kind=agent&start=1&profile=codex&targetId=00000000-0000-4000-8000-000000001099",
     );
     expect(advanceProviderComputerSetup).toHaveBeenCalledWith(HETZNER_CONNECTION.id, {
       orderId: "00000000-0000-4000-8000-000000001016", expectedConnectionRevision: 1,
@@ -2005,7 +2086,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose my machine/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /^Remote server/i }));
@@ -2567,7 +2648,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     const addCapacity = await screen.findByRole("button", { name: "Add capacity" });
     fireEvent.click(addCapacity);
-    const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     const openDialog = within(chooser).getByRole("button", { name: /Start with Hetzner/i });
     openDialog.focus();
@@ -2783,7 +2864,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     { trigger: "Connect existing host", title: "Connect a host" },
   ])("pins $title inside the dashboard scrollport", async ({ trigger, title }) => {
     const { container, unmount } = render(<InfrastructureConnectionsPage />);
-    const chooser = await screen.findByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     if (trigger === "Start with Hetzner") {
       fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     } else {

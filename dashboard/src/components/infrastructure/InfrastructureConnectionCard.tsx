@@ -30,7 +30,7 @@ import {
   formatInfrastructureDate,
   preflightHeadline,
 } from "@/lib/infrastructure/formatters";
-import { hasReadyEvidence } from "@/lib/infrastructure/launch-on-server";
+import { gvisorAdapterOutdated, hasReadyEvidence } from "@/lib/infrastructure/launch-on-server";
 import { canPrepareFromSavedTarget } from "@/lib/infrastructure/preparation-eligibility";
 
 import styles from "./Infrastructure.module.css";
@@ -96,6 +96,8 @@ export function InfrastructureConnectionCard({
   );
   const gvisorReady = gvisorSetUp && targetLaunch !== null;
   const gvisorCheckLapsed = gvisorSetUp && targetLaunch === null;
+  // Lapsed because an older Hivra release set it up, not because of time.
+  const gvisorOutdated = gvisorCheckLapsed && Boolean(gvisorTarget && gvisorAdapterOutdated(gvisorTarget));
   const savedTargetIncomplete = Boolean(
     (trustedSavedTarget && !savedTargetReady) || (gvisorTarget && !gvisorSetUp),
   );
@@ -187,6 +189,8 @@ export function InfrastructureConnectionCard({
                 ? "Agents and computers can run here. Launch checks the server again before anything starts."
                 : gvisorReady
                   ? "Linux Sandbox can run here. A check is good for 15 minutes; after that, check again before you launch."
+                  : gvisorOutdated
+                    ? "Linux Sandbox here was set up by an older Hivra release. Check readiness; if the check asks, reinstall the setup before you launch."
                   : gvisorCheckLapsed
                     ? "Linux Sandbox is set up here. Its last check is more than 15 minutes old, so check again before you launch."
                     : gvisorTarget

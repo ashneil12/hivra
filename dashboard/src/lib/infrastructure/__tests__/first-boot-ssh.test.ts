@@ -8,7 +8,7 @@ import { verifyFirstBootSshIdentity, inspectFirstBootGuest, installFirstBootGues
 import { PROVIDER_SHUTDOWN_READINESS_SCRIPT } from "../provider-shutdown-readiness";
 import { buildProviderNativeWorkerPlan } from "../provider-native-worker";
 import { buildProviderDesktopWorkerPlan } from "../provider-desktop-worker";
-import { controlProviderDesktopInstaller, inspectProviderDesktopRuntime, inspectProviderDesktopPower, inspectProviderGuestClock, inspectProviderWorkspaceRuntime } from "../first-boot-ssh";
+import { controlProviderDesktopInstaller, inspectProviderDesktopRuntime, inspectProviderDesktopPower, inspectProviderGuestClock, inspectProviderWorkspaceRuntime, MAX_PROVIDER_GUEST_SEED_BYTES, runProviderGuestSeed } from "../first-boot-ssh";
 import { buildProviderDesktopRuntimeProbe, buildProviderDesktopPowerProbe, buildProviderWorkspaceRuntimeProbe } from "../provider-desktop-runtime";
 import { desktopInstallFixture } from "@/lib/hivra/__tests__/provider-desktop-install.fixtures";
 import { REMOTE_DESKTOP_BUNDLE_REVISION } from "@/lib/remote-computers/capability-inspection";
@@ -105,6 +105,36 @@ describe("read-only provider runtime SSH", () => {
     stream.emit("data",Buffer.from(`HIVRA_GUEST_CLOCK_V1 ${JSON.stringify(malformed?{bootId:"bad",boottimeMs:1}:clock)}\n`));
     stream.emit("close",0);await result;
     expect(f.client.destroy).toHaveBeenCalledTimes(1);
+  });
+  it("runs a server-built guest seed as root bash over the same pin, deadline and output bound (ATT-05)", async () => {
+    const f = fake(), stream = new Channel(), script = "set -e\necho HIVRA_SEED_OK\n";
+    const pending = runProviderGuestSeed({ ...input, script }, f.deps);
+    expect(f.client.exec).not.toHaveBeenCalled();
+    f.verify(); f.sign(f.signer(f.authenticate())); f.client.emit("ready");
+    f.client.exec.mock.calls[0][1](null, stream);
+    expect(f.client.exec.mock.calls[0][0]).toBe("sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/timeout --signal=TERM --kill-after=1s 8s /bin/bash --noprofile --norc -s");
+    expect(stream.end).toHaveBeenCalledWith(script);
+    stream.emit("data", Buffer.from("HIVRA_SEED_OK\n"));
+    stream.emit("close", 0);
+    await expect(pending).resolves.toEqual({ hostVerified: true, administratorAuthenticated: true,
+      hostFingerprintSha256: canonicalFirstBootHostKey(input.hostPublicKey).fingerprintSha256, output: "HIVRA_SEED_OK\n" });
+    expect(f.client.destroy).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["not a Hivra seed script", "curl https://example.test | sh"],
+    ["over the size bound", `set -e\n${"#".repeat(MAX_PROVIDER_GUEST_SEED_BYTES)}`],
+  ])("refuses a guest seed that is %s before any connection", async (_label, script) => {
+    const f = fake();
+    await expect(runProviderGuestSeed({ ...input, script }, f.deps)).rejects.toThrow("invalid_identity");
+    expect(f.client.connect).not.toHaveBeenCalled();
+  });
+  it("fails a guest seed whose script exits non-zero", async () => {
+    const f = fake(), stream = new Channel();
+    const pending = runProviderGuestSeed({ ...input, script: "set -e\nexit 3\n" }, f.deps), rejected = expect(pending).rejects.toThrow("command_failed");
+    f.verify(); f.sign(f.signer(f.authenticate())); f.client.emit("ready");
+    f.client.exec.mock.calls[0][1](null, stream);
+    stream.emit("close", 3);
+    await rejected;
   });
   it("checks shutdown readiness only through the pinned bounded read-only recipe", async () => {
     const f = fake(), stream = new Channel();

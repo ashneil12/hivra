@@ -97,10 +97,13 @@ export function useLaunchReadyTargetIds(targets: readonly DeploymentTargetDto[])
 
 /** The launch the owner came here from: ?launch=<resource>, or the launch
  * journey's unsent draft that this owner saved in this browser. */
-export function usePendingLaunch(): PendingLaunch | null {
+export function usePendingLaunch(
+  /** Capacity opened inside Launch passes its launch here instead of in the URL. */
+  override: { launchParam: string | null; returnTo: string | null } | null = null,
+): PendingLaunch | null {
   const searchParams = useSearchParams();
-  const launchParam = searchParams?.get("launch") ?? null;
-  const returnTo = searchParams?.get("returnTo") ?? null;
+  const launchParam = override ? override.launchParam : searchParams?.get("launch") ?? null;
+  const returnTo = override ? override.returnTo : searchParams?.get("returnTo") ?? null;
   // Drafts are saved per owner; until auth says who, there is none to read.
   const { isLoaded, userId } = useAuth();
   const ownerId = isLoaded ? userId ?? null : null;
@@ -155,11 +158,14 @@ export function useLaunchOnServer() {
   const { pending, targets } = useContext(LaunchOnServerContext);
   return useMemo(() => ({
     pending,
-    /** The newest ready Proxmox target this connection published, if any.
-     * Proxmox readiness doesn't lapse with time; a gVisor host's does, so it
-     * goes through useTargetLaunchAction or useGvisorCheckLaunchAction. */
-    forProxmoxConnection: (connectionId: string): LaunchOnServerAction | null => {
+    /** The ready Proxmox target for the node a check just named. A
+     * connection can hold evidence for more than one node, so the check's own
+     * node is matched, never the first ready one. Proxmox readiness doesn't
+     * lapse with time; a gVisor host's does, so it goes through
+     * useTargetLaunchAction or useGvisorCheckLaunchAction. */
+    forProxmoxConnection: (connectionId: string, externalId: string): LaunchOnServerAction | null => {
       const target = targets.find((candidate) => candidate.connectionId === connectionId
+        && candidate.externalId === externalId
         && isProxmoxDeploymentTarget(candidate)
         && hasReadyEvidence(candidate));
       return target ? launchActionForReadyTarget(target, pending) : null;

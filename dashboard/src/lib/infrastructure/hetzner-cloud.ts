@@ -2249,7 +2249,12 @@ async function createCapacityWithRecipe(
   if(preparation && order.serverPostAttemptedAt) {
     // A retry observes an original prepared purchase; it never upgrades an
     // already-created capacity-only disk or rotates its enrollment capability.
-    if(!await deps.firstBootEnrollment(firstBootScope)) throw new HetznerCloudCapacityError("access_setup_failed");
+    // Either recipe: a server created just before the current recipe shipped
+    // keeps its original attempt and rules.
+    const {recipeVersion:currentRecipe,...originalBinding}=firstBootScope.binding;void currentRecipe;
+    if(!await deps.firstBootEnrollment({binding:originalBinding,capacityIdempotencyKey:firstBootScope.capacityIdempotencyKey})) {
+      throw new HetznerCloudCapacityError("access_setup_failed");
+    }
   }
   if (
     order.operation.status === "created_off"
@@ -2478,7 +2483,7 @@ async function createCapacityWithRecipe(
     : await deps.markServerPostAttempted(markerInput);
   if (!marked) throw new HetznerCloudCapacityError("connection_changed");
   assertCapacityDispatchWindow(dispatchDeadline, order.operation.quote.expiresAt, deps);
-  if(preparedRecipe && deps.now().getTime()>=Date.parse(preparedRecipe.enrollmentExpiresAt)) {
+  if(preparedRecipe && deps.now().getTime()>=Date.parse(preparedRecipe.deliveryExpiresAt)) {
     throw new HetznerCloudCapacityError("access_setup_failed");
   }
 
