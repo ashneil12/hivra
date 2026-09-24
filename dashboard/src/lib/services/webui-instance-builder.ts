@@ -68,8 +68,11 @@ import {
 } from "@/lib/services/webui-terminal-config";
 import {
   buildWebUISessionRetentionConfigYaml,
+  buildWebUISessionRetentionRecordJson,
   buildWebUISessionRetentionRepairCommand,
   WEBUI_SESSION_RETENTION_BACKUP_SUFFIX,
+  WEBUI_SESSION_RETENTION_RECORD_ENV,
+  WEBUI_SESSION_RETENTION_RECORD_SEED_SH,
 } from "@/lib/services/webui-session-retention";
 
 // Username for the official-dashboard's bundled "basic" password provider. The
@@ -4023,11 +4026,14 @@ done
 chown -R 1024:1024 /state 2>/dev/null || true
 SH`
     : `# Seed config.yaml + .env into the named volume on first start so the agent
-# inside the container picks them up at /home/hermes/.hermes/.
+# inside the container picks them up at /home/hermes/.hermes/. Also record that
+# Hivra wrote config.yaml's session retention settings, so a later update can
+# tell them from an owner's identical value (webui-session-retention.ts).
 docker run --rm \\
   -v ${p.containerName}_webui-state:/state \\
   -v "$INSTANCE_DIR":/seed:ro \\
-  busybox sh -c 'mkdir -p /state && cp /seed/config.yaml /state/config.yaml && cp /seed/hermes.env /state/.env && chmod 600 /state/.env && if [ -f /seed/auth.json.inject ]; then cp /seed/auth.json.inject /state/auth.json && touch /state/auth.lock && chmod 600 /state/auth.json /state/auth.lock; fi && chown -R 1024:1024 /state'`;
+  -e ${WEBUI_SESSION_RETENTION_RECORD_ENV}=${shellSingleQuote(buildWebUISessionRetentionRecordJson(p.ramLimit))} \\
+  busybox sh -c 'mkdir -p /state && cp /seed/config.yaml /state/config.yaml && ${WEBUI_SESSION_RETENTION_RECORD_SEED_SH} && cp /seed/hermes.env /state/.env && chmod 600 /state/.env && if [ -f /seed/auth.json.inject ]; then cp /seed/auth.json.inject /state/auth.json && touch /state/auth.lock && chmod 600 /state/auth.json /state/auth.lock; fi && chown -R 1024:1024 /state'`;
   const terminalConfigSyncCommand = !isUpdate || opts.applyTerminalBackend === true
     ? `# Match the explicitly selected env backend in saved YAML before either
 # agent service starts. Native config-to-env bridging otherwise restores a
