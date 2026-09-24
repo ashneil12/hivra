@@ -1169,7 +1169,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (runId) {
  void stopBoxChatRun(boxUrl, runId, token).then((stopped) => {
  if (!stopped && runsSupportedRef.current) {
- clientLog.warn("chat run stop was not confirmed by the box", { source: "hivra-chat", failureType: "hivra_chat_run_stop_unconfirmed", agentKind });
+ clientLog.warn("chat run stop was not confirmed by the computer", { source: "hivra-chat", failureType: "hivra_chat_run_stop_unconfirmed", agentKind });
  }
  });
  }
