@@ -1,13 +1,14 @@
 "use client";
 
-// Hivra per-agent view — Chat (Chat, <Agent> session) · Computer (Terminal,
+// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Terminal,
 // Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
 import styles from "./ResourceWorkspace.module.css";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Component, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
@@ -37,29 +38,23 @@ import { HivraGit } from "@/components/hivra/HivraGit";
 import { HivraSkills } from "@/components/hivra/HivraSkills";
 import { HivraTelegram } from "@/components/hivra/HivraTelegram";
 import { HivraManage } from "@/components/hivra/HivraManage";
-import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
-import { HivraRemoteDesktop } from "@/components/hivra/HivraRemoteDesktop";
-import { HivraConsoleDesktop } from "@/components/hivra/HivraConsoleDesktop";
-import { HivraOmarchyDesktop } from "@/components/hivra/HivraOmarchyDesktop";
+import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import {
   SurfaceActionProvider,
   useSurfaceAction,
   useSurfaceActionStoreInstance,
 } from "@/components/hivra/SurfaceActionContext";
-import {
-  agentTabSurface,
-  hivraRuntimeUid,
-} from "@/lib/workspace/runtime-selection";
-import { persistWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import { hivraRuntimeUid } from "@/lib/workspace/runtime-selection";
+import { lastTabFor } from "@/lib/workspace/recents";
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
+import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
-import { TasksPanel } from "@/components/scheduled-tasks/TasksPanel";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
-import { DigitalOceanAgentWorkspace } from "@/components/hivra/DigitalOceanAgentWorkspace";
 import { AttachedAgentChat, useAttachedAgentChat } from "@/components/hivra/AttachedAgentChat";
 import { withAttachedAgentChat } from "@/lib/agent-computers/attached-agent-surface";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
@@ -69,6 +64,93 @@ import {
 } from "@/lib/welcome-personalization";
 
 const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
+
+// A desktop stays mounted (hidden) while its owner works in other tabs, so
+// its placeholder shows only while Desktop is the open tab.
+const DesktopTabOpen = createContext(true);
+function DesktopLoading() {
+  return useContext(DesktopTabOpen) ? <LoadingState dark label="Opening your computer…" /> : null;
+}
+/** A part of the page whose code didn't download. */
+class SurfaceCodeUnavailable extends Error {}
+function surfaceCodeUnavailable(cause: unknown): never {
+  throw new SurfaceCodeUnavailable("This part of the page didn't download.", { cause });
+}
+
+/**
+ * Where a part of the page that loads on demand would be, says so if its code
+ * didn't download (a dropped connection, or a release that replaced the file
+ * while the page was open), so the tabs and chat around it keep working. The
+ * failed download is remembered until the page reloads, so reloading is what
+ * fetches it again. Any other fault in the part goes on to the dashboard's
+ * own error page, as before.
+ */
+class SurfaceCodeBoundary extends Component<{ children: ReactNode; visible?: boolean }, { error: unknown; failed: boolean }> {
+  state = { error: null as unknown, failed: false };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error, failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    if (!(error instanceof SurfaceCodeUnavailable)) return;
+    clientLog.error("Part of the agent page didn't download", error.cause ?? error, {
+      source: "hivra-agent-page",
+      route: "/dashboard/agent/[id]",
+    });
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    if (!(this.state.error instanceof SurfaceCodeUnavailable)) throw this.state.error;
+    if (this.props.visible === false) return null;
+    return (
+      <div className={styles.statusPanel} role="alert">
+        <h3>Couldn’t load this part of the page</h3>
+        <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Check your connection, then reload the page to try again.</p>
+        <button type="button" onClick={() => window.location.reload()}>Reload page</button>
+      </div>
+    );
+  }
+}
+
+// Only computers, DigitalOcean sessions and the Tasks tab use these. Load them
+// when one is shown, so an agent's page doesn't download the desktop and
+// session code before it can open. (The browser paywall stays in the page:
+// Manage already brings it along.)
+const HivraRemoteDesktop = dynamic(
+  () => import("@/components/hivra/HivraRemoteDesktop").then((mod) => mod.HivraRemoteDesktop, surfaceCodeUnavailable),
+  { ssr: false, loading: DesktopLoading },
+);
+const HivraConsoleDesktop = dynamic(
+  () => import("@/components/hivra/HivraConsoleDesktop").then((mod) => mod.HivraConsoleDesktop, surfaceCodeUnavailable),
+  { ssr: false, loading: DesktopLoading },
+);
+const HivraOmarchyDesktop = dynamic(
+  () => import("@/components/hivra/HivraOmarchyDesktop").then((mod) => mod.HivraOmarchyDesktop, surfaceCodeUnavailable),
+  { ssr: false, loading: DesktopLoading },
+);
+const DigitalOceanAgentWorkspace = dynamic(
+  () => import("@/components/hivra/DigitalOceanAgentWorkspace")
+    .then((mod) => mod.DigitalOceanAgentWorkspace, surfaceCodeUnavailable),
+  { ssr: false, loading: () => <LoadingState label="Opening your workspace…" /> },
+);
+const TasksPanel = dynamic(
+  () => import("@/components/scheduled-tasks/TasksPanel").then((mod) => mod.TasksPanel, surfaceCodeUnavailable),
+  { ssr: false, loading: () => <LoadingState compact label="Loading tasks…" /> },
+);
+/**
+ * Starts downloading a desktop's code before the page knows which computer it
+ * shows (Omarchy's desktop is a thin wrapper around the remote one). The
+ * desktop above reuses the download; if it fails, the desktop says so when it
+ * renders.
+ */
+function startDesktopDownload(windows: boolean) {
+  const download = windows
+    ? import("@/components/hivra/HivraConsoleDesktop")
+    : import("@/components/hivra/HivraRemoteDesktop");
+  download.catch(() => undefined);
+}
 
 // Which tabs a resource has is one shared decision (agentSurfacesFor): the
 // Computer Contract and the launch Review read it too, so what the agent is
@@ -108,9 +190,62 @@ const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
 const WORK_PANE_ID = "agent-work-pane";
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-// The chat/terminal pick is remembered (global) — whichever the user looked at
-// last sticks across refreshes and navigating away. Other tabs don't persist.
-const LAST_VIEW_KEY = "hivra:agent-last-view";
+/**
+ * The sidebar, ⌘K and Home reuse a list of agents read moments ago. After a
+ * change made here (a delete, a stop, a rename) that list is out of date, and
+ * Home would offer to continue in an agent just deleted.
+ */
+function listChanged(): void {
+  resourceInventory.invalidate("hivra");
+}
+
+/**
+ * The surface a page opens on: a ?tab= deep link (e.g. the dashboard
+ * checklist's "connect Telegram" item), then a fresh launch's conversation,
+ * then the surface you last left THIS agent on. Never another agent's: a
+ * remembered view used to be shared by every agent, so using one agent's
+ * command line opened the next agent on its command line too, which on an
+ * older computer can start a session nobody asked for. Anything else lands on
+ * Chat, which `shownTab` turns into the resource's own landing view.
+ */
+function openingTab(id: string, requested: string | null | undefined, welcome: boolean): Tab {
+  if (requested && TABS.some((t) => t.id === requested)) return requested as Tab;
+  if (welcome) return "chat";
+  return lastTabFor(hivraRuntimeUid(id)) ?? "chat";
+}
+
+/**
+ * The surface actually shown for `tab`. A tab the resource does not have (a
+ * stale link, a surface removed since) falls back to its landing view: a
+ * computer's desktop (Manage for a terminal-only sandbox or one with no
+ * desktop yet), a dashboard agent's dashboard, and everyone else's Chat.
+ */
+function shownTab(agent: HivraAgent, tab: Tab): Tab {
+  const def = catalogAgent(agent.type);
+  const surfaces = agentSurfacesFor(agent);
+  if (def?.surface === "computer") {
+    // gVisor sandboxes are terminal-only: they have no desktop to land on, so
+    // they open on Manage. Every other computer defers to the shared landing
+    // decision rather than hardcoding "desktop" a second time.
+    if (agent.computer_substrate === "gvisor") return "manage";
+    if (surfaces.includes(tab)) return tab;
+    const landing = resolveResourceLanding({
+      source: "hivra",
+      type: agent.type,
+      computerProfile: agent.computer_profile,
+      status: agent.status,
+      chatUrl: agent.chat_url,
+      surfaceKind: def.surface,
+      resourceKind: def.resourceKind,
+    });
+    return landing.landing === "desktop" ? "desktop" : "manage";
+  }
+  if (surfaces.includes(tab)) return tab;
+  // Dashboard agents have no "chat" tab, so the default falls back to the
+  // dashboard surface. A stale or shared link can name a surface a CLI agent
+  // lacks (Desktop, Dashboard); land on Chat rather than an empty pane.
+  return def?.surface === "dashboard" ? "aeon" : "chat";
+}
 
 function Stub({ title, body }: { title: string; body: string }) {
   return (
@@ -140,6 +275,68 @@ function CanonicalizeUnavailableTab({
 }
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
+type SurfaceAccess = "ready" | "upgrade-required" | "unavailable";
+
+/** The guest origin and local path of a surface URL, or null when it must fail closed. */
+function parseSurfaceUrl(url: string): { origin: string; destination: string } | null {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
+      /[\s;*'"]/.test(parsed.origin)
+    ) {
+      throw new Error("A clean HTTPS surface endpoint is required.");
+    }
+    return { origin: parsed.origin, destination: `${parsed.pathname}${parsed.search}` };
+  } catch {
+    // A malformed stored surface URL must fail closed instead of navigating.
+    return null;
+  }
+}
+
+// Provider ownership says nothing about the installed gateway protocol.
+// Probe nonsecret runtime metadata before sending any bearer. An old or
+// unreachable runtime must never fall back to putting it in a URL.
+function probeSurfaceAccess(origin: string): Promise<SurfaceAccess> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  return fetch(`${origin}/api/meta`, { cache: "no-store", credentials: "omit", signal: controller.signal })
+    .then(async (response): Promise<SurfaceAccess> => {
+      if (!response.ok) throw new Error("Runtime metadata is unavailable.");
+      const metadata: unknown = await response.json();
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+        throw new Error("Runtime metadata is invalid.");
+      }
+      const record = metadata as Record<string, unknown>;
+      return record.surfaceAuth === "post-cookie-v1"
+        ? "ready"
+        : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
+    })
+    .catch((): SurfaceAccess => "unavailable")
+    .finally(() => window.clearTimeout(timeout));
+}
+
+// One check per computer for as long as its page is open: every terminal,
+// session tab and embedded surface reuses a gateway that has already shown it
+// takes the bearer by POST. Only that answer is kept. Any other answer, a
+// changed credential and "Try again" all ask the computer again.
+type SurfaceAccessChecks = { check(origin: string, token: string, fresh?: boolean): Promise<SurfaceAccess> };
+function createSurfaceAccessChecks(): SurfaceAccessChecks {
+  const checks = new Map<string, { token: string; result: Promise<SurfaceAccess> }>();
+  return {
+    check(origin, token, fresh = false) {
+      const known = checks.get(origin);
+      if (known && known.token === token && !fresh) return known.result;
+      const entry = { token, result: probeSurfaceAccess(origin) };
+      checks.set(origin, entry);
+      void entry.result.then((status) => {
+        if (status !== "ready" && checks.get(origin) === entry) checks.delete(origin);
+      });
+      return entry.result;
+    },
+  };
+}
+const SurfaceAccessContext = createContext<SurfaceAccessChecks | null>(null);
 
 function AuthenticatedSurface({
   url,
@@ -166,31 +363,18 @@ function AuthenticatedSurface({
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const formRef = useRef<HTMLFormElement>(null);
   const newTabFormRef = useRef<HTMLFormElement>(null);
+  const accessChecks = useContext(SurfaceAccessContext);
   const [probeVersion, setProbeVersion] = useState(0);
   const [access, setAccess] = useState<{
     key: string;
     token: string;
-    status: "ready" | "upgrade-required" | "unavailable";
+    status: SurfaceAccess;
   } | null>(null);
-  let bootstrapUrl = "";
-  let metadataUrl = "";
-  let destination = "";
-  let surfaceOrigin = "";
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
-      /[\s;*'"]/.test(parsed.origin)
-    ) {
-      throw new Error("A clean HTTPS surface endpoint is required.");
-    }
-    surfaceOrigin = parsed.origin;
-    bootstrapUrl = `${parsed.origin}/auth/bootstrap`;
-    metadataUrl = `${parsed.origin}/api/meta`;
-    destination = `${parsed.pathname}${parsed.search}`;
-  } catch {
-    // A malformed stored surface URL must fail closed instead of navigating.
-  }
+  const endpoint = parseSurfaceUrl(url);
+  const surfaceOrigin = endpoint?.origin ?? "";
+  const bootstrapUrl = endpoint ? `${endpoint.origin}/auth/bootstrap` : "";
+  const metadataUrl = endpoint ? `${endpoint.origin}/api/meta` : "";
+  const destination = endpoint?.destination ?? "";
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
   // validated guest origin used for bootstrap, never a wildcard or legacy
@@ -205,36 +389,18 @@ function AuthenticatedSurface({
     : access?.key === probeKey && access.token === token ? access.status : "checking";
 
   useEffect(() => {
-    if (!metadataUrl || !token) return;
-    const controller = new AbortController();
+    if (!surfaceOrigin || !token) return;
     let cancelled = false;
-    const timeout = window.setTimeout(() => controller.abort(), 10_000);
-    // Provider ownership says nothing about the installed gateway protocol.
-    // Probe nonsecret runtime metadata before sending any bearer. An old or
-    // unreachable runtime must never fall back to putting it in a URL.
-    void fetch(metadataUrl, { cache: "no-store", credentials: "omit", signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Runtime metadata is unavailable.");
-        const metadata: unknown = await response.json();
-        if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-          throw new Error("Runtime metadata is invalid.");
-        }
-        const record = metadata as Record<string, unknown>;
-        const status = record.surfaceAuth === "post-cookie-v1"
-          ? "ready"
-          : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
+    // "Try again" always asks the computer afresh.
+    const fresh = probeVersion > 0;
+    void (accessChecks ? accessChecks.check(surfaceOrigin, token, fresh) : probeSurfaceAccess(surfaceOrigin))
+      .then((status) => {
         if (!cancelled) setAccess({ key: probeKey, token, status });
-      })
-      .catch(() => {
-        if (!cancelled) setAccess({ key: probeKey, token, status: "unavailable" });
-      })
-      .finally(() => window.clearTimeout(timeout));
+      });
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
-      controller.abort();
     };
-  }, [metadataUrl, probeKey, token]);
+  }, [accessChecks, probeKey, probeVersion, surfaceOrigin, token]);
 
   useEffect(() => {
     if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
@@ -559,6 +725,7 @@ export default function AgentPage() {
   // One registry per agent page. Never a module singleton: a route change or a
   // reused module in a test must not carry another page's actions over.
   const actionStore = useSurfaceActionStoreInstance();
+  const [surfaceAccessChecks] = useState(createSurfaceAccessChecks);
   const id = (params?.id as string) || "";
   const launchWelcome = searchParams?.get("welcome") === "1";
   const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
@@ -569,27 +736,17 @@ export default function AgentPage() {
     receivedAt: number;
     unavailable: boolean;
   } | null>(null);
-  // Start on whichever of chat/terminal the user looked at last (sticks across
-  // refreshes and navigating away). Lazy initializer keeps it SSR-safe — the tab
+  // Lazy initializer keeps it SSR-safe: the server has no recents and the tab
   // value doesn't affect the loading render, so there's no hydration flash.
-  // A ?tab= deep link (e.g. the dashboard checklist's "connect Telegram" item)
-  // wins over both the welcome default and the remembered view.
-  const [tab, setTab] = useState<Tab>(() => {
-    const requested = searchParams?.get("tab");
-    if (requested && TABS.some((t) => t.id === requested)) return requested as Tab;
-    try {
-      if (launchWelcome) {
-        window.localStorage.setItem(LAST_VIEW_KEY, "chat");
-        return "chat";
-      }
-      const saved = window.localStorage.getItem(LAST_VIEW_KEY);
-      if (saved === "chat" || saved === "terminal") return saved;
-    } catch {
-      /* SSR / storage disabled */
-    }
-    return "chat";
-  });
+  const [tab, setTab] = useState<Tab>(() => openingTab(id, searchParams?.get("tab"), launchWelcome));
   const requestedTab = searchParams?.get("tab");
+  // Another agent in the same page instance starts from its own opening tab,
+  // not from the surface the previous agent was left on.
+  const [tabAgentId, setTabAgentId] = useState(id);
+  if (tabAgentId !== id) {
+    setTabAgentId(id);
+    setTab(openingTab(id, requestedTab, launchWelcome));
+  }
   const [lastRequestedTab, setLastRequestedTab] = useState(requestedTab);
   // Reconcile a changed deep link before committing a stale surface.
   if (requestedTab !== lastRequestedTab) {
@@ -735,36 +892,23 @@ export default function AgentPage() {
 
   // Keep the current surface in the shareable URL without reloading its
   // retained sessions or adding a Back entry for every local tab click.
-  // Chat/terminal also retain their cross-computer sticky preference.
   const selectTab = useCallback((t: Tab) => {
     setTab(t);
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("tab", t);
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
-    if (t === "chat" || t === "terminal") {
-      try {
-        window.localStorage.setItem(LAST_VIEW_KEY, t);
-      } catch {
-        /* ignore */
-      }
-    }
   }, []);
 
-  // Remember this runtime, so Home can offer it back as "Continue <name>".
-  //
-  // The reader for this lived on the fleet pane from the start and never had a
-  // writer once the workspace route became a door — the only one was
-  // `UnifiedWorkspace`, which stopped being imported. This route is where the
-  // visit actually happens, so it is where the record belongs. Recording is
-  // fire-and-forget and cannot navigate: Home offers the stored selection as
-  // "Continue", and follows it only when the app itself is opened at Home.
-  useEffect(() => {
-    if (!id) return;
-    persistWorkspaceSelection({
-      uid: hivraRuntimeUid(id),
-      surface: agentTabSurface(tab),
-    });
-  }, [id, tab]);
+  // Remember this agent and the surface actually on screen, so Home can offer
+  // it back ("Pick up where you left off") and the switchers can list it under
+  // Recent and reopen it where you were. Only once the agent has loaded here:
+  // an unknown or unavailable page is not somewhere to return to. A
+  // DigitalOcean session keeps its own views and opens on its chat. Recording
+  // cannot navigate: Home follows it only when the app itself opens at Home.
+  const visitTab: Tab | null = flagOn && agent && agent.id === id
+    ? agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
+    : null;
+  useRecordVisit(id ? hivraRuntimeUid(id) : null, visitTab);
 
   // An agent added to this computer (design 5.8): the computer gains a Chat
   // tab that reaches it through the computer's gateway.
@@ -791,6 +935,29 @@ export default function AgentPage() {
     return () => controller.abort();
   }, [agent, id]);
 
+  // Check the computer's connection service as soon as its address is known,
+  // so opening a terminal or another session tab doesn't wait for it. Windows
+  // computers and provider desktops have no surface that uses it.
+  const checksSurfaceAccess = agent?.id === id && agent.status === "running" && agent.computer_profile !== "windows"
+    && !(agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop");
+  const surfaceCheckUrl = checksSurfaceAccess ? agent.chat_url : null;
+  const surfaceCheckToken = checksSurfaceAccess ? agent.api_token : null;
+  useEffect(() => {
+    if (!surfaceCheckUrl || !surfaceCheckToken) return;
+    const endpoint = parseSurfaceUrl(surfaceCheckUrl);
+    if (endpoint) void surfaceAccessChecks.check(endpoint.origin, surfaceCheckToken);
+  }, [surfaceAccessChecks, surfaceCheckToken, surfaceCheckUrl]);
+
+  // Computers open on their desktop (?tab=desktop; open=fast for Windows).
+  // Start downloading its code alongside the computer's record instead of
+  // after it, so the desktop can start connecting as soon as the record
+  // arrives.
+  const desktopRequested = requestedTab === "desktop";
+  const fastDesktopRequested = searchParams?.get("open") === "fast";
+  useEffect(() => {
+    if (desktopRequested) startDesktopDownload(fastDesktopRequested);
+  }, [desktopRequested, fastDesktopRequested]);
+
   if (flagOn === null) {
     return <LoadingState label="Checking availability…" />;
   }
@@ -814,7 +981,11 @@ export default function AgentPage() {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
     // surface, with its own Chat, Files and Manage views. The computer tabs
     // (Terminal, Browser, Git) and Skills do not apply.
-    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => go("/dashboard")} />;
+    return (
+      <SurfaceCodeBoundary>
+        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => { listChanged(); go("/dashboard"); }} />
+      </SurfaceCodeBoundary>
+    );
   }
 
   const def = catalogAgent(agent.type);
@@ -822,7 +993,6 @@ export default function AgentPage() {
   const cliKind = def?.cliKind ?? "claude";
   const isDashboard = def?.surface === "dashboard";
   const isComputer = def?.surface === "computer";
-  const isGvisorComputer = isComputer && agent.computer_substrate === "gvisor";
   const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
     && agent.computer_profile === "ubuntu-desktop";
   // For a computer, a running lifecycle record plus its provisioned chat_url
@@ -836,16 +1006,21 @@ export default function AgentPage() {
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Chat · Computer (Terminal, Files,
-  // Browser, Git) · Manage. Computers keep their short flat list.
+  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
+  // Computer (Terminal, Files, Browser, Git) · Manage. Computers keep their
+  // short flat list. Agent and Manage always open their first view (Chat or
+  // the dashboard, Settings); Computer reopens the view last used in it.
   const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
     id: group.id,
     label: group.label,
     icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
     surfaces: group.surfaces,
+    home: group.id === "computer" ? undefined : group.surfaces[0],
   }));
-  // Dashboard agents have no "chat" tab, so the persisted/default "chat" choice
-  // falls back to the dashboard surface.
+  // The switcher's caption names the kind ("Agent · Running"). A chat agent's
+  // bar already opens with an Agent button, so there it keeps only the status.
+  const switcherKind = isComputer ? "computer" : "agent";
+  const kindInBar = Boolean(surfaceGroups?.some((group) => group.label === resourceKindLabel(switcherKind)));
   // One shared decision with the workspace: resource-landing owns "what does
   // this resource open on", so the two routes cannot drift apart again.
   const landing = resolveResourceLanding({
@@ -857,20 +1032,10 @@ export default function AgentPage() {
     surfaceKind: def?.surface,
     resourceKind: def?.resourceKind,
   });
-  const effectiveTab: Tab = isComputer
-    // gVisor sandboxes are terminal-only: they have no desktop to land on, so
-    // they open on Manage. Every other computer defers to the shared landing
-    // decision rather than hardcoding "desktop" a second time.
-    ? isGvisorComputer
-      ? "manage"
-      : computerTabs.includes(tab)
-        ? tab
-        : landing.landing === "desktop" ? "desktop" : "manage"
-    : isDashboard
-      ? (tabs.some((t) => t.id === tab) ? tab : "aeon")
-      // A stale or shared link can name a surface this agent lacks (Desktop,
-      // Dashboard); land on Chat rather than an empty pane.
-      : tabs.some((t) => t.id === tab) ? tab : "chat";
+  // The attached agent's Chat (design 5.8) is one of this computer's tabs,
+  // though not one of its own surfaces.
+  const attachedChatShown = isComputer && tab === "chat" && computerTabs.includes("chat");
+  const effectiveTab: Tab = attachedChatShown ? "chat" : shownTab(agent, tab);
   const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
   const unavailableTab = isComputer
     ? COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
@@ -893,8 +1058,8 @@ export default function AgentPage() {
       agent={agent}
       def={def}
       plan={plan}
-      onChanged={() => setReloadKey((k) => k + 1)}
-      onDestroyed={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}
+      onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+      onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
       browserOn={browserOn}
       onBrowserChange={(e) => setBrowserOn(e)}
     />
@@ -902,6 +1067,7 @@ export default function AgentPage() {
 
   return (
     <SurfaceActionProvider store={actionStore}>
+    <SurfaceAccessContext.Provider value={surfaceAccessChecks}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
       <CanonicalizeUnavailableTab
         unavailableTab={unavailableTab}
@@ -921,7 +1087,7 @@ export default function AgentPage() {
         identity={
           nativeWorkspace ? undefined : (
             <div className={styles.identity}>
-              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={isComputer ? "computer" : "agent"} status={provisioning ? activity.label : agent.status} />
+              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} showKind={!kindInBar} status={provisioning ? activity.label : agent.status} />
             </div>
           )
         }
@@ -945,6 +1111,8 @@ export default function AgentPage() {
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
             among local surfaces. Only computers have a desktop. */}
+        <DesktopTabOpen.Provider value={effectiveTab === "desktop"}>
+        <SurfaceCodeBoundary visible={effectiveTab === "desktop"}>
         {isComputer && agent.status === "running" ? (
           agent.computer_profile === "omarchy" ? (
             <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
@@ -968,6 +1136,8 @@ export default function AgentPage() {
             />
           )
         ) : null}
+        </SurfaceCodeBoundary>
+        </DesktopTabOpen.Provider>
         {chatOpened && chatSurfaceReady && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
             <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
@@ -1107,13 +1277,15 @@ export default function AgentPage() {
           agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "tasks" ? (
           agent.status === "running" ? (
-            <TasksPanel
-              instanceId={agent.id}
-              agentName={agent.name}
-              agentStatus={agent.status}
-              isFreePlan={isFreePlan}
-              currentPlan={plan?.key ?? null}
-            />
+            <SurfaceCodeBoundary>
+              <TasksPanel
+                instanceId={agent.id}
+                agentName={agent.name}
+                agentStatus={agent.status}
+                isFreePlan={isFreePlan}
+                currentPlan={plan?.key ?? null}
+              />
+            </SurfaceCodeBoundary>
           ) : (
             <Stub title="Not ready" body="The computer isn't running yet. Scheduled tasks become available once it's online." />
           )
@@ -1142,6 +1314,7 @@ export default function AgentPage() {
         />
       ) : null}
     </div>
+    </SurfaceAccessContext.Provider>
     </SurfaceActionProvider>
   );
 }

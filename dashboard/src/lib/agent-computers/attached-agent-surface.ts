@@ -2,6 +2,7 @@
 // page gains a Chat tab for it, reached through the computer's gateway. Kept
 // apart from agent-surfaces.ts, which decides a row's own surfaces. Client-safe.
 
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
 import type { AgentSurfaceId } from "./agent-surfaces";
 
 /** Sent on window when an agent on a computer was added, changed or removed, so the page's tabs follow. */
@@ -23,6 +24,9 @@ export function withAttachedAgentChat(surfaces: readonly AgentSurfaceId[], attac
   return ["chat", ...surfaces];
 }
 
+/** The page's tabs follow, and the shared agents list (Home, the switchers) is read again. */
 export function announceAttachedAgentsChanged(): void {
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(ATTACHED_AGENTS_CHANGED_EVENT));
+  if (typeof window === "undefined") return;
+  resourceInventory.invalidate("hivra");
+  window.dispatchEvent(new Event(ATTACHED_AGENTS_CHANGED_EVENT));
 }

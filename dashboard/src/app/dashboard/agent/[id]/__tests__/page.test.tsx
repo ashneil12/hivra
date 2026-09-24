@@ -2,6 +2,8 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
+import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
+import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -50,6 +52,15 @@ jest.mock("@/components/instances/AgentSwitcher", () => ({
   AgentSwitcher: () => <div data-testid="agent-switcher" />,
 }));
 
+// Home's list, for the round trip from an agent back through Home.
+const mockHomeAgents = jest.fn((): unknown[] => []);
+jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
+  useWorkspaceAgents: () => ({
+    agents: mockHomeAgents(), loading: false, hermesError: null, hivraError: null, lastRefreshedAt: null,
+    retryHermes: async () => undefined, retryHivra: async () => undefined, retryAll: async () => undefined,
+  }),
+}));
+
 const mockChatMounts = jest.fn();
 jest.mock("@/components/hivra/HivraChat", () => ({
   HivraChat: function MockHivraChat() {
@@ -60,8 +71,11 @@ jest.mock("@/components/hivra/HivraChat", () => ({
 }));
 
 jest.mock("@/components/hivra/DigitalOceanAgentWorkspace", () => ({
-  DigitalOceanAgentWorkspace: ({ agentId, firstTask }: { agentId: string; firstTask?: string | null }) => (
-    <div>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</div>
+  DigitalOceanAgentWorkspace: ({ agentId, firstTask, onDeleted }: { agentId: string; firstTask?: string | null; onDeleted: () => void }) => (
+    <div>
+      <span>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</span>
+      <button type="button" onClick={onDeleted}>Session deleted</button>
+    </div>
   ),
 }));
 
@@ -88,10 +102,11 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ plan, onChanged }: { plan?: { usage?: { usedCpu: number } } | null; onChanged: () => void }) => <>
+  HivraManage: ({ plan, onChanged, onDestroyed }: { plan?: { usage?: { usedCpu: number } } | null; onChanged: () => void; onDestroyed: () => void }) => <>
     <div>Manage panel</div>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
     <button onClick={onChanged}>Refresh capacity</button>
+    <button onClick={onDestroyed}>Agent deleted</button>
   </>,
 }));
 
@@ -124,6 +139,7 @@ jest.mock("@/components/hivra/AttachedAgentChat", () => ({
 const previousHivraEnv = process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 const AgentPage = jest.requireActual("../page").default as typeof import("../page").default;
+const { FleetControlPane } = jest.requireActual("@/components/hivra/FleetControlPane") as typeof import("@/components/hivra/FleetControlPane");
 if (previousHivraEnv === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 else process.env.NEXT_PUBLIC_HIVRA_AGENTS = previousHivraEnv;
 
@@ -134,12 +150,12 @@ const CONNECTED_UBUNTU = {
   chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
 };
 
-// Agent pages group their surfaces as Chat · Computer · Manage, each view a
+// Agent pages group their surfaces as Agent · Computer · Manage, each view a
 // tab in its group's row; computers keep one flat bar with a Tools menu.
 // Reach a surface the way an owner does: its tab, then its group, then Tools.
 const GROUP_OF_LABEL: Record<string, string> = {
   Terminal: "Computer", Files: "Computer", Browser: "Computer", Git: "Computer",
-  "Claude Code session": "Chat", "Codex session": "Chat",
+  "Claude Code session": "Agent", "Codex session": "Agent",
   Skills: "Manage", Tasks: "Manage", Telegram: "Manage",
 };
 function groupFor(name: string | RegExp): string | null {
@@ -599,25 +615,70 @@ describe("AgentPage", () => {
     requestSubmit.mockRestore();
   });
 
-  it("groups an agent's surfaces as Chat · Computer · Manage and names its computer (ATT-11, ATT-12)", async () => {
+  it("groups an agent's surfaces as Agent · Computer · Manage and names its computer (ATT-11, ATT-12)", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
     render(<AgentPage />);
     const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
-    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Chat", "Computer", "Manage"]);
-    expect(within(screen.getByRole("tablist", { name: "Chat views" })).getAllByRole("tab").map((tab) => tab.textContent))
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Agent", "Computer", "Manage"]);
+    expect(within(screen.getByRole("tablist", { name: "Agent views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Chat", "Codex session"]);
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Terminal", "Files", "Browser", "Git"]);
     expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    // The group is Manage, so its own pane's tab is Settings: no "Manage › Manage".
     expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Manage", "Skills", "Tasks", "Telegram"]);
+      .toEqual(["Settings", "Skills", "Tasks", "Telegram"]);
+    expect(screen.getByText("Manage panel")).toBeInTheDocument();
     // Retired: "Box Terminal", "<Agent> Terminal", the Desktop tab on an agent, and the Tools overflow.
     expect(document.body).not.toHaveTextContent(/Box Terminal|Codex Terminal/);
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Desktop" })).not.toBeInTheDocument();
+  });
+
+  it("says Agent once in a chat agent's bar: the group button, not the switcher's caption as well", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
+    render(<AgentPage />);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(nav.textContent?.match(/Agent/g)).toEqual(["Agent"]);
+    const switcher = within(nav).getByRole("button", { name: "Switch agent or computer: Codex 1" });
+    expect(switcher).toHaveTextContent(/^Codex 1running$/);
+    expect(switcher).toHaveAccessibleDescription("running");
+  });
+
+  it("keeps the kind in the switcher's caption where no group button already names it", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    const { unmount } = render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: OPENCLAW_AGENT" })).toHaveTextContent("Agent · running");
+    unmount();
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: UBUNTU" })).toHaveTextContent("Computer · running");
+  });
+
+  it("gives a dashboard agent's single-surface groups no second row, with Export data still in reach", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Dashboard", "Computer", "Manage"]);
+    expect(await screen.findByTitle("OpenClaw · dashboard")).toBeInTheDocument();
+    // Dashboard and Manage each hold one surface: their buttons open it, and
+    // no "Dashboard › Dashboard" or "Manage › Manage" row repeats the name.
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.getByText("Manage panel")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Terminal", "Files", "Browser"]);
+    expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
   });
 
   it("keeps the Browser tab exposed for browser-capable agents even when browser automation is off", async () => {
@@ -725,7 +786,10 @@ describe("AgentPage", () => {
     { label: "invalid JSON", response: { ok: true, json: async () => { throw new SyntaxError("Invalid JSON"); } } },
     { label: "unknown metadata", response: { ok: true, json: async () => ({ surfaceAuth: "future-protocol" }) } },
   ])("fails closed on $label and can retry without a bearer URL", async ({ response }) => {
-    (global.fetch as jest.Mock).mockResolvedValueOnce(response);
+    // The computer answers this way until it is fixed. The page asks when it
+    // opens and again when the session opens.
+    let metadata: unknown = response;
+    (global.fetch as jest.Mock).mockImplementation(async () => metadata);
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
@@ -734,19 +798,84 @@ describe("AgentPage", () => {
     expect(document.documentElement.outerHTML).not.toContain("box-token");
     expect(requestSubmit).not.toHaveBeenCalled();
 
+    metadata = { ok: true, json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1" }) };
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
   });
 
   it("does not fall back to a bearer URL on network failure", async () => {
-    (global.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network failed"));
+    (global.fetch as jest.Mock).mockRejectedValue(new TypeError("Network failed"));
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
     expect(document.querySelector("iframe, form")).toBeNull();
     expect(requestSubmit).not.toHaveBeenCalled();
+  });
+
+  describe("connection service check", () => {
+    const READY = { ok: true, json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1" }) };
+    const metaChecks = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
+
+    it("checks the computer as soon as the page opens, before any terminal and without the bearer", async () => {
+      render(<AgentPage />);
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("https://box.example.com/api/meta", {
+        cache: "no-store",
+        credentials: "omit",
+        signal: expect.any(AbortSignal),
+      }));
+      expect(document.querySelector("iframe, form")).toBeNull();
+      expect(requestSubmit).not.toHaveBeenCalled();
+    });
+
+    it("reuses that check for every session tab and terminal instead of asking again", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+
+      fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+      await screen.findByTitle("Claude Code session · 2");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
+
+      expect(metaChecks()).toBe(1);
+    });
+
+    it("does not remember a failed check: opening the session asks again", async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network failed"));
+      render(<AgentPage />);
+      await waitFor(() => expect(metaChecks()).toBe(1));
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+
+      expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(metaChecks()).toBe(2);
+    });
+
+    it("asks afresh on Try again, even while another surface's check is still waiting", async () => {
+      const answers: Array<() => Promise<unknown>> = [
+        async () => { throw new TypeError("Network failed"); }, // when the page opens
+        async () => { throw new TypeError("Network failed"); }, // the session
+        () => new Promise(() => undefined), // the Terminal, still waiting
+      ];
+      (global.fetch as jest.Mock).mockImplementation((url: string) =>
+        url.endsWith("/api/meta") && answers.length ? answers.shift()!() : Promise.resolve(READY));
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
+      fireEvent.click(getSurfaceButton("Terminal"));
+      expect(await screen.findByText("Connecting securely…")).toBeVisible();
+
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(metaChecks()).toBe(4);
+    });
   });
 
   it.each(["http://box.example.com", "https://user:password@box.example.com", "https://box.example.com?token=secret"])("does not send credentials to an invalid surface base %s", async (chatUrl) => {
@@ -778,6 +907,9 @@ describe("AgentPage", () => {
       cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
     });
     view.rerender(<AgentPage />);
+    // The next agent opens on its own surface, so its session is opened by hand.
+    expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
     const frame = await screen.findByTitle("Claude Code session");
     expect(frame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
     await act(async () => {
@@ -867,7 +999,7 @@ describe("AgentPage", () => {
   it("keeps the chat mounted while working in other surfaces", async () => {
     mockChatMounts.mockClear();
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Chat" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agent" }));
     const chat = await screen.findByText("Chat panel");
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
 
@@ -876,7 +1008,7 @@ describe("AgentPage", () => {
     expect(chat).toBeInTheDocument();
     expect(chat).not.toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
     expect(screen.getByText("Chat panel")).toBe(chat);
     expect(chat).toBeVisible();
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
@@ -927,6 +1059,7 @@ describe("AgentPage", () => {
       expect(oldFrame).not.toBeInTheDocument();
       await act(async () => { jest.advanceTimersByTime(2000); });
       expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
       const nextFrame = await screen.findByTitle("Claude Code session");
       expect(nextFrame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
     } finally {
@@ -1064,14 +1197,125 @@ describe("AgentPage", () => {
     expect(frame).toHaveAttribute("allow", "clipboard-read https://box.example.com; clipboard-write https://box.example.com");
   });
 
-  it("opens a fresh welcome launch on chat even when terminal was the last remembered view", async () => {
-    window.localStorage.setItem("hivra:agent-last-view", "terminal");
+  it("opens a fresh welcome launch on chat even when this agent was last left on its session", async () => {
+    recordVisit("x-agent_123", "terminal");
     mockSearchGet.mockImplementation((key: string) => (key === "welcome" ? "1" : null));
 
     render(<AgentPage />);
 
     expect(await screen.findByText("Chat panel")).toBeInTheDocument();
-    expect(window.localStorage.getItem("hivra:agent-last-view")).toBe("chat");
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+    expect(lastTabFor("x-agent_123")).toBe("chat");
+  });
+
+  // Each agent reopens where it was left; nothing carries over to another one.
+  // A single remembered view used to be shared by every agent, so after using
+  // one agent's command line the next agent opened on its command line too,
+  // which on an older computer could start a session nobody asked for.
+  it("reopens an agent on the surface it was last left on, Computer › Terminal included", async () => {
+    recordVisit("x-agent_123", "box");
+
+    render(<AgentPage />);
+
+    expect(await screen.findByTitle("Terminal")).toBeVisible();
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+  });
+
+  it("does not open another agent on the surface the previous agent was left on", async () => {
+    const first = render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    expect(await screen.findByTitle("Claude Code session")).toBeVisible();
+    first.unmount();
+
+    mockAgentId = "agent_next";
+    mockGetAgent.mockResolvedValue({
+      id: "agent_next", type: "claude-code", name: "NEXT_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
+    });
+    render(<AgentPage />);
+
+    expect(await screen.findByText("Chat panel")).toBeVisible();
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+    expect(document.querySelector('iframe[name], form[action*="/terminal"]')).toBeNull();
+    // The first agent still reopens on its own session.
+    expect(lastTabFor("x-agent_123")).toBe("terminal");
+  });
+
+  // Computer › Terminal and the agent's session were remembered as one word,
+  // so Home's continue link reopened the agent's session instead of the shell.
+  it("sends Home's continue link back to Computer › Terminal, not the agent's session", async () => {
+    const page = render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton("Terminal"));
+    expect(await screen.findByTitle("Terminal")).toBeVisible();
+    page.unmount();
+
+    mockHomeAgents.mockReturnValue([{
+      uid: "x-agent_123", kind: "hivra", id: "agent_123", name: "CLAUDE_CODE_AGENT", statusRaw: "running",
+      state: "running", dot: "#22c55e", vendor: "Anthropic", typeLabel: "Claude Code", resourceKind: "agent", agentType: "claude-code",
+    }]);
+    render(<FleetControlPane requested />);
+    const resume = screen.getAllByRole("link").find((link) => /Continue/.test(link.textContent ?? "") && link.textContent?.includes("CLAUDE_CODE_AGENT"));
+    expect(resume).toHaveAttribute("href", "/dashboard/agent/agent_123?tab=box");
+  });
+
+  it("starts the next agent on its own surface when the page is reused for it", async () => {
+    const view = render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    expect(await screen.findByTitle("Claude Code session")).toBeVisible();
+
+    mockAgentId = "agent_next";
+    mockGetAgent.mockResolvedValue({
+      id: "agent_next", type: "claude-code", name: "NEXT_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://next.example.com", api_token: "next-token",
+    });
+    await act(async () => { view.rerender(<AgentPage />); });
+
+    expect(await screen.findByText("Chat panel")).toBeVisible();
+    expect(screen.queryByTitle("Claude Code session")).not.toBeInTheDocument();
+  });
+
+  it("records the surface on screen: at once on open, then after a pause, and on leaving", async () => {
+    jest.useFakeTimers();
+    try {
+      const view = render(<AgentPage />);
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      expect(listRecents()).toEqual([{ uid: "x-agent_123", tab: "chat", usedAt: expect.any(Number) }]);
+
+      fireEvent.click(getSurfaceButton("Files"));
+      expect(lastTabFor("x-agent_123")).toBe("chat");
+      await act(async () => { jest.advanceTimersByTime(400); });
+      expect(lastTabFor("x-agent_123")).toBe("files");
+
+      fireEvent.click(getSurfaceButton("Terminal"));
+      view.unmount();
+      expect(lastTabFor("x-agent_123")).toBe("box");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("records a computer on the desktop it lands on, not on chat", async () => {
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+
+    render(<AgentPage />);
+
+    expect(await screen.findByTestId("remote-desktop")).toBeVisible();
+    expect(lastTabFor("x-agent_123")).toBe("desktop");
+  });
+
+  it("records nothing for an agent that cannot be found", async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetAgent.mockResolvedValue(null);
+      render(<AgentPage />);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await act(async () => { jest.advanceTimersByTime(2000); });
+      }
+      expect(await screen.findByText("Agent not found.")).toBeInTheDocument();
+      expect(listRecents()).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("shows launch personalization questions while a fresh Claude Code box is provisioning", async () => {
@@ -1344,7 +1588,8 @@ describe("AgentPage", () => {
     render(<AgentPage />);
 
     expect(await screen.findByText("Telegram panel")).toBeInTheDocument();
-    // The sticky chat/terminal memory is untouched by non-sticky deep links.
+    // What is remembered is this agent's own surface, not a shared view.
+    expect(lastTabFor("x-agent_123")).toBe("telegram");
     expect(window.localStorage.getItem("hivra:agent-last-view")).toBeNull();
   });
 
@@ -1655,4 +1900,70 @@ describe("AgentPage", () => {
       expect(screen.queryByTestId("attached-chat")).not.toBeInTheDocument();
     });
   });
+
+  // The sidebar, ⌘K and Home reuse a list of agents read in the last few
+  // seconds. A change made here has to reach them, or Home offers to continue
+  // in an agent just deleted and the switchers keep its old name and status.
+  describe("after a change on Manage", () => {
+    const agentRow = { id: "agent_123", name: "CLAUDE_CODE_AGENT", type: "claude-code", status: "running", cpu: 2, ram: 4 };
+    let listed: unknown[];
+    let listReads: number;
+    let stopShowing: () => void;
+    const heldNames = () => {
+      const body = resourceInventory.getSnapshot().hivra.body as { data: { agents: Array<{ name: string }> } };
+      return body.data.agents.map((row) => row.name);
+    };
+
+    beforeEach(async () => {
+      resetResourceInventory();
+      listed = [agentRow];
+      listReads = 0;
+      const pageFetch = global.fetch as jest.Mock;
+      global.fetch = jest.fn((url: string, init?: RequestInit) => {
+        if (url === "/api/hivra/agents") {
+          listReads += 1;
+          return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { agents: listed } }) });
+        }
+        return pageFetch(url, init);
+      }) as unknown as typeof fetch;
+      await act(async () => { await resourceInventory.load("hivra"); });
+      // The sidebar is showing the list.
+      stopShowing = resourceInventory.subscribe(() => undefined);
+    });
+
+    afterEach(() => {
+      stopShowing();
+      resetResourceInventory();
+    });
+
+    it("reads the agents list again after deleting, so it is not offered again", async () => {
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "manage" : null);
+      render(<AgentPage />);
+      listed = [];
+      fireEvent.click(await screen.findByRole("button", { name: "Agent deleted" }));
+      expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
+      await waitFor(() => expect(heldNames()).toEqual([]));
+      expect(listReads).toBe(2);
+    });
+
+    it("reads the agents list again after a rename, stop or resize", async () => {
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "manage" : null);
+      render(<AgentPage />);
+      listed = [{ ...agentRow, name: "RENAMED_AGENT", status: "stopped" }];
+      fireEvent.click(await screen.findByRole("button", { name: "Refresh capacity" }));
+      await waitFor(() => expect(heldNames()).toEqual(["RENAMED_AGENT"]));
+      expect(listReads).toBe(2);
+    });
+
+    it("reads the agents list again when a DigitalOcean session is deleted", async () => {
+      mockGetAgent.mockResolvedValue({ ...agentRow, computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null });
+      render(<AgentPage />);
+      listed = [];
+      fireEvent.click(await screen.findByRole("button", { name: "Session deleted" }));
+      expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
+      await waitFor(() => expect(heldNames()).toEqual([]));
+      expect(listReads).toBe(2);
+    });
+  });
+
 });
