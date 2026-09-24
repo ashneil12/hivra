@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -52,14 +52,25 @@ env > "$FAKE_DIR/ssh.$count.env"
 cat > "$FAKE_DIR/ssh.$count.stdin"
 command="\${@: -1}"
 case "$command" in
-  *HIVRA_RUNTIME_ARCHIVE*)
-    echo gateway >> "$FAKE_DIR/ssh.kinds"
+  *HIVRA_RUNTIME_ARCHIVE*) kind=gateway ;;
+  *"install --source-dir"*) kind=install ;;
+  *"/bin/sh -c"*) kind=stage ;;
+  *) kind=cleanup ;;
+esac
+echo "$kind" >> "$FAKE_DIR/ssh.kinds"
+echo "ssh $kind" >> "$FAKE_DIR/events"
+case "$kind" in
+  gateway)
     printf '%b' "\${FAKE_GUEST_STDOUT-HIVRA_GUEST_RUNTIME_UPDATED\\\\n}"
     exit "\${FAKE_GUEST_EXIT:-0}" ;;
-  *"install --source-dir"*) echo install >> "$FAKE_DIR/ssh.kinds"; exit "\${FAKE_INSTALL_EXIT:-0}" ;;
-  *"/bin/sh -c"*) echo stage >> "$FAKE_DIR/ssh.kinds"; printf '%s\\n' "${GUEST_STAGE_DIR}"; exit 0 ;;
-  *) echo cleanup >> "$FAKE_DIR/ssh.kinds"; exit 0 ;;
+  install) exit "\${FAKE_INSTALL_EXIT:-0}" ;;
+  stage) printf '%s\\n' "${GUEST_STAGE_DIR}"; exit 0 ;;
+  *) exit 0 ;;
 esac
+`,
+  // Records the FD8 release relative to the guest calls.
+  flock: `#!/usr/bin/env bash
+echo "flock $*" >> "$FAKE_DIR/events"
 `,
   // GNU stat for the credential reader: the staged file is root-owned 0600.
   stat: `#!/usr/bin/env bash
@@ -81,6 +92,8 @@ interface HelperRun {
   kinds: string[];
   qm: string[];
   credentialFileLeft: boolean;
+  /** FD8 releases and guest calls, in order. */
+  events: string[];
   sshCall: (index: number) => { argv: string[]; env: string; stdin: string };
 }
 
@@ -90,6 +103,10 @@ function runHelper(options: {
   guestExit?: number;
   installExit?: number;
   qmStatus?: string;
+  /** Open FD8 and pass HIVRA_LIFECYCLE_LOCK_FD=8, as the dashboard route does. */
+  lockFd?: boolean;
+  /** Seconds from now until HIVRA_RUNTIME_UPDATE_DEADLINE, or a raw value. */
+  deadline?: number | string;
 } = {}): HelperRun {
   const work = mkdtempSync(path.join(tmpdir(), "hivra-update-in-place-"));
   try {
@@ -123,8 +140,13 @@ function runHelper(options: {
       writeFileSync(credentialFile, `HIVRA_ACTIVITY_TELEMETRY_B64=${Buffer.from(CREDENTIAL_JSON).toString("base64")}\n`, { mode: 0o600 });
     }
 
+    const lock = options.lockFd ? openSync(path.join(work, "allocation.lock"), "w") : null;
+    const deadline = typeof options.deadline === "number"
+      ? String(Math.floor(Date.now() / 1000) + options.deadline)
+      : options.deadline;
     const result = spawnSync("bash", [helper, "1090", "10.250.21.90"], {
       encoding: "utf8",
+      ...(lock === null ? {} : { stdio: ["pipe", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", "ignore", lock] }),
       env: {
         ...process.env,
         PATH: `${binDir}:${process.env.PATH}`,
@@ -136,9 +158,12 @@ function runHelper(options: {
         FAKE_GUEST_EXIT: String(options.guestExit ?? 0),
         FAKE_INSTALL_EXIT: String(options.installExit ?? 0),
         FAKE_QM_STATUS: options.qmStatus ?? "running",
+        ...(lock === null ? {} : { HIVRA_LIFECYCLE_LOCK_FD: "8" }),
+        ...(deadline === undefined ? {} : { HIVRA_RUNTIME_UPDATE_DEADLINE: deadline }),
       },
       timeout: 30_000,
     });
+    if (lock !== null) closeSync(lock);
     const read = (file: string) => (existsSync(path.join(fakeDir, file)) ? readFileSync(path.join(fakeDir, file), "utf8") : "");
     const calls = new Map<number, { argv: string[]; env: string; stdin: string }>();
     const count = Number(read("ssh.count") || 0);
@@ -156,6 +181,7 @@ function runHelper(options: {
       kinds: read("ssh.kinds").trim().split("\n").filter(Boolean),
       qm: read("qm.log").trim().split("\n").filter(Boolean),
       credentialFileLeft: existsSync(credentialFile),
+      events: read("events").trim().split("\n").filter(Boolean),
       sshCall: (index) => {
         const call = calls.get(index);
         expect(call).toBeDefined();
@@ -242,6 +268,38 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     expect(run.stdout).toBe("");
     expect(run.stderr).toContain(message);
     expect(run.kinds).toEqual(["gateway"]);
+    expect(run.credentialFileLeft).toBe(false);
+  });
+
+  it("releases the dashboard's FD8 host lock before any guest call, and takes no lock of its own", () => {
+    const locked = runHelper({ credential: true, lockFd: true, deadline: 600 });
+    expect(locked.status).toBe(0);
+    expect(locked.events).toEqual(["flock -u 8", "ssh gateway", "ssh stage", "ssh install"]);
+    expect(locked.stdout).toBe("HIVRA_ACTIVITY_COLLECTOR status=installed\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+
+    // Run by hand (no inherited lock): nothing to release.
+    const unlocked = runHelper();
+    expect(unlocked.status).toBe(0);
+    expect(unlocked.events).toEqual(["ssh gateway"]);
+  });
+
+  it("leaves the reporter to the next start when its bounded worst case no longer fits the request deadline", () => {
+    const run = runHelper({ credential: true, lockFd: true, deadline: 120 });
+    expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
+    // The committed update still gets its receipt, promptly.
+    expect(run.stdout).toBe("HIVRA_ACTIVITY_COLLECTOR status=failed reason=not_attempted\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
+    expect(run.kinds).toEqual(["gateway"]);
+    expect(run.credentialFileLeft).toBe(false);
+    expect(run.stdout + run.stderr).not.toContain(CREDENTIAL.token);
+  });
+
+  it("refuses a malformed deadline before any host or guest call and still consumes the credential", () => {
+    const run = runHelper({ credential: true, deadline: "soon" });
+    expect(run.status).not.toBe(0);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("invalid runtime update deadline");
+    expect(run.qm).toEqual([]);
+    expect(run.kinds).toEqual([]);
     expect(run.credentialFileLeft).toBe(false);
   });
 

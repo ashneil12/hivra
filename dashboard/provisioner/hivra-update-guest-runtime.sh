@@ -6,9 +6,10 @@
 # detached chat runs keep running; proxied browser views reconnect. For a
 # Claude Code / Codex computer it then re-credentials and reinstalls the
 # agent-run reporter, the step the start helper performs on every boot. The
-# caller owns the provider-operation lease and FD8 host lock; this helper never
-# powers the VM on/off and never touches agent files, native CLI credentials,
-# model credentials, or the box API token.
+# caller owns the provider-operation lease and takes the FD8 host lock; this
+# helper releases that lock once its host-side checks are done (see
+# release_lifecycle_lock). It never powers the VM on/off and never touches agent
+# files, native CLI credentials, model credentials, or the box API token.
 #
 # Stdout carries only host-authored lines: at most one HIVRA_ACTIVITY_COLLECTOR
 # line, then the final `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt, which
@@ -87,6 +88,25 @@ if [ -n "$ACTIVITY_TELEMETRY_FILE" ]; then
     rm -f -- "$ACTIVITY_TELEMETRY_FILE" 2>/dev/null || true
   fi
 fi
+# The caller's request deadline (epoch seconds on this host) and the FD8
+# lifecycle lock it holds. Both are optional so the helper can also run by hand.
+UPDATE_DEADLINE="${HIVRA_RUNTIME_UPDATE_DEADLINE:-}"
+LIFECYCLE_LOCK_FD="${HIVRA_LIFECYCLE_LOCK_FD:-}"
+[ -z "$UPDATE_DEADLINE" ] || [[ "$UPDATE_DEADLINE" =~ ^[0-9]{1,12}$ ]] \
+  || { echo "invalid runtime update deadline" >&2; exit 1; }
+case "$LIFECYCLE_LOCK_FD" in ''|8) ;; *) echo "invalid lifecycle lock descriptor" >&2; exit 1 ;; esac
+# FD8 serializes host-level lifecycle work (allocation, start, stop, bundle
+# sync). Everything after the host-side checks and the archive build happens in
+# the guest and can wait minutes on it, so release the lock there, as the start
+# helper does before it waits for a guest. The operation lease still fences
+# this computer against any other lifecycle change until the update completes.
+release_lifecycle_lock() {
+  if [ "$LIFECYCLE_LOCK_FD" = 8 ]; then
+    flock -u 8 2>/dev/null || true
+    exec 8>&-
+    LIFECYCLE_LOCK_FD=""
+  fi
+}
 [[ "$CHAT_PORT" =~ ^[0-9]+$ ]] && [ "$CHAT_PORT" -ge 1 ] && [ "$CHAT_PORT" -le 65535 ] \
   || { echo "invalid chat port" >&2; exit 1; }
 [ -f "$VM_KEY" ] || { echo "VM ssh key is missing" >&2; exit 1; }
@@ -105,6 +125,7 @@ done
   || { echo "runtime source asset is missing or unsafe: hivra-agent-shell" >&2; exit 1; }
 tar -czf "$ARCHIVE" -C "$PROVISIONER_DIR/hivra-chat" "${ASSETS[@]}" -C "$PROVISIONER_DIR" hivra-agent-shell
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+release_lifecycle_lock
 
 GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
 chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
@@ -321,6 +342,16 @@ printf "%s\n" "$dir"'
   esac
   return 0
 }
+# The update runs inside one bounded dashboard request. The reporter step starts
+# only when its whole bounded worst case (the 20 s, 120 s and 8 s guest calls
+# above plus their kill grace) still fits before the caller's deadline, so it can
+# never turn the committed update into an unverified one. Otherwise it stays
+# "not attempted" and the next start installs the reporter.
+REPORTER_WORST_CASE_SECONDS=165
+if [ -n "$ACTIVITY_CREDENTIAL_JSON" ] && [ -n "$UPDATE_DEADLINE" ] \
+  && [ "$(( UPDATE_DEADLINE - $(date +%s) ))" -lt "$REPORTER_WORST_CASE_SECONDS" ]; then
+  ACTIVITY_CREDENTIAL_JSON=""
+fi
 if [ -n "$ACTIVITY_CREDENTIAL_JSON" ]; then
   install_activity_collector || true
   ACTIVITY_CREDENTIAL_JSON=""

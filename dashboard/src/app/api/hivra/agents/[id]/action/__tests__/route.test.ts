@@ -958,6 +958,12 @@ describe("POST /api/hivra/agents/[id]/action", () => {
       expect(script).toContain("HIVRA_VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
       expect(script).toContain("bash '/root/hivra-provisioner/hivra-update-guest-runtime.sh' 1090 '10.250.21.90'");
       expect(script.indexOf("flock -w 60 8")).toBeLessThan(script.indexOf("hivra-update-guest-runtime.sh"));
+      // The helper inherits FD8 and releases it before its guest steps, and gets
+      // a host-side deadline started before the lock wait, inside the request.
+      expect(script).toContain("HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_RUNTIME_UPDATE_DEADLINE=\"$HIVRA_RUNTIME_UPDATE_DEADLINE\" bash '/root/hivra-provisioner/hivra-update-guest-runtime.sh'");
+      expect(script.startsWith("HIVRA_RUNTIME_UPDATE_DEADLINE=\"$(( $(date +%s) + 220 ))\"\n")).toBe(true);
+      expect(script.indexOf("HIVRA_RUNTIME_UPDATE_DEADLINE=")).toBeLessThan(script.indexOf("flock -w 60 8"));
+      expect(spawnSync("bash", ["-n"], { input: script, encoding: "utf8" })).toMatchObject({ status: 0, stderr: "" });
       // No reboot: nothing may stop, shut down, start or re-run the start helper.
       expect(script).not.toMatch(/qm (shutdown|stop|start|reboot|reset)\b/);
       expect(script).not.toContain("hivra-start-on-host.sh");
@@ -1011,6 +1017,17 @@ describe("POST /api/hivra/agents/[id]/action", () => {
       const response = await POST(updateRequest(), params());
 
       expect(response.status).toBe(409);
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("refuses a DeepSeek computer before any host call or lease, so nothing is locked", async () => {
+      mockAgent = { ...mockAgent, type: "deepseek-harness" };
+      const response = await POST(updateRequest(), params());
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/DeepSeek computers can’t update their connection service/) });
+      expect(mockCheckManagedHivraHostReadiness).not.toHaveBeenCalled();
       expect(mockSupabaseRpc).not.toHaveBeenCalled();
       expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
     });

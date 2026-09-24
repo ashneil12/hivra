@@ -346,7 +346,7 @@ it("tells never set up, set up but silent, and could not be installed apart", ()
     "its files were not available on the host",
   );
   expect(installFailureText("not_attempted")).toBe(
-    "the start did not reach the install step",
+    "the start or update did not reach the install step",
   );
   expect(installFailureText("disk_full")).toBe("failure code disk_full");
   // An older response without a reason: a recorded failed install still reads as one.

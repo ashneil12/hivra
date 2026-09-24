@@ -438,12 +438,15 @@ unaccepted.
 
 **Target: in-place runtime update (2026-09-24, not yet accepted).** The code on
 this branch changes `update_runtime` from update-then-reboot to an in-place
-update: the same restart-kind operation lease and FD8 host lock, the guest
-updater restarts only the chat gateway, the reporter credential is re-issued and
-the agent-run reporter reinstalled without a boot, and the operation completes
-as `running` on the updater's `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>`
-receipt instead of passing through `provisioning`. The 2026-08-29 evidence above
-covers the reboot flow only; this change has no live Canary evidence yet.
+update: the same restart-kind operation lease, FD8 held only for the host-side
+checks, the guest updater restarts only the chat gateway, the reporter
+credential is re-issued and the agent-run reporter reinstalled without a boot
+when it fits the request deadline, and the operation completes as `running` on
+the updater's `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt instead of
+passing through `provisioning`. The page that ran the update signs its open
+terminals in again; DeepSeek computers are refused before any lease. The
+2026-08-29 evidence above covers the reboot flow only; this change has no live
+Canary evidence yet.
 
 The current portable code can inspect a generic Linux host, inventory an owner's
 Hetzner Cloud project, create a policy-bounded provider VM after explicit billing

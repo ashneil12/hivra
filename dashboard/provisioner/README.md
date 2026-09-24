@@ -213,14 +213,22 @@ updates only the Hivra Chat connection-service assets in place and then verifies
 secure surface authentication plus unchanged agent identity/API-token metadata.
 Only `bux-hivra-chat` restarts; the VM is never powered off or on, so desktop
 apps, agent services, tmux-backed agent terminals and detached chat runs keep
-running while proxied browser views reconnect. For a Claude
+running. The restart drops the gateway's in-memory surface sign-ins, so the
+dashboard page that ran the update signs its open terminals in again when it
+finishes. For a Claude
 Code / Codex computer it also consumes a staged agent-run reporter credential
 (`HIVRA_ACTIVITY_TELEMETRY_FILE`, the same slot and code as the start helper)
-and reinstalls the reporter after the gateway commit. Its stdout carries only
-host-authored lines: at most one `HIVRA_ACTIVITY_COLLECTOR` line, then
-`HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>`. The dashboard holds the lifecycle
-lock for the whole update and completes the operation as running only on that
-receipt.
+and reinstalls the reporter after the gateway commit, but only when that step's
+bounded worst case still fits before the dashboard's request deadline
+(`HIVRA_RUNTIME_UPDATE_DEADLINE`); otherwise it reports `not_attempted` and the
+next start installs it. Its stdout carries only host-authored lines: at most one
+`HIVRA_ACTIVITY_COLLECTOR` line, then `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>`.
+The dashboard takes the FD8 lifecycle lock (`HIVRA_LIFECYCLE_LOCK_FD=8`) for
+the host-side checks; the helper releases it before any guest step, as the
+start helper does, while the operation lease keeps fencing the computer. The
+dashboard completes the operation as running only on that receipt, and refuses
+DeepSeek computers before taking the lease because their guest step cannot
+update them yet.
 
 ## Architecture notes
 

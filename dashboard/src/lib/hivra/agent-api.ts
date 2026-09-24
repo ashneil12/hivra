@@ -530,6 +530,16 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return (await fetchPlanStrict()) ?? FREE_PLAN;
 }
 
+/** A lifecycle action the server refused or could not verify, with its HTTP status. */
+export class AgentActionError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AgentActionError";
+    this.status = status;
+  }
+}
+
 async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
   const r = await fetch(`/api/hivra/agents/${id}/action`, {
     method: "POST",
@@ -537,7 +547,7 @@ async function agentAction(id: string, action: string, extra?: Record<string, un
     body: JSON.stringify({ action, ...(extra || {}) }),
   });
   const j = await readJson(r);
-  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Action failed");
+  if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
 }
 export const stopAgent = (id: string) => agentAction(id, "stop");
 export const startAgent = (id: string) => agentAction(id, "start");

@@ -103,6 +103,11 @@ const ACTIVITY_CREDENTIAL_STAGED = "HIVRA_ACTIVITY_CREDENTIAL_STAGED";
 // host script below maxDuration so a stalled guest yields a recorded unknown
 // outcome for the reconciler instead of a killed function with nothing saved.
 const RUNTIME_UPDATE_TIMEOUT_MS = 240_000;
+// The updater's own deadline, counted on the host from the first line of the
+// script (so it includes the FD8 wait). The margin covers the SSH connection
+// and the result's trip back before RUNTIME_UPDATE_TIMEOUT_MS; the updater
+// skips its optional reporter step rather than run past this deadline.
+const RUNTIME_UPDATE_HOST_BUDGET_SECONDS = RUNTIME_UPDATE_TIMEOUT_MS / 1000 - 20;
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
@@ -352,6 +357,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (["update_runtime", "snapshot", "restore"].includes(action) && !isSameOriginMutationRequest(req)) {
       return apiError("Same-origin request required.", 403);
+    }
+    // A DeepSeek guest also runs a native adapter and service generation that
+    // the gateway-only updater cannot replace, so the guest step refuses before
+    // changing anything. Refuse here, before any lease or host call: sent to
+    // the host, that refusal would read as an unverified outcome and hold the
+    // lease (blocking Stop, Restart and Resize) until the reconciler clears it.
+    if (action === "update_runtime" && agent.type === "deepseek-harness") {
+      return apiError("DeepSeek computers can’t update their connection service here yet. Nothing was changed.", 409);
     }
 
     const invalidateDesktopBeforePower = async (operationId: string) => {
@@ -1010,7 +1023,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
 
     if (action === "update_runtime") {
       if (agent.status !== "running") {
-        return apiError("Start this computer before updating its runtime.", 409);
+        return apiError("Start this computer before updating its connection service.", 409);
       }
       if (executionContext.kind === "self-managed") {
         const readiness = await runProxmoxHostScript(
@@ -1032,8 +1045,10 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
       // gateway (detached runs survive it), so the VM, its agent services,
       // tmux-backed agent terminals and desktop apps keep running. It still
       // takes the same operation lease as before (the "restart" kind; a stale
-      // one settles from provider state in the reconciler) and holds FD8 for
-      // the whole update.
+      // one settles from provider state in the reconciler). FD8 is taken here
+      // for the host-side checks; the helper releases it before its guest
+      // steps, as the start helper does, so a slow guest never holds other
+      // lifecycle work on this host past its own 60 s lock wait.
       const operationId = await claimProviderOperation("restart", "running");
       if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
       const guestIp = `${subnetPrefix}.${octet}`;
@@ -1043,9 +1058,10 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
       const activityCleanup = activity.stage
         ? `trap ${shellQuote(`rm -f -- ${shellQuote(activityCredentialFile)}`)} EXIT\n`
         : "";
-      const updateCommand = `${activity.stage}HIVRA_VM_SSH_KEY_PATH=${shellQuote(executionContext.paths.vmSshKeyPath ?? "")} ${activity.env}bash ${shellQuote(runtimeUpdateHelper)} ${vmid} ${shellQuote(guestIp)}`;
+      const updateCommand = `${activity.stage}HIVRA_VM_SSH_KEY_PATH=${shellQuote(executionContext.paths.vmSshKeyPath ?? "")} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_RUNTIME_UPDATE_DEADLINE="$HIVRA_RUNTIME_UPDATE_DEADLINE" ${activity.env}bash ${shellQuote(runtimeUpdateHelper)} ${vmid} ${shellQuote(guestIp)}`;
+      // The deadline is set before the prelude so it also counts the FD8 wait.
       const r = await runProxmoxHostScript(
-        `${lifecyclePrelude}\n${activityCleanup}${updateCommand}`,
+        `HIVRA_RUNTIME_UPDATE_DEADLINE="$(( $(date +%s) + ${RUNTIME_UPDATE_HOST_BUDGET_SECONDS} ))"\n${lifecyclePrelude}\n${activityCleanup}${updateCommand}`,
         env,
         { timeoutMs: RUNTIME_UPDATE_TIMEOUT_MS },
       );
@@ -1065,7 +1081,7 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
           stderr: r.stderr?.slice(0, 300) ?? null,
         });
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Runtime update outcome is unknown"));
-        return apiError("Runtime update could not be verified. Refresh this computer before trying again.", 502);
+        return apiError("The connection service update could not be verified. Refresh this computer before trying again.", 502);
       }
       await recordActivityCredentialIssued(r);
       await recordActivityCollectorInstall(r);
@@ -1085,7 +1101,7 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
           agentId: agent.id,
           vmid,
         });
-        return apiError("The runtime was updated, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
+        return apiError("The connection service was updated, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
       }
       await logHivraAgentEvent({
         userId,

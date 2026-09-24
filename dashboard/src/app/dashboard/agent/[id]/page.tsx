@@ -7,7 +7,7 @@
 
 import styles from "./ResourceWorkspace.module.css";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
@@ -139,6 +139,13 @@ function CanonicalizeUnavailableTab({
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
 
+// The computer's gateway keeps surface sign-ins only in memory, so restarting
+// it (an in-place connection-service update) leaves every open terminal, browser
+// and dashboard frame with a dead cookie and each reconnect with a 401. The page
+// bumps this when Manage reports such a restart; every mounted surface then
+// probes and signs in again, in its own frame, without losing its place.
+const SurfaceSignInEpoch = createContext(0);
+
 function AuthenticatedSurface({
   url,
   token,
@@ -162,6 +169,7 @@ function AuthenticatedSurface({
   active?: boolean;
 }) {
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+  const signInEpoch = useContext(SurfaceSignInEpoch);
   const formRef = useRef<HTMLFormElement>(null);
   const newTabFormRef = useRef<HTMLFormElement>(null);
   const [probeVersion, setProbeVersion] = useState(0);
@@ -196,7 +204,7 @@ function AuthenticatedSurface({
   const permissionsPolicy = surfaceOrigin && permissions?.length
     ? permissions.map((feature) => `${feature} ${surfaceOrigin}`).join("; ")
     : undefined;
-  const probeKey = `${metadataUrl}:${probeVersion}`;
+  const probeKey = `${metadataUrl}:${probeVersion}:${signInEpoch}`;
   const missingToken = !token;
   const accessStatus = !metadataUrl || missingToken
     ? "unavailable"
@@ -314,7 +322,7 @@ function AuthenticatedSurface({
               : accessStatus === "upgrade-required"
                 ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
                 : missingToken
-                  ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update connection service, then try Terminal or Files again. Your computer and its files are unchanged."
+                  ? "Secure access credentials for this computer aren’t available in the dashboard, so this view can’t open here. Your computer and its files are unchanged. Contact support to restore access."
                   : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus === "upgrade-required" ? (
@@ -602,6 +610,7 @@ export default function AgentPage() {
   const [chatOpened, setChatOpened] = useState(false);
   const [browserOn, setBrowserOn] = useState<boolean | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
   const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
   const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
   const [planResult, setPlanResult] = useState<{ value: PlanInfo | null; agentId: string; version: number } | null>(null);
@@ -888,6 +897,7 @@ export default function AgentPage() {
       def={def}
       plan={plan}
       onChanged={() => setReloadKey((k) => k + 1)}
+      onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
       onDestroyed={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}
       browserOn={browserOn}
       onBrowserChange={(e) => setBrowserOn(e)}
@@ -895,6 +905,7 @@ export default function AgentPage() {
   );
 
   return (
+    <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
     <SurfaceActionProvider store={actionStore}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
       <CanonicalizeUnavailableTab
@@ -1132,5 +1143,6 @@ export default function AgentPage() {
       ) : null}
     </div>
     </SurfaceActionProvider>
+    </SurfaceSignInEpoch.Provider>
   );
 }
