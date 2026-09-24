@@ -14,8 +14,10 @@ const EN_BILLING = MARKETING_COPY.en.dashboard.billing;
 
 const mockGet = jest.fn();
 const mockReplace = jest.fn();
+const mockPush = jest.fn();
 const mockRouter = {
   replace: mockReplace,
+  push: mockPush,
 };
 const mockSearchParams = {
   get: mockGet,
@@ -954,6 +956,52 @@ describe("BillingPage", () => {
     });
   });
 
+  it("returns to the launch a checkout started from once the checkout is confirmed", async () => {
+    const launchReturn = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+    mockGet.mockImplementation((key: string) => ({
+      subscription: "success",
+      session_id: "cs_checkout_success",
+      returnTo: launchReturn,
+    } as Record<string, string>)[key] ?? null);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (requestUrl(input).includes("/api/billing/confirm-checkout")) {
+        return Promise.resolve(apiResponse({ success: true, data: { activated: true, plan: "operator" } }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<BillingPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(`${launchReturn}&upgraded=1`);
+    });
+    expect(mockReplace).not.toHaveBeenCalledWith(expect.stringContaining("/dashboard/welcome"));
+  });
+
+  it.each([
+    ["an absolute URL", "https://evil.example/dashboard/launch"],
+    ["a protocol-relative URL", "//evil.example/dashboard/launch"],
+    ["a path outside the dashboard", "/api/billing/subscribe"],
+  ])("ignores %s as a checkout return path", async (_label, returnTo) => {
+    mockGet.mockImplementation((key: string) => ({
+      subscription: "success",
+      session_id: "cs_checkout_success",
+      returnTo,
+    } as Record<string, string>)[key] ?? null);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (requestUrl(input).includes("/api/billing/confirm-checkout")) {
+        return Promise.resolve(apiResponse({ success: true, data: { activated: true, plan: "operator" } }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<BillingPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?subscription=success&step=agent-type");
+    });
+  });
+
   it("keeps the user on billing when checkout confirmation fails", async () => {
     mockGet.mockImplementation((key: string) => {
       if (key === "subscription") return "success";
@@ -1611,6 +1659,44 @@ describe("BillingPage", () => {
       screen.getByText("Your plan isn't billed to a card. You'll enter card details at checkout.")
     ).toBeInTheDocument();
     expect(screen.queryByText(/no card on file/i)).not.toBeInTheDocument();
+  });
+
+  it("carries a launch return path into checkout and offers the way back", async () => {
+    const location = stubLocation("http://localhost/dashboard/billing?from=launch");
+    const launchReturn = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+    mockGet.mockImplementation((key: string) => ({ from: "launch", returnTo: launchReturn } as Record<string, string>)[key] ?? null);
+    const defaultFetch = fetchMock.getMockImplementation();
+    usageData = {
+      ...usageData,
+      plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes("/api/billing/subscribe")) {
+        return Promise.resolve(jsonResponse({ url: "https://checkout.stripe.test/session" }));
+      }
+      return defaultFetch?.(input, init) ?? Promise.resolve(jsonResponse({}));
+    });
+
+    try {
+      render(<BillingPage />);
+      expect(await screen.findByRole("link", { name: /back to your launch/i })).toHaveAttribute("href", launchReturn);
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade to Pro" }));
+      fireEvent.click(await screen.findByRole("button", { name: /open checkout/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith("/api/billing/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: "operator", cadence: "monthly", returnTo: launchReturn }),
+        });
+      });
+      expect(location.assignMock).toHaveBeenCalledWith("https://checkout.stripe.test/session");
+    } finally {
+      location.restore();
+    }
   });
 
   it("opens Stripe checkout when a Free plan user upgrades from the plans ladder", async () => {
@@ -2388,6 +2474,27 @@ describe("BillingPage", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
       expect(within(screen.getByRole("article", { name: "Power" })).getAllByText("Current plan").length).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: "Upgrade to Power" })).not.toBeInTheDocument();
+    });
+
+    it("goes back to the launch an in-place upgrade started from once the new plan has loaded", async () => {
+      const launchReturn = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+      mockGet.mockImplementation((key: string) => ({ from: "launch", returnTo: launchReturn } as Record<string, string>)[key] ?? null);
+      subscribedAs({ key: "operator", name: "Pro", source: "stripe", canChangePlanInPlace: true });
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/change-plan")) {
+          return Promise.resolve(jsonResponse({ message: "Plan changed to Power." }));
+        }
+        return base(input, init);
+      });
+
+      render(<BillingPage />);
+      await openTab("Plans");
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade to Power" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Upgrade" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(`${launchReturn}&upgraded=1`));
     });
 
     it("brings a plan-change result into view when it lands above the screen", async () => {

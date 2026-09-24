@@ -878,6 +878,8 @@ export function InfrastructureConnectionsPage() {
                 void loadConnections();
               }}
               returnFocusRef={addCapacityButtonRef}
+              // A plan bought during a launch detour returns to that launch.
+              returnTo={unifiedLaunchReturn ? "/dashboard/launch" : null}
             />
           ) : null}
 

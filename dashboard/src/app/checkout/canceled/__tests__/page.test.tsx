@@ -124,4 +124,37 @@ describe("CheckoutCanceledPage", () => {
 
     expect(await screen.findByText(/couldn't open secure checkout/i)).toBeInTheDocument();
   });
+
+  it("keeps the way back to the launch a checkout started from", async () => {
+    mockGet.mockImplementation((key: string) => ({
+      plan: "operator",
+      returnTo: "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333",
+    } as Record<string, string>)[key] ?? null);
+    fetchMock.mockResolvedValue({
+      json: async () => ({ success: true, data: { url: "https://checkout.stripe.test/session" } }),
+    } as Response);
+
+    render(<CheckoutCanceledPage />);
+
+    expect(screen.getByRole("link", { name: /back to your launch/i })).toHaveAttribute(
+      "href",
+      "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333"
+    );
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/billing/subscribe", expect.objectContaining({
+        body: JSON.stringify({
+          plan: "operator",
+          cadence: "monthly",
+          returnTo: "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333",
+        }),
+      }));
+    });
+  });
+
+  it("ignores a return path that leaves the dashboard", () => {
+    mockGet.mockImplementation((key: string) => ({ plan: "operator", returnTo: "//evil.example/dashboard" } as Record<string, string>)[key] ?? null);
+    render(<CheckoutCanceledPage />);
+    expect(screen.queryByRole("link", { name: /back/i })).not.toBeInTheDocument();
+  });
 });

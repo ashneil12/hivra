@@ -10,6 +10,7 @@ import {
 } from "@/lib/billing/client";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
+import { safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
 import type { BillingActivityData } from "@/components/billing/BillingActivityPanel";
 import {
   describeWalletProviderError,
@@ -156,6 +157,7 @@ export const BILLING_QUERY_PARAM_KEYS = [
   "yearly_token",
   "from",
   "feature",
+  "returnTo",
 ] as const;
 
 function useBillingSearchParams() {
@@ -170,9 +172,19 @@ function useBillingSearchParams() {
   return useMemo(() => searchParams, [signature]);
 }
 
+/** Where a plan change started from (a launch blocked on the plan) and
+ * should land once the plan is confirmed, marked so that page knows to check
+ * and say which plan is now active. Only a same-origin dashboard path. */
+function planReturnDestination(params: { get(key: string): string | null } | null | undefined): string | null {
+  const returnTo = safeReturnPath(params?.get("returnTo"));
+  return returnTo ? withReturnParams(returnTo, { upgraded: "1" }) : null;
+}
+
 export function useBillingController() {
   const router = useRouter();
   const searchParams = useBillingSearchParams();
+  const returnTo = safeReturnPath(searchParams?.get("returnTo"));
+  const returnAfterPlanChange = planReturnDestination(searchParams);
   const billingV2Enabled = isBillingV2UiEnabled();
   const cryptoBillingEnabled = isCryptoBillingUiEnabled();
   const creditTopUpsEnabled = isCreditTopUpsUiEnabled();
@@ -483,7 +495,7 @@ export function useBillingController() {
             return;
           }
 
-          router.replace("/dashboard/welcome?subscription=success&step=agent-type");
+          router.replace(planReturnDestination(searchParams) ?? "/dashboard/welcome?subscription=success&step=agent-type");
         } catch (err) {
           clientLog.error("Checkout confirmation request failed", err, {
             source: "billing-page",
@@ -645,10 +657,10 @@ export function useBillingController() {
     });
     setSubscribing(planKey);
     try {
-      const result = await requestSubscriptionCheckout(planKey as PlanKey, cadence);
+      const result = await requestSubscriptionCheckout(planKey as PlanKey, cadence, { returnTo });
       if (result.ok) {
         if (result.activated) {
-          router.push("/dashboard/welcome?step=agent-type");
+          router.push(returnAfterPlanChange ?? "/dashboard/welcome?step=agent-type");
           return;
         }
 
@@ -822,6 +834,7 @@ export function useBillingController() {
         // Keep the dialog busy until the new plan has loaded, so the page
         // never shows the old plan with live buttons in between.
         await fetchUsage();
+        if (returnAfterPlanChange) router.push(returnAfterPlanChange);
       } else {
         setViolation(result.error || "Failed to change plan.");
       }
@@ -1102,6 +1115,8 @@ export function useBillingController() {
       selfServeDowngradeEnabled,
     },
     status: { loading, confirming },
+    /** The page a plan change returns to, when one started elsewhere. */
+    returnTo,
     data,
     activity,
     activityLoading,

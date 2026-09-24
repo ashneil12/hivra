@@ -469,6 +469,87 @@ describe("POST /api/billing/subscribe", () => {
     expect(mockStripeSessionsCreate).toHaveBeenCalled();
   });
 
+  describe("returning to where checkout started", () => {
+    const LAUNCH_RETURN = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+
+    function pendingCheckout() {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+        data: { status: "pending", updated_at: new Date().toISOString(), stripe_customer_id: mockCustomerStripeId },
+        error: null,
+      });
+    }
+
+    it("sends Stripe's success and cancel pages back to a same-origin launch path", async () => {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator", returnTo: LAUNCH_RETURN }));
+      expect(res.status).toBe(200);
+
+      const [params, options] = mockStripeSessionsCreate.mock.calls[0];
+      const encoded = encodeURIComponent(LAUNCH_RETURN);
+      expect(new URL(params.success_url).pathname + new URL(params.success_url).search)
+        .toBe(`/dashboard/billing?subscription=success&session_id={CHECKOUT_SESSION_ID}&returnTo=${encoded}`);
+      expect(new URL(params.cancel_url).searchParams.get("returnTo")).toBe(LAUNCH_RETURN);
+      expect(new URL(params.cancel_url).pathname).toBe("/checkout/canceled");
+      expect(params.metadata).toEqual(expect.objectContaining({ plan: "operator", return_to: LAUNCH_RETURN }));
+      // Subscription metadata stays about the subscription.
+      expect(params.subscription_data.metadata).not.toHaveProperty("return_to");
+      expect(options.idempotencyKey).toMatch(/^checkout_user_123_operator_monthly_r[0-9a-f]{16}_\d+$/);
+    });
+
+    it.each([
+      ["an absolute URL", "https://evil.example/dashboard/launch"],
+      ["a protocol-relative URL", "//evil.example/dashboard"],
+      ["a path outside the dashboard", "/api/billing/subscribe"],
+      ["a non-string", { path: "/dashboard" }],
+    ])("drops %s and checks out without a return path", async (_label, returnTo) => {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator", returnTo }));
+      expect(res.status).toBe(200);
+
+      const [params, options] = mockStripeSessionsCreate.mock.calls[0];
+      expect(params.success_url).toMatch(/session_id=\{CHECKOUT_SESSION_ID\}$/);
+      expect(params.cancel_url).toMatch(/\/checkout\/canceled\?plan=operator$/);
+      expect(params.metadata).not.toHaveProperty("return_to");
+      expect(options.idempotencyKey).toMatch(/^checkout_user_123_operator_monthly_\d+$/);
+    });
+
+    it("resumes an open session only when it returns to the same place", async () => {
+      pendingCheckout();
+      mockStripeSessionsList.mockResolvedValueOnce({
+        data: [
+          { id: "cs_plain", status: "open", url: "https://stripe.test/plain", metadata: { user_id: mockUserId, plan: "operator" } },
+          { id: "cs_launch", status: "open", url: "https://stripe.test/launch", metadata: { user_id: mockUserId, plan: "operator", return_to: LAUNCH_RETURN } },
+        ],
+      });
+
+      const res = await POST(createRequest({ plan: "operator", returnTo: LAUNCH_RETURN }));
+      const body = await res.json();
+
+      expect(body.data).toEqual({ url: "https://stripe.test/launch", resumed: true });
+      expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
+    });
+
+    it("never reuses the idempotency key of a session it just expired", async () => {
+      // Plain checkout, then one from Launch (which expires the plain one),
+      // then plain again: the third must not replay the first, expired
+      // session's saved response.
+      pendingCheckout();
+      mockStripeSessionsList.mockResolvedValueOnce({
+        data: [{ id: "cs_launch", status: "open", url: "https://stripe.test/launch", metadata: { user_id: mockUserId, plan: "operator", return_to: LAUNCH_RETURN } }],
+      });
+
+      const res = await POST(createRequest({ plan: "operator" }));
+      expect(res.status).toBe(200);
+
+      expect(mockStripeSessionsExpire).toHaveBeenCalledWith("cs_launch");
+      const [params, options] = mockStripeSessionsCreate.mock.calls[0];
+      expect(params.metadata).not.toHaveProperty("return_to");
+      expect(options.idempotencyKey).toMatch(/^checkout_user_123_operator_monthly_x[0-9a-f]{16}_\d+$/);
+    });
+  });
+
   it("keeps recreated checkout sessions as direct payment with no trial", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
       data: {

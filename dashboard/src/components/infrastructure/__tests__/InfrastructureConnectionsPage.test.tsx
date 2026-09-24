@@ -991,8 +991,18 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Yearly" }));
     fireEvent.click(within(dialog).getByRole("button", { name: /Continue to secure checkout/i }));
 
-    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("fleet", "yearly"));
+    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("fleet", "yearly", { returnTo: null }));
     expect(redirectToCheckoutUrl).toHaveBeenCalledWith("https://checkout.stripe.test/hivra-cloud");
+  });
+
+  it("returns a Hivra Cloud checkout started from a launch detour to that launch", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => ({ launch: "codex", returnTo: "unified-launch" } as Record<string, string>)[key] ?? null);
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Hivra Cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure checkout/i }));
+
+    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("operator", "monthly", { returnTo: "/dashboard/launch" }));
   });
 
   it("refreshes Infrastructure when Hivra Cloud activates without a checkout redirect", async () => {
