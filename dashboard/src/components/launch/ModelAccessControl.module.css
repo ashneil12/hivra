@@ -1,0 +1,199 @@
+.control {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.4rem;
+}
+
+.option {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+  align-content: start;
+}
+
+.option > button:first-child {
+  min-width: 0;
+  min-height: 64px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: inherit;
+  padding: 0.6rem 0.7rem;
+  display: grid;
+  gap: 0.25rem;
+  justify-items: start;
+  text-align: left;
+  cursor: pointer;
+}
+
+.option > button:first-child strong {
+  font-size: 0.84rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.option > button:first-child small {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.option > button:first-child[aria-pressed="true"] {
+  border-color: var(--launch-accent, #ff4244);
+  background: color-mix(in srgb, var(--launch-accent, #ff4244) 6%, transparent);
+}
+
+.option > button:first-child:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.inlineAction {
+  justify-self: start;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  padding: 0 0.1rem;
+  color: inherit;
+  font: 700 0.7rem var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.details {
+  min-width: 0;
+  display: grid;
+  gap: 0.7rem;
+  border-left: 2px solid var(--etched-border);
+  padding-left: 0.8rem;
+}
+
+.field {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field > label:not(.checkbox),
+.advanced label {
+  color: var(--text-secondary);
+  font: 700 0.66rem var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.field input:not([type="checkbox"]),
+.field select,
+.advanced input {
+  width: 100%;
+  min-width: 0;
+  max-width: 28rem;
+  min-height: 44px;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  color: inherit;
+  padding: 0.5rem 0.6rem;
+  font: 0.9rem var(--font-mono), monospace;
+}
+
+.field small,
+.advanced small,
+.note {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.note { margin: 0; }
+
+.keySource {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.keySource button {
+  min-height: 44px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: inherit;
+  padding: 0.45rem 0.7rem;
+  font: 700 0.7rem var(--font-mono), monospace;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.keySource button[aria-pressed="true"] {
+  border-color: var(--launch-accent, #ff4244);
+  color: var(--launch-accent, #ff4244);
+}
+
+.consent,
+.checkbox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.consent input,
+.checkbox input {
+  width: 18px;
+  height: 18px;
+  margin: 0.1rem 0 0;
+  accent-color: var(--launch-accent, #ff4244);
+}
+
+.consent span {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.consent strong { font-size: 0.86rem; }
+.consent small { color: var(--text-secondary); font-size: 0.78rem; line-height: 1.45; }
+.checkbox span { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.45; }
+
+.advanced { display: grid; gap: 0.35rem; }
+
+.advanced summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font: 700 0.66rem var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.problem {
+  margin: 0;
+  color: #b7791f;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.option > button:focus-visible,
+.inlineAction:focus-visible,
+.keySource button:focus-visible,
+.advanced summary:focus-visible,
+.field input:not([type="checkbox"]):focus-visible,
+.field select:focus-visible,
+.advanced input:focus-visible,
+.consent input:focus-visible,
+.checkbox input:focus-visible {
+  outline: 2px solid var(--launch-accent, #ff4244);
+  outline-offset: 3px;
+}
