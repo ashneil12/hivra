@@ -78,6 +78,7 @@ export function useLaunchDestination(
     handoff = null,
     preferSelfManaged = false,
     managedAvailable = true,
+    selfManagedAvailable = true,
     targetKind = "any",
   }: {
     handoff?: LaunchTargetHandoff | null;
@@ -85,6 +86,9 @@ export function useLaunchDestination(
     /** False for runtimes Hivra Cloud cannot run; placement is then always
      * self-managed, even before any compatible host is connected. */
     managedAvailable?: boolean;
+    /** False for runtimes that run on Hivra Cloud only (Hermes); placement is
+     * then always Hivra Cloud, whatever the owner chose for another runtime. */
+    selfManagedAvailable?: boolean;
     targetKind?: "any" | "proxmox" | "gvisor";
   } = {},
 ): LaunchDestinationState {
@@ -102,7 +106,9 @@ export function useLaunchDestination(
   const currentChoice = choice.handoffKey === handoffKey ? choice : initialChoice;
   // Derived, not stored: switching to a runtime Hivra Cloud can run restores
   // the owner's own choice instead of inheriting a forced one.
-  const mode: LaunchDestinationMode = managedAvailable ? currentChoice.mode : "self-managed";
+  const mode: LaunchDestinationMode = !selfManagedAvailable && !selfHosted
+    ? "hivra-managed"
+    : managedAvailable ? currentChoice.mode : "self-managed";
   const [refreshToken, setRefreshToken] = useState(0);
   const scope = useMemo(
     () => ({ catalogRuntimeId, handoffKey, refreshToken, targetKind }),
@@ -159,9 +165,9 @@ export function useLaunchDestination(
 
   const setMode = useCallback((nextMode: LaunchDestinationMode) => {
     if (selfHosted && nextMode === "hivra-managed") return;
-    if (nextMode === "self-managed" && targets.length === 0) return;
+    if (nextMode === "self-managed" && (targets.length === 0 || !selfManagedAvailable)) return;
     setChoice(current => ({ ...current, mode: nextMode }));
-  }, [selfHosted, targets.length]);
+  }, [selfHosted, selfManagedAvailable, targets.length]);
 
   const deployment = useMemo<AgentDeploymentDestination | null>(
     () => mode === "self-managed"
@@ -203,6 +209,7 @@ export function DeploymentDestinationControl({
   state,
   disabled = false,
   managedAvailable = true,
+  ownServerSupported = true,
   runtimeName = "this agent",
   resourceLabel = "agent",
   capacitySetupHref = "/dashboard/infrastructure",
@@ -210,12 +217,15 @@ export function DeploymentDestinationControl({
   state: LaunchDestinationState;
   disabled?: boolean;
   managedAvailable?: boolean;
+  /** False for runtimes that run on Hivra Cloud only. The owner's servers are
+   * still shown, with why they can't be used, never as a pressed choice. */
+  ownServerSupported?: boolean;
   runtimeName?: string;
   resourceLabel?: "agent" | "computer";
   capacitySetupHref?: string;
 }) {
   const selfHosted = isLocalAuthMode();
-  const selfManagedAvailable = state.readyTargets.length > 0;
+  const selfManagedAvailable = ownServerSupported && state.readyTargets.length > 0;
   const selectedTarget = state.selectedTarget;
   // An unavailable destination is never shown as the pressed choice.
   const managedSelected = managedAvailable && state.mode === "hivra-managed";
@@ -275,15 +285,17 @@ export function DeploymentDestinationControl({
           <Server size={16} aria-hidden="true" />
           <span>
             <strong>{selfHosted ? "Connected host" : "My infrastructure"}</strong>
-            <small>{selfHosted
-              ? "A compatible computer prepared by this installation. Uses its measured capacity."
-              : "A compatible host you connected. Uses its measured capacity, not Hivra plan compute."}</small>
+            <small>{!ownServerSupported
+              ? <>Not available for {runtimeName} yet. It runs on Hivra Cloud.</>
+              : selfHosted
+                ? "A compatible computer prepared by this installation. Uses its measured capacity."
+                : "A compatible host you connected. Uses its measured capacity, not Hivra plan compute."}</small>
           </span>
           {state.mode === "self-managed" ? <Check size={14} className={styles.check} aria-hidden="true" /> : null}
         </button>
       </div>
 
-      {state.loading ? (
+      {!ownServerSupported ? null : state.loading ? (
         <div className={styles.notice} role="status" aria-live="polite">
           <Loader2 size={14} className={styles.spin} aria-hidden="true" />
           <span>Checking your ready hosts...</span>

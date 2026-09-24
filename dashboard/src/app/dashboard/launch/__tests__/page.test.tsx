@@ -331,14 +331,14 @@ describe("LaunchPage", () => {
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
     expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Preview");
 
-    // Other agents still launch from their own setup page, with a way back here.
-    expect(within(agents).getByRole("link", { name: /^Claude Code/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=claude-code&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
-    expect(within(agents).getByRole("link", { name: /^Hermes/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=general&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
-    expect(within(agents).getByRole("link", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
-    expect(within(agents).getByRole("link", { name: /^Agent Zero/ })).toHaveAttribute("href", "/dashboard/welcome?step=deploy&agentType=agent-zero&from=launch");
-    expect(within(agents).getByRole("link", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    // Every catalog agent launches here; none hands off to another page.
+    expect(within(agents).queryAllByRole("link")).toHaveLength(0);
+    expect(within(agents).getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
+    expect(within(agents).getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
+    expect(within(agents).getByRole("button", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Agent Zero/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    expect(screen.queryByText(/Sets up on its own page/i)).not.toBeInTheDocument();
 
     chooseTile("Codex");
     expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
@@ -385,7 +385,12 @@ describe("LaunchPage", () => {
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Customize" })).toHaveAttribute("aria-expanded", "false");
     expect(within(card).getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
-    expect(within(card).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
+    // Codex signs in inside itself by default; a key or Hivra credits are the
+    // other two choices, in the same control every agent uses.
+    const modelAccess = within(card).getByRole("group", { name: "Model access" });
+    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(modelAccess).getByRole("button", { name: /^Use my API key/ })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(card).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
     expect(within(card).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     expect(screen.queryByText(/balloon|opportunistic|shared scheduling/i)).not.toBeInTheDocument();

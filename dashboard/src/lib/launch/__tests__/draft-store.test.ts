@@ -184,6 +184,79 @@ describe("launch draft storage", () => {
     expect(read()?.name).toHaveLength(60);
   });
 
+  it.each(["claude-code", "hermes", "openclaw", "agent-zero", "aeon"] as const)("restores a %s draft", profileId => {
+    const draft = { ...createLaunchDraft(), stage: "plan" as const, resourceKind: "agent" as const, profileId, name: "Agent 1" };
+    write(draft);
+    expect(read()).toEqual(draft);
+  });
+
+  it("keeps the model choice, but never a key typed for it", () => {
+    const draft = {
+      ...createLaunchDraft(),
+      stage: "review" as const,
+      resourceKind: "agent" as const,
+      profileId: "hermes" as const,
+      name: "Hermes 1",
+      sendMemoryKey: true,
+      modelAccess: {
+        mode: "api-key" as const, source: "custom" as const, provider: "custom_llm", model: "llama3.2",
+        keySource: "saved" as const, vaultKeyId: "44444444-4444-4444-8444-444444444444", sendSavedKey: true, saveKey: false,
+        walletType: "hermesos" as const, baseUrl: "https://llm.example.test/v1",
+      },
+    };
+    write(draft);
+    const raw = JSON.parse(window.localStorage.getItem(KEY) || "{}");
+    raw.modelAccess.apiKey = "must-not-survive";
+    raw.modelAccess.key = "must-not-survive";
+    window.localStorage.setItem(KEY, JSON.stringify(raw));
+
+    expect(read()).toEqual(draft);
+    expect(JSON.stringify(read())).not.toContain("must-not-survive");
+  });
+
+  it("saves a pasted key to the Vault only when this draft explicitly chose to", () => {
+    const base = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
+    write(base);
+    const raw = JSON.parse(window.localStorage.getItem(KEY) || "{}");
+    // A draft saved before this choice existed, or with any non-true value, never saves.
+    delete raw.modelAccess.saveKey;
+    window.localStorage.setItem(KEY, JSON.stringify(raw));
+    expect(read()?.modelAccess.saveKey).toBe(false);
+    raw.modelAccess.saveKey = "yes";
+    window.localStorage.setItem(KEY, JSON.stringify(raw));
+    expect(read()?.modelAccess.saveKey).toBe(false);
+    write({ ...base, modelAccess: { ...base.modelAccess, saveKey: true } });
+    expect(read()?.modelAccess.saveKey).toBe(true);
+  });
+
+  it("drops a model choice that could carry a credential or reach outside the dashboard", () => {
+    const draft = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
+    window.localStorage.setItem(KEY, JSON.stringify({
+      ...draft,
+      modelAccess: {
+        mode: "api-key", provider: "venice; rm -rf", model: "bad model", vaultKeyId: "not-a-uuid", sendSavedKey: "yes",
+        baseUrl: "https://user:secret@llm.example.test/v1",
+      },
+      // Consent to send a memory key is Hermes' only.
+      sendMemoryKey: true,
+      errorAction: { kind: "open", label: "Open", href: "https://evil.example.test/" },
+    }));
+
+    expect(read()).toMatchObject({
+      modelAccess: { mode: "api-key", provider: "venice", model: "", vaultKeyId: null, sendSavedKey: false, baseUrl: "" },
+      sendMemoryKey: false,
+      errorAction: null,
+    });
+  });
+
+  it("keeps a next step only when it opens a dashboard page or the card check", () => {
+    const draft = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "hermes" as const, name: "Hermes 1" };
+    write({ ...draft, errorAction: { kind: "open", label: "Open your agent", href: "/dashboard/instances/77777777-7777-4777-8777-777777777777" } });
+    expect(read()?.errorAction).toEqual({ kind: "open", label: "Open your agent", href: "/dashboard/instances/77777777-7777-4777-8777-777777777777" });
+    write({ ...draft, errorAction: { kind: "verify-card" } });
+    expect(read()?.errorAction).toEqual({ kind: "verify-card" });
+  });
+
   it("treats only a chosen, not yet launched draft as unfinished", () => {
     const chosen = { ...createLaunchDraft(), stage: "plan" as const, resourceKind: "agent" as const, profileId: "codex" as const };
     expect(isUnfinishedLaunchDraft(chosen)).toBe(true);
