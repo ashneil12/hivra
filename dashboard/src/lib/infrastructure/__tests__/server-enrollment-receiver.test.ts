@@ -147,7 +147,7 @@ describe("receiveServerEnrollmentReport", () => {
     expect(d.report).not.toHaveBeenCalled();
   });
 
-  it.each(["127.0.0.1", "169.254.169.254", "10.0.0.5", "192.168.1.20", "100.64.0.1", "0.0.0.0"])(
+  it.each(["127.0.0.1", "169.254.169.254", "10.240.0.5", "192.168.1.20", "100.64.0.1", "0.0.0.0"])(
     "refuses a report from the reserved address %s on hosted Hivra (T15, T34)", async address => {
       const d = deps();
       const outcome = await receive(enrolled(), d, { address, family: 4 });

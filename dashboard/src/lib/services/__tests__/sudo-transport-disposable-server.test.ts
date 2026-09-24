@@ -78,7 +78,7 @@ type Config = { host: string; hostFingerprintSha256Hex: string; adminPrivateKeyP
 const configPath = process.env.HIVRA_DISPOSABLE_SUDO_SERVER;
 const config: Config | null = configPath ? JSON.parse(readFileSync(configPath, "utf8")) : null;
 const live = config ? describe : describe.skip;
-const CONNECTION_ID = "5b0b0c1e-7b4f-4c55-9d0e-3f1f5c7e9a01";
+const CONNECTION_ID = "00000000-0000-4000-8000-00000000c001";
 
 function connection(overrides: { sshUser: string; sshPrivilege: "login" | "sudo"; key: string; fingerprint?: string }):
   LoadedInfrastructureConnection {

@@ -88,7 +88,7 @@ describe("captureServerHostKey (T44, T45)", () => {
 
   it("uses the real resolver by default, which refuses reserved addresses", async () => {
     const client = jest.fn();
-    for (const host of ["127.0.0.1", "10.0.0.1", "169.254.169.254", "localhost"]) {
+    for (const host of ["127.0.0.1", "10.240.0.1", "169.254.169.254", "localhost"]) {
       expect(await captureServerHostKey({ sshHost: host, sshPort: 22 }, { client })).toBeNull();
     }
     expect(client).not.toHaveBeenCalled();

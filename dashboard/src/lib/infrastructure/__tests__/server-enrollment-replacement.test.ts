@@ -186,7 +186,7 @@ describe("confirmServerEnrollment (T2, T15, T22, T30)", () => {
   });
 
   it("asks for an address when Hivra saw none or saw a reserved one", async () => {
-    for (const observed of [null, "10.0.0.4", "2001:db8::4"]) {
+    for (const observed of [null, "10.240.0.4", "2001:db8::4"]) {
       store.getServerEnrollmentRow.mockResolvedValue(row({ observed_address: observed }));
       await expect(confirmServerEnrollment(USER, ENROLLMENT_ID, {}, NOW)).rejects.toEqual(new ServerEnrollmentError("address_required"));
     }

@@ -20,15 +20,17 @@ function seededBytes(seed: string, length: number): Uint8Array {
 }
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/** A Clerk-shaped user id (user_ + 27 base62 characters) from a fixed seed. */
+/** A Clerk-shaped user id (27 base62 characters after the prefix) from a
+ * fixed seed. The "fixture_" prefix keeps it from reading as a real hosted
+ * account id to the public-tree hygiene check. */
 function clerkLikeUserId(index: number): string {
-  return "user_" + Array.from(seededBytes(`clerk-user:${index}`, 27), (byte) => BASE62[byte % 62]).join("");
+  return "fixture_user_" + Array.from(seededBytes(`clerk-user:${index}`, 27), (byte) => BASE62[byte % 62]).join("");
 }
 
-const CLERK_LIKE_FIRST_ID = "user_7MFK3d7nKARq9ZuOAdC4lFTuM4e";
+const CLERK_LIKE_FIRST_ID = "fixture_user_7MFK3d7nKARq9ZuOAdC4lFTuM4e";
 /** sha256 of the 100,000 codes in order, computed independently (Python's
  * hashlib) when this test was written. */
-const ALL_CODES_SHA256 = "55f8445f8a2f01433c27fa0bf2e616e1ef1cc53b2f6acb53417ec941692efc24";
+const ALL_CODES_SHA256 = "4196a541bee4f69122898b576e5d614aeb0588d788e8358c304643ed03458d72";
 
 /** An independent reference: node:crypto and BigInt, not the module's code. */
 function referenceCode(userId: string): string {

@@ -43,7 +43,7 @@ ADMIN_KEY = "ssh-ed25519 " + base64.b64encode(PREFIX + bytes(range(1, 33))).deco
 HOST_KEY = "ssh-ed25519 " + base64.b64encode(PREFIX + bytes(range(33, 65))).decode()
 ENTRY_NAMES = ("hivra_enroll_entry", "hivra_uninstall_entry", "hivra_refuse")
 SUDOERS = b"hivra ALL=(ALL:ALL) NOPASSWD: ALL\n"
-ENROLLMENT_ID = "11111111-2222-4333-8444-555555555555"
+ENROLLMENT_ID = "11111111-1111-4111-8111-111111111111"
 
 
 def fingerprint(key):

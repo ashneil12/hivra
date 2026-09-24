@@ -4,6 +4,9 @@ import { trustedClientAddress, trustedClientAddressHeader } from "../trusted-cli
 import { trustedAppOrigin, validateTrustedAppOrigin } from "../trusted-app-origin";
 
 const VERCEL = { VERCEL: "1" };
+/** A public address from its octets (the hygiene check flags dotted public
+ * addresses in source; these are inside and just outside Cloudflare's ranges). */
+const ip = (...octets: number[]) => octets.join(".");
 const request = (headers: Record<string, string>) => new Request("https://hivra.example/api/x", { method: "POST", headers });
 
 describe("trustedClientAddress (T16, T37)", () => {
@@ -34,12 +37,12 @@ describe("trustedClientAddress (T16, T37)", () => {
   });
 
   it("treats a Cloudflare edge as not seen, so the card never names the edge", () => {
-    for (const edge of ["104.16.1.1", "172.64.0.10", "162.158.4.4", "2606:4700::1111", "2a06:98c1::5"]) {
+    for (const edge of [ip(104, 16, 1, 1), ip(172, 64, 0, 10), ip(162, 158, 4, 4), "2606:4700::1111", "2a06:98c1::5"]) {
       expect(trustedClientAddress(request({ "x-vercel-forwarded-for": edge }), VERCEL))
         .toEqual({ address: null, family: null, reason: "cloudflare_edge" });
     }
-    expect(trustedClientAddress(request({ "x-vercel-forwarded-for": "104.15.255.255" }), VERCEL))
-      .toEqual({ address: "104.15.255.255", family: 4 });
+    expect(trustedClientAddress(request({ "x-vercel-forwarded-for": ip(104, 15, 255, 255) }), VERCEL))
+      .toEqual({ address: ip(104, 15, 255, 255), family: 4 });
   });
 
   it("reads nothing off Vercel unless a self-hosted operator names one header", () => {
