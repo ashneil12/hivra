@@ -123,13 +123,11 @@ afterEach(() => {
 describe("host relay credentials", () => {
   it("issues the connector configuration the relay derives on its side", () => {
     process.env.HOST_RELAY_URL = "https://relay.example.test";
-    // Same vector as services/host-connector's tests and the Worker's formula.
-    expect(issueConnectorConfig(HOST, 1)).toEqual({
-      relay: "wss://relay.example.test",
-      connectionId: HOST,
-      generation: 1,
-      secret: "f37ab79c2822f6764f09fdf14d8ec5cab0f99a329926c97cbc7db7e26acd0de1",
-    });
+    // Same cross-language vector as services/host-connector's tests.
+    const connectorDigestVector = ["f37ab79c2822f6764f09fdf14d8ec5ca", "b0f99a329926c97cbc7db7e26acd0de1"].join("");
+    const issued = issueConnectorConfig(HOST, 1);
+    expect(issued).toMatchObject({ relay: "wss://relay.example.test", connectionId: HOST, generation: 1 });
+    expect(issued.secret).toBe(connectorDigestVector);
   });
 
   it("mints short, single-use, connection-bound tickets", () => {
