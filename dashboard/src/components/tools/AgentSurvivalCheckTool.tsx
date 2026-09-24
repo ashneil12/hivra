@@ -4,15 +4,17 @@
 //
 // Nine questions about where and how an agent runs, mapped to concrete
 // failure modes (lid-close suspend, SSH SIGHUP, OOM kill, reboot without
-// autostart, network drops, a browser-tab run on a managed box). Output is a
-// 0-100 survival score, a ranked list of the ways this exact setup dies, free
-// fixes first, then the CTA. All state is client side; nothing is sent anywhere.
+// autostart, network drops, a long run on a managed computer that is not in
+// tmux). Output is a 0-100 survival score, a ranked list of the ways this exact
+// setup dies, free fixes first, then the CTA. All state is client side; nothing
+// is sent anywhere.
 //
-// Managed boxes are not magic: on Hivra, a Claude Code or Codex run started in
-// the browser chat or the agent terminal stops when that tab closes (the chat
-// kills the CLI on disconnect; the agent terminal has no tmux). The computer
-// stays on, and runs started inside tmux in the Box Terminal or from Telegram
-// keep going. The managed branch and the bridge copy say exactly that.
+// Managed computers are not magic, and the copy only promises what holds on
+// every Hivra computer (lib/blog/runtime-facts.ts): the computer stays on, and a
+// run started inside tmux in its Terminal tab, or on Claude Code one sent
+// through Telegram, keeps going. Whether a browser chat or session-tab run
+// outlives a closed tab depends on the computer's runtime version, so the copy
+// says neither that it stops nor that it keeps going.
 
 import { useState } from "react";
 import Link from "next/link";
@@ -127,14 +129,14 @@ function buildFailureModes(a: {
 
   if (managed && a.multiplexer === "none") {
     modes.push({
-      id: "managed_tab_run",
-      title: "Closing the tab ends a browser run",
-      severity: 20,
-      perWeek: 3,
+      id: "managed_untracked_run",
+      title: "Long runs are not in tmux",
+      severity: 15,
+      perWeek: 2,
       scenario:
-        "The box stays on, but a run you start in its browser chat or web terminal lasts only as long as that tab. On Hivra, close the tab or let the laptop sleep and that Claude Code or Codex run stops. Your files, sessions and login are still on the box when you come back.",
+        "The computer stays on, but nothing you control is holding this run. Whether a run started in a browser chat or web terminal outlives a closed tab depends on the provider and the version it runs, so a long run should not rest on it. Your files, sessions and login are still on the computer when you come back.",
       fix:
-        "Free fix: start long runs inside tmux in the box's own terminal (the Box Terminal on Hivra), or send them from Telegram if your box has it connected. Both keep going with the tab closed.",
+        "Free fix: start long runs inside tmux in the computer's own terminal (on Hivra, the Terminal tab under Computer), or, on Claude Code, send them from Telegram after connecting a bot in the agent's Telegram tab. A run inside tmux, or one sent from Telegram, keeps going after you close the laptop.",
       snippet: TMUX_SNIPPET,
     });
   }
@@ -189,7 +191,7 @@ Host *
       severity: a.autoRestart === "none" ? 15 : 10,
       perWeek: 1,
       scenario:
-        "The agent hits an unhandled error at 2am and exits. Nothing notices and nothing restarts it. The box is fine; the process is just gone.",
+        "The agent hits an unhandled error at 2am and exits. Nothing notices and nothing restarts it. The server is fine; the process is just gone.",
       fix:
         "Free fix: a systemd unit that starts the agent in a detached tmux session and restarts it on failure. Replace User=you with your username, then run: sudo systemctl enable --now agent. Honest tradeoff: it restarts a fresh session, not your conversation. Whatever context the run had is gone.",
       snippet: SYSTEMD_SNIPPET,
@@ -203,7 +205,7 @@ Host *
       severity: a.reboots === "auto" ? 15 : 10,
       perWeek: 0.5,
       scenario:
-        "unattended-upgrades reboots the box at 4am for a kernel patch. The machine comes back up clean. The agent does not, because nothing starts it at boot.",
+        "unattended-upgrades reboots the server at 4am for a kernel patch. The machine comes back up clean. The agent does not, because nothing starts it at boot.",
       fix: "Free fix: the same systemd unit covers this. WantedBy=multi-user.target makes it start at boot, so a reboot brings the agent back on its own.",
       snippet: "sudo systemctl enable agent.service",
     });
@@ -217,9 +219,9 @@ Host *
       perWeek: a.ram === "low" ? 1.5 : 0.5,
       scenario:
         a.ram === "low"
-          ? "A build step spikes memory on a 1 GB box. The kernel is out of RAM, the OOM killer picks the biggest process, and that is the agent."
+          ? "A build step spikes memory on a 1 GB server. The kernel is out of RAM, the OOM killer picks the biggest process, and that is the agent."
           : "Most days 2 to 4 GB is fine. Then the agent runs a test suite next to a dev server and the kernel starts killing things.",
-      fix: "Free fix: add a swap file so spikes hit slow disk instead of the OOM killer. Honest tradeoff: swap buys headroom, it does not fix a box that is too small for the workload.",
+      fix: "Free fix: add a swap file so spikes hit slow disk instead of the OOM killer. Honest tradeoff: swap buys headroom, it does not fix a server that is too small for the workload.",
       snippet: SWAP_SNIPPET,
     });
   }
@@ -353,7 +355,7 @@ export default function AgentSurvivalCheckTool() {
             { value: "laptop", label: "My laptop" },
             { value: "desktop", label: "A desktop or home server that stays on" },
             { value: "vps", label: "A raw VPS or cloud VM I manage" },
-            { value: "managed", label: "A managed always-on box (Hivra or similar)" },
+            { value: "managed", label: "A managed always-on computer (Hivra or similar)" },
           ]}
         />
         <RadioGroup
@@ -491,7 +493,7 @@ export default function AgentSurvivalCheckTool() {
         <p className={styles.verdict}>
           No structural failure modes found.{" "}
           {runsOn === "managed"
-            ? "A managed box takes the lid and the server upkeep off your list, and your session manager holds the run after you close the tab. The remaining risk is your provider's uptime, which is the right place for it."
+            ? "A managed computer takes the lid and the server upkeep off your list, and your session manager holds the run after you close the tab. The remaining risk is your provider's uptime, which is the right place for it."
             : "This setup should hold. The remaining risks are hardware and power, which no config fixes."}
         </p>
       )}
@@ -558,11 +560,11 @@ export default function AgentSurvivalCheckTool() {
 
       <div className={styles.bridge}>
         <p>
-          A managed always-on box takes the lid and the server upkeep off your list. Hivra runs Claude Code on a
-          cloud computer with your own sign-in, and that computer stays on with your files, sessions and login. Start
-          a run inside tmux in its Box Terminal, or from Telegram, and it keeps going after you close the laptop. A
-          run in the browser chat or the Claude Code Terminal stops when you close that tab. The $9.99 a month plan
-          gives it 2 vCPU and 4 GB, and paid plans are not paused for inactivity.
+          A managed always-on computer takes the lid and the server upkeep off your list. Hivra runs Claude Code on
+          a cloud computer with your own sign-in, and that computer stays on with your files, sessions and login.
+          Start a run inside tmux in its Terminal tab, or send it from Telegram, and it keeps going after you close
+          the laptop. The $9.99 a month plan gives it 2 vCPU and 4 GB, and paid plans are not paused for
+          inactivity.
         </p>
         <Link href={TOOLS_CTA.primaryHref} className={styles.bridgeLink}>
           Skip the server upkeep

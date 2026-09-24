@@ -247,8 +247,8 @@ export default function PlanCalculatorTool() {
       <div className={styles.bridge}>
         <p>
           Whichever plan you pick, it only pays off while the agent is running. Put the same Claude login on an
-          always-on box, start long runs inside tmux or from Telegram, and the hours you pay for keep working after
-          you close the laptop.
+          always-on computer, start long runs inside tmux or from Telegram, and the hours you pay for keep working
+          after you close the laptop.
         </p>
         <Link href={TOOLS_CTA.claudeCodeHref} className={styles.bridgeLink}>
           Run Claude Code on Hivra

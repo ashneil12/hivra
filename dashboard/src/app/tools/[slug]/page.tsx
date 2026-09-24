@@ -137,7 +137,7 @@ export default async function ToolPage({ params }: ToolPageParams) {
         <ToolsCta
           title={
             <>
-              Put your agent on a box that <strong>stays on.</strong>
+              Put your agent on a computer that <strong>stays on.</strong>
             </>
           }
         />

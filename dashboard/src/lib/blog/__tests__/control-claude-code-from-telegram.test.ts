@@ -23,9 +23,11 @@ describe("Claude Code Telegram article", () => {
     const copy = JSON.stringify(article);
 
     expect(copy).toContain("machine and the Claude Code process must stay online");
-    // Hivra's Claude Code box ships its own Telegram connect (the agent's
-    // Telegram tab, HivraTelegram.tsx); the plugin is the self-hosted route.
-    expect(copy).toContain("Hivra's Claude Code box also has its own Telegram connect, in the agent's Telegram tab");
+    // A Claude Code agent on Hivra ships its own Telegram connect (the Telegram
+    // tab under Manage, HivraTelegram.tsx); the plugin is the self-hosted route.
+    expect(copy).toContain("On Hivra, a Claude Code agent also has its own Telegram connect, in its Telegram tab under Manage");
+    expect(copy).toContain("messages to the bot run as work on the computer");
+    expect(copy).not.toMatch(/\bthe box\b|Claude Code box/);
     expect(copy).toContain("the route when you host Claude Code yourself");
     expect(copy).not.toMatch(/does not claim a built-in Telegram connection|No built-in Hivra Telegram connection/);
     expect(copy).toContain("research preview");

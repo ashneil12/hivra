@@ -75,7 +75,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       {
         heading: "Where self-hosting regularly fails",
         paragraphs: [
-          "Update management is the main pain point. Nous Research ships updates to Hermes Agent that sometimes change the memory storage schema, update required environment variables, or introduce new dependencies. On self-hosted setups, applying these requires manual steps and testing. On Hivra, Hermes updates are tested on a canary agent before they roll out.",
+          "Update management is the main pain point. Nous Research ships updates to Hermes Agent that sometimes change the memory storage schema, update required environment variables, or introduce new dependencies. On self-hosted setups, applying these requires manual steps and testing. On Hivra, Hermes updates are tested on one agent before they roll out to the rest.",
           "Backup reliability is the second failure mode. The agent's memory volume needs regular off-host backups. Most self-hosters either do not set this up, or set it up incorrectly and discover the problem when they need to restore. Backups matter on Hivra too: backup coverage is not guaranteed, so keep your own copy of anything you cannot lose. You can download a Hermes agent's memory files from its file explorer, and Claude Code and Codex agents add a JSON export of chats and memory.",
           "The crash-at-bad-time problem: agents deployed for 24/7 scheduled task operation crash silently on self-hosted setups when Docker has an issue, the host runs out of memory, or a dependency update breaks the container. Without monitoring set up, you will not know until you notice a task has not run for days.",
         ],

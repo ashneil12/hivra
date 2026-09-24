@@ -5,7 +5,9 @@
 // it. Hivra product facts here trace back to code: the $9.99 checkout plan is
 // 2 vCPU and 4 GB (lib/subscription/plans.ts), paid plans are not paused for
 // inactivity, and Claude Code and Codex run on your own login
-// (lib/hivra/agent-catalog.ts). Plans are described by price and size, never by
+// (lib/hivra/agent-catalog.ts). What keeps running after the laptop closes is
+// stated only as lib/blog/runtime-facts.ts allows: tmux in the computer's
+// Terminal tab, or Telegram on Claude Code. Plans are described by price and size, never by
 // plan name, because the public ladder and checkout still use different names.
 //
 // External facts (Anthropic plan prices and limits, API rates, VPS prices) live
@@ -115,7 +117,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       },
       {
         q: "Do the plan limits apply if Claude Code runs in the cloud?",
-        a: "Yes. The limits follow your Anthropic account, not the machine. Running Claude Code on an always-on box does not raise your caps. It does mean a run you start inside tmux there keeps working after your laptop sleeps, so the hours you pay for produce finished work.",
+        a: "Yes. The limits follow your Anthropic account, not the machine. Running Claude Code on an always-on computer does not raise your caps. It does mean a run you start inside tmux there keeps working after your laptop sleeps, so the hours you pay for produce finished work.",
       },
     ],
     relatedLinks: [
@@ -154,7 +156,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       },
       {
         q: "How do I keep an AI agent running overnight?",
-        a: "Run it on a machine that stays on. Three ways: a desktop that stays on, a VPS with tmux, or a managed box. Hivra runs Claude Code on a cloud computer with your own Anthropic sign-in. The $9.99 a month plan gives it 2 vCPU and 4 GB, and paid plans are not paused for inactivity. Start the run inside tmux in its Box Terminal, or from Telegram, and it keeps going with your laptop closed. A run in the browser chat stops when you close that tab.",
+        a: "Run it on a machine that stays on. Three ways: a desktop that stays on, a VPS with tmux, or a managed computer. Hivra runs Claude Code on a cloud computer with your own Anthropic sign-in. The $9.99 a month plan gives it 2 vCPU and 4 GB, and paid plans are not paused for inactivity. Start the run inside tmux in the computer's Terminal tab, or send it from Telegram, and it keeps going with your laptop closed.",
       },
       {
         q: "Is a VPS with tmux enough?",
@@ -175,18 +177,18 @@ export const TOOL_ENTRIES: ToolEntry[] = [
     name: "AI Agent Hosting Cost Calculator",
     h1: "AI agent hosting cost calculator",
     subhead:
-      "Compare what running an agent 24/7 really costs on a VPS you manage and on a managed box. Your time is part of the bill.",
+      "Compare what running an agent 24/7 really costs on a VPS you manage and on a managed computer. Your time is part of the bill.",
     metaTitle: "AI Agent Hosting Cost Calculator: VPS vs Managed",
     metaDescription:
-      "Work out what running an AI agent 24/7 really costs on a VPS you manage versus a managed box. Counts your time, not just the server bill.",
+      "Work out what running an AI agent 24/7 really costs on a VPS you manage versus a managed computer. Counts your time, not just the server bill.",
     longIntro: [
-      "Running an AI agent 24/7 needs a computer that stays on. The usual options: a VPS you rent and manage, hardware you already own, or a managed agent box. Each has a real monthly cost, and the server bill is only part of it.",
-      "This calculator compares one VPS you run yourself with one managed box: the server bill, setup time, and the maintenance hours priced at your own rate, plus DIY backups if you tick them. Hivra's price does not include backups, so they start off. Model usage is separate on both, billed through your own Claude or ChatGPT login or API key. DIY genuinely wins in some cases. The numbers show where.",
+      "Running an AI agent 24/7 needs a computer that stays on. The usual options: a VPS you rent and manage, hardware you already own, or a managed agent computer. Each has a real monthly cost, and the server bill is only part of it.",
+      "This calculator compares one VPS you run yourself with one managed computer: the server bill, setup time, and the maintenance hours priced at your own rate, plus DIY backups if you tick them. Hivra's price does not include backups, so they start off. Model usage is separate on both, billed through your own Claude or ChatGPT login or API key. DIY genuinely wins in some cases. The numbers show where.",
     ],
     faqs: [
       {
         q: "How much does it cost to run an AI agent 24/7?",
-        a: "A small VPS lists at about $5 to $12 a month before tax. Hardware you already own costs mostly electricity, roughly $1 to $10 a month depending on the machine. A managed box on Hivra is $9.99 a month for 2 vCPU and 4 GB. Model usage bills separately through your own account on all three.",
+        a: "A small VPS lists at about $5 to $12 a month before tax. Hardware you already own costs mostly electricity, roughly $1 to $10 a month depending on the machine. A managed computer on Hivra is $9.99 a month for 2 vCPU and 4 GB. Model usage bills separately through your own account on all three.",
       },
       {
         q: "What is the cheapest way to run an AI agent?",
@@ -250,7 +252,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       },
       {
         q: "Does running Claude Code on a server give me more usage?",
-        a: "No. The limits follow your Anthropic account, not the machine, so a cloud box gets exactly the same quota as your laptop. What changes is whether the window gets used. Claude Code can pick a task back up on its own after a reset, but only while the session stays open. If your laptop sleeps through the reset for more than about 30 minutes, it waits for you to press Enter.",
+        a: "No. The limits follow your Anthropic account, not the machine, so a cloud computer gets exactly the same quota as your laptop. What changes is whether the window gets used. Claude Code can pick a task back up on its own after a reset, but only while the session stays open. If your laptop sleeps through the reset for more than about 30 minutes, it waits for you to press Enter.",
       },
       {
         q: "How do I see how much quota I have left?",

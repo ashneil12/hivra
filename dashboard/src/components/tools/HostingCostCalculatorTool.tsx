@@ -218,7 +218,7 @@ export default function HostingCostCalculatorTool() {
 
       <div className={styles.panel}>
         <span className={styles.panelTitle}>12-month total cost</span>
-        <StackedBar title="DIY: one VPS, self-managed" total={diyTotal12} segments={segments} maxTotal={maxTotal} />
+        <StackedBar title="DIY: one VPS you run yourself" total={diyTotal12} segments={segments} maxTotal={maxTotal} />
         <StackedBar
           title={`${hivra.label} (${hivra.size}, ${formatUsd(hivra.monthlyUsd)}/mo)`}
           total={hivraTotal12}
@@ -274,7 +274,7 @@ export default function HostingCostCalculatorTool() {
 
       <p className={styles.note}>
         Assumptions: one VPS compared with one Hivra computer of {hivra.size}. Several light agents can share one
-        box, which works until they compete for CPU and memory. DIY backups start off because Hivra&apos;s price
+        server, which works until they compete for CPU and memory. DIY backups start off because Hivra&apos;s price
         does not include backups. Ticked, they cost 20% of the server, which is Hetzner&apos;s rate and
         DigitalOcean&apos;s weekly rate; other providers price backups differently. Model
         usage is excluded on both sides: you bring your own Claude or ChatGPT login or API key either way. The
@@ -287,7 +287,7 @@ export default function HostingCostCalculatorTool() {
 
       <div className={styles.bridge}>
         <p>
-          If the hours column is the problem, a managed box takes the install and the server off your hands. One
+          If the hours column is the problem, a managed computer takes the install and the server off your hands. One
           monthly price, not paused for inactivity, your own model login: $9.99 a month for 2 vCPU and 4 GB, or
           $19.99 a month for 4 vCPU and 8 GB.
         </p>

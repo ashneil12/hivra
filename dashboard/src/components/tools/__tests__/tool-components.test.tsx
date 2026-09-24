@@ -12,6 +12,7 @@ import LimitResetCalculatorTool from "../LimitResetCalculatorTool";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
 import { unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
+import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 
 jest.mock("next/link", () => {
   const MockLink = ({ href, children, ...rest }: { href: string; children: React.ReactNode; [key: string]: unknown }) => (
@@ -35,11 +36,14 @@ function blockText(container: HTMLElement): string {
   return [...container.querySelectorAll("p, li, h2, h3")].map((el) => el.textContent ?? "").join("\n");
 }
 
-// On Hivra a Claude Code or Codex run started in the browser chat or the agent
-// terminal stops when that tab closes. Any sentence about Hivra or a managed
-// box that says the work keeps going has to say how: tmux or Telegram.
+// Whether a Claude Code or Codex run started in the browser chat or the agent's
+// session tab outlives the tab depends on the computer's runtime version, so the
+// tools promise neither. Any sentence about Hivra or a managed computer that
+// says the work keeps going has to say how: tmux or Telegram.
 function expectKeepRunningClaimsQualified(container: HTMLElement) {
-  expect(unqualifiedKeepRunningClaims(blockText(container), /Hivra|managed|always-on box/i)).toEqual([]);
+  expect(unqualifiedKeepRunningClaims(blockText(container), /Hivra|managed|always-on (?:box|computer)/i)).toEqual([]);
+  expect(container.textContent).not.toMatch(/Box Terminal|\b(?:the|a|managed|always-on|cloud) box\b/i);
+  expect(unknownDashboardNames(blockText(container))).toEqual([]);
 }
 
 describe("tool components carry no retired claims", () => {
@@ -108,7 +112,7 @@ describe("AgentSurvivalCheckTool", () => {
     // The lid fix is honest about what caffeinate cannot do.
     expect(screen.getByText(/closed-display mode with an external display/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText("A managed always-on box (Hivra or similar)"));
+    fireEvent.click(screen.getByLabelText("A managed always-on computer (Hivra or similar)"));
     const updated = screen.getByRole("img", { name: /survival score \d+ out of 100/i });
     const updatedScore = Number((updated.getAttribute("aria-label") ?? "").match(/\d+/)?.[0]);
     expect(updatedScore).toBeGreaterThan(initialScore);
@@ -120,23 +124,26 @@ describe("AgentSurvivalCheckTool", () => {
     expectNoBannedClaims(container);
   });
 
-  it("tells a managed-box user that a browser-tab run stops, and that tmux fixes it", () => {
+  it("tells a managed-computer user to put long runs in tmux, without claiming what a browser run does", () => {
     const { container } = render(<AgentSurvivalCheckTool />);
-    fireEvent.click(screen.getByLabelText("A managed always-on box (Hivra or similar)"));
+    fireEvent.click(screen.getByLabelText("A managed always-on computer (Hivra or similar)"));
 
-    // Plain terminal on a managed box: the browser chat or agent terminal run
-    // ends with the tab. It is a failure mode, not a solved problem.
+    // Plain terminal on a managed computer: nothing the owner controls holds the
+    // run. It is a failure mode, not a solved problem, but whether a browser run
+    // stops with the tab depends on the computer's runtime version, so the tool
+    // says neither that it stops nor that it keeps going.
     // Listed as a failure mode and in the shareable verdict.
-    expect(screen.getAllByText(/Closing the tab ends a browser run/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/start long runs inside tmux in the box's own terminal/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Long runs are not in tmux/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/start long runs inside tmux in the computer's own terminal \(on Hivra, the Terminal tab under Computer\)/)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/no SIGHUP|removes the lid, the SIGHUP/);
-    expect(screen.getByText(/A run in the browser chat or the Claude Code Terminal stops when you close that tab/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/stops when you close|Closing the tab ends|lasts only as long as that tab/);
+    expect(screen.getByText(/Start a run inside tmux in its Terminal tab, or send it from Telegram, and it keeps going after you close\s+the laptop/)).toBeInTheDocument();
     expectKeepRunningClaimsQualified(container);
     expectNoBannedClaims(container);
 
     // Inside tmux the run survives the closed tab, so that failure mode goes away.
     fireEvent.click(screen.getByLabelText("tmux"));
-    expect(screen.queryAllByText(/Closing the tab ends a browser run/)).toHaveLength(0);
+    expect(screen.queryAllByText(/Long runs are not in tmux/)).toHaveLength(0);
     expectKeepRunningClaimsQualified(container);
     expectNoBannedClaims(container);
   });
@@ -217,9 +224,10 @@ describe("LimitResetCalculatorTool", () => {
       "href",
       "/get-started?plan=operator&agentType=claude-code",
     );
-    // Only a tmux session outlives the tab; the browser chat and agent terminal do not.
-    expect(screen.getByText(/A session you start inside tmux in its\s+Box Terminal stays open after you close the laptop/)).toBeInTheDocument();
-    expect(screen.getByText(/stops when you close that tab/)).toBeInTheDocument();
+    // A tmux session in the Terminal tab outlives the tab on every computer; the
+    // copy says nothing either way about browser chat runs.
+    expect(screen.getByText(/A session you start inside tmux in its\s+Terminal tab stays open after you close the laptop/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/stops when you close|browser chat/);
     expectKeepRunningClaimsQualified(container);
     expectNoBannedClaims(container);
   });

@@ -11,7 +11,7 @@ import AgentPage, { dynamicParams, generateMetadata, generateStaticParams } from
 import {
   AGENT_COPY_BANNED_PATTERNS,
   AGENT_SEO_ENTRIES,
-  TAB_BOUND_AGENT_SLUGS,
+  CLI_RUN_AGENT_SLUGS,
   agentDeployHref,
   unqualifiedKeepRunningClaims,
 } from "@/lib/hivra/agent-seo-catalog";
@@ -171,7 +171,10 @@ describe("/agents hub", () => {
     const text = blockText(container.querySelector("main")!);
     expect(unqualifiedKeepRunningClaims(text, /Claude Code|Codex/)).toEqual([]);
     expect(text).not.toMatch(/close the laptop and the work keeps going/i);
-    expect(text).toMatch(/Claude Code and Codex keep going too when you start the run inside tmux/);
+    expect(text).toMatch(/A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going/);
+    // Aeon's work runs on the owner's GitHub Actions, not on the computer.
+    expect(text).toMatch(/Aeon's tasks run on your own GitHub Actions/);
+    expect(text).not.toMatch(/\bthe box\b|Box Terminal/i);
   });
 });
 
@@ -249,14 +252,15 @@ describe("/agents/[slug]", () => {
     expect(text).toContain("7-day money-back guarantee on card payments");
   });
 
-  it.each(TAB_BOUND_AGENT_SLUGS.map((slug) => [slug]))(
-    "%s: the rendered page never promises a run survives a closed tab without tmux or Telegram",
+  it.each(CLI_RUN_AGENT_SLUGS.map((slug) => [slug]))(
+    "%s: the rendered page promises only tmux (or Telegram) runs keep going, and says nothing about browser runs",
     async (slug) => {
       const meta = await generateMetadata({ params: Promise.resolve({ slug }) });
       const { container } = render(await AgentPage({ params: Promise.resolve({ slug }) }));
       const text = [blockText(container.querySelector("main")!), ...metadataStrings(meta)].join("\n");
       expect(unqualifiedKeepRunningClaims(text)).toEqual([]);
-      expect(text).toMatch(/stops when you close that tab/);
+      expect(text).toMatch(/inside tmux in the computer's Terminal tab/);
+      expect(text).not.toMatch(/stops when you close|browser chat/i);
     },
   );
 });

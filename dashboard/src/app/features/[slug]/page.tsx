@@ -66,7 +66,7 @@ const FEATURES: Record<string, FeatureData> = {
         paragraphs: [
           "Memory stored in a local application disappears if you reinstall, switch machines, or the application crashes. For memory to be genuinely useful over months of agent use, it needs to live somewhere persistent — a server with its own storage, separate from your local environment.",
           "This is why running an agent locally on your laptop is fundamentally limited for memory-intensive use. You get the capability during the session, but you lose the compounding effect that makes the agent genuinely useful over time.",
-          "Hivra keeps the memory on the agent's own cloud server, not on your laptop. If you switch to a new computer, your agent's memory is exactly where you left it. Nothing is tied to a local process. Backup coverage depends on the runtime and provider and is not guaranteed, so keep an export of anything you cannot afford to lose.",
+          "Hivra keeps the memory on the agent's own cloud server, not on your laptop. If you switch to a new computer, your agent's memory is exactly where you left it. Nothing is tied to a local process. Backup coverage depends on the agent and provider and is not guaranteed, so keep an export of anything you cannot afford to lose.",
         ],
       },
       {
@@ -326,8 +326,8 @@ const FEATURES: Record<string, FeatureData> = {
         paragraphs: [
           "Server provisioning is automatic. When you launch an agent, Hivra creates its server and starts the Hermes Agent container, configured and tested for stability. You do not select an OS, configure SSH keys, or install anything.",
           "Networking and SSL are handled. Your agent's web interface is served over HTTPS on a Hivra address, with no Nginx config files.",
-          "Monitoring runs in the background. If the agent process crashes, it restarts automatically. Recovery from a host failure depends on the runtime and provider and is not guaranteed.",
-          "Updates are managed. When Nous Research ships a new Hermes Agent version, we test it on a canary agent before rolling it out. Your memory and configuration carry forward.",
+          "Monitoring runs in the background. If the agent process crashes, it restarts automatically. Recovery from a host failure depends on the agent and provider and is not guaranteed.",
+          "Updates are managed. When Nous Research ships a new Hermes Agent version, we test it on one agent before rolling it out to everyone. Your memory and configuration carry forward.",
         ],
       },
       {
@@ -377,7 +377,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Is Hivra just a VPS with a UI wrapper?",
-        a: "No. Hivra is managed infrastructure for AI agents, including Hermes, OpenClaw, Claude Code and Codex: a pre-configured runtime, pre-installed browser automation, managed updates, and a dashboard built for agents. A generic VPS does none of this for you.",
+        a: "No. Hivra is managed infrastructure for AI agents, including Hermes, OpenClaw, Claude Code and Codex: a pre-configured computer for each agent, pre-installed browser automation, managed updates, and a dashboard built for agents. A generic VPS does none of this for you.",
       },
       {
         q: "What region is my server in?",
@@ -385,7 +385,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "What happens if Hermes releases an update that breaks my configuration?",
-        a: "We test Hermes updates on a canary agent before rolling them out. If an update still breaks your setup, contact support and we will help you fix it.",
+        a: "We test Hermes updates on one agent before rolling them out to everyone. If an update still breaks your setup, contact support and we will help you fix it.",
       },
     ],
   },
@@ -459,7 +459,7 @@ const FEATURES: Record<string, FeatureData> = {
     faqs: [
       {
         q: "How different is Hivra from OpenClaw?",
-        a: "OpenClaw is an open-source agent you normally run yourself. Hivra is a managed place to run agents, and OpenClaw is one of them, alongside Hermes, Claude Code, Codex and others. Hivra takes care of the server, restarts, and updates so the agent keeps running when your laptop is closed.",
+        a: "OpenClaw is an open-source agent you normally run yourself. Hivra is a managed place to run agents, and OpenClaw is one of them, alongside Hermes, Claude Code, Codex and others. Hivra takes care of the server, restarts, and updates so OpenClaw keeps running when your laptop is closed.",
       },
       {
         q: "Can I migrate my existing OpenClaw setup to Hivra?",

@@ -308,17 +308,18 @@ export default function LimitResetCalculatorTool() {
       </p>
 
       {/* Hosting does not raise or reset Anthropic limits. The honest bridge is
-          availability during the window, not extra quota. On Hivra only a session
-          inside tmux outlives the tab: the browser chat and the agent terminal
-          stop their run when the tab closes. */}
+          availability during the window, not extra quota. The copy promises only
+          what holds on every Hivra computer (lib/blog/runtime-facts.ts): a session
+          inside tmux in the Terminal tab outlives the tab. Browser chat and
+          session-tab runs depend on the computer's runtime version, so the copy
+          makes no claim about them either way. */}
       <div className={styles.bridge}>
         <p>
           Hosting does not change your limits. The quota follows your Anthropic account, so it is the same on a
           laptop or a server. What a server changes is whether the window gets used: Claude Code can pick a task back
           up after a reset only while its session stays open. Hivra runs Claude Code on its own computer with your
           own Anthropic login, and paid plans are not paused for inactivity. A session you start inside tmux in its
-          Box Terminal stays open after you close the laptop, so it is still there when the window resets. A run in
-          the browser chat or the Claude Code Terminal stops when you close that tab. See{" "}
+          Terminal tab stays open after you close the laptop, so it is still there when the window resets. See{" "}
           <Link href={TOOLS_CTA.secondaryHref}>the pricing page</Link> for plans.
         </p>
         <Link href={TOOLS_CTA.claudeCodeHref} className={styles.bridgeLink}>

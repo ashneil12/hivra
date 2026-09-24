@@ -16,6 +16,7 @@
 
 import type { AgentId } from "@/lib/hivra/agent-catalog";
 import type { WelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
+import { CLI_RUN_FALSE_CLAIMS } from "@/lib/blog/runtime-facts";
 
 /** Subset of the ops catalog that gets a public landing page. */
 export type AgentSeoSlug = Extract<
@@ -84,15 +85,15 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     agentType: "claude-code",
     h1: "Claude Code, running 24/7 in the cloud.",
     subhead:
-      "The official Anthropic CLI on a private VM that stays on, with a live browser, a web terminal, and your own Claude sign-in. Start a run from Telegram or inside tmux and it keeps going after you close your laptop.",
+      "The official Anthropic CLI on a private VM that stays on, with a live browser, a web terminal, and your own Claude sign-in. Start a run inside tmux or send it from Telegram, and it keeps going after you close your laptop.",
     metaTitle: "Run Claude Code in the Cloud 24/7",
     metaDescription:
       "Run Claude Code 24/7 on a managed cloud VM with your own Anthropic sign-in. Live browser, web terminal and files. Plans from $9.99/mo.",
     cardSummary: "The official Anthropic CLI with a live browser, a web terminal and your own Claude sign-in.",
     longDescription: [
       "Claude Code on your laptop stops when your laptop does. The lid closes, the session dies, and the refactor you kicked off at 6pm is gone by dinner. Keeping it alive means a spare machine, or a VPS with tmux and SSH keys you now get to maintain.",
-      "Hivra runs the official Claude Code CLI on a private cloud VM that stays on. You sign in with your own Anthropic account inside the box after launch, the same way you would on your laptop. Then you get chat, a web terminal, files, and an optional live browser in one tab, from any device.",
-      "The computer keeps your files, sessions and Claude login between visits. Start long work from Telegram or inside tmux in the Box Terminal, close the laptop, and it keeps going while you're away. A run you start in the browser chat or the Claude Code Terminal stops when you close that tab. Plans start at $9.99 a month for 2 vCPU and 4 GB RAM, enough to run Claude Code with the live browser on. Paid plans are never paused for inactivity.",
+      "Hivra runs the official Claude Code CLI on a private cloud VM that stays on. You sign in with your own Anthropic account on the computer after launch, the same way you would on your laptop. Then you get chat, a web terminal, files, and an optional live browser in one tab, from any device.",
+      "The computer keeps your files, sessions and Claude login between visits. Start long work inside tmux in the computer's Terminal tab, or send it from Telegram, and it keeps going after you close the laptop. Plans start at $9.99 a month for 2 vCPU and 4 GB RAM, enough to run Claude Code with the live browser on. Paid plans are never paused for inactivity.",
     ],
     heroBullets: [
       "Official Claude Code CLI, unmodified. Your own Anthropic sign-in.",
@@ -102,19 +103,19 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     howItWorks: [
       {
         title: "Pick Claude Code on the get-started page",
-        detail: "Choose a plan, name the box, and choose resources. The live browser is optional.",
+        detail: "Choose a plan, name the agent, and choose resources. The live browser is optional.",
       },
       {
         title: "Hivra provisions a private VM",
-        detail: "The official CLI is already installed when your box comes up.",
+        detail: "The official CLI is already installed when your computer comes up.",
       },
       {
         title: "Sign in with your Anthropic account",
-        detail: "The sign-in happens inside the box, the same way it does on your laptop. Your session is stored on that computer.",
+        detail: "The sign-in happens on the computer, the same way it does on your laptop. Your session is stored there.",
       },
       {
         title: "Hand off long runs",
-        detail: "Chat with it while you watch. Start long runs from Telegram or inside tmux in the Box Terminal, and they keep going after you close the tab.",
+        detail: "Chat with it while you watch. Start long runs inside tmux in the computer's Terminal tab, or send them from Telegram, and they keep going after you close the laptop.",
       },
     ],
     faqs: [
@@ -124,15 +125,15 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       },
       {
         q: "Do I need an Anthropic API key?",
-        a: "No key required. You sign in with your own Anthropic account inside the box after launch, the same way you would on your laptop. The session is stored on that computer, and Hivra administrators keep infrastructure access to Hivra-managed hosts.",
+        a: "No key required. You sign in with your own Anthropic account on the computer after launch, the same way you would on your laptop. The session is stored on that computer, and Hivra administrators keep infrastructure access to Hivra-managed hosts.",
       },
       {
         q: "What happens when I close my laptop?",
-        a: "The computer stays on and keeps your files, sessions and Claude login, and paid plans are never paused for inactivity. A run you start from Telegram, or inside tmux in the Box Terminal, keeps going with the lid shut, so you can check the result from your phone later. A run in the browser chat or the Claude Code Terminal stops when you close that tab.",
+        a: "The computer stays on and keeps your files, sessions and Claude login, and paid plans are never paused for inactivity. A run you start inside tmux in the computer's Terminal tab, or send from Telegram, keeps going with the lid shut, so you can check the result from your phone later. Telegram connects in the agent's Telegram tab, under Manage.",
       },
       {
         q: "Can Claude Code use a browser on Hivra?",
-        a: "Yes. The box ships an optional live self-hosted browser. You watch it work in a live view and can log into sites yourself. The browser adds 1 vCPU and 2 GB RAM to the box, which fits within the $9.99 plan.",
+        a: "Yes. The computer ships an optional live self-hosted browser. You watch it work in a live view and can log into sites yourself. The browser adds 1 vCPU and 2 GB RAM to the computer, which fits within the $9.99 plan.",
       },
       {
         q: "Is this a modified version of Claude Code?",
@@ -140,7 +141,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       },
       {
         q: "How is this different from tmux on a VPS?",
-        a: "Same CLI and the same tmux, without the server work. tmux is already installed, there are no SSH keys to manage, and you reach the box from any browser. Plus chat, a files view, Telegram and a live browser a bare VPS doesn't have.",
+        a: "Same CLI and the same tmux, without the server work. tmux is already installed, there are no SSH keys to manage, and you reach the computer from any browser. Plus chat, a files view, Telegram and a live browser a bare VPS doesn't have.",
       },
       SELF_HOST_FAQ,
     ],
@@ -158,15 +159,15 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     agentType: "codex",
     h1: "Codex, on a computer that stays on when you log off.",
     subhead:
-      "The official OpenAI Codex CLI on a private cloud VM with your own ChatGPT sign-in. The computer stays on with any paid plan, from $9.99 a month, and a run you start inside tmux keeps going after you log off.",
+      "The official OpenAI Codex CLI on a private cloud VM with your own ChatGPT sign-in. The computer stays on with any paid plan, from $9.99 a month, and a run you start inside tmux in its Terminal tab keeps going after you log off.",
     metaTitle: "Codex Hosting: Run OpenAI Codex 24/7 in the Cloud",
     metaDescription:
       "Run the official OpenAI Codex CLI 24/7 on a managed cloud VM with your own ChatGPT sign-in or API key. Optional live browser. From $9.99/mo.",
     cardSummary: "OpenAI's official Codex CLI on a private VM, with your own ChatGPT sign-in or API key.",
     longDescription: [
       "Codex is OpenAI's coding agent. On your machine it works while the terminal is open and stops when it isn't. Long tasks need a computer that stays on, and most people don't want to run one.",
-      "Hivra hosts the official Codex CLI on a private VM that stays on. Sign in with your own ChatGPT account, or use your own OpenAI API key, inside the box after launch. Then hand it real work: a repo to inspect, a change to implement, a failing build to debug.",
-      "Start long work inside tmux in the Box Terminal and it keeps going after you log off. A run you start in the browser chat or the Codex Terminal stops when you close that tab. Plans start at $9.99 a month for 2 vCPU and 4 GB RAM, with room for the optional live browser, and paid plans are never paused for inactivity. When you sign in with ChatGPT or your own OpenAI key, Codex usage bills through that account, not through Hivra.",
+      "Hivra hosts the official Codex CLI on a private VM that stays on. Sign in with your own ChatGPT account, or use your own OpenAI API key, on the computer after launch. Then hand it real work: a repo to inspect, a change to implement, a failing build to debug.",
+      "Start long work inside tmux in the computer's Terminal tab and it keeps going after you log off. Plans start at $9.99 a month for 2 vCPU and 4 GB RAM, with room for the optional live browser, and paid plans are never paused for inactivity. When you sign in with ChatGPT or your own OpenAI key, Codex usage bills through that account, not through Hivra.",
     ],
     heroBullets: [
       "Official OpenAI Codex CLI, unmodified. Sign in with ChatGPT or your own API key.",
@@ -176,19 +177,19 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     howItWorks: [
       {
         title: "Pick Codex on the get-started page",
-        detail: "Choose a plan, name the box, and choose resources. The live browser is optional.",
+        detail: "Choose a plan, name the agent, and choose resources. The live browser is optional.",
       },
       {
         title: "Hivra provisions a private VM",
-        detail: "The official CLI is already installed when your box comes up.",
+        detail: "The official CLI is already installed when your computer comes up.",
       },
       {
         title: "Sign in with your ChatGPT account",
-        detail: "The sign-in happens inside the box, or you can use your own OpenAI API key instead. Your session is stored on that computer.",
+        detail: "The sign-in happens on the computer, or you can use your own OpenAI API key instead. Your session is stored there.",
       },
       {
         title: "Hand off long runs",
-        detail: "Chat with it while you watch. Start long runs inside tmux in the Box Terminal, and they keep going while you're offline.",
+        detail: "Chat with it while you watch. Start long runs inside tmux in the computer's Terminal tab, and they keep going while you're offline.",
       },
     ],
     faqs: [
@@ -198,15 +199,15 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       },
       {
         q: "Do I need an OpenAI API key?",
-        a: "No. You can sign in with your own ChatGPT account inside the box after launch, or use your own OpenAI API key if you prefer. Either way the credentials live on your agent computer, and Hivra administrators keep infrastructure access to Hivra-managed hosts.",
+        a: "No. You can sign in with your own ChatGPT account on the computer after launch, or use your own OpenAI API key if you prefer. Either way the credentials live on your agent computer, and Hivra administrators keep infrastructure access to Hivra-managed hosts.",
       },
       {
         q: "What happens when I close my laptop?",
-        a: "The computer stays on and keeps your files, sessions and ChatGPT login, and paid plans are never paused for inactivity. A run you start inside tmux in the Box Terminal keeps going, and you pick up the result later from any device. A run in the browser chat or the Codex Terminal stops when you close that tab.",
+        a: "The computer stays on and keeps your files, sessions and ChatGPT login, and paid plans are never paused for inactivity. A run you start inside tmux in the computer's Terminal tab keeps going, and you pick up the result later from any device.",
       },
       {
         q: "Can Codex browse the web on Hivra?",
-        a: "Yes. The box ships the same live browser stack as our Claude Code boxes. Turn it on for web research or logged-in sites. It adds 1 vCPU and 2 GB RAM to the box, which fits within the $9.99 plan.",
+        a: "Yes. Codex computers ship the same live browser stack as Claude Code computers. Turn it on for web research or logged-in sites. It adds 1 vCPU and 2 GB RAM to the computer, which fits within the $9.99 plan.",
       },
       {
         q: "Is this a modified version of Codex?",
@@ -216,7 +217,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     vsSelfHosted: [
       "DIY: a VPS, the CLI install, a tmux session you keep alive, and updates you apply by hand.",
-      "Hivra provisions the box and keeps it on around the clock on any paid plan, with tmux already installed for long runs.",
+      "Hivra provisions the computer and keeps it on around the clock on any paid plan, with tmux already installed for long runs.",
       "You get chat, a web terminal, files, and an optional live browser instead of a bare shell.",
       "Same official CLI and the same ChatGPT billing either way. You're paying Hivra to skip the ops.",
     ],
@@ -286,7 +287,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     vsSelfHosted: [
       "Self-hosting Hermes means a VPS, Docker, a reverse proxy, SSL, and you on call when it breaks at midnight.",
-      "Hivra provisions the box and keeps the agent running for you.",
+      "Hivra provisions the computer and keeps the agent running for you.",
       "You keep control: the same open-source agent and your own provider key.",
       "A DIY setup costs a VPS bill plus the weekend you spend configuring it. Hivra starts at $9.99 a month.",
     ],
@@ -298,34 +299,34 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     agentType: "aeon",
     h1: "Aeon, set once. It runs on your GitHub.",
     subhead:
-      "Hivra hosts the Aeon dashboard on a tiny managed box. The agent's recurring tasks run unattended on your own GitHub Actions.",
+      "Hivra hosts the Aeon dashboard on a small managed computer. The agent's recurring tasks run unattended on your own GitHub Actions.",
     metaTitle: "Aeon Agent Hosting: Runs on Your GitHub",
     metaDescription:
       "Host the Aeon autonomous agent on Hivra. Tasks run on your own GitHub Actions: research digests, PR reviews and scans, unattended. From $9.99/mo.",
     cardSummary: "An autonomous agent framework whose recurring tasks run on your own GitHub Actions.",
     longDescription: [
       "Aeon is an autonomous agent framework that runs recurring work on your own GitHub Actions: monitoring, code review, research digests, security scans. Set a task once and it runs on schedule without you.",
-      "Hivra hosts Aeon's dashboard on a tiny managed box. Connect with a GitHub token after launch, and the box sets up your own fork of Aeon on GitHub. Then configure tasks inside Aeon's own dashboard. The heavy lifting happens on your fork's GitHub Actions, not the box.",
-      "Because the box is so light, Aeon does not draw on your plan's shared CPU and RAM. Plans start at $9.99 a month.",
+      "Hivra hosts Aeon's dashboard on a small managed computer. Connect with a GitHub token after launch, and the computer sets up your own fork of Aeon on GitHub. Then configure tasks inside Aeon's own dashboard. The heavy lifting happens on your fork's GitHub Actions, not the computer.",
+      "Because the computer is so light, Aeon does not draw on your plan's shared CPU and RAM. Plans start at $9.99 a month.",
     ],
     heroBullets: [
-      "Tasks run on your own GitHub Actions, not on the box.",
+      "Tasks run on your own GitHub Actions, not on the computer.",
       "Near zero compute. It does not draw on your plan's CPU and RAM.",
-      "Connect with a GitHub token after launch, inside the box.",
+      "Connect a GitHub token on the computer after launch.",
     ],
     howItWorks: [
       {
         title: "Pick Aeon on the get-started page",
-        detail: "Choose a plan and name the box. Aeon barely uses any compute.",
+        detail: "Choose a plan and name the agent. Aeon barely uses any compute.",
       },
       {
-        title: "Hivra provisions a tiny box",
+        title: "Hivra provisions a small computer",
         detail: "It hosts Aeon's dashboard behind an authenticated gateway.",
       },
       {
         title: "Connect your GitHub",
         detail:
-          "Enter a GitHub token inside the box. The box uses it to create your Aeon fork (or sync the one you have), turn on its Actions, and store your task secrets there. Give the token Read and write access to Secrets, Actions, Contents and Workflows.",
+          "Enter a GitHub token on the computer. The computer uses it to create your Aeon fork (or sync the one you have), turn on its Actions, and store your task secrets there. Give the token Read and write access to Secrets, Actions, Contents and Workflows.",
       },
       {
         title: "Schedule tasks in Aeon's dashboard",
@@ -335,15 +336,15 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     faqs: [
       {
         q: "What does Aeon cost on Hivra?",
-        a: "Plans start at $9.99 a month. The box only hosts Aeon's dashboard, so it does not draw on your plan's shared CPU and RAM. Task minutes run on your own GitHub Actions account.",
+        a: "Plans start at $9.99 a month. The computer only hosts Aeon's dashboard, so it does not draw on your plan's shared CPU and RAM. Task minutes run on your own GitHub Actions account.",
       },
       {
         q: "What do I need to connect?",
-        a: "A GitHub token, entered inside the box after launch. The box uses it to create an Aeon fork in your GitHub account (or sync the fork you already have), turn on Actions for it, point the dashboard at it, and store your task secrets on it as repository secrets. The token needs Read and write access to Secrets, Actions, Contents and Workflows on that fork, or the connect stops and tells you what to change. Credentials may be stored on that computer, and Hivra administrators keep infrastructure access to Hivra-managed hosts.",
+        a: "A GitHub token, entered on the computer after launch. The computer uses it to create an Aeon fork in your GitHub account (or sync the fork you already have), turn on Actions for it, point the dashboard at it, and store your task secrets on it as repository secrets. The token needs Read and write access to Secrets, Actions, Contents and Workflows on that fork, or the connect stops and tells you what to change. Credentials may be stored on that computer, and Hivra administrators keep infrastructure access to Hivra-managed hosts.",
       },
       {
         q: "Where do Aeon's tasks actually run?",
-        a: "On your own GitHub Actions, in your Aeon fork. The Hivra box hosts the dashboard; the recurring work runs in your GitHub account with credentials you control.",
+        a: "On your own GitHub Actions, in your Aeon fork. The Hivra computer hosts the dashboard; the recurring work runs in your GitHub account with credentials you control.",
       },
       {
         q: "What kind of work does Aeon do?",
@@ -355,11 +356,11 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       },
       {
         q: "Is this a modified version of Aeon?",
-        a: "No. The box runs the Aeon project exactly as it ships. Hivra is an independent hosting service and isn't affiliated with the Aeon project.",
+        a: "No. The computer runs the Aeon project exactly as it ships. Hivra is an independent hosting service and isn't affiliated with the Aeon project.",
       },
     ],
     vsSelfHosted: [
-      "You can self-host Aeon's dashboard on any box. Then you own uptime, updates, and the reverse proxy.",
+      "You can self-host Aeon's dashboard on any server. Then you own uptime, updates, and the reverse proxy.",
       "Hivra stands the dashboard up behind an authenticated gateway.",
       "Either way the tasks run on your own GitHub Actions with your own credentials.",
       "On Hivra it barely touches your plan's compute, so there's little to save by self-hosting.",
@@ -373,7 +374,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     h1: "OpenClaw, hosted and always on for $9.99 a month.",
     subhead:
       "The open-source OpenClaw agent on a private managed VM. Message it from Telegram, WhatsApp, or Signal. It runs while you sleep. Needs a paid plan.",
-    metaTitle: "OpenClaw Hosting: Always-On Managed Box for $9.99/mo",
+    metaTitle: "OpenClaw Hosting: Always-On Cloud Computer, $9.99/mo",
     metaDescription:
       "Host OpenClaw on a managed cloud VM from $9.99/mo. An always-on agent you reach from Telegram, WhatsApp or Signal, with an optional live browser.",
     cardSummary: "The open-source agent you message like a contact, with a heartbeat that runs routines on schedule.",
@@ -390,11 +391,11 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     howItWorks: [
       {
         title: "Pick OpenClaw on the get-started page",
-        detail: "It needs a paid plan, from $9.99 a month. Name the box and launch.",
+        detail: "It needs a paid plan, from $9.99 a month. Name the agent and launch.",
       },
       {
         title: "Hivra provisions a private VM",
-        detail: "Your box comes up with OpenClaw's Control UI behind an authenticated gateway.",
+        detail: "Your computer comes up with OpenClaw's Control UI behind an authenticated gateway.",
       },
       {
         title: "Connect your model and channels",
@@ -424,7 +425,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       },
       {
         q: "Can OpenClaw use a browser on Hivra?",
-        a: "Yes, optionally. The box ships a live self-hosted browser OpenClaw can attach to. You log into your accounts in a live view and the agent acts in that session. Turning it on adds 1 vCPU and 2 GB RAM to the box.",
+        a: "Yes, optionally. The computer ships a live self-hosted browser OpenClaw can attach to. You log into your accounts in a live view and the agent acts in that session. Turning it on adds 1 vCPU and 2 GB RAM to the computer.",
       },
       {
         q: "Why not just self-host OpenClaw on a VPS?",
@@ -433,7 +434,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     ],
     vsSelfHosted: [
       "Self-hosting works: a VPS, the OpenClaw install, a gateway you secure, and updates you apply by hand.",
-      "Hivra provisions the box, runs the gateway as a service, and restarts it if it crashes.",
+      "Hivra provisions the computer, runs the gateway as a service, and restarts it if it crashes.",
       "Either way you run the same open-source project, with your own channels and your own credentials.",
       "A VPS is a monthly bill plus your time. On Hivra, plans start at $9.99 a month.",
     ],
@@ -463,7 +464,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     howItWorks: [
       {
         title: "Pick Agent Zero on the get-started page",
-        detail: "It needs a paid plan, from $9.99 a month. Name the box and launch.",
+        detail: "It needs a paid plan, from $9.99 a month. Name the agent and launch.",
       },
       {
         title: "Hivra provisions a private VM",
@@ -502,7 +503,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       },
       {
         q: "How is this different from running Agent Zero in Docker locally?",
-        a: "Same container, different machine. Locally it stops when your computer sleeps and exposing the web UI safely is on you. On Hivra the box stays on and the dashboard is only reachable through an authenticated gateway.",
+        a: "Same container, different machine. Locally it stops when your computer sleeps and exposing the web UI safely is on you. On Hivra its cloud computer stays on and the dashboard is only reachable through an authenticated gateway.",
       },
     ],
     vsSelfHosted: [
@@ -555,32 +556,34 @@ export const AGENT_COPY_BANNED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason
   { pattern: /multi-agent coordination|orchestrat/i, reason: "coordination is not built in" },
   { pattern: /\b(Free|Pro|Power|Starter|Studio|Max|Command) plan\b/, reason: "plan names collide between checkout and the public ladder; use price and size" },
   { pattern: /[–—]/, reason: "no em or en dashes in page copy" },
-  {
-    pattern: /no SIGHUP|no tmux (required|needed)|survives? (laptop|lid) (sleep|close)|close your laptop\. it keeps/i,
-    reason: "Claude Code and Codex runs started in the browser chat or agent terminal stop when that tab closes",
-  },
+  // Claude Code and Codex keep-running claims, shared with the blog and /tools
+  // (lib/blog/runtime-facts.ts): the old survives-anything claims, "stops when
+  // you close the tab" (false on updated computers) and "the browser chat keeps
+  // going" (false on computers without the runtime update).
+  ...CLI_RUN_FALSE_CLAIMS.map(({ pattern, reason }) => ({ pattern, reason })),
 ];
 
 /**
- * Agents whose runs are tied to the browser tab they were started in. On these
- * boxes the browser Chat runs one CLI process per message and kills it when the
- * browser disconnects (provisioner/hivra-chat/server.js), and the agent terminal
- * execs the CLI under ttyd with no tmux (provisioner/hivra-agent-shell), so
- * closing the tab ends that run. The computer itself stays on and keeps files,
- * sessions and logins. A run started inside tmux in the Box Terminal (tmux is
- * installed on the box), or from the box's Telegram connect, keeps going.
- * Hermes, OpenClaw, Agent Zero and Aeon run their loops server-side and are
- * not in this list.
+ * Agents whose keep-running promises must say how the run is started. These run
+ * the vendor's CLI, and what a browser chat or session-tab run does after the
+ * tab closes depends on whether the computer has the 2026.09.24.1 runtime
+ * (detached chat runs, session tab inside tmux), which existing computers only
+ * get through an owner-approved rollout. So copy promises only what holds on
+ * every computer: it stays on and keeps files, sessions and logins; a run
+ * started inside tmux in the Terminal tab (tmux is installed on every one), or
+ * on Claude Code one sent through Telegram, keeps going. Hermes, OpenClaw and
+ * Agent Zero run on the computer and Aeon's tasks on the owner's GitHub
+ * Actions, so they are not in this list.
  */
-export const TAB_BOUND_AGENT_SLUGS: ReadonlyArray<AgentSeoSlug> = ["claude-code", "codex"];
+export const CLI_RUN_AGENT_SLUGS: ReadonlyArray<AgentSeoSlug> = ["claude-code", "codex"];
 
 const KEEPS_RUNNING = /\b(keeps?|kept) (going|working|running)\b|\bnothing stops\b|\bwalk away\b|\bfinished work\b/i;
 const DETACHED_RUN = /\btmux\b|\bTelegram\b/;
 
 /**
- * Sentences that promise a tab-bound agent keeps working without saying how
- * (inside tmux or from Telegram). Pass `mentioning` to check only sentences
- * about those agents, for copy that also covers server-side agents.
+ * Sentences that promise a Claude Code or Codex run keeps working without
+ * saying how (inside tmux or from Telegram). Pass `mentioning` to check only
+ * sentences about those agents, for copy that also covers the other agents.
  */
 export function unqualifiedKeepRunningClaims(text: string, mentioning?: RegExp): string[] {
   return text

@@ -10,7 +10,13 @@ import {
   MONEY_BACK_GUARANTEE,
   PLAN_SUMMARY,
 } from "@/lib/blog/plan-facts";
-import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
+import {
+  CLI_RUN_FALSE_CLAIMS,
+  CLI_RUN_LIFETIME,
+  SERVER_SIDE_AGENTS_KEEP_WORKING,
+  falseCliRunClaims,
+  unknownDashboardNames,
+} from "@/lib/blog/runtime-facts";
 import { resizeFloor } from "@/lib/hivra/agent-catalog";
 import { PLANS } from "@/lib/subscription/plans";
 import { HOSTED_MACHINES } from "@/lib/subscription/hosted-ladder";
@@ -49,13 +55,13 @@ const BANNED_ANYWHERE: Array<[string, RegExp]> = [
   ["Hivra cannot see content", /cannot read your|never sees? (?:your|those|either)|never holds your|no access to your content/i],
   ["guaranteed backups", /nightly backups? handle|backed up automatically|automated (?:nightly )?backups/i],
   ["trial clause helper", /trialCard/],
-  // A Claude Code or Codex run started in Hivra's browser chat or agent
-  // terminal stops when the tab closes (hivra-chat/server.js kills the CLI on
-  // disconnect), and `claude -p` cannot wait out a usage window.
-  [
-    "keep-running claim for browser-started runs",
-    /no tmux required|no SIGHUP|stalls until the usage window resets|window resets, then continues/i,
-  ],
+  // `claude -p` cannot wait out a usage window.
+  ["usage-window resume claim", /stalls until the usage window resets|window resets, then continues/i],
+  // Claude Code and Codex keep-running claims, shared with /agents and /tools
+  // (lib/blog/runtime-facts.ts): the old survives-anything claims, "stops when
+  // you close the tab" (false on computers with the 2026.09.24.1 runtime) and
+  // "the browser chat keeps going" (false on computers without it).
+  ...CLI_RUN_FALSE_CLAIMS.map(({ label, pattern }): [string, RegExp] => [label, pattern]),
   // Hivra's chat bypasses the CLIs' permission prompts by default, and Hermes
   // runs from Hivra's own build.
   [
@@ -63,7 +69,7 @@ const BANNED_ANYWHERE: Array<[string, RegExp]> = [
     /behave exactly as they would|not a fork or a wrapper|official unmodified runtimes|assumes the managed platform runs the same software/i,
   ],
   ["money-back guarantee without the card-payments limit", /money-back guarantee(?! on card payments)/i],
-  ["denies the Claude Code box's Telegram tab", /does not claim a built-in Telegram connection|No built-in Hivra Telegram connection/i],
+  ["denies the Claude Code agent's Telegram tab", /does not claim a built-in Telegram connection|No built-in Hivra Telegram connection/i],
 ];
 
 const BANNED_ABOUT_HIVRA: Array<[string, RegExp]> = [
@@ -146,6 +152,18 @@ const KNOWN_FALSE_ANYWHERE = [
   "The comparison in this article assumes the managed platform runs the same software you would install yourself.",
   "Plans start at $9.99/month, and every paid plan comes with a 7-day money-back guarantee.",
   "Hivra does not claim a built-in Telegram connection for Claude Code.",
+  // The keep-running copy the 24/7 posts carried before the 2026.09.24.1
+  // runtime. Each says a browser run stops with its tab, which is false on
+  // updated computers.
+  "On Hivra the computer stays on and keeps your files, sessions and login. A Claude Code or Codex run you start in the browser chat or the agent terminal stops when you close that tab.",
+  "For Claude Code and Codex, start long runs from the agent's Telegram tab or inside tmux, because a run started in the browser chat stops when you close that tab.",
+  "A managed box stays up, but on Hivra a run started in the browser chat or the agent terminal still stops when you close that tab; start long runs inside tmux in the Box Terminal.",
+  "| Keeps running with the laptop closed | Yes, inside tmux | Yes for runs started from Telegram or inside tmux; a browser chat run stops with its tab |",
+  // The opposite promise, false on computers without the runtime update.
+  "A run you start in the browser chat keeps going after you close the tab.",
+  // The retired survives-anything claims.
+  "Survives laptop sleep: Yes",
+  "Close your laptop. It keeps working.",
 ];
 const KNOWN_FALSE_ABOUT_HIVRA = [
   "Hivra fills that gap by handling server provisioning, Docker configuration, networking, SSL termination, monitoring, and backups.",
@@ -160,11 +178,14 @@ const KNOWN_FALSE_TABLES = [
 const KNOWN_TRUE_ABOUT_HIVRA = [
   "Hivra restarts the agent if it crashes; backups are not guaranteed.",
   "On Hivra, Claude Code and Codex agents also have an Export data link that downloads chats plus memory as one JSON file.",
-  "| | DIY VPS + tmux | Hivra managed |\n|---|---|---|\n| Keeps running with the laptop closed | Yes, inside tmux | Yes for runs started from Telegram or inside tmux; a browser chat run stops with its tab |",
+  "| | DIY VPS + tmux | Hivra managed |\n|---|---|---|\n| Keeps running with the laptop closed | Yes, inside tmux | Yes, inside tmux in the Terminal tab or sent through Telegram |",
+  CLI_RUN_LIFETIME,
+  SERVER_SIDE_AGENTS_KEEP_WORKING,
 ];
 
 // Posts that pitch Hivra for keeping Claude Code or Codex running. Each must
-// carry the one true statement of which runs survive a closed laptop.
+// carry the one true statement of which runs survive a closed laptop: only what
+// holds on every computer, old runtime or new.
 const CLI_24_7_POSTS = [
   "keep-claude-code-running-24-7",
   "run-codex-24-7-in-the-cloud",
@@ -263,11 +284,33 @@ describe("blog claims", () => {
       expect(article).toBeDefined();
       expect(articleCopy(article!)).toContain(CLI_RUN_LIFETIME);
     }
-    expect(CLI_RUN_LIFETIME).toMatch(/stops when you close that tab/);
-    expect(CLI_RUN_LIFETIME).toMatch(/inside tmux in the Box Terminal keep going/);
-    // Telegram is only verified for Claude Code boxes (bux-tg); never promise it for Codex.
-    expect(CLI_RUN_LIFETIME).toMatch(/on a Claude Code box so do runs you send from its Telegram tab/);
+    expect(CLI_RUN_LIFETIME).toMatch(/On a paid Hivra plan the computer stays on and keeps your files, sessions and login/);
+    expect(CLI_RUN_LIFETIME).toMatch(/run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop/);
+    // Telegram is only verified for Claude Code (bux-tg); never promise it for Codex.
+    expect(CLI_RUN_LIFETIME).toMatch(/On Claude Code, work you send through Telegram, connected in the agent's Telegram tab, runs on the computer, not in your browser/);
+    expect(CLI_RUN_LIFETIME).not.toMatch(/Codex[^.]*Telegram/);
+    // Browser chat and session-tab runs depend on the computer's runtime
+    // version, so the statement says nothing about them either way.
+    expect(CLI_RUN_LIFETIME).not.toMatch(/browser chat|agent terminal|stops|Box Terminal|\bbox\b/i);
+    expect(falseCliRunClaims(CLI_RUN_LIFETIME)).toEqual([]);
     expect(SERVER_SIDE_AGENTS_KEEP_WORKING).not.toMatch(/Claude Code|Codex/);
+    // Aeon's scheduled work runs on the owner's GitHub Actions, not on the computer.
+    expect(SERVER_SIDE_AGENTS_KEEP_WORKING).toMatch(/Aeon's scheduled tasks run on your own GitHub Actions while the computer hosts its dashboard/);
+  });
+
+  it("uses the computer vocabulary and the dashboard's own tab names on the 24/7 and Telegram posts", () => {
+    for (const slug of [...CLI_24_7_POSTS, "control-claude-code-from-telegram"]) {
+      const copy = articleCopy(BLOG_ARTICLES_LIST.find((candidate) => candidate.slug === slug)!);
+      // "box" for the computer (a UI text box is fine).
+      expect({ slug, box: copy.match(/Box Terminal|(?<!text )\bbox(?:es)?\b/gi) }).toEqual({ slug, box: null });
+      expect({ slug, runtime: copy.match(/\b(?:runtimes?|instances?)\b/gi) }).toEqual({ slug, runtime: null });
+      expect({ slug, unknown: unknownDashboardNames(copy) }).toEqual({ slug, unknown: [] });
+    }
+    // The checker itself: the retired tab name fails, the real ones pass.
+    expect(unknownDashboardNames("Start it inside tmux in the Box Terminal tab.")).toEqual(["Box Terminal tab"]);
+    expect(unknownDashboardNames("Open the Codex Terminal tab.")).toEqual(["Codex Terminal tab"]);
+    expect(unknownDashboardNames("Use the computer's Terminal tab, under Computer, or the Telegram tab under Manage.")).toEqual([]);
+    expect(unknownDashboardNames("Open the Claude Code session tab or the agent's Manage tab.")).toEqual([]);
   });
 
   it("matches the Agent Zero plus OpenClaw plan claim to the launch floors", () => {

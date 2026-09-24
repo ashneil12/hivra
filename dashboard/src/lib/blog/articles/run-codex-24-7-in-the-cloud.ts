@@ -14,7 +14,7 @@ export const article: BlogArticle = {
   author: "Hivra team",
   tagline: "Codex works as long as your terminal lives. Fix that.",
   intro:
-    "OpenAI's Codex CLI is an interactive terminal agent. Close the terminal, drop the SSH connection, or let your laptop sleep, and the run dies with it. Here is how to give Codex a machine that stays awake: tmux, a cheap VPS, or a managed box with your own ChatGPT login.",
+    "OpenAI's Codex CLI is an interactive terminal agent. Close the terminal, drop the SSH connection, or let your laptop sleep, and the run dies with it. Here is how to give Codex a machine that stays awake: tmux, a cheap VPS, or a managed computer with your own ChatGPT login.",
   sections: [
     {
       heading: "The problem: Codex lives and dies with your terminal",
@@ -38,27 +38,27 @@ export const article: BlogArticle = {
     {
       heading: "Fix 3: the DIY VPS route",
       paragraphs: [
-        "A small VPS costs $5-10/month and runs the Codex CLI fine. The setup:\n\n```bash\n# 1. SSH in\nssh root@your-vps-ip\n\n# 2. Install Node.js, then the Codex CLI\ncurl -fsSL https://deb.nodesource.com/setup_22.x | bash -\napt-get install -y nodejs\nnpm install -g @openai/codex\n\n# 3. Sign in with your ChatGPT account. On a headless box,\n#    the device-code flow avoids opening a browser on the server\ncodex login --device-auth\n\n# 4. Run inside tmux so it survives disconnects\ntmux new -s codex\ncodex\n```\n\nDetach and walk away. The agent keeps working on the server.",
-        "The hidden costs of DIY, stated plainly:\n\n- **Setup and auth friction.** The ChatGPT login on a headless box means moving a code between machines. Budget an hour or two total.\n- **Maintenance.** Node updates, CLI updates, OS patches, disk cleanup. All yours now.\n- **Security.** A public box with your logged-in agent on it. SSH keys only, firewall on. Also yours.\n- **No interface.** SSH is the whole experience. No browser view, no file browser, nothing friendly on a phone.",
+        "A small VPS costs $5-10/month and runs the Codex CLI fine. The setup:\n\n```bash\n# 1. SSH in\nssh root@your-vps-ip\n\n# 2. Install Node.js, then the Codex CLI\ncurl -fsSL https://deb.nodesource.com/setup_22.x | bash -\napt-get install -y nodejs\nnpm install -g @openai/codex\n\n# 3. Sign in with your ChatGPT account. On a headless server,\n#    the device-code flow avoids opening a browser on the server\ncodex login --device-auth\n\n# 4. Run inside tmux so it survives disconnects\ntmux new -s codex\ncodex\n```\n\nDetach and walk away. The agent keeps working on the server.",
+        "The hidden costs of DIY, stated plainly:\n\n- **Setup and auth friction.** The ChatGPT login on a headless server means moving a code between machines. Budget an hour or two total.\n- **Maintenance.** Node updates, CLI updates, OS patches, disk cleanup. All yours now.\n- **Security.** A public server with your logged-in agent on it. SSH keys only, firewall on. Also yours.\n- **No interface.** SSH is the whole experience. No browser view, no file browser, nothing friendly on a phone.",
       ],
     },
     {
       heading: "Fix 4: managed Codex hosting",
       paragraphs: [
-        `[Hivra](/) runs the official OpenAI Codex CLI on a private virtual machine provisioned for you. Hivra's chat runs it with approvals and the Codex sandbox bypassed by default inside that VM, and the Permissions setting on the agent's Manage tab narrows that to Limited (workspace sandbox) or Read-only. What the product actually ships:\n\n- **Your own ChatGPT login.** After launch, you sign in with your own ChatGPT account inside the box, or provide your own OpenAI API key inside Codex. The login is stored on that VM.\n- **Browser access to the box.** Chat, terminal, files, and skills tabs wrap the standard CLI, so you can check on the box from any device.\n- **Optional live self-hosted browser.** Turn on browser automation and the Codex box gets a real Chrome instance the agent can drive.\n- **A machine that stays on, with one rule to know.** ${CLI_RUN_LIFETIME}\n- **A Box Terminal with tmux installed.** Start a long run inside tmux there and it keeps going after you close the tab.\n\nLaunch it from [the Codex agent page](/agents/codex).`,
+        `[Hivra](/) runs the official OpenAI Codex CLI on a private virtual machine provisioned for you. Hivra's chat runs it with approvals and the Codex sandbox bypassed by default inside that VM, and the Permissions setting on the agent's Manage tab narrows that to Limited (workspace sandbox) or Read-only. What the product actually ships:\n\n- **Your own ChatGPT login.** After launch, you sign in with your own ChatGPT account on the computer, or provide your own OpenAI API key inside Codex. The login is stored on that VM.\n- **Browser access to the computer.** Chat, terminal, files, and skills tabs wrap the standard CLI, so you can check on it from any device.\n- **Optional live self-hosted browser.** Turn on browser automation and the Codex computer gets a real Chrome browser the agent can drive.\n- **A machine that stays on, with one rule to know.** ${CLI_RUN_LIFETIME}\n- **A Terminal tab with tmux installed.** The computer's Terminal tab, under Computer, is a plain shell with tmux ready. Start a long run inside tmux there and it keeps going after you close the tab.\n\nLaunch it from [the Codex agent page](/agents/codex).`,
         `Plan facts: paid plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, enough for Codex with the browser on. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Numbers on [the pricing page](/pricing). Hivra is independent and is not affiliated with OpenAI.`,
       ],
     },
     {
       heading: "DIY vs managed",
       paragraphs: [
-        `| | DIY VPS + tmux | Hivra managed |\n|---|---|---|\n| Cash cost | $5-10/mo | From ${ENTRY_PLAN_PRICE}/mo |\n| Setup | 1-2 hours of your time | Pick the agent, then sign in |\n| Login | Your ChatGPT account | Your ChatGPT account, entered inside the box |\n| Interface | SSH terminal only | Browser: chat, terminal, files, skills |\n| Agent browser automation | You install and maintain it | Optional toggle on the Codex box |\n| Server setup | You | Done for you |\n| Root access to the box | Yes | Managed VM, resize CPU/RAM in the dashboard |\n\nBoth routes end in the same place: the official Codex CLI, on your own OpenAI account, on a machine that stays on. The difference is who runs the server. On either one, a long run has to live somewhere other than a browser tab or a bare SSH shell: tmux, \`codex exec\`, or on Hivra tmux in the Box Terminal.`,
+        `| | DIY VPS + tmux | Hivra managed |\n|---|---|---|\n| Cash cost | $5-10/mo | From ${ENTRY_PLAN_PRICE}/mo |\n| Setup | 1-2 hours of your time | Pick the agent, then sign in |\n| Login | Your ChatGPT account | Your ChatGPT account, entered on the computer |\n| Interface | SSH terminal only | Browser: chat, terminal, files, skills |\n| Agent browser automation | You install and maintain it | Optional toggle on the Codex computer |\n| Server setup | You | Done for you |\n| Root access to the machine | Yes | Managed VM, resize CPU/RAM in the dashboard |\n\nBoth routes end in the same place: the official Codex CLI, on your own OpenAI account, on a machine that stays on. The difference is who runs the server. On either one, put a long run where you know it survives a disconnect: tmux, \`codex exec\`, or on Hivra tmux in the computer's Terminal tab.`,
       ],
     },
     {
       heading: "Pick your route",
       paragraphs: [
-        "- **One overnight task:** `nohup codex exec \"...\"` on any machine that stays awake.\n- **You own an always-on machine:** tmux. Free and done in a minute.\n- **Permanent setup, you like server work:** $5-10/month VPS plus tmux.\n- **Permanent setup, zero server work:** [deploy Codex on Hivra](/agents/codex), sign in with ChatGPT, and start long runs inside tmux in the Box Terminal, so they keep going after you close the laptop.",
+        "- **One overnight task:** `nohup codex exec \"...\"` on any machine that stays awake.\n- **You own an always-on machine:** tmux. Free and done in a minute.\n- **Permanent setup, you like server work:** $5-10/month VPS plus tmux.\n- **Permanent setup, zero server work:** [deploy Codex on Hivra](/agents/codex), sign in with ChatGPT, and start long runs inside tmux in the computer's Terminal tab, so they keep going after you close the laptop.",
       ],
     },
   ],
@@ -69,11 +69,11 @@ export const article: BlogArticle = {
     },
     {
       q: "Does Codex keep running when I close my terminal?",
-      a: "Not by default. The CLI is a child of your shell and dies with it. Run it inside tmux or screen on an always-on machine, or use codex exec with nohup for one-shot headless runs. A managed box stays up, but on Hivra a run started in the browser chat or the agent terminal still stops when you close that tab; start long runs inside tmux in the Box Terminal.",
+      a: "Not by default. The CLI is a child of your shell and dies with it. Run it inside tmux or screen on an always-on machine, or use codex exec with nohup for one-shot headless runs. A managed computer stays up too; on Hivra, start long runs inside tmux in the computer's Terminal tab and they keep going after you close the laptop.",
     },
     {
       q: "Do I need an OpenAI API key to run Codex in the cloud?",
-      a: "No. On Hivra you sign in with your own ChatGPT account inside the box after launch, the same login the CLI uses on your laptop. You can provide your own OpenAI API key inside Codex instead if you prefer. The login is stored on the agent's VM.",
+      a: "No. On Hivra you sign in with your own ChatGPT account on the computer after launch, the same login the CLI uses on your laptop. You can provide your own OpenAI API key inside Codex instead if you prefer. The login is stored on the agent's VM.",
     },
     {
       q: "How much does 24/7 Codex hosting cost?",
@@ -85,7 +85,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Can hosted Codex use a browser?",
-      a: "Yes, optionally. The Codex box on Hivra can run a live self-hosted browser (a real Chrome instance on the VM) that the agent drives for web tasks. It is a toggle, and turning it on adds 1 vCPU and 2 GB of RAM to the box.",
+      a: "Yes, optionally. The Codex computer on Hivra can run a live self-hosted browser (a real Chrome browser on the VM) that the agent drives for web tasks. It is a toggle, and turning it on adds 1 vCPU and 2 GB of RAM to the computer.",
     },
   ],
   relatedArticles: [

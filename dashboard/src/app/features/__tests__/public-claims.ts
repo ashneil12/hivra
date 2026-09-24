@@ -154,7 +154,7 @@ export const KNOWN_FALSE_CLAIMS = [
 export const KNOWN_TRUE_CLAIMS = [
   "Render's free tier spins down web services after 15 minutes without inbound traffic, and free services cannot use a persistent disk.",
   "Hosting starts at $9.99/month for 2 vCPU and 4 GB RAM.",
-  "Backup coverage depends on the runtime and provider and is not guaranteed.",
+  "Backup coverage depends on the agent and provider and is not guaranteed.",
   "Hivra does not coordinate work between them today; built-in orchestration is planned, not shipped.",
   "Initial setup: 4-8 hours for a developer who knows Linux.",
   "Runs at 7am, arrives in Telegram as a formatted message by 7:15am.",

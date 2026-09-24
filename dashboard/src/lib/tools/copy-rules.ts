@@ -5,6 +5,8 @@
 //
 // Each rule names why it exists so a failing test says what to fix.
 
+import { CLI_RUN_FALSE_CLAIMS } from "@/lib/blog/runtime-facts";
+
 export interface BannedClaim {
   pattern: RegExp;
   why: string;
@@ -27,12 +29,13 @@ export const BANNED_CLAIMS: BannedClaim[] = [
   // $19.99 is allowed only with its size in the same sentence ("$19.99 a month for 4 vCPU and 8 GB").
   { pattern: /\bHivra (?:Pro|Power|Starter|Studio|Max)\b|\bPower plan\b|Pro is \$9\.99|\$19\.99(?![^.]*4 vCPU and 8 GB)/i, why: "Describe Hivra plans by price and size, not by colliding names." },
   { pattern: /sizes (?:are )?(?:on|listed on) the pricing page|current (?:caps|sizes)/i, why: "The /pricing page shows a preview ladder; state the $9.99 and $19.99 sizes inline." },
-  {
-    pattern: /no SIGHUP|no tmux (?:required|needed)|survives? (?:laptop|lid) (?:sleep|close)|close your laptop\. it keeps/i,
-    why: "Claude Code and Codex runs started in Hivra's browser chat or agent terminal stop when that tab closes; only tmux or Telegram runs keep going.",
-  },
   { pattern: /\$79\b|\$149\b|\/yr\b|per year|yearly plan/i, why: "Do not state a Hivra annual price." },
   { pattern: /[–—]/, why: "No em or en dashes in copy." },
+  // Claude Code and Codex keep-running claims, shared with the blog and /agents:
+  // the old survives-anything claims, "stops when you close the tab" and "the
+  // browser chat keeps going". Only tmux (or Telegram, on Claude Code) runs are
+  // promised, because browser runs depend on the computer's runtime version.
+  ...CLI_RUN_FALSE_CLAIMS.map(({ pattern, reason }) => ({ pattern, why: reason })),
 ];
 
 /** Every banned claim a piece of copy makes, with the reason. */

@@ -41,7 +41,7 @@ const SUMMARY = [
   },
   {
     title: "Stays on when you log off",
-    body: "Every agent gets a private cloud VM of its own, and paid plans are never paused for inactivity. Hermes, OpenClaw, Agent Zero and Aeon keep working with the laptop closed. Claude Code and Codex keep going too when you start the run inside tmux on the box, not in a browser tab.",
+    body: "Every agent gets a private cloud VM of its own, and paid plans are never paused for inactivity. Hermes, OpenClaw and Agent Zero run on that computer, and Aeon's tasks run on your own GitHub Actions, so none of them needs an open browser. A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop.",
   },
   {
     title: "From $9.99 a month",

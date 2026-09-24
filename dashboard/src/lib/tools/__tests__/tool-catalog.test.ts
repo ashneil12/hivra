@@ -12,6 +12,7 @@ import {
 } from "../tool-catalog";
 import { findBannedClaims } from "../copy-rules";
 import { agentDeployHref, getAgentSeoEntry, unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
+import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 
 // componentKey -> the client component file the /tools/[slug] template maps it
 // to (src/app/tools/[slug]/page.tsx). Keep both maps in sync.
@@ -146,10 +147,25 @@ describe("tools catalog", () => {
 
   it("only says Hivra keeps a run going when the run is started inside tmux or from Telegram", () => {
     const copy = TOOL_ENTRIES.flatMap((entry) => collectStrings(entry)).join("\n");
-    expect(unqualifiedKeepRunningClaims(copy, /Hivra|always-on box|managed box/i)).toEqual([]);
-    for (const claim of ["no lid, no SIGHUP", "No tmux required.", "Survives laptop sleep: Yes"]) {
-      expect(findBannedClaims(claim)).not.toEqual([]);
+    expect(unqualifiedKeepRunningClaims(copy, /Hivra|always-on (?:box|computer)|managed (?:box|computer)/i)).toEqual([]);
+    expect(copy).toMatch(/inside tmux in the computer's Terminal tab, or send it from Telegram/);
+    expect(copy).not.toMatch(/Box Terminal|browser chat|\b(?:the|a|managed|cloud|always-on) box\b/i);
+    expect(unknownDashboardNames(copy)).toEqual([]);
+    for (const claim of [
+      // Retired survives-anything claims.
+      "no lid, no SIGHUP",
+      "No tmux required.",
+      "Survives laptop sleep: Yes",
+      // False on computers with the 2026.09.24.1 runtime.
+      "A run in the browser chat stops when you close that tab.",
+      "On Hivra, close the tab or let the laptop sleep and that Claude Code or Codex run stops.",
+      "Closing the tab ends a browser run",
+      // False on computers without it.
+      "A run in the browser chat keeps going after you close the tab.",
+    ]) {
+      expect({ claim, banned: findBannedClaims(claim).length > 0 }).toEqual({ claim, banned: true });
     }
+    expect(findBannedClaims("Start the run inside tmux in the computer's Terminal tab and it keeps going with your laptop closed.")).toEqual([]);
   });
 
   it("does not imply the Hivra side of the cost calculator includes backups", () => {

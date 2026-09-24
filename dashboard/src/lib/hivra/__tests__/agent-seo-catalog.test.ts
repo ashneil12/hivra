@@ -6,7 +6,7 @@ import {
   AGENT_PAGES_LAST_MODIFIED,
   AGENT_SEO_ENTRIES,
   AGENT_SEO_SLUGS,
-  TAB_BOUND_AGENT_SLUGS,
+  CLI_RUN_AGENT_SLUGS,
   agentDeployHref,
   getAgentSeoEntry,
   unqualifiedKeepRunningClaims,
@@ -14,6 +14,7 @@ import {
 } from "../agent-seo-catalog";
 import { AGENTS, BROWSER_ADD, getAgent, isPoolExempt, resizeFloor } from "../agent-catalog";
 import { BLOG_ARTICLES } from "@/lib/blog-data";
+import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 import { resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import { ACTIVE_PLAN_KEYS, PLANS } from "@/lib/subscription";
 import { HOSTED_MACHINES } from "@/lib/subscription/hosted-ladder";
@@ -84,6 +85,12 @@ describe("agent SEO catalog", () => {
       const match = copy.match(pattern);
       if (match) throw new Error(`/agents/${entry.slug} says "${match[0]}" (${reason})`);
     }
+  });
+
+  it.each(AGENT_SEO_ENTRIES)("$slug: says computer, not box, and names only tabs the agent page shows", (entry) => {
+    const copy = copyOf(entry);
+    expect(copy.match(/Box Terminal|\bbox(?:es)?\b|\b(?:runtimes?|instances?)\b/gi)).toBeNull();
+    expect(unknownDashboardNames(copy)).toEqual([]);
   });
 
   it("scans the literal phrases the owner ruled out", () => {
@@ -188,29 +195,41 @@ describe("agent SEO catalog", () => {
     expect(getAgentSeoEntry("deepseek-harness")).toBeUndefined();
   });
 
-  // On Claude Code and Codex boxes the browser chat kills the CLI when the tab
-  // disconnects and the agent terminal runs without tmux, so "close your laptop,
-  // it keeps working" is false unless the run was started inside tmux (or, for
-  // Claude Code, from Telegram). The computer itself stays on.
-  it("lists exactly the agents whose runs are tied to the browser tab", () => {
-    expect([...TAB_BOUND_AGENT_SLUGS].sort()).toEqual(["claude-code", "codex"]);
+  // What a browser chat or session-tab run does after the tab closes depends on
+  // whether the computer has the 2026.09.24.1 runtime (detached chat runs, the
+  // session tab inside tmux). Existing computers get it only through an
+  // owner-approved rollout, so the pages make neither claim. They promise what
+  // holds on every computer: it stays on, and a run inside tmux in the Terminal
+  // tab (or, for Claude Code, one sent through Telegram) keeps going.
+  it("lists exactly the agents whose keep-running promises must say how the run starts", () => {
+    expect([...CLI_RUN_AGENT_SLUGS].sort()).toEqual(["claude-code", "codex"]);
   });
 
-  it.each(TAB_BOUND_AGENT_SLUGS.map((slug) => [slug]))(
-    "%s: every keeps-working claim says how, and the tab-close limit is stated",
+  it.each(CLI_RUN_AGENT_SLUGS.map((slug) => [slug]))(
+    "%s: every keeps-working claim says how, and no claim depends on the computer's runtime version",
     (slug) => {
       const entry = getAgentSeoEntry(slug)!;
       const copy = copyOf(entry);
       expect(unqualifiedKeepRunningClaims(copy)).toEqual([]);
-      expect(copy).toMatch(/\btmux\b/);
-      expect(copy).toMatch(/stops when you close that tab/);
+      expect(copy).toMatch(/inside tmux in the computer's Terminal tab/);
+      expect(copy).not.toMatch(/Box Terminal|\bthe box\b/i);
+      // Neither "stops when you close the tab" nor "the browser chat keeps going".
+      for (const { pattern } of AGENT_COPY_BANNED_PATTERNS) expect(copy).not.toMatch(pattern);
       // The subhead sits right under the "24/7" / "stays on" H1, so it has to say how.
       expect(entry.subhead).toMatch(/\btmux\b/);
       const closeLaptop = entry.faqs.find((faq) => /close my laptop/i.test(faq.q));
       expect(closeLaptop?.a).toMatch(/\btmux\b/);
-      expect(closeLaptop?.a).toMatch(/stops when you close that tab/);
+      expect(closeLaptop?.a).toMatch(/paid plans are never paused for inactivity/);
+      expect(closeLaptop?.a).not.toMatch(/browser chat|stops when/i);
     },
   );
+
+  it("offers Telegram for Claude Code only, where the Telegram tab is verified", () => {
+    const claude = getAgentSeoEntry("claude-code")!;
+    expect(claude.subhead).toMatch(/\bTelegram\b/);
+    expect(claude.faqs.find((faq) => /close my laptop/i.test(faq.q))?.a).toMatch(/Telegram tab, under Manage/);
+    expect(copyOf(getAgentSeoEntry("codex")!)).not.toMatch(/Telegram/);
+  });
 
   it("keeps the H1 search intent for Claude Code in the cloud", () => {
     expect(getAgentSeoEntry("claude-code")!.h1).toMatch(/Claude Code, running 24\/7 in the cloud/);
@@ -228,10 +247,34 @@ describe("agent SEO catalog", () => {
     }
     expect(unqualifiedKeepRunningClaims("Start a run inside tmux and it keeps going after you close the tab.")).toEqual([]);
     expect(unqualifiedKeepRunningClaims("Start it from Telegram and it keeps going.")).toEqual([]);
-    // Scoped to sentences about the tab-bound agents when the copy covers others too.
+    // Scoped to sentences about Claude Code and Codex when the copy covers others too.
     expect(unqualifiedKeepRunningClaims("Hermes keeps working with the laptop closed.", /Claude Code|Codex/)).toEqual([]);
-    for (const claim of ["no SIGHUP", "No tmux required.", "Survives laptop sleep: Yes"]) {
-      expect(AGENT_COPY_BANNED_PATTERNS.some(({ pattern }) => pattern.test(claim))).toBe(true);
+  });
+
+  it("bans the old false claims and both version-dependent tab claims", () => {
+    const banned = (claim: string) => AGENT_COPY_BANNED_PATTERNS.some(({ pattern }) => pattern.test(claim));
+    for (const claim of [
+      // Retired survives-anything claims.
+      "no SIGHUP",
+      "No tmux required.",
+      "Survives laptop sleep: Yes",
+      "Close your laptop. It keeps working.",
+      // The copy these pages carried before the 2026.09.24.1 runtime: false on
+      // updated computers.
+      "A run you start in the browser chat or the Claude Code Terminal stops when you close that tab.",
+      "A run in the browser chat or the Codex Terminal stops when you close that tab.",
+      "Claude Code and Codex runs started in the browser chat or agent terminal stop when that tab closes.",
+      // The opposite promise: false on computers without the runtime update.
+      "A run you start in the browser chat keeps going after you close the tab.",
+    ]) {
+      expect({ claim, banned: banned(claim) }).toEqual({ claim, banned: true });
+    }
+    for (const claim of [
+      "Start long work inside tmux in the computer's Terminal tab and it keeps going after you log off.",
+      "Hermes is useful because it doesn't stop when you close a browser tab.",
+      "On Hivra it lives on a private virtual machine that stays on, so nothing resets when you close the tab.",
+    ]) {
+      expect({ claim, banned: banned(claim) }).toEqual({ claim, banned: false });
     }
   });
 
