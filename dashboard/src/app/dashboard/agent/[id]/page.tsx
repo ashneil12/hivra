@@ -7,7 +7,8 @@
 
 import styles from "./ResourceWorkspace.module.css";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
@@ -38,9 +39,6 @@ import { HivraSkills } from "@/components/hivra/HivraSkills";
 import { HivraTelegram } from "@/components/hivra/HivraTelegram";
 import { HivraManage } from "@/components/hivra/HivraManage";
 import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
-import { HivraRemoteDesktop } from "@/components/hivra/HivraRemoteDesktop";
-import { HivraConsoleDesktop } from "@/components/hivra/HivraConsoleDesktop";
-import { HivraOmarchyDesktop } from "@/components/hivra/HivraOmarchyDesktop";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import {
   SurfaceActionProvider,
@@ -53,13 +51,10 @@ import {
 } from "@/lib/workspace/runtime-selection";
 import { persistWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
-import { TasksPanel } from "@/components/scheduled-tasks/TasksPanel";
-import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
-import { DigitalOceanAgentWorkspace } from "@/components/hivra/DigitalOceanAgentWorkspace";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
 import {
   buildWelcomePersonalizationContext,
@@ -67,6 +62,40 @@ import {
 } from "@/lib/welcome-personalization";
 
 const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
+
+// A desktop stays mounted (hidden) while its owner works in other tabs, so
+// its placeholder shows only while Desktop is the open tab.
+const DesktopTabOpen = createContext(true);
+function DesktopLoading() {
+  return useContext(DesktopTabOpen) ? <LoadingState dark label="Opening your computer…" /> : null;
+}
+// Only computers, DigitalOcean sessions, the Tasks tab and the browser paywall
+// use these. Load them when one is shown, so an agent's page doesn't download
+// the desktop and session code before it can open.
+const HivraRemoteDesktop = dynamic(
+  () => import("@/components/hivra/HivraRemoteDesktop").then((mod) => mod.HivraRemoteDesktop),
+  { ssr: false, loading: DesktopLoading },
+);
+const HivraConsoleDesktop = dynamic(
+  () => import("@/components/hivra/HivraConsoleDesktop").then((mod) => mod.HivraConsoleDesktop),
+  { ssr: false, loading: DesktopLoading },
+);
+const HivraOmarchyDesktop = dynamic(
+  () => import("@/components/hivra/HivraOmarchyDesktop").then((mod) => mod.HivraOmarchyDesktop),
+  { ssr: false, loading: DesktopLoading },
+);
+const DigitalOceanAgentWorkspace = dynamic(
+  () => import("@/components/hivra/DigitalOceanAgentWorkspace").then((mod) => mod.DigitalOceanAgentWorkspace),
+  { ssr: false, loading: () => <LoadingState label="Opening your workspace…" /> },
+);
+const TasksPanel = dynamic(
+  () => import("@/components/scheduled-tasks/TasksPanel").then((mod) => mod.TasksPanel),
+  { ssr: false, loading: () => <LoadingState compact label="Loading tasks…" /> },
+);
+const UpgradePaywallModal = dynamic(
+  () => import("@/components/billing/UpgradePaywallModal").then((mod) => mod.UpgradePaywallModal),
+  { ssr: false },
+);
 
 // Which tabs a resource has is one shared decision (agentSurfacesFor): the
 // Computer Contract and the launch Review read it too, so what the agent is
@@ -138,6 +167,68 @@ function CanonicalizeUnavailableTab({
 }
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
+type SurfaceAccess = "ready" | "upgrade-required" | "unavailable";
+
+/** The guest origin and local path of a surface URL, or null when it must fail closed. */
+function parseSurfaceUrl(url: string): { origin: string; destination: string } | null {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
+      /[\s;*'"]/.test(parsed.origin)
+    ) {
+      throw new Error("A clean HTTPS surface endpoint is required.");
+    }
+    return { origin: parsed.origin, destination: `${parsed.pathname}${parsed.search}` };
+  } catch {
+    // A malformed stored surface URL must fail closed instead of navigating.
+    return null;
+  }
+}
+
+// Provider ownership says nothing about the installed gateway protocol.
+// Probe nonsecret runtime metadata before sending any bearer. An old or
+// unreachable runtime must never fall back to putting it in a URL.
+function probeSurfaceAccess(origin: string): Promise<SurfaceAccess> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  return fetch(`${origin}/api/meta`, { cache: "no-store", credentials: "omit", signal: controller.signal })
+    .then(async (response): Promise<SurfaceAccess> => {
+      if (!response.ok) throw new Error("Runtime metadata is unavailable.");
+      const metadata: unknown = await response.json();
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+        throw new Error("Runtime metadata is invalid.");
+      }
+      const record = metadata as Record<string, unknown>;
+      return record.surfaceAuth === "post-cookie-v1"
+        ? "ready"
+        : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
+    })
+    .catch((): SurfaceAccess => "unavailable")
+    .finally(() => window.clearTimeout(timeout));
+}
+
+// One check per computer for as long as its page is open: every terminal,
+// session tab and embedded surface reuses a gateway that has already shown it
+// takes the bearer by POST. Only that answer is kept. Any other answer, a
+// changed credential and "Try again" all ask the computer again.
+type SurfaceAccessChecks = { check(origin: string, token: string, fresh?: boolean): Promise<SurfaceAccess> };
+function createSurfaceAccessChecks(): SurfaceAccessChecks {
+  const checks = new Map<string, { token: string; result: Promise<SurfaceAccess> }>();
+  return {
+    check(origin, token, fresh = false) {
+      const known = checks.get(origin);
+      if (known && known.token === token && !fresh) return known.result;
+      const entry = { token, result: probeSurfaceAccess(origin) };
+      checks.set(origin, entry);
+      void entry.result.then((status) => {
+        if (status !== "ready" && checks.get(origin) === entry) checks.delete(origin);
+      });
+      return entry.result;
+    },
+  };
+}
+const SurfaceAccessContext = createContext<SurfaceAccessChecks | null>(null);
 
 function AuthenticatedSurface({
   url,
@@ -164,31 +255,18 @@ function AuthenticatedSurface({
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const formRef = useRef<HTMLFormElement>(null);
   const newTabFormRef = useRef<HTMLFormElement>(null);
+  const accessChecks = useContext(SurfaceAccessContext);
   const [probeVersion, setProbeVersion] = useState(0);
   const [access, setAccess] = useState<{
     key: string;
     token: string;
-    status: "ready" | "upgrade-required" | "unavailable";
+    status: SurfaceAccess;
   } | null>(null);
-  let bootstrapUrl = "";
-  let metadataUrl = "";
-  let destination = "";
-  let surfaceOrigin = "";
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
-      /[\s;*'"]/.test(parsed.origin)
-    ) {
-      throw new Error("A clean HTTPS surface endpoint is required.");
-    }
-    surfaceOrigin = parsed.origin;
-    bootstrapUrl = `${parsed.origin}/auth/bootstrap`;
-    metadataUrl = `${parsed.origin}/api/meta`;
-    destination = `${parsed.pathname}${parsed.search}`;
-  } catch {
-    // A malformed stored surface URL must fail closed instead of navigating.
-  }
+  const endpoint = parseSurfaceUrl(url);
+  const surfaceOrigin = endpoint?.origin ?? "";
+  const bootstrapUrl = endpoint ? `${endpoint.origin}/auth/bootstrap` : "";
+  const metadataUrl = endpoint ? `${endpoint.origin}/api/meta` : "";
+  const destination = endpoint?.destination ?? "";
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
   // validated guest origin used for bootstrap, never a wildcard or legacy
@@ -203,36 +281,18 @@ function AuthenticatedSurface({
     : access?.key === probeKey && access.token === token ? access.status : "checking";
 
   useEffect(() => {
-    if (!metadataUrl || !token) return;
-    const controller = new AbortController();
+    if (!surfaceOrigin || !token) return;
     let cancelled = false;
-    const timeout = window.setTimeout(() => controller.abort(), 10_000);
-    // Provider ownership says nothing about the installed gateway protocol.
-    // Probe nonsecret runtime metadata before sending any bearer. An old or
-    // unreachable runtime must never fall back to putting it in a URL.
-    void fetch(metadataUrl, { cache: "no-store", credentials: "omit", signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Runtime metadata is unavailable.");
-        const metadata: unknown = await response.json();
-        if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-          throw new Error("Runtime metadata is invalid.");
-        }
-        const record = metadata as Record<string, unknown>;
-        const status = record.surfaceAuth === "post-cookie-v1"
-          ? "ready"
-          : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
+    // "Try again" always asks the computer afresh.
+    const fresh = probeVersion > 0;
+    void (accessChecks ? accessChecks.check(surfaceOrigin, token, fresh) : probeSurfaceAccess(surfaceOrigin))
+      .then((status) => {
         if (!cancelled) setAccess({ key: probeKey, token, status });
-      })
-      .catch(() => {
-        if (!cancelled) setAccess({ key: probeKey, token, status: "unavailable" });
-      })
-      .finally(() => window.clearTimeout(timeout));
+      });
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
-      controller.abort();
     };
-  }, [metadataUrl, probeKey, token]);
+  }, [accessChecks, probeKey, probeVersion, surfaceOrigin, token]);
 
   useEffect(() => {
     if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
@@ -557,6 +617,7 @@ export default function AgentPage() {
   // One registry per agent page. Never a module singleton: a route change or a
   // reused module in a test must not carry another page's actions over.
   const actionStore = useSurfaceActionStoreInstance();
+  const [surfaceAccessChecks] = useState(createSurfaceAccessChecks);
   const id = (params?.id as string) || "";
   const launchWelcome = searchParams?.get("welcome") === "1";
   const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
@@ -785,6 +846,19 @@ export default function AgentPage() {
     return () => controller.abort();
   }, [agent, id]);
 
+  // Check the computer's connection service as soon as its address is known,
+  // so opening a terminal or another session tab doesn't wait for it. Windows
+  // computers and provider desktops have no surface that uses it.
+  const checksSurfaceAccess = agent?.id === id && agent.status === "running" && agent.computer_profile !== "windows"
+    && !(agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop");
+  const surfaceCheckUrl = checksSurfaceAccess ? agent.chat_url : null;
+  const surfaceCheckToken = checksSurfaceAccess ? agent.api_token : null;
+  useEffect(() => {
+    if (!surfaceCheckUrl || !surfaceCheckToken) return;
+    const endpoint = parseSurfaceUrl(surfaceCheckUrl);
+    if (endpoint) void surfaceAccessChecks.check(endpoint.origin, surfaceCheckToken);
+  }, [surfaceAccessChecks, surfaceCheckToken, surfaceCheckUrl]);
+
   if (flagOn === null) {
     return <LoadingState label="Checking availability…" />;
   }
@@ -896,6 +970,7 @@ export default function AgentPage() {
 
   return (
     <SurfaceActionProvider store={actionStore}>
+    <SurfaceAccessContext.Provider value={surfaceAccessChecks}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
       <CanonicalizeUnavailableTab
         unavailableTab={unavailableTab}
@@ -939,6 +1014,7 @@ export default function AgentPage() {
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
             among local surfaces. Only computers have a desktop. */}
+        <DesktopTabOpen.Provider value={effectiveTab === "desktop"}>
         {isComputer && agent.status === "running" ? (
           agent.computer_profile === "omarchy" ? (
             <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
@@ -962,6 +1038,7 @@ export default function AgentPage() {
             />
           )
         ) : null}
+        </DesktopTabOpen.Provider>
         {chatOpened && chatSurfaceReady && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
             <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
@@ -1131,6 +1208,7 @@ export default function AgentPage() {
         />
       ) : null}
     </div>
+    </SurfaceAccessContext.Provider>
     </SurfaceActionProvider>
   );
 }

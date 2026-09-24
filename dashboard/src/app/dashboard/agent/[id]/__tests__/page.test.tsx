@@ -712,7 +712,10 @@ describe("AgentPage", () => {
     { label: "invalid JSON", response: { ok: true, json: async () => { throw new SyntaxError("Invalid JSON"); } } },
     { label: "unknown metadata", response: { ok: true, json: async () => ({ surfaceAuth: "future-protocol" }) } },
   ])("fails closed on $label and can retry without a bearer URL", async ({ response }) => {
-    (global.fetch as jest.Mock).mockResolvedValueOnce(response);
+    // The computer answers this way until it is fixed. The page asks when it
+    // opens and again when the session opens.
+    let metadata: unknown = response;
+    (global.fetch as jest.Mock).mockImplementation(async () => metadata);
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
@@ -721,19 +724,84 @@ describe("AgentPage", () => {
     expect(document.documentElement.outerHTML).not.toContain("box-token");
     expect(requestSubmit).not.toHaveBeenCalled();
 
+    metadata = { ok: true, json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1" }) };
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
   });
 
   it("does not fall back to a bearer URL on network failure", async () => {
-    (global.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network failed"));
+    (global.fetch as jest.Mock).mockRejectedValue(new TypeError("Network failed"));
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
     expect(document.querySelector("iframe, form")).toBeNull();
     expect(requestSubmit).not.toHaveBeenCalled();
+  });
+
+  describe("connection service check", () => {
+    const READY = { ok: true, json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1" }) };
+    const metaChecks = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
+
+    it("checks the computer as soon as the page opens, before any terminal and without the bearer", async () => {
+      render(<AgentPage />);
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("https://box.example.com/api/meta", {
+        cache: "no-store",
+        credentials: "omit",
+        signal: expect.any(AbortSignal),
+      }));
+      expect(document.querySelector("iframe, form")).toBeNull();
+      expect(requestSubmit).not.toHaveBeenCalled();
+    });
+
+    it("reuses that check for every session tab and terminal instead of asking again", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+
+      fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+      await screen.findByTitle("Claude Code session · 2");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
+
+      expect(metaChecks()).toBe(1);
+    });
+
+    it("does not remember a failed check: opening the session asks again", async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network failed"));
+      render(<AgentPage />);
+      await waitFor(() => expect(metaChecks()).toBe(1));
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+
+      expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(metaChecks()).toBe(2);
+    });
+
+    it("asks afresh on Try again, even while another surface's check is still waiting", async () => {
+      const answers: Array<() => Promise<unknown>> = [
+        async () => { throw new TypeError("Network failed"); }, // when the page opens
+        async () => { throw new TypeError("Network failed"); }, // the session
+        () => new Promise(() => undefined), // the Terminal, still waiting
+      ];
+      (global.fetch as jest.Mock).mockImplementation((url: string) =>
+        url.endsWith("/api/meta") && answers.length ? answers.shift()!() : Promise.resolve(READY));
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      expect(await screen.findByText("Couldn’t verify secure access")).toBeInTheDocument();
+      fireEvent.click(getSurfaceButton("Terminal"));
+      expect(await screen.findByText("Connecting securely…")).toBeVisible();
+
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByTitle("Claude Code session")).toBeInTheDocument();
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(metaChecks()).toBe(4);
+    });
   });
 
   it.each(["http://box.example.com", "https://user:password@box.example.com", "https://box.example.com?token=secret"])("does not send credentials to an invalid surface base %s", async (chatUrl) => {
