@@ -79,6 +79,32 @@ describe("useWorkspaceAgents", () => {
     expect(result.current.hivraError).toBeNull();
   });
 
+  it("keeps each computer's operating system, so Home names Windows and Omarchy computers correctly", async () => {
+    const computer = (id: string, profile: unknown) => ({ ...hivraRow(id, id), type: "linux-desktop", computer_profile: profile });
+    const { result } = renderHook(() =>
+      useWorkspaceAgents({
+        fetchHermes: async () => hermesEnvelope([]),
+        fetchHivra: async () => hivraResult([
+          computer("windows", "windows"),
+          computer("omarchy", "omarchy"),
+          computer("ubuntu", "ubuntu-desktop"),
+          { ...computer("sandbox", "linux-terminal"), type: "linux-terminal" },
+          computer("odd", "beos"),
+        ]),
+      }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const byId = Object.fromEntries(result.current.agents.map((agent) => [agent.id, [agent.typeLabel, agent.computerProfile]]));
+    expect(byId).toEqual({
+      windows: ["Windows", "windows"],
+      omarchy: ["Omarchy", "omarchy"],
+      ubuntu: ["Ubuntu Desktop", "ubuntu-desktop"],
+      sandbox: ["Linux Sandbox", "linux-terminal"],
+      // An unknown profile is dropped, not passed on as a label.
+      odd: ["Ubuntu Desktop", null],
+    });
+  });
+
   it("combines successful families with stable source-qualified identities", async () => {
     const { result } = renderHook(() =>
       useWorkspaceAgents({

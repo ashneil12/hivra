@@ -7,7 +7,8 @@
 
 import styles from "./ResourceWorkspace.module.css";
 
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Component, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
@@ -24,7 +25,7 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
-import { useSurfaceBootstrap } from "@/components/hivra/useSurfaceBootstrap";
+import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
 import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
@@ -39,9 +40,6 @@ import { HivraSkills } from "@/components/hivra/HivraSkills";
 import { HivraTelegram } from "@/components/hivra/HivraTelegram";
 import { HivraManage } from "@/components/hivra/HivraManage";
 import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
-import { HivraRemoteDesktop } from "@/components/hivra/HivraRemoteDesktop";
-import { HivraConsoleDesktop } from "@/components/hivra/HivraConsoleDesktop";
-import { HivraOmarchyDesktop } from "@/components/hivra/HivraOmarchyDesktop";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
@@ -54,13 +52,11 @@ import { lastTabFor } from "@/lib/workspace/recents";
 import { resourceInventory } from "@/lib/workspace/resource-inventory";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
-import { TasksPanel } from "@/components/scheduled-tasks/TasksPanel";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
-import { DigitalOceanAgentWorkspace } from "@/components/hivra/DigitalOceanAgentWorkspace";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
 import {
   buildWelcomePersonalizationContext,
@@ -68,6 +64,93 @@ import {
 } from "@/lib/welcome-personalization";
 
 const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
+
+// A desktop stays mounted (hidden) while its owner works in other tabs, so
+// its placeholder shows only while Desktop is the open tab.
+const DesktopTabOpen = createContext(true);
+function DesktopLoading() {
+  return useContext(DesktopTabOpen) ? <LoadingState dark label="Opening your computer…" /> : null;
+}
+/** A part of the page whose code didn't download. */
+class SurfaceCodeUnavailable extends Error {}
+function surfaceCodeUnavailable(cause: unknown): never {
+  throw new SurfaceCodeUnavailable("This part of the page didn't download.", { cause });
+}
+
+/**
+ * Where a part of the page that loads on demand would be, says so if its code
+ * didn't download (a dropped connection, or a release that replaced the file
+ * while the page was open), so the tabs and chat around it keep working. The
+ * failed download is remembered until the page reloads, so reloading is what
+ * fetches it again. Any other fault in the part goes on to the dashboard's
+ * own error page, as before.
+ */
+class SurfaceCodeBoundary extends Component<{ children: ReactNode; visible?: boolean }, { error: unknown; failed: boolean }> {
+  state = { error: null as unknown, failed: false };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error, failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    if (!(error instanceof SurfaceCodeUnavailable)) return;
+    clientLog.error("Part of the agent page didn't download", error.cause ?? error, {
+      source: "hivra-agent-page",
+      route: "/dashboard/agent/[id]",
+    });
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    if (!(this.state.error instanceof SurfaceCodeUnavailable)) throw this.state.error;
+    if (this.props.visible === false) return null;
+    return (
+      <div className={styles.statusPanel} role="alert">
+        <h3>Couldn’t load this part of the page</h3>
+        <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Check your connection, then reload the page to try again.</p>
+        <button type="button" onClick={() => window.location.reload()}>Reload page</button>
+      </div>
+    );
+  }
+}
+
+// Only computers, DigitalOcean sessions and the Tasks tab use these. Load them
+// when one is shown, so an agent's page doesn't download the desktop and
+// session code before it can open. (The browser paywall stays in the page:
+// Manage already brings it along.)
+const HivraRemoteDesktop = dynamic(
+  () => import("@/components/hivra/HivraRemoteDesktop").then((mod) => mod.HivraRemoteDesktop, surfaceCodeUnavailable),
+  { ssr: false, loading: DesktopLoading },
+);
+const HivraConsoleDesktop = dynamic(
+  () => import("@/components/hivra/HivraConsoleDesktop").then((mod) => mod.HivraConsoleDesktop, surfaceCodeUnavailable),
+  { ssr: false, loading: DesktopLoading },
+);
+const HivraOmarchyDesktop = dynamic(
+  () => import("@/components/hivra/HivraOmarchyDesktop").then((mod) => mod.HivraOmarchyDesktop, surfaceCodeUnavailable),
+  { ssr: false, loading: DesktopLoading },
+);
+const DigitalOceanAgentWorkspace = dynamic(
+  () => import("@/components/hivra/DigitalOceanAgentWorkspace")
+    .then((mod) => mod.DigitalOceanAgentWorkspace, surfaceCodeUnavailable),
+  { ssr: false, loading: () => <LoadingState label="Opening your workspace…" /> },
+);
+const TasksPanel = dynamic(
+  () => import("@/components/scheduled-tasks/TasksPanel").then((mod) => mod.TasksPanel, surfaceCodeUnavailable),
+  { ssr: false, loading: () => <LoadingState compact label="Loading tasks…" /> },
+);
+/**
+ * Starts downloading a desktop's code before the page knows which computer it
+ * shows (Omarchy's desktop is a thin wrapper around the remote one). The
+ * desktop above reuses the download; if it fails, the desktop says so when it
+ * renders.
+ */
+function startDesktopDownload(windows: boolean) {
+  const download = windows
+    ? import("@/components/hivra/HivraConsoleDesktop")
+    : import("@/components/hivra/HivraRemoteDesktop");
+  download.catch(() => undefined);
+}
 
 // Which tabs a resource has is one shared decision (agentSurfacesFor): the
 // Computer Contract and the launch Review read it too, so what the agent is
@@ -192,6 +275,11 @@ function CanonicalizeUnavailableTab({
 }
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
+// One shared first check of the computer's gateway for this page: every
+// terminal, session tab and embedded surface opens on it (see
+// createSurfaceMetadataCache), and the page starts it as soon as the
+// computer's address is known.
+const SurfaceMetadataContext = createContext<SurfaceMetadataCache | null>(null);
 
 // Bumped when Manage reports a connection-service restart (an in-place update).
 // Every mounted surface then re-checks the gateway at once instead of at its
@@ -231,7 +319,9 @@ function AuthenticatedSurface({
   const newTabFormRef = useRef<HTMLFormElement>(null);
   // Probes the runtime before any bearer is sent, bootstraps this frame, and
   // signs in again, into a new frame keyed on the generation, when the
-  // computer's gateway lost its sign-ins (see the hook).
+  // computer's gateway lost its sign-ins (see the hook). The page's shared
+  // check of this computer answers the first probe of every surface.
+  const metadataCache = useContext(SurfaceMetadataContext);
   const {
     status: accessStatus,
     generation,
@@ -242,7 +332,7 @@ function AuthenticatedSurface({
     destination,
     formRef,
     retry,
-  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch });
+  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache });
   const missingToken = !token;
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
@@ -639,6 +729,7 @@ export default function AgentPage() {
   // One registry per agent page. Never a module singleton: a route change or a
   // reused module in a test must not carry another page's actions over.
   const actionStore = useSurfaceActionStoreInstance();
+  const [surfaceMetadataCache] = useState(createSurfaceMetadataCache);
   const id = (params?.id as string) || "";
   const launchWelcome = searchParams?.get("welcome") === "1";
   const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
@@ -840,6 +931,29 @@ export default function AgentPage() {
     void refreshDesktopCapability(agent.id).catch(() => {});
   }, [agent, id]);
 
+  // Check the computer's connection service as soon as its address is known,
+  // so opening a terminal or another session tab doesn't wait for it. Windows
+  // computers and provider desktops have no surface that uses it.
+  const checksSurfaceAccess = agent?.id === id && agent.status === "running" && agent.computer_profile !== "windows"
+    && !(agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop");
+  const surfaceCheckUrl = checksSurfaceAccess ? agent.chat_url : null;
+  const surfaceCheckToken = checksSurfaceAccess ? agent.api_token : null;
+  useEffect(() => {
+    if (!surfaceCheckUrl || !surfaceCheckToken) return;
+    const endpoint = surfaceEndpoints(surfaceCheckUrl);
+    if (endpoint) void surfaceMetadataCache.read(endpoint.metadataUrl, surfaceCheckToken);
+  }, [surfaceMetadataCache, surfaceCheckToken, surfaceCheckUrl]);
+
+  // Computers open on their desktop (?tab=desktop; open=fast for Windows).
+  // Start downloading its code alongside the computer's record instead of
+  // after it, so the desktop can start connecting as soon as the record
+  // arrives.
+  const desktopRequested = requestedTab === "desktop";
+  const fastDesktopRequested = searchParams?.get("open") === "fast";
+  useEffect(() => {
+    if (desktopRequested) startDesktopDownload(fastDesktopRequested);
+  }, [desktopRequested, fastDesktopRequested]);
+
   if (flagOn === null) {
     return <LoadingState label="Checking availability…" />;
   }
@@ -863,7 +977,11 @@ export default function AgentPage() {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
     // surface, with its own Chat, Files and Manage views. The computer tabs
     // (Terminal, Browser, Git) and Skills do not apply.
-    return <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => { listChanged(); go("/dashboard"); }} />;
+    return (
+      <SurfaceCodeBoundary>
+        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} onDeleted={() => { listChanged(); go("/dashboard"); }} />
+      </SurfaceCodeBoundary>
+    );
   }
 
   const def = catalogAgent(agent.type);
@@ -944,6 +1062,7 @@ export default function AgentPage() {
   return (
     <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
     <SurfaceActionProvider store={actionStore}>
+    <SurfaceMetadataContext.Provider value={surfaceMetadataCache}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
       <CanonicalizeUnavailableTab
         unavailableTab={unavailableTab}
@@ -987,6 +1106,8 @@ export default function AgentPage() {
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
             among local surfaces. Only computers have a desktop. */}
+        <DesktopTabOpen.Provider value={effectiveTab === "desktop"}>
+        <SurfaceCodeBoundary visible={effectiveTab === "desktop"}>
         {isComputer && agent.status === "running" ? (
           agent.computer_profile === "omarchy" ? (
             <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
@@ -1010,6 +1131,8 @@ export default function AgentPage() {
             />
           )
         ) : null}
+        </SurfaceCodeBoundary>
+        </DesktopTabOpen.Provider>
         {chatOpened && chatSurfaceReady && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
             <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
@@ -1144,13 +1267,15 @@ export default function AgentPage() {
           agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "tasks" ? (
           agent.status === "running" ? (
-            <TasksPanel
-              instanceId={agent.id}
-              agentName={agent.name}
-              agentStatus={agent.status}
-              isFreePlan={isFreePlan}
-              currentPlan={plan?.key ?? null}
-            />
+            <SurfaceCodeBoundary>
+              <TasksPanel
+                instanceId={agent.id}
+                agentName={agent.name}
+                agentStatus={agent.status}
+                isFreePlan={isFreePlan}
+                currentPlan={plan?.key ?? null}
+              />
+            </SurfaceCodeBoundary>
           ) : (
             <Stub title="Not ready" body="The computer isn't running yet. Scheduled tasks become available once it's online." />
           )
@@ -1179,6 +1304,7 @@ export default function AgentPage() {
         />
       ) : null}
     </div>
+    </SurfaceMetadataContext.Provider>
     </SurfaceActionProvider>
     </SurfaceSignInEpoch.Provider>
   );

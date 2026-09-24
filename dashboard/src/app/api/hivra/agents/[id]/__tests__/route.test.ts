@@ -723,14 +723,17 @@ describe("GET /api/hivra/agents/[id]", () => {
         data: mockAgentRow,
         error: null,
       })),
+      // A stamp persists, so a later read of the row sees it (as the database would).
       update: jest.fn((payload: Record<string, unknown>) => {
         updates.push(payload);
-        const updated = { ...mockAgentRow, ...payload };
+        mockAgentRow = { ...mockAgentRow, ...payload };
+        const updated = mockAgentRow;
         return {
           eq: jest.fn(() => ({
             select: jest.fn(() => ({
               single: jest.fn(async () => ({ data: updated, error: null })),
             })),
+            then: (resolve: (value: { data: null; error: null }) => void) => resolve({ data: null, error: null }),
           })),
         };
       }),
@@ -1194,6 +1197,113 @@ describe("GET /api/hivra/agents/[id]", () => {
       }),
     );
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalled();
+  });
+
+  // The poll that first sees a launch running seeds the box over SSH before it
+  // answers (identity ~2 s, Bankr skills ~3 s measured on Canary). Those used to
+  // run one after the other and hold the page on "starting" for their sum.
+  describe("launch seeds on the poll that sees the agent running", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    type HostResult = { ok: boolean; stdout: string; stderr: string };
+    let hostScripts: Array<{ guest: string; finish: (result: HostResult) => void }>;
+    let finishBootstrap: (result: { ok: boolean; error?: string }) => void;
+    // The skills seeds stream their guest script base64-wrapped; decode it to
+    // see which skill folders a host script writes.
+    const guestScriptOf = (hostScript: string) => {
+      const encoded = hostScript.match(/printf '%s' '([A-Za-z0-9+/=]+)'/)?.[1];
+      return encoded ? Buffer.from(encoded, "base64").toString("utf8") : hostScript;
+    };
+    const skillsDone = { ok: true, stdout: "HIVRA_BANKR_SKILLS_OK\n", stderr: "" };
+    async function until(condition: () => boolean) {
+      for (let tick = 0; tick < 50 && !condition(); tick += 1) await new Promise((resolve) => setImmediate(resolve));
+      expect(condition()).toBe(true);
+    }
+
+    beforeEach(() => {
+      mockAfterResponse.mockReset();
+      hostScripts = [];
+      finishBootstrap = () => undefined;
+      mockSeedAgentBox.mockImplementation(() => new Promise((resolve) => { finishBootstrap = resolve; }));
+      mockRunProxmoxHostScript.mockImplementation((script: string) =>
+        new Promise((resolve) => { hostScripts.push({ guest: guestScriptOf(script), finish: resolve }); }));
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", operation_id: null, operation_kind: null,
+        computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true,
+        bootstrapped_at: null, bankr_skills_seeded_at: null, template_skills_seeded_at: null, template_skills: null,
+      };
+    });
+
+    it("starts the identity and skills seeds together and answers with every stamp", async () => {
+      const pending = GET(makeGetRequest() as never, params);
+      // Both reached the box before either finished.
+      await until(() => mockSeedAgentBox.mock.calls.length === 1 && hostScripts.length === 1);
+      expect(hostScripts[0].guest).toContain("HIVRA_BANKR_SKILLS_OK");
+
+      hostScripts[0].finish(skillsDone);
+      finishBootstrap({ ok: true });
+      const response = await pending;
+
+      expect(response.status).toBe(200);
+      const { data } = await response.json();
+      expect(data.agent.bootstrapped_at).toEqual(expect.any(String));
+      expect(data.agent.bankr_skills_seeded_at).toEqual(expect.any(String));
+      expect(mockLogHivraAgentEvent.mock.calls.map(([event]) => event.event).sort()).toEqual(["bankr_skills_seeded", "bootstrapped"]);
+      // The read-back row carries the bootstrap stamp the contract waits for.
+      expect(mockAfterResponse.mock.calls.map((call) => call[1]?.failureType)).toContain("computer_contract_step_skipped");
+    });
+
+    it("keeps the Bankr and template skills in order, never writing the skills folder twice at once", async () => {
+      mockAgentRow = { ...mockAgentRow, template_skills: ["official-1password"] };
+      const pending = GET(makeGetRequest() as never, params);
+      await until(() => mockSeedAgentBox.mock.calls.length === 1 && hostScripts.length === 1);
+      expect(hostScripts[0].guest).not.toContain("official-security-1password");
+      // The template's skills wait for the Bankr write, however long it takes.
+      for (let tick = 0; tick < 10; tick += 1) await new Promise((resolve) => setImmediate(resolve));
+      expect(hostScripts).toHaveLength(1);
+
+      hostScripts[0].finish(skillsDone);
+      await until(() => hostScripts.length === 2);
+      expect(hostScripts[1].guest).toContain("official-security-1password");
+      hostScripts[1].finish(skillsDone);
+      finishBootstrap({ ok: true });
+      const { data } = await (await pending).json();
+
+      expect(data.agent).toMatchObject({
+        bootstrapped_at: expect.any(String),
+        bankr_skills_seeded_at: expect.any(String),
+        template_skills_seeded_at: expect.any(String),
+      });
+    });
+
+    it("leaves a seed that failed for the next poll without holding back the others", async () => {
+      const pending = GET(makeGetRequest() as never, params);
+      await until(() => mockSeedAgentBox.mock.calls.length === 1 && hostScripts.length === 1);
+      finishBootstrap({ ok: false, error: "guest unreachable" });
+      hostScripts[0].finish(skillsDone);
+      const { data } = await (await pending).json();
+
+      expect(data.agent.bootstrapped_at ?? null).toBeNull();
+      expect(data.agent.bankr_skills_seeded_at).toEqual(expect.any(String));
+      expect(mockAfterResponse.mock.calls.map((call) => call[1]?.failureType)).not.toContain("computer_contract_step_skipped");
+
+      // The next poll retries only the identity seed.
+      mockSeedAgentBox.mockResolvedValue({ ok: true });
+      const next = await (await GET(makeGetRequest() as never, params)).json();
+      expect(mockSeedAgentBox).toHaveBeenCalledTimes(2);
+      expect(hostScripts).toHaveLength(1);
+      expect(next.data.agent.bootstrapped_at).toEqual(expect.any(String));
+    });
+
+    it("still fails the poll when a seed throws, after the other seed has finished", async () => {
+      mockSeedAgentBox.mockRejectedValue(new Error("unexpected seed failure"));
+      const pending = GET(makeGetRequest() as never, params);
+      await until(() => hostScripts.length === 1);
+      hostScripts[0].finish(skillsDone);
+      const response = await pending;
+
+      expect(response.status).toBe(500);
+      expect(mockLogHivraAgentEvent.mock.calls.map(([event]) => event.event)).toEqual(["bankr_skills_seeded"]);
+    });
   });
 
   describe("seeds and Computer Contract on a computer in the owner's own cloud (ATT-05)", () => {

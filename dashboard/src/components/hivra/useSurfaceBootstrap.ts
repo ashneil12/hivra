@@ -147,30 +147,79 @@ function classifyRuntime(metadata: unknown, pathname: string): RuntimeProbe {
     : unavailableProbe("metadata names neither an agent nor surfaceAuth");
 }
 
-async function probeRuntime(metadataUrl: string, pathname: string, signal: AbortSignal): Promise<RuntimeProbe> {
+/** The gateway's /api/meta answer, or why there was none. */
+export type SurfaceMetadata =
+  | { metadata: unknown; failure: null; fetchedAt: number }
+  | { metadata: null; failure: string | null; fetchedAt: number };
+
+async function fetchMetadata(metadataUrl: string, signal?: AbortSignal): Promise<SurfaceMetadata> {
   const controller = new AbortController();
   let timedOut = false;
   const abort = () => controller.abort();
-  signal.addEventListener("abort", abort);
+  signal?.addEventListener("abort", abort);
   const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, PROBE_TIMEOUT_MS);
   let stage = "request";
+  const failed = (failure: string | null): SurfaceMetadata => ({ metadata: null, failure, fetchedAt: Date.now() });
   try {
     // Nonsecret runtime metadata only: no credentials, no bearer. An old or
     // unreachable runtime must never fall back to putting it in a URL.
     const response = await fetch(metadataUrl, { cache: "no-store", credentials: "omit", signal: controller.signal });
-    if (!response.ok) return unavailableProbe(`metadata answered HTTP ${response.status}`);
+    if (!response.ok) return failed(`metadata answered HTTP ${response.status}`);
     stage = "metadata body";
-    return classifyRuntime(await response.json(), pathname);
+    return { metadata: await response.json(), failure: null, fetchedAt: Date.now() };
   } catch (error) {
     // The surface went away: nothing to report.
-    if (signal.aborted) return unavailableProbe(null);
-    if (timedOut) return unavailableProbe(`no answer within ${PROBE_TIMEOUT_MS / 1_000} s`);
+    if (signal?.aborted) return failed(null);
+    if (timedOut) return failed(`no answer within ${PROBE_TIMEOUT_MS / 1_000} s`);
     // Network, CORS and TLS failures all surface here as a bare TypeError.
-    return unavailableProbe(`${stage} failed: ${error instanceof Error ? error.message : String(error)}`);
+    return failed(`${stage} failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     window.clearTimeout(timeout);
-    signal.removeEventListener("abort", abort);
+    signal?.removeEventListener("abort", abort);
   }
+}
+
+function classifyMetadata(result: SurfaceMetadata, pathname: string): RuntimeProbe {
+  return result.failure !== null || result.metadata === null
+    ? unavailableProbe(result.failure)
+    : classifyRuntime(result.metadata, pathname);
+}
+
+async function probeRuntime(metadataUrl: string, pathname: string, signal: AbortSignal): Promise<RuntimeProbe> {
+  return classifyMetadata(await fetchMetadata(metadataUrl, signal), pathname);
+}
+
+/**
+ * One page's shared first check of a computer's gateway. Every terminal,
+ * session tab and embedded surface of that computer opens on the same
+ * /api/meta answer instead of asking again, and the page can start it before
+ * any surface mounts. Only an answer from a gateway that takes the bearer by
+ * POST (and whose own interface is not still starting) is reused, and only for
+ * SURFACE_RECHECK_INTERVAL_MS, so a surface opened later still learns the
+ * current bootId. A changed credential and "Try again" always ask afresh.
+ * Background re-checks never use it: they exist to notice a restart.
+ */
+export interface SurfaceMetadataCache {
+  read(metadataUrl: string, token: string, fresh?: boolean): Promise<SurfaceMetadata>;
+}
+export function createSurfaceMetadataCache(): SurfaceMetadataCache {
+  const entries = new Map<string, { token: string; result: Promise<SurfaceMetadata> }>();
+  return {
+    read(metadataUrl, token, fresh = false) {
+      const known = entries.get(metadataUrl);
+      if (known && known.token === token && !fresh) return known.result;
+      const entry = { token, result: fetchMetadata(metadataUrl) };
+      entries.set(metadataUrl, entry);
+      void entry.result.then((result) => {
+        const record = result.metadata && typeof result.metadata === "object" ? result.metadata as Record<string, unknown> : null;
+        const reusable = record?.surfaceAuth === "post-cookie-v1" && record.nativeReady !== false;
+        const forget = () => { if (entries.get(metadataUrl) === entry) entries.delete(metadataUrl); };
+        if (!reusable) forget();
+        else window.setTimeout(forget, SURFACE_RECHECK_INTERVAL_MS);
+      });
+      return entry.result;
+    },
+  };
 }
 
 // Surfaces retry on their own, so a stuck one must leave a trail (DevTools and
@@ -284,12 +333,14 @@ export function nativeStartCopy(agentKind: string | null) {
   };
 }
 
-export function useSurfaceBootstrap({ url, token, active = true, recheck = 0 }: {
+export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, metadataCache = null }: {
   url: string;
   token: string | null;
   active?: boolean;
   /** Changing this re-checks the gateway at once (e.g. right after it restarted). */
   recheck?: number;
+  /** The page's shared first check of this computer (see SurfaceMetadataCache). */
+  metadataCache?: SurfaceMetadataCache | null;
 }) {
   const endpoints = surfaceEndpoints(url);
   const origin = endpoints?.origin ?? "";
@@ -307,18 +358,23 @@ export function useSurfaceBootstrap({ url, token, active = true, recheck = 0 }: 
   const status: SurfaceAccessStatus = !metadataUrl || !token ? "unavailable" : current?.status ?? "checking";
   const generation = current?.generation ?? 0;
 
-  // First check for this surface, token and explicit retry.
+  // First check for this surface, token and explicit retry. The page's shared
+  // check answers it when there is one; "Try again" (probeVersion) asks afresh.
   useEffect(() => {
     if (!metadataUrl || !token) return;
     const controller = new AbortController();
-    void probeRuntime(metadataUrl, pathname, controller.signal).then((probe) => {
+    const answer = metadataCache
+      ? metadataCache.read(metadataUrl, token, probeVersion > 0)
+      : fetchMetadata(metadataUrl, controller.signal);
+    void answer.then((result) => {
       if (controller.signal.aborted) return;
-      lastProbeAt.current = Date.now();
+      const probe = classifyMetadata(result, pathname);
+      lastProbeAt.current = result.fetchedAt;
       reportProbe(probe, origin, lastFailure);
       setAccess(firstAccess(probeKey, token, probe, Date.now()));
     });
     return () => controller.abort();
-  }, [metadataUrl, origin, pathname, probeKey, token]);
+  }, [metadataCache, metadataUrl, origin, pathname, probeKey, probeVersion, token]);
 
   // Each generation signs its own, newly mounted frame in (hosts key the
   // iframe on it). The bearer only ever travels in this POST body.
