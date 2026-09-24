@@ -252,7 +252,9 @@ export function ModelAccessControl({
                   disabled={disabled}
                   onChange={event => onChange({ saveKey: event.target.checked })}
                 />
-                <span>Save it in my Vault for next time</span>
+                <span>{saved
+                  ? `Save it in my Vault for next time, replacing your saved key ${savedKeyHint(saved)}`
+                  : "Save it in my Vault for next time"}</span>
               </label>
             </div>
           )}

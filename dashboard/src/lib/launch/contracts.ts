@@ -80,7 +80,8 @@ export type LaunchModelAccess = {
   vaultKeyId: string | null;
   /** The owner ticked "Send this key to <name>'s computer" for this launch. */
   sendSavedKey: boolean;
-  /** Save a pasted key in the Vault before launching. */
+  /** Save a pasted key in the Vault before launching. Off until the owner
+   * ticks it: the Vault keeps one key per provider, so saving replaces one. */
   saveKey: boolean;
   walletType: "card" | "hermesos";
   /** Hermes custom OpenAI-compatible endpoint (custom_llm only). */
@@ -136,7 +137,7 @@ export const DEFAULT_MODEL_ACCESS: LaunchModelAccess = {
   keySource: "paste",
   vaultKeyId: null,
   sendSavedKey: false,
-  saveKey: true,
+  saveKey: false,
   walletType: "card",
   baseUrl: "",
 };

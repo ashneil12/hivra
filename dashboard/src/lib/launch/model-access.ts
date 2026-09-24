@@ -425,7 +425,10 @@ export function modelAccessSummary(
     const key = savedKeysFor(profileId, access, savedKeys).find(candidate => candidate.id === access.vaultKeyId);
     return `Your saved ${provider} key${key ? ` ${savedKeyHint(key)}` : ""}, sent to ${agentName}'s computer${model}`;
   }
-  return `The ${provider} key you pasted, sent to ${agentName}'s computer${access.saveKey ? " and saved in your Vault" : ""}${model}`;
+  const replaced = access.saveKey ? savedKeysFor(profileId, access, savedKeys)[0] ?? null : null;
+  const saving = !access.saveKey ? ""
+    : replaced ? ` and saved in your Vault, replacing ${savedKeyHint(replaced)}` : " and saved in your Vault";
+  return `The ${provider} key you pasted, sent to ${agentName}'s computer${saving}${model}`;
 }
 
 /** The Cost row's model line, or null when the model isn't paid through Hivra. */
