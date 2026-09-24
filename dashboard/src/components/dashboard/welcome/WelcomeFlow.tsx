@@ -5382,7 +5382,7 @@ function PlanGrid({
           <Shield size={14} style={{ opacity: 0.5 }} />
           <span className="mono" style={STYLES.guaranteeText}>
             {paidPathChoice === 'card'
-              ? '48-hour refund on card payments · cancel any time'
+              ? '7-day money-back guarantee on card payments · cancel any time'
               : 'Withdraw anytime · your tokens, your custody · launch rate locked for life'}
           </span>
         </div>

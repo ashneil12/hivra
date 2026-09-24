@@ -16,8 +16,8 @@ import { isLocalAuthMode } from "@/lib/self-host/config";
 // PLANS map; user-facing names (Pro/Power) match the new launch
 // pricing. Kept in sync with src/lib/subscription/plans.ts.
 const PLAN_META: Record<string, { name: string; price: string; highlight: string }> = {
-  operator: { name: "Pro",   price: "$9.99/mo",  highlight: "1 agent · 48-hr refund" },
-  fleet:    { name: "Power", price: "$19.99/mo", highlight: "3 agents · 48-hr refund" },
+  operator: { name: "Pro",   price: "$9.99/mo",  highlight: "3 agents · 7-day money-back guarantee" },
+  fleet:    { name: "Power", price: "$19.99/mo", highlight: "5 agents · 7-day money-back guarantee" },
 };
 
 export default async function SignUpPage({

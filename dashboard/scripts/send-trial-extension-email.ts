@@ -177,7 +177,7 @@ async function main() {
   const clerkSecretKey = requireEnv("CLERK_SECRET_KEY");
   const resendApiKey = requireEnv("RESEND_API_KEY");
   const from = requireEnv("RESEND_FROM_EMAIL");
-  const replyTo = process.env.RESEND_REPLY_TO_EMAIL?.trim() || "info@hermesos.cloud";
+  const replyTo = process.env.RESEND_REPLY_TO_EMAIL?.trim() || "info@hivra.cloud";
 
   const users = await fetchClerkUsers(clerkSecretKey);
   const recipients = buildRecipients(users, options);

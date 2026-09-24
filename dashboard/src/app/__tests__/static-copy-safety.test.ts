@@ -57,6 +57,30 @@ describe("Static copy safety", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("keeps refund and contact copy on the current policy: 7-day money-back and info@hivra.cloud", () => {
+    // Card refunds are a 7-day money-back guarantee (owner decision 2026-09-24),
+    // and the public contact is info@hivra.cloud.
+    const srcRoot = path.join(__dirname, "..", "..");
+    const staleRefund: string[] = [];
+    const staleContact: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "__tests__" && entry.name !== "node_modules" && entry.name !== "data") walk(full);
+        } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          const source = fs.readFileSync(full, "utf8");
+          const relative = path.relative(srcRoot, full);
+          if (/48[- ]?(?:hour|hr)s?\.? refund|refund[^"'`\n]{0,20}48[- ]?(?:hour|hr)/i.test(source)) staleRefund.push(relative);
+          if (source.includes("info@hermesos.cloud")) staleContact.push(relative);
+        }
+      }
+    };
+    walk(srcRoot);
+    expect(staleRefund).toEqual([]);
+    expect(staleContact).toEqual([]);
+  });
+
   it("gives the site a current default title with no dashes and a Hivra contact address", () => {
     const layout = fs.readFileSync(path.join(__dirname, "..", "layout.tsx"), "utf8");
     const defaultTitle = layout.match(/default:\s*"([^"]+)"/)?.[1];

@@ -105,7 +105,7 @@ async function send(opts: {
     return { sent: false, reason: "not_configured" };
   }
   const from = process.env.RESEND_FROM_EMAIL ?? "noreply@hermesos.cloud";
-  const replyTo = process.env.RESEND_REPLY_TO_EMAIL ?? "info@hermesos.cloud";
+  const replyTo = process.env.RESEND_REPLY_TO_EMAIL ?? "info@hivra.cloud";
   try {
     const resend = new Resend(apiKey);
     const { data, error } = await resend.emails.send(
