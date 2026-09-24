@@ -112,15 +112,28 @@ export type LaunchFitEvidence = {
 const PLAN_UNCHECKED: LaunchFit = { label: "Couldn't check your plan", tone: "neutral" };
 const SERVERS_UNCHECKED: LaunchFit = { label: "Couldn't check your servers", tone: "neutral" };
 
-const NOTHING_RUNNING = { agentCount: 0, usedCpu: 0, usedRam: 0 } as const;
+/** Why Hivra Cloud is closed to an account whose paid plan holds it without
+ * granting anything, and what settles it. "unconfirmed": turning Free on
+ * found a paid plan billing didn't describe. `subject` names what the owner
+ * wants to run, when there is one. */
+export type PlanHold =
+  | { reason: "payment_overdue" | "no_slots"; planName: string }
+  | { reason: "unconfirmed" };
 
-/** The plan Launch plans against. An account with no plan yet is planned as
- * the Free plan turning it on would give, with nothing running on it; it
- * keeps `needsActivation`, so the launch still waits for the owner to turn
- * Free on. A plan whose usage couldn't be read stays unknown. */
-export function planForLaunch(plan: PlanInfo | null): PlanInfo | null {
-  if (!plan?.needsActivation || plan.usage) return plan;
-  return { ...plan, usage: { ...NOTHING_RUNNING } };
+export function planHoldMessage(hold: PlanHold, subject: string | null = null): string {
+  const run = subject ? `to run ${subject} on Hivra Cloud` : "to launch on Hivra Cloud";
+  if (hold.reason === "payment_overdue") {
+    return `Your ${hold.planName} plan is on hold because a payment didn't go through. Update your payment in Billing ${run}.`;
+  }
+  if (hold.reason === "no_slots") {
+    return `Your ${hold.planName} plan has no agent slots right now. Check it in Billing ${run}.`;
+  }
+  return `Your account has a paid plan that isn't active right now, so Free can't be turned on. Check your plan in Billing ${run}.`;
+}
+
+/** The Billing link a plan hold offers. */
+export function planHoldAction(hold: PlanHold): string {
+  return hold.reason === "payment_overdue" ? "Update payment" : "Open Billing";
 }
 
 export function isPaidPlan(plan: PlanInfo | null): boolean {
@@ -229,6 +242,13 @@ export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence
   }
   if (subject.hivraCloud === "plan") {
     if (!evidence.planChecked) return null;
+    // A paid plan on hold runs nothing on Hivra Cloud until it is settled.
+    const hold = evidence.plan?.onHold;
+    if (hold) {
+      if (subject.ownServer && evidence.targetsLoading) return null;
+      if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
+      return { label: `${hold.name} plan on hold`, tone: "needs" };
+    }
     const cloud = hivraCloudFit(subject, evidence.plan);
     const planName = evidence.plan?.name ?? "";
     // A plan not turned on yet isn't the owner's plan: "Fits Free".
@@ -522,6 +542,7 @@ export function costSummary({
   planName,
   modelNote = null,
   planPending = false,
+  planOnHold = null,
 }: {
   profileId: LaunchProfileId;
   substrate: LaunchSubstrate;
@@ -530,9 +551,14 @@ export function costSummary({
   modelNote?: string | null;
   /** The account has no plan yet; the Free plan is turned on before launch. */
   planPending?: boolean;
+  /** A paid plan holds the account but is on hold until it is settled. */
+  planOnHold?: string | null;
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
   if (profileId === "omarchy") return "Nothing is bought. It uses a prepared preview computer.";
+  if (substrate === "hivra-cloud" && planOnHold) {
+    return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
+  }
   if (substrate === "hivra-cloud" && planPending) {
     return withModel("No charge. It runs on the Free plan, which you turn on before launching.");
   }

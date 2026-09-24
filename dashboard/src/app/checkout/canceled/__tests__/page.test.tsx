@@ -56,10 +56,11 @@ describe("CheckoutCanceledPage", () => {
 
     expect(screen.getByText(/checkout paused/i)).toBeInTheDocument();
     expect(screen.getByText(/nothing was charged/i)).toBeInTheDocument();
-    // Plans are chosen in Billing; there is no separate welcome plan picker.
+    // Plans are chosen in Billing, on its Plans tab; there is no separate
+    // welcome plan picker.
     expect(screen.getByRole("link", { name: /choose a different plan/i })).toHaveAttribute(
       "href",
-      "/dashboard/billing"
+      "/dashboard/billing?tab=plans"
     );
     expect(screen.queryByRole("link", { name: /skip for now/i })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -178,7 +179,7 @@ describe("CheckoutCanceledPage", () => {
     render(<CheckoutCanceledPage />);
     expect(screen.getByRole("link", { name: /choose a different plan/i })).toHaveAttribute(
       "href",
-      "/dashboard/billing?returnTo=%2Fdashboard%2Flaunch%3Fdraft%3D33333333-3333-4333-8333-333333333333",
+      "/dashboard/billing?tab=plans&returnTo=%2Fdashboard%2Flaunch%3Fdraft%3D33333333-3333-4333-8333-333333333333",
     );
   });
 

@@ -20,6 +20,13 @@ const PLAN_GUIDE: Record<PlanKey, string> = {
   command: "Command is best for the biggest jobs, faster scaling, and maximum compute headroom.",
 };
 
+/** Billing's Plans tab, keeping the way back to where checkout started. */
+function differentPlanHref(returnTo: string | null): string {
+  const query = new URLSearchParams({ tab: "plans" });
+  if (returnTo) query.set("returnTo", returnTo);
+  return `/dashboard/billing?${query.toString()}`;
+}
+
 function CheckoutCanceledFallback() {
   return (
     <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
@@ -251,7 +258,7 @@ function CheckoutCanceledContent() {
               </a>
             ) : null}
             <a
-              href={returnTo ? `/dashboard/billing?returnTo=${encodeURIComponent(returnTo)}` : "/dashboard/billing"}
+              href={differentPlanHref(returnTo)}
               style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
             >
               Choose a different plan →

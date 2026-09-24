@@ -131,6 +131,18 @@ export interface BillingUsageData {
     monthlyGrant: number;
     unit: string;
   };
+  /**
+   * Only without a plan: a paid plan that holds the account but grants it
+   * nothing (a payment didn't go through, or it has no agent slots). Free
+   * can't be turned on over it; the billing portal settles it.
+   */
+  planOnHold?: {
+    key: string;
+    name: string;
+    status: string;
+    reason: "payment_overdue" | "no_slots";
+    billingPortal: boolean;
+  } | null;
 }
 
 type UsageData = BillingUsageData;

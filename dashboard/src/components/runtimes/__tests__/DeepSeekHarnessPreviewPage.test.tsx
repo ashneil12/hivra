@@ -19,6 +19,16 @@ describe("DeepSeekHarnessPreviewPage", () => {
     expect(screen.getByRole("link", { name: /Launch a coding agent/ })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
   });
 
+  it("claims about the model key only what the preview showed", () => {
+    render(<DeepSeekHarnessPreviewPage />);
+    const key = screen.getByText("Your model key", { selector: "strong" }).parentElement;
+
+    // The preview showed the key reach its computer and never come back to
+    // the browser, not that it lives nowhere else.
+    expect(key).toHaveTextContent("Delivered to its computer, never shown back in your browser.");
+    expect(document.body.textContent).not.toMatch(/kept on its computer only/i);
+  });
+
   it("leaves engineering acceptance notes out of customer copy", () => {
     render(<DeepSeekHarnessPreviewPage />);
     const text = document.body.textContent ?? "";

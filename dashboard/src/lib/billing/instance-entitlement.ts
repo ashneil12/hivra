@@ -39,7 +39,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
-import { isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
+import { holdsPaidPlan, isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
 import { PLANS, getWorkspaceCloudPlan } from "@/lib/subscription/plans";
 import { APPLE_ACCESS_STATUSES } from "@/lib/billing/apple-products";
 import {
@@ -319,6 +319,71 @@ export async function resolveEffectiveSubscription(
   }
 
   return null;
+}
+
+/**
+ * A paid plan that holds an account but grants it nothing right now. Only
+ * meaningful where resolveEffectiveSubscription found no plan at all.
+ */
+export interface PlanOnHold {
+  key: string;
+  name: string;
+  status: "active" | "past_due" | "trialing";
+  /**
+   * payment_overdue: the row is past_due, so a payment didn't go through and
+   * its grace is over (or dunning took its agent slots). no_slots: the row is
+   * in good standing but grants no agents.
+   */
+  reason: "payment_overdue" | "no_slots";
+  /** A live Stripe subscription bills it, so the billing portal can settle it. */
+  billingPortal: boolean;
+}
+
+/**
+ * The paid plan standing between an account without an effective plan and
+ * the Free plan. resolveEffectiveSubscription returns null for a paid
+ * Stripe row once its past_due grace is over or dunning zeroes its slots,
+ * but /api/billing/subscribe still refuses Free over it (holdsPaidPlan), so
+ * the account can neither use the plan nor turn Free on until it is settled
+ * in Billing. Null when no such row exists, or when it can't be read.
+ *
+ * Call only after resolveEffectiveSubscription returned null: a row it
+ * accepted is the account's plan, not one on hold.
+ */
+export async function readPlanOnHold(userId: string): Promise<PlanOnHold | null> {
+  if (!supabaseAdmin) return null;
+  try {
+    const { data: row, error } = await supabaseAdmin
+      .from("hermes_subscriptions")
+      .select("plan, status, stripe_subscription_id")
+      .eq("user_id", userId)
+      .maybeSingle<{ plan: string | null; status: string | null; stripe_subscription_id: string | null }>();
+    if (error) {
+      log.warn("could not read the subscription row an account without a plan may be held by", {
+        source: "billing.plan-on-hold",
+        userId,
+        failureType: "plan_on_hold_read_failed",
+        errorCode: typeof error.code === "string" ? error.code : undefined,
+      });
+      return null;
+    }
+    if (!row || typeof row.plan !== "string" || !holdsPaidPlan(row)) return null;
+    const known = Object.hasOwn(PLANS, row.plan) ? PLANS[row.plan as keyof typeof PLANS] : null;
+    return {
+      key: row.plan,
+      name: known?.name ?? "Paid",
+      status: row.status as PlanOnHold["status"],
+      reason: row.status === "past_due" ? "payment_overdue" : "no_slots",
+      billingPortal: isLiveStripeSubscriptionId(row.stripe_subscription_id),
+    };
+  } catch (error) {
+    log.warn("could not read the subscription row an account without a plan may be held by", {
+      source: "billing.plan-on-hold",
+      userId,
+      failureType: "plan_on_hold_read_threw",
+    }, error);
+    return null;
+  }
 }
 
 interface WorkspaceCloudSubscriptionRow {

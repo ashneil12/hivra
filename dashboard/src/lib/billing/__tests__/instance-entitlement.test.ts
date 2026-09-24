@@ -1,4 +1,5 @@
-import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { holdsPaidPlan } from "@/lib/billing/subscription-status";
 import { supabaseAdmin } from "@/lib/supabase";
 import { PLANS } from "@/lib/subscription/plans";
 
@@ -823,5 +824,55 @@ describe("resolveEffectiveSubscription", () => {
       expect(result?.source).toBe("stripe");
       expect(result?.status).toBe("active");
     });
+  });
+});
+
+describe("readPlanOnHold", () => {
+  const LAPSED_ROWS: Array<[string, MockSubData, { reason: string; billingPortal: boolean }]> = [
+    ["past_due after its grace", {
+      plan: "operator", status: "past_due", instance_limit: 3, total_cpu_budget: 2, total_ram_budget: 4096,
+      stripe_subscription_id: "sub_live", grace_period_ends_at: "2020-01-01T00:00:00.000Z",
+    }, { reason: "payment_overdue", billingPortal: true }],
+    ["past_due with its slots zeroed by dunning", {
+      plan: "fleet", status: "past_due", instance_limit: 0, total_cpu_budget: 0, total_ram_budget: 0,
+      stripe_subscription_id: "sub_live", grace_period_ends_at: null,
+    }, { reason: "payment_overdue", billingPortal: true }],
+    ["active with no slots", {
+      plan: "operator", status: "active", instance_limit: 0, total_cpu_budget: 0, total_ram_budget: 0,
+      stripe_subscription_id: null, grace_period_ends_at: null,
+    }, { reason: "no_slots", billingPortal: false }],
+  ];
+
+  it.each(LAPSED_ROWS)("names a paid plan that grants nothing but still refuses Free: %s", async (_label, sub, expected) => {
+    mockTables({ sub });
+    // The pair this reports: no effective plan, and a row Free can't replace.
+    await expect(resolveEffectiveSubscription("user_lapsed")).resolves.toBeNull();
+    expect(holdsPaidPlan(sub)).toBe(true);
+    await expect(readPlanOnHold("user_lapsed")).resolves.toEqual({
+      key: sub.plan,
+      name: PLANS[sub.plan as keyof typeof PLANS].name,
+      status: sub.status,
+      ...expected,
+    });
+  });
+
+  it.each<[string, MockSubData | null]>([
+    ["no row", null],
+    ["the Free row", { plan: "free", status: "active", instance_limit: 1, total_cpu_budget: 0.5, total_ram_budget: 1024 }],
+    ["a paid plan that ended", { plan: "operator", status: "canceled", instance_limit: 3, total_cpu_budget: 2, total_ram_budget: 4096, stripe_subscription_id: "sub_old" }],
+    ["an unpaid checkout", { plan: "operator", status: "incomplete", instance_limit: 3, total_cpu_budget: 2, total_ram_budget: 4096 }],
+  ])("reports no hold for %s, which Free can be turned on over", async (_label, sub) => {
+    mockTables({ sub });
+    expect(holdsPaidPlan(sub)).toBe(false);
+    await expect(readPlanOnHold("user_free_to_start")).resolves.toBeNull();
+  });
+
+  it("reports no hold when the row can't be read", async () => {
+    (supabaseAdmin!.from as jest.Mock).mockImplementation(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: { code: "08006", message: "down" } }),
+    }));
+    await expect(readPlanOnHold("user_unreadable")).resolves.toBeNull();
   });
 });

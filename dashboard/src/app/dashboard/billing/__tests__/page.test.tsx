@@ -738,6 +738,41 @@ describe("BillingPage", () => {
       expect(screen.getByRole("heading", { name: "Choose a plan" })).toBeInTheDocument();
     });
 
+    it("opens Overview on a paid plan on hold, with the way to settle it", async () => {
+      notSubscribed();
+      usageData = {
+        ...usageData,
+        planOnHold: { key: "operator", name: "Pro", status: "past_due", reason: "payment_overdue", billingPortal: true },
+      };
+      render(<BillingPage />);
+
+      expect(await screen.findByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("heading", { name: "Pro plan on hold" })).toBeInTheDocument();
+      expect(screen.getByText(
+        "A payment didn't go through, so this plan isn't active right now. Pay the open invoice or update your card in the billing portal.",
+      )).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open billing portal" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Choose a plan" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "See plans" }));
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
+      });
+    });
+
+    it("offers no billing portal for a plan on hold that no live card subscription bills", async () => {
+      notSubscribed();
+      usageData = {
+        ...usageData,
+        planOnHold: { key: "fleet", name: "Power", status: "active", reason: "no_slots", billingPortal: false },
+      };
+      render(<BillingPage />);
+
+      expect(await screen.findByRole("heading", { name: "Power plan on hold" })).toBeInTheDocument();
+      expect(screen.getByText("This plan has no agent slots right now. Contact support to check it.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
+    });
+
     it("renders only the active panel and wires tabs to their panels", async () => {
       render(<BillingPage />);
       const tablist = await screen.findByRole("tablist", { name: "Billing sections" });

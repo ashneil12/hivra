@@ -1,3 +1,5 @@
+import { deepLinkBillingTab } from "@/app/dashboard/billing/_components/billing-tabs";
+
 import { welcomeRedirect } from "../welcome-redirect";
 
 const go = (query: string) => welcomeRedirect(new URLSearchParams(query));
@@ -39,9 +41,19 @@ describe("welcomeRedirect", () => {
     expect(go("subscription=success&plan=fleet")).toBe("/dashboard/launch?upgraded=fleet");
   });
 
-  it("chooses a paid plan in Billing, which comes back to Launch", () => {
-    expect(go("plan=operator")).toBe("/dashboard/billing?returnTo=%2Fdashboard%2Flaunch");
+  it("chooses the named paid plan in Billing's Plans tab, which comes back to Launch", () => {
+    expect(go("plan=operator")).toBe("/dashboard/billing?plan=operator&from=welcome&returnTo=%2Fdashboard%2Flaunch");
+    expect(go("plan=fleet&cadence=yearly")).toBe("/dashboard/billing?plan=fleet&from=welcome&cadence=yearly&returnTo=%2Fdashboard%2Flaunch");
+    // Only a real cadence is carried.
+    expect(go("plan=fleet&cadence=weekly")).toBe("/dashboard/billing?plan=fleet&from=welcome&returnTo=%2Fdashboard%2Flaunch");
     // Free needs no checkout: a new account turns it on in Launch.
     expect(go("plan=free")).toBe("/dashboard/launch");
+    // A plan Billing doesn't sell is not carried along.
+    expect(go("plan=platinum")).toBe("/dashboard/launch");
+  });
+
+  it("names a plan Billing opens on its Plans tab", () => {
+    const target = new URL(go("plan=operator"), "https://hivra.test");
+    expect(deepLinkBillingTab(target.searchParams, null)).toBe("plans");
   });
 });

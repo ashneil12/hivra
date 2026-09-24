@@ -18,7 +18,7 @@ import {
 } from "@/lib/billing/trial-experiment";
 import { posthogClient } from "@/lib/posthog";
 import {
-  hasPlanAccessStatus,
+  holdsPaidPlan,
   isLiveStripeSubscriptionId,
 } from "@/lib/billing/subscription-status";
 import { log } from "@/lib/logger";
@@ -197,8 +197,7 @@ export async function POST(req: NextRequest) {
     // paid rows have access but no live Stripe subscription to mutate, so they
     // are allowed to start Checkout and keep their current entitlement until
     // Checkout completes.
-    const hasActivePaidSubscription =
-      Boolean(existingSub && hasPlanAccessStatus(existingSub.status) && existingSub.plan !== "free");
+    const hasActivePaidSubscription = holdsPaidPlan(existingSub);
     const shouldPreserveExistingEntitlement =
       Boolean(
         hasActivePaidSubscription &&

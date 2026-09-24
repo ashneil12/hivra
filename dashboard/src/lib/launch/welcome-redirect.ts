@@ -25,7 +25,15 @@ export function welcomeRedirect(params: WelcomeParams): string {
   if (params.get("subscription") === "success") {
     return withReturnParams(LAUNCH_ROUTE, planReturnParams(plan));
   }
-  if (plan) return `/dashboard/billing?returnTo=${encodeURIComponent(LAUNCH_ROUTE)}`;
+  if (plan) {
+    // Billing opens its Plans tab on the plan the link named, and a confirmed
+    // plan comes back to Launch.
+    const billing = new URLSearchParams({ plan, from: "welcome" });
+    const cadence = params.get("cadence");
+    if (cadence === "monthly" || cadence === "yearly") billing.set("cadence", cadence);
+    billing.set("returnTo", LAUNCH_ROUTE);
+    return `/dashboard/billing?${billing.toString()}`;
+  }
 
   const targetIds = params.getAll("targetId").filter(id => /^[0-9a-f-]{36}$/i.test(id));
   const template = safeTemplateRef(params.get("templateId"));

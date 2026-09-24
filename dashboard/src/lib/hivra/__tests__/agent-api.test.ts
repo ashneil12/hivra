@@ -493,14 +493,50 @@ describe("fetchPlanStrict managed usage", () => {
     await expect(fetchPlanStrict()).resolves.toMatchObject({ key: "free", subscribed: false, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
   });
 
-  it("marks an account billing reports no plan for as needing the Free plan turned on", async () => {
+  function noPlan(extra: Record<string, unknown>) {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: {
-      subscribed: false, plan: null, usage: null,
+      subscribed: false, plan: null, usage: null, ...extra,
     } }) });
+  }
+
+  it("marks an account billing reports no plan for as needing the Free plan turned on, with what it already runs", async () => {
+    noPlan({ planOnHold: null, managedUsage: { agentCount: 1, usedCpu: 0.5, usedRam: 1024 } });
     const plan = await fetchPlanStrict();
-    expect(plan).toMatchObject({ key: "free", subscribed: false, needsActivation: true });
-    // No usage is invented for it here; Launch decides how to plan it.
+    expect(plan).toMatchObject({ key: "free", subscribed: false, needsActivation: true, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
+    expect(plan?.onHold).toBeUndefined();
+  });
+
+  it("leaves an account without a plan unknown, never empty, when billing couldn't read what it runs", async () => {
+    noPlan({});
+    const plan = await fetchPlanStrict();
+    expect(plan).toMatchObject({ key: "free", needsActivation: true });
     expect(plan?.usage).toBeUndefined();
+    noPlan({ managedUsage: { agentCount: -1, usedCpu: 0, usedRam: 0 } });
+    expect((await fetchPlanStrict())?.usage).toBeUndefined();
+  });
+
+  it("reads a paid plan on hold as that plan, never as an account that can turn Free on", async () => {
+    noPlan({
+      planOnHold: { key: "operator", name: "Pro", status: "past_due", reason: "payment_overdue", billingPortal: true },
+      managedUsage: { agentCount: 2, usedCpu: 1, usedRam: 2048 },
+    });
+    const plan = await fetchPlanStrict();
+    expect(plan?.needsActivation).toBeUndefined();
+    expect(plan?.onHold).toEqual({ key: "operator", name: "Pro", reason: "payment_overdue", billingPortal: true });
+    // Everything else stays Free's shape: nothing reads the account as paid.
+    expect(plan).toMatchObject({ key: "free", name: "Free", subscribed: false, usage: { agentCount: 2, usedCpu: 1, usedRam: 2 } });
+  });
+
+  it.each([
+    { key: "operator", name: "Pro", reason: "unknown_reason" },
+    { key: "", name: "Pro", reason: "no_slots" },
+    { key: "operator", reason: "no_slots" },
+    "operator",
+  ])("treats a malformed plan hold as no hold: %j", async (planOnHold) => {
+    noPlan({ planOnHold });
+    const plan = await fetchPlanStrict();
+    expect(plan?.onHold).toBeUndefined();
+    expect(plan?.needsActivation).toBe(true);
   });
 
   it("never marks an active plan, Free included, as needing activation", async () => {
