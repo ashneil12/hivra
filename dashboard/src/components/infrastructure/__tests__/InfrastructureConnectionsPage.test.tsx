@@ -789,6 +789,45 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
+  it("inside Launch, names the ready server and uses it for the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    const banner = (await screen.findByText(`${READY_GVISOR_TARGET.displayName} is ready for Linux Sandbox.`)).closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(banner).getByRole("button", { name: "Use it for this launch" }));
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+  });
+
+  // Live test of slice 10: the sheet said "Capacity is ready" for the Hivra
+  // Cloud plan the launch had just outgrown, and its "Continue launch" link
+  // (no server in it) left the sheet open over the launch.
+  it("inside Launch, returns to the launch from any Launch link and doesn't offer Hivra Cloud back as news", async () => {
+    (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
+    const onLaunchTarget = jest.fn();
+    const onClose = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "codex", onLaunchTarget, onClose }} />);
+
+    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    screen.getByRole("link", { name: /Launch an agent/i }).dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onLaunchTarget).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
   // Review of slice 5: an owner who set up Linux Sandbox and came back an
   // hour later got Ready and a Launch button the server then refused.
   it("asks for a readiness check on a gVisor host whose last check is stale, then offers Launch", async () => {
@@ -1574,6 +1613,49 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(await within(dialog).findByRole("button", { name: "Review current rates" })).toBeDisabled();
     expect(within(dialog).getByText(/hivra-a1b2c3d4 is using it/)).toBeInTheDocument();
     expect(quoteHetznerCloudCapacity).not.toHaveBeenCalled();
+  });
+
+  // Live test of INF02 on Canary: a server Hivra had just set up sat on the
+  // card as "Off" beside "Ready for agents", because Start setup powered it on
+  // after the last inventory sync, until the owner pressed Sync servers.
+  it("syncs a set-up server's power state once instead of showing it Off beside Ready for agents", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, status: "running", discoveredAt: "2026-08-26T15:31:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Running")).toBeInTheDocument();
+    expect(within(server).getByText("Ready for agents")).toBeInTheDocument();
+    expect(within(server).queryByText("Off")).not.toBeInTheDocument();
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a set-up server that really is off as Off after one sync, without syncing again", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, discoveredAt: "2026-08-26T16:00:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    await waitFor(() => expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1));
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Off")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
   });
 
   it("replaces a rejected project token from the card without disconnecting", async () => {

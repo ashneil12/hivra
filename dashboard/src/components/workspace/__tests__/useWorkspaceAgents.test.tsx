@@ -123,7 +123,7 @@ describe("useWorkspaceAgents", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.agents.map(({ uid }) => uid)).toEqual(["x-x-1"]);
-    expect(result.current.hermesError).toMatch(/Hermes agents are unavailable/);
+    expect(result.current.hermesError).toBe("Some agents couldn't be loaded. Retry to check again.");
     expect(result.current.hivraError).toBeNull();
     expect(JSON.stringify(result.current)).not.toContain(rawFailure.message);
     expect(mockedWarn).toHaveBeenCalledWith(
@@ -148,7 +148,7 @@ describe("useWorkspaceAgents", () => {
 
     expect(result.current.agents.map(({ uid }) => uid)).toEqual(["h-h-1"]);
     expect(result.current.hermesError).toBeNull();
-    expect(result.current.hivraError).toMatch(/Hivra agents are unavailable/);
+    expect(result.current.hivraError).toBe("Some agents and computers couldn't be loaded. Retry to check again.");
     expect(JSON.stringify(result.current)).not.toContain("DO_NOT_RETURN_HIVRA_ERROR_BODY");
   });
 

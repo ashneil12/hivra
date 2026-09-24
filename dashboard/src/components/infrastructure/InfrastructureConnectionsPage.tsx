@@ -52,6 +52,7 @@ import {
   HETZNER_CLOUD_CONNECTION_ERROR_CODES,
   HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION,
 } from "@/lib/infrastructure/contracts";
+import { staleHetznerPowerKeys } from "@/lib/infrastructure/hetzner-inventory-freshness";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import {
   hetznerCloudTokenReplacedNotice,
@@ -155,13 +156,14 @@ export type EmbeddedCapacity = {
   onClose: () => void;
 };
 
-/** The target a Launch link inside the sheet points at, if it is one. */
-function launchTargetFromHref(href: string | null): string | null {
+/** A Launch link inside the sheet, and the place it chooses if any; null for
+ * any other link. */
+function launchLinkFromHref(href: string | null): { targetId: string | null } | null {
   if (!href) return null;
   try {
     const url = new URL(href, "https://hivra.invalid");
     if (url.origin !== "https://hivra.invalid" || url.pathname !== "/dashboard/launch") return null;
-    return url.searchParams.get("targetId");
+    return { targetId: url.searchParams.get("targetId") };
   } catch {
     return null;
   }
@@ -426,6 +428,23 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     void loadConnections(controller.signal);
     return () => controller.abort();
   }, [loadConnections]);
+
+  // A server Hivra set up can be newer than the last inventory sync: Start
+  // setup powers it on after that sync. Sync once per setup step so its card
+  // doesn't say "Off" beside "Ready for agents".
+  const syncedForSetup = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const [connectionId, state] of Object.entries(hetznerInventory)) {
+      const setup = hetznerSetups[connectionId];
+      if (state.loading || state.error || setup?.status !== "loaded") continue;
+      const fresh = staleHetznerPowerKeys(state.inventory, setup.computers)
+        .map((key) => `${connectionId}:${key}`)
+        .filter((key) => !syncedForSetup.current.has(key));
+      if (fresh.length === 0) continue;
+      for (const key of fresh) syncedForSetup.current.add(key);
+      void loadHetznerInventory(connectionId, { refresh: true });
+    }
+  }, [hetznerInventory, hetznerSetups, loadHetznerInventory]);
 
   // Open "Replace token" once for the connection a deep link names.
   const handledTokenReplacement = useRef<string | null>(null);
@@ -738,15 +757,16 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     <LaunchOnServerProvider pending={pendingLaunch} targets={targets}>
     <div
       className={embedded ? styles.embeddedPage : styles.page}
-      // Inside Launch, "Launch on this server" and "Continue launch" hand the
-      // server back to the same launch instead of opening Launch again.
+      // Inside Launch, every link back to Launch returns to the same launch
+      // instead of opening Launch again: with the place it chooses, if any.
       onClickCapture={embedded ? (event) => {
         const anchor = (event.target as HTMLElement | null)?.closest?.("a");
-        const targetId = launchTargetFromHref(anchor?.getAttribute("href") ?? null);
-        if (!targetId) return;
+        const link = launchLinkFromHref(anchor?.getAttribute("href") ?? null);
+        if (!link) return;
         event.preventDefault();
         event.stopPropagation();
-        embedded.onLaunchTarget(targetId);
+        if (link.targetId) embedded.onLaunchTarget(link.targetId);
+        else embedded.onClose();
       } : undefined}
     >
       {embedded ? null : <div className={styles.pageGlow} aria-hidden="true" />}
@@ -799,7 +819,17 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
           </div>
         ) : null}
 
-        {launchReturnHref && requestedLaunchLabel ? (
+        {/* Inside Launch, Hivra Cloud is already one of the launch's choices:
+            only a new place to run is news worth handing back. */}
+        {embedded && readyLaunchTarget && requestedLaunchLabel ? (
+          <div className={styles.pageNotice} role="status">
+            <CheckCircle2 size={16} aria-hidden="true" />
+            <span>{readyLaunchTarget.displayName} is ready for {requestedLaunchLabel}.</span>
+            <button type="button" className={styles.primaryButton} onClick={() => embedded.onLaunchTarget(readyLaunchTarget.id)}>
+              Use it for this launch <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          </div>
+        ) : !embedded && launchReturnHref && requestedLaunchLabel ? (
           <div className={styles.pageNotice} role="status">
             <CheckCircle2 size={16} aria-hidden="true" />
             <span>Capacity is ready for {requestedLaunchLabel}. Return to finish this launch.</span>

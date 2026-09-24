@@ -150,6 +150,8 @@ const GVISOR_TARGET: DeploymentTargetDto = {
     access: { terminal: "owner-gated-command-v1", publicPorts: false }, desktop: false, windows: false,
   },
   supportedIsolationDrivers: ["gvisor-runsc"], isolationClass: "application-kernel",
+  // A gVisor host launches only within 15 minutes of its last strict check.
+  lastPreflightAt: new Date(Date.now() - 60_000).toISOString(),
   lastErrorCode: null,
 };
 
@@ -209,6 +211,7 @@ const CODEX_CAN_USE_WITHOUT_BROWSER = "Terminal, files and administrator access 
 
 describe("LaunchPage", () => {
   let infrastructureTargets: DeploymentTargetDto[];
+  let gvisorChecks: number;
   let windowsIsoImages: Array<{ volume: string; name: string; sizeBytes: number; modifiedAtSeconds: number; fileIdentitySha256: string; source: "unknown" | "windows-11" | "windows-server-evaluation" }>;
   let windowsLaunchBody: Record<string, unknown> | null;
   let windowsDownloadBody: Record<string, unknown> | null;
@@ -218,6 +221,7 @@ describe("LaunchPage", () => {
     window.sessionStorage.clear();
     window.localStorage.clear();
     infrastructureTargets = [];
+    gvisorChecks = 0;
     windowsIsoImages = [];
     windowsLaunchBody = null;
     windowsDownloadBody = null;
@@ -242,6 +246,10 @@ describe("LaunchPage", () => {
           ok: true,
           json: async () => ({ success: true, data: { targets: infrastructureTargets } }),
         } as Response;
+      }
+      if (url.includes("/gvisor/preflight") && init?.method === "POST") {
+        gvisorChecks += 1;
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { target: { id: GVISOR_TARGET.id, status: "ready" } } }) } as Response;
       }
       if (url.includes("/api/hivra/windows/iso-images")) {
         return {
@@ -294,6 +302,24 @@ describe("LaunchPage", () => {
       type: "linux-terminal", computerProfile: "linux-terminal", cpu: 1, ram: 1, maximumCpu: 1, maximumRam: 1,
       deployment: expect.objectContaining({ mode: "self-managed", targetId: GVISOR_TARGET.id }),
     })));
+  });
+
+  // B2 review: a host chosen near the end of its 15-minute readiness window
+  // was refused at Launch. Launch checks it again first (read-only).
+  it("checks a Linux Sandbox host again before launching when its readiness is about to lapse", async () => {
+    infrastructureTargets = [{ ...GVISOR_TARGET, lastPreflightAt: new Date(Date.now() - 14 * 60_000).toISOString() }];
+    createAgentMock.mockResolvedValue({ id: "77777777-7777-4777-8777-777777777777", type: "linux-terminal",
+      computer_profile: "linux-terminal", computer_substrate: "gvisor", name: "MY_LINUX_SANDBOX", status: "running", cpu: 1, ram: 1 });
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+    await waitFor(() => expect(whereButton(/My infrastructure/i)).toBeEnabled());
+    fireEvent.click(whereButton(/My infrastructure/i));
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    fireEvent.click(screen.getByTestId("launch-primary-action"));
+
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
+    expect(gvisorChecks).toBe(1);
   });
 
   it("focuses each new step without stealing focus during name editing", async () => {
