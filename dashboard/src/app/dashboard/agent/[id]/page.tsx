@@ -197,6 +197,8 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
  */
 function listChanged(): void {
   resourceInventory.invalidate("hivra");
+  // A computer's change can end or pause the agents added to it.
+  resourceInventory.invalidate("attached");
 }
 
 /**
@@ -905,15 +907,21 @@ export default function AgentPage() {
   // an unknown or unavailable page is not somewhere to return to. A
   // DigitalOcean session keeps its own views and opens on its chat. Recording
   // cannot navigate: Home follows it only when the app itself opens at Home.
-  const visitTab: Tab | null = flagOn && agent && agent.id === id
-    ? agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
-    : null;
-  useRecordVisit(id ? hivraRuntimeUid(id) : null, visitTab);
-
   // An agent added to this computer (design 5.8): the computer gains a Chat
   // tab that reaches it through the computer's gateway.
   const attachedRead = useAttachedAgentChatRead(agent, id);
   const attachedAgent = attachedRead.target;
+
+  // While that agent's Chat is on screen, the visit is the agent's own
+  // (`a-<attachment id>`), not the computer's Desktop.
+  const attachedVisit = Boolean(flagOn && attachedAgent && agent?.id === id && tab === "chat");
+  const visitTab: Tab | null = flagOn && agent && agent.id === id
+    ? attachedVisit || agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
+    : null;
+  useRecordVisit(
+    attachedVisit && attachedAgent ? `a-${attachedAgent.attachmentId}` : id ? hivraRuntimeUid(id) : null,
+    visitTab,
+  );
 
   // Read-only capability refresh once per computer id/session.
   // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).

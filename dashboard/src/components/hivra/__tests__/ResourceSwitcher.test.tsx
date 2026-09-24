@@ -95,6 +95,24 @@ describe("ResourceSwitcher", () => {
     expect(push).toHaveBeenCalledWith("/dashboard/agent/abc");
   });
 
+  // An agent added to a computer shares that computer's id; it opened the
+  // computer's Desktop instead of the agent's Chat.
+  it("opens an agent added to a computer on that computer's Chat tab", () => {
+    const attachedCodex: UnifiedAgent = {
+      ...agent("a-7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", "Codex on My Desktop", "hivra"),
+      id: "desktop",
+      attachment: { id: "7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", computerId: "desktop", computerName: "My Desktop", phase: "attached" },
+      href: "/dashboard/agent/desktop?tab=chat",
+    };
+    mockedUseWorkspaceAgents.mockReturnValue({ ...mockedUseWorkspaceAgents(), agents: [desktop, attachedCodex] });
+    render(<ResourceSwitcher currentUid="abc" />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch agent or computer" }));
+
+    fireEvent.click(screen.getByRole("option", { name: /Codex on My Desktop/ }));
+
+    expect(push).toHaveBeenCalledWith("/dashboard/agent/desktop?tab=chat");
+  });
+
   it("marks the current resource even when the route carries a raw id", () => {
     // The route gives `abc`; the list speaks `x-abc`. Without the id fallback
     // the menu opens with nothing marked and no way to see where you are.

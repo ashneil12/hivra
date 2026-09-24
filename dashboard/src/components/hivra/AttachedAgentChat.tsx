@@ -44,7 +44,7 @@ export function useAttachedAgentChatRead(agent: Pick<HivraAgent, "id" | "type" |
         ? result.gate.attachments.find((attachment) => attachment.phase === "attached" && attachment.installationId)
         : undefined;
       setRead({ id, value: ready?.installationId
-        ? { computerId: id, installationId: ready.installationId, agentName: ready.agentName || ATTACH_RUNTIME_NAME } : null });
+        ? { computerId: id, attachmentId: ready.id, installationId: ready.installationId, agentName: ready.agentName || ATTACH_RUNTIME_NAME } : null });
     });
     return () => { alive = false; };
   }, [eligible, id, version]);

@@ -1908,6 +1908,19 @@ describe("AgentPage", () => {
       if (after) expect(after).not.toBeVisible();
     });
 
+    // Recents and Home keep the added agent as its own resource: its Chat was
+    // recorded as the computer (x-<computer>) on its Desktop.
+    it("records its own visit, a-<attachment id> on Chat, while its Chat is on screen", async () => {
+      const ATTACHMENT = "7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "chat" : null);
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      mockFetchAttachGate.mockResolvedValue(gateWith({ id: ATTACHMENT, phase: "attached", installationId: INSTALLATION, agentName: "Codex" }));
+      render(<AgentPage />);
+      expect(await screen.findByTestId("attached-chat")).toBeInTheDocument();
+      await waitFor(() => expect(listRecents()).toContainEqual({ uid: `a-${ATTACHMENT}`, tab: "chat", usedAt: expect.any(Number) }));
+      expect(lastTabFor("x-agent_123")).not.toBe("chat");
+    });
+
     it("has no Chat tab while the agent is still being added", async () => {
       mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
       mockFetchAttachGate.mockResolvedValue(gateWith({ phase: "dispatched", installationId: null, agentName: "Codex" }));
