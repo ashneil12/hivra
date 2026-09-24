@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 /**
  * Tier-3 SYNTHETIC USER JOURNEY A: Launch readiness (assert-only).
  *
- * Walks the bounded Canary path from Agent -> Codex -> capacity -> Review.
+ * Walks the bounded Canary path from Choose -> Codex plan -> Review.
  * Routine CI must stop before Launch so it cannot provision a VM. Actual
  * provisioning remains double-gated by the dedicated first-run audit.
  */
@@ -21,7 +21,7 @@ function isAuthed(): boolean {
 test.describe('Tier 3 Journey A: Launch Readiness', () => {
   test.skip(!isAuthed(), 'No authenticated QA session (CLERK_SECRET_KEY/QA_USER_ID not set).');
 
-  test('walks Agent -> Codex -> capacity -> exact Review without provisioning', async ({ page }) => {
+  test('walks Choose -> Codex plan -> exact Review without provisioning', async ({ page }) => {
     const consoleErrors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -32,11 +32,12 @@ test.describe('Tier 3 Journey A: Launch Readiness', () => {
     await expect(page.locator('body')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('body')).not.toContainText(/sign in|signed out/i);
 
-    await expect(page.getByRole('heading', { name: 'Choose an agent' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: 'What do you want to launch?' })).toBeVisible({ timeout: 20_000 });
+    // Choosing a tile goes straight to the plan; there is no Continue step.
     await page.getByRole('button', { name: /^Codex/i }).click();
-    await page.getByTestId('launch-primary-action').click();
 
-    await expect(page.getByRole('heading', { name: 'Where should Codex run?' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: "Codex — here's the plan" })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Change' }).click();
     await expect(page.getByRole('button', { name: /Hivra Cloud/i })).toHaveAttribute('aria-pressed', 'true');
 
     const continueCta = page.getByTestId('launch-primary-action');
@@ -52,12 +53,12 @@ test.describe('Tier 3 Journey A: Launch Readiness', () => {
     await expect.poll(readiness, { timeout: 15_000 }).not.toBe('pending');
     if ((await readiness()) === 'ready') {
       await continueCta.click();
-      await expect(page.getByRole('heading', { name: 'Review this launch' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: /^Review and launch/ })).toBeVisible();
       const review = page.getByLabel('Launch review');
       await expect(review).toContainText('Codex');
       await expect(review).toContainText('Hivra Cloud');
-      await expect(review).toContainText('ChatGPT sign-in happens inside Codex after it opens.');
-      await expect(page.getByRole('button', { name: 'Launch' })).toBeEnabled();
+      await expect(review).toContainText('Sign in to ChatGPT inside Codex after it opens.');
+      await expect(page.getByRole('button', { name: 'Launch Codex' })).toBeEnabled();
     } else {
       await expect(continueCta).toBeDisabled();
       await expect(capacityAlert).toBeVisible();
@@ -72,6 +73,6 @@ test.describe('Tier 3 Journey A: Launch Readiness', () => {
     );
     expect(fatalErrors).toHaveLength(0);
 
-    // DO NOT CLICK Launch. This journey is deliberately assert-only.
+    // DO NOT CLICK Launch Codex. This journey is deliberately assert-only.
   });
 });
