@@ -27,6 +27,6 @@ export function withAttachedAgentChat(surfaces: readonly AgentSurfaceId[], attac
 /** The page's tabs follow, and the shared agents list (Home, the switchers) is read again. */
 export function announceAttachedAgentsChanged(): void {
   if (typeof window === "undefined") return;
-  resourceInventory.invalidate("hivra");
+  resourceInventory.invalidate("attached");
   window.dispatchEvent(new Event(ATTACHED_AGENTS_CHANGED_EVENT));
 }

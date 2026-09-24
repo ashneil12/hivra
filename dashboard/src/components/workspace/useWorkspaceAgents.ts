@@ -36,6 +36,9 @@ export interface UseWorkspaceAgentsOptions {
    */
   fetchHermes?: WorkspaceSourceFetcher;
   fetchHivra?: WorkspaceSourceFetcher;
+  /** The agents added to the owner's computers. With stand-ins and without
+   * this one, nothing is attached. */
+  fetchAttached?: WorkspaceSourceFetcher;
   getNow?: () => Date;
   /**
    * Show the list already held at once, instead of reporting it as loading
@@ -168,33 +171,26 @@ function requiredId(value: unknown): string {
   return value;
 }
 
-/**
- * Agents added to the owner's computers, read with the Hivra list (the
- * inventory carries GET /api/hivra/attached-agents as `attached` on that
- * body): `undefined` when that one list could not be read.
- */
-function parseAttached(value: unknown): AttachedAgentLite[] | undefined {
-  if (value === undefined) return [];
-  if (value === null) return undefined;
-  const list = asRecord(asRecord(value)?.data ?? value);
-  if (!list || !Array.isArray(list.agents)) return undefined;
-  if (list.enabled !== true) return [];
-  try {
-    return list.agents.map((candidate) => {
-      const row = asRecord(candidate);
-      if (!row || typeof row.phase !== "string" || !ATTACHED_PHASES.has(row.phase)) throw new Error("invalid-source-record");
-      return {
-        id: requiredId(row.id),
-        phase: row.phase as AttachedAgentLite["phase"],
-        agentName: requiredString(row.agentName),
-        computerId: requiredId(row.computerId),
-        computerName: requiredString(row.computerName),
-        computerStatus: optionalString(row.computerStatus) ?? null,
-      };
-    });
-  } catch {
-    return undefined;
+/** Agents added to the owner's computers (GET /api/hivra/attached-agents): none where attach is not offered. */
+function parseAttachedEnvelope(value: unknown): AttachedAgentLite[] {
+  const envelope = asRecord(value);
+  const list = asRecord(envelope?.data);
+  if (!envelope || envelope.success !== true || !list || !Array.isArray(list.agents)) {
+    throw new Error("invalid-attached-envelope");
   }
+  if (list.enabled !== true) return [];
+  return list.agents.map((candidate) => {
+    const row = asRecord(candidate);
+    if (!row || typeof row.phase !== "string" || !ATTACHED_PHASES.has(row.phase)) throw new Error("invalid-source-record");
+    return {
+      id: requiredId(row.id),
+      phase: row.phase as AttachedAgentLite["phase"],
+      agentName: requiredString(row.agentName),
+      computerId: requiredId(row.computerId),
+      computerName: requiredString(row.computerName),
+      computerStatus: optionalString(row.computerStatus) ?? null,
+    };
+  });
 }
 
 function logSourceFailure(agentSource: "hermes" | "hivra" | "attached"): void {
@@ -233,13 +229,16 @@ function sourceRows<T>(state: InventorySourceState, parse: (value: unknown) => T
   return { rows, settled, failed: settled && (state.failed || unreadable) };
 }
 
+const NOT_OFFERED = { success: true, data: { enabled: false, agents: [] } };
+
 function privateInventory(options: UseWorkspaceAgentsOptions): ResourceInventory | null {
-  if (!options.fetchHermes && !options.fetchHivra) return null;
-  const { fetchHermes, fetchHivra, getNow } = options;
+  if (!options.fetchHermes && !options.fetchHivra && !options.fetchAttached) return null;
+  const { fetchHermes, fetchHivra, fetchAttached, getNow } = options;
   return createResourceInventory({
     fetchers: {
       ...(fetchHermes ? { hermes: () => fetchHermes() } : {}),
       ...(fetchHivra ? { hivra: () => fetchHivra() } : {}),
+      attached: fetchAttached ? () => fetchAttached() : async () => NOT_OFFERED,
     },
     now: getNow ? () => getNow().getTime() : undefined,
   });
@@ -255,8 +254,8 @@ export function useWorkspaceAgents(
   const [inventory] = useState(() => privateInventory(options) ?? resourceInventory);
   const [reuseHeld] = useState(() => options.reuseHeldList === true);
   const [marks] = useState<Record<InventorySource, number>>(() => reuseHeld
-    ? { hermes: 0, hivra: 0 }
-    : { hermes: inventory.readMark("hermes"), hivra: inventory.readMark("hivra") });
+    ? { hermes: 0, hivra: 0, attached: 0 }
+    : { hermes: inventory.readMark("hermes"), hivra: inventory.readMark("hivra"), attached: inventory.readMark("attached") });
   const snapshot = useSyncExternalStore(
     inventory.subscribe,
     inventory.getSnapshot,
@@ -281,18 +280,18 @@ export function useWorkspaceAgents(
     () => mine ? sourceRows(snapshot.hivra, parseHivraEnvelope, marks.hivra) : NO_ROWS,
     [mine, snapshot.hivra, marks.hivra],
   );
-  // Its own failure (a rate limit, or attach not deployed yet) is reported on
-  // its own: the agents and computers it did not touch stay current.
-  const attached = useMemo(() => {
-    if (!mine || !snapshot.hivra.hasBody) return { rows: [] as AttachedAgentLite[], failed: false };
-    const rows = parseAttached(asRecord(snapshot.hivra.body)?.attached);
-    return rows ? { rows, failed: false } : { rows: [] as AttachedAgentLite[], failed: hivra.settled && !hivra.failed };
-  }, [mine, snapshot.hivra, hivra.settled, hivra.failed]);
+  // The agents added to the owner's computers are their own list: its failure
+  // (a rate limit, say) is reported on its own, the agents and computers it
+  // did not touch stay current, and nothing waits for it.
+  const attached = useMemo(
+    () => mine ? sourceRows(snapshot.attached, parseAttachedEnvelope, marks.attached) : NO_ROWS,
+    [mine, snapshot.attached, marks.attached],
+  );
 
   // Logged once per failed read this hook sees, never with the response.
   const hermesFailedAt = hermes.failed ? snapshot.hermes.settledAt : 0;
   const hivraFailedAt = hivra.failed ? snapshot.hivra.settledAt : 0;
-  const attachedFailedAt = attached.failed ? snapshot.hivra.settledAt : 0;
+  const attachedFailedAt = attached.failed ? snapshot.attached.settledAt : 0;
   useEffect(() => {
     if (hermesFailedAt) logSourceFailure("hermes");
   }, [hermesFailedAt]);
@@ -304,7 +303,10 @@ export function useWorkspaceAgents(
   }, [attachedFailedAt]);
 
   const retryHermes = useCallback(() => inventory.load("hermes", { force: true }), [inventory]);
-  const retryHivra = useCallback(() => inventory.load("hivra", { force: true }), [inventory]);
+  // An agent added to a computer is shown with the Hivra list, so its Retry reads both.
+  const retryHivra = useCallback(async () => {
+    await Promise.all([inventory.load("hivra", { force: true }), inventory.load("attached", { force: true })]);
+  }, [inventory]);
   const retryAll = useCallback(async () => {
     await Promise.all([retryHermes(), retryHivra()]);
   }, [retryHermes, retryHivra]);

@@ -1,10 +1,10 @@
 /**
  * One browser-side copy of the two lists every switcher reads: Hermes agents
  * (`/api/instances?summary=true`) and Hivra agents and computers
- * (`/api/hivra/agents`). The Hivra read also carries the agents added to the
- * owner's computers (`/api/hivra/attached-agents`) as `attached` on its body:
- * null when that one list could not be read, which its readers report on its
- * own without marking the Hivra list failed.
+ * (`/api/hivra/agents`), and of the agents added to the owner's computers
+ * (`/api/hivra/attached-agents`), which Home and the agent switcher list after
+ * their computer. That third list is read only by those readers, never by the
+ * sidebar, and never holds the other two back.
  *
  * The sidebar re-read both on every page change, and Home read the same pair
  * again for its own list, so opening Home fetched each list twice and moving
@@ -28,15 +28,14 @@
  * switch.
  */
 
-import { fetchOwnerAttachedAgents } from "@/lib/agent-computers/attach-client";
+export type InventorySource = "hermes" | "hivra" | "attached";
 
-export type InventorySource = "hermes" | "hivra";
-
-export const INVENTORY_SOURCES = ["hermes", "hivra"] as const satisfies readonly InventorySource[];
+export const INVENTORY_SOURCES = ["hermes", "hivra", "attached"] as const satisfies readonly InventorySource[];
 
 export const INVENTORY_PATHS: Record<InventorySource, string> = {
   hermes: "/api/instances?summary=true",
   hivra: "/api/hivra/agents",
+  attached: "/api/hivra/attached-agents",
 };
 
 /** How long a read is reused before the next caller reads again. */
@@ -65,6 +64,7 @@ export interface InventorySnapshot {
   readonly owner: string | null;
   readonly hermes: InventorySourceState;
   readonly hivra: InventorySourceState;
+  readonly attached: InventorySourceState;
 }
 
 type SourceFetcher = (signal: AbortSignal) => Promise<unknown>;
@@ -113,6 +113,7 @@ const INITIAL_SNAPSHOT: InventorySnapshot = Object.freeze({
   owner: null,
   hermes: INITIAL_SOURCE,
   hivra: INITIAL_SOURCE,
+  attached: INITIAL_SOURCE,
 });
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -132,20 +133,10 @@ export function isInventoryEnvelope(source: InventorySource, body: unknown): boo
 function defaultFetcher(source: InventorySource): SourceFetcher {
   return async (signal) => {
     const response = await fetch(INVENTORY_PATHS[source], { cache: "no-store", signal });
+    // Where Hivra is off the attach route does not exist: nothing is attached, and nothing failed.
+    if (source === "attached" && response.status === 404) return { success: true, data: { enabled: false, agents: [] } };
     if (!response.ok) throw new Error("Resource list unavailable");
     return response.json();
-  };
-}
-
-/** The Hivra list, with the agents added to the owner's computers read alongside. */
-function hivraFetcher(): SourceFetcher {
-  const agents = defaultFetcher("hivra");
-  return async (signal) => {
-    const [body, attached] = await Promise.all([
-      agents(signal),
-      fetchOwnerAttachedAgents((input, init) => fetch(input, { ...init, signal })),
-    ]);
-    return asRecord(body) ? { ...(body as Record<string, unknown>), attached } : body;
   };
 }
 
@@ -158,7 +149,8 @@ export function createResourceInventory(options: {
   const freshMs = options.freshMs ?? INVENTORY_FRESH_MS;
   const fetchers: Record<InventorySource, SourceFetcher> = {
     hermes: options.fetchers?.hermes ?? defaultFetcher("hermes"),
-    hivra: options.fetchers?.hivra ?? hivraFetcher(),
+    hivra: options.fetchers?.hivra ?? defaultFetcher("hivra"),
+    attached: options.fetchers?.attached ?? defaultFetcher("attached"),
   };
   const listeners = new Set<() => void>();
   const inflight: Partial<Record<InventorySource, { controller: AbortController; done: Promise<void>; read: number }>> = {};
@@ -169,7 +161,7 @@ export function createResourceInventory(options: {
   // Reads started so far. Never reset, so marks handed out stay comparable.
   let started = 0;
   // Reads numbered at or below this predate a change, and are not reused.
-  const outdated: Record<InventorySource, number> = { hermes: 0, hivra: 0 };
+  const outdated: Record<InventorySource, number> = { hermes: 0, hivra: 0, attached: 0 };
 
   const emit = () => {
     for (const listener of [...listeners]) listener();
