@@ -21,7 +21,8 @@ function row() { return { id: operation.agentId, user_id: operation.userId, oper
   provider_install_stopped_at: null, provider_install_outcome: null }; }
 function load(value: unknown) {
   mockRead.mockResolvedValueOnce({ data: value, error: null })
-    .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null });
+    .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: f.binding.quoteFingerprint }, error: null })
+    .mockResolvedValueOnce({ data: { recipe_version: f.binding.recipeVersion }, error: null });
 }
 
 describe("original provider desktop installation binding", () => {
@@ -31,7 +32,7 @@ describe("original provider desktop installation binding", () => {
     await expect(loadProviderDesktopInstallBinding(operation)).resolves.toMatchObject({ operation,
       runtime: "linux-desktop", computerProfile: "ubuntu-desktop", desiredState: desired_state,
       accessMode: null, hostname: null, identity: null });
-    expect(mockFrom.mock.calls.map(call => call[0])).toEqual(["hivra_agents", "infrastructure_capacity_orders"]);
+    expect(mockFrom.mock.calls.map(call => call[0])).toEqual(["hivra_agents", "infrastructure_capacity_orders", "infrastructure_first_boot_enrollments"]);
     for (const pair of [["user_id", operation.userId], ["id", operation.agentId], ["operation_id", operation.operationId],
       ["connection_revision", f.binding.connectionRevision], ["provider_resource_id", "42"], ["status", "created_off"]]) {
       expect(mockQuery.eq).toHaveBeenCalledWith(...pair);
