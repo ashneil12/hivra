@@ -5,12 +5,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
-import { shellQuote } from "@/lib/hivra/proxmox-target";
-import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { ATTACHED_HELPERS } from "./attachment-service-units";
-import { ATTACHMENT_HOST_LOCK_PROGRAM, snapshotAttachmentObservationTarget } from "./attachment-host-observation";
+import { buildAttachmentHostStepScript, parseAttachmentTargetRefusal, snapshotAttachmentObservationTarget,
+  type AttachmentTargetRefusal } from "./attachment-host-observation";
 
 // The attached agent's guest steps after staging: activate, observe, change
 // access, remove (design 5.5). One pinned runner and one pinned lifecycle
@@ -73,24 +72,8 @@ export interface AttachedAgentTarget {
 export function buildAttachedAgentHostScript(action: AttachedAgentAction, inputTarget: AttachedAgentTarget, packet: Record<string, unknown>): string {
   const target = snapshotAttachmentObservationTarget(inputTarget);
   const bundle = buildAttachedAgentBundle({ ...packet, action });
-  const body = `#!/usr/bin/env bash
-set -Eeuo pipefail
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C
-umask 077
-VMID=${target.vmid}
-EXPECTED_BINDING_TAG=${shellQuote(target.bindingTag)}
-GUEST_IP=${shellQuote(target.guestIp)}
-qm() { command timeout --kill-after=5 20 qm "$@"; }
-[ "$(qm status "$VMID" | awk '{print $2}')" = running ]
-VM_CONFIG="$(qm config "$VMID")"
-printf '%s\\n' "$VM_CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG"
-printf '%s\\n' "$VM_CONFIG" | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\\n' | grep -Fxq "ip=$GUEST_IP/24"
-${buildVmidBoundGuestExecPrelude()}
-# Only the guest command gets the step's deadline. No private-IP SSH fallback.
-qm() { command timeout --kill-after=5 ${ATTACHED_AGENT_TIMEOUTS[action].guestSeconds} qm "$@"; }
-printf '%s' ${shellQuote(bundle.stdin)} | run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(bundle.program)}
-`;
-  return `#!/usr/bin/env bash\nset -Eeuo pipefail\nexec /usr/bin/python3 -I -B -c ${shellQuote(ATTACHMENT_HOST_LOCK_PROGRAM)} ${shellQuote(body)}\n`;
+  // No private-IP SSH fallback. The host lock covers the VM check and the start only.
+  return buildAttachmentHostStepScript(target, bundle.program, bundle.stdin, ATTACHED_AGENT_TIMEOUTS[action].guestSeconds);
 }
 
 // ── Results ─────────────────────────────────────────────────────────────────
@@ -154,7 +137,8 @@ export function parseAttachedAgentResult(action: AttachedAgentAction, stdout: st
 type Dependencies = { resolveContext: typeof resolveHivraAgentExecutionContext; runHostScript: typeof runProxmoxHostScript };
 export type AttachedAgentHostResult =
   | { ok: true; result: AttachedActivationResult | AttachedAccessResult | AttachedRemoveResult | AttachedStateResult }
-  | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" };
+  | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" }
+  | { ok: false; code: "target_refused"; reason: AttachmentTargetRefusal };
 
 /** Internal transport only. The caller must hold the step's database dispatch
  * (activate, access, remove) or ask for a read-only observe. Never retried
@@ -179,7 +163,10 @@ export async function executeAttachedAgentStep(
   try {
     const result = await deps.runHostScript(script, { ...context.env },
       { timeoutMs: ATTACHED_AGENT_TIMEOUTS[action].hostMs, maxOutputBytes: 64 * 1024 });
-    if (!result.ok) return { ok: false, code: "transport_failed" };
+    if (!result.ok) {
+      const refused = parseAttachmentTargetRefusal(result.stdout);
+      return refused ? { ok: false, code: "target_refused", reason: refused } : { ok: false, code: "transport_failed" };
+    }
     const parsed = parseAttachedAgentResult(action, result.stdout);
     return parsed ? { ok: true, result: parsed } : { ok: false, code: "invalid_result" };
   } catch { return { ok: false, code: "transport_failed" }; }

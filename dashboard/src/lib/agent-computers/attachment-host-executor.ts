@@ -7,6 +7,7 @@ import { parseAttachmentArtifactResult, type AttachmentArtifactResult } from "./
 import { parseAttachmentGuestResult, snapshotAttachmentGuestExpectation,
   type AttachmentGuestResult, type ExpectedAttachmentGuestResult } from "./attachment-guest-result";
 import { ATTACHMENT_ACTION_TIMEOUTS, buildAttachmentHostActionScript, type AttachmentGuestAction } from "./attachment-host-action";
+import { parseAttachmentTargetRefusal, type AttachmentTargetRefusal } from "./attachment-host-observation";
 
 type Dependencies = {
   resolveContext: typeof resolveHivraAgentExecutionContext;
@@ -15,7 +16,8 @@ type Dependencies = {
 export type AttachmentHostActionResult =
   | { ok: true; action: "fetch"; artifact: AttachmentArtifactResult }
   | { ok: true; action: "stage" | "observe"; staged: AttachmentGuestResult }
-  | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" };
+  | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" }
+  | { ok: false; code: "target_refused"; reason: AttachmentTargetRefusal };
 
 /** Internal transport adapter only, deliberately not called by a route yet.
  * Inputs must be loaded from the owned durable claim/reservation/boot records.
@@ -52,7 +54,10 @@ export async function executeAttachmentGuestAction(
   try {
     const result = await deps.runHostScript(script, { ...context.env },
       { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32 * 1024 });
-    if (!result.ok) return { ok: false, code: "transport_failed" };
+    if (!result.ok) {
+      const refused = parseAttachmentTargetRefusal(result.stdout);
+      return refused ? { ok: false, code: "target_refused", reason: refused } : { ok: false, code: "transport_failed" };
+    }
     if (action === "fetch") {
       const artifact = parseAttachmentArtifactResult(result.stdout, expected);
       return artifact ? { ok: true, action, artifact } : { ok: false, code: "invalid_result" };

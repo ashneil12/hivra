@@ -251,3 +251,16 @@ it("tells a guest that never answered (boot_unobserved) from an answer it could 
   expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "boot_unconfirmed" });
   expect(deps.execute).not.toHaveBeenCalled();
 });
+
+it("names a VM the host refused before anything ran in it, at the boot read and at the fetch", async () => {
+  const deps = fixture();
+  deps.store.read.mockResolvedValue({ ...prepared, observation: null });
+  deps.observeBoot.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
+  deps.observeBoot.mockResolvedValue({ ok: false, code: "target_refused", reason: "address_mismatch" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_ready" });
+  deps.store.read.mockResolvedValue(prepared);
+  deps.execute.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
+  expect(deps.store.dispatch).not.toHaveBeenCalled();
+});

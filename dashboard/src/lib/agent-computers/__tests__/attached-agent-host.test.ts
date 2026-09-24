@@ -35,13 +35,21 @@ it("pins the runner and the lifecycle program to the files in the tree", () => {
 });
 
 it.each(Object.keys(ATTACHED_AGENT_TIMEOUTS) as Array<keyof typeof ATTACHED_AGENT_TIMEOUTS>)(
-  "builds the fixed %s transport inside the allocation lock, bound to the VMID and binding tag", (action) => {
+  "starts the %s step under the allocation lock, bound to the VMID and binding tag, and waits without the lock", (action) => {
     const script = buildAttachedAgentHostScript(action, target, packet);
     expect(spawnSync("bash", ["-n"], { input: script, encoding: "utf8", timeout: 5000 }).status).toBe(0);
     expect(script).toContain("fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)");
     expect(script).toContain("VMID=1234");
-    expect(script).toContain(`qm() { command timeout --kill-after=5 ${ATTACHED_AGENT_TIMEOUTS[action].guestSeconds} qm "$@"; }`);
-    expect(script.indexOf('grep -Fxq "$EXPECTED_BINDING_TAG"')).toBeLessThan(script.lastIndexOf("run_vmid_bound_guest_exec_stdin /usr/bin/python3"));
+    // Every other user of the host lock waits at most 60 s: an activation
+    // (up to 540 s) must never hold it while the guest works (fleet safety).
+    const dispatch = script.lastIndexOf("dispatch_vmid_bound_guest_exec_stdin /usr/bin/python3");
+    const release = script.lastIndexOf("flock -u 9");
+    const wait = script.lastIndexOf(`await_vmid_bound_guest_exec "$HIVRA_GUEST_PID" ${ATTACHED_AGENT_TIMEOUTS[action].guestSeconds}`);
+    expect(script.indexOf('grep -Fxq "$EXPECTED_BINDING_TAG"')).toBeLessThan(dispatch);
+    expect(dispatch).toBeGreaterThan(-1);
+    expect(release).toBeGreaterThan(dispatch);
+    expect(wait).toBeGreaterThan(release);
+    expect(script.match(/qm\(\) \{ command timeout/g)).toHaveLength(1);
     expect(script).toContain(`"action":"${action}"`);
     expect(script).not.toContain("ssh ");
   });
@@ -78,6 +86,12 @@ describe("executing a step", () => {
     expect(await executeAttachedAgentStep(OWNER, agent as never, "remove", target, packet, d)).toEqual({ ok: true, result: removed });
     expect(d.runHostScript).toHaveBeenCalledWith(expect.any(String), context.env, { timeoutMs: ATTACHED_AGENT_TIMEOUTS.remove.hostMs, maxOutputBytes: 65536 });
     d.runHostScript.mockResolvedValue({ ok: false, stdout: "" });
+    expect(await executeAttachedAgentStep(OWNER, agent as never, "remove", target, packet, d)).toEqual({ ok: false, code: "transport_failed" });
+    // The host refused the VM before anything ran in it, and said why.
+    d.runHostScript.mockResolvedValue({ ok: false, stdout: "HIVRA_ATTACHMENT_TARGET_REFUSED computer_not_running\n" });
+    expect(await executeAttachedAgentStep(OWNER, agent as never, "remove", target, packet, d))
+      .toEqual({ ok: false, code: "target_refused", reason: "computer_not_running" });
+    d.runHostScript.mockResolvedValue({ ok: false, stdout: "HIVRA_ATTACHMENT_TARGET_REFUSED something_else\n" });
     expect(await executeAttachedAgentStep(OWNER, agent as never, "remove", target, packet, d)).toEqual({ ok: false, code: "transport_failed" });
     d.runHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_ATTACHED_AGENT_V1 ${JSON.stringify(removed)}` });
     expect(await executeAttachedAgentStep(OWNER, agent as never, "state", target, packet, d)).toEqual({ ok: false, code: "invalid_result" });

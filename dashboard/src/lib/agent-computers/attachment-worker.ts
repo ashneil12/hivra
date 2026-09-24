@@ -118,6 +118,9 @@ function packetInput(state: AttachmentState, computer: ComputerRow, ids: { uid: 
   };
 }
 
+/** A held step's reason: the host's refusal when it gave one, else the transport code. */
+const failureCode = (result: { code: string; reason?: string }) => result.code === "target_refused" && result.reason ? result.reason : result.code;
+
 const grantsLabel = (grants: { workspace: boolean }) => grants.workspace ? "~/Hivra read and write, internet" : "internet, no shared folder";
 
 /** One pass over one attach: staging, activation, readiness, completion. */
@@ -151,6 +154,10 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   if (!state.staged) {
     const staged = await deps.stage(ownerId, id, architecture);
     if (staged.state !== "staging_recorded") {
+      // The host refused the VM before anything ran in it: failed, with why.
+      if ((staged.reason === "computer_not_running" || staged.reason === "computer_not_ready") && state.phase === "claimed") {
+        return await refuse(staged.reason);
+      }
       // The guest never answered: once the window has passed it is not ready.
       const claimedAt = state.createdAt ? Date.parse(state.createdAt) : Number.NaN;
       if (staged.reason === "boot_unobserved" && state.phase === "claimed" && Number.isFinite(claimedAt)
@@ -179,7 +186,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     // and then only observed.
     if (!granted) return held("activation_unconfirmed");
     const started = await deps.execute(ownerId, computer, "activate", hostTarget, built.packet);
-    if (!started.ok) return held("activation_" + started.code);
+    if (!started.ok) return held("activation_" + failureCode(started));
     result = started.result as AttachedActivationResult;
     state = await deps.store.readState(ownerId, id);
     if (!state?.activation) return held("state_unavailable");
@@ -191,7 +198,7 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     const observed = await deps.execute(ownerId, computer, "observe", hostTarget, attachedObservePacket({ operationId: id,
       activationId: activation.activationId, installationId: state.installation!.installationId, bootId: state.bootId,
       serviceDefinitionSha256: activation.serviceDefinitionSha256, instanceToken: token }).packet);
-    if (!observed.ok) return held("observation_" + observed.code);
+    if (!observed.ok) return held("observation_" + failureCode(observed));
     result = observed.result as AttachedActivationResult;
     if (result.contract) {
       const built = attachedActivatePacket({ ...packetInput(state, computer, ids, id, grants, 1), bootId: state.bootId,
@@ -235,7 +242,7 @@ async function cleanUpAndFail(ownerId: string, state: AttachmentState, computer:
   const held = (reason: string): AttachmentWorkProgress => ({ kind: "attach", id: state.id, state: "held", reason });
   const cleaned = await deps.execute(ownerId, computer, "remove", hostTarget,
     attachedRemovePacket({ operationId: state.id, installationId: state.installation!.installationId }).packet);
-  if (!cleaned.ok) return held("cleanup_" + cleaned.code);
+  if (!cleaned.ok) return held("cleanup_" + failureCode(cleaned));
   const receipt = cleaned.result as AttachedRemoveResult;
   if (receipt.state !== "removed") return held("cleanup_unresolved");
   if (!await deps.store.fail({ ownerId, operationId: state.id, generation: state.generation, authority: state.guestAuthority,
@@ -278,7 +285,7 @@ Promise<AttachmentWorkProgress> {
     // pass that lost the previous answer runs it again to observe the end state.
     const removed = await deps.execute(ownerId, computer, "remove", hostTarget,
       attachedRemovePacket({ operationId: id, installationId: state.installation.installationId }).packet);
-    if (!removed.ok) return held("remove_" + removed.code);
+    if (!removed.ok) return held("remove_" + failureCode(removed));
     const receipt = removed.result as AttachedRemoveResult;
     if (receipt.state !== "removed") return held(receipt.reason ?? "remove_unresolved");
     if (!await deps.store.completeOperation(ownerId, id, receipt as unknown as Record<string, unknown>)) return held("completion_unconfirmed");
@@ -293,14 +300,14 @@ Promise<AttachmentWorkProgress> {
   if (fresh) {
     const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
     const changed = await deps.execute(ownerId, computer, "access", hostTarget, built.packet);
-    if (!changed.ok) return held("access_" + changed.code);
+    if (!changed.ok) return held("access_" + failureCode(changed));
     const receipt = changed.result as AttachedAccessResult;
     return await finishAccess(ownerId, id, operation.attachmentId, receipt, built.contract, revision, operation.grants, computer, state, deps);
   }
   // The answer to a dispatched change was lost: look, never change again.
   const looked = await deps.execute(ownerId, computer, "state", hostTarget,
     attachedStatePacket({ operationId: id, installationId: state.installation.installationId, instanceToken: token }).packet);
-  if (!looked.ok) return held("state_" + looked.code);
+  if (!looked.ok) return held("state_" + failureCode(looked));
   const observed = looked.result as AttachedStateResult;
   const built = attachedAccessPacket({ ...input, instanceToken: token, previousGrants: operation.previousGrants });
   if (observed.chatReady && observed.workspace === operation.grants.workspace && observed.viewMounted === operation.grants.workspace) {

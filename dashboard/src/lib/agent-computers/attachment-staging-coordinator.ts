@@ -11,8 +11,15 @@ type Dependencies = { store: AttachmentExecutionStore; observeBoot: typeof obser
   execute: typeof executeAttachmentGuestAction; uuid: () => string };
 // boot_unobserved: the computer's guest did not answer Hivra at all, so it is
 // not ready; boot_unconfirmed: it answered and recording that was not confirmed.
+// computer_not_running / computer_not_ready: before the stage dispatch, the
+// host refused the VM (stopped, or not the tagged VM on its address) and
+// nothing ran in it; the worker ends the claim as failed with that reason.
 type Reason = "state_unavailable" | "pending_delete" | "reservation_unconfirmed" | "boot_unobserved" | "boot_unconfirmed"
-  | "fetch_unconfirmed" | "dispatch_unconfirmed" | "staging_unconfirmed" | "result_unconfirmed";
+  | "fetch_unconfirmed" | "dispatch_unconfirmed" | "staging_unconfirmed" | "result_unconfirmed"
+  | "computer_not_running" | "computer_not_ready";
+const refusalReason = (result: { ok: boolean; code?: string; reason?: string }): Reason | null =>
+  !result.ok && result.code === "target_refused"
+    ? result.reason === "computer_not_running" ? "computer_not_running" : "computer_not_ready" : null;
 export type AttachmentStagingProgress = { operationId: string; state: "staging_recorded" }
   | { operationId: string; state: "held"; reason: Reason };
 
@@ -67,7 +74,7 @@ export async function progressAttachmentStaging(
         operationId, computerId: snapshot.computerId, sourceId: snapshot.guestAuthority.id,
         architecture: snapshot.installation!.architecture,
       });
-      if (!observed.ok) return held();
+      if (!observed.ok) { reason = refusalReason(observed) ?? reason; return held(); }
       reason = "boot_unconfirmed";
       if (await deps.store.recordBoot(snapshot, observed.observation.bootId) !== true) return held();
       const next = await read();
@@ -81,7 +88,8 @@ export async function progressAttachmentStaging(
     const expected = attachmentExecutionExpectation(snapshot, dispatchId);
     if (!expected) return held();
     const fetched = await deps.execute(ownerId, attachmentExecutionAgent(snapshot), "fetch", expected);
-    if (!fetched.ok || fetched.action !== "fetch") return held();
+    if (!fetched.ok) { reason = refusalReason(fetched) ?? reason; return held(); }
+    if (fetched.action !== "fetch") return held();
     reason = "dispatch_unconfirmed";
     // Only an unambiguous true from THIS pass authorizes one stage call. Lost
     // acknowledgement, false, or exception cannot be converted into a retry.

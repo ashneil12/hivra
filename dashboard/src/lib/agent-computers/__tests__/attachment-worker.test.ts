@@ -123,6 +123,17 @@ describe("adding Codex", () => {
     expect(deps.execute).not.toHaveBeenCalled();
   });
 
+  it.each(["computer_not_running", "computer_not_ready"] as const)(
+    "fails a claim at once when the host refused the VM before staging (%s), never held", async (reason) => {
+      const { store, deps } = fakes();
+      deps.stage.mockResolvedValue({ operationId: ID, state: "held", reason });
+      store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, createdAt: new Date(NOW - 10_000).toISOString() }));
+      expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+        .toEqual({ kind: "attach", id: ID, state: "failed", reason });
+      expect(store.refuse).toHaveBeenCalledWith(OWNER, ID, reason);
+      expect(deps.execute).not.toHaveBeenCalled();
+    });
+
   it("keeps a refusal the database did not confirm held, to be read again", async () => {
     const { store, deps } = fakes();
     store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
