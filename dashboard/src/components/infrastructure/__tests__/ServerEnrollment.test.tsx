@@ -269,6 +269,7 @@ describe("Is this your server?", () => {
     expect(await screen.findByText(/Enter the server's public IPv4 address or hostname/)).toBeInTheDocument();
     expect(replaceServerEnrollmentAccess).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Sign in at this address instead"), { target: { value: "203.0.113.9" } });
+    expect(screen.getByText(/Hivra first signs in to web-1 at 203\.0\.113\.9 with the new key\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch web-1 to the hivra user" }));
     await waitFor(() => expect(handlers.onReplaced).toHaveBeenCalled());
     expect(replaceServerEnrollmentAccess).toHaveBeenCalledWith(reported().id,

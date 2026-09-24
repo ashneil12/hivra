@@ -2372,6 +2372,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       expect(within(commands).getByText(/The setup command you made at .+ hasn't been used yet\. It works until .+\./))
         .toBeInTheDocument();
       expect(within(commands).getByRole("button", { name: "Cancel this command" })).toBeInTheDocument();
+      // The owner's next step sits above the ways to add more capacity.
+      const entryChooser = document.getElementById("infrastructure-entry-options");
+      expect(entryChooser).not.toBeNull();
+      expect(commands.compareDocumentPosition(entryChooser as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
       // The server runs the copied command and reports: the page's poll finds it.
       (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [{

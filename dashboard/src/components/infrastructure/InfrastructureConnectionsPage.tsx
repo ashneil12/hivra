@@ -996,18 +996,8 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
           </div>
         ) : null}
 
-        {showingEntryChooser ? (
-          <InfrastructureEntryChooser
-            firstConnection={showingFirstConnection}
-            hivraCloud={hivraCloud}
-            selfHosted={selfHosted}
-            onChooseHivraCloud={openHivraCloudDialog}
-            onConnectHetzner={openHetznerDialog}
-            onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
-            onConnectExisting={openServerEnrollment}
-          />
-        ) : null}
-
+        {/* Answers waiting (Is this your server?, open commands) come first:
+            they are the owner's next step, above the ways to add more. */}
         <ServerEnrollmentAnswers
           enrollments={openEnrollments(enrollments, dismissedEnrollments, enrollmentNow)}
           uninstallCommand={uninstallCommand}
@@ -1021,6 +1011,18 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
           onDismiss={(id) => setDismissedEnrollments((current) => new Set(current).add(id))}
           onNewCommand={openServerEnrollment}
         />
+
+        {showingEntryChooser ? (
+          <InfrastructureEntryChooser
+            firstConnection={showingFirstConnection}
+            hivraCloud={hivraCloud}
+            selfHosted={selfHosted}
+            onChooseHivraCloud={openHivraCloudDialog}
+            onConnectHetzner={openHetznerDialog}
+            onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
+            onConnectExisting={openServerEnrollment}
+          />
+        ) : null}
 
         {hasHivraCloudCapacity && hivraCloud ? (
           <section className={styles.connectionSection} aria-labelledby="hivra-cloud-heading">

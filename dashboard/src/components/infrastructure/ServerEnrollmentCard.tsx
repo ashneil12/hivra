@@ -153,6 +153,10 @@ export function ServerEnrollmentCard({
 
   const name = known?.connectionName ?? "the server";
   const replaceOffered = known?.offer === "replace_key" || known?.offer === "switch_user";
+  // Where the check signs in: the connection's address, or, for a switch, the
+  // one the owner typed.
+  const signInAddress = known?.offer === "switch_user" && editingAddress && address.trim()
+    ? address.trim() : known?.sshHost ?? null;
 
   async function answerYes() {
     let sshHost: string | null = null;
@@ -266,7 +270,7 @@ export function ServerEnrollmentCard({
       ) : known ? (
         <p>
           Only continue if your terminal shows these three words and you ran the command on {name}. Hivra first signs
-          in to {name} at {known.sshHost ?? "its address"} with the new key. It changes {name} only if that works;
+          in to {name} at {signInAddress ?? "its address"} with the new key. It changes {name} only if that works;
           otherwise Hivra leaves {name} as it is.
         </p>
       ) : (
