@@ -36,10 +36,15 @@
  * more credit per token), so a quote is priced at min(spot, median): a pump
  * never buys a cheaper quote. A spot more than PLATFORM_PRICE_MAX_DEVIATION_BPS
  * above the median is refused outright; a spot below it is simply used.
+ *
+ * Each refusal is a PlatformTokenPriceGateError that names the token, the
+ * reason (liquidity_floor, median_deviation, no_candle or feed_error) and the
+ * observed values, so the quote routes can log and alert on it
+ * (price-gate-alerts.ts) without re-deriving why.
  */
 
 import { VVV_TOKEN_ADDRESS } from "./token-holdings";
-import { HERMESOS_TOKEN, type PlatformToken } from "./token-registry";
+import { HERMESOS_TOKEN, type PlatformToken, type PlatformTokenKey } from "./token-registry";
 
 export interface HermesPriceQuote {
   /**
@@ -109,15 +114,91 @@ const REFERENCE_CACHE_MS = 60_000;
 /** A failed reference read is reused this long, so an outage does not become a request storm (and a 429). */
 const REFERENCE_FAILURE_CACHE_MS = 30_000;
 
+export type PlatformTokenPriceGate = "liquidity" | "spot_unavailable" | "reference_unavailable" | "deviation" | "pool_missing";
+
+/**
+ * Why a price gate refused, for logs and ops alerts:
+ *   liquidity_floor   the pricing pool holds less than the token's floor
+ *   median_deviation  the spot is too far above the recent median
+ *   no_candle         the median source has no candle for the pool
+ *   feed_error        a price source failed, or named the wrong pool
+ */
+export type PriceGateReason = "liquidity_floor" | "median_deviation" | "no_candle" | "feed_error";
+
+/** Numbers and ids a gate observed when it refused (never user data). */
+export type PriceGateObserved = Record<string, number | string | null>;
+
+/** One gate refusal, in the shape the quote routes log and alert on. */
+export interface PriceGateRefusal {
+  /** Registry key of the refused token, or "unknown" when the error did not name it. */
+  assetKey: PlatformTokenKey | "unknown";
+  /** How the product writes the token, e.g. "$HIVRA". */
+  asset: string;
+  reason: PriceGateReason;
+  gate: PlatformTokenPriceGate | "unknown";
+  observed: PriceGateObserved;
+}
+
+function reasonForGate(gate: PlatformTokenPriceGate): PriceGateReason {
+  if (gate === "liquidity") return "liquidity_floor";
+  if (gate === "deviation") return "median_deviation";
+  return "feed_error";
+}
+
 /** A platform-token price failed a safety gate; quotes must not be issued. */
 export class PlatformTokenPriceGateError extends Error {
+  readonly reason: PriceGateReason;
+  readonly assetKey: PlatformTokenKey | "unknown";
+  readonly asset: string;
+  readonly observed: PriceGateObserved;
+
   constructor(
-    readonly gate: "liquidity" | "spot_unavailable" | "reference_unavailable" | "deviation" | "pool_missing",
-    message: string
+    readonly gate: PlatformTokenPriceGate,
+    message: string,
+    details: { token?: PlatformToken; reason?: PriceGateReason; observed?: PriceGateObserved } = {}
   ) {
     super(message);
     this.name = "PlatformTokenPriceGateError";
+    this.reason = details.reason ?? reasonForGate(gate);
+    this.assetKey = details.token?.key ?? "unknown";
+    this.asset = details.token?.displayUnit ?? "unknown";
+    this.observed = details.observed ?? {};
   }
+
+  get refusal(): PriceGateRefusal {
+    return { assetKey: this.assetKey, asset: this.asset, reason: this.reason, gate: this.gate, observed: this.observed };
+  }
+}
+
+/**
+ * The gate refusal behind a quote failure: a PlatformTokenPriceGateError, an
+ * error that carries a `priceGateRefusal` (managed-Venice deposit gates), or
+ * one wrapping either as its `cause` (LivePriceUnavailableError). Null when
+ * no gate is involved.
+ */
+export function priceGateRefusalFromError(error: unknown): PriceGateRefusal | null {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    if (current instanceof PlatformTokenPriceGateError) return current.refusal;
+    const carried = (current as { priceGateRefusal?: PriceGateRefusal }).priceGateRefusal;
+    if (carried) return carried;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/** The median source has no candle for the pool (never traded, or not indexed yet). */
+class NoCandleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoCandleError";
+  }
+}
+
+/** A gate error raised below the token level (a shared fetch), named for `token`. */
+function forToken(error: PlatformTokenPriceGateError, token: PlatformToken): PlatformTokenPriceGateError {
+  if (error.assetKey !== "unknown") return error;
+  return new PlatformTokenPriceGateError(error.gate, error.message, { token, reason: error.reason, observed: error.observed });
 }
 
 type FetchImpl = typeof fetch;
@@ -192,7 +273,8 @@ async function fetchTokenPriceUsd(
     if (options.poolId && eligible.length > 0) {
       throw new PlatformTokenPriceGateError(
         "pool_missing",
-        `DEXScreener has no pair for the canonical pool ${options.poolId}`
+        `DEXScreener has no pair for the canonical pool ${options.poolId}`,
+        { observed: { stage: "spot", poolId: options.poolId, otherPairs: eligible.length } }
       );
     }
     throw new Error(`DEXScreener returned no usable pair for ${tokenAddress}`);
@@ -303,7 +385,9 @@ async function readPoolMedianCloseNative(
   const base = payload.meta?.base?.address?.toLowerCase();
   if (base && base !== tokenAddress.toLowerCase()) {
     // A misconfigured pool, not an outage: fail closed, never serve a cached price.
-    throw new PlatformTokenPriceGateError("pool_missing", `GeckoTerminal priced pool ${poolId} for ${base}, not ${tokenAddress}`);
+    throw new PlatformTokenPriceGateError("pool_missing", `GeckoTerminal priced pool ${poolId} for ${base}, not ${tokenAddress}`, {
+      observed: { stage: "reference", poolId },
+    });
   }
   const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
   const nowSec = Math.floor(nowMs / 1000);
@@ -312,7 +396,7 @@ async function readPoolMedianCloseNative(
     .map((c) => ({ at: Number(c[0]), close: Number(c[4]) }))
     .filter((c) => Number.isFinite(c.at) && c.at <= nowSec && Number.isFinite(c.close) && c.close > 0)
     .sort((a, b) => a.at - b.at);
-  if (candles.length === 0) throw new Error(`GeckoTerminal has no candles for pool ${poolId}`);
+  if (candles.length === 0) throw new NoCandleError(`GeckoTerminal has no candles for pool ${poolId}`);
 
   const lastBucket = nowSec - (nowSec % BUCKET_SEC);
   const buckets = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES / 5;
@@ -325,7 +409,7 @@ async function readPoolMedianCloseNative(
     // Before the pool's first candle there is no price to carry: skip.
     if (carried !== null) closes.push(carried);
   }
-  if (closes.length === 0) throw new Error(`GeckoTerminal has no candles for pool ${poolId} before now`);
+  if (closes.length === 0) throw new NoCandleError(`GeckoTerminal has no candles for pool ${poolId} before now`);
   return {
     priceNative: median(closes),
     candles: candles.filter((c) => c.at >= firstBucket).length,
@@ -355,24 +439,30 @@ export async function fetchPlatformTokenPriceUsd(
   try {
     spot = await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId });
   } catch (error) {
-    if (error instanceof PlatformTokenPriceGateError) throw error;
+    if (error instanceof PlatformTokenPriceGateError) throw forToken(error, token);
     throw new PlatformTokenPriceGateError(
       "spot_unavailable",
-      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`
+      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      { token, observed: { stage: "spot", poolId: token.poolId } }
     );
   }
   const { pair, ...quote } = spot;
+  const poolId = pair.pairAddress ?? token.poolId;
   const liquidityUsd = pair.liquidity?.usd ?? 0;
   if (!(liquidityUsd >= token.minPriceLiquidityUsd)) {
     throw new PlatformTokenPriceGateError(
       "liquidity",
-      `${token.displayUnit} pricing pool holds $${Math.floor(liquidityUsd)}, below the $${token.minPriceLiquidityUsd} floor`
+      `${token.displayUnit} pricing pool holds $${Math.floor(liquidityUsd)}, below the $${token.minPriceLiquidityUsd} floor`,
+      { token, observed: { liquidityUsd, minLiquidityUsd: token.minPriceLiquidityUsd, poolId } }
     );
   }
   const spotUsd = Number(quote.priceUsd);
   const spotNative = Number(pair.priceNative);
   if (!(spotNative > 0) || !Number.isFinite(spotNative)) {
-    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`);
+    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`, {
+      token,
+      observed: { stage: "spot", poolId, liquidityUsd },
+    });
   }
   const reference = await referenceFor(token, pair, options);
   // Positive = spot above the median (the direction a pump pushes).
@@ -380,7 +470,20 @@ export async function fetchPlatformTokenPriceUsd(
   if (aboveMedianBps > PLATFORM_PRICE_MAX_DEVIATION_BPS) {
     throw new PlatformTokenPriceGateError(
       "deviation",
-      `${token.displayUnit} spot is ${aboveMedianBps} bps above its ${PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES}-minute median`
+      `${token.displayUnit} spot is ${aboveMedianBps} bps above its ${PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES}-minute median`,
+      {
+        token,
+        observed: {
+          aboveMedianBps,
+          maxDeviationBps: PLATFORM_PRICE_MAX_DEVIATION_BPS,
+          spotNative,
+          medianNative: reference.priceNative,
+          medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
+          medianCandles: reference.candles,
+          liquidityUsd,
+          poolId,
+        },
+      }
     );
   }
   // The median in USD at today's paired-token rate (the spot's own rate).
@@ -412,14 +515,22 @@ async function referenceFor(
   options: FetchTokenPriceOptions
 ): Promise<PoolReference> {
   const poolId = token.poolId ?? pair.pairAddress;
-  if (!poolId) throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`);
+  if (!poolId) {
+    throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`, {
+      token,
+      observed: { stage: "reference", poolId: null },
+    });
+  }
   try {
     return await fetchPoolMedianCloseNative(poolId, token.address, options);
   } catch (error) {
-    if (error instanceof PlatformTokenPriceGateError) throw error;
+    if (error instanceof PlatformTokenPriceGateError) throw forToken(error, token);
     throw new PlatformTokenPriceGateError(
       "reference_unavailable",
-      `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`
+      `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      // Still a reference outage for the stale-price fallback (live-thresholds),
+      // but reported as no_candle when the pool simply has no candle yet.
+      { token, reason: error instanceof NoCandleError ? "no_candle" : "feed_error", observed: { stage: "reference", poolId } }
     );
   }
 }
@@ -438,15 +549,19 @@ export async function fetchPlatformTokenPriceCrossCheck(
   try {
     pair = (await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId })).pair;
   } catch (error) {
-    if (error instanceof PlatformTokenPriceGateError) throw error;
+    if (error instanceof PlatformTokenPriceGateError) throw forToken(error, token);
     throw new PlatformTokenPriceGateError(
       "spot_unavailable",
-      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`
+      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      { token, observed: { stage: "spot", poolId: token.poolId } }
     );
   }
   const usdPerNative = Number(pair.priceUsd) / Number(pair.priceNative);
   if (!(usdPerNative > 0) || !Number.isFinite(usdPerNative)) {
-    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`);
+    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`, {
+      token,
+      observed: { stage: "spot", poolId: pair.pairAddress ?? token.poolId },
+    });
   }
   const reference = await referenceFor(token, pair, options);
   return {

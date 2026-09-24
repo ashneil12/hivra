@@ -23,8 +23,10 @@ import {
   fetchHermesPriceCrossCheck,
   fetchPlatformTokenPriceUsd,
   isHermesPriceFresh,
+  priceGateRefusalFromError,
   type HermesPriceCrossCheck,
   type HermesPriceQuote,
+  type PriceGateRefusal,
 } from "./price-feed";
 
 export const MANAGED_VENICE_QUOTE_LIFETIME_MS = 20 * 60_000;
@@ -234,11 +236,30 @@ const SELECT_COLUMNS =
   "cross_check_last_updated_at, transaction_hash, settled_at, " +
   "transfer_surfacing_pending, metadata";
 
+/**
+ * Deposits are paused because a price gate refused. `priceGateRefusal` names
+ * the gate (price-feed.ts), for the route's log and ops alert; `cause` is the
+ * underlying price error when there is one.
+ */
 export class ManagedVeniceTokenQuotePriceError extends Error {
-  constructor(message: string) {
+  readonly priceGateRefusal?: PriceGateRefusal;
+  readonly cause?: unknown;
+
+  constructor(message: string, details: { cause?: unknown; priceGateRefusal?: PriceGateRefusal } = {}) {
     super(message);
     this.name = "ManagedVeniceTokenQuotePriceError";
+    this.cause = details.cause;
+    this.priceGateRefusal = details.priceGateRefusal ?? priceGateRefusalFromError(details.cause) ?? undefined;
   }
+}
+
+/** A deposit-only gate (stale price, cross-check band) refusing a quote for `token`. */
+function depositGateRefusal(
+  token: PlatformToken,
+  reason: PriceGateRefusal["reason"],
+  observed: PriceGateRefusal["observed"]
+): PriceGateRefusal {
+  return { assetKey: token.key, asset: token.displayUnit, reason, gate: "unknown", observed };
 }
 
 // Thrown by the quote-creation flow when a deposit's projected bonus
@@ -1088,7 +1109,8 @@ async function gatedDepositPrice(token: PlatformToken) {
   } catch (error) {
     if (error instanceof PlatformTokenPriceGateError) {
       throw new ManagedVeniceTokenQuotePriceError(
-        `Managed Venice token deposits are temporarily disabled: ${error.message}`
+        `Managed Venice token deposits are temporarily disabled: ${error.message}`,
+        { cause: error }
       );
     }
     throw error;
@@ -1120,7 +1142,14 @@ export async function createManagedVeniceTokenQuote(
   const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   if (!isHermesPriceFresh(priceQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the token price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token price is stale",
+      {
+        priceGateRefusal: depositGateRefusal(token, "feed_error", {
+          stage: "spot_stale",
+          priceAgeMs: now.getTime() - priceQuote.lastUpdatedAt * 1000,
+          maxAgeMs: MANAGED_VENICE_PRICE_MAX_AGE_MS,
+        }),
+      }
     );
   }
 
@@ -1133,7 +1162,13 @@ export async function createManagedVeniceTokenQuote(
     params.crossCheckQuote === undefined
       ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {
           throw new ManagedVeniceTokenQuotePriceError(
-            `Managed Venice token deposits are temporarily disabled: ${error instanceof Error ? error.message : String(error)}`
+            `Managed Venice token deposits are temporarily disabled: ${error instanceof Error ? error.message : String(error)}`,
+            {
+              cause: error,
+              ...(priceGateRefusalFromError(error)
+                ? {}
+                : { priceGateRefusal: depositGateRefusal(token, "feed_error", { stage: "cross_check" }) }),
+            }
           );
         })
       : params.crossCheckQuote;
@@ -1142,7 +1177,14 @@ export async function createManagedVeniceTokenQuote(
     !isHermesPriceFresh(crossCheckQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the token cross-check price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token cross-check price is stale",
+      {
+        priceGateRefusal: depositGateRefusal(token, "feed_error", {
+          stage: "cross_check_stale",
+          priceAgeMs: now.getTime() - crossCheckQuote.lastUpdatedAt * 1000,
+          maxAgeMs: MANAGED_VENICE_PRICE_MAX_AGE_MS,
+        }),
+      }
     );
   }
   if (
@@ -1154,7 +1196,15 @@ export async function createManagedVeniceTokenQuote(
     )
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the token price is above its recent median"
+      "Managed Venice token deposits are temporarily disabled because the token price is above its recent median",
+      {
+        priceGateRefusal: depositGateRefusal(token, "median_deviation", {
+          stage: "cross_check",
+          priceUsd: priceQuote.priceUsd,
+          medianUsd: crossCheckQuote.priceUsd,
+          maxDeviationBps: MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS,
+        }),
+      }
     );
   }
 

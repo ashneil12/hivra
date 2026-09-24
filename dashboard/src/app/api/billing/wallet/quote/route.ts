@@ -29,6 +29,7 @@ import {
 import { getTokenVerificationWallet } from "@/lib/billing/token-holdings";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
+import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 import { hasExistingTokenTierRow, resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
@@ -172,10 +173,30 @@ export async function POST(req: NextRequest) {
     return apiSuccess(serializeQuote(quote));
   } catch (error) {
     if (error instanceof PlatformTokenPriceGateError) {
-      return apiError("Token price unavailable — please try again later.", 503, {
-        failureType: "deposit_quote_price_unavailable",
-        gate: error.gate,
+      // The rate-limited gate log and ops alert are the signal; the per-request
+      // line stays at info so a gate that holds for hours cannot flood the logs.
+      await reportPriceGateRefusal(error, {
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
       });
+      return apiError(
+        "Token price unavailable — please try again later.",
+        503,
+        {
+          failureType: "deposit_quote_price_unavailable",
+          gate: error.gate,
+          gateReason: error.reason,
+        },
+        undefined,
+        {
+          source: "billing/wallet-quote",
+          route: "/api/billing/wallet/quote",
+          method: "POST",
+          failureType: "deposit_quote_price_unavailable",
+          logLevel: "info",
+        }
+      );
     }
     if (error instanceof TokenNotAllowedError) {
       return apiError(error.message, 403, {
