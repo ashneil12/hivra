@@ -19,7 +19,7 @@ export interface Env {
 
 const CONNECTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN_ID = /^[A-Za-z0-9_-]{16,64}$/;
-const ROUTE = /^\/v1\/hosts\/([0-9a-f-]{36})\/(agent|client|revoke|stream\/([A-Za-z0-9_-]{16,64}))$/;
+const ROUTE = /^\/v1\/hosts\/([0-9a-f-]{36})\/(agent|client|revoke|status|stream\/([A-Za-z0-9_-]{16,64}))$/;
 const CLOCK_SKEW_SECONDS = 120;
 const MAX_TICKET_LIFETIME_SECONDS = 120;
 const MAX_GENERATION = 1_000_000_000;
@@ -147,6 +147,7 @@ export class HostRelay extends DurableObject<Env> {
     const master = this.env.HOST_RELAY_SECRET;
 
     if (route === "revoke") return this.revoke(request, master);
+    if (route === "status") return this.status(request, master);
     if (!isUpgrade(request)) return json(426, { error: "websocket_required" });
     if (route === "agent") return this.acceptAgent(request, master, connectionId);
     if (route === "client") return this.acceptClient(request, master, connectionId);
@@ -193,6 +194,22 @@ export class HostRelay extends DurableObject<Env> {
       if (entry) this.closeEntry(streamId, 4001, "revoked");
     }
     return json(200, { minGeneration: next });
+  }
+
+  /** Whether the machine's connector is connected now, for Hivra's control plane. */
+  private async status(request: Request, master: string): Promise<Response> {
+    if (request.method !== "GET") return json(405, { error: "method_not_allowed" });
+    if (!sameString(request.headers.get("authorization") ?? "", `Bearer ${await adminToken(master)}`)) {
+      return json(401, { error: "unauthorized" });
+    }
+    const agent = this.ctx.getWebSockets("agent")[0];
+    const generation = agent ? Number(this.ctx.getTags(agent).find((tag) => tag.startsWith("gen:"))?.slice(4)) : null;
+    return json(200, {
+      online: Boolean(agent),
+      generation: Number.isSafeInteger(generation) ? generation : null,
+      minGeneration: await this.minGeneration(),
+      sessions: this.streams.size,
+    });
   }
 
   private async acceptAgent(request: Request, master: string, connectionId: string): Promise<Response> {
