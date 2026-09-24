@@ -7,7 +7,9 @@ import "server-only";
 // SSH (host->guest, base64-wrapped). This reuses bankr-skills-seed's proven SSH
 // plumbing (`seedSkillFilesOntoBox`) rather than duplicating it; the only new
 // logic here is resolving catalog ids → {slug, content} files and the per-call
-// gating/result shape.
+// gating/result shape. Every file written is one Codex can load (repaired if
+// needed, see skill-file.ts); a requested skill that can't be made loadable
+// fails the whole install with a clear error instead of vanishing.
 //
 // Each install is an on-demand SSH round-trip to the box via the orchestrator
 // key. Only CLI box types with a skills dir (codex / claude-code) are eligible;
@@ -21,7 +23,11 @@ import {
   seedSkillFilesOntoBox,
   type BankrSkillFile,
 } from "@/lib/hivra/bankr-skills-seed";
+import { loadableSkillContent, SkillContentError } from "@/lib/hivra/skill-file";
+import { log } from "@/lib/logger";
 import type { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+
+const LOG_SOURCE = "hivra/skill-install";
 
 export interface SkillInstallAgent {
   id: string;
@@ -35,6 +41,8 @@ export interface SkillInstallResult {
   installed: string[];
   /** Catalog ids that were requested but not installable (unknown id / no content). */
   skipped: string[];
+  /** Catalog ids whose SKILL.md Codex couldn't load, even repaired. Never written. */
+  unloadable?: string[];
   error?: string;
 }
 
@@ -74,16 +82,19 @@ export function listInstallableSkillMeta(): InstallableSkillMeta[] {
 
 /**
  * Resolve requested catalog ids into the {slug, content} files to write, plus
- * the ids that couldn't be resolved (unknown / contentless). Slugs are unique
- * per call so two requested skills never collide on disk — same scheme the Bankr
- * suite uses (slug from the identifier, deduped with a numeric suffix).
+ * the ids that couldn't be resolved (unknown / contentless) and the ids whose
+ * SKILL.md can't be made loadable. Slugs are unique per call so two requested
+ * skills never collide on disk — same scheme the Bankr suite uses (slug from
+ * the identifier, deduped with a numeric suffix).
  */
 export function collectSkillFilesForIds(skillIds: string[]): {
   files: (BankrSkillFile & { id: string })[];
   skipped: string[];
+  unloadable: string[];
 } {
   const files: (BankrSkillFile & { id: string })[] = [];
   const skipped: string[] = [];
+  const unloadable: string[] = [];
   const seenIds = new Set<string>();
   const seenSlugs = new Set<string>();
   for (const id of skillIds) {
@@ -99,20 +110,43 @@ export function collectSkillFilesForIds(skillIds: string[]): {
       skipped.push(id);
       continue;
     }
+    let content: string;
+    try {
+      content = loadableSkillContent(entry);
+    } catch (err) {
+      if (!(err instanceof SkillContentError)) throw err;
+      log.warn("curated skill not installed: its SKILL.md can't be loaded", {
+        source: LOG_SOURCE,
+        failureType: "skill_file_unloadable",
+        skillId: id,
+        problem: err.problem,
+      });
+      unloadable.push(id);
+      continue;
+    }
     let slug = base;
     let n = 2;
     while (seenSlugs.has(slug)) slug = `${base}-${n++}`;
     seenSlugs.add(slug);
-    files.push({ id, slug, content: entry.content });
+    files.push({ id, slug, content });
   }
-  return { files, skipped };
+  return { files, skipped, unloadable };
+}
+
+function unloadableSkillsError(ids: string[]): string {
+  const names = ids.map((id) => CURATED_BY_ID.get(id)?.name ?? id);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  const one = names.length === 1;
+  return `Couldn't install ${list}: ${one ? "its skill file is" : "their skill files are"} broken, so your agent couldn't use ${one ? "it" : "them"}. Nothing was installed.`;
 }
 
 /**
  * Install the given curated skills onto a running box over SSH. Returns the ids
  * that were written and the ids that were skipped (unknown / contentless). On an
  * SSH/transport failure NOTHING is reported installed (the write is one atomic
- * guest script — partial success isn't observable), and `error` is set.
+ * guest script — partial success isn't observable), and `error` is set. A
+ * requested skill whose SKILL.md can't be made loadable refuses the whole
+ * install before SSH, naming the skill in `error`.
  */
 export async function installCuratedSkillsOnBox(
   agent: SkillInstallAgent,
@@ -127,7 +161,10 @@ export async function installCuratedSkillsOnBox(
     return { ok: false, installed: [], skipped: skillIds, error: "missing or invalid box ip" };
   }
 
-  const { files, skipped } = collectSkillFilesForIds(skillIds);
+  const { files, skipped, unloadable } = collectSkillFilesForIds(skillIds);
+  if (unloadable.length > 0) {
+    return { ok: false, installed: [], skipped, unloadable, error: unloadableSkillsError(unloadable) };
+  }
   if (files.length === 0) {
     // Nothing installable — succeed iff there was genuinely nothing to do.
     return { ok: skipped.length === 0, installed: [], skipped };
