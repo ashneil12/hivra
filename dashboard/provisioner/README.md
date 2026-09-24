@@ -252,9 +252,15 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   only in the gateway process, so `/api/meta` also carries a random
   per-process `bootId` (served `no-store`). While a surface is on screen the
   dashboard re-reads it on focus, `online`, visibility and every 30 s, and
-  re-submits the bootstrap into the same frame when it changes. Gateways
-  without `bootId` keep the old behaviour. A DeepSeek surface for the native
-  root waits for `nativeReady: true` before it bootstraps.
+  when it changes, appears or disappears it posts the bootstrap into a newly
+  mounted frame (never into the loaded one, which would add a browser history
+  entry). Gateways that never advertised a `bootId` are never reloaded. A
+  DeepSeek surface for the native root waits for `nativeReady: true` before
+  it bootstraps, and waits again whenever a loaded one reports it false; the
+  wait ends after 3 minutes (or 20 s of an unreachable gateway) with an
+  honest failure and Try again. `hivra-update-guest-runtime.sh` refuses
+  DeepSeek, so a DeepSeek computer only gets `bootId` from a fresh DeepSeek
+  install of a bundle that contains it.
 
 ## Gotchas (do NOT reintroduce these)
 
