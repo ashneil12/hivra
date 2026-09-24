@@ -15,6 +15,7 @@ import {
   Cloud,
   Code2,
   Cpu,
+  Droplet,
   Loader2,
   Monitor,
   Orbit,
@@ -26,6 +27,7 @@ import {
 
 import {
   DeploymentDestinationControl,
+  DestinationOption,
   measuredTargetCapacity,
   useLaunchDestination,
   type LaunchDestinationChoice,
@@ -36,7 +38,19 @@ import { useHermesWorkspaceReadiness } from "@/components/dashboard/welcome/useH
 import { FreeTierCardVerification } from "@/components/billing/FreeTierCardVerification";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
-import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { formatDigitalOceanBalance, listManagedSessions } from "@/lib/hivra/managed-session-client";
+import { useDigitalOceanBalance } from "@/components/infrastructure/useDigitalOceanBalance";
+import {
+  digitalOceanHarnessFor,
+  digitalOceanModelProblem,
+  digitalOceanSizeFor,
+  digitalOceanSizeLabel,
+  digitalOceanTargetRuns,
+  digitalOceanVendorKey,
+  effectiveDigitalOceanModelMode,
+} from "@/lib/launch/digitalocean-launch";
+import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
@@ -75,8 +89,8 @@ import {
 import {
   LaunchCorrectableError,
   launchResultHref,
-  launchResumeMode,
-  opensOnAcceptance,
+  launchResumeModeFor,
+  opensOnAcceptanceFor,
   reconcileLaunchDraft,
   savedMemoryKey,
   submitLaunchDraft,
@@ -758,6 +772,38 @@ export function LaunchJourney() {
     targetKind: profile?.placementRuntimeId === "linux-terminal" ? "gvisor" : "any",
   });
 
+  // DigitalOcean Managed Agents teams the owner connected. They run a
+  // DigitalOcean sandbox, not a host, so they are read on their own and never
+  // enter the host destination list.
+  const [digitalOceanTeams, setDigitalOceanTeams] = useState<{ state: "loading" | "ready" | "failed"; targets: DigitalOceanDeploymentTargetDto[] }>(
+    () => ({ state: selfHosted ? "ready" : "loading", targets: [] }),
+  );
+  useEffect(() => {
+    if (selfHosted) return;
+    const controller = new AbortController();
+    listManagedSessions(controller.signal)
+      .then(result => { if (!controller.signal.aborted) setDigitalOceanTeams({ state: "ready", targets: result.targets }); })
+      .catch(() => { if (!controller.signal.aborted) setDigitalOceanTeams({ state: "failed", targets: [] }); });
+    return () => controller.abort();
+  }, [selfHosted]);
+  const digitalOceanHarness = digitalOceanHarnessFor(draft?.profileId ?? null);
+  const digitalOceanChoices = digitalOceanHarness
+    ? digitalOceanTeams.targets.filter(target => digitalOceanTargetRuns(target, digitalOceanHarness))
+    : [];
+  const digitalOceanLane = draft?.capacity.mode === "digitalocean";
+  const digitalOceanTarget = digitalOceanLane
+    ? digitalOceanChoices.find(target => target.id === draft?.capacity.targetId) ?? null
+    : null;
+  const digitalOceanBalance = useDigitalOceanBalance(digitalOceanTarget?.connectionId ?? "",
+    Boolean(digitalOceanTarget) && draft?.stage !== "launch");
+  /** The DigitalOcean team a profile can run on, from an earlier choice or the card that handed it over. */
+  const digitalOceanTeamFor = (profileId: LaunchProfileId, targetId: string | null | undefined) => {
+    const harness = digitalOceanHarnessFor(profileId);
+    return harness && targetId
+      ? digitalOceanTeams.targets.find(target => target.id === targetId && digitalOceanTargetRuns(target, harness)) ?? null
+      : null;
+  };
+
   useEffect(() => {
     const selected = destination.deployment;
     if (draft?.profileId !== "windows" || selected?.mode !== "self-managed") {
@@ -1111,7 +1157,7 @@ export function LaunchJourney() {
   useEffect(() => {
     if (draft?.launchState !== "accepted" || !draft.result) return;
     // Hermes stays here to show when its workspace answers (Start chatting).
-    if (!opensOnAcceptance(draft.profileId)) return;
+    if (!opensOnAcceptanceFor(draft)) return;
     const href = launchResultHref(draft, draft.result.id);
     clearLaunchDraft(storageOwner);
     router.push(href);
@@ -1360,7 +1406,18 @@ export function LaunchJourney() {
     && image.modifiedAtSeconds === draft.windowsIsoEvidence?.modifiedAtSeconds
     && image.fileIdentitySha256 === draft.windowsIsoEvidence?.fileIdentitySha256
     && image.source === draft.windowsIsoSource);
-  if (destination.loading) capacityBlocker = "Checking compatible capacity…";
+  if (digitalOceanLane) {
+    // A DigitalOcean sandbox needs neither a Hivra plan nor a host: only a
+    // ready team that runs this agent, and DigitalOcean not blocking it.
+    capacityBlocker = !digitalOceanHarness
+      ? `${currentProfile?.name ?? "This launch"} can't run on DigitalOcean. Choose where it runs again.`
+      : digitalOceanTeams.state === "loading"
+        ? "Checking your DigitalOcean team…"
+        : !digitalOceanTarget
+          ? `That DigitalOcean team isn't ready for ${currentProfile?.name ?? "this agent"}. Choose where it runs again.`
+          : digitalOceanBalanceProblem(digitalOceanBalance.balance);
+  }
+  else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
   else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "This preview computer runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) capacityBlocker = "No compatible capacity is ready for this profile.";
@@ -1473,7 +1530,9 @@ export function LaunchJourney() {
   const modelDefaultPending = Boolean(draft.profileId && modelAccessShown
     && draft.modelAccess.source === "recommended"
     && recommendedModelAccessMode(draft.profileId, creditsBalance, selfHosted) === null);
-  const modelProblem = !draft.profileId || !modelAccessShown
+  const modelProblem = digitalOceanLane
+    ? digitalOceanHarness ? digitalOceanModelProblem(digitalOceanHarness, draft.digitalOcean, currentPastedKey) : null
+    : !draft.profileId || !modelAccessShown
     ? null
     : modelDefaultPending || (draft.modelAccess.mode === "credits" && creditsBalance.state === "loading")
       ? "Checking your Hivra credits…"
@@ -1484,14 +1543,18 @@ export function LaunchJourney() {
         options: modelOptions,
       });
   const keyProviders = draft.profileId ? apiKeyProviders(draft.profileId, savedKeys) : [];
-  const modelSummary = draft.profileId
+  const modelSummary = digitalOceanLane && digitalOceanHarness
+    ? effectiveDigitalOceanModelMode(digitalOceanHarness, draft.digitalOcean) === "vendor"
+      ? `Your ${digitalOceanVendorKey(digitalOceanHarness)}, sent to DigitalOcean for this sandbox`
+      : `DigitalOcean Inference · ${draft.digitalOcean.model || "no model chosen"}, billed to your team`
+    : draft.profileId
     ? modelAccessSummary(draft.profileId, draft.modelAccess, { name: draft.name, balance: creditsBalance, savedKeys })
     : null;
   // Hermes' memory can use the owner's saved Honcho key. Like a model key, it
   // is sent to the agent's computer only when the owner ticks it for this
   // launch; Review says so.
   const hermesMemoryKey = hermes ? savedMemoryKey(savedKeys) : null;
-  const resumeMode = draft.profileId ? launchResumeMode(draft.profileId) : "resend";
+  const resumeMode = launchResumeModeFor(draft);
   // A resend that needs the pasted key again (it isn't kept across a reload).
   const resendNeedsKey = draft.launchState === "uncertain" && resumeMode === "resend"
     && draft.modelAccess.mode === "api-key" && draft.modelAccess.keySource === "paste" && !currentPastedKey.trim();
@@ -1533,9 +1596,15 @@ export function LaunchJourney() {
     autoNameRef.current = existingNames ? null : { launchRequestId: fresh.launchRequestId, name };
     setWhereExpanded(false);
     setCustomizeOpen(false);
+    // A DigitalOcean team stays chosen across agents it runs, and the team a
+    // DigitalOcean card handed over is chosen for the first one.
+    const keptTeam = digitalOceanTeamFor(profileId, draft.capacity.mode === "digitalocean"
+      ? draft.capacity.targetId : handoff?.targetId ?? null);
     setDraft({
       ...fresh,
-      capacity: details.lane === "hermes-instance" ? { mode: "hivra-managed", targetId: null } : freshDraftCapacity(destination.choice),
+      capacity: keptTeam ? { mode: "digitalocean", targetId: keptTeam.id }
+        : details.lane === "hermes-instance" ? { mode: "hivra-managed", targetId: null } : freshDraftCapacity(destination.choice),
+      digitalOcean: keptTeam ? draft.digitalOcean : fresh.digitalOcean,
       stage: "plan",
       resourceKind: details.resourceKind,
       profileId,
@@ -1556,6 +1625,13 @@ export function LaunchJourney() {
       windowsRightsAttested: false,
     });
     setRestoredDestinationFor(null);
+  };
+  const chooseDigitalOcean = (targetId: string) => {
+    setWindowsDownloadTask(null);
+    updateDraft({ capacity: { mode: "digitalocean", targetId } });
+  };
+  const updateDigitalOcean = (change: Partial<LaunchDraft["digitalOcean"]>) => {
+    updateDraft({ digitalOcean: { ...draft.digitalOcean, ...change } });
   };
   const choosePreset = (preset: SizePreset) => {
     updateDraft({ resources: { ...preset.resources, source: "custom" } });
@@ -1750,7 +1826,7 @@ export function LaunchJourney() {
       ...context,
       stage,
       errorMessage: launchErrorMessage(error, [submitting.name]),
-      resumeMode: submitting.profileId ? launchResumeMode(submitting.profileId) : null,
+      resumeMode: submitting.profileId ? launchResumeModeFor(submitting) : null,
     });
   };
 
@@ -1758,7 +1834,9 @@ export function LaunchJourney() {
     const resumingUncertain = draft.launchState === "uncertain";
     const submissionDeployment = resumingUncertain
       ? draft.submittedDeployment
-      : destination.deployment;
+      : digitalOceanLane
+        ? digitalOceanTarget ? { mode: "digitalocean" as const, connectionId: digitalOceanTarget.connectionId, targetId: digitalOceanTarget.id } : null
+        : destination.deployment;
     if (
       !submissionDeployment
       || !draft.profileId
@@ -1794,6 +1872,7 @@ export function LaunchJourney() {
         savedKeys,
         balance: creditsBalance,
         onObserved: setObservation,
+        digitalOceanTarget,
         onKeySaved: (vaultKeyId, saved) => {
           savedKeyId = vaultKeyId;
           setSavedKeys(keys => [...keys.filter(key => key.provider !== saved.provider), saved]);
@@ -1966,14 +2045,19 @@ export function LaunchJourney() {
 
   const selfHostedTargetLabel = "Connected host";
   const whereForcedOpen = draft.profileId === "windows"
+    || (digitalOceanLane && !digitalOceanTarget && digitalOceanTeams.state !== "loading")
     || (destination.mode === "self-managed" && !destination.loading && !destination.selectedTarget)
     || (destination.mode === "self-managed" && Boolean(destination.error));
   const whereOpen = whereForcedOpen || whereExpanded;
-  const whereTitle = destination.mode === "hivra-managed" && !selfHosted
+  const whereTitle = digitalOceanLane
+    ? digitalOceanTarget ? `DigitalOcean · ${digitalOceanTarget.displayName}` : "DigitalOcean team unavailable"
+    : destination.mode === "hivra-managed" && !selfHosted
     ? "Hivra Cloud"
     : destination.selectedTarget?.displayName
       ?? (destination.loading ? "Checking your servers…" : "No server selected");
-  const whereDetail = destination.mode === "hivra-managed" && !selfHosted
+  const whereDetail = digitalOceanLane
+    ? "A sandbox on your own DigitalOcean team. DigitalOcean bills it."
+    : destination.mode === "hivra-managed" && !selfHosted
     ? planHold?.reason === "unconfirmed" ? "Paid plan · not active"
       : plan?.onHold ? `${plan.onHold.name} plan · on hold`
         : plan ? plan.needsActivation ? `${plan.name} plan · not turned on yet` : `${plan.name} plan` : null
@@ -2000,7 +2084,9 @@ export function LaunchJourney() {
     planOnHold: planHold ? planHold.reason === "unconfirmed" ? "paid" : planHold.planName : null,
   }) : "";
   const whatItCanUse = draft.profileId ? capabilitySummary(draft.profileId, { browser: browserOn }) : "";
-  const launchLabel = draft.profileId === "windows" ? "Start Windows setup" : `Launch ${currentProfile?.name ?? ""}`.trim();
+  const launchLabel = draft.profileId === "windows" ? "Start Windows setup"
+    : digitalOceanLane ? "Launch and start billing"
+    : `Launch ${currentProfile?.name ?? ""}`.trim();
 
   const windowsCapacity = draft.profileId === "windows" ? (
     <section className={styles.windowsCapacity} aria-labelledby="windows-capacity-heading">
@@ -2261,10 +2347,34 @@ export function LaunchJourney() {
                   runtimeName={currentProfile.name}
                   resourceLabel={draft.resourceKind ?? "agent"}
                   capacitySetupHref={capacitySetupHref}
+                  otherSelected={digitalOceanLane}
+                  otherOptions={digitalOceanChoices.map(team => (
+                    <DestinationOption
+                      key={team.id}
+                      selected={digitalOceanLane && digitalOceanTarget?.id === team.id}
+                      onClick={() => chooseDigitalOcean(team.id)}
+                      icon={<Droplet size={16} aria-hidden="true" />}
+                      title={`DigitalOcean · ${team.displayName}`}
+                      detail="A sandbox on your own DigitalOcean team. DigitalOcean bills it per second."
+                    />
+                  ))}
                 />
               </div>
             ) : null}
 
+            {digitalOceanLane ? (digitalOceanTarget && digitalOceanHarness ? (
+              <DigitalOceanLaunchPlan
+                target={digitalOceanTarget}
+                harness={digitalOceanHarness}
+                agentName={draft.name}
+                choice={draft.digitalOcean}
+                onChange={updateDigitalOcean}
+                pastedKey={currentPastedKey}
+                onPastedKeyChange={setCurrentPastedKey}
+                problem={modelProblem}
+                balance={digitalOceanBalance}
+              />
+            ) : null) : (<>
             <div className={styles.planRow}>
               <span className={styles.planLabel}>Size</span>
               <span className={styles.planValue}>
@@ -2418,6 +2528,7 @@ export function LaunchJourney() {
               <span className={styles.planLabel}>What it can use</span>
               <span className={styles.planValue}><span className={styles.planSummary}><strong>{whatItCanUse}</strong></span></span>
             </div>
+            </>)}
           </div>
           {capacityBlocker ? (
             <div className={styles.blocker} role={destination.loading || !planChecked ? "status" : "alert"}>
@@ -2433,9 +2544,12 @@ export function LaunchJourney() {
             </div>
           ) : null}
           {footer(primary("Review launch", () => advanceTo("review", {
-            capacity: destination.mode === "hivra-managed"
-              ? { mode: "hivra-managed", targetId: null }
-              : { mode: "self-managed", targetId: destination.selectedTarget?.id ?? null },
+            // A DigitalOcean team is its own choice; the host destination only
+            // speaks for Hivra Cloud and the owner's servers.
+            capacity: digitalOceanLane ? draft.capacity
+              : destination.mode === "hivra-managed"
+                ? { mode: "hivra-managed", targetId: null }
+                : { mode: "self-managed", targetId: destination.selectedTarget?.id ?? null },
           }), Boolean(capacityBlocker || nameProblem || modelProblem)))}
         </section>
       ) : null}
@@ -2450,24 +2564,38 @@ export function LaunchJourney() {
           {upgradeNotice}
           <dl className={styles.review} aria-label="Launch review">
             <div><dt>Runs on</dt><dd>
-              {destination.mode === "hivra-managed" && !selfHosted
+              {digitalOceanLane
+                ? <>DigitalOcean · {digitalOceanTarget?.displayName ?? "team unavailable"}<small>A sandbox on your own DigitalOcean team</small></>
+                : destination.mode === "hivra-managed" && !selfHosted
                 ? <>Hivra Cloud<small>Private virtual machine</small></>
                 : <>{destination.selectedTarget?.displayName ?? "Unavailable server"}{destination.selectedTarget
                   ? <small>{selfHosted ? selfHostedTargetLabel : ownCapacityLabel(substrate)}</small> : null}</>}
             </dd></div>
-            <div><dt>Size</dt><dd>{wholeProviderComputer
+            <div><dt>Size</dt><dd>{digitalOceanLane
+              ? (() => { const size = digitalOceanTarget ? digitalOceanSizeFor(digitalOceanTarget, draft.digitalOcean) : null;
+                return size ? `${digitalOceanSizeLabel(size)} DigitalOcean sandbox` : "No size available"; })()
+              : wholeProviderComputer
               ? "The whole server · its CPU and memory stay as they are"
               : gvisorComputer
                 ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved and enforced maximum`
                 : sizeSummary}</dd></div>
-            <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{whatItCanUse}</dd></div>
+            <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{digitalOceanLane
+              ? "Its own DigitalOcean sandbox and /workspace. Chat and files through Hivra. No browser, desktop or terminal."
+              : whatItCanUse}</dd></div>
             {modelSummary ? <div><dt>Model</dt><dd>{modelSummary}</dd></div> : null}
-            {hermesMemoryKey && draft.sendMemoryKey
+            {hermesMemoryKey && draft.sendMemoryKey && !digitalOceanLane
               ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>
               : null}
-            {draft.template ? <div><dt>Template</dt><dd>{draft.template.name ?? "Saved template"}<small>Its focus, personality and skills are applied when it launches.</small></dd></div> : null}
-            <div><dt>Cost</dt><dd>{cost}</dd></div>
-            <div><dt>Changes</dt><dd>{launchChangesSummary({
+            {draft.template ? <div><dt>Template</dt><dd>{draft.template.name ?? "Saved template"}<small>{digitalOceanLane
+              ? "Not applied on DigitalOcean: its sandbox starts from DigitalOcean's own setup."
+              : "Its focus, personality and skills are applied when it launches."}</small></dd></div> : null}
+            <div><dt>Cost</dt><dd>{digitalOceanLane
+              ? <>DigitalOcean bills this sandbox per second while it runs, to your team.{digitalOceanBalance.balance && digitalOceanBalance.balance.state !== "unreadable"
+                ? <small>Prepaid balance {formatDigitalOceanBalance(digitalOceanBalance.balance.balance)}</small> : null}</>
+              : cost}</dd></div>
+            <div><dt>Changes</dt><dd>{digitalOceanLane
+              ? `Creates one DigitalOcean sandbox on ${digitalOceanTarget?.displayName ?? "your team"} and starts it. DigitalOcean bills from now. Nothing is bought from Hivra.`
+              : launchChangesSummary({
               profileId: draft.profileId,
               substrate,
               targetName: destination.selectedTarget?.displayName ?? null,
@@ -2480,9 +2608,15 @@ export function LaunchJourney() {
           <details className={styles.technical}>
             <summary>Technical details</summary>
             <dl aria-label="Technical details">
-              <div><dt>Isolation</dt><dd>{isolationDetail(substrate)}</dd></div>
-              <div><dt>Runtime</dt><dd>{currentProfile.runtimeId}{hasBrowser ? ` · browser ${draft.browser ? "on" : "off"}` : ""}</dd></div>
-              {destination.mode === "self-managed" && destination.selectedTarget ? <div><dt>Server id</dt><dd>{destination.selectedTarget.id}</dd></div> : null}
+              {digitalOceanLane ? <>
+                <div><dt>Isolation</dt><dd>DigitalOcean sandbox microVM</dd></div>
+                <div><dt>Runtime</dt><dd>{digitalOceanHarness ?? currentProfile.runtimeId} on DigitalOcean Managed Agents</dd></div>
+                {digitalOceanTarget ? <div><dt>Team id</dt><dd>{digitalOceanTarget.id}</dd></div> : null}
+              </> : <>
+                <div><dt>Isolation</dt><dd>{isolationDetail(substrate)}</dd></div>
+                <div><dt>Runtime</dt><dd>{currentProfile.runtimeId}{hasBrowser ? ` · browser ${draft.browser ? "on" : "off"}` : ""}</dd></div>
+                {destination.mode === "self-managed" && destination.selectedTarget ? <div><dt>Server id</dt><dd>{destination.selectedTarget.id}</dd></div> : null}
+              </>}
               <div><dt>Launch request</dt><dd>{draft.launchRequestId}</dd></div>
             </dl>
           </details>
@@ -2503,7 +2637,8 @@ export function LaunchJourney() {
               <Link href={`/dashboard/agent/${encodeURIComponent(draft.result.id)}?tab=manage`}>Open it to delete</Link>
             </span>
           </div> : null}
-          {footer(primary(launchLabel, () => void submit(), Boolean(capacityBlocker || !destination.deployment || nameProblem || modelProblem)))}
+          {footer(primary(launchLabel, () => void submit(), Boolean(capacityBlocker
+            || (digitalOceanLane ? !digitalOceanTarget : !destination.deployment) || nameProblem || modelProblem)))}
         </section>
       ) : null}
 
@@ -2520,7 +2655,7 @@ export function LaunchJourney() {
         </section>
       ) : null}
 
-      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && hermes ? (
+      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && hermes && !digitalOceanLane ? (
         <HermesLaunched
           name={draft.result.name || draft.name.trim()}
           instanceId={draft.result.id}
@@ -2530,7 +2665,7 @@ export function LaunchJourney() {
         />
       ) : null}
 
-      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && !hermes ? (
+      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && (!hermes || digitalOceanLane) ? (
         <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading">
           <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
           <span className={styles.eyebrow}>Launch accepted</span>

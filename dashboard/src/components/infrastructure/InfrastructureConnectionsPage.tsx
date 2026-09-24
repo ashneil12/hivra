@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
@@ -90,9 +90,8 @@ import { ProviderComputerSetupDialog } from "./ProviderComputerSetupDialog";
 import { HetznerCloudCleanupDialog } from "./HetznerCloudCleanupDialog";
 import { HetznerCloudConnectionCard, type HetznerSetupEvidenceStatus } from "./HetznerCloudConnectionCard";
 import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
-import { DigitalOceanConnectionCard } from "./DigitalOceanConnectionCard";
+import { DigitalOceanConnectionCard, digitalOceanLaunchHref } from "./DigitalOceanConnectionCard";
 import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
-import { DigitalOceanLaunchDialog } from "./DigitalOceanLaunchDialog";
 import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
@@ -153,6 +152,7 @@ export function InfrastructureConnectionsPage() {
     setHivraAgentsEnabled(isHivraEnabled());
   }, []);
   const searchParams = useSearchParams();
+  const router = useRouter();
   const requestedLaunchResource = parsePortableLaunchResourceId(searchParams?.get("launch"));
   // Deep link from a DigitalOcean agent whose token stopped working.
   const requestedTokenReplacement = searchParams?.get("replaceToken") ?? null;
@@ -174,7 +174,6 @@ export function InfrastructureConnectionsPage() {
   const [hetznerDialogOpen, setHetznerDialogOpen] = useState(false);
   const [digitalOceanDialogOpen, setDigitalOceanDialogOpen] = useState(false);
   const [replacingDigitalOcean, setReplacingDigitalOcean] = useState<DigitalOceanConnectionDto | null>(null);
-  const [digitalOceanLaunch, setDigitalOceanLaunch] = useState<{ connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto } | null>(null);
   const [digitalOceanTargets, setDigitalOceanTargets] = useState<DigitalOceanDeploymentTargetDto[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSessionDto[]>([]);
   const [digitalOceanRefreshing, setDigitalOceanRefreshing] = useState<Set<string>>(() => new Set());
@@ -917,7 +916,6 @@ export function InfrastructureConnectionsPage() {
                         sessions={managedSessions.filter((session) => session.connectionId === connection.id)}
                         refreshing={digitalOceanRefreshing.has(connection.id)}
                         error={digitalOceanErrors[connection.id] ?? null}
-                        onLaunch={() => { if (target) setDigitalOceanLaunch({ connection, target }); }}
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
                         onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
@@ -1006,7 +1004,8 @@ export function InfrastructureConnectionsPage() {
                 upsertConnection(connection);
                 setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
                 setDigitalOceanDialogOpen(false);
-                setDigitalOceanLaunch({ connection, target });
+                // Connected and ready: choose what runs there in Launch.
+                if (target.status === "ready" && target.capabilities.launchReady) router.push(digitalOceanLaunchHref(target.id));
               }}
             />
           ) : null}
@@ -1029,17 +1028,6 @@ export function InfrastructureConnectionsPage() {
             />
           ) : null}
 
-          {digitalOceanLaunch ? (
-            <DigitalOceanLaunchDialog
-              connection={digitalOceanLaunch.connection}
-              target={digitalOceanLaunch.target}
-              onClose={() => setDigitalOceanLaunch(null)}
-              returnFocusRef={addCapacityButtonRef}
-              onLaunched={(session) => {
-                setManagedSessions((current) => [session, ...current.filter((candidate) => candidate.agentId !== session.agentId)]);
-              }}
-            />
-          ) : null}
 
           {!selfHosted && hivraCloudDialogOpen ? (
             <HivraCloudPurchaseDialog

@@ -46,8 +46,10 @@ import {
 
 const mockSearchParamsGet = jest.fn();
 
+const mockRouterPush = jest.fn();
 jest.mock("next/navigation", () => ({
   useSearchParams: () => ({ get: mockSearchParamsGet }),
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 
 jest.mock("@/lib/infrastructure/client", () => ({

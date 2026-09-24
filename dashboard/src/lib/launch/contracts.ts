@@ -1,3 +1,4 @@
+import type { DigitalOceanSandboxSize } from "@/lib/infrastructure/contracts";
 import { recommendedResourceEnvelope } from "./resource-envelope";
 
 export const LAUNCH_DRAFT_SCHEMA_VERSION = 1 as const;
@@ -40,7 +41,11 @@ export type WindowsIsoDownloadDraft = {
 
 export type LaunchCapacityChoice =
   | { mode: "hivra-managed"; targetId: null }
-  | { mode: "self-managed"; targetId: string | null };
+  | { mode: "self-managed"; targetId: string | null }
+  /** A DigitalOcean Managed Agents team the owner connected. It launches a
+   * DigitalOcean sandbox, never a host or VM, so it never enters the host
+   * deployment contracts. */
+  | { mode: "digitalocean"; targetId: string };
 
 /** Secret-free, immutable placement authority captured at the first submit.
  * An uncertain replay must send this exact snapshot even if live capacity
@@ -52,7 +57,25 @@ export type LaunchDeploymentSnapshot =
       connectionId: string;
       targetId: string;
       expectedConnectionRevision: number;
-    };
+    }
+  | { mode: "digitalocean"; connectionId: string; targetId: string };
+
+/** Secret-free choices for a DigitalOcean sandbox. The model key is typed for
+ * one launch and lives only in the page's memory. */
+export type LaunchDigitalOceanChoice = {
+  size: DigitalOceanSandboxSize;
+  /** "vendor": the agent's own provider key (Anthropic, OpenAI). "digitalocean-
+   * inference": a DigitalOcean model access key and a model DigitalOcean serves. */
+  modelMode: "vendor" | "digitalocean-inference";
+  /** DigitalOcean Inference model slug; "" until chosen. */
+  model: string;
+};
+
+export const DEFAULT_DIGITALOCEAN_CHOICE: LaunchDigitalOceanChoice = {
+  size: "mars-2vcpu-4gb",
+  modelMode: "vendor",
+  model: "",
+};
 
 type LaunchResult = {
   id: string;
@@ -118,6 +141,8 @@ export type LaunchDraft = {
    * back while the raised size is unchanged. */
   browserRaisedFrom: LaunchResources | null;
   capacity: LaunchCapacityChoice;
+  /** Used only while capacity is a DigitalOcean team. */
+  digitalOcean: LaunchDigitalOceanChoice;
   modelAccess: LaunchModelAccess;
   /** Hermes: the owner ticked "Send my saved Honcho key to <name>'s
    * computer" for this launch. Never pre-ticked. */
