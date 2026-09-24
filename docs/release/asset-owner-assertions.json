@@ -30,6 +30,15 @@
       "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit afd750bbec44befbfcfb60623227210623a53a7d."
     },
     {
+      "path": "dashboard/public/brand/hivra-token-200.png",
+      "sha256": "950f037aff0e527d2921526fff10e802ab08b97ea6c3cf9f4d18059f57690497",
+      "assertedBy": "repository-owner",
+      "assertion": "Resized export of docs/brand/hivra-logo.jpg. The owner's assertion for that logo applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit 440fae2db8034889ee239fa72e7d3190b342ab26."
+    },
+    {
       "path": "dashboard/public/brand/hivra-token-256.png",
       "sha256": "f500fd90cc8c85cb2d73f6591d3222eda152985aaf4a3dede490733bf376b80c",
       "assertedBy": "repository-owner",
@@ -39,6 +48,15 @@
       "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit afd750bbec44befbfcfb60623227210623a53a7d."
     },
     {
+      "path": "dashboard/public/brand/hivra-token-32.png",
+      "sha256": "74f175228ab6a59ccaf5378aee1db84da57cff9bd2eb0e64e8f6e67650d8198d",
+      "assertedBy": "repository-owner",
+      "assertion": "Resized export of docs/brand/hivra-logo.jpg. The owner's assertion for that logo applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit 440fae2db8034889ee239fa72e7d3190b342ab26."
+    },
+    {
       "path": "dashboard/public/brand/hivra-token-512.png",
       "sha256": "5d3ee5d906648daf6f1c22631066a0242e7b2a658f530ae2309931cd245a9c53",
       "assertedBy": "repository-owner",
@@ -46,6 +64,15 @@
       "redistributionBasis": "owner-originality-assertion",
       "independentEvidenceLevel": "repository-history-only",
       "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit afd750bbec44befbfcfb60623227210623a53a7d."
+    },
+    {
+      "path": "dashboard/public/brand/hivra-token-64.png",
+      "sha256": "14a000404d817ba8d2854bd3bac304061410d132a8b319ae62a7834dc975e871",
+      "assertedBy": "repository-owner",
+      "assertion": "Resized export of docs/brand/hivra-logo.jpg. The owner's assertion for that logo applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit 440fae2db8034889ee239fa72e7d3190b342ab26."
     },
     {
       "path": "dashboard/public/images/computers/omarchy-workspace.webp",
@@ -100,6 +127,24 @@
       "redistributionBasis": "owner-originality-assertion",
       "independentEvidenceLevel": "repository-history-only",
       "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit afd750bbec44befbfcfb60623227210623a53a7d."
+    },
+    {
+      "path": "docs/brand/drafts/hivra-header-1500x500-draft.png",
+      "sha256": "286e7bf6bc5e83c9951574fe8ba1d20eda3f7b3a7e4f44de4076a074bb2964bd",
+      "assertedBy": "repository-owner",
+      "assertion": "Draft composite of two owner-asserted artworks, docs/litepaper/assets/boundary-monolith-v5.png and docs/brand/hivra-logo.jpg. The owner's assertion for each applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Drawn by docs/brand/make-launch-banners.py, which checks its inputs' SHA-256 before drawing: docs/litepaper/assets/boundary-monolith-v5.png (cebb1ae84c23f7eaae8fdc9825c0fc028e90eb66c968e77d11fd9e844ebb5ee2) and docs/brand/hivra-logo.jpg (9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4) are only resized with Lanczos resampling and positioned. The script adds flat colour, a fade and text set in the repository's OFL-1.1 Manrope and IBM Plex Mono fonts (docs/litepaper/assets/fonts). Rerunning the script with Pillow 11.3.0 reproduces these bytes. The exact bytes first appear in repository commit 440fae2db8034889ee239fa72e7d3190b342ab26."
+    },
+    {
+      "path": "docs/brand/drafts/hivra-launch-announcement-1600x900-template.png",
+      "sha256": "7c4e70cc6defa40f929465f5f6b3379f6442e9d4f2cd00781733b2f9c408a65a",
+      "assertedBy": "repository-owner",
+      "assertion": "Draft composite of two owner-asserted artworks, docs/litepaper/assets/boundary-monolith-v5.png and docs/brand/hivra-logo.jpg. The owner's assertion for each applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Drawn by docs/brand/make-launch-banners.py, which checks its inputs' SHA-256 before drawing: docs/litepaper/assets/boundary-monolith-v5.png (cebb1ae84c23f7eaae8fdc9825c0fc028e90eb66c968e77d11fd9e844ebb5ee2) and docs/brand/hivra-logo.jpg (9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4) are only resized with Lanczos resampling and positioned. The script adds flat colour, a fade and text set in the repository's OFL-1.1 Manrope and IBM Plex Mono fonts (docs/litepaper/assets/fonts). Rerunning the script with Pillow 11.3.0 reproduces these bytes. The exact bytes first appear in repository commit 440fae2db8034889ee239fa72e7d3190b342ab26."
     },
     {
       "path": "docs/brand/hivra-logo.jpg",
