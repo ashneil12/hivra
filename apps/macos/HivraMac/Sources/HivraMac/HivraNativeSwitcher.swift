@@ -20,12 +20,9 @@ struct HivraNativeSwitcher: View {
                     .focused($searchFocused)
                     .onKeyPress(.downArrow) { moveSelection(by: 1); return .handled }
                     .onKeyPress(.upArrow) { moveSelection(by: -1); return .handled }
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark").frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Close switcher")
+                    // Claim Escape before the field editor interprets it, so dismissal
+                    // never depends on the text system passing cancelOperation along.
+                    .onKeyPress(.escape) { onDismiss(); return .handled }
             }
             .padding(20)
             Divider()
@@ -96,7 +93,9 @@ struct HivraNativeSwitcher: View {
             HStack(spacing: 12) {
                 Text("↑↓ Select")
                 Text("↵ Open")
+                Text("esc Close")
                 Spacer()
+                // The one dismiss control; Escape from anywhere in the switcher does the same.
                 Button("Cancel", action: onDismiss)
                     .keyboardShortcut(.cancelAction)
                     .buttonStyle(HivraButtonStyle())
@@ -123,6 +122,7 @@ struct HivraNativeSwitcher: View {
             selectedUID = nil
             onDismiss()
         }
+        // Escape while the result list or another control has focus.
         .onExitCommand(perform: onDismiss)
     }
 
