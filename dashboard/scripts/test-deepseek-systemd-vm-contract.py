@@ -88,15 +88,19 @@ class OfflineVmContract(unittest.TestCase):
             root = Path(folder).resolve()
             source = root / "dashboard/provisioner"
             source.mkdir(parents=True)
+            version = "2026.01.02.3"
             entries = []
-            for name in ["VERSION", *[f"file-{number}" for number in range(36)]]:
-                content = vm.BUNDLE_VERSION.encode() if name == "VERSION" else b"reviewed"
+            # Any sealed release size: the payload is whatever the manifest lists.
+            for name in ["VERSION", *[f"file-{number}" for number in range(4)]]:
+                content = version.encode() if name == "VERSION" else b"reviewed"
                 (source / name).write_bytes(content)
                 entries.append({"path": name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()})
             (source / "not-reviewed").write_text("do not copy")
-            manifest = {"schema": 1, "version": vm.BUNDLE_VERSION, "files": entries}
-            with patch.object(vm, "ROOT", root), patch.object(vm, "git_bytes", return_value=json.dumps(manifest).encode()):
-                vm.snapshot_source(root / "snapshot")
+            manifest = {"schema": 1, "version": version, "files": entries}
+            committed = {"dashboard/provisioner/VERSION": (version + "\n").encode(),
+                         f"dashboard/provisioner-releases/{version}.json": json.dumps(manifest).encode()}
+            with patch.object(vm, "ROOT", root), patch.object(vm, "git_bytes", side_effect=committed.__getitem__):
+                self.assertEqual(vm.snapshot_source(root / "snapshot"), manifest)
                 self.assertFalse((root / "snapshot/not-reviewed").exists())
                 (source / "file-0").write_bytes(b"changed")
                 with self.assertRaisesRegex(RuntimeError, "source_digest_mismatch"):
@@ -105,6 +109,33 @@ class OfflineVmContract(unittest.TestCase):
                 (source / "file-0").symlink_to(source / "file-1")
                 with self.assertRaisesRegex(RuntimeError, "link_rejected"):
                     vm.snapshot_source(root / "link-snapshot")
+
+    def test_source_snapshot_tracks_the_committed_release_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            (root / "dashboard/provisioner").mkdir(parents=True)
+            requested = []
+            def committed(relative):
+                requested.append(relative)
+                if relative == "dashboard/provisioner/VERSION":
+                    return b"2026.01.02.3\n"
+                return json.dumps({"schema": 1, "version": "2026.01.02.2", "files": []}).encode()
+            with patch.object(vm, "ROOT", root), patch.object(vm, "git_bytes", side_effect=committed), \
+                    self.assertRaisesRegex(RuntimeError, "bundle_manifest_invalid"):
+                vm.snapshot_source(root / "snapshot")
+            self.assertEqual(requested, ["dashboard/provisioner/VERSION", "dashboard/provisioner-releases/2026.01.02.3.json"])
+            for bad in (b"", b"../2026.01.02.3", b"2026.01.02.3;id"):
+                with self.subTest(bad=bad), patch.object(vm, "git_bytes", return_value=bad), \
+                        self.assertRaisesRegex(RuntimeError, "bundle_version_invalid"):
+                    vm.bundle_version()
+
+    def test_actual_revision_release_manifest_matches_the_committed_version(self):
+        # The fixture only runs from this public repository. Its committed
+        # VERSION must name a sealed release manifest that exists at HEAD.
+        version = vm.bundle_version()
+        manifest = json.loads(vm.git_bytes(f"dashboard/provisioner-releases/{version}.json"))
+        self.assertEqual(manifest["version"], version)
+        self.assertIn("deepseek-harness/native-broker.cjs", [entry["path"] for entry in manifest["files"]])
 
     def test_real_http_header_casing_does_not_break_bootstrap(self):
         # Node normalizes response headers; Python HTTPResponse preserves the
@@ -192,12 +223,17 @@ class OfflineVmContract(unittest.TestCase):
     def test_ci_gate_rejects_local_and_self_hosted_execution(self):
         with patch.dict(vm.os.environ, {}, clear=True), self.assertRaises(RuntimeError):
             vm.require_ci()
-        with patch.dict(vm.os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted",
-                "GITHUB_REPOSITORY": "ashneil12/hermesdeploy-canary"}, clear=True), \
-             patch.object(vm.os, "geteuid", return_value=0), \
-             patch.object(vm.os, "uname", return_value=SimpleNamespace(sysname="Linux")), \
-             self.assertRaisesRegex(RuntimeError, "disposable_canary_ci_required"):
-            vm.require_ci()
+        hosted = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_REPOSITORY": "ashneil12/hivra",
+                  "GITHUB_WORKSPACE": str(vm.ROOT), "HIVRA_DISPOSABLE_CI": "offline-native-systemd"}
+        with patch.object(vm.os, "geteuid", return_value=0), \
+             patch.object(vm.os, "uname", return_value=SimpleNamespace(sysname="Linux")):
+            with patch.dict(vm.os.environ, hosted, clear=True):
+                vm.require_ci()
+            # Self-hosted runners and the retired private repository never qualify.
+            for override in ({"RUNNER_ENVIRONMENT": "self-hosted"}, {"GITHUB_REPOSITORY": "ashneil12/hermesdeploy-canary"}):
+                with self.subTest(override=override), patch.dict(vm.os.environ, {**hosted, **override}, clear=True), \
+                     self.assertRaisesRegex(RuntimeError, "disposable_canary_ci_required"):
+                    vm.require_ci()
         workflow = vm.ROOT / ".github/workflows/deepseek-systemd-fixture.yml"
         text = workflow.read_text()
         self.assertIn("runs-on: ubuntu-24.04", text)

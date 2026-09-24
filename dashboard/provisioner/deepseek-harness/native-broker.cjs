@@ -4,6 +4,7 @@
 // Upstream login authority never crosses this module's private closure.
 const http = require('node:http');
 const { createHash } = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 
 const REQUEST_HEADERS = ['accept', 'accept-language', 'accept-encoding', 'content-type', 'content-length', 'range'];
 const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-encoding', 'content-disposition', 'content-range', 'accept-ranges'];
@@ -42,23 +43,48 @@ function safeResponseHeaders(source) {
   };
 }
 
+// Diagnostics are fixed category codes only. The launch token and upstream
+// cookie are bearer material and must never reach a log line.
+function logDiagnostic(code) {
+  console.error(`DeepSeek native session: ${code}`);
+}
+
 /**
  * The caller must supply the canonical per-computer HTTPS origin and a
  * synchronous, re-checkable Hivra session authorizer. Authentication remains
  * required for ALL native routes, including public upstream static/SSE routes.
  * Lifecycle owner calls reset() on child termination, close() on teardown.
+ *
+ * Upstream keeps one launch token for its whole process lifetime, so the
+ * broker retains the validated token privately and renews its cookie before
+ * expiry (renewBeforeMs, capped at half the cookie lifetime) and once after an
+ * upstream 401. A long-running computer therefore keeps its native surface
+ * without a service restart that would end in-flight agent work.
  */
-function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, headerTimeoutMs = 30000, recheckMs = 1000 }) {
+function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, headerTimeoutMs = 30000, recheckMs = 1000,
+  renewBeforeMs = 24 * 3600000, renewRetryMs = 60000, onDiagnostic = logDiagnostic }) {
   const origin = canonicalOrigin(publicOrigin);
   if (typeof authorize !== 'function' || !Number.isInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65535
-    || !Number.isInteger(headerTimeoutMs) || headerTimeoutMs < 1 || !Number.isInteger(recheckMs) || recheckMs < 1) {
+    || !Number.isInteger(headerTimeoutMs) || headerTimeoutMs < 1 || !Number.isInteger(recheckMs) || recheckMs < 1
+    || !Number.isInteger(renewBeforeMs) || renewBeforeMs < 1 || !Number.isInteger(renewRetryMs) || renewRetryMs < 1
+    || typeof onDiagnostic !== 'function') {
     throw new Error('deepseek_broker_options_invalid');
   }
   const authority = `127.0.0.1:${upstreamPort}`;
   const upstreamOrigin = `http://${authority}`;
   const cookieName = `dsh-auth-${createHash('sha256').update(authority).digest('base64url')}`;
   let cookie = null;
+  let issuedAt = 0;
   let expiresAt = 0;
+  // The owned child's validated launch token. Never exposed; cleared by reset().
+  let launchToken = null;
+  // Bumped whenever the cookie changes, so a 401 answered to a request sent
+  // with an older cookie cannot discard fresher authority.
+  let cookieEpoch = 0;
+  // Retry backoff runs on the monotonic clock: a guest wall clock stepped
+  // backwards (NTP, a restored RTC) must not postpone the next attempt by the
+  // size of the step. Cookie lifetimes stay on the wall clock upstream uses.
+  let renewNotBefore = 0;
   let generation = 0;
   let closed = false;
   let exchanging = false;
@@ -72,20 +98,41 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
 
   function ready() { return !closed && cookie !== null && expiresAt > Date.now(); }
 
+  function diagnostic(code) {
+    try { onDiagnostic(code); } catch { /* Diagnostics never change authority. */ }
+  }
+
+  function clearCookie() {
+    cookie = null;
+    issuedAt = 0;
+    expiresAt = 0;
+    cookieEpoch += 1;
+  }
+
   function reset() {
     generation += 1;
-    cookie = null;
-    expiresAt = 0;
+    clearCookie();
+    launchToken = null;
+    renewNotBefore = 0;
     exchanging = false;
     for (const exchange of exchanges) exchange.destroy();
     for (const socket of rejectedSockets) socket.destroy();
     for (const connection of [...connections]) connection.stop();
   }
 
+  function renewalDue(now) {
+    if (closed || exchanging || launchToken === null || performance.now() < renewNotBefore) return false;
+    if (cookie === null) return true;
+    // Upstream cookies default to 30 days (minimum one). Renew inside the last
+    // day, or the last half of a shorter lifetime, so readiness never lapses.
+    return expiresAt - now <= Math.min(renewBeforeMs, Math.floor((expiresAt - issuedAt) / 2));
+  }
+
   const timer = setInterval(() => {
     for (const connection of [...connections]) {
       if (!ready() || !authorized(connection.req)) connection.stop();
     }
+    if (renewalDue(Date.now())) void renew();
   }, recheckMs);
   timer.unref();
 
@@ -133,50 +180,107 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
     res.end(`Native surface unavailable (${code}).`);
   }
 
+  // Exchange a launch token at the fixed loopback destination with redirects
+  // disabled. Resolves { cookie, issuedAt, expiresAt } or { failure } where
+  // 'refused' is upstream's explicit 401 for the token and every other failure
+  // (socket error, deadline, malformed or superseded response) is 'unavailable'.
+  function exchangeToken(token, ownedGeneration) {
+    return new Promise(resolve => {
+      const unavailable = { failure: 'unavailable' };
+      const exchange = http.get({ hostname: '127.0.0.1', port: upstreamPort, path: `/?token=${token}`, agent: false,
+        headers: { host: authority }, maxHeaderSize: 8192 }, response => {
+        response.resume();
+        if (closed || generation !== ownedGeneration) { resolve(unavailable); return; }
+        if (response.statusCode === 401) { resolve({ failure: 'refused' }); return; }
+        if (response.statusCode !== 303 || response.headers.location !== '/') { resolve(unavailable); return; }
+        const cookies = response.headers['set-cookie'];
+        if (!Array.isArray(cookies) || cookies.length !== 1 || cookies[0].length > 2048) { resolve(unavailable); return; }
+        const pair = cookies[0].split(';')[0];
+        const match = pair.match(/^([^=]+)=v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/);
+        if (!match || match[1] !== cookieName) { resolve(unavailable); return; }
+        try {
+          // Trust comes from the owned loopback process, not decoding this
+          // payload. Check audience/lifetime so stale readiness fails closed.
+          const payload = JSON.parse(Buffer.from(match[2], 'base64url').toString('utf8'));
+          const now = Date.now();
+          if (payload.version !== 1 || payload.authority !== authority || !Number.isSafeInteger(payload.issuedAt)
+            || !Number.isSafeInteger(payload.expiresAt) || payload.issuedAt > now || payload.expiresAt <= now
+            || payload.expiresAt <= payload.issuedAt || payload.expiresAt - payload.issuedAt > 31 * 86400000) {
+            resolve(unavailable); return;
+          }
+          resolve({ cookie: pair, issuedAt: payload.issuedAt, expiresAt: payload.expiresAt });
+        } catch { resolve(unavailable); }
+      });
+      exchanges.add(exchange);
+      const deadline = setTimeout(() => exchange.destroy(), headerTimeoutMs);
+      exchange.on('error', () => resolve(unavailable));
+      exchange.on('close', () => { clearTimeout(deadline); exchanges.delete(exchange); resolve(unavailable); });
+    });
+  }
+
+  // One exchange at a time, fenced to the generation that started it: reset()
+  // or close() while it is in flight discards the result.
+  async function exchangeOwned(token) {
+    const ownedGeneration = generation;
+    exchanging = true;
+    let result;
+    try { result = await exchangeToken(token, ownedGeneration); }
+    catch { result = { failure: 'unavailable' }; }
+    finally { if (generation === ownedGeneration) exchanging = false; }
+    if (closed || generation !== ownedGeneration) return { failure: 'superseded' };
+    if (result.cookie) {
+      clearCookie(); // New epoch: stale 401s for the previous cookie are ignored.
+      cookie = result.cookie;
+      issuedAt = result.issuedAt;
+      expiresAt = result.expiresAt;
+      renewNotBefore = 0;
+    }
+    return result;
+  }
+
   // Accept ONLY a bounded, complete line from the owned child's stdout. The
   // destination is fixed; a printed URL cannot redirect this broker elsewhere.
   async function acceptLaunchLine(line) {
-    if (closed || exchanging || cookie !== null || typeof line !== 'string' || line.length > 256) return false;
+    if (closed || exchanging || launchToken !== null || cookie !== null || typeof line !== 'string' || line.length > 256) return false;
     const prefix = `dsh web: ${upstreamOrigin}/?token=`;
     if (!line.startsWith(prefix)) return false;
     const token = line.slice(prefix.length);
     if (!/^[A-Za-z0-9_-]{43}$/.test(token) || Buffer.from(token, 'base64url').toString('base64url') !== token) return false;
-    const ownedGeneration = generation;
-    exchanging = true;
-    try {
-      return await new Promise(resolve => {
-        const exchange = http.get({ hostname: '127.0.0.1', port: upstreamPort, path: `/?token=${token}`, agent: false,
-          headers: { host: authority }, maxHeaderSize: 8192 }, response => {
-          response.resume();
-          if (closed || generation !== ownedGeneration || response.statusCode !== 303 || response.headers.location !== '/') {
-            resolve(false); return;
-          }
-          const cookies = response.headers['set-cookie'];
-          if (!Array.isArray(cookies) || cookies.length !== 1 || cookies[0].length > 2048) { resolve(false); return; }
-          const pair = cookies[0].split(';')[0];
-          const match = pair.match(/^([^=]+)=v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/);
-          if (!match || match[1] !== cookieName) { resolve(false); return; }
-          try {
-            // Trust comes from the owned loopback process, not decoding this
-            // payload. Check audience/lifetime so stale readiness fails closed.
-            const payload = JSON.parse(Buffer.from(match[2], 'base64url').toString('utf8'));
-            const now = Date.now();
-            if (payload.version !== 1 || payload.authority !== authority || !Number.isSafeInteger(payload.issuedAt)
-              || !Number.isSafeInteger(payload.expiresAt) || payload.issuedAt > now || payload.expiresAt <= now
-              || payload.expiresAt <= payload.issuedAt || payload.expiresAt - payload.issuedAt > 31 * 86400000) {
-              resolve(false); return;
-            }
-            cookie = pair;
-            expiresAt = payload.expiresAt;
-            resolve(true);
-          } catch { resolve(false); }
-        });
-        exchanges.add(exchange);
-        const deadline = setTimeout(() => exchange.destroy(), headerTimeoutMs);
-        exchange.on('error', () => resolve(false));
-        exchange.on('close', () => { clearTimeout(deadline); exchanges.delete(exchange); });
-      });
-    } finally { if (generation === ownedGeneration) exchanging = false; }
+    const result = await exchangeOwned(token);
+    if (!result.cookie) return false;
+    launchToken = token;
+    return true;
+  }
+
+  // Re-exchange the retained token. A transient failure retries after
+  // renewRetryMs while the old cookie may still be valid; upstream refusing
+  // its own launch token drops it, so readiness fails closed at expiry until
+  // the lifecycle owner resets the broker for a new child.
+  async function renew() {
+    if (closed || exchanging || launchToken === null) return false;
+    const result = await exchangeOwned(launchToken);
+    if (result.cookie) { diagnostic('renewed'); return true; }
+    if (result.failure === 'superseded') return false;
+    if (result.failure === 'refused') {
+      launchToken = null;
+      diagnostic('renewal_refused');
+      return false;
+    }
+    renewNotBefore = performance.now() + renewRetryMs;
+    diagnostic('renewal_failed');
+    return false;
+  }
+
+  // Upstream rejected the cookie a request carried. Clear readiness, stop
+  // live connections and try exactly one re-exchange; the rejected request is
+  // never replayed. A 401 for an older cookie than the current one is stale.
+  function upstreamUnauthorized(epoch) {
+    if (closed || epoch !== cookieEpoch) return;
+    clearCookie();
+    for (const connection of [...connections]) connection.stop();
+    diagnostic('upstream_unauthorized');
+    renewNotBefore = 0;
+    void renew();
   }
 
   function handleHttp(req, res) {
@@ -186,6 +290,7 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
     }
     const rejection = gate(req, false);
     if (rejection) { error(res, rejection); return; }
+    const epoch = cookieEpoch;
     const upstream = http.request({ hostname: '127.0.0.1', port: upstreamPort, path: req.url, method: req.method,
       headers: outgoingHeaders(req), agent: false, maxHeaderSize: 16384 });
     const connection = { req, stop: () => { upstream.destroy(); res.destroy(); connections.delete(connection); } };
@@ -199,7 +304,7 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
         response.resume();
         connections.delete(connection);
         error(res, 503);
-        reset();
+        upstreamUnauthorized(epoch);
         return;
       }
       const headers = safeResponseHeaders(response.headers);
@@ -233,6 +338,7 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
       socket.destroySoon();
       return;
     }
+    const epoch = cookieEpoch;
     const upstream = http.request({ hostname: '127.0.0.1', port: upstreamPort, path: WS_PATH,
       headers: outgoingHeaders(req, true), agent: false, maxHeaderSize: 16384 });
     let peer;
@@ -263,8 +369,8 @@ function createNativeBroker({ publicOrigin, authorize, upstreamPort = 3080, head
     });
     upstream.on('response', response => {
       response.resume();
-      if (response.statusCode === 401) reset();
       connection.stop();
+      if (response.statusCode === 401) upstreamUnauthorized(epoch);
     });
     upstream.on('error', connection.stop);
     socket.on('error', connection.stop);

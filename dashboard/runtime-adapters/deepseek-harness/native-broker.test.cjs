@@ -8,25 +8,49 @@ const { createHash, randomBytes } = require('node:crypto');
 const { createNativeBroker } = require('../../provisioner/deepseek-harness/native-broker.cjs');
 
 const PUBLIC = 'https://computer.example.test';
-async function fixture(t, { lifetime = 60000 } = {}) {
+const HOUR = 3600000;
+const DAY = 24 * HOUR;
+const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+// Fake upstream modelled on dsh browser-auth: one launch token for the process
+// lifetime, every exchange mints a fresh signed cookie, and a minted cookie
+// authenticates only while issuedAt <= now < expiresAt (anything else gets 401),
+// as dsh's BrowserAuth.isAuthenticated does.
+async function fixture(t, { lifetime = 60000, broker: brokerOptions = {} } = {}) {
   const token = randomBytes(32).toString('base64url');
   const observed = [];
+  const diagnostics = [];
+  const minted = new Map();
+  const parked = [];
   let revoke = false;
   let rejectNext = false;
+  let exchanges = 0;
+  let exchangeMode = 'mint';
+  let exchangeFailures = Infinity;
   const peers = new Set();
   let cookie;
   const upstream = http.createServer((req, res) => {
     if (req.url === `/?token=${token}`) {
+      exchanges += 1;
+      if (exchangeMode !== 'mint' && exchangeFailures > 0) {
+        exchangeFailures -= 1;
+        if (exchangeMode === 'drop') { req.socket.destroy(); return; }
+        res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('dsh web authentication required; reopen the URL printed by dsh web.\n'); return;
+      }
       const now = Date.now();
       const payload = Buffer.from(JSON.stringify({ version: 1, authority: req.headers.host, issuedAt: now, expiresAt: now + lifetime })).toString('base64url');
       cookie = `dsh-auth-${createHash('sha256').update(req.headers.host).digest('base64url')}=v1.${payload}.${randomBytes(32).toString('base64url')}`;
+      minted.set(cookie, { issuedAt: now, expiresAt: now + lifetime });
       res.writeHead(303, { location: '/', 'set-cookie': `${cookie}; Path=/; HttpOnly; SameSite=Strict` });
       res.end(); return;
     }
     observed.push({ url: req.url, headers: req.headers, method: req.method });
     if (rejectNext) { rejectNext = false; res.writeHead(401); res.end(); return; }
-    assert.equal(req.headers.cookie, cookie);
+    const session = minted.get(req.headers.cookie);
+    if (!session || session.issuedAt > Date.now() || session.expiresAt <= Date.now()) { res.writeHead(401); res.end(); return; }
     if (req.url === '/redirect') { res.writeHead(303, { location: `/?token=${token}` }); res.end(); return; }
+    if (req.url === '/park') { parked.push(res); return; }
     if (req.url === '/plugins/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'set-cookie': cookie });
       res.write('data: hello\n\n'); return;
@@ -47,7 +71,8 @@ async function fixture(t, { lifetime = 60000 } = {}) {
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const port = upstream.address().port;
   const broker = createNativeBroker({ publicOrigin: PUBLIC, upstreamPort: port, recheckMs: 15,
-    authorize: req => !revoke && req.headers.cookie === 'hivra=private' });
+    authorize: req => !revoke && req.headers.cookie === 'hivra=private',
+    onDiagnostic: code => diagnostics.push(code), ...brokerOptions });
   const front = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization');
@@ -71,7 +96,23 @@ async function fixture(t, { lifetime = 60000 } = {}) {
       req.on('error', reject); req.end(options.body);
     });
   }
-  return { broker, front, port, token, observed, launch, request, peers,
+  function stream(path = '/plugins/events') {
+    return new Promise(resolve => http.get({ hostname: '127.0.0.1', port: front.address().port, path,
+      headers: { host: 'computer.example.test', cookie: 'hivra=private' } }, resolve));
+  }
+  async function until(condition, message = 'condition was not reached') {
+    for (let attempt = 0; attempt < 300 && !condition(); attempt++) await delay(10);
+    assert.ok(condition(), message);
+  }
+  // Bearer material must never appear in a diagnostic.
+  function assertDiagnosticsSecretFree() {
+    const text = JSON.stringify(diagnostics);
+    assert.equal(text.includes(token), false);
+    for (const value of minted.keys()) assert.equal(text.includes(value.split('=')[1]), false);
+  }
+  return { broker, front, port, token, observed, diagnostics, parked, launch, request, stream, until, peers,
+    assertDiagnosticsSecretFree, exchanges: () => exchanges,
+    failExchanges: (mode, count = Infinity) => { exchangeMode = mode; exchangeFailures = count; },
     revoke: () => { revoke = true; }, rejectNext: () => { rejectNext = true; } };
 }
 
@@ -147,13 +188,40 @@ test('strips user credentials, forwarding and nominated headers; uses only priva
   assert.equal(headers.cookie.includes('hivra='), false);
 });
 
-test('native authority failure clears readiness and never replays the request', async t => {
+test('an upstream 401 is never replayed and renews private authority exactly once', async t => {
   const f = await fixture(t); await f.launch(); f.rejectNext();
   assert.equal((await f.request('/api/settings/set', { method: 'POST', body: '{}', headers: { origin: PUBLIC } })).status, 503);
   assert.equal(f.observed.length, 1);
+  // The retained launch token restores readiness without a unit restart.
+  await f.until(() => f.broker.ready(), 'broker did not re-exchange after the upstream 401');
+  await delay(100);
+  assert.equal(f.exchanges(), 2);
+  const response = await f.request('/api/settings/get');
+  assert.equal(response.status, 200);
+  assert.equal(f.observed.length, 2);
+  assert.equal(f.observed[0].method, 'POST', 'the rejected mutation is not replayed');
+  assert.notEqual(f.observed[1].headers.cookie, f.observed[0].headers.cookie);
+  assert.equal(JSON.stringify(response).includes(f.token), false);
+  assert.equal(await f.launch(), false, 'stdout cannot reinitialize live authority');
+  assert.deepEqual(f.diagnostics, ['upstream_unauthorized', 'renewed']);
+  f.assertDiagnosticsSecretFree();
+});
+
+test('a refused re-exchange fails closed after one attempt until the owner resets', async t => {
+  const f = await fixture(t); await f.launch();
+  f.failExchanges('refuse'); f.rejectNext();
+  assert.equal((await f.request()).status, 503);
+  await f.until(() => f.diagnostics.includes('renewal_refused'));
+  await delay(100);
+  assert.equal(f.exchanges(), 2, 'one launch exchange plus exactly one renewal attempt');
   assert.equal(f.broker.ready(), false);
   assert.equal((await f.request()).status, 503);
+  assert.equal(f.observed.length, 1);
+  f.failExchanges('mint', 0);
+  f.broker.reset();
   assert.equal(await f.launch(), true); // Explicit owner action, not request replay.
+  assert.equal((await f.request()).status, 200);
+  f.assertDiagnosticsSecretFree();
 });
 
 test('native token redirects are not exposed', async t => {
@@ -166,8 +234,7 @@ test('native token redirects are not exposed', async t => {
 
 test('SSE streams incrementally and revocation closes both connections', async t => {
   const f = await fixture(t); await f.launch();
-  const response = await new Promise(resolve => http.get({ hostname: '127.0.0.1', port: f.front.address().port, path: '/plugins/events',
-    headers: { host: 'computer.example.test', cookie: 'hivra=private' } }, resolve));
+  const response = await f.stream();
   assert.equal(response.headers['set-cookie'], undefined);
   const [bytes] = await once(response, 'data');
   assert.equal(bytes.toString(), 'data: hello\n\n');
@@ -178,15 +245,117 @@ test('SSE streams incrementally and revocation closes both connections', async t
   await assertNoUpstreamPeers(f);
 });
 
-test('upstream cookie expiry closes an already streaming response', async t => {
-  const f = await fixture(t, { lifetime: 100 }); await f.launch();
-  const response = await new Promise(resolve => http.get({ hostname: '127.0.0.1', port: f.front.address().port, path: '/plugins/events',
-    headers: { host: 'computer.example.test', cookie: 'hivra=private' } }, resolve));
+test('short-lived upstream cookies are renewed before expiry without dropping a live stream', async t => {
+  const f = await fixture(t, { lifetime: 300 }); await f.launch();
+  const response = await f.stream();
+  const [bytes] = await once(response, 'data');
+  assert.equal(bytes.toString(), 'data: hello\n\n');
+  let dropped = false;
+  response.on('close', () => { dropped = true; }); response.on('error', () => {});
+  await delay(1000); // More than three cookie lifetimes.
+  assert.equal(dropped, false, 'renewal must not interrupt a live stream');
+  assert.equal(f.broker.ready(), true);
+  assert.ok(f.exchanges() >= 4, `expected repeated renewal, saw ${f.exchanges()} exchanges`);
+  assert.equal((await f.request('/api/settings/get')).status, 200);
+  assert.ok(f.diagnostics.length > 0 && f.diagnostics.every(code => code === 'renewed'));
+  f.assertDiagnosticsSecretFree();
+  response.destroy();
+});
+
+test('a 30-day upstream cookie is renewed inside its last day, not before', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = await fixture(t, { lifetime: 30 * DAY }); await f.launch();
+  t.mock.timers.tick(29 * DAY - HOUR); // 25 hours remain.
+  await delay(100);
+  assert.equal(f.exchanges(), 1);
+  t.mock.timers.tick(2 * HOUR); // 23 hours remain.
+  await f.until(() => f.exchanges() === 2, 'broker did not renew inside the last day');
+  await f.until(() => f.diagnostics.includes('renewed'));
+  assert.equal(f.broker.ready(), true);
+  t.mock.timers.tick(23 * HOUR + 1); // The first cookie has now expired.
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.exchanges(), 2);
+});
+
+// The README's live renewal check skews the guest clock into the cookie's last
+// day, then restores it. Model exactly what that check must observe.
+test('the operator clock-skew check sees renewed, then one 503 with upstream_unauthorized and renewed', async t => {
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const f = await fixture(t, { lifetime: 30 * DAY }); await f.launch();
+  t.mock.timers.setTime(start + 29 * DAY + 12 * HOUR);
+  await f.until(() => f.diagnostics.includes('renewed'), 'no proactive renewal inside the last day');
+  assert.equal(f.broker.ready(), true, 'readiness never lapses before expiry');
+  assert.equal((await f.request()).status, 200);
+  // Clock restored: the renewed cookie now has a future issuedAt. Only upstream
+  // can tell, and it refuses the cookie on the next native request.
+  t.mock.timers.setTime(start + 1000);
+  assert.equal(f.broker.ready(), true);
+  const observedBefore = f.observed.length;
+  assert.equal((await f.request()).status, 503);
+  await f.until(() => f.diagnostics.length === 3, 'no re-exchange after the upstream 401');
+  assert.deepEqual(f.diagnostics, ['renewed', 'upstream_unauthorized', 'renewed']);
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.observed.length, observedBefore + 2, 'the rejected request is not replayed');
+  assert.equal(f.exchanges(), 3);
+  f.assertDiagnosticsSecretFree();
+});
+
+test('a renewal retry is not postponed when the guest clock steps backwards', async t => {
+  const start = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const f = await fixture(t, { lifetime: 30 * DAY, broker: { renewRetryMs: 50 } }); await f.launch();
+  t.mock.timers.setTime(start + 29 * DAY + 12 * HOUR);
+  await f.until(() => f.diagnostics.includes('renewed'));
+  f.failExchanges('drop', 1); f.rejectNext();
+  assert.equal((await f.request()).status, 503);
+  await f.until(() => f.diagnostics.includes('renewal_failed'));
+  // NTP (or the operator check) steps the clock back while no cookie is held.
+  t.mock.timers.setTime(start + 1000);
+  await f.until(() => f.diagnostics.at(-1) === 'renewed', 'the retry waited for the wall clock to catch up');
+  assert.deepEqual(f.diagnostics, ['renewed', 'upstream_unauthorized', 'renewal_failed', 'renewed']);
+  assert.equal((await f.request()).status, 200);
+});
+
+test('a transient renewal failure retries on the bounded schedule', async t => {
+  const f = await fixture(t, { lifetime: 400, broker: { renewRetryMs: 50 } }); await f.launch();
+  f.failExchanges('drop', 1);
+  const response = await f.stream();
+  let dropped = false;
+  response.resume(); response.on('close', () => { dropped = true; }); response.on('error', () => {});
+  await f.until(() => f.diagnostics.includes('renewed'), 'renewal was not retried');
+  assert.deepEqual(f.diagnostics.slice(0, 2), ['renewal_failed', 'renewed']);
+  assert.equal(dropped, false);
+  assert.equal(f.broker.ready(), true);
+  response.destroy();
+});
+
+test('a 401 for a superseded cookie does not discard renewed authority', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = await fixture(t, { lifetime: 30 * DAY }); await f.launch();
+  const stale = f.request('/park');
+  await f.until(() => f.parked.length === 1);
+  t.mock.timers.tick(29 * DAY + HOUR);
+  await f.until(() => f.diagnostics.includes('renewed'));
+  f.parked[0].writeHead(401); f.parked[0].end();
+  assert.equal((await stale).status, 503, 'the rejected request is still not replayed');
+  await delay(100);
+  assert.equal(f.exchanges(), 2);
+  assert.equal(f.broker.ready(), true);
+  assert.equal(f.diagnostics.includes('upstream_unauthorized'), false);
+  assert.equal((await f.request()).status, 200);
+});
+
+test('when renewal is refused, cookie expiry still closes an already streaming response', async t => {
+  const f = await fixture(t, { lifetime: 300 }); await f.launch();
+  f.failExchanges('refuse');
+  const response = await f.stream();
   response.resume(); response.on('error', () => {});
   await new Promise(resolve => response.once('close', resolve));
   assert.equal(f.broker.ready(), false);
+  assert.deepEqual(f.diagnostics, ['renewal_refused']);
   assert.equal(await f.launch(), false);
-  f.broker.reset();
+  f.broker.reset(); f.failExchanges('mint', 0);
   assert.equal(await f.launch(), true);
   await assertNoUpstreamPeers(f);
 });
