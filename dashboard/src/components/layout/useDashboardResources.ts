@@ -1,70 +1,102 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
+import {
+  resourceInventory,
+  type InventorySource,
+  type InventorySourceState,
+} from "@/lib/workspace/resource-inventory";
 import { parseDashboardResources, type DashboardResource, type DashboardResourceSource } from "./dashboard-resources";
 
-type SourceState = { resources: DashboardResource[]; loading: boolean; error: string | null };
-type Snapshot = { owner: string; hermes: SourceState; hivra: SourceState };
-const emptySource = (): SourceState => ({ resources: [], loading: true, error: null });
-const emptySnapshot = (owner: string): Snapshot => ({ owner, hermes: emptySource(), hivra: emptySource() });
-const paths = { hermes: "/api/instances?summary=true", hivra: "/api/hivra/agents" };
+type SourceView = { resources: DashboardResource[]; loading: boolean; error: string | null };
 const errors = { hermes: "Hermes agents could not be refreshed.", hivra: "Other agents and computers could not be refreshed." };
+const LOADING: SourceView = { resources: [], loading: true, error: null };
+const OFF: SourceView = { resources: [], loading: false, error: null };
 
-export function useDashboardResources(owner: string, routeKey?: string | null) {
-  const [snapshot, setSnapshot] = useState<Snapshot>(() => emptySnapshot(owner));
-  const controllers = useRef<Partial<Record<DashboardResourceSource, AbortController>>>({});
-  const [revision, setRevision] = useState(0);
+/** The resource a detail route names, so arriving on one the list lacks re-reads it. */
+function routeResource(routeKey: string | null | undefined): { source: InventorySource; id: string } | null {
+  const match = routeKey?.match(/^\/dashboard\/(agent|instances)\/([^/?#]+)/);
+  if (!match) return null;
+  try {
+    return { source: match[1] === "agent" ? "hivra" : "hermes", id: decodeURIComponent(match[2]) };
+  } catch {
+    return null;
+  }
+}
 
-  useEffect(() => {
-    const requests = controllers.current;
-    // Each source resolves independently: one unavailable service cannot hide the other.
-    for (const source of ["hermes", "hivra"] as const) {
-      if (source === "hivra" && !isHivraEnabled()) {
-        // A deliberately disabled source is not a failed network read.
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setSnapshot((current) => ({
-          ...(current.owner === owner ? current : emptySnapshot(owner)),
-          hivra: { resources: [], loading: false, error: null },
-        }));
-        continue;
-      }
-      const controller = new AbortController();
-      requests[source] = controller;
-      // Start a new external-source read while retaining explicitly last-known metadata.
-      setSnapshot((current) => {
-        const next = current.owner === owner ? current : emptySnapshot(owner);
-        return { ...next, [source]: { ...next[source], loading: true } };
-      });
-      void fetch(paths[source], { cache: "no-store", signal: controller.signal })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Resource source unavailable");
-          return parseDashboardResources(await response.json(), source);
-        })
-        .then((resources) => {
-          if (controller.signal.aborted) return;
-          setSnapshot((current) => current.owner !== owner ? current : {
-            ...current, [source]: { resources, loading: false, error: null },
-          });
-        })
-        .catch(() => {
-          if (controller.signal.aborted) return;
-          setSnapshot((current) => current.owner !== owner ? current : {
-            ...current, [source]: { ...current[source], loading: false, error: errors[source] },
-          });
-        });
+function listsResource(state: InventorySourceState, source: InventorySource, id: string): boolean {
+  if (!state.hasBody) return false;
+  try {
+    return parseDashboardResources(state.body, source).some((resource) => resource.id === id);
+  } catch {
+    return false;
+  }
+}
+
+function sourceView(state: InventorySourceState, source: DashboardResourceSource): SourceView {
+  let resources: DashboardResource[] = [];
+  let unreadable = false;
+  if (state.hasBody) {
+    try {
+      resources = parseDashboardResources(state.body, source);
+    } catch {
+      unreadable = true;
     }
-    return () => { requests.hermes?.abort(); requests.hivra?.abort(); };
-  }, [owner, revision, routeKey]);
-
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  // Never show the previous account's snapshot while the next effect is pending.
-  const current = useMemo(() => snapshot.owner === owner ? snapshot : emptySnapshot(owner), [snapshot, owner]);
-  const resources = useMemo(() => [...current.hermes.resources, ...current.hivra.resources], [current.hermes.resources, current.hivra.resources]);
+  }
   return {
     resources,
-    loading: current.hermes.loading || current.hivra.loading,
-    errors: { hermes: current.hermes.error, hivra: current.hivra.error },
+    loading: state.pending || state.settledAt === 0,
+    error: state.failed || unreadable ? errors[source] : null,
+  };
+}
+
+/**
+ * The agents and computers the shell's switchers list, from the shared
+ * inventory. Moving between pages reuses a fresh read; opening a resource the
+ * held list does not have (one just launched) reads its list again.
+ */
+export function useDashboardResources(owner: string, routeKey?: string | null) {
+  const snapshot = useSyncExternalStore(
+    resourceInventory.subscribe,
+    resourceInventory.getSnapshot,
+    resourceInventory.getServerSnapshot,
+  );
+  // Whether Hivra is on is only known in the browser (hostname), after hydration.
+  const [hivraOn, setHivraOn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    resourceInventory.setOwner(owner);
+    const enabled = isHivraEnabled();
+    // A deliberately disabled source is not a failed network read.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHivraOn(enabled);
+    const named = routeResource(routeKey);
+    // Each source resolves independently: one unavailable service cannot hide the other.
+    for (const source of enabled ? (["hermes", "hivra"] as const) : (["hermes"] as const)) {
+      const unknownHere = named?.source === source
+        && !listsResource(resourceInventory.getSnapshot()[source], source, named.id);
+      void resourceInventory.load(source, { force: unknownHere });
+    }
+  }, [owner, routeKey]);
+
+  const refresh = useCallback(() => {
+    void resourceInventory.load("hermes", { force: true });
+    if (isHivraEnabled()) void resourceInventory.load("hivra", { force: true });
+  }, []);
+
+  // Never show the previous account's snapshot while the next effect is pending.
+  const mine = snapshot.owner === owner;
+  const hermes = useMemo(() => mine ? sourceView(snapshot.hermes, "hermes") : LOADING, [mine, snapshot.hermes]);
+  const hivra = useMemo(
+    () => hivraOn === false ? OFF : mine ? sourceView(snapshot.hivra, "hivra") : LOADING,
+    [hivraOn, mine, snapshot.hivra],
+  );
+  const resources = useMemo(() => [...hermes.resources, ...hivra.resources], [hermes.resources, hivra.resources]);
+  return {
+    resources,
+    loading: hermes.loading || hivra.loading,
+    errors: { hermes: hermes.error, hivra: hivra.error },
     refresh,
   };
 }

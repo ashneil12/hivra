@@ -24,6 +24,7 @@ import {
 } from '@/lib/instance-settings';
 import type { InstanceFailureAlert, RecoveryAction } from '@/lib/failure-ownership';
 import { clientLog } from '@/lib/client/logger';
+import { resourceInventory } from '@/lib/workspace/resource-inventory';
 import { normalizeSshWarmupMessage } from '@/lib/ssh-warmup';
 import styles from './console.module.css';
 
@@ -407,6 +408,9 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: pendingAction })
       });
+      // Answered, so the agent's status may have changed: the sidebar, ⌘K and
+      // Home stop reusing the list of agents read before it.
+      resourceInventory.invalidate('hermes');
       const data = await res.json();
       if (data.success) {
         setActionFeedback({
