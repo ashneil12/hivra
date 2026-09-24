@@ -198,7 +198,7 @@ describe("a part of the page whose code can't download", () => {
 
     expect(await screen.findByText(NOTICE)).toBeVisible();
     expect(screen.queryByText(/Dashboard error page/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Chat/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Agent/ }));
     expect(await screen.findByText("Chat panel")).toBeVisible();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });
