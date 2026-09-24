@@ -45,6 +45,7 @@ import {
   portableRuntimeCompatibilityForProvisioner,
 } from "./portable-provisioner-contract";
 import { resolveProxmoxHostCapacityPolicy } from "./host-capacity-policy";
+import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
 
 type PreflightDependencies = {
   loadConnection: typeof loadInfrastructureConnectionSecret;
@@ -73,7 +74,7 @@ const PUBLIC_ERROR_COPY: Record<
   },
   HOST_ADDRESS_BLOCKED: {
     message: "The SSH host resolves to an address this control plane cannot reach.",
-    remediation: "Use a public address, or explicitly allow private networking on a self-hosted control plane.",
+    // Mode-dependent; see preflightErrorCopy.
   },
   SSH_HOST_KEY_MISMATCH: {
     message: "The server identity did not match the pinned SSH fingerprint.",
@@ -101,7 +102,7 @@ const PUBLIC_ERROR_COPY: Record<
   },
   PROXMOX_PERMISSION_UNAVAILABLE: {
     message: "The SSH account cannot run the required Proxmox lifecycle commands.",
-    remediation: "Use a root SSH account for this direct-command Proxmox adapter.",
+    remediation: "Hivra needs a root login on this Proxmox server. Edit the connection, set the SSH user to root, then check again.",
   },
   NODE_UNAVAILABLE: {
     message: "The Proxmox node could not be inspected.",
@@ -109,41 +110,62 @@ const PUBLIC_ERROR_COPY: Record<
   },
   KVM_UNAVAILABLE: {
     message: "Hardware-backed KVM isolation is unavailable on this target.",
-    remediation: "Enable virtualization and expose /dev/kvm before launching agents.",
+    remediation: "Turn on virtualization (VT-x or AMD-V) in the server's firmware, or nested virtualization with your provider, so /dev/kvm exists. Then check again.",
   },
   BRIDGE_UNAVAILABLE: {
     message: "No usable Proxmox network bridge was found.",
-    remediation: "Create or select a bridge in Advanced mode.",
+    remediation: "Choose Review setup to create Hivra's private network on this server. Using your own bridge? Create it in the Proxmox web UI under your node → System → Network → Create → Linux Bridge, apply it, then check again.",
   },
   STORAGE_UNAVAILABLE: {
     message: "No usable Proxmox VM storage was found.",
-    remediation: "Enable VM-capable storage or select it in Advanced mode.",
+    remediation: "In the Proxmox web UI, open Datacenter → Storage and make sure one storage is enabled, active and allows Disk image content (for example local-lvm). Then check again.",
   },
   TEMPLATE_UNAVAILABLE: {
     message: "The configured VM template is not ready.",
-    remediation: "Prepare the template or choose a different one in Advanced mode.",
+    remediation: "In the Proxmox web UI, convert the VM this connection names into a template (right-click → Convert to template), or edit the connection to name another one. Then check again.",
   },
   PROVISIONER_UNAVAILABLE: {
     message: "The portable provisioner is not ready on this target.",
-    remediation: "Install the versioned provisioner assets before launching agents.",
+    remediation: "Choose Review setup to install Hivra's host tools on this server, then check again.",
   },
   VMID_RANGE_UNAVAILABLE: {
     message: "The configured VMID range has no free IDs.",
-    remediation: "Free a VMID or select a different range in Advanced mode.",
+    remediation: "Every VM ID this connection may use is taken. Remove VMs you no longer need from that range in the Proxmox web UI, then check again.",
   },
   CAPACITY_UNAVAILABLE: {
     message: "The target capacity could not be measured safely.",
-    remediation: "Check Proxmox node and storage status, then run preflight again.",
+    remediation: "Check the node and storage status in the Proxmox web UI, then check again.",
   },
   PREFLIGHT_SUPERSEDED: {
     message: "A newer connection change or preflight replaced this check.",
-    remediation: "Use the newest result, or run preflight again.",
+    remediation: "Use the newest result, or check again.",
   },
   PREFLIGHT_INTERNAL_ERROR: {
     message: "The infrastructure preflight could not be completed.",
-    remediation: "Try again. If the problem continues, inspect the self-hosted server logs.",
+    // Mode-dependent; see preflightErrorCopy.
   },
 };
+
+// A legacy Advanced connection names its own bridge and host-tools directory,
+// and Review setup (Simple only) cannot fix those; its owner fixes them.
+const ADVANCED_REMEDIATION: Partial<Record<ProxmoxPreflightErrorCode, string>> = {
+  BRIDGE_UNAVAILABLE: "Create the bridge this connection names in the Proxmox web UI under your node → System → Network → Create → Linux Bridge, apply it, then check again.",
+  PROVISIONER_UNAVAILABLE: "Install Hivra's host tools in the directory this connection names, or switch the connection to Simple so Review setup can install them. Then check again.",
+};
+
+/** The public copy for a code, with fix text that fits how Hivra is run:
+ * hosted owners are never told to read server logs or change network policy,
+ * and nobody is sent to a setup mode their connection doesn't have. */
+function preflightErrorCopy(
+  code: ProxmoxPreflightErrorCode,
+  setupMode: "simple" | "advanced" = "simple",
+): { message: string; remediation?: string } {
+  const copy = PUBLIC_ERROR_COPY[code];
+  if (code === "HOST_ADDRESS_BLOCKED") return { ...copy, remediation: blockedAddressRemediation() };
+  if (code === "PREFLIGHT_INTERNAL_ERROR") return { ...copy, remediation: internalFailureRemediation() };
+  const advanced = setupMode === "advanced" ? ADVANCED_REMEDIATION[code] : undefined;
+  return advanced ? { ...copy, remediation: advanced } : copy;
+}
 
 const PREFLIGHT_ISSUE_CODES: Record<string, ProxmoxPreflightErrorCode> = {
   PROXMOX_TOOL_PVEVERSION_MISSING: "PROXMOX_UNAVAILABLE",
@@ -191,8 +213,9 @@ function publicFailure(
   checkedAt: string,
   code: ProxmoxPreflightErrorCode,
   unmetRequirements?: Array<{ code: ProxmoxPreflightErrorCode; message: string }>,
+  setupMode?: "simple" | "advanced",
 ): ProxmoxPreflightResult {
-  const copy = PUBLIC_ERROR_COPY[code];
+  const copy = preflightErrorCopy(code, setupMode);
   return ProxmoxPreflightResultSchema.parse({
     ok: false,
     connectionId,
@@ -648,8 +671,8 @@ export async function preflightInfrastructureConnection(
     const requirements = mappedRequirements(outcome.report.unmetRequirements);
     const result = outcome.report.connectionReady
       ? publicSuccess(connection, outcome.report, checkedAt)
-        ?? publicFailure(connectionId, checkedAt, topReportError(outcome.report), requirements)
-      : publicFailure(connectionId, checkedAt, topReportError(outcome.report), requirements);
+        ?? publicFailure(connectionId, checkedAt, topReportError(outcome.report), requirements, connection.setupMode)
+      : publicFailure(connectionId, checkedAt, topReportError(outcome.report), requirements, connection.setupMode);
 
     const completion: InfrastructurePreflightCompletion = {
       connectionStatus: result.ok ? "ready" : "error",

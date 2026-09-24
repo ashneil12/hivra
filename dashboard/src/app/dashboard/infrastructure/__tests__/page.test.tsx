@@ -21,6 +21,7 @@ import {
 } from "@/lib/infrastructure/client";
 
 jest.mock("@/lib/infrastructure/client", () => ({
+  InfrastructureApiError: jest.requireActual("@/lib/infrastructure/client").InfrastructureApiError,
   createInfrastructureConnection: jest.fn(),
   updateInfrastructureConnection: jest.fn(),
   deleteInfrastructureConnection: jest.fn(),
@@ -208,7 +209,7 @@ describe("InfrastructureConnectionsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
 
     const discoveryHeading = await screen.findByRole("heading", {
-      name: "A supported isolation engine is installed.",
+      name: "Home Proxmox runs Proxmox VE 8.4.1.",
     });
     expect(discoveryHeading).toHaveFocus();
     expect(discoverInfrastructureHost).toHaveBeenCalledWith(CONNECTION_ID);
@@ -244,13 +245,14 @@ describe("InfrastructureConnectionsPage", () => {
     }));
     render(<InfrastructureConnectionsPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare recommended setup" }));
-    const dialog = screen.getByRole("dialog", { name: "Prepare the recommended setup on Home Proxmox?" });
-    expect(within(dialog).getByText(/does not create or start an agent/i)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Review setup" }));
+    const dialog = screen.getByRole("dialog", { name: "Set up Home Proxmox for agents?" });
+    expect(within(dialog).getByText(/doesn't create an agent or buy anything/i)).toBeInTheDocument();
     expect(prepareInfrastructureConnection).not.toHaveBeenCalled();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Prepare recommended setup" }));
-    expect(screen.getByRole("status")).toHaveTextContent(/No agent is being created/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set up Home Proxmox" }));
+    expect(screen.getByRole("status")).toHaveTextContent(/Running for/i);
+    expect(screen.queryByRole("button", { name: "Close host setup" })).not.toBeInTheDocument();
     finishPreparation({
       ok: true,
       connectionId: CONNECTION_ID,
@@ -259,7 +261,7 @@ describe("InfrastructureConnectionsPage", () => {
     });
 
     expect(await screen.findByRole("heading", {
-      name: "Home Proxmox was prepared, but still needs attention.",
+      name: "Home Proxmox was set up, but still needs attention.",
     })).toBeInTheDocument();
     expect(screen.getByText("Hivra 2026.08.26.3")).toBeInTheDocument();
     expect(prepareInfrastructureConnection).toHaveBeenCalledWith(CONNECTION_ID);
@@ -274,13 +276,13 @@ describe("InfrastructureConnectionsPage", () => {
     render(<InfrastructureConnectionsPage />);
 
     await screen.findByRole("heading", { name: "Home Proxmox" });
-    expect(screen.queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Inspect again" }));
-    await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+    await screen.findByRole("heading", { name: "Home Proxmox runs Proxmox VE 8.4.1." });
     fireEvent.click(screen.getByRole("button", { name: "Check Proxmox readiness" }));
     const readinessDialog = await screen.findByRole("dialog", { name: "Check Home Proxmox" });
-    expect(within(readinessDialog).queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(within(readinessDialog).queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 
   it("does not offer preparation for a capacity-only failure", async () => {
@@ -300,12 +302,12 @@ describe("InfrastructureConnectionsPage", () => {
     render(<InfrastructureConnectionsPage />);
 
     expect(await screen.findByRole("heading", { name: "Home Proxmox" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Inspect again" }));
-    await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+    await screen.findByRole("heading", { name: "Home Proxmox runs Proxmox VE 8.4.1." });
     fireEvent.click(screen.getByRole("button", { name: "Check Proxmox readiness" }));
     const readinessDialog = await screen.findByRole("dialog", { name: "Check Home Proxmox" });
-    expect(within(readinessDialog).queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(within(readinessDialog).queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 
   it("shows preparation failure as a distinct recoverable state", async () => {
@@ -314,11 +316,11 @@ describe("InfrastructureConnectionsPage", () => {
     );
     render(<InfrastructureConnectionsPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare recommended setup" }));
-    const confirmation = screen.getByRole("dialog", { name: "Prepare the recommended setup on Home Proxmox?" });
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Prepare recommended setup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review setup" }));
+    const confirmation = screen.getByRole("dialog", { name: "Set up Home Proxmox for agents?" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Set up Home Proxmox" }));
 
-    const failure = await screen.findByRole("alertdialog", { name: "The host was not prepared." });
+    const failure = await screen.findByRole("alertdialog", { name: "Home Proxmox was not set up." });
     expect(failure).toHaveTextContent(/pinned SSH fingerprint/i);
     expect(within(failure).getByRole("button", { name: "Review and try again" })).toBeEnabled();
   });
@@ -343,7 +345,7 @@ describe("InfrastructureConnectionsPage", () => {
     render(<InfrastructureConnectionsPage />);
 
     await screen.findByRole("heading", { name: "Home Proxmox" });
-    expect(screen.queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 
   it("does not reuse stale preparation evidence after the connection changes", async () => {
@@ -355,6 +357,6 @@ describe("InfrastructureConnectionsPage", () => {
 
     await screen.findByRole("heading", { name: "Home Proxmox" });
     expect(screen.getByText("Needs inspection")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 });
