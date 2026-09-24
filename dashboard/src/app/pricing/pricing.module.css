@@ -1,0 +1,5 @@
+/* Three cards (self-host plus the two sizes checkout sells) on the homepage
+   pricing card styles, whose ladder grid is sized for five. The doubled class
+   outranks that grid wherever the two stylesheets load. */
+.sizes.sizes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .sizes.sizes { grid-template-columns: 1fr; } }

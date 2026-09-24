@@ -28,7 +28,7 @@ export const BANNED_CLAIMS: BannedClaim[] = [
   { pattern: /bring your own cloud|BYO cloud|your own (?:AWS|GCP|Azure|DigitalOcean) account/i, why: "BYO cloud beyond Hetzner is not available." },
   // $19.99 is allowed only with its size in the same sentence ("$19.99 a month for 4 vCPU and 8 GB").
   { pattern: /\bHivra (?:Pro|Power|Starter|Studio|Max)\b|\bPower plan\b|Pro is \$9\.99|\$19\.99(?![^.]*4 vCPU and 8 GB)/i, why: "Describe Hivra plans by price and size, not by colliding names." },
-  { pattern: /sizes (?:are )?(?:on|listed on) the pricing page|current (?:caps|sizes)/i, why: "The /pricing page shows a preview ladder; state the $9.99 and $19.99 sizes inline." },
+  { pattern: /sizes (?:are )?(?:on|listed on) the pricing page|current (?:caps|sizes)/i, why: "State the $9.99 and $19.99 sizes inline instead of sending readers elsewhere for them." },
   { pattern: /\$79\b|\$149\b|\/yr\b|per year|yearly plan/i, why: "Do not state a Hivra annual price." },
   { pattern: /[–—]/, why: "No em or en dashes in copy." },
   // Claude Code and Codex keep-running claims, shared with the blog and /agents:

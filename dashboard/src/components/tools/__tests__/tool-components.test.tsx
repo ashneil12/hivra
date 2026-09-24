@@ -190,7 +190,7 @@ describe("HostingCostCalculatorTool", () => {
 
     expect(screen.getByText(/Prices last verified 2026-09-24/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /start on the \$9\.99 plan/i })).toHaveAttribute("href", "/get-started?plan=operator");
-    // /pricing shows a preview ladder, so the two sizes checkout sells are stated here.
+    // The two sizes checkout sells are stated here, not left to another page.
     expect(screen.getByText(/\$9\.99 a month for 2 vCPU and 4 GB, or \$19\.99 a month for 4 vCPU and 8 GB/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "the pricing page" })).not.toBeInTheDocument();
     expectNoBannedClaims(container);

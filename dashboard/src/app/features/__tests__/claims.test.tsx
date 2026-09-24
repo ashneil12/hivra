@@ -91,8 +91,7 @@ describe("feature page claims", () => {
     const metadata = await generateMetadata({ params: Promise.resolve({ slug: "multi-agent" }) });
     expect(metadata.title).toBe("Run Multiple AI Agents From One Account");
     expect(container.querySelector("h1")?.textContent).toBe("One account. Several agents, each on its own computer.");
-    // The two sizes checkout sells, stated inline rather than via /pricing,
-    // which shows a preview ladder.
+    // The two sizes checkout sells, stated inline rather than via /pricing.
     expect(container.textContent).toMatch(/\$9\.99\/mo for 2 vCPU and 4 GB RAM, or \$19\.99\/mo for 4 vCPU and 8 GB RAM/);
   });
 
