@@ -13,6 +13,12 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn(), currentUser: jest.fn() }));
+// The real admin check, observed: the dormant policy must never reach it.
+const mockIsOpsAdminUser = jest.fn();
+jest.mock("@/lib/ops-access", () => {
+  const actual = jest.requireActual("@/lib/ops-access");
+  return { ...actual, isOpsAdminUser: (...args: unknown[]) => mockIsOpsAdminUser(...args) };
+});
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   RATE_LIMIT_PRESETS: { settingsWrite: {}, secretWrite: {} },
   enforceAuthenticatedRouteRateLimit: () => null,
@@ -192,8 +198,22 @@ const TOKEN_ACTIONS = [
   },
 ] as const;
 
+// Obviously fake admin identities: the repo is public and no real admin is named.
+const ADMIN_EMAIL = "ops-admin@example.test";
+const OPS_ENV_KEYS = ["OPS_ADMIN_USER_IDS", "OPS_ADMIN_EMAILS", "CLERK_SECRET_KEY"] as const;
+const originalOpsEnv: Record<string, string | undefined> = {};
+const originalFetch = global.fetch;
+const clerkFetch = jest.fn();
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockIsOpsAdminUser.mockImplementation(jest.requireActual("@/lib/ops-access").isOpsAdminUser);
+  for (const key of OPS_ENV_KEYS) originalOpsEnv[key] = process.env[key];
+  delete process.env.OPS_ADMIN_USER_IDS;
+  delete process.env.OPS_ADMIN_EMAILS;
+  process.env.CLERK_SECRET_KEY = "sk_test_geo";
+  clerkFetch.mockReset();
+  global.fetch = clerkFetch as unknown as typeof fetch;
   storedCountry = null;
   existingQualifications = [];
   verifiedWallets = [];
@@ -261,8 +281,26 @@ function refresh(country?: string) {
 }
 
 afterEach(() => {
+  global.fetch = originalFetch;
+  for (const key of OPS_ENV_KEYS) {
+    if (originalOpsEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = originalOpsEnv[key];
+  }
   jest.restoreAllMocks();
 });
+
+/** Clerk's GET /users/{id} answering with a verified primary email. */
+function clerkPrimaryEmail(email: string) {
+  clerkFetch.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      id: USER,
+      primary_email_address_id: "idn_1",
+      email_addresses: [{ id: "idn_1", email_address: email, verification: { status: "verified" } }],
+    }),
+  });
+}
 
 describe("dormant policy (no country listed)", () => {
   beforeEach(() => {
@@ -279,6 +317,19 @@ describe("dormant policy (no country listed)", () => {
     expect(headerGet).not.toHaveBeenCalledWith("x-vercel-ip-country");
     expect(mockFrom).not.toHaveBeenCalledWith("signup_risk_assessments");
     expect(mockFrom).not.toHaveBeenCalledWith("token_tier_qualifications");
+  });
+
+  it.each(TOKEN_ACTIONS)("$name makes no admin lookup, even with ops admins configured", async ({ call, created }) => {
+    process.env.OPS_ADMIN_USER_IDS = USER;
+    process.env.OPS_ADMIN_EMAILS = ADMIN_EMAIL;
+    clerkPrimaryEmail(ADMIN_EMAIL);
+    storedCountry = "GB";
+    const response = await call("GB");
+    expect(response.status).toBe(200);
+    expect(created()).toHaveBeenCalledTimes(1);
+    expect(mockIsOpsAdminUser).not.toHaveBeenCalled();
+    expect(clerkFetch).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalledWith("signup_risk_assessments");
   });
 
   it("wallet refresh calls the tier evaluator with exactly the arguments it always did", async () => {
@@ -372,6 +423,47 @@ describe("policy of ['GB']", () => {
       verifiedWallets = [{ verification_method: "bankr", metadata: { bankr: { purpose: "credit_deposit" } } }];
       const response = await challengeRoute.POST(post("/api/billing/wallet/challenge", { address: DEPOSIT, chainId: 8453 }, "GB"));
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe("ops admins (OPS_ADMIN_USER_IDS / OPS_ADMIN_EMAILS) are exempt", () => {
+    it.each(TOKEN_ACTIONS)("$name proceeds for an admin (by user ID) from a UK IP with a stored UK country", async ({ call, created }) => {
+      process.env.OPS_ADMIN_USER_IDS = USER;
+      storedCountry = "GB";
+      const response = await call("GB");
+      expect(response.status).toBe(200);
+      expect(created()).toHaveBeenCalledTimes(1);
+      expect(mockIsOpsAdminUser).toHaveBeenCalled();
+      expect(clerkFetch).not.toHaveBeenCalled();
+    });
+
+    it.each(TOKEN_ACTIONS)("$name proceeds for an admin (by verified primary email) from a UK IP", async ({ call, created }) => {
+      process.env.OPS_ADMIN_EMAILS = ADMIN_EMAIL;
+      clerkPrimaryEmail(ADMIN_EMAIL);
+      const response = await call("GB");
+      expect(response.status).toBe(200);
+      expect(created()).toHaveBeenCalledTimes(1);
+      expect(clerkFetch).toHaveBeenCalledWith(`https://api.clerk.com/v1/users/${USER}`, expect.anything());
+    });
+
+    it.each(TOKEN_ACTIONS)("$name is still refused for a non-admin while admins are configured", async ({ call, created }) => {
+      process.env.OPS_ADMIN_USER_IDS = "user_ops_admin_test";
+      process.env.OPS_ADMIN_EMAILS = ADMIN_EMAIL;
+      clerkPrimaryEmail("customer@example.test");
+      const response = await call("GB");
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ code: "token_geo_blocked", error: GB_NOTICE });
+      expect(created()).not.toHaveBeenCalled();
+    });
+
+    it("wallet refresh gives an admin's evaluator a not-blocked decision from a UK IP", async () => {
+      process.env.OPS_ADMIN_USER_IDS = USER;
+      expect((await refresh("GB")).status).toBe(200);
+      expect(mockEvaluate).toHaveBeenCalledWith({
+        userId: USER,
+        balances: { hermesos: 5n },
+        tokenGeo: { blocked: false },
+      });
     });
   });
 

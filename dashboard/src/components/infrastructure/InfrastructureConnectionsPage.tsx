@@ -58,6 +58,7 @@ import {
   HETZNER_CLOUD_CONNECTION_ERROR_CODES,
   HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION,
 } from "@/lib/infrastructure/contracts";
+import { staleHetznerPowerKeys } from "@/lib/infrastructure/hetzner-inventory-freshness";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import {
   hetznerCloudTokenReplacedNotice,
@@ -491,6 +492,23 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     const timer = window.setInterval(() => void loadEnrollments(), 5_000);
     return () => window.clearInterval(timer);
   }, [waitingEnrollment, enrollmentDialogOpen, loadEnrollments]);
+
+  // A server Hivra set up can be newer than the last inventory sync: Start
+  // setup powers it on after that sync. Sync once per setup step so its card
+  // doesn't say "Off" beside "Ready for agents".
+  const syncedForSetup = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const [connectionId, state] of Object.entries(hetznerInventory)) {
+      const setup = hetznerSetups[connectionId];
+      if (state.loading || state.error || setup?.status !== "loaded") continue;
+      const fresh = staleHetznerPowerKeys(state.inventory, setup.computers)
+        .map((key) => `${connectionId}:${key}`)
+        .filter((key) => !syncedForSetup.current.has(key));
+      if (fresh.length === 0) continue;
+      for (const key of fresh) syncedForSetup.current.add(key);
+      void loadHetznerInventory(connectionId, { refresh: true });
+    }
+  }, [hetznerInventory, hetznerSetups, loadHetznerInventory]);
 
   // Open "Replace token" once for the connection a deep link names.
   const handledTokenReplacement = useRef<string | null>(null);
