@@ -407,6 +407,30 @@ describe("BillingPage", () => {
           },
         }));
       }
+      if (url.includes("/api/billing/wallet/eligibility")) {
+        return Promise.resolve(jsonResponse({
+          balance: { balanceDisplay: "1.25" },
+          thresholds: {
+            configured: true,
+            proDisplay: "134,476,535",
+            powerDisplay: "269,855,596",
+            priceUsd: "0.000001108",
+            priceFetchedAt: "2026-09-24T12:59:43.827Z",
+          },
+          tiers: {
+            pro: { currentlyEligible: false, currentThresholdDisplay: "134,476,535" },
+            power: { currentlyEligible: false, currentThresholdDisplay: "269,855,596" },
+          },
+          veniceBoost: {
+            thresholdUsd: 199,
+            cpuBonus: 1,
+            ramBonusMb: 2048,
+            currentlyEligible: false,
+            requiredVvvDisplay: "7",
+            countsStakedVvv: true,
+          },
+        }));
+      }
       if (url.includes("/api/billing/token-holding")) {
         return Promise.resolve(jsonResponse(
           requestMethod(input, init) === "POST" ? tokenRefreshData : tokenHoldingData
@@ -1287,10 +1311,18 @@ describe("BillingPage", () => {
     expect(within(holdBlock).getByText("Wallet verified")).toBeInTheDocument();
     expect(holdBlock).not.toHaveTextContent(/minimum|qualified|base tier|token access|verified wallet:/i);
     expect(holdBlock).not.toHaveTextContent(/(^|[^\d.])1 \$HermesOS/);
-    expect(within(holdBlock).getByRole("link", { name: /see how much to hold/i })).toHaveAttribute(
+    expect(within(holdBlock).getByRole("link", { name: /verify a wallet and track your holding/i })).toHaveAttribute(
       "href",
       "/dashboard/wallet?from=billing"
     );
+    // The account's own hold amounts, straight from the eligibility API.
+    const holdTable = await within(holdBlock).findByRole("table", { name: /\$HermesOS to hold for each plan/i });
+    const proRow = within(holdTable).getByRole("row", { name: /^Pro/ });
+    expect(proRow).toHaveTextContent("134,476,535 $HermesOS");
+    expect(proRow).toHaveTextContent("$149");
+    expect(proRow).toHaveTextContent("Not yet");
+    expect(within(holdTable).getByRole("row", { name: /^Power/ })).toHaveTextContent("269,855,596 $HermesOS");
+    expect(holdBlock).toHaveTextContent("7 VVV (staked counts), about $199, adds +1 vCPU and +2 GB per agent");
     for (const rule of [
       "Base network only.",
       "Send the exact amount in one transfer.",
@@ -2126,6 +2158,18 @@ describe("BillingPage", () => {
           },
         }));
       }
+      if (requestUrl(input).includes("/api/billing/wallet/eligibility")) {
+        // Deliberately unlike any old hardcoded price, so the cards can only
+        // be showing what the server resolved for this account.
+        return Promise.resolve(jsonResponse({
+          balance: null,
+          thresholds: { configured: true, proDisplay: "10,000,000", powerDisplay: "25,000,000", priceUsd: "0.00001" },
+          tiers: {
+            pro: { currentlyEligible: false, currentThresholdDisplay: "10,000,000" },
+            power: { currentlyEligible: false, currentThresholdDisplay: "25,000,000" },
+          },
+        }));
+      }
       return defaultFetch?.(input, init) ?? Promise.resolve(jsonResponse({}));
     });
 
@@ -2137,13 +2181,17 @@ describe("BillingPage", () => {
     expect(screen.getByText("Token payments are final, except where the law gives you a right to cancel.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: "Hold to qualify" }));
-    const holdLinks = screen.getAllByRole("link", { name: /see how much to hold/i });
+    const holdLinks = screen.getAllByRole("link", { name: /verify a wallet to hold/i });
     expect(holdLinks.map((link) => link.getAttribute("href"))).toEqual([
       "/dashboard/wallet?from=billing&plan=pro",
       "/dashboard/wallet?from=billing&plan=power",
     ]);
-    // Hold amounts depend on the user's pricing epoch and are shown on the
-    // wallet page, never hardcoded here.
+    // Hold amounts depend on the user's pricing epoch: the cards show what the
+    // eligibility API resolved, never a hardcoded price.
+    const proCard = screen.getByRole("article", { name: "Pro" });
+    expect(await within(proCard).findByText("Hold 10,000,000 $HermesOS in a verified wallet · move it any time")).toBeInTheDocument();
+    expect(proCard).toHaveTextContent("≈$100");
+    expect(screen.getByRole("article", { name: "Power" })).toHaveTextContent("≈$250");
     for (const name of ["Pro", "Power"]) {
       expect(screen.getByRole("article", { name })).not.toHaveTextContent(/\$(99|149|199|299)\b/);
     }

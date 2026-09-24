@@ -8,6 +8,7 @@
  * checkout does not charge. Nothing here reads flags or the network.
  */
 
+import type { HoldAmounts } from "./hold-amounts";
 import {
   ACTIVE_PLAN_KEYS,
   PLAN_ORDER,
@@ -121,7 +122,13 @@ export interface PlanPriceDisplay {
 /** What a plan card prints as its price for the chosen payment method. */
 export function planPriceDisplay(
   key: PlanKey,
-  options: { path: PlanPaymentPath; cadence: BillingCadence; tokenMode?: TokenPlanMode }
+  options: {
+    path: PlanPaymentPath;
+    cadence: BillingCadence;
+    tokenMode?: TokenPlanMode;
+    /** Server hold amounts for this account; without them the card stays generic. */
+    holdAmounts?: HoldAmounts | null;
+  }
 ): PlanPriceDisplay {
   if (key === "free") {
     return { amount: "$0", unit: "", subline: "Free · no charge" };
@@ -131,6 +138,14 @@ export function planPriceDisplay(
     const tier = yearlyTokenTierForPlan(key);
     if (!tier) return cardMonthly(key);
     if (options.tokenMode === "hold") {
+      const held = options.holdAmounts?.[tier];
+      if (held) {
+        return {
+          amount: held.usdApprox !== null ? `≈$${held.usdApprox.toLocaleString("en-US")}` : "Hold",
+          unit: "held in $HermesOS",
+          subline: `Hold ${held.amountDisplay} $HermesOS in a verified wallet · move it any time`,
+        };
+      }
       return {
         amount: "Hold",
         unit: "$HermesOS",
@@ -365,7 +380,7 @@ export function planCardCta(params: {
     if (params.tokenMode === "hold") {
       return {
         kind: "hold_token",
-        label: "See how much to hold",
+        label: "Verify a wallet to hold",
         href: `/dashboard/wallet?from=billing&plan=${tier}`,
         tier,
       };
