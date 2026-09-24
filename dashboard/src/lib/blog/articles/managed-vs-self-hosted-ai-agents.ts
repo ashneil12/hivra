@@ -28,7 +28,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "A self-hosted agent setup, done properly, looks like this:\n\n- Pick and rent a VPS, generate SSH keys, harden the box (firewall, fail2ban, SSH keys only): 1-2 hours\n- Install the runtime (Node or Python, plus the agent itself) and fight version mismatches: 1-2 hours\n- Authenticate the agent on a headless machine, which usually means copying OAuth URLs and tokens between your laptop and the server: 30-60 minutes\n- Set up tmux or a systemd service so the agent survives disconnects and reboots: 30-60 minutes\n- Optional but common: reverse proxy, TLS certificate, and basic auth so you can reach the agent from a browser or phone: 1-3 hours",
         "That is 4 to 10 hours for a first-timer, and the wide range is honest. If every step goes clean, you land near 4. One bad Python version conflict or a botched proxy config and you are at 10. We wrote step-by-step guides for [self-hosting Hermes Agent](/blog/how-to-self-host-hermes-agent) and [self-hosting OpenClaw](/blog/how-to-self-host-openclaw), and neither is short.",
-        "The managed equivalent: pick an agent, click deploy, wait for the VM to provision, then sign in to your AI account inside the box. That is the whole setup.",
+        "The managed equivalent: pick an agent, click deploy, wait for the VM to provision, then sign in to your AI account on the agent's computer. That is the whole setup.",
       ],
     },
     {
@@ -45,7 +45,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "This is the strongest real argument for self-hosting, so it deserves a straight treatment rather than a strawman.",
         "On a self-hosted box, you control the physical jurisdiction of the server, the disk encryption, the backup destinations, and exactly which processes run next to your agent. No platform operator can access the machine, because there is no platform operator. If you work under strict compliance rules, or your agent handles data that contractually cannot touch third-party infrastructure, self-hosting is not just cheaper in some spreadsheet. It is the only option that satisfies the requirement.",
-        "Managed hosting narrows this gap but does not close it. On Hivra, each agent runs in its own private VM rather than a shared container, you sign in with your own Anthropic or ChatGPT account inside the box (the login is stored on that VM), and your usage bills through your own accounts. That is meaningfully better than platforms that proxy your traffic through their own keys. But the VM still lives on infrastructure someone else operates, and Hivra administrators keep infrastructure access to the hosts Hivra manages. If your threat model or your contracts cannot accept that, self-host and do not look back.",
+        "Managed hosting narrows this gap but does not close it. On Hivra, each agent runs in its own private VM rather than a shared container, you sign in with your own Anthropic or ChatGPT account on the agent's computer (the login is stored on that VM), and your usage bills through your own accounts. That is meaningfully better than platforms that proxy your traffic through their own keys. But the VM still lives on infrastructure someone else operates, and Hivra administrators keep infrastructure access to the hosts Hivra manages. If your threat model or your contracts cannot accept that, self-host and do not look back.",
         "For everyone else, the practical question is different: is your data safer on a professionally maintained VM, or on a box you hardened once in an evening and have not patched since? Unmaintained self-hosted servers are the most common way this argument flips in practice.",
       ],
     },
@@ -77,7 +77,7 @@ export const article: BlogArticle = {
     {
       heading: "Try the managed side",
       paragraphs: [
-        `If the hours column in the TCO table is the one that hurts, the managed route is easy to evaluate: [Hivra](/) launches Hermes, Claude Code, Codex, or Aeon on a private VM. Sign in with your own AI accounts, pay zero markup on that usage, and see whether a box you do not have to administer fits how you work. [Plans start at ${ENTRY_PLAN_PRICE}/month](/pricing), paid plans are not paused for inactivity, they come with a ${MONEY_BACK_GUARANTEE}, and your workspace files come with you if you ever move to your own hardware.`,
+        `If the hours column in the TCO table is the one that hurts, the managed route is easy to evaluate: [Hivra](/) launches Hermes, Claude Code, Codex, or Aeon on a private VM. Sign in with your own AI accounts, pay zero markup on that usage, and see whether a computer you do not have to administer fits how you work. [Plans start at ${ENTRY_PLAN_PRICE}/month](/pricing), paid plans are not paused for inactivity, they come with a ${MONEY_BACK_GUARANTEE}, and your workspace files come with you if you ever move to your own hardware.`,
       ],
     },
   ],

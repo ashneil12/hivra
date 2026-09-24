@@ -298,6 +298,18 @@ describe("blog claims", () => {
     expect(SERVER_SIDE_AGENTS_KEEP_WORKING).toMatch(/Aeon's scheduled tasks run on your own GitHub Actions while the computer hosts its dashboard/);
   });
 
+  // The glossary says "computer" for what Hivra runs an agent on. Generic
+  // server talk ("a 2 vCPU box at a budget host") is fine; a sentence about
+  // Hivra itself may not call its computer a box or an instance.
+  it("never calls a Hivra computer a box or an instance in any article", () => {
+    const found = BLOG_ARTICLES_LIST.flatMap((article) =>
+      hivraSentences(articleCopy(article))
+        .filter((sentence) => /(?<!text )\bbox(?:es)?\b|\binstances?\b/i.test(sentence))
+        .map((sentence) => `${article.slug}: ${sentence.slice(0, 160)}`),
+    );
+    expect(found).toEqual([]);
+  });
+
   it("uses the computer vocabulary and the dashboard's own tab names on the 24/7 and Telegram posts", () => {
     for (const slug of [...CLI_24_7_POSTS, "control-claude-code-from-telegram"]) {
       const copy = articleCopy(BLOG_ARTICLES_LIST.find((candidate) => candidate.slug === slug)!);

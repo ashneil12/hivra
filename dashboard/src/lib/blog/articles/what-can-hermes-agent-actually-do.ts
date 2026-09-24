@@ -117,7 +117,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Can multiple people use the same instance?",
-      a: "Yes — add multiple User IDs to the allowlist. They all interact with the same agent and share memory and skills. For separate agents per person, each needs their own instance. Hivra supports multiple instances.",
+      a: "Yes. Add multiple User IDs to the allowlist. They all interact with the same agent and share memory and skills. For separate agents per person, each person needs their own agent, and on Hivra you can launch several agents in one account.",
     },
     {
       q: "Does it work when my computer is off?",

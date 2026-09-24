@@ -39,7 +39,7 @@ export const article: BlogArticle = {
     {
       heading: "BYO login for Claude Code and Codex",
       paragraphs: [
-        "BYO is not only about API keys. For coding agents, Hivra runs the official CLIs, unmodified, and you sign in with the account you already have. [Claude Code](/agents/claude-code) uses your Anthropic or Claude subscription login. [Codex](/agents/codex) uses your ChatGPT login. You authenticate inside the box after launch, the same flow as on your laptop. The login is stored on the agent's VM.",
+        "BYO is not only about API keys. For coding agents, Hivra runs the official CLIs, unmodified, and you sign in with the account you already have. [Claude Code](/agents/claude-code) uses your Anthropic or Claude subscription login. [Codex](/agents/codex) uses your ChatGPT login. You sign in on the agent's computer after launch, the same flow as on your laptop. The login is stored on the agent's VM.",
         `The billing consequence is the same as BYO keys: zero markup on AI usage. If you already pay for Claude or ChatGPT, running these agents in the cloud adds no new AI cost. For that usage, hosting is the only thing you pay Hivra for. Plans on [the pricing page](/pricing) start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. To check whether your existing Claude subscription covers the usage you plan to run, use the [Claude Code plan calculator](/tools/claude-code-plan-calculator).`,
       ],
     },

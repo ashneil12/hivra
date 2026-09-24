@@ -42,7 +42,7 @@ export const article: BlogArticle = {
       heading: "Risk 3: it runs next to things it should never see",
       paragraphs: [
         "An agent on your personal laptop shares a filesystem with your tax documents, your browser sessions, and every credential your other tools have cached. Even with scoped permissions, that is a dense environment for something autonomous to live in. And there is a second problem: agents that read the outside world (web pages, emails, messages from strangers) can be fed instructions by the content they read. Prompt injection is a real, unsolved class of attack, and the honest defense is not a clever prompt. It is making sure that even a successfully hijacked agent has nothing valuable within reach.",
-        "Isolation is the fix, and it is binary in practice: either the agent has its own machine, or it does not. A cheap VPS, a spare box, or a managed VM all work. The isolated machine holds the agent, its workspace, and the scoped credentials it needs. Everything else you own lives somewhere the agent cannot reach by definition. On [Hivra](/), each agent gets a private virtual machine of its own, which gives you this boundary without building it: the agent can do real work inside its box, and the box is the boundary.",
+        "Isolation is the fix, and it is binary in practice: either the agent has its own machine, or it does not. A cheap VPS, a spare box, or a managed VM all work. The isolated machine holds the agent, its workspace, and the scoped credentials it needs. Everything else you own lives somewhere the agent cannot reach by definition. On [Hivra](/), each agent gets a private virtual machine of its own, which gives you this boundary without building it: the agent can do real work inside its computer, and the computer is the boundary.",
         "If you must run unattended on a shared machine, at minimum run the agent as a separate OS user with its own home directory. It is weaker than a separate machine, but it beats sharing your login.",
       ],
     },
@@ -72,7 +72,7 @@ export const article: BlogArticle = {
     {
       heading: "Try it with the boundaries already built",
       paragraphs: [
-        `If you want to run an agent unattended without assembling the isolation pieces yourself, [Hivra](/) launches Hermes, Claude Code, Codex, or Aeon on a private VM. [Plans start at ${ENTRY_PLAN_PRICE} a month](/pricing) for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. You bring your own AI login, keep your own spending limits, and can check on the agent or stop it from any browser. The permission decisions stay yours, including the Manage tab setting that decides how much a Claude Code or Codex agent may do on its box.`,
+        `If you want to run an agent unattended without assembling the isolation pieces yourself, [Hivra](/) launches Hermes, Claude Code, Codex, or Aeon on a private VM. [Plans start at ${ENTRY_PLAN_PRICE} a month](/pricing) for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. You bring your own AI login, keep your own spending limits, and can check on the agent or stop it from any browser. The permission decisions stay yours, including the Manage tab setting that decides how much a Claude Code or Codex agent may do on its computer.`,
       ],
     },
   ],

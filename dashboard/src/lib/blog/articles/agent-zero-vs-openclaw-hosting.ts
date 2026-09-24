@@ -33,9 +33,9 @@ export const article: BlogArticle = {
     {
       heading: "Server requirements: one is heavier, one flexes",
       paragraphs: [
-        "**Agent Zero** has the heavier and less negotiable footprint. It runs its full stack in a Docker container: the agent loop, its tools, and its own browser and computer. The [project's own VPS guide](https://github.com/agent0ai/agent-zero/blob/main/docs/setup/vps-deployment.md) lists 1 vCPU and 2 GB of RAM as the minimum and 2 vCPU with 4 GB or more as recommended. On Hivra an Agent Zero box starts at 1 vCPU and 2 GB, and you can give it more from your plan's compute in the dashboard. There is no lighter mode, because the browser and computer ship inside the container whether or not a given task uses them.",
-        "**OpenClaw** scales with what you turn on. The daemon and heartbeat scheduler are the light part: on Hivra an OpenClaw box starts at 1 vCPU and 2 GB RAM, and switching browser automation on adds another 1 vCPU and 2 GB. If you self-host with the full Docker setup instead, budget more: [our OpenClaw self-hosting guide](/blog/how-to-self-host-openclaw) recommends 2 vCPU and 4 GB as the DIY minimum, because the multi-container install competes with everything else on the box.",
-        "The browser difference matters more than the raw numbers. Agent Zero's browser is its own, inside its container, visible in its dashboard, with no extra setup. OpenClaw's optional browser works differently: turn it on and OpenClaw gets a real Chrome running on the same box, with a live browser view where you log into your accounts once. After that, the agent acts inside those sessions. Self-contained browsing versus browsing as you, in your accounts. Which one you want depends on the tasks.",
+        "**Agent Zero** has the heavier and less negotiable footprint. It runs its full stack in a Docker container: the agent loop, its tools, and its own browser and computer. The [project's own VPS guide](https://github.com/agent0ai/agent-zero/blob/main/docs/setup/vps-deployment.md) lists 1 vCPU and 2 GB of RAM as the minimum and 2 vCPU with 4 GB or more as recommended. On Hivra an Agent Zero computer starts at 1 vCPU and 2 GB, and you can give it more from your plan's compute in the dashboard. There is no lighter mode, because the browser and computer ship inside the container whether or not a given task uses them.",
+        "**OpenClaw** scales with what you turn on. The daemon and heartbeat scheduler are the light part: on Hivra an OpenClaw computer starts at 1 vCPU and 2 GB RAM, and switching browser automation on adds another 1 vCPU and 2 GB. If you self-host with the full Docker setup instead, budget more: [our OpenClaw self-hosting guide](/blog/how-to-self-host-openclaw) recommends 2 vCPU and 4 GB as the DIY minimum, because the multi-container install competes with everything else on the box.",
+        "The browser difference matters more than the raw numbers. Agent Zero's browser is its own, inside its container, visible in its dashboard, with no extra setup. OpenClaw's optional browser works differently: turn it on and OpenClaw gets a real Chrome running on the same machine, with a live browser view where you log into your accounts once. After that, the agent acts inside those sessions. Self-contained browsing versus browsing as you, in your accounts. Which one you want depends on the tasks.",
       ],
     },
     {
@@ -66,8 +66,8 @@ export const article: BlogArticle = {
       heading: "Running both, and the fastest way to try either one",
       paragraphs: [
         "Plenty of people end up wanting both: OpenClaw as the standing assistant, Agent Zero for hand-off projects. DIY, that is one 4 vCPU, 8 GB VPS, from €8.49 a month at Hetzner (excluding VAT) to $40-48 at Vultr or DigitalOcean, running the two side by side.",
-        `On Hivra, one plan detail matters before you pick. A plan's compute is a pool shared across everything you run, and the ${ENTRY_PLAN_PRICE} plan's pool is ${ENTRY_PLAN_SIZE}. Both fit on the ${ENTRY_PLAN_PRICE} plan at their minimum size, with OpenClaw's browser off: Agent Zero at 1 vCPU and 2 GB plus OpenClaw at 1 vCPU and 2 GB fill that pool exactly. For OpenClaw with its browser on, or for more headroom (Agent Zero's own recommendation is 2 vCPU and 4 GB), take the [${LARGER_PLAN_PRICE} plan](/pricing), whose pool of ${LARGER_PLAN_SIZE} fits Agent Zero plus OpenClaw with its browser on. A stopped box still counts against the pool; deleting a box is what frees its share, so switching between agents is a delete and a relaunch, not a support ticket.`,
-        `If you want to skip the setup entirely, either agent launches on Hivra from its page ([OpenClaw](/agents/openclaw) or [Agent Zero](/agents/agent-zero)): name the box, pick a model in the agent's own UI, and hand it work. If the agent does not earn its keep, delete the box. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
+        `On Hivra, one plan detail matters before you pick. A plan's compute is a pool shared across everything you run, and the ${ENTRY_PLAN_PRICE} plan's pool is ${ENTRY_PLAN_SIZE}. Both fit on the ${ENTRY_PLAN_PRICE} plan at their minimum size, with OpenClaw's browser off: Agent Zero at 1 vCPU and 2 GB plus OpenClaw at 1 vCPU and 2 GB fill that pool exactly. For OpenClaw with its browser on, or for more headroom (Agent Zero's own recommendation is 2 vCPU and 4 GB), take the [${LARGER_PLAN_PRICE} plan](/pricing), whose pool of ${LARGER_PLAN_SIZE} fits Agent Zero plus OpenClaw with its browser on. A stopped computer still counts against the pool; deleting it is what frees its share, so switching between agents is a delete and a relaunch, not a support ticket.`,
+        `If you want to skip the setup entirely, either agent launches on Hivra from its page ([OpenClaw](/agents/openclaw) or [Agent Zero](/agents/agent-zero)): name the agent, pick a model in the agent's own UI, and hand it work. If the agent does not earn its keep, delete its computer. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
       ],
     },
   ],
@@ -82,7 +82,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How much does it cost to host Agent Zero or OpenClaw?",
-      a: `A DIY VPS runs from about $5 a month at budget hosts to $20-24 for a 2 vCPU, 4 GB box at the US-brand hosts, and Hivra's paid plans start at ${ENTRY_PLAN_PRICE} a month for either agent. Whichever route you pick, budget separately for model usage; it is often the larger number.`,
+      a: `A DIY VPS runs from about $5 a month at budget hosts to $20-24 for a 2 vCPU, 4 GB server at the US-brand hosts, and Hivra's paid plans start at ${ENTRY_PLAN_PRICE} a month for either agent. Whichever route you pick, budget separately for model usage; it is often the larger number.`,
     },
     {
       q: "What do these agents use for a model?",
@@ -90,7 +90,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Can I run Agent Zero and OpenClaw at the same time on one plan?",
-      a: `Yes, on a plan whose compute pool fits both boxes. Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}) fits both at minimum size with OpenClaw's browser off. The ${LARGER_PLAN_PRICE} plan (${LARGER_PLAN_SIZE}) fits Agent Zero plus OpenClaw with its browser on, with more headroom. A stopped box still counts against the pool, so freeing room means deleting, not stopping.`,
+      a: `Yes, on a plan whose compute pool fits both computers. Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}) fits both at minimum size with OpenClaw's browser off. The ${LARGER_PLAN_PRICE} plan (${LARGER_PLAN_SIZE}) fits Agent Zero plus OpenClaw with its browser on, with more headroom. A stopped computer still counts against the pool, so freeing room means deleting, not stopping.`,
     },
     {
       q: "Is it safe to self-host OpenClaw or Agent Zero on my own VPS?",
