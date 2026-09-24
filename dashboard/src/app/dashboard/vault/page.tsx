@@ -481,13 +481,13 @@ export default function VaultPage() {
   const hostPickerOptions: ModalPickerOption[] = agents.map((agent) => ({
     value: agent.id,
     label: agent.name,
-    description: agent.status === 'running' ? 'Running instance' : `Status: ${agent.status}`,
+    description: agent.status === 'running' ? 'Running agent' : `Status: ${agent.status}`,
     keywords: [agent.provider, agent.status],
   }));
   const profilePickerOptions: ModalPickerOption[] = (codexProfiles.length > 0 ? codexProfiles : [{ name: 'default' }]).map((profile) => ({
     value: profile.name,
-    label: getCodexProfileOptionLabel(selectedCodexHost?.name || 'Main Instance', profile),
-    description: profile.name === 'default' ? 'Main agent profile for this instance.' : 'Sub-agent profile on the selected instance.',
+    label: getCodexProfileOptionLabel(selectedCodexHost?.name || 'Main agent', profile),
+    description: profile.name === 'default' ? 'Main profile for this agent.' : 'Sub-agent profile on the selected agent.',
     keywords: [profile.name, profile.display_name || ''],
   }));
 
@@ -500,7 +500,7 @@ export default function VaultPage() {
         </div>
         <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 300, lineHeight: 1.1 }}>API <em>keys</em>.</h2>
         <p style={{ marginTop: 16, opacity: 0.6, lineHeight: 1.6, fontSize: 14, maxWidth: 500 }}>
-          Manage your individual API credentials globally. Bind these secure keys to instances to swap configurations dynamically.
+          Keep your API keys in one place, then choose which agents use them.
         </p>
       </motion.header>
 
@@ -612,7 +612,7 @@ export default function VaultPage() {
                     {agents.length === 0 ? (
                       <div style={{ padding: '16px 20px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <div style={{ color: 'var(--red)', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <AlertTriangle size={16} /> Proxy Instance Offline
+                          <AlertTriangle size={16} /> The agent that runs sign-in is offline
                         </div>
                         <p style={{ fontSize: 12, margin: 0, opacity: 0.9 }}>
                           Automated authorization proxies your request through a deployed Hermès agent. You currently have absolutely no active running instances.
@@ -627,14 +627,14 @@ export default function VaultPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         <ModalPicker
                           id="codex-host-instance"
-                          label="Host Instance To Run Auth Flow"
+                          label="Agent that runs the sign-in"
                           value={codexAgentId}
                           options={hostPickerOptions}
                           onChange={setCodexAgentId}
-                          dialogTitle="Choose Host Instance"
-                          dialogDescription="Pick the deployed instance that should run the Hermes OAuth device flow."
+                          dialogTitle="Choose an agent"
+                          dialogDescription="Pick the running agent that should run the Hermes sign-in."
                           searchPlaceholder="Search instances..."
-                          emptyMessage="No matching instances found."
+                          emptyMessage="No matching agents found."
                         />
 
                         {newProvider === 'codex' && (
@@ -886,13 +886,13 @@ export default function VaultPage() {
           <motion.section variants={sectionVariants} style={{ marginTop: "2rem" }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
               <h3 className="mono" style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", margin: 0 }}>
-                 {agents.length === 1 ? "Bind Keys to Core Instance" : "Bind Keys to Active Instances"}
+                 {agents.length === 1 ? "Choose keys for your agent" : "Choose keys for your agents"}
               </h3>
             </div>
             
             <div className="w-full">
               {agents.length === 0 ? (
-                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono), monospace' }}>No active running instances found.</div>
+                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono), monospace' }}>No running agents yet.</div>
               ) : (
                 <>
                   {/* Desktop View: the table needs ~780px, so tablets keep the cards. */}
@@ -900,7 +900,7 @@ export default function VaultPage() {
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
                       <thead>
                         <tr style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono), monospace', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.6 }}>
-                          <th style={{ padding: '14px 20px', fontWeight: 600 }}>{agents.length === 1 ? "Instance Designation" : "Instance Designation"}</th>
+                          <th style={{ padding: '14px 20px', fontWeight: 600 }}>Agent</th>
                           <th style={{ padding: '14px 20px', fontWeight: 600 }}>Provider Key</th>
                           <th style={{ padding: '14px 20px', fontWeight: 600 }}>Memory Key (Honcho)</th>
                           <th style={{ padding: '14px 20px', fontWeight: 600 }}>Model</th>
@@ -1072,7 +1072,7 @@ export default function VaultPage() {
                             style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', minHeight: 44, gap: 8, background: hasChanges ? 'var(--gold-leaf)' : 'var(--ink-black)', color: hasChanges ? 'var(--ink-black)' : "var(--bg-surface)", border: hasChanges ? '1px solid var(--gold-leaf)' : 'none', padding: '12px', cursor: (syncingAgent === agent.id || noSelection) ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: noSelection ? 0.3 : 1 }}
                           >
                             {syncingAgent === agent.id ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                            {hasChanges ? 'Apply Changes' : 'Sync Instance'}
+                            {hasChanges ? 'Apply changes' : 'Sync agent'}
                           </button>
                           {hasChanges && (
                             <p className="mono" style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.5, color: 'var(--text-secondary)' }}>

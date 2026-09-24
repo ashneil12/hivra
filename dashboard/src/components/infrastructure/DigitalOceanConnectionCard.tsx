@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { AlertTriangle, Bot, CalendarClock, CheckCircle2, ExternalLink, KeyRound, Loader2, Play, RefreshCw, Trash2 } from "lucide-react";
 
-import { setDigitalOceanAccountTokenExpiry } from "@/lib/hivra/managed-session-client";
+import { formatDigitalOceanBalance, setDigitalOceanAccountTokenExpiry } from "@/lib/hivra/managed-session-client";
 import {
   DIGITALOCEAN_HARNESS_LABELS,
   type ManagedSessionDto,
@@ -22,6 +22,7 @@ import {
 
 import styles from "./Infrastructure.module.css";
 import { TokenExpiryField } from "./TokenExpiryField";
+import { DIGITALOCEAN_BILLING_URL, useDigitalOceanBalance } from "./useDigitalOceanBalance";
 
 const DIGITALOCEAN_CONSOLE_URL = "https://cloud.digitalocean.com/managed-agents/harness-runtime";
 
@@ -135,6 +136,13 @@ export function DigitalOceanConnectionCard({
   const badge = cardBadge(ready, rejected, expiry);
   const visibleError = error ?? (connection.status === "error" ? persistedError(connection.lastErrorCode) : null);
   const replacePrimary = rejected || expiry.kind === "soon" || expiry.kind === "expired";
+  const prepaid = useDigitalOceanBalance(connection.id, ready && !rejected);
+  const balanceLabel = !prepaid.balance
+    ? prepaid.checking ? "Checking…" : prepaid.error ? "Couldn’t check" : "—"
+    : prepaid.balance.state === "unreadable" ? "Not visible to this token"
+      : prepaid.balance.state === "blocked" ? `${formatDigitalOceanBalance(prepaid.balance.balance)} · sessions blocked`
+        : formatDigitalOceanBalance(prepaid.balance.balance);
+  const lowBalance = prepaid.balance?.state === "empty" || prepaid.balance?.state === "blocked";
 
   return (
     <article className={`${styles.connectionCard} ${styles.providerConnectionCard}`}>
@@ -154,6 +162,10 @@ export function DigitalOceanConnectionCard({
         <div><span>Agent sessions</span><strong>{sessions.length}</strong></div>
         <div><span>Sandbox sizes</span><strong>{target?.capabilities.sizes.length ?? 0}</strong></div>
         <div><span>Last checked</span><strong>{formatInfrastructureDate(connection.lastCheckedAt)}</strong></div>
+        <div>
+          <span>Prepaid balance</span>
+          <strong>{balanceLabel}</strong>
+        </div>
         <div>
           <span>Token expires</span>
           <strong>
@@ -176,6 +188,20 @@ export function DigitalOceanConnectionCard({
           onCancel={() => setEditingExpiry(false)}
           onSaved={(next) => { setEditingExpiry(false); onExpiryChanged(next); }}
         />
+      ) : null}
+
+      {lowBalance ? (
+        <div className={styles.providerInventoryError} role="status">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>
+            {prepaid.balance?.state === "blocked"
+              ? "DigitalOcean is not starting Managed Agents sessions for this team until its prepaid balance is topped up."
+              : "This team’s prepaid Managed Agents balance is empty, so DigitalOcean won’t start new sessions."}{" "}
+            <a href={DIGITALOCEAN_BILLING_URL} target="_blank" rel="noreferrer">Add funds in DigitalOcean<span className={styles.srOnly}> (opens in a new tab)</span></a>
+            {" · "}
+            <button type="button" className={styles.tertiaryButton} onClick={prepaid.recheck} disabled={prepaid.checking}>Check again</button>
+          </span>
+        </div>
       ) : null}
 
       {!rejected && (expiry.kind === "soon" || expiry.kind === "expired") ? (
