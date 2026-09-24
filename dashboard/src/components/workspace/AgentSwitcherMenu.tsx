@@ -335,11 +335,11 @@ function AgentSwitcherPanel({
           />
         </label>
 
-        {hermesError ? (
-          <SourceFailure source="Hermes" onRetry={onRetryHermes} />
-        ) : null}
-        {hivraError ? (
-          <SourceFailure source="Hivra" onRetry={onRetryHivra} />
+        {hermesError || hivraError ? (
+          <SourceFailure onRetry={() => {
+            if (hermesError) onRetryHermes();
+            if (hivraError) onRetryHivra();
+          }} />
         ) : null}
 
         <div
@@ -457,17 +457,11 @@ function AgentSwitcherPanel({
   );
 }
 
-function SourceFailure({
-  source,
-  onRetry,
-}: {
-  source: "Hermes" | "Hivra";
-  onRetry: () => void;
-}) {
+function SourceFailure({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="shrink-0 border-b border-[var(--etched-border)] px-2.5 py-2">
       <p className="text-[11.5px] leading-[1.4] text-[var(--yellow)]">
-        {source} agents are unavailable. Your other agents are still listed.
+        Some agents and computers couldn&apos;t be loaded. The rest are listed.
       </p>
       <button
         type="button"
@@ -475,7 +469,7 @@ function SourceFailure({
         className="mono mt-1 inline-flex min-h-[32px] items-center gap-1.5 text-[11.5px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
       >
         <RotateCcw aria-hidden="true" size={13} />
-        Retry {source}
+        Retry
       </button>
     </div>
   );

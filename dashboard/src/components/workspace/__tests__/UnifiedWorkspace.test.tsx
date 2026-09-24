@@ -410,7 +410,7 @@ describe("UnifiedWorkspace", () => {
     mockedUseWorkspaceAgents.mockReturnValue(
       state({
         agents: [hivraAgent],
-        hermesError: "Hermes agents are unavailable. Retry Hermes.",
+        hermesError: "Some agents couldn't be loaded. Retry to check again.",
         retryHermes,
       }),
     );
@@ -419,9 +419,9 @@ describe("UnifiedWorkspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Switch agent/ }));
 
     expect(
-      screen.getByText("Hermes agents are unavailable. Your other agents are still listed."),
+      screen.getByText("Some agents and computers couldn't be loaded. The rest are listed."),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry Hermes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retryHermes).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("option", { name: /Beta/ })).toBeInTheDocument();
   });
