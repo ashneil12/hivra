@@ -1,10 +1,13 @@
 jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 
+import { createHash } from "node:crypto";
+
 import {
   createDigitalOceanManagedAgentsClient,
   DigitalOceanApiError,
   parseDigitalOceanSessionEvent,
   readServerSentEvents,
+  verifyWorkspaceDownloadBody,
 } from "../managed-agents-client";
 
 const TOKEN = "dop_v1_" + "a".repeat(64);
@@ -144,5 +147,78 @@ describe("createDigitalOceanManagedAgentsClient", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.digitalocean.com/v2/agents/sessions/sess_1/hitl/hitl_7");
     expect(JSON.parse(String(init.body))).toEqual({ outcome: "HITL_OUTCOME_APPROVE", source: "RESOLUTION_SOURCE_OUT_OF_BAND" });
+  });
+});
+
+function footerFor(payload: string): string {
+  return `DOWSSHA1${createHash("sha256").update(payload).digest("hex")}\n`;
+}
+
+describe("verifyWorkspaceDownloadBody", () => {
+  it("strips DigitalOcean's integrity footer across chunk boundaries", async () => {
+    const payload = "line one\nline two\n";
+    const wire = payload + footerFor(payload);
+    const chunks = [wire.slice(0, 5), wire.slice(5, 40), wire.slice(40)];
+    await expect(new Response(verifyWorkspaceDownloadBody(streamOf(chunks))).text()).resolves.toBe(payload);
+  });
+
+  it("delivers an empty file", async () => {
+    await expect(new Response(verifyWorkspaceDownloadBody(streamOf([footerFor("")]))).text()).resolves.toBe("");
+  });
+
+  it("errors the stream on a checksum mismatch, a missing footer, or a payload over the cap", async () => {
+    await expect(new Response(verifyWorkspaceDownloadBody(streamOf(["tampered" + footerFor("original")]))).text()).rejects.toBeInstanceOf(DigitalOceanApiError);
+    await expect(new Response(verifyWorkspaceDownloadBody(streamOf(["no footer here"]))).text()).rejects.toBeInstanceOf(DigitalOceanApiError);
+    const big = "x".repeat(200);
+    await expect(new Response(verifyWorkspaceDownloadBody(streamOf([big + footerFor(big)]), { maxBytes: 100 })).text()).rejects.toBeInstanceOf(DigitalOceanApiError);
+  });
+});
+
+describe("sandbox exec and workspace download", () => {
+  it("posts argv to the exec endpoint and parses the result", async () => {
+    const fetchMock = jest.fn(async () => jsonResponse({ exit_code: 0, stdout: "ok", stderr: "" }));
+    const client = createDigitalOceanManagedAgentsClient(TOKEN, { fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.execInSandbox("sess_1", { argv: ["sh", "-c", "echo", "x", "/workspace"], timeoutSeconds: 15 }))
+      .resolves.toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.digitalocean.com/v2/agents/sessions/sess_1/sandbox/exec");
+    expect(JSON.parse(String(init.body))).toEqual({ argv: ["sh", "-c", "echo", "x", "/workspace"], timeout_seconds: 15 });
+  });
+
+  it("rejects an exec response without an exit code", async () => {
+    const client = createDigitalOceanManagedAgentsClient(TOKEN, { fetch: (async () => jsonResponse({ stdout: "?" })) as unknown as typeof fetch });
+    await expect(client.execInSandbox("sess_1", { argv: ["true"] })).rejects.toMatchObject({ code: "response_invalid" });
+  });
+
+  it("downloads with the path query, reads DigitalOcean's headers, and verifies the body", async () => {
+    const payload = "file body";
+    const fetchMock = jest.fn(async () => new Response(streamOf([payload + footerFor(payload)]), {
+      status: 200,
+      headers: { "X-Workspace-Is-Archive": "false", "X-Workspace-Size-Bytes": String(payload.length) },
+    }));
+    const client = createDigitalOceanManagedAgentsClient(TOKEN, { fetch: fetchMock as unknown as typeof fetch });
+    const download = await client.downloadWorkspace("sess_1", { path: "src/a b.txt" });
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe("https://api.digitalocean.com/v2/agents/sessions/sess_1/workspace/download?path=src%2Fa+b.txt");
+    expect(download).toMatchObject({ isArchive: false, sizeBytes: payload.length });
+    await expect(new Response(download.body).text()).resolves.toBe(payload);
+  });
+});
+
+describe("listDigitalOceanInferenceModels", () => {
+  it("reads model ids with the account token, dropping malformed ids, sorted", async () => {
+    const { listDigitalOceanInferenceModels } = await import("../managed-agents-client");
+    const fetchMock = jest.fn(async () => jsonResponse({ data: [{ id: "llama3.3-70b-instruct" }, { id: "deepseek-v4-pro" }, { id: "bad id; rm -rf" }, { id: 7 }] }));
+    await expect(listDigitalOceanInferenceModels(TOKEN, { fetch: fetchMock as unknown as typeof fetch }))
+      .resolves.toEqual(["deepseek-v4-pro", "llama3.3-70b-instruct"]);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://inference.do-ai.run/v1/models");
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("maps a rejected token without exposing it", async () => {
+    const { listDigitalOceanInferenceModels } = await import("../managed-agents-client");
+    const failure = listDigitalOceanInferenceModels(TOKEN, { fetch: (async () => jsonResponse({ id: "unauthorized" }, 401)) as unknown as typeof fetch });
+    await expect(failure).rejects.toMatchObject({ code: "unauthorized" });
+    await expect(failure.catch((error: Error) => error.message)).resolves.not.toContain(TOKEN);
   });
 });

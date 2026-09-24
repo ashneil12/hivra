@@ -23,6 +23,7 @@ import {
   InfrastructureConnectionStoreError,
   listInfrastructureConnections,
 } from "@/lib/infrastructure/connection-store";
+import { withCredentialExpiry } from "@/lib/infrastructure/credential-expiry-store";
 import {
   hasStrictJsonContentType,
   isSameOriginMutationRequest,
@@ -95,7 +96,7 @@ export async function GET() {
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
 
-    const connections = await listInfrastructureConnections(userId);
+    const connections = await withCredentialExpiry(userId, await listInfrastructureConnections(userId));
     return noStore(apiSuccess({ connections }));
   } catch (error) {
     return storeFailure(error, "GET");
@@ -158,6 +159,7 @@ export async function POST(request: NextRequest) {
       const result = await connectDigitalOcean(userId, {
         name: parsed.data.name,
         apiToken: parsed.data.credentials.apiToken,
+        tokenExpiry: parsed.data.tokenExpiry,
       });
       return noStore(apiSuccess(result, 201));
     }
