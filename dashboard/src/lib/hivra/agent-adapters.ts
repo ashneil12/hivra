@@ -18,6 +18,8 @@
 // through the chat components and on to the box as agent_kind without a cast.
 export type AgentKind = "claude" | "codex" | "generic" | "operatoros";
 export type ToolStatus = "running" | "done" | "error";
+/** How a turn ended, as the agent's own final event reports it. */
+export type TurnOutcome = "complete" | "error";
 
 export interface ToolPatch {
   name?: string;
@@ -38,8 +40,13 @@ export interface ChatSink {
   setText(text: string): void;
   /** Create or update a tool card by id. */
   upsertTool(id: string | undefined, patch: ToolPatch): void;
-  /** Surface a warning inline (rendered as "⚠ …" under the message). */
+  /** Surface a warning (rendered as "⚠ …" under the message). A warning never
+   * decides how the turn ended: a turn can warn and still complete. */
   appendWarning(text: string): void;
+  /** The agent's own final event says how the turn ended (Claude's `result`,
+   * Codex's `turn.completed` / `turn.failed`). Agents without one leave it to
+   * the process's exit. */
+  reportOutcome(outcome: TurnOutcome): void;
 }
 
 export interface AgentAdapter {
@@ -156,6 +163,7 @@ const claudeAdapter: AgentAdapter = {
         const msg = typeof ev.result === "string" && ev.result ? ev.result : "The request failed.";
         sink.appendWarning(msg);
       }
+      sink.reportOutcome(ev.is_error ? "error" : "complete");
     } else if (type === "_stderr") {
       const text = String(ev.text || "");
       if (/error|invalid|denied|expired|unauthor/i.test(text)) sink.appendWarning(text.trim());
@@ -163,11 +171,70 @@ const claudeAdapter: AgentAdapter = {
   },
 };
 
+// ---- codex stderr: tracing diagnostics are not replies ----
+// `codex exec` logs through tracing-subscriber's default formatter on stderr
+// (codex-rs/exec/src/lib.rs: `fmt::layer().with_writer(std::io::stderr)`,
+// filter "error" unless RUST_LOG widens it). Every event starts a line with an
+// RFC 3339 time, a level padded to five characters, any enabled spans, and the
+// module path it came from:
+//   2026-09-24T17:59:18.578959Z ERROR codex_core::session::session: failed to load skill …
+//   2026-09-24T17:59:26.449919Z  WARN codex.exec{otel.kind="internal"}: codex_core::mcp: …
+// with ANSI colours when stderr is a terminal. These are Codex's own
+// diagnostics (a skill it could not load, an MCP server that did not start),
+// not part of the reply. A problem the owner has to act on — sign-in, a usage
+// limit, a model that does not exist — reaches the chat as an `error` or
+// `turn.failed` event on stdout. Plain stderr lines, such as the "Error
+// loading config.toml: …" Codex prints before a run starts, still show.
+const ANSI_ESCAPE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const TRACING_LEVEL = "(?:TRACE|DEBUG|INFO|WARN|ERROR)";
+const TRACING_LINE = new RegExp(`^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})\\s+${TRACING_LEVEL}\\s`);
+// The same line from a formatter without the time: a level, any spans, then a
+// Rust module path ("codex_core::session: ").
+const UNTIMED_TRACING_LINE = new RegExp(`^${TRACING_LEVEL}\\s+(?:[^\\s:{}]+(?:\\{[^}]*\\})?:)*\\s*[A-Za-z_]\\w*(?:::\\w+)+:(?:\\s|$)`);
+const ACTIONABLE_STDERR = /error|invalid|denied|expired|unauthor/i;
+
+/** True for a line of Codex's tracing output (see above). */
+export function isCodexTracingLine(line: string): boolean {
+  const plain = line.replace(ANSI_ESCAPE, "");
+  return TRACING_LINE.test(plain) || UNTIMED_TRACING_LINE.test(plain);
+}
+
+// stderr reaches the chat in the chunks the pipe delivered, which can hold
+// several lines or part of one; only whole lines are judged. A tracing event's
+// message can span lines, so the indented or blank lines right after one are
+// part of it.
+function codexStderr(state: Record<string, unknown>, text: string, flush: boolean): string | null {
+  const lines = (String(state.stderrTail || "") + text).split(/\r?\n/);
+  state.stderrTail = flush ? "" : lines.pop() || "";
+  const shown: string[] = [];
+  for (const line of lines) {
+    if (isCodexTracingLine(line)) state.inTracing = true;
+    else if (!(state.inTracing && (!line.trim() || /^\s/.test(line)))) {
+      state.inTracing = false;
+      shown.push(line);
+    }
+  }
+  const out = shown.join("\n").trim();
+  return out && ACTIONABLE_STDERR.test(out) ? out : null;
+}
+
+// Codex states a failure more than once: a usage limit arrives as a top-level
+// `error` and again as the `turn.failed` that ends the turn. Show each message
+// once per turn.
+function warnOnce(sink: ChatSink, state: Record<string, unknown>, text: string) {
+  const message = text.trim();
+  const key = message.replace(/\s+/g, " ");
+  const warned = state.warned as Set<string>;
+  if (!key || warned.has(key)) return;
+  warned.add(key);
+  sink.appendWarning(message);
+}
+
 // ---- codex: `codex exec --json` — thread/turn/item event model ----
 const codexAdapter: AgentAdapter = {
   kind: "codex",
   label: "Codex",
-  createTurnState: () => ({ segments: new Map<string, string>() }),
+  createTurnState: () => ({ segments: new Map<string, string>(), warned: new Set<string>(), stderrTail: "", inTracing: false }),
   parseEvent(ev, sink, state) {
     const type = ev.type as string;
     const segments = state.segments as Map<string, string>;
@@ -203,26 +270,33 @@ const codexAdapter: AgentAdapter = {
       } else if (itype === "mcp_tool_call") {
         sink.upsertTool(id, { name: String(item.tool || item.name || "mcp"), detail: String(item.server || ""), status: done ? "done" : "running" });
       } else if (itype === "error") {
-        sink.appendWarning(String(item.message || "error"));
+        warnOnce(sink, state, String(item.message || "error"));
       }
       return;
     }
+    if (type === "turn.completed") {
+      sink.reportOutcome("complete");
+      return;
+    }
     if (type === "turn.failed") {
+      // The turn's end. Its message is usually the `error` already shown.
       const err = (ev.error as Record<string, unknown>) || {};
-      sink.appendWarning(String(err.message || "turn failed"));
+      const message = String(err.message || "").trim();
+      if (message || (state.warned as Set<string>).size === 0) warnOnce(sink, state, message || "turn failed");
+      sink.reportOutcome("error");
       return;
     }
     if (type === "error") {
       const msg = String(ev.message || "");
-      if (msg) sink.appendWarning(msg);
+      if (msg) warnOnce(sink, state, msg);
       return;
     }
-    if (type === "_stderr") {
-      const text = String(ev.text || "");
-      if (/error|invalid|denied|expired|unauthor/i.test(text)) sink.appendWarning(text.trim());
+    if (type === "_stderr" || type === "_done") {
+      const text = codexStderr(state, type === "_stderr" ? String(ev.text || "") : "", type === "_done");
+      if (text) warnOnce(sink, state, text);
       return;
     }
-    // ignore turn.started / _done / unrecognised
+    // ignore turn.started / unrecognised
   },
 };
 
@@ -283,6 +357,7 @@ export function extractAssistantText(events: Record<string, unknown>[], kind: st
     },
     upsertTool: () => {},
     appendWarning: () => {},
+    reportOutcome: () => {},
   };
   for (const ev of events) adapter.parseEvent(ev, sink, state);
   return text;

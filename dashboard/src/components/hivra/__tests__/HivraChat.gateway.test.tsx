@@ -65,6 +65,50 @@ setTimeout(() => {
 }, wait);
 `;
 
+const THREAD_ID = "00000000-0000-4000-8000-000000000002";
+// What `codex exec` writes to stderr on a computer with a skill it cannot load:
+// its tracing-subscriber diagnostics, byte for byte the format of its default
+// fmt layer (RFC 3339 time, level, target) — the same session-init error that
+// surfaced in the chat, and an MCP start failure.
+const CODEX_TRACING_STDERR = [
+  "2026-09-24T17:59:18.578959Z ERROR codex_core::session::session: failed to load skill /home/user/.agents/skills/notes/SKILL.md: missing YAML frontmatter delimited by ---",
+  "2026-09-24T17:59:18.579123Z ERROR codex_core::mcp_connection_manager: MCP client for `docs` failed to start: program not found",
+].join("\n") + "\n";
+const CODEX_WARNING = "Model metadata for `gpt-test` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.";
+const CODEX_USAGE_LIMIT = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again in 2 hours.";
+
+// The stand-in for `codex exec --json … <prompt>`: the prompt is its last
+// argument. It speaks Codex's JSONL events on stdout, its tracing on stderr,
+// and `CODEX:<scenario>` picks how the turn ends.
+const FAKE_CODEX = `#!${process.execPath}
+const fs = require("fs");
+const path = require("path");
+const dir = process.env.FAKE_AGENT_DIR;
+const prompt = process.argv[process.argv.length - 1] || "";
+const tag = (prompt.match(/TAG:([a-z0-9-]+)/) || [, "untagged"])[1];
+const wait = Number((prompt.match(/WAIT:(\\d+)/) || [, "0"])[1]);
+const scenario = (prompt.match(/CODEX:([a-z-]+)/) || [, "reply"])[1];
+fs.appendFileSync(path.join(dir, "calls-" + tag), JSON.stringify({ argv: process.argv.slice(2) }) + "\\n");
+const out = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+process.stderr.write(${JSON.stringify(CODEX_TRACING_STDERR)});
+out({ type: "thread.started", thread_id: "${THREAD_ID}" });
+out({ type: "turn.started" });
+if (scenario === "usage-limit") {
+  // Codex reports the failure as a top-level error, then fails the turn with it.
+  out({ type: "error", message: ${JSON.stringify(CODEX_USAGE_LIMIT)} });
+  out({ type: "turn.failed", error: { message: ${JSON.stringify(CODEX_USAGE_LIMIT)} } });
+  fs.writeFileSync(path.join(dir, "done-" + tag), String(Date.now()));
+  process.exitCode = 1;
+} else {
+  if (scenario === "warning") out({ type: "item.completed", item: { id: "item_0", type: "error", message: ${JSON.stringify(CODEX_WARNING)} } });
+  setTimeout(() => {
+    out({ type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Finished " + tag + "." } });
+    out({ type: "turn.completed", usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5 } });
+    fs.writeFileSync(path.join(dir, "done-" + tag), String(Date.now()));
+  }, wait);
+}
+`;
+
 type Gateway = { port: number; close: () => Promise<void> };
 
 function pollUntil<T>(probe: () => T | undefined | false | null, timeoutMs = 15_000, label = "condition"): Promise<T> {
@@ -138,11 +182,12 @@ describe("HivraChat against the real guest chat gateway", () => {
   let home: string;
   let fakeDir: string;
   let fakeAgent: string;
+  let fakeCodex: string;
   const gateways: Gateway[] = [];
   const open = new Set<http.ClientRequest>();
 
-  function boot(port = 0): Promise<Gateway> {
-    fs.writeFileSync(path.join(home, ".hivra", "agent-kind"), "claude\n");
+  function boot(port = 0, agentKind: "claude" | "codex" = "claude"): Promise<Gateway> {
+    fs.writeFileSync(path.join(home, ".hivra", "agent-kind"), agentKind + "\n");
     let server: http.Server | undefined;
     const sockets = new Set<net.Socket>();
     const realRequire = createRequire(SERVER_PATH);
@@ -161,7 +206,7 @@ describe("HivraChat against the real guest chat gateway", () => {
         return realRequire(name);
       },
       process: {
-        env: { HOME: home, HIVRA_CHAT_PORT: String(port), CLAUDE_BIN: fakeAgent, FAKE_AGENT_DIR: fakeDir },
+        env: { HOME: home, HIVRA_CHAT_PORT: String(port), CLAUDE_BIN: fakeAgent, CODEX_BIN: fakeCodex, FAKE_AGENT_DIR: fakeDir },
         once: () => undefined,
       },
       __dirname: path.dirname(SERVER_PATH),
@@ -223,6 +268,8 @@ describe("HivraChat against the real guest chat gateway", () => {
     fs.writeFileSync(path.join(home, ".hivra", "api-token"), TOKEN);
     fakeAgent = path.join(home, "fake-agent");
     fs.writeFileSync(fakeAgent, FAKE_AGENT, { mode: 0o755 });
+    fakeCodex = path.join(home, "fake-codex");
+    fs.writeFileSync(fakeCodex, FAKE_CODEX, { mode: 0o755 });
     global.fetch = createBrowserFetch(open);
   });
 
@@ -382,5 +429,67 @@ describe("HivraChat against the real guest chat gateway", () => {
     expect(await screen.findByText("Working on restart. Finished restart.", undefined, { timeout: 20_000 })).toBeInTheDocument();
     expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
     expect(fs.existsSync(marker("term-restart"))).toBe(false);
+  });
+
+  describe("a Codex computer", () => {
+    async function openCodexChat(storageKey: string) {
+      const gateway = await boot(0, "codex");
+      window.localStorage.setItem(`hivra:first-welcome:${storageKey}`, "1");
+      const chat = () => <HivraChat boxUrl={`http://127.0.0.1:${gateway.port}`} storageKey={storageKey} token={TOKEN} agentName="Atlas" agentKind="codex" />;
+      return { gateway, chat };
+    }
+    async function send(text: string) {
+      fireEvent.change(await screen.findByPlaceholderText("Message Atlas…"), { target: { value: text } });
+      fireEvent.click(screen.getByLabelText("Send message"));
+    }
+    const settled = () => waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument(), { timeout: 15_000 });
+
+    it("keeps Codex's stderr diagnostics out of a reply that completed after a warning", async () => {
+      const { chat } = await openCodexChat("e2e-codex-ok");
+      render(chat());
+      await send("TAG:codex-ok WAIT:0 CODEX:warning summarise the repo");
+      const reply = await screen.findByText(/Finished codex-ok\./, undefined, { timeout: 15_000 });
+      await settled();
+
+      // The computer did pass Codex's stderr through to the chat...
+      const runsDir = path.join(home, ".hivra", "chat-runs");
+      const log = fs.readdirSync(runsDir).map((name) => fs.readFileSync(path.join(runsDir, name, "events.ndjson"), "utf8")).join("");
+      expect(log).toContain('"type":"_stderr"');
+      expect(log).toContain("failed to load skill");
+      // ...but its tracing lines are Codex's own diagnostics, not part of the reply.
+      expect(screen.queryByText(/failed to load skill|codex_core|MCP client/)).not.toBeInTheDocument();
+      // Its warning still shows, but the turn completed, so the reply did too.
+      expect(reply).toHaveTextContent(CODEX_WARNING);
+      expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+      expect(screen.queryByText("Could not complete response")).not.toBeInTheDocument();
+    });
+
+    it("shows a usage limit once and fails the reply", async () => {
+      const { chat } = await openCodexChat("e2e-codex-limit");
+      render(chat());
+      await send("TAG:codex-limit WAIT:0 CODEX:usage-limit summarise the repo");
+      expect(await screen.findByLabelText("Response failed", undefined, { timeout: 15_000 })).toHaveTextContent("Could not complete response");
+      const reply = screen.getByText(/hit your usage limit/);
+      expect(reply.textContent?.split(CODEX_USAGE_LIMIT)).toHaveLength(2);
+      expect(screen.queryByText(/failed to load skill|codex_core/)).not.toBeInTheDocument();
+    });
+
+    it("picks a reply that showed a warning back up after the tab closed, and finishes it", async () => {
+      const { chat } = await openCodexChat("e2e-codex-reload");
+      const first = render(chat());
+      await send("TAG:codex-reload WAIT:2500 CODEX:warning summarise the repo");
+      expect(await screen.findByText(new RegExp("Defaulting to fallback metadata"), undefined, { timeout: 15_000 })).toBeInTheDocument();
+
+      // The owner closes the tab while Codex is still working.
+      closeTab(first.unmount);
+      await pollUntil(() => fs.existsSync(marker("done-codex-reload")), 15_000, "codex turn to finish");
+
+      // Reopening shows the finished reply, not a failure.
+      render(chat());
+      expect(await screen.findByText(/Finished codex-reload\./, undefined, { timeout: 15_000 })).toBeInTheDocument();
+      await settled();
+      expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+      expect(calls("codex-reload")).toHaveLength(1);
+    });
   });
 });

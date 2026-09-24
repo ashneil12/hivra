@@ -633,6 +633,70 @@ describe("HivraChat", () => {
     expect(screen.getByText(/Model unavailable/)).toBeInTheDocument();
   });
 
+  // A reply is judged by how its run ended; a warning on the way never fails it.
+  async function sendWithoutWelcome(agentKind: "claude" | "codex" | "generic", events: unknown[]) {
+    window.localStorage.setItem(`hivra:first-welcome:outcome${agentKind}`, "1");
+    const read = jest.fn().mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, ...events)).mockResolvedValue({ done: true, value: undefined });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey={`outcome-${agentKind}`} agentName="Atlas" agentKind={agentKind} />);
+    await sendMessage("begin");
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+  }
+
+  it("completes a Claude reply that warned on the way and ended with a successful result", async () => {
+    await sendWithoutWelcome("claude", [
+      { type: "_stderr", text: "MCP server docs: connection error\n" },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "All done." } } },
+      { type: "result", subtype: "success", is_error: false },
+      { type: "_done", code: 0 },
+    ]);
+    expect(screen.getByText(/All done\./)).toHaveTextContent("⚠ MCP server docs: connection error");
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("keeps a Codex warning under the reply that arrives after it, and completes the reply", async () => {
+    await sendWithoutWelcome("codex", [
+      { type: "thread.started", thread_id: "00000000-0000-4000-8000-000000000003" },
+      { type: "item.completed", item: { id: "item_0", type: "error", message: "Model metadata for `gpt-test` not found." } },
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Here is the summary." } },
+      { type: "turn.completed", usage: {} },
+      { type: "_done", code: 0 },
+    ]);
+    expect(screen.getByText(/Here is the summary\./)).toHaveTextContent("Here is the summary. ⚠ Model metadata for `gpt-test` not found.");
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("fails a Codex reply whose turn failed after its text, keeping the reason", async () => {
+    await sendWithoutWelcome("codex", [
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Starting on it." } },
+      { type: "error", message: "unexpected status 401 Unauthorized" },
+      { type: "turn.failed", error: { message: "unexpected status 401 Unauthorized" } },
+      { type: "_done", code: 1 },
+    ]);
+    expect(screen.getByText(/Starting on it\./)).toHaveTextContent("Starting on it. ⚠ unexpected status 401 Unauthorized");
+    expect(screen.getByText(/Starting on it\./).textContent?.match(/401/g)).toHaveLength(1);
+    expect(screen.getByLabelText("Response failed")).toBeInTheDocument();
+  });
+
+  it("judges an agent with no final event of its own by how its process exited", async () => {
+    await sendWithoutWelcome("generic", [
+      { type: "_stderr", text: "warning: deprecated flag, error-prone\n" },
+      { type: "_text", text: "Answer." },
+      { type: "_done", code: 0 },
+    ]);
+    expect(screen.getByText(/Answer\./)).toHaveTextContent("Answer. ⚠ warning: deprecated flag, error-prone");
+    expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("fails a reply whose agent exited with an error without saying why", async () => {
+    await sendWithoutWelcome("generic", [
+      { type: "_text", text: "Half an answer" },
+      { type: "_done", code: 2 },
+    ]);
+    expect(screen.getByText("Half an answer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Response failed")).toHaveTextContent("Could not complete response");
+  });
+
   it("labels the composer, grows up to its cap, shrinks, and preserves IME input", async () => {
     global.fetch = jest.fn() as unknown as typeof fetch;
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);

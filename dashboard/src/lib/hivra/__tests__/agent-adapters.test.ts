@@ -1,9 +1,11 @@
 import {
   getAdapter,
   extractAssistantText,
+  isCodexTracingLine,
   type AgentAdapter,
   type ChatSink,
   type ToolPatch,
+  type TurnOutcome,
 } from "@/lib/hivra/agent-adapters";
 
 // A recording sink so we can assert exactly what a parser emitted.
@@ -12,6 +14,7 @@ function recorder() {
   let text = "";
   const tools = new Map<string | undefined, ToolPatch>();
   const warnings: string[] = [];
+  const outcomes: TurnOutcome[] = [];
   let sessionId: string | null = null;
   const sink: ChatSink = {
     setSessionId: (id) => {
@@ -34,11 +37,16 @@ function recorder() {
       warnings.push(t);
       calls.push("warn:" + t);
     },
+    reportOutcome: (outcome) => {
+      outcomes.push(outcome);
+      calls.push("outcome:" + outcome);
+    },
   };
   return {
     sink,
     calls,
     warnings,
+    outcomes,
     get text() {
       return text;
     },
@@ -128,6 +136,19 @@ describe("agent-adapters", () => {
       ]);
       expect(r.warnings).toEqual([]);
     });
+
+    it("reports how the turn ended from its result, never from a warning", () => {
+      const ok = run(getAdapter("claude"), [
+        { type: "_stderr", text: "MCP server docs: connection error" },
+        { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Done." } } },
+        { type: "result", subtype: "success", is_error: false, session_id: "sid-3" },
+      ]);
+      expect(ok.warnings).toEqual(["MCP server docs: connection error"]);
+      expect(ok.outcomes).toEqual(["complete"]);
+      const failed = run(getAdapter("claude"), [{ type: "result", subtype: "success", is_error: true, result: "Credit balance is too low" }]);
+      expect(failed.outcomes).toEqual(["error"]);
+      expect(run(getAdapter("claude"), [{ type: "_stderr", text: "fatal error" }]).outcomes).toEqual([]);
+    });
   });
 
   describe("codex adapter", () => {
@@ -159,6 +180,99 @@ describe("agent-adapters", () => {
     it("surfaces turn.failed as a warning", () => {
       const r = run(getAdapter("codex"), [{ type: "turn.failed", error: { message: "rate limited" } }]);
       expect(r.warnings).toEqual(["rate limited"]);
+    });
+
+    // Captured from tracing-subscriber's fmt layer configured the way `codex
+    // exec` configures its stderr (codex-rs/exec/src/lib.rs), emitting the
+    // session-init skill error from codex-rs/core/src/session/session.rs.
+    const SKILL_ERROR = "2026-09-24T17:59:18.578959Z ERROR codex_core::session::session: failed to load skill /home/user/.agents/skills/notes/SKILL.md: missing YAML frontmatter delimited by ---";
+    const MCP_ERROR = "2026-09-24T17:59:18.579123Z ERROR codex_core::mcp_connection_manager: MCP client for `docs` failed to start: program not found";
+    const SKILL_ERROR_ANSI = "\u001b[2m2026-09-24T17:59:18.612687Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_core::session::session\u001b[0m\u001b[2m:\u001b[0m failed to load skill /home/user/.agents/skills/notes/SKILL.md: missing YAML frontmatter delimited by ---";
+    const SPANNED_ERROR = "2026-09-24T17:59:26.449919Z ERROR codex.exec{otel.kind=\"internal\"}:turn{otel.name=\"session_task.turn\" thread.id=\"00000000-0000-4000-8000-000000000001\"}: codex_core::mcp_connection_manager: MCP client for `docs` failed to start: program not found";
+
+    it("recognises Codex's tracing lines by their format, not their wording", () => {
+      for (const line of [
+        SKILL_ERROR,
+        MCP_ERROR,
+        SKILL_ERROR_ANSI,
+        SPANNED_ERROR,
+        "2026-09-24T17:59:18.578959Z  WARN codex_core::config: unauthorized field ignored",
+        "2026-09-24T17:59:18.578959+00:00 INFO codex_exec: starting",
+        "ERROR codex_core::skills::loader: failed to load skill notes: missing YAML frontmatter",
+        "ERROR codex.exec{otel.kind=\"internal\"}: codex_core::session: invalid state",
+      ]) expect([line, isCodexTracingLine(line)]).toEqual([line, true]);
+      for (const line of [
+        "Error loading config.toml: invalid type: string, expected a boolean",
+        "ERROR: unexpected status 401 Unauthorized",
+        "error: unexpected argument '--bogus' found",
+        "Not inside a trusted directory and --skip-git-repo-check was not specified.",
+        "spawn error: spawn /usr/bin/codex ENOENT",
+        "ERROR something went wrong",
+      ]) expect([line, isCodexTracingLine(line)]).toEqual([line, false]);
+    });
+
+    it("keeps Codex's tracing diagnostics out of the chat and shows its plain errors", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "_stderr", text: SKILL_ERROR + "\n" + MCP_ERROR + "\n" },
+        { type: "_stderr", text: SKILL_ERROR_ANSI + "\n" + SPANNED_ERROR + "\n" },
+        // A multi-line tracing message keeps its continuation lines with it.
+        { type: "_stderr", text: "2026-09-24T17:59:18.579200Z ERROR codex_core::exec: command failed:\n    permission denied (os error 13)\n\n" },
+        { type: "_stderr", text: "Error loading config.toml: invalid type: string, expected a boolean\n" },
+        { type: "item.completed", item: { id: "a", type: "agent_message", text: "Here is the summary." } },
+        { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+        { type: "_done", code: 0 },
+      ]);
+      expect(r.warnings).toEqual(["Error loading config.toml: invalid type: string, expected a boolean"]);
+      expect(r.text).toBe("Here is the summary.");
+      expect(r.outcomes).toEqual(["complete"]);
+    });
+
+    it("judges whole stderr lines when the pipe splits them", () => {
+      const cut = SKILL_ERROR.indexOf("missing");
+      const r = run(getAdapter("codex"), [
+        { type: "_stderr", text: SKILL_ERROR.slice(0, cut) },
+        { type: "_stderr", text: SKILL_ERROR.slice(cut) + "\nError: unexpected status 401 Unauth" },
+        { type: "_stderr", text: "orized: token expired\n" },
+        // A last line with no newline still shows once the run ends.
+        { type: "_stderr", text: "spawn error: spawn /usr/bin/codex ENOENT" },
+        { type: "_done", code: null },
+      ]);
+      expect(r.warnings).toEqual([
+        "Error: unexpected status 401 Unauthorized: token expired",
+        "spawn error: spawn /usr/bin/codex ENOENT",
+      ]);
+    });
+
+    it("shows a usage limit once when Codex reports it as an error and again as the failed turn", () => {
+      const limit = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again in 2 hours.";
+      const r = run(getAdapter("codex"), [
+        { type: "thread.started", thread_id: "th-2" },
+        { type: "turn.started" },
+        { type: "error", message: limit },
+        { type: "turn.failed", error: { message: limit } },
+        { type: "_done", code: 1 },
+      ]);
+      expect(r.warnings).toEqual([limit]);
+      expect(r.outcomes).toEqual(["error"]);
+    });
+
+    it("still shows a failed turn's own reason when it differs from an earlier error", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "error", message: "Reconnecting... 1/5" },
+        { type: "turn.failed", error: { message: "stream disconnected before completion" } },
+      ]);
+      expect(r.warnings).toEqual(["Reconnecting... 1/5", "stream disconnected before completion"]);
+      expect(run(getAdapter("codex"), [{ type: "error", message: "boom" }, { type: "turn.failed", error: {} }]).warnings).toEqual(["boom"]);
+    });
+
+    it("reports a completed turn even after a warning", () => {
+      const r = run(getAdapter("codex"), [
+        { type: "item.completed", item: { id: "w", type: "error", message: "Model metadata for `gpt-test` not found." } },
+        { type: "item.completed", item: { id: "a", type: "agent_message", text: "Done." } },
+        { type: "turn.completed", usage: {} },
+      ]);
+      expect(r.warnings).toEqual(["Model metadata for `gpt-test` not found."]);
+      expect(r.outcomes).toEqual(["complete"]);
     });
   });
 

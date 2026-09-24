@@ -14,7 +14,7 @@ import { Send, Loader2, Check, X, Plus, MessageSquare, Trash2, ChevronRight, Che
 import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
 import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
-import { getAdapter, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
+import { getAdapter, type AgentKind, type ChatSink, type ToolStatus, type TurnOutcome } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
@@ -216,6 +216,13 @@ interface ChatMessage {
    * "unknown": the run finished while no page was watching and the computer
    * no longer keeps its log, so only the text that arrived here is shown. */
   outcome?: "complete" | "error" | "stopped" | "disconnected" | "unknown";
+  /** What the agent's own final event said about the turn (Claude's result,
+   * Codex's turn.completed / turn.failed). It decides `outcome` once the run
+   * ends; an agent that says nothing is judged by its exit. */
+  reported?: TurnOutcome;
+  /** Warnings the agent raised during the turn, shown under the reply. They
+   * never decide how the turn ended. */
+  warnings?: string[];
   /** The box run producing this reply: the key for Stop and for re-attaching. */
   runId?: string;
   /** The computer confirmed it started the run (its `_run` line arrived). */
@@ -292,9 +299,24 @@ function historyBeforeRunningTurn(history: ChatMessage[], prompt: string | null,
  return [...history, ...asked];
 }
 
-// Any sign the computer took up the reply's run: its `_run` line, text or a tool.
+// Any sign the computer took up the reply's run: its `_run` line, text, a tool
+// or a warning.
 function replyStarted(m: ChatMessage): boolean {
- return Boolean(m.started || m.text.trim() || m.tools.length);
+ return Boolean(m.started || m.text.trim() || m.tools.length || m.warnings?.length);
+}
+
+// A reply as it reads: the agent's text, then the warnings it raised.
+function replyMarkdown(m: ChatMessage): string {
+ return [m.text, ...(m.warnings || []).map((w) => "⚠ " + w)].filter(Boolean).join("\n\n");
+}
+
+// How a run ended when its agent reported nothing of its own (a generic CLI,
+// or one that died before its final event): exit 0 is success; any other code,
+// or none (killed by a signal, or never started), is a failure. A stream with
+// no `_done` comes from an older runtime, where that meant the turn finished.
+function exitOutcome(done: Record<string, unknown> | null): TurnOutcome {
+ if (!done || !("code" in done)) return "complete";
+ return done.code === 0 ? "complete" : "error";
 }
 
 // A pending reply whose run log the computer no longer keeps. Finished runs are
@@ -979,11 +1001,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  appendText: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: m.text + t })),
  setText: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: t })),
  upsertTool: (id, patch) => upsertTool(sessionId, runId, id, patch),
- appendWarning: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
+ appendWarning: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, warnings: [...(m.warnings || []), t] })),
+ reportOutcome: (outcome) => updateRunMessage(sessionId, runId, (m) => ({ ...m, reported: outcome })),
  };
  let turnState = turnStateRef.current.get(sessionId);
- if (!turnState) { turnState = {}; turnStateRef.current.set(sessionId, turnState); }
- getAdapter(agentKind).parseEvent(ev, sink, turnState);
+ const adapter = getAdapter(agentKind);
+ if (!turnState) { turnState = adapter.createTurnState(); turnStateRef.current.set(sessionId, turnState); }
+ adapter.parseEvent(ev, sink, turnState);
  },
  [agentKind, updateRunMessage, upsertTool],
  );
@@ -1059,7 +1083,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (resp.status === 404) return { kind: "missing" };
  if (!resp.ok || !resp.body) continue;
  turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState());
- updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], outcome: undefined, streaming: true, started: true }));
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], warnings: undefined, reported: undefined, outcome: undefined, streaming: true, started: true }));
  const result = await readRunStream(resp.body, sessionId, runId, isCurrent);
  if (result.kind === "done" || result.kind === "superseded") return result;
  }
@@ -1069,15 +1093,16 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  );
 
  // Close a reply from the box's `_done` line (null: an older runtime whose
- // stream simply ended, which always meant the turn finished).
+ // stream simply ended, which always meant the turn finished). How the run
+ // ended decides the outcome, never a warning raised on the way.
  const finalizeRun = useCallback(
  (sessionId: string, runId: string | undefined, done: Record<string, unknown> | null) => {
  updateRunMessage(sessionId, runId, (m) => {
  if (done?.interrupted) {
- return { ...m, streaming: false, outcome: "error", text: m.text + (m.text ? "\n\n" : "") + "⚠ The run was interrupted before it finished because the agent's computer restarted." };
+ return { ...m, streaming: false, outcome: "error", warnings: [...(m.warnings || []), "The run was interrupted before it finished because the agent's computer restarted."] };
  }
  if (done?.stopped) return { ...m, streaming: false, outcome: "stopped" };
- return { ...m, streaming: false, outcome: m.outcome === "error" ? "error" : "complete" };
+ return { ...m, streaming: false, outcome: m.reported ?? exitOutcome(done) };
  });
  },
  [updateRunMessage],
@@ -1847,7 +1872,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
  <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
  {m.role === "assistant" ? (
- <ReactMarkdown remarkPlugins={[remarkGfm]} components={CHAT_MARKDOWN_COMPONENTS}>{m.text}</ReactMarkdown>
+ <ReactMarkdown remarkPlugins={[remarkGfm]} components={CHAT_MARKDOWN_COMPONENTS}>{replyMarkdown(m)}</ReactMarkdown>
  ) : (
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
