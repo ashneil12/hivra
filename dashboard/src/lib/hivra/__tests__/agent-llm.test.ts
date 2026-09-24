@@ -145,10 +145,10 @@ describe("sanitizeHivraAgentRow", () => {
   });
 
   it("keeps internal host topology (proxmox_host, private bridge ip) server-side", () => {
-    const out = sanitizeHivraAgentRow({ id: "agent", vmid: 163, proxmox_host: "pve11", ip: "10.70.20.63" });
+    const out = sanitizeHivraAgentRow({ id: "agent", vmid: 163, proxmox_host: "fixturenode10", ip: "10.253.0.90" });
     expect(out).not.toHaveProperty("proxmox_host");
     expect(out).not.toHaveProperty("ip");
-    expect(JSON.stringify(out)).not.toMatch(/pve11|10\.70\.20\.63/);
+    expect(JSON.stringify(out)).not.toMatch(/fixturenode10|10\.253\.0\.90/);
     expect(out).toMatchObject({ id: "agent", vmid: 163 });
   });
 

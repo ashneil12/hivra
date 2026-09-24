@@ -3409,7 +3409,7 @@ describe("GET /api/hivra/agents", () => {
   it("does not send internal host topology to the browser", async () => {
     mockExistingAgents = [{
       id: "agent-running", type: "claude-code", name: "RUNNING_AGENT", status: "running",
-      cpu: 2, ram: 4, vmid: 163, proxmox_host: "pve11", ip: "10.70.20.63",
+      cpu: 2, ram: 4, vmid: 163, proxmox_host: "fixturenode10", ip: "10.253.0.90",
     }];
 
     const response = await GET(makeGetRequest() as never);
@@ -3419,6 +3419,6 @@ describe("GET /api/hivra/agents", () => {
     expect(body.data.agents).toEqual([expect.objectContaining({ id: "agent-running", vmid: 163 })]);
     expect(body.data.agents[0]).not.toHaveProperty("proxmox_host");
     expect(body.data.agents[0]).not.toHaveProperty("ip");
-    expect(JSON.stringify(body)).not.toMatch(/pve11|10\.70\.20\.63/);
+    expect(JSON.stringify(body)).not.toMatch(/fixturenode10|10\.253\.0\.90/);
   });
 });
