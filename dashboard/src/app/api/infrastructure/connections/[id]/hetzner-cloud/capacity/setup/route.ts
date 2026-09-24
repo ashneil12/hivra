@@ -9,7 +9,7 @@ import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
-import { listProviderComputerSetups, advanceProviderComputerSetup, ProviderComputerSetupError } from "@/lib/infrastructure/provider-computer-setup";
+import { listProviderComputerSetupEvidence, advanceProviderComputerSetup, ProviderComputerSetupError } from "@/lib/infrastructure/provider-computer-setup";
 import { ProviderComputerSetupRequestSchema } from "@/lib/infrastructure/provider-computer-setup-contracts";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "../../../../request-security";
 
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (limited) return noStore(limited);
     const id = z.string().uuid().safeParse((await context.params).id);
     if (!id.success) return noStore(apiError("Infrastructure connection not found.", 404));
-    return noStore(apiSuccess({ computers: await listProviderComputerSetups(userId, id.data) }));
+    return noStore(apiSuccess(await listProviderComputerSetupEvidence(userId, id.data)));
   } catch (error) { return failure(error); }
 }
 

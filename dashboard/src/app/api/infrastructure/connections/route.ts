@@ -14,6 +14,7 @@ import { InfrastructureConnectionCreateSchema } from "@/lib/infrastructure/contr
 import {
   connectHetznerCloudProject,
   HetznerCloudConnectionError,
+  HetznerCloudTokenCheckError,
 } from "@/lib/infrastructure/hetzner-cloud";
 import { connectDigitalOcean, ManagedSessionError } from "@/lib/hivra/do-managed-sessions";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
@@ -44,6 +45,11 @@ function storeFailure(error: unknown, method: "GET" | "POST"): Response {
       return noStore(apiError("An infrastructure connection with this name already exists.", 409));
     }
     if (error.code === "provider_unavailable") return noStore(apiError(error.message, 502));
+  }
+  if (error instanceof HetznerCloudTokenCheckError) {
+    // Read-only or unconfirmed write check: fixable on the same screen by
+    // pasting another token. Nothing was saved.
+    return noStore(apiError(error.message, 422, undefined, { code: error.code }));
   }
   if (error instanceof HetznerCloudConnectionError) {
     if (error.code === "invalid_credentials") {

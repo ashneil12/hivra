@@ -76,25 +76,43 @@ API. The supported flow is therefore a guided project API token:
    though connecting it performs no purchase. The user can revoke it in
    Hetzner Console at any time.
 3. Paste the token into Hivra once and give the connection a local display name.
-4. Hivra validates the token with a read-only request, encrypts it, and never
-   returns it to the browser or logs it. This proves read access, not write
-   scope; a later approved create reports a specific remediation if the token
-   is read-only.
+4. Hivra validates the token by listing the project's servers, then runs a
+   disclosed, non-billable write check: it adds one SSH key named
+   `hivra-check-<random>` (a throwaway public key whose private half is never
+   stored) and deletes it by id. A read-only token fails here with "This token
+   is read-only. Generate a Read & Write token in the same project and paste it
+   here." and nothing is saved. If the test key cannot be deleted, write
+   access is still proven, the connection is saved, and the stray key's name
+   is shown to the user. Hivra encrypts the token and never returns it to the
+   browser or logs it. (Owner-approved change, 2026-09-24; previously this step
+   proved read access only.)
 5. Hivra inventories the servers already visible to that project.
 6. The user chooses one policy-bounded shared-CPU size, currently available
-   location, and matching Ubuntu system image from the live provider catalog.
+   location, and system image from the live provider catalog. Only sizes and
+   images Hivra's agent setup supports are listed (currently Ubuntu 22.04 on
+   x86, shared with the server-side prepared-create gate).
 7. Hivra fetches a fresh, short-lived observation of provider rates and shows
    the generated non-personal server name, server price, IPv4 price, IPv6 price,
    base hourly rate, monthly cap, included traffic, and variable per-TB traffic
    overage in the project currency.
-8. The user confirms the observed configuration and rates and selects **Create
-   server and start billing**. The review states that Hetzner does not lock the
-   observed rates and remains authoritative for final billing. No earlier
-   interaction can create a provider resource.
+8. The review shows the price, a three-row timeline (Create — Hetzner starts
+   billing; Set it up for agents — about 5 minutes, started next; Launch —
+   reviewed next), one billing confirmation that names the hourly rate and
+   monthly cap, and a "Billing details" disclosure with the price breakdown and
+   provider caveats. Every Hivra-created server carries the setup recipe; a
+   plain server without setup is an explicit opt-out under Advanced. The user
+   selects **Create server and start billing**. No earlier interaction can
+   create a provider resource.
 9. Hivra creates the server with public IPv4 and IPv6, backups off, no volumes,
    and `start_after_create=false`. Success is shown only after the provider
    action succeeds and a subsequent provider read observes the server powered
-   off. The node remains unprepared and blocked from agent launch.
+   off. The node remains unprepared and blocked from agent launch until the
+   user selects **Start setup**, the only primary action on the result. The
+   result shows a countdown from the server's setup-key expiry
+   (`enrollmentExpiresAt`), the observed setup stages with elapsed time, and
+   ends with "Continue your launch" or "Launch on this server". Moving the
+   15-minute window to start at Start setup, or re-issuing a key, remains
+   deferred target behavior.
 
 For this canary, durable spend control permits at most one non-rejected in-app
 Hetzner server claim (`creating`, `ambiguous`, or `created_off`) per Hivra
@@ -116,8 +134,15 @@ project-scoped. A user can add multiple project connections.
 
 Legacy v1 project credentials remain eligible for compatible read-only
 inventory and catalog access, but billable quote/create paths fail closed with
-`credential_reconnect_required`. The UI tells the owner to disconnect and
-reconnect the project with a current Read & Write token before in-app creation.
+`credential_reconnect_required`. The UI points the owner to **Replace token**.
+
+**Replace token** swaps a project's token in place. The new token must
+authenticate, see at least one server or generated SSH key Hivra created
+through the connection (Hetzner ids are unique across projects), and pass the
+write check. The encrypted envelope is then compare-and-swapped at the same
+connection revision, so generated SSH keys, setup enrollments and provider-VM
+targets carry forward; nothing is wiped. The swap is refused while a server
+removal or a leased setup step holds the credential.
 
 ### Create a new server
 
@@ -272,8 +297,8 @@ approved program and disclosure exist.
 
 The repository implements the first Hetzner Cloud connection and bounded-create
 slice. A user is asked for a project-scoped Read & Write token; Hivra validates
-read access, encrypts the credential, and reports missing write scope only when
-an approved mutation proves it. The user can then persist sanitized inventory,
+read access and write scope (the disclosed add-then-remove test key), encrypts
+the credential, and can later replace it in place. The user can then persist sanitized inventory,
 sync it explicitly, select policy-bounded live
 offers, obtain a revision-bound short-lived quote, explicitly confirm billing,
 and submit one idempotent create request. The operation can report creating,

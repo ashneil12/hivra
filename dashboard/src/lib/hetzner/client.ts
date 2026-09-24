@@ -614,6 +614,10 @@ export type HetznerCloudProjectClient = {
     publicKey: string;
     labels: Record<string, string>;
   }): Promise<HetznerSshKey>;
+  /** Delete one explicitly identified project SSH key. Used only to remove
+   * the disclosed, never-attached connect-time write-check key; a 204 is the
+   * provider's acknowledgement, not proof that no other key exists. */
+  deleteSshKey(sshKeyId: number): Promise<void>;
   createServer(
     input: HetznerProjectCreateServerPayload,
   ): Promise<HetznerProjectCreateServerResult>;
@@ -713,6 +717,23 @@ export function createHetznerCloudProjectClient(
         );
       }
       return response.ssh_key;
+    },
+    deleteSshKey: async (sshKeyId) => {
+      if (!Number.isSafeInteger(sshKeyId) || sshKeyId <= 0) {
+        throw new HetznerCloudApiError(
+          null,
+          "DELETE",
+          "/ssh_keys/{id}",
+          "response_invalid",
+        );
+      }
+      await hetznerFetch(
+        `/ssh_keys/${sshKeyId}`,
+        { method: "DELETE" },
+        explicitToken,
+        fetchImpl,
+        204,
+      );
     },
     createServer: async (input) => {
       assertValidUserDataLength(input.user_data);
