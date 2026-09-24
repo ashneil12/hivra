@@ -241,6 +241,7 @@ export function DeploymentDestinationControl({
   capacitySetupHref = "/dashboard/infrastructure",
   otherOptions = null,
   otherSelected = false,
+  onSetUpCapacity = null,
 }: {
   state: LaunchDestinationState;
   managedAvailable?: boolean;
@@ -254,6 +255,8 @@ export function DeploymentDestinationControl({
   otherOptions?: ReactNode;
   /** One of otherOptions is chosen, so neither Hivra Cloud nor a host is. */
   otherSelected?: boolean;
+  /** Set up capacity without leaving this page (Launch's capacity sheet). */
+  onSetUpCapacity?: (() => void) | null;
 }) {
   const selfHosted = isLocalAuthMode();
   const selfManagedAvailable = ownServerSupported && state.readyTargets.length > 0;
@@ -261,6 +264,9 @@ export function DeploymentDestinationControl({
   // An unavailable destination is never shown as the pressed choice.
   const managedSelected = !otherSelected && managedAvailable && state.mode === "hivra-managed";
   const selfManagedSelected = !otherSelected && state.mode === "self-managed";
+  const setUpCapacity = onSetUpCapacity
+    ? <button type="button" className={styles.manageLink} onClick={onSetUpCapacity}>Add capacity</button>
+    : <Link className={styles.manageLink} href={capacitySetupHref}>Open Infrastructure</Link>;
 
   return (
     <section
@@ -338,7 +344,7 @@ export function DeploymentDestinationControl({
           <AlertTriangle size={14} aria-hidden="true" />
           <span>
             Ready self-managed hosts could not be loaded. {selfHosted ? "Fix the connection before launching." : "Hivra Cloud is still available."} {state.error}{" "}
-            <Link className={styles.manageLink} href={capacitySetupHref}>Open Infrastructure</Link>
+            {setUpCapacity}
           </span>
         </div>
       ) : !state.loading && !selfManagedAvailable ? (
@@ -348,7 +354,7 @@ export function DeploymentDestinationControl({
             {state.incompatibleReadyTargetCount > 0
               ? `None of your ready hosts has current compatibility evidence for ${runtimeName}. `
               : "No self-managed host is ready yet. "}
-            <Link className={styles.manageLink} href={capacitySetupHref}>Open Infrastructure</Link>{" "}
+            {setUpCapacity}{" "}
             to connect, inspect, and prepare a host.
           </span>
         </div>

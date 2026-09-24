@@ -19,6 +19,14 @@
   overflow: hidden;
 }
 
+/* The Capacity page inside Launch's capacity sheet: no page chrome of its own. */
+.embeddedPage {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  position: relative;
+}
+
 .page::before {
   content: "";
   position: absolute;

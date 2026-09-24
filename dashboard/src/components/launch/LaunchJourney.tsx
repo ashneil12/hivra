@@ -51,6 +51,7 @@ import {
   effectiveDigitalOceanModelMode,
 } from "@/lib/launch/digitalocean-launch";
 import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
+import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
@@ -64,7 +65,7 @@ import {
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
-import { buildInfrastructureSetupHref, isPortableAgentLaunchId } from "@/lib/hivra/launch-navigation";
+import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
   HERMES_NAME_MAX_LENGTH,
@@ -509,6 +510,13 @@ function capacitySetupHrefFor(profileId: LaunchProfileId | null): string {
   return "/dashboard/infrastructure";
 }
 
+/** What the capacity sheet sets up for: the launch's own runtime, when a server can run it. */
+function capacityResourceFor(profileId: LaunchProfileId | null) {
+  if (!profileId) return null;
+  const runtime = PROFILE_DETAILS[profileId].placementRuntimeId;
+  return parsePortableLaunchResourceId(runtime === "windows-installer" ? "windows" : runtime);
+}
+
 /** Copy for a profile's optional browser. */
 function browserCopy(profileId: LaunchProfileId): string {
   const name = PROFILE_DETAILS[profileId].name;
@@ -786,6 +794,8 @@ export function LaunchJourney() {
       .catch(() => { if (!controller.signal.aborted) setDigitalOceanTeams({ state: "failed", targets: [] }); });
     return () => controller.abort();
   }, [selfHosted]);
+  // Capacity set up without leaving the launch (slice 10).
+  const [capacitySheetOpen, setCapacitySheetOpen] = useState(false);
   const digitalOceanHarness = digitalOceanHarnessFor(draft?.profileId ?? null);
   const digitalOceanChoices = digitalOceanHarness
     ? digitalOceanTeams.targets.filter(target => digitalOceanTargetRuns(target, digitalOceanHarness))
@@ -1633,6 +1643,30 @@ export function LaunchJourney() {
   const updateDigitalOcean = (change: Partial<LaunchDraft["digitalOcean"]>) => {
     updateDraft({ digitalOcean: { ...draft.digitalOcean, ...change } });
   };
+  const refreshPlaces = () => {
+    destination.refresh();
+    listManagedSessions()
+      .then(result => setDigitalOceanTeams({ state: "ready", targets: result.targets }))
+      .catch(() => undefined);
+  };
+  // A place the owner made ready in the capacity sheet is chosen for this
+  // launch: a DigitalOcean team as itself, anything else as a server.
+  const chooseCapacityTarget = async (targetId: string) => {
+    setCapacitySheetOpen(false);
+    setWhereExpanded(true);
+    let teams = digitalOceanTeams.targets;
+    try {
+      teams = (await listManagedSessions()).targets;
+      setDigitalOceanTeams({ state: "ready", targets: teams });
+    } catch { /* keep the teams already read */ }
+    if (teams.some(team => team.id === targetId)) chooseDigitalOcean(targetId);
+    else chooseTarget(targetId);
+    destination.refresh();
+  };
+  const closeCapacitySheet = () => {
+    setCapacitySheetOpen(false);
+    refreshPlaces();
+  };
   const choosePreset = (preset: SizePreset) => {
     updateDraft({ resources: { ...preset.resources, source: "custom" } });
   };
@@ -1952,20 +1986,20 @@ export function LaunchJourney() {
         </button>
       ) : null}
       {offerBrowserOff ? <button type="button" onClick={() => chooseBrowser(false)}>Turn off the browser</button> : null}
-      {destination.mode === "self-managed" ? <Link href={capacitySetupHref}>Set up capacity</Link>
+      {destination.mode === "self-managed" ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up capacity</button>
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
           <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
-          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
         </> : blockerRemedy === "activate-free" ? <>
           <button type="button" onClick={() => void activateFree()} disabled={freeActivation.state === "activating"}>
             {freeActivation.state === "activating" ? "Turning on Free…" : "Turn on Free"}
           </button>
           <Link href={upgradeHref} onClick={() => recordUpgradeClick("free_activation")}>See paid plans</Link>
-          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
         </> : blockerRemedy === "settle-plan" && planHold ? <>
           <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
-          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
         </> : null}
     </span>
   ) : null;
@@ -2207,7 +2241,7 @@ export function LaunchJourney() {
           {destination.incompatibleReadyTargetCount > 0
             ? "Your ready hosts do not have current Windows compatibility evidence. "
             : "No compatible Windows host is ready. "}
-          <Link href={buildInfrastructureSetupHref("windows", { unified: true })}>Open Infrastructure</Link>
+          <button type="button" className={styles.inlineAction} onClick={() => setCapacitySheetOpen(true)}>Add capacity</button>
         </small>
       ) : null}
     </section>
@@ -2347,6 +2381,7 @@ export function LaunchJourney() {
                   runtimeName={currentProfile.name}
                   resourceLabel={draft.resourceKind ?? "agent"}
                   capacitySetupHref={capacitySetupHref}
+                  onSetUpCapacity={() => setCapacitySheetOpen(true)}
                   otherSelected={digitalOceanLane}
                   otherOptions={digitalOceanChoices.map(team => (
                     <DestinationOption
@@ -2765,6 +2800,13 @@ export function LaunchJourney() {
           await submit();
         }}
       />
+      {capacitySheetOpen ? (
+        <LaunchCapacitySheet
+          launchResourceId={capacityResourceFor(draft.profileId)}
+          onLaunchTarget={targetId => void chooseCapacityTarget(targetId)}
+          onClose={closeCapacitySheet}
+        />
+      ) : null}
     </main>
   );
 }

@@ -765,6 +765,30 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     );
   });
 
+  // Slice 10: inside Launch's capacity sheet, a ready server goes back to the
+  // launch that opened it instead of opening Launch again.
+  it("inside Launch, hands the ready server back to the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    expect(await screen.findByRole("heading", { name: "Add capacity for your launch" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    const launch = await within(card).findByRole("link", { name: /^(Launch on this server|Continue launch)$/ });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    launch.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
   // Review of slice 5: an owner who set up Linux Sandbox and came back an
   // hour later got Ready and a Launch button the server then refused.
   it("asks for a readiness check on a gVisor host whose last check is stale, then offers Launch", async () => {
