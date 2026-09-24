@@ -239,12 +239,12 @@ describe("ComputerCatalogPage", () => {
     ).toBe(false);
   });
 
-  it("keeps infrastructure and agent inventories as separate destinations", async () => {
+  it("keeps capacity and agent inventories as separate destinations", async () => {
     render(<ComputerCatalogPage />);
 
     await screen.findByText("No computers yet");
     expect(
-      screen.getByRole("link", { name: /Infrastructure/i }),
+      screen.getByRole("link", { name: /Capacity/i }),
     ).toHaveAttribute("href", "/dashboard/infrastructure");
     expect(
       screen.getByText(/Those are agent runtimes, not operating systems/i),

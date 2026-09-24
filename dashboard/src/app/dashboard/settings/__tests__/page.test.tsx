@@ -162,11 +162,15 @@ describe("SettingsPage", () => {
     expect(group("On this device").getByText("Motion follows your device's reduce-motion setting.")).toBeInTheDocument();
   });
 
+  it("does not duplicate Capacity, which is in the primary navigation", () => {
+    render(<SettingsPage />);
+    expect(screen.queryByRole("link", { name: /Infrastructure|Capacity/ })).not.toBeInTheDocument();
+  });
+
   it.each([
     ["Plan and billing", "Billing", "/dashboard/billing", "Plan, payment methods, credits and invoices"],
     ["Plan and billing", "Wallets", "/dashboard/wallet", "Agent wallets and $HermesOS access"],
     ["Keys and connections", "API keys", "/dashboard/vault", "Provider keys and which agents use them"],
-    ["Keys and connections", "Infrastructure", "/dashboard/infrastructure", "The machines and cloud accounts your agents run on"],
     ["Agent toolkit", "Shared agent memory", "/dashboard/settings/memory", "What every new agent starts out knowing"],
     ["Agent toolkit", "Tools and capabilities", "/dashboard/tools", "Add tools to the agents you choose"],
     ["Agent toolkit", "Prompt library", "/dashboard/library", "Ready-made agent roles with tested prompts"],

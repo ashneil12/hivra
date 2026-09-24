@@ -9,6 +9,9 @@
 .startChoice h2 { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
 .startChoice p { color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
 .startChoice > span { display: block; margin-top: 28px; font-size: 13px; }
+.startAlt { grid-column: 1 / -1; margin: 0; color: var(--text-secondary); font-size: 13px; }
+.startAlt a { color: var(--ink-black); text-decoration: underline; text-underline-offset: 4px; display: inline-flex; align-items: center; min-height: 44px; }
+.startAlt a:focus-visible { outline: 2px solid var(--hivra-red); outline-offset: 3px; }
 .resourceIcon { display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; flex-shrink: 0; background: var(--bg-elevated); color: var(--text-secondary); }
 @media (max-width: 600px) { .start { grid-template-columns: 1fr; } .home { gap: 22px; } }
 
