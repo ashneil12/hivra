@@ -70,8 +70,15 @@ function ContractAddress({ label, address }: { label: string; address: string })
  * transaction: when conversion is open it links out to the conversion service
  * in lib/claim/conversion-links-config.ts. $HIVRA comes from the token registry.
  */
-export function ConvertPanel({ state }: { state: ConversionState }) {
-  const live = state.status === "open" || state.status === "switch-access";
+export function ConvertPanel({
+  state,
+  geoNotice = null,
+}: {
+  state: ConversionState;
+  /** Set when the token geo-policy blocks this viewer; conversion is then never offered. */
+  geoNotice?: string | null;
+}) {
+  const live = !geoNotice && (state.status === "open" || state.status === "switch-access");
   return (
     <article style={{ maxWidth: 720 }}>
       <header style={{ marginBottom: "1.5rem" }}>
@@ -90,7 +97,11 @@ export function ConvertPanel({ state }: { state: ConversionState }) {
       </header>
 
       <Section id="convert-status" title="Status">
-        {state.status === "open" ? (
+        {geoNotice ? (
+          <p data-testid="token-geo-notice" style={body}>
+            {geoNotice}
+          </p>
+        ) : state.status === "open" ? (
           <>
             <p style={body}>
               Conversion happens on the service linked below, not inside Hivra.
@@ -138,7 +149,7 @@ export function ConvertPanel({ state }: { state: ConversionState }) {
             Keeping access and converting tokens are separate decisions. Billing shows which token your tier counts.
           </p>
         </Section>
-      ) : state.status === "open" ? (
+      ) : state.status === "open" && !geoNotice ? (
         <Section id="convert-access" title="Your access">
           {state.graceEndsAt ? (
             <p style={body}>

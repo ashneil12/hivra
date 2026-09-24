@@ -18,6 +18,7 @@ import {
 } from "@/lib/billing/token-plan-prices";
 import type { BillingController } from "../useBillingController";
 import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
+import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import type { BillingTabId } from "./billing-tabs";
 import styles from "../Billing.module.css";
 
@@ -91,7 +92,9 @@ export function PaymentMethodsTab({
   // Model-credit top-ups with $HermesOS are part of billing v2 and live in
   // Credits whatever the crypto flag says, so don't call crypto unavailable
   // while that button is there.
-  const hermesCreditTopUpsOffered = c.flags.billingV2Enabled && Boolean(c.managedVeniceSummary);
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenFeatures = c.tokenGeo.status === "allowed";
+  const hermesCreditTopUpsOffered = c.flags.billingV2Enabled && tokenFeatures && Boolean(c.managedVeniceSummary);
 
   return (
     <div className={styles.stack}>
@@ -139,7 +142,7 @@ export function PaymentMethodsTab({
           </span>
           <div className={styles.methodBody}>
             <h2 className={styles.panelTitle} id="billing-method-crypto">$HermesOS and USDC on Base</h2>
-            {!c.flags.cryptoBillingEnabled ? (
+            {!c.flags.cryptoBillingEnabled || !tokenFeatures ? (
               <p className={styles.panelText}>
                 {hermesCreditTopUpsOffered
                   ? "Paying for your plan with $HermesOS or USDC isn't available right now. You can still top up model credits with $HermesOS in Credits."
@@ -153,7 +156,20 @@ export function PaymentMethodsTab({
           </div>
         </div>
 
-        {!c.flags.cryptoBillingEnabled ? (
+        {!tokenFeatures ? (
+          // The token geo-policy blocks this viewer (or hasn't answered yet):
+          // no token payment paths. An existing holding stays manageable on
+          // the Wallet page.
+          <>
+            {c.tokenGeo.notice ? <TokenGeoNotice notice={c.tokenGeo.notice} /> : null}
+            <p className={styles.quietLine}>
+              <Link className={styles.link} href="/dashboard/wallet?from=billing">
+                Manage an existing token holding
+                <ArrowRight size={13} aria-hidden="true" />
+              </Link>
+            </p>
+          </>
+        ) : !c.flags.cryptoBillingEnabled ? (
           <p className={styles.quietLine}>
             {hermesCreditTopUpsOffered && (
               <button

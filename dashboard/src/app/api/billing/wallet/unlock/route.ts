@@ -18,6 +18,7 @@
  * the button can't hammer the RPC or SSH into Proxmox in a tight loop.
  */
 
+import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
@@ -31,6 +32,7 @@ import {
   VVV_TOKEN_ADDRESS,
 } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { qualifiesForTokenBaseTier, resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { evaluateAndRecordVeniceComputeBoost } from "@/lib/billing/venice-compute-boost";
 import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
@@ -61,7 +63,7 @@ const LOG_CONTEXT = {
 // short-circuits to the current state — bounds the RPC read + Proxmox resize.
 const UNLOCK_COOLDOWN_SECONDS = 20;
 
-export async function POST() {
+export async function POST(req?: NextRequest) {
   let userIdForLog: string | null = null;
   try {
     if (!isBillingV2ServerEnabled()) {
@@ -99,7 +101,16 @@ export async function POST() {
     // ── 2. $HERMESOS tier eligibility ──────────────────────────────────
     let hermesEvaluated = false;
     try {
-      await evaluateAndRecordTokenTierEligibility({ userId, balances, access });
+      // Token geo-policy: existing tiers are re-evaluated as always; a
+      // blocked request just can't gain a NEW one. (Without a blocked
+      // decision the evaluator still checks the stored country itself.)
+      const geo = await resolveTokenGeoBlock(req, { userId });
+      await evaluateAndRecordTokenTierEligibility({
+        userId,
+        balances,
+        access,
+        ...(geo.blocked ? { tokenGeo: geo } : {}),
+      });
       hermesEvaluated = true;
     } catch (err) {
       log.warn("unlock: hermes eligibility eval failed", {

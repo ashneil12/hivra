@@ -73,6 +73,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { isNewTokenQualificationRefused, type TokenGeoDecision } from "@/lib/compliance/token-geo-gate";
 import {
   REQUALIFICATION_CAP_PER_YEAR,
   REQUALIFICATION_COOLDOWN_DAYS,
@@ -203,6 +204,12 @@ interface EvaluateParams {
   balances?: PlatformTokenBalances;
   /** Token access, when the caller already resolved it (crons). */
   access?: UserTokenAccess;
+  /**
+   * The request's token geo decision (resolveTokenGeoBlock), when the caller
+   * has a request. Without it (crons) only the stored country is checked.
+   * Either way it only stops a NEW qualification row.
+   */
+  tokenGeo?: TokenGeoDecision;
   db?: SupabaseLike | null;
   now?: Date;
 }
@@ -454,6 +461,8 @@ interface EvaluateTierContext {
   thresholdFor: ThresholdLookup;
   now: Date;
   warnings: string[];
+  /** Token geo-policy: true when no NEW qualification row may be created. */
+  newQualificationRefused: () => Promise<boolean>;
 }
 
 async function updateRow(
@@ -537,6 +546,13 @@ async function evaluateFirstQualification(
   for (const candidate of candidates) {
     const balance = balances[candidate.token];
     if (balance === undefined || !meetsRequiredBalance(balance, candidate.amount)) continue;
+    // Token geo-policy (lib/compliance/token-geo-policy.ts): a blocked user
+    // gets no NEW tier. This is the only place a qualification row is
+    // created; rows that already exist are evaluated below as before.
+    if (await ctx.newQualificationRefused()) {
+      warnings.push(`New ${tier} qualification for ${userId} refused by the token geo-policy.`);
+      break;
+    }
     const { error } = await db.from("token_tier_qualifications").insert({
       user_id: userId,
       tier,
@@ -1057,6 +1073,14 @@ export async function evaluateAndRecordTokenTierEligibility(
     return live ? (tier === "pro" ? live.pro : live.power) : null;
   };
 
+  // Read at most once per call, and only when a first qualification would
+  // otherwise be recorded. The dormant policy answers false without I/O.
+  let refusal: Promise<boolean> | null = null;
+  const newQualificationRefused = () => {
+    refusal ??= isNewTokenQualificationRefused(params.userId, params.tokenGeo);
+    return refusal;
+  };
+
   // Evaluate Pro and Power independently. A user can be eligible for Pro
   // (qualifying_quantity recorded) and not eligible for Power.
   const [pro, power] = await Promise.all(
@@ -1070,6 +1094,7 @@ export async function evaluateAndRecordTokenTierEligibility(
         thresholdFor: lookupFor(tier),
         now,
         warnings,
+        newQualificationRefused,
       })
     )
   );

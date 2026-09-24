@@ -321,7 +321,7 @@ function BillingPageContent() {
 
       <ManagedVeniceDepositModal
         isOpen={c.managedVeniceDeposit.open}
-        tokenPaymentsEnabled={c.flags.billingV2Enabled}
+        tokenPaymentsEnabled={c.flags.billingV2Enabled && c.tokenGeo.status === "allowed"}
         walletType={c.managedVeniceDeposit.wallet}
         amountUsd={c.managedVeniceDeposit.amountUsd}
         loading={c.managedVeniceDeposit.loading}

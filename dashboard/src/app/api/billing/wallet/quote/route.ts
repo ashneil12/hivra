@@ -31,6 +31,8 @@ import { TokenNotAllowedError } from "@/lib/billing/token-access";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 
 function isValidTier(value: unknown): value is TierKey {
   return value === "pro" || value === "power";
@@ -124,6 +126,17 @@ export async function POST(req: NextRequest) {
     const { userId } = await auth();
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
+
+    // Token geo-policy: a deposit quote locks the price of a new token tier.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
+        userId,
+      });
+    }
 
     let body: PostBody = {};
     try {

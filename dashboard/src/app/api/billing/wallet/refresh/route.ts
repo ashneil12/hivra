@@ -30,6 +30,7 @@ import {
 import { isCryptoBillingEnabled } from "@/lib/billing/crypto-availability";
 import { refreshPrimaryHermesTokenHolding } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { log } from "@/lib/logger";
 
 const LOG_CONTEXT = {
@@ -73,9 +74,14 @@ export async function POST(req: NextRequest) {
     // what flips the tier row to breached / qualified / etc. on the
     // user's next page reload.
     try {
+      // Token geo-policy: an existing tier is re-evaluated as always; a
+      // blocked request just can't gain a NEW one. (Without a blocked
+      // decision the evaluator still checks the stored country itself.)
+      const geo = await resolveTokenGeoBlock(req, { userId });
       await evaluateAndRecordTokenTierEligibility({
         userId,
         balances: result.balances,
+        ...(geo.blocked ? { tokenGeo: geo } : {}),
       });
     } catch (eligErr) {
       log.warn("wallet refresh eligibility re-evaluation failed", {

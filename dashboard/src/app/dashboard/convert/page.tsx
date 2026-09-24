@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 import { ConvertPanel } from "@/components/claim/ConvertPanel";
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { readConversionAccessGate } from "@/lib/claim/conversion-access.server";
+import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { readConversionInputs, resolveConversionState } from "@/lib/claim/conversion-state";
 import { log } from "@/lib/logger";
 
@@ -17,7 +18,11 @@ export const dynamic = "force-dynamic";
 export default async function ConvertPage() {
   const now = new Date();
   const { userId } = await auth();
-  const access = await readConversionAccessGate(userId ?? null, now);
+  // Token geo-policy: a blocked viewer gets the factual page (contracts and the
+  // address checker) with the notice, and no switch step or conversion link.
+  // With the dormant policy this reads nothing.
+  const geo = await resolveTokenGeoBlockForPage(userId ?? null);
+  const access = geo.blocked ? null : await readConversionAccessGate(userId ?? null, now);
   const state = resolveConversionState(readConversionInputs(access, now));
   if ((state.status === "dormant" || state.status === "announced") && state.problems.length > 0) {
     // A set but invalid launch value is a release defect: surface it instead of
@@ -27,7 +32,7 @@ export default async function ConvertPage() {
 
   return (
     <DashboardPageShell maxWidth={900}>
-      <ConvertPanel state={state} />
+      <ConvertPanel state={state} geoNotice={geo.blocked ? geo.message : null} />
     </DashboardPageShell>
   );
 }
