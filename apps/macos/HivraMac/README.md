@@ -103,15 +103,31 @@ Embedded pages follow browser rules for windows, links, downloads and dialogs:
   example a link in agent chat) opens in your default browser; links that stay
   in the pane load there as before. Sign-in providers stay in the app so they can
   return to the page that asked. A dashboard route opened in a new window opens
-  its resource tab or destination in the workspace instead. `mailto:` and `tel:`
-  links open the Mac app registered for them (Mail, FaceTime) only when you
-  click them in the page itself. Other schemes (and `about:`, `blob:`, `data:` and
-  `javascript:` addresses, which WebKit handles itself) are never handed to macOS.
+  its resource tab or destination in the workspace instead. Other schemes (and
+  `about:`, `blob:`, `data:` and `javascript:` addresses, which WebKit handles
+  itself) are never handed to macOS.
+- **Your presses.** WebKit reports a script's `click()` as a link click, so the
+  app counts your own mouse and key presses in a page instead. Each press can be
+  used by one download or one hand-off to another app, and presses from before
+  the page loaded do not count. The app cannot tell which frame you pressed in,
+  so a press anywhere in the page counts.
+- **Mail and phone links.** `mailto:` and `tel:` links in the page itself (not
+  in a frame inside it) can open the Mac app registered for them (Mail,
+  FaceTime). The connection's own page opens the app straight away when it has
+  an unused press. Any other site, and any request without one (a page clicking
+  its own link, or assistive technology activating it), first shows a sheet
+  naming the site and the app. Only one such sheet is shown at a time, and it
+  can stop the page from asking again until it navigates.
 - **Downloads.** Attachments, `download` links and files WebKit cannot show are
-  saved to Downloads. An existing file is never replaced: a second
-  `report.pdf` becomes `report (1).pdf`. A notice with **Show in Finder** appears
-  briefly at the bottom of the page that started the download. Downloaded files
-  keep macOS quarantine.
+  saved to Downloads. As in a browser, a page may save one file after it loads
+  and one for each unused press. Beyond that, a sheet asks whether the page may
+  download multiple files; the answer lasts until the page navigates. A frame
+  from another origin than the connection (an embed inside the page) needs an
+  unused press to save a file; without one, its download is refused without
+  asking. An existing file is never replaced: a second `report.pdf` becomes
+  `report (1).pdf`. A notice with **Show in Finder** appears briefly at the
+  bottom of the page that started the download. Downloaded files keep macOS
+  quarantine.
 - **Dialogs and files.** JavaScript alerts, confirmations and prompts appear as
   sheets on the page's window and name the site asking. After the first dialog,
   you can stop a page from showing more until it navigates. File inputs open the

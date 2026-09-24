@@ -5,7 +5,8 @@ import Foundation
 public enum HivraWebNavigationDecision: Equatable, Sendable {
     case allow
     case download
-    /// Hand the URL to its system handler, then cancel the navigation.
+    /// Hand the URL to its system handler, subject to `HivraPageActivation.openApp`,
+    /// then cancel the navigation.
     case openExternally(URL)
     case cancel(reason: String)
 }
@@ -16,7 +17,7 @@ public enum HivraNewWindowDecision: Equatable, Sendable {
     /// `postMessage` and `window.close()` keep working for OAuth, payments and connectors.
     case inAppPopup
     case openInDefaultBrowser(URL)
-    /// Hand the URL to its system handler (mail, phone).
+    /// Hand the URL to its system handler (mail, phone), subject to `HivraPageActivation.openApp`.
     case openExternally(URL)
     case refuse(reason: String)
 }
@@ -24,14 +25,17 @@ public enum HivraNewWindowDecision: Equatable, Sendable {
 public enum HivraWebContentPolicy {
     /// Schemes WebKit resolves itself. They are never handed to NSWorkspace.
     public static let webContentSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
-    /// Schemes handed to their system handler after a user's link activation in the
-    /// main frame. Add "hivra" here once the app registers its own URL scheme.
+    /// Schemes handed to their system handler for a link in the main frame, after
+    /// `HivraPageActivation.openApp` agrees. Add "hivra" here once the app registers its
+    /// own URL scheme.
     public static let externalSchemes: Set<String> = ["mailto", "tel"]
 
     /// `targetsMainFrame` is false for subframes and for new-window requests (no target frame).
+    /// `sourceIsMainFrame` is false when a frame navigates another one, such as `target=_top`.
     public static func navigation(
         url: URL?,
         targetsMainFrame: Bool,
+        sourceIsMainFrame: Bool,
         opensNewWindow: Bool,
         isLinkActivation: Bool,
         shouldPerformDownload: Bool
@@ -45,7 +49,8 @@ public enum HivraWebContentPolicy {
         if opensNewWindow { return .allow }
         if webContentSchemes.contains(scheme) { return .allow }
         if externalSchemes.contains(scheme) {
-            return targetsMainFrame && isLinkActivation
+            // A frame's link aimed at the top window is still the frame's request.
+            return targetsMainFrame && sourceIsMainFrame && isLinkActivation
                 ? .openExternally(url)
                 : .cancel(reason: "\(scheme) requires a link activation in the main frame")
         }

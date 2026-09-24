@@ -19,13 +19,19 @@ struct HivraWebDialogResponse<Value> {
     var suppressesFurtherDialogs = false
 }
 
-/// Native presentation for JavaScript dialogs and file inputs.
+/// Native presentation for JavaScript dialogs, file inputs and the questions a page
+/// raises by asking for more than `HivraPageActivation` allows without asking.
 @MainActor
 protocol HivraWebDialogPresenting: AnyObject {
     func alert(_ message: String, from origin: String, offeringSuppression: Bool, in window: NSWindow?) async -> HivraWebDialogResponse<Void>
     func confirm(_ message: String, from origin: String, offeringSuppression: Bool, in window: NSWindow?) async -> HivraWebDialogResponse<Bool>
     func prompt(_ message: String, defaultText: String?, from origin: String, offeringSuppression: Bool, in window: NSWindow?) async -> HivraWebDialogResponse<String?>
     func chooseFiles(allowsMultipleSelection: Bool, allowsDirectories: Bool, in window: NSWindow?) async -> [URL]?
+    /// Whether `origin` may hand `url` to its app (Mail, FaceTime). Suppression blocks
+    /// further requests from the page until it navigates.
+    func confirmOpeningApp(for url: URL, from origin: String, in window: NSWindow?) async -> HivraWebDialogResponse<Bool>
+    /// Whether a page that has already downloaded a file may download more until it navigates.
+    func confirmMoreDownloads(from origin: String, in window: NSWindow?) async -> Bool
 }
 
 /// Everything a web view may ask of the Mac beyond rendering.
@@ -45,7 +51,7 @@ struct HivraBrowserServices {
     )
 }
 
-/// JavaScript dialogs as sheets on the page's window, always naming the page's origin.
+/// JavaScript dialogs and page requests as sheets on the page's window, always naming the page's origin.
 @MainActor
 final class HivraWebDialogs: HivraWebDialogPresenting {
     static let maximumMessageLength = 2_000
@@ -76,6 +82,35 @@ final class HivraWebDialogs: HivraWebDialogPresenting {
         let response = await run(alert, in: window)
         return .init(value: response == .alertFirstButtonReturn ? field.stringValue : nil,
                      suppressesFurtherDialogs: suppressed(alert))
+    }
+
+    func confirmOpeningApp(for url: URL, from origin: String, in window: NSWindow?) async -> HivraWebDialogResponse<Bool> {
+        let application = NSWorkspace.shared.urlForApplication(toOpen: url).map { appURL in
+            let name = FileManager.default.displayName(atPath: appURL.path)
+            return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "\(origin) wants to open \(application ?? "another app")"
+        let address = url.absoluteString
+        alert.informativeText = address.count > Self.maximumMessageLength
+            ? String(address.prefix(Self.maximumMessageLength)) + "…" : address
+        alert.addButton(withTitle: application.map { "Open \($0)" } ?? "Open")
+        alert.addButton(withTitle: "Cancel")
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Don’t allow this page to open apps"
+        let response = await run(alert, in: window)
+        return .init(value: response == .alertFirstButtonReturn, suppressesFurtherDialogs: suppressed(alert))
+    }
+
+    func confirmMoreDownloads(from origin: String, in window: NSWindow?) async -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "\(origin) wants to download multiple files"
+        alert.informativeText = "This page has already downloaded a file. Allow it to save more files to Downloads until you leave the page?"
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Don’t Allow")
+        return await run(alert, in: window) == .alertFirstButtonReturn
     }
 
     func chooseFiles(allowsMultipleSelection: Bool, allowsDirectories: Bool, in window: NSWindow?) async -> [URL]? {

@@ -17,7 +17,7 @@ final class RecordingSystemURLs: HivraSystemURLOpening {
     }
 }
 
-/// Answers JavaScript dialogs and file pickers the way a user would, and records what was asked.
+/// Answers JavaScript dialogs, file pickers and page requests the way a user would, and records what was asked.
 @MainActor
 final class ScriptedWebDialogs: HivraWebDialogPresenting {
     struct Presentation: Equatable {
@@ -31,6 +31,11 @@ final class ScriptedWebDialogs: HivraWebDialogPresenting {
     var promptAnswer: String?
     var suppressNext = false
     var chosenFiles: [URL]?
+    /// Unanswered questions default to Cancel and Don’t Allow.
+    var appOpenAnswers: [HivraWebDialogResponse<Bool>] = []
+    var moreDownloadsAnswers: [Bool] = []
+    /// Keeps app and download questions open, as a person still reading the sheet would.
+    var holdsQuestions = false
     private(set) var presentations: [Presentation] = []
     private(set) var fileRequests: [(multiple: Bool, directories: Bool)] = []
 
@@ -55,6 +60,22 @@ final class ScriptedWebDialogs: HivraWebDialogPresenting {
         return chosenFiles
     }
 
+    func confirmOpeningApp(for url: URL, from origin: String, in window: NSWindow?) async -> HivraWebDialogResponse<Bool> {
+        record("open-app", url.absoluteString, origin, true)
+        while holdsQuestions { try? await Task.sleep(for: .milliseconds(20)) }
+        return appOpenAnswers.isEmpty ? .init(value: false) : appOpenAnswers.removeFirst()
+    }
+
+    func confirmMoreDownloads(from origin: String, in window: NSWindow?) async -> Bool {
+        record("more-downloads", "", origin, false)
+        while holdsQuestions { try? await Task.sleep(for: .milliseconds(20)) }
+        return moreDownloadsAnswers.isEmpty ? false : moreDownloadsAnswers.removeFirst()
+    }
+
+    func questions(_ kind: String) -> [Presentation] {
+        presentations.filter { $0.kind == kind }
+    }
+
     private func record(_ kind: String, _ message: String, _ origin: String, _ offered: Bool) {
         presentations.append(.init(kind: kind, message: message, origin: origin, offeredSuppression: offered))
     }
@@ -73,6 +94,7 @@ final class BrowserFixture {
     let dialogs = ScriptedWebDialogs()
     let folder: URL
     let services: HivraBrowserServices
+    private var windows: [NSWindow] = []
 
     init() throws {
         _ = NSApplication.shared
@@ -91,7 +113,49 @@ final class BrowserFixture {
     }
 
     func cleanUp() {
+        for window in windows {
+            window.contentView = nil
+            window.close()
+        }
         try? FileManager.default.removeItem(at: folder)
+    }
+
+    /// Names of the files saved to Downloads, sorted.
+    func downloadedFiles() -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: downloads.path)) ?? []).sorted()
+    }
+
+    /// Puts the browser in a window, so the user's mouse events can reach the page.
+    func host(_ browser: HivraBrowserModel) {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = browser.webView
+        windows.append(window)
+    }
+
+    /// The user's own click on an element: the mouse down and up the window would deliver to
+    /// the web view, at the element's centre. A script's `click()` is not this.
+    func click(_ selector: String, in browser: HivraBrowserModel) async throws {
+        let webView = browser.webView
+        let window = try #require(webView.window, "host the browser before clicking")
+        var center: [Double] = []
+        try await eventually("\(selector) laid out") {
+            center = (try await webView.callAsyncJavaScript("""
+                const rect = document.querySelector(selector)?.getBoundingClientRect();
+                return rect && rect.width > 0 && rect.height > 0 ? [rect.x + rect.width / 2, rect.y + rect.height / 2] : [];
+                """, arguments: ["selector": selector], contentWorld: .page) as? [Double]) ?? []
+            return center.count == 2
+        }
+        let point = NSPoint(x: center[0], y: webView.isFlipped ? center[1] : webView.bounds.height - center[1])
+        let location = webView.convert(point, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(
+                with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            if type == .leftMouseDown { webView.mouseDown(with: event) } else { webView.mouseUp(with: event) }
+            try await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     /// Replaces the page with a local document at `origin`. No server or network is used.
@@ -259,12 +323,23 @@ struct HivraBrowserWebContentTests {
         let fixture = try BrowserFixture()
         defer { fixture.cleanUp() }
         let browser = fixture.connectionBrowser()
+        fixture.host(browser)
         try await fixture.show("""
+            <button id="save" style="display:block;width:200px;height:40px">Save report</button>
             <iframe src="about:blank"></iframe>
             <iframe srcdoc="<p>inline</p>"></iframe>
             <iframe src="data:text/html,<p>data</p>"></iframe>
             <iframe src="vnc://10.0.0.1"></iframe>
             <iframe id="mailframe" srcdoc="<a id='mail' href='mailto:frame@example.com'>mail</a>"></iframe>
+            <script>
+              document.getElementById('save').addEventListener('click', () => {
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(new Blob([window.reportBody], {type: 'text/plain'}));
+                link.download = 'report.txt';
+                document.body.append(link);
+                link.click();
+              });
+            </script>
             """, in: browser)
         try await fixture.eventually("subframes loaded") {
             try await browser.webView.evaluateJavaScript(
@@ -277,21 +352,15 @@ struct HivraBrowserWebContentTests {
             "document.getElementById('mailframe').contentDocument.getElementById('mail').click(); true")
         _ = try await browser.webView.evaluateJavaScript("location.href = 'mailto:script@example.com'; true")
 
-        // The same file twice: the second download must not replace the first.
-        let download = """
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(new Blob([body], {type: 'text/plain'}));
-            link.download = 'report.txt';
-            document.body.append(link);
-            link.click();
-            return true;
-            """
+        // The user saves the same file twice: the second download must not replace the first.
         let first = fixture.downloads.appendingPathComponent("report.txt")
         let second = fixture.downloads.appendingPathComponent("report (1).txt")
-        _ = try await browser.webView.callAsyncJavaScript(download, arguments: ["body": "first"], contentWorld: .page)
+        _ = try await browser.webView.evaluateJavaScript("window.reportBody = 'first'; true")
+        try await fixture.click("#save", in: browser)
         try await fixture.eventually("first download saved") { (try? String(contentsOf: first, encoding: .utf8)) == "first" }
         #expect(browser.downloadNotice?.outcome == .finished(first))
-        _ = try await browser.webView.callAsyncJavaScript(download, arguments: ["body": "second"], contentWorld: .page)
+        _ = try await browser.webView.evaluateJavaScript("window.reportBody = 'second'; true")
+        try await fixture.click("#save", in: browser)
         try await fixture.eventually("second download saved beside the first") {
             (try? String(contentsOf: second, encoding: .utf8)) == "second"
         }
@@ -301,6 +370,7 @@ struct HivraBrowserWebContentTests {
         #expect(getxattr(first.path, "com.apple.quarantine", nil, 0, 0, 0) > 0)
 
         #expect(fixture.systemURLs.opened.isEmpty)
+        #expect(fixture.dialogs.presentations.isEmpty)
         #expect(browser.popupWindows.isEmpty)
     }
 
@@ -310,15 +380,19 @@ struct HivraBrowserWebContentTests {
         defer { fixture.cleanUp() }
         let browser = fixture.connectionBrowser()
         defer { browser.closeOwnedPopups() }
+        fixture.host(browser)
         try await fixture.show("""
-            <a id="mail" href="mailto:ops@example.com">Email ops</a>
-            <a id="docs" href="https://docs.example.com/guide" target="_blank" rel="noopener">Guide</a>
+            <a id="mail" href="mailto:ops@example.com" style="display:block;height:40px">Email ops</a>
+            <a id="docs" href="https://docs.example.com/guide" target="_blank" rel="noopener" style="display:block;height:40px">Guide</a>
             """, in: browser)
 
-        _ = try await browser.webView.evaluateJavaScript("document.getElementById('mail').click(); true")
-        _ = try await browser.webView.evaluateJavaScript("document.getElementById('docs').click(); true")
-        try await fixture.eventually("both links handed to the system") { fixture.systemURLs.opened.count == 2 }
+        try await fixture.click("#mail", in: browser)
+        try await fixture.eventually("the mail link handed to Mail") { fixture.systemURLs.opened.count == 1 }
+        try await fixture.click("#docs", in: browser)
+        try await fixture.eventually("the guide handed to the default browser") { fixture.systemURLs.opened.count == 2 }
         #expect(fixture.systemURLs.opened == [URL(string: "mailto:ops@example.com")!, URL(string: "https://docs.example.com/guide")!])
+        // The connection's own page, clicked by the user: nothing to ask.
+        #expect(fixture.dialogs.presentations.isEmpty)
         #expect(browser.popupWindows.isEmpty)
     }
 

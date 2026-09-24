@@ -48,7 +48,7 @@ final class HivraBrowserModel: NSObject, ObservableObject {
     @Published private(set) var surfaceSnapshot: HivraSurfaceSnapshot?
     @Published private(set) var downloadNotice: HivraDownloadNotice?
 
-    let webView: WKWebView
+    let webView: HivraInputCountingWebView
     /// True only for connection-owned views that carry the native bridges.
     let isPrivileged: Bool
     let isPopup: Bool
@@ -71,6 +71,10 @@ final class HivraBrowserModel: NSObject, ObservableObject {
     private var presentedDialogs = 0
     private var dialogsSuppressed = false
     private var downloadNoticeDismissal: Task<Void, Never>?
+    /// Downloads and app hand-offs this document may start without asking.
+    private var activation = HivraPageActivation()
+    /// One question per requesting origin; further downloads from it wait for the answer.
+    private var pendingDownloadQuestions: [String: Task<Bool, Never>] = [:]
     /// Popup windows this page opened. They close with it.
     private(set) var popupWindows: [HivraPopupWindowController] = []
 
@@ -110,7 +114,7 @@ final class HivraBrowserModel: NSObject, ObservableObject {
         self.opener = opener
         isPrivileged = nativeDesktopBridge != nil
         isPopup = opener != nil
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = HivraInputCountingWebView(frame: .zero, configuration: configuration)
         super.init()
 
         workspaceBridge?.receive = { [weak self] message in
@@ -415,6 +419,73 @@ final class HivraBrowserModel: NSObject, ObservableObject {
         return HivraWebOriginLabel.make(scheme: origin.protocol, host: origin.host, port: origin.port)
     }
 
+    private func isConnectionOrigin(_ frame: WKFrameInfo) -> Bool {
+        let origin = frame.securityOrigin
+        return HivraTrustedWebOrigin(trustedURL)?.matches(scheme: origin.protocol, host: origin.host, port: origin.port) == true
+    }
+
+    /// Answers through `decide` once `HivraPageActivation` or the user has.
+    private func decideDownload(
+        requester: String,
+        fromMainFrame: Bool,
+        fromConnectionOrigin: Bool,
+        url: URL?,
+        decide: @escaping @MainActor (Bool) -> Void
+    ) {
+        let frame = fromMainFrame ? "main frame" : "subframe"
+        switch activation.download(requester: requester, fromMainFrame: fromMainFrame,
+                                   fromConnectionOrigin: fromConnectionOrigin, input: webView.userInputCount) {
+        case .allow:
+            decide(true)
+        case .refuse(let reason):
+            logRefusal("download: \(reason)", url: url, frame: frame)
+            decide(false)
+        case .ask:
+            let question = pendingDownloadQuestions[requester] ?? askForMoreDownloads(from: requester)
+            Task { [weak self] in
+                let allowed = await question.value
+                if !allowed { self?.logRefusal("download: the user did not allow more downloads", url: url, frame: frame) }
+                decide(allowed)
+            }
+        }
+    }
+
+    private func askForMoreDownloads(from requester: String) -> Task<Bool, Never> {
+        let document = activation.document
+        let question = Task { [weak self] () -> Bool in
+            guard let self else { return false }
+            let allowed = await services.dialogs.confirmMoreDownloads(from: requester, in: webView.window)
+            activation.recordDownloadAnswer(allowed, requester: requester, document: document)
+            if activation.document == document { pendingDownloadQuestions[requester] = nil }
+            return allowed
+        }
+        pendingDownloadQuestions[requester] = question
+        return question
+    }
+
+    /// Hands `url` to its app when `HivraPageActivation` or the user allows it.
+    private func openApp(_ url: URL, requestedBy frame: WKFrameInfo) {
+        let requester = origin(of: frame)
+        switch activation.openApp(fromConnectionOrigin: isConnectionOrigin(frame), input: webView.userInputCount) {
+        case .allow:
+            services.systemURLs.open(url)
+        case .refuse(let reason):
+            logRefusal(reason, url: url, frame: "main frame")
+        case .ask:
+            let document = activation.document
+            Task { [weak self] in
+                guard let self else { return }
+                let response = await services.dialogs.confirmOpeningApp(for: url, from: requester, in: webView.window)
+                activation.appOpenAnswered(blockingFurther: response.suppressesFurtherDialogs, document: document)
+                if response.value {
+                    services.systemURLs.open(url)
+                } else {
+                    logRefusal("the user did not allow opening the app", url: url, frame: "main frame")
+                }
+            }
+        }
+    }
+
     /// False when the user has asked this page to stop presenting dialogs.
     private func beginDialog() -> Bool {
         guard !dialogsSuppressed else { return false }
@@ -437,9 +508,11 @@ extension HivraBrowserModel: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         retryURL = nil
-        // Dialog suppression lasts for one document, as in a browser.
+        // Dialog suppression, download allowances and answers last for one document, as in a browser.
         presentedDialogs = 0
         dialogsSuppressed = false
+        activation.documentCommitted(input: self.webView.userInputCount)
+        pendingDownloadQuestions = [:]
         if workspaceBridge != nil, let url = webView.url,
            HivraWorkspacePolicy.isCommittedAccountEntry(url: url, trustedURL: trustedURL) { clearWorkspaceMetadata() }
         updateState()
@@ -486,17 +559,23 @@ extension HivraBrowserModel: WKNavigationDelegate {
     ) {
         let url = navigationAction.request.url
         let targetsMainFrame = navigationAction.targetFrame?.isMainFrame == true
+        let source = navigationAction.sourceFrame
         switch HivraWebContentPolicy.navigation(
             url: url,
             targetsMainFrame: targetsMainFrame,
+            sourceIsMainFrame: source.isMainFrame,
             opensNewWindow: navigationAction.targetFrame == nil,
             isLinkActivation: navigationAction.navigationType == .linkActivated,
             shouldPerformDownload: navigationAction.shouldPerformDownload
         ) {
         case .download:
-            decisionHandler(.download)
+            // A download link: the frame holding it asks.
+            decideDownload(requester: origin(of: source), fromMainFrame: source.isMainFrame,
+                           fromConnectionOrigin: isConnectionOrigin(source), url: url) { allowed in
+                decisionHandler(allowed ? .download : .cancel)
+            }
         case .openExternally(let externalURL):
-            services.systemURLs.open(externalURL)
+            openApp(externalURL, requestedBy: source)
             decisionHandler(.cancel)
         case .cancel(let reason):
             logRefusal(reason, url: url, frame: targetsMainFrame ? "main frame" : "subframe")
@@ -517,10 +596,26 @@ extension HivraBrowserModel: WKNavigationDelegate {
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
         let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")
-        decisionHandler(HivraWebContentPolicy.shouldDownload(
+        guard HivraWebContentPolicy.shouldDownload(
             canShowMIMEType: navigationResponse.canShowMIMEType,
             contentDisposition: disposition
-        ) ? .download : .allow)
+        ) else {
+            decisionHandler(.allow)
+            return
+        }
+        // WebKit names no frame here. A subframe's download comes from the origin it
+        // loads; the main frame's from the page it is showing.
+        let responseURL = navigationResponse.response.url
+        let fromMainFrame = navigationResponse.isForMainFrame
+        let requesterURL = fromMainFrame ? webView.backForwardList.currentItem?.url ?? responseURL : responseURL
+        decideDownload(
+            requester: HivraWebOriginLabel.make(url: requesterURL) ?? HivraWebOriginLabel.opaque,
+            fromMainFrame: fromMainFrame,
+            fromConnectionOrigin: responseURL.map { HivraWebContentPolicy.isSameOrigin($0, trustedURL) } ?? false,
+            url: responseURL
+        ) { allowed in
+            decisionHandler(allowed ? .download : .cancel)
+        }
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -544,16 +639,21 @@ extension HivraBrowserModel: WKUIDelegate {
            handleWorkspaceNewWindow?(url) == true {
             return nil
         }
+        let source = navigationAction.sourceFrame
         switch HivraWebContentPolicy.newWindow(
             url: url,
             isLinkActivation: navigationAction.navigationType == .linkActivated,
-            sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
+            sourceIsMainFrame: source.isMainFrame,
             connectionURL: trustedURL
         ) {
         case .inAppPopup:
             return openPopup(configuration: configuration, windowFeatures: windowFeatures)
-        case .openInDefaultBrowser(let externalURL), .openExternally(let externalURL):
+        case .openInDefaultBrowser(let externalURL):
+            // WebKit's popup blocker has already required a user gesture for this link.
             services.systemURLs.open(externalURL)
+            return nil
+        case .openExternally(let externalURL):
+            openApp(externalURL, requestedBy: source)
             return nil
         case .refuse(let reason):
             logRefusal(reason, url: url, frame: "new window")

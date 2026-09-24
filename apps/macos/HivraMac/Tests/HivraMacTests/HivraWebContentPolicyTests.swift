@@ -11,12 +11,13 @@ struct HivraWebContentPolicyTests {
     private func navigation(
         _ value: String,
         mainFrame: Bool = true,
+        sourceMainFrame: Bool = true,
         newWindow: Bool = false,
         link: Bool = false,
         download: Bool = false
     ) -> HivraWebNavigationDecision {
-        HivraWebContentPolicy.navigation(url: URL(string: value), targetsMainFrame: mainFrame, opensNewWindow: newWindow,
-                                         isLinkActivation: link, shouldPerformDownload: download)
+        HivraWebContentPolicy.navigation(url: URL(string: value), targetsMainFrame: mainFrame, sourceIsMainFrame: sourceMainFrame,
+                                         opensNewWindow: newWindow, isLinkActivation: link, shouldPerformDownload: download)
     }
 
     private func newWindow(_ value: String?, link: Bool = false, mainFrame: Bool = true) -> HivraNewWindowDecision {
@@ -39,6 +40,8 @@ struct HivraWebContentPolicyTests {
         #expect(navigation(mail.absoluteString, link: true) == .openExternally(mail))
         #expect(navigation("tel:+15550100", link: true) == .openExternally(URL(string: "tel:+15550100")!))
         #expect(navigation(mail.absoluteString, mainFrame: false, link: true) != .openExternally(mail))
+        // A frame's link aimed at the top window (target=_top) is still the frame's.
+        #expect(navigation(mail.absoluteString, sourceMainFrame: false, link: true) != .openExternally(mail))
         // Script-driven location changes are not a user's link.
         #expect(navigation(mail.absoluteString, link: false) != .openExternally(mail))
     }
