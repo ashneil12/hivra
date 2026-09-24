@@ -1,8 +1,12 @@
-// Reusable component to inject JSON-LD structured data into the page <head>.
+// Reusable component to inject JSON-LD structured data into the page.
 // Usage: <StructuredData schema={mySchemaObject} />
 // Accepts any valid schema.org JSON-LD object or @graph array.
-
-import Script from 'next/script';
+//
+// Deliberately a plain inline <script>, NOT next/script: next/script with
+// strategy="afterInteractive" injects the tag client-side after hydration, so
+// crawlers fetching raw HTML never see the structured data (and its fixed id
+// deduped multiple schemas on one page down to a single tag). A plain script
+// renders in the server HTML, which is the canonical Next.js JSON-LD pattern.
 
 interface StructuredDataProps {
   schema: Record<string, unknown>;
@@ -10,11 +14,12 @@ interface StructuredDataProps {
 
 export default function StructuredData({ schema }: StructuredDataProps) {
   return (
-    <Script
-      id="structured-data"
+    <script
       type="application/ld+json"
-      strategy="afterInteractive"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      // '<' is escaped so schema text can never close the tag early (XSS guard).
+      dangerouslySetInnerHTML={{
+        __html: JSON.stringify(schema).replace(/</g, "\\u003c"),
+      }}
     />
   );
 }

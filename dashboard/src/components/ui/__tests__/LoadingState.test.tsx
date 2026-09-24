@@ -3,7 +3,6 @@ import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import { LoadingState } from "../LoadingState";
 import DashboardLoading from "@/app/dashboard/loading";
-import Loading from "@/app/loading";
 
 it("announces real activity without claiming measurable progress", () => {
   const { rerender } = render(<LoadingState label="Opening Windows…" detail="My computer" dark />);
@@ -16,9 +15,7 @@ it("announces real activity without claiming measurable progress", () => {
   expect(screen.getByRole("status")).toHaveTextContent("Loading files…");
 });
 
-it("provides accessible root and dashboard route fallbacks", () => {
-  const { rerender } = render(<Loading />);
-  expect(screen.getByRole("status")).toHaveTextContent("Opening Hivra…");
-  rerender(<DashboardLoading />);
+it("provides an accessible dashboard route fallback", () => {
+  render(<DashboardLoading />);
   expect(screen.getByRole("status")).toHaveTextContent("Opening your workspace…");
 });

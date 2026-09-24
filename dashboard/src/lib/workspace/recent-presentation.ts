@@ -35,6 +35,10 @@ export function recentSurfaceLabel(tab: AgentSurfaceId, resource: RecentSubject)
   const dashboard = resource.surfaceKind === "dashboard";
   const surfaces = dashboard ? DASHBOARD_SURFACES : CHAT_SURFACES;
   const shown = surfaces.includes(tab) ? tab : dashboard ? "aeon" : "chat";
+  // A dashboard agent's Manage group holds only Manage, so its page shows no
+  // second row. A chat agent's Manage row names its own tab "Settings"
+  // (ResourceSurfaceNavigation GROUPED_LABEL), and Home names it the same way.
+  if (shown === "manage") return dashboard ? "Manage" : "Manage › Settings";
   const label = agentSurfaceLabel(shown, def);
   // The agent's own views stand alone; its computer's and its settings say
   // which group they sit in, as the page's two rows do.

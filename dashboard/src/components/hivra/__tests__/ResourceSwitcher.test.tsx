@@ -393,6 +393,16 @@ describe("ResourceSwitcher compact parts", () => {
     expect(trigger).toHaveTextContent("Agent · stopped");
   });
 
+  it("leaves the caption to the status when the host already names the kind", () => {
+    render(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="running" showKind={false} />);
+    const trigger = screen.getByRole("button", { name: "Switch agent or computer: Atlas" });
+    expect(trigger.querySelector('[data-switcher-part="kind"]')).toBeNull();
+    expect(trigger.querySelector('[data-switcher-part="separator"]')).toBeNull();
+    expect(trigger.querySelector('[data-switcher-part="status"]')).toHaveAttribute("data-tone", "ok");
+    expect(trigger).toHaveTextContent(/^Atlasrunning$/);
+    expect(trigger).toHaveAccessibleDescription("running");
+  });
+
   it("gives screen readers the status the label and a narrow host would hide", () => {
     const { rerender } = render(<ResourceSwitcher currentUid="abc" name="Atlas" kind="agent" status="running" />);
     const trigger = screen.getByRole("button", { name: "Switch agent or computer: Atlas" });
