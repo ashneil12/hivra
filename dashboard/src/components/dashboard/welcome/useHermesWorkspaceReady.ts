@@ -37,7 +37,7 @@ export function useHermesWorkspaceReadiness(instanceId: string | null | undefine
   const [round, setRound] = useState(0);
   const [stopped, setStopped] = useState<{ instanceId: string; round: number } | null>(null);
   const ready = Boolean(instanceId) && readyFor === instanceId;
-  const gaveUp = !ready && Boolean(instanceId) && stopped?.instanceId === instanceId && stopped.round === round;
+  const gaveUp = !ready && Boolean(instanceId) && stopped !== null && stopped.instanceId === instanceId && stopped.round === round;
 
   useEffect(() => {
     if (!instanceId || ready) return;
