@@ -4130,9 +4130,12 @@ describe("BANKR_* reconcile for user-connected wallets (bankrRuntimeReconcile)",
 
     // Runs the script against whatever is on disk under dir (seed() first).
     function runOnDisk(p: WebUIDeployParams) {
-      const body = stateSeedBody(p)
-        .body.replace(/(^|[^A-Za-z0-9_.-])\/(state|seed)(?=[/\s'"]|$)/gm, (_m, pre: string, name: string) => `${pre}${dir}/${name}`)
-        .replace(/(^|[^A-Za-z0-9_.-])\/tmp\//gm, (_m, pre: string) => `${pre}${dir}/tmp/`);
+      // One pass, so a rewritten path is never rewritten again: on Linux dir
+      // itself lives under /tmp, and a second /tmp/ pass would nest it twice.
+      const body = stateSeedBody(p).body.replace(
+        /(^|[^A-Za-z0-9_.-])\/(?:(state|seed)(?=[/\s'"]|$)|tmp\/)/gm,
+        (_m, pre: string, name: string | undefined) => `${pre}${dir}/${name ?? "tmp/"}`,
+      );
       // The box runs busybox; GNU and busybox sed take a bare `sed -i`. BSD sed
       // (macOS) needs an explicit empty suffix, so shim it there rather than skip.
       const harness = `sed --version >/dev/null 2>&1 || sed() { if [ "$1" = "-i" ]; then shift; command sed -i '' "$@"; else command sed "$@"; fi; }
