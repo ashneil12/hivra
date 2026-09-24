@@ -84,6 +84,22 @@ describe("Hivra Tailscale private access route", () => {
     expect(mockObserve).not.toHaveBeenCalled();
   });
 
+  // The reason lets Manage say "start this computer" to a stopped, eligible
+  // Ubuntu computer instead of refusing it as if it could never connect.
+  it.each([
+    ["an eligible running computer", {}, true, null],
+    ["a stopped computer", { status: "stopped", desired_state: "stopped" }, false, "not_running"],
+    ["a computer with an operation in progress", { operation_id: "00000000-0000-4000-8000-000000001111", operation_kind: "resize" }, false, "operation_in_progress"],
+    ["an older computer without ownership checks", { infrastructure_binding_token_enforced: false }, false, "not_bound"],
+    ["an agent", { type: "codex", computer_profile: null }, false, "not_eligible"],
+    ["a computer in the owner's own cloud", { computer_substrate: "provider-vm" }, false, "not_eligible"],
+  ])("reports why private access is or isn't available for %s", async (_case, change, supported, reason) => {
+    agent = { ...agent!, ...change };
+    const response = await GET(new NextRequest(`https://canary.hermesos.cloud/x`, { headers: { host: "canary.hermesos.cloud" } }), params);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, data: { supported, reason } });
+  });
+
   it("blocks unsupported or lifecycle-busy computers before guest access", async () => {
     agent = { ...agent!, operation_id: "00000000-0000-4000-8000-000000001111", operation_kind: "resize" };
     const response = await POST(request({ action: "refresh" }), params);
