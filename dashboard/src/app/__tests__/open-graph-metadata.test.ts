@@ -32,6 +32,14 @@ describe('route Open Graph metadata', () => {
     expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
   });
 
+  it('keeps the Hermes OS brand bridge on the homepage, where most search clicks come from', () => {
+    // ~75% of hivra.cloud's Search Console clicks (Jun-Sep 2026) were "hermes os" searches.
+    expect(String(homeMetadata.title)).toMatch(/^Hermes OS is now Hivra \| /);
+    expect(String(homeMetadata.description)).toMatch(/^Hermes OS is now Hivra\./);
+    expect(String(homeMetadata.description).length).toBeLessThanOrEqual(160);
+    expect(getOpenGraphValue(homeMetadata.openGraph, 'title')).toBe(homeMetadata.title);
+  });
+
   it('labels the /tokenomics title as proposed and sets its own description', () => {
     expect(tokenomicsMetadata.title).toBe('Proposed $HIVRA tokenomics');
     expect(String(tokenomicsMetadata.description)).toMatch(/proposed migration/);

@@ -28,8 +28,13 @@ import WhatsComingSection from "@/components/landing/WhatsComingSection";
 import FounderSection from "@/components/landing/FounderSection";
 import FAQSection from "@/components/landing/FAQSection";
 
-const homepageTitle = "Hivra | A computer for you and your agents";
-const homepageDescription = "Launch Ubuntu, with Windows and Omarchy in private preview. Run Claude Code, Codex, Hermes and more on a computer of their own. Choose Hivra Cloud, your infrastructure or self-hosting.";
+// "Hermes OS" stays at the front of the homepage title and description: in
+// Search Console (Jun-Sep 2026) about three quarters of hivra.cloud's clicks came
+// from "hermes os" / "hermes agent os" / "hermesos" searches landing here, and
+// the retired site's "Hermes OS is now Hivra" title earned 20-26% CTR at
+// positions 1-3. Dropping the old name at the cutover would put that at risk.
+const homepageTitle = "Hermes OS is now Hivra | A computer for you and your agents";
+const homepageDescription = "Hermes OS is now Hivra. Launch Ubuntu, with Windows and Omarchy in private preview. Run Claude Code, Codex, Hermes and more on a computer of their own.";
 
 export const metadata: Metadata = {
   title: homepageTitle,
