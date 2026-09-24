@@ -448,6 +448,25 @@ describe("ComputerCatalogPage", () => {
       .toBeInTheDocument();
   });
 
+  it("gives a supported computer that can't take Codex now the gate's reason, not the pair line", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm", name: "STOPPED_DESK", status: "stopped", cpu: 2, ram: 4 };
+    const busy = { ...desk, id: "22222222-2222-4222-8222-222222222222", name: "CODEX_DESK", status: "running" };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [],
+          computerReasons: { [desk.id]: "Start the computer to add Codex.", [busy.id]: "Codex is already on this computer." } } }
+        : { success: true, data: { agents: [desk, busy] } } }) as Response);
+    render(<ComputerCatalogPage />);
+    const stopped = await screen.findByRole("link", { name: /STOPPED_DESK/ });
+    await waitFor(() => expect(within(stopped).getByText("Start the computer to add Codex.")).toBeInTheDocument());
+    expect(stopped).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage`);
+    const present = screen.getByRole("link", { name: /CODEX_DESK/ });
+    expect(within(present).getByText("Codex is already on this computer.")).toBeInTheDocument();
+    expect(screen.queryByText(/Adds a new Codex/)).not.toBeInTheDocument();
+  });
+
   it("ignores ?addAgent=1 where attach is not offered (production)", async () => {
     mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
     const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",

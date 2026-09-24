@@ -70,8 +70,10 @@ function computerTypeLabel(computer: HivraAgent): string {
   );
 }
 
-function ComputerRow({ computer, addingAgent = false, canTakeAgent = false }: {
+function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, attachReason = null }: {
   computer: HivraAgent; addingAgent?: boolean; canTakeAgent?: boolean;
+  /** Why a computer the first pair supports can't take Codex now, in the gate's words. */
+  attachReason?: string | null;
 }) {
   const isDesktop = getCatalogAgent(computer.type)?.resourceKind === "computer";
   const desktopQuery = computer.computer_profile === "windows"
@@ -79,8 +81,10 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false }: {
     : "?tab=desktop";
   // Choosing a computer for an agent (Launch's "Put an agent on a computer I
   // already have") opens its Manage, where Add an agent has its own gate. The
-  // server says which computers can take one.
-  const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${canTakeAgent ? "?tab=manage&addAgent=1" : isDesktop ? desktopQuery : ""}`;
+  // server says which computers can take one now; one that could but can't yet
+  // (stopped, busy, already has Codex, the plan's limit) opens Manage with why.
+  const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${canTakeAgent ? "?tab=manage&addAgent=1"
+    : addingAgent && attachReason ? "?tab=manage" : isDesktop ? desktopQuery : ""}`;
   const state = computerState(computer);
   return (
     <Link className={styles.computerRow} href={href}>
@@ -91,7 +95,7 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false }: {
       <span className={styles.computerIdentity}>
         <strong>{computer.name}</strong>
         {/* Choosing a computer for an agent: the honest pair line, or why not. */}
-        <small>{addingAgent ? canTakeAgent ? attachPairLine(computer.name) : ATTACH_NOT_AVAILABLE : computerTypeLabel(computer)}</small>
+        <small>{addingAgent ? canTakeAgent ? attachPairLine(computer.name) : attachReason ?? ATTACH_NOT_AVAILABLE : computerTypeLabel(computer)}</small>
       </span>
       <span className={styles.computerMeta}>
         {computer.cpu} vCPU · {computer.ram} GB
@@ -126,12 +130,14 @@ export function ComputerCatalogPage() {
   const addAgentRequested = searchParams?.get("addAgent") === "1";
   // ?addAgent=1 changes this list only where attach is offered (Canary), and
   // only for computers the server says can take the agent.
-  const [attachChoice, setAttachChoice] = useState<{ offered: boolean; eligible: Set<string> }>({ offered: false, eligible: new Set() });
+  const [attachChoice, setAttachChoice] = useState<{ offered: boolean; eligible: Set<string>; reasons: Record<string, string> }>(
+    { offered: false, eligible: new Set(), reasons: {} });
   useEffect(() => {
     if (!addAgentRequested) return;
     let alive = true;
     void fetchOwnerAttachedAgents().then((result) => {
-      if (alive) setAttachChoice({ offered: Boolean(result?.enabled), eligible: new Set(result?.eligibleComputerIds ?? []) });
+      if (alive) setAttachChoice({ offered: Boolean(result?.enabled), eligible: new Set(result?.eligibleComputerIds ?? []),
+        reasons: result?.computerReasons ?? {} });
     });
     return () => { alive = false; };
   }, [addAgentRequested]);
@@ -274,7 +280,8 @@ export function ComputerCatalogPage() {
         <div className={styles.computerList}>
           {visibleComputers.map((computer) => (
             <ComputerRow key={computer.id} computer={computer} addingAgent={addingAgent}
-              canTakeAgent={addingAgent && attachChoice.eligible.has(computer.id)} />
+              canTakeAgent={addingAgent && attachChoice.eligible.has(computer.id)}
+              attachReason={Object.hasOwn(attachChoice.reasons, computer.id) ? attachChoice.reasons[computer.id] : null} />
           ))}
           {!loading && !loadError && total === 0 ? (
             <div className={styles.empty}>

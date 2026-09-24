@@ -90,21 +90,39 @@ export interface OwnerAttachedAgentRow {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+export type OwnerAttachedAgents = {
+  enabled: boolean;
+  agents: OwnerAttachedAgentRow[];
+  /** Computers where Add would open the gate now. */
+  eligibleComputerIds: string[];
+  /** Computers the first pair supports that can't take Codex now, with the gate's reason. */
+  computerReasons: Record<string, string>;
+};
+
+function parseReasons(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const reasons: Record<string, string> = {};
+  for (const [id, message] of Object.entries(value as Record<string, unknown>)) {
+    if (UUID.test(id) && typeof message === "string" && message.length > 0 && message.length <= 300) reasons[id] = message;
+  }
+  return reasons;
+}
+
 /** The owner's agents added to their computers, whether attach is offered here
  * at all, and which of their computers can take one (the server decides). */
-export async function fetchOwnerAttachedAgents(fetcher?: typeof fetch):
-Promise<{ enabled: boolean; agents: OwnerAttachedAgentRow[]; eligibleComputerIds: string[] } | null> {
+export async function fetchOwnerAttachedAgents(fetcher?: typeof fetch): Promise<OwnerAttachedAgents | null> {
   const request = resolveFetch(fetcher);
   if (!request) return null;
   try {
     const response = await request("/api/hivra/attached-agents", { cache: "no-store" });
-    if (response.status === 404) return { enabled: false, agents: [], eligibleComputerIds: [] };
+    if (response.status === 404) return { enabled: false, agents: [], eligibleComputerIds: [], computerReasons: {} };
     const payload = await readJson(response);
-    const data = payload?.data as { enabled?: unknown; agents?: unknown; eligibleComputerIds?: unknown } | undefined;
+    const data = payload?.data as { enabled?: unknown; agents?: unknown; eligibleComputerIds?: unknown; computerReasons?: unknown } | undefined;
     if (!response.ok || payload?.success !== true || !Array.isArray(data?.agents)) return null;
     const eligible = Array.isArray(data.eligibleComputerIds)
       ? data.eligibleComputerIds.filter((id): id is string => typeof id === "string" && UUID.test(id)) : [];
-    return { enabled: data?.enabled === true, agents: data.agents as OwnerAttachedAgentRow[], eligibleComputerIds: eligible };
+    return { enabled: data?.enabled === true, agents: data.agents as OwnerAttachedAgentRow[], eligibleComputerIds: eligible,
+      computerReasons: parseReasons(data.computerReasons) };
   } catch {
     return null;
   }

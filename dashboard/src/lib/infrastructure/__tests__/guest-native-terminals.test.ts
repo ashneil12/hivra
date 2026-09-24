@@ -227,6 +227,9 @@ AGENT_HOME=${dir}; mkdir -p ${dir}/.hivra; cp ${dir}/api-token ${dir}/.hivra/api
 HIVRA_CHAT_PORT=8080
 mktemp() { : > ${dir}/header; printf '%s\n' ${dir}/header; }
 sleep() { :; }
+# Two tries, not the installer's 30: each try runs python3, and 30 of them can
+# outlast the 3 s bound on a loaded machine (the retry itself is still tested).
+seq() { printf '%s\n' 1 2; }
 curl() {
   printf 'CURL %s\n' "$*" >> ${dir}/calls
   case "$*" in
@@ -262,10 +265,17 @@ curl() {
       ["the proxied agent terminal fails", SOCKETS, "502", "200"],
       ["the proxied computer terminal fails", SOCKETS, "200", "502"],
     ])("fails when %s", (_label, meta, terminal, box) => {
-      const { result, headerLeft } = gatewayCheck(meta, { terminal, box });
+      const { result, calls, headerLeft } = gatewayCheck(meta, { terminal, box });
       expect(result.status).toBe(1);
       expect(result.stdout).not.toContain("DONE");
       expect(headerLeft).toBe(false);
+      // It asked again before giving up.
+      expect(calls.split("\n").filter((line) => line.includes("/api/meta"))).toHaveLength(2);
+    });
+    it("tries the installer's 30 times, 2 seconds apart, before it gives up", () => {
+      const body = helper("verify_terminals_through_gateway");
+      expect(body).toContain("for _ in $(seq 1 30); do");
+      expect(body).toContain("    sleep 2\n  done");
     });
     it("runs in the installer once the gateway answers, and fails the install otherwise", () => {
       const text = installer();

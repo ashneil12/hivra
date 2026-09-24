@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolvePlanAgentSlots, validateAgentResources } from "@/lib/hivra/resource-gate";
 import { ATTACH_INSTALLER_SHA256, ATTACH_NOT_AVAILABLE, attachSupported, type AttachGrants } from "./attach-plan";
@@ -124,6 +125,46 @@ export async function readAttachGate(ownerId: string, computerId: string, deps: 
   return view(null, target, attachments);
 }
 
+/** One supported computer's live answer for Launch's "Put an agent on a
+ * computer I already have": null when Add would open the gate, else the gate's
+ * own reason and words (5.8). */
+export type AttachChoice = { reason: AttachReason | null; message: string | null };
+const MAX_CHOICES = 25;
+
+/**
+ * The gate's answer for each computer the first pair supports, without the
+ * owner's review: running, ready, free, no agent on it, and the plan's agent
+ * limit for Hivra Cloud (checked once). The claim checks all of it again.
+ */
+export async function readAttachChoices(ownerId: string, computers: Array<{ id: string; deploymentMode: string | null }>,
+  deps: AttachDependencies): Promise<Map<string, AttachChoice>> {
+  const listed = computers.slice(0, MAX_CHOICES);
+  const targets = await Promise.all(listed.map((computer) => deps.store.readTarget(ownerId, computer.id)));
+  let plan: AttachChoice | null | undefined;
+  const choices = new Map<string, AttachChoice>();
+  for (const [index, computer] of listed.entries()) {
+    const target = targets[index];
+    if (!target || !target.eligible) {
+      const reason = target?.reason ?? "unsupported_computer";
+      choices.set(computer.id, { reason, message: attachReasonCopy(reason) });
+      continue;
+    }
+    if (computer.deploymentMode === "hivra-managed") {
+      if (plan === undefined) {
+        const gate = await deps.validate({ userId: ownerId, type: "codex", cpu: 0, ram: 0, browser: false, mode: "attach", agentLabel: "Codex" });
+        if (gate.ok) plan = null;
+        else {
+          const reason: AttachReason = gate.status === 403 && /plan access/i.test(gate.message) ? "plan_required" : "plan_agent_limit";
+          plan = { reason, message: attachReasonCopy(reason, gate.message) };
+        }
+      }
+      if (plan) { choices.set(computer.id, plan); continue; }
+    }
+    choices.set(computer.id, { reason: null, message: null });
+  }
+  return choices;
+}
+
 export type AttachMutation =
   | { ok: true; status: 202; operationId: string; resumed: boolean }
   | { ok: false; status: 400 | 403 | 404 | 409; message: string; reason?: string };
@@ -140,6 +181,22 @@ const CLAIM_REFUSALS: Record<string, { status: 400 | 403 | 404 | 409; reason: At
 };
 const REVIEW_CHANGED = "The review changed. Check it again.";
 
+/**
+ * The claim's new agent identity and its authority command, derived from the
+ * owner and the review's request id: resending the same review after a lost
+ * answer is the same claim, byte for byte, and resumes it (T2).
+ */
+export function attachClaimIds(ownerId: string, requestId: string): { agentIdentityId: string; authorityCommandId: string } {
+  const id = (label: string) => {
+    const bytes = createHash("sha256").update(`hivra-attach-${label}\u0000${ownerId}\u0000${requestId}`).digest().subarray(0, 16);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
+  return { agentIdentityId: id("identity"), authorityCommandId: id("authority-command") };
+}
+
 /** Add: one claim, never a cancel; the minute worker does the rest (5.5). */
 export async function claimAttach(ownerId: string, computerId: string, input: { grants: AttachGrants; reviewSha256: string; requestId: string },
   deps: AttachDependencies): Promise<AttachMutation> {
@@ -150,21 +207,25 @@ export async function claimAttach(ownerId: string, computerId: string, input: { 
   }
   const target = await deps.store.readTarget(ownerId, computerId);
   if (!target) return { ok: false, status: 404, message: "Computer not found." };
-  if (!target.eligible) {
+  // The same review sent again after a lost answer: this very claim is the
+  // computer's live one. Resume it; the database compares the intent exactly.
+  const resuming = target.liveAttachmentId === input.requestId;
+  if (!target.eligible && !resuming) {
     const reason = target.reason ?? "unsupported_computer";
     return { ok: false, status: 409, message: attachReasonCopy(reason), reason };
   }
   let agentLimit = 100000;
-  if (computer.deploymentMode === "hivra-managed") {
+  if (computer.deploymentMode === "hivra-managed" && !resuming) {
     const gate = await deps.validate({ userId: ownerId, type: "codex", cpu: 0, ram: 0, browser: false, mode: "attach", agentLabel: "Codex" });
     if (!gate.ok) return { ok: false, status: 403, message: gate.message, reason: "plan_agent_limit" };
     const slots = await deps.planSlots(ownerId);
     if (!slots) return { ok: false, status: 403, message: attachReasonCopy("plan_required"), reason: "plan_required" };
     agentLimit = slots.agentLimit;
   }
-  const claim = await deps.store.claim({ ownerId, sourceId: computerId, operationId: input.requestId, authorityCommandId: crypto.randomUUID(),
+  const ids = attachClaimIds(ownerId, input.requestId);
+  const claim = await deps.store.claim({ ownerId, sourceId: computerId, operationId: input.requestId, authorityCommandId: ids.authorityCommandId,
     authority: target.authority, agentLimit,
-    intent: { version: 2, agentIdentityId: crypto.randomUUID(), runtimeId: "codex", agentName: "Codex", installerSha256: ATTACH_INSTALLER_SHA256,
+    intent: { version: 2, agentIdentityId: ids.agentIdentityId, runtimeId: "codex", agentName: "Codex", installerSha256: ATTACH_INSTALLER_SHA256,
       grants: { workspace: input.grants.workspace }, grantPolicySha256: ATTACH_GRANT_POLICY_SHA256, reviewSha256: input.reviewSha256,
       requestId: input.requestId } });
   if (claim.status === "claimed" && claim.operationId) {

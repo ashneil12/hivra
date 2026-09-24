@@ -140,6 +140,27 @@ it("claims with the reviewed grants and pinned policy, and answers 202 with the 
     "requestId", "reviewSha256", "runtimeId", "version"]);
 });
 
+it("resumes the same claim when the same review is sent again after a lost answer (T2)", async () => {
+  store.claim.mockResolvedValueOnce({ status: "claimed", operationId: REQUEST, resumed: false });
+  expect((await post({ grants: { workspace: true }, reviewSha256: review(true), requestId: REQUEST })).status).toBe(202);
+  // The answer was lost; by now the claim is the computer's live attachment.
+  store.readTarget.mockResolvedValue({ ...target, eligible: false, reason: "agent_present", liveAttachmentId: REQUEST });
+  jest.mocked(validateAgentResources).mockResolvedValue({ ok: false, status: 403, message: "Your plan's agent limit is reached." });
+  store.claim.mockResolvedValueOnce({ status: "claimed", operationId: REQUEST, phase: "claimed", resumed: true });
+  const again = await post({ grants: { workspace: true }, reviewSha256: review(true), requestId: REQUEST });
+  expect(again.status).toBe(202);
+  expect((await again.json()).data).toEqual({ operationId: REQUEST, resumed: true });
+  expect(store.claim).toHaveBeenCalledTimes(2);
+  const [first, second] = store.claim.mock.calls.map((call) => call[0]);
+  expect(second.intent).toEqual(first.intent);
+  expect(second.authorityCommandId).toBe(first.authorityCommandId);
+  // Another review on the same computer is still refused before any claim.
+  store.claim.mockClear();
+  const other = await post({ grants: { workspace: true }, reviewSha256: review(true), requestId: "66666666-6666-4666-8666-666666666666" });
+  expect(other.status).toBe(409);
+  expect(store.claim).not.toHaveBeenCalled();
+});
+
 it("does not count an agent on My server against the plan", async () => {
   computerRow = { ...computerRow!, deployment_mode: "self-managed" };
   store.readTarget.mockResolvedValue({ ...target, deploymentMode: "self-managed" });
