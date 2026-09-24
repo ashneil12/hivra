@@ -37,7 +37,7 @@ export function InfrastructureEntryChooser({
     <section id="infrastructure-entry-options" className={styles.entryChooser} aria-labelledby="infrastructure-entry-heading">
       <div className={styles.guidedHeading}>
         <div>
-          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add infrastructure"}</span>
+          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add capacity"}</span>
           <h2 ref={headingRef} id="infrastructure-entry-heading" tabIndex={-1}>{title}</h2>
         </div>
         {path !== "choose" && <button type="button" className={styles.tertiaryButton} onClick={back}><ArrowLeft size={14} aria-hidden="true" /> Back</button>}
@@ -130,7 +130,7 @@ export function InfrastructureEntryChooser({
           </div>
         </div>
       )}
-      <p className={styles.guidedFootnote}>Your infrastructure choice does not change who operates your Hivra control plane. Connecting, preparation, payment, and launch are separate steps.</p>
+      <p className={styles.guidedFootnote}>Where your agents run doesn’t change who operates Hivra. Connecting, setup, payment, and launch are each their own step.</p>
     </section>
   );
 }

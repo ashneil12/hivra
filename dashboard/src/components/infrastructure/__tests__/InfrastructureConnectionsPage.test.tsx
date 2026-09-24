@@ -984,7 +984,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       "/dashboard/launch?start=1&kind=computer",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Add infrastructure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add capacity" }));
     const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
     expect(within(chooser).getByText("Pro is active. Review plan options in Billing.")).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
@@ -2395,7 +2395,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
     render(<InfrastructureConnectionsPage />);
 
-    const addCapacity = await screen.findByRole("button", { name: "Add infrastructure" });
+    const addCapacity = await screen.findByRole("button", { name: "Add capacity" });
     fireEvent.click(addCapacity);
     const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
@@ -2488,7 +2488,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     await waitFor(() => expect(screen.queryByRole(role as "dialog" | "alertdialog")).not.toBeInTheDocument());
     expect(opener).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Add infrastructure" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add capacity" })).not.toHaveFocus();
   });
 
   it("requires typed confirmation before force-forgetting an idle ambiguous Hetzner connection", async () => {
