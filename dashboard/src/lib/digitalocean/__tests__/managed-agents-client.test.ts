@@ -222,3 +222,22 @@ describe("listDigitalOceanInferenceModels", () => {
     await expect(failure.catch((error: Error) => error.message)).resolves.not.toContain(TOKEN);
   });
 });
+
+describe("getPrepaymentStatus", () => {
+  it("reads the Harness Runtime prepayment wallet, not the classic ledger", async () => {
+    const fetchMock = jest.fn(async () => jsonResponse({ status: { balance: "12.34", blocked: false, eligible: true, is_auto_prepay_enabled: true, month_to_date_balance: "3.00" } }));
+    const client = createDigitalOceanManagedAgentsClient(TOKEN, { fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.getPrepaymentStatus()).resolves.toEqual({ balance: "12.34", blocked: false, autoPrepay: true });
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe("https://api.digitalocean.com/v2/customers/my/prepayment_status");
+  });
+
+  it("treats a token without billing access as unreadable, not as a failure", async () => {
+    const client = createDigitalOceanManagedAgentsClient(TOKEN, { fetch: (async () => jsonResponse({ id: "forbidden" }, 403)) as unknown as typeof fetch });
+    await expect(client.getPrepaymentStatus()).resolves.toBeNull();
+  });
+
+  it("drops a balance that is not a plain decimal", async () => {
+    const client = createDigitalOceanManagedAgentsClient(TOKEN, { fetch: (async () => jsonResponse({ status: { balance: "12.34<script>", blocked: true } })) as unknown as typeof fetch });
+    await expect(client.getPrepaymentStatus()).resolves.toEqual({ balance: null, blocked: true, autoPrepay: false });
+  });
+});

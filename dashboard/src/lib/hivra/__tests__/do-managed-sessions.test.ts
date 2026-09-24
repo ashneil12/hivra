@@ -69,6 +69,7 @@ import {
   downloadManagedSessionWorkspace,
   forgetManagedSession,
   listDigitalOceanModelsForConnection,
+  readDigitalOceanBalance,
   listManagedSessionWorkspace,
   replaceDigitalOceanToken,
   setDigitalOceanTokenExpiry,
@@ -496,5 +497,22 @@ describe("listDigitalOceanModelsForConnection", () => {
     } finally {
       restoreModels();
     }
+  });
+});
+
+describe("readDigitalOceanBalance", () => {
+  it("reports ok, empty, blocked and unreadable from DigitalOcean's prepayment status", async () => {
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toMatchObject({ state: "ok", balance: "25.00" });
+    fake.prepayment = { balance: "0.00", blocked: false, autoPrepay: false };
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toMatchObject({ state: "empty" });
+    fake.prepayment = { balance: "4.10", blocked: true, autoPrepay: false };
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toMatchObject({ state: "blocked", balance: "4.10" });
+    fake.prepayment = null;
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toEqual({ state: "unreadable" });
+  });
+
+  it("maps a rejected token to a credential problem", async () => {
+    fake.rejectedTokens.add(TOKEN);
+    await expect(readDigitalOceanBalance(userId, connectionId)).rejects.toMatchObject({ code: "invalid_credentials" });
   });
 });
