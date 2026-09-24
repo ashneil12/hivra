@@ -1992,7 +1992,20 @@ sudo, each followed by the strict readiness check. Before the fix, 2 of 4 such
 runs on 22.04 failed. That fits the race and nothing else was seen, but four
 passing runs make a second cause unlikely, not impossible; 22.3 step 6 still
 treats any repeat as one. The server and its SSH key were deleted (404).
-Ubuntu 24.04's binding stays by timestamp only.
+
+**Ubuntu 24.04 on the final code (Revision 6).** A fourth server,
+`hivra-spike-c1-4` (cx23, fsn1, `ubuntu-24.04`: Ubuntu 24.04.4, kernel
+6.8.0-138, sudo 1.9.15p5, OpenSSH 9.6p1, `use_pty` on), ran on 2026-09-24
+from 20:19 to 20:29 UTC with the code at `9a412e39` (a clean tree: both
+gVisor-check pipe fixes, `468467bf` and `1763257f`, in place): the host check
+passed 39 of 39 with `scriptBodySha256`
+`e1ec492a165f21addfa515883b06bad3693e9234c99c63ea5191b9ed46689cfe`, version
+`2026.09.24.1`; the live runner file then passed 10 of 10 in each of 4
+consecutive runs, one fresh gVisor Prepare and three repeat Prepares through
+sudo, each followed by the strict readiness check (`runsc` release-20260907.0
+afterwards, `sudo` logging one constant command per operation). Both
+supported releases are now bound to the final script and check by digest and
+commit, not by timestamp. The server and its SSH key were deleted (404).
 
 ## 22. Canary acceptance run (after merge)
 
@@ -2101,7 +2114,7 @@ Hetzner console or `ssh-keyscan -t ed25519`, its Ed25519 fingerprint. Check
    Sandbox after a short setup. Review setup → Prepare (gVisor) → ready. Then
    Check readiness on the server's card (inspection, then the strict check)
    and see it ready again; the repeat Prepare the 22.04 runs failed after was
-   repeated on a disposable server (21). If the strict readiness check fails at any point
+   repeated on disposable 22.04 and 24.04 servers with the final code (21). If the strict readiness check fails at any point
    after Prepare, even once and even if a retry passes, stop and record it as
    a **second cause**: the `runsc --version | head` SIGPIPE race (468467bf)
    and the `docker info | grep -q` pipe are both fixed, so a repeat is not
