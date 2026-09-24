@@ -33,7 +33,7 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 
-const ID = "11111111-2222-4333-8444-555555555555";
+const ID = "11111111-1111-4111-8111-111111111111";
 const get = (id = ID) => GET(new NextRequest(`https://hivra.cloud/api/hivra/agents/${id}/events`, { headers: { Host: "hivra.cloud" } }),
   { params: Promise.resolve({ id }) });
 

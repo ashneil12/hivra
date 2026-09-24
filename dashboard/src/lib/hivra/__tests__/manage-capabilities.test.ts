@@ -7,7 +7,7 @@ import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-co
 
 const BINDING_HASH = "b".repeat(64);
 const base = {
-  id: "11111111-2222-4333-8444-555555555555",
+  id: "11111111-1111-4111-8111-111111111111",
   name: "Fixture",
   status: "running",
   desired_state: "running",

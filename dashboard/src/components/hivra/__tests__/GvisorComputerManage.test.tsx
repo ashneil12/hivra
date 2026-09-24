@@ -6,7 +6,7 @@ import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 
 const row = {
-  id: "11111111-2222-4333-8444-555555555555", name: "SANDBOX", type: "linux-desktop", status: "running", cpu: 1, ram: 2,
+  id: "11111111-1111-4111-8111-111111111111", name: "SANDBOX", type: "linux-desktop", status: "running", cpu: 1, ram: 2,
   computer_substrate: "gvisor", computer_profile: "linux-terminal", deployment_mode: "self-managed",
 } as const;
 const agent: HivraAgent = { ...row, manage: manageCapabilitiesFor(row, { preparedMatch: false }) };

@@ -34,7 +34,7 @@ jest.mock("@/lib/hivra/agent-events", () => ({ logHivraAgentEvent: jest.fn(async
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
 const base = {
-  id: "11111111-2222-4333-8444-555555555555", user_id: "owner", name: "Fixture", status: "running", desired_state: "running",
+  id: "11111111-1111-4111-8111-111111111111", user_id: "owner", name: "Fixture", status: "running", desired_state: "running",
   cpu: 2, ram: 4, vmid: 1113, ip: "10.250.20.63", proxmox_host: "fixturenode11", deployment_mode: "hivra-managed",
   infrastructure_binding_token_hash: "c".repeat(64), infrastructure_binding_token_enforced: true,
   operation_id: null, operation_kind: null, operation_payload: null, chat_url: null, api_token: null,
