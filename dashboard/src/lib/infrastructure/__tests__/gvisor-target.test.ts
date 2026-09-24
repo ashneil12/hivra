@@ -152,6 +152,35 @@ describe("preflightGvisorTarget", () => {
     }
   });
 
+  // The same race, the other early-exit reader: `docker info … | grep -q`
+  // under pipefail. grep -q exits at its first match; a later write by docker
+  // would die of SIGPIPE and fail the check (exit 141).
+  it("checks docker's runsc runtime without failing when docker writes after the match", async () => {
+    mockLoadConnection.mockResolvedValue(connectionAs("root"));
+    mockLoadSnapshot.mockResolvedValue(snapshot(1));
+    await expect(preflightGvisorTarget(USER, CONNECTION, BUNDLE)).rejects.toMatchObject({ code: "remote_failed" });
+    const script = String(mockRunScript.mock.calls[0][0]);
+    const runtimeLine = script.split("\n").find(line => line.includes("docker info --format '{{json .Runtimes}}'"));
+    expect(runtimeLine).toBeDefined();
+    const stubs = mkdtempSync(join(tmpdir(), "hivra-docker-"));
+    const run = (runtimes: string) => {
+      writeFileSync(join(stubs, "docker"), `#!/bin/bash\nprintf '%s\\n' '${runtimes}'\nsleep 0.3\nprintf '\\n'\n`);
+      chmodSync(join(stubs, "docker"), 0o755);
+      return spawnSync("bash", ["--noprofile", "--norc", "-c", `set -euo pipefail\n${runtimeLine}\necho checked`],
+        { encoding: "utf8", timeout: 10_000, env: { PATH: `${stubs}:/usr/bin:/bin`, LC_ALL: "C", NODE_ENV: "test" } });
+    };
+    try {
+      const withRunsc = run('{"runc":{"path":"runc"},"runsc":{"path":"/usr/local/bin/runsc"}}');
+      expect({ status: withRunsc.status, stdout: withRunsc.stdout, stderr: withRunsc.stderr })
+        .toEqual({ status: 0, stdout: "checked\n", stderr: "" });
+      const withoutRunsc = run('{"runc":{"path":"runc"}}');
+      expect(withoutRunsc.status).not.toBe(0);
+      expect(withoutRunsc.stdout).toBe("");
+    } finally {
+      rmSync(stubs, { recursive: true, force: true });
+    }
+  });
+
   it("asks for a new inspection when there is no current one", async () => {
     mockLoadConnection.mockResolvedValue(connectionAs("hivra", "sudo"));
     mockLoadSnapshot.mockResolvedValue(null);

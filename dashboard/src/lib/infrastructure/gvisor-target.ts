@@ -62,7 +62,9 @@ runsc_sha="$(cat /opt/hivra/gvisor-adapter/runsc.sha256)"
 [[ "$runsc_sha" =~ ^[0-9a-f]{64}$ ]]
 [ "$(sha256sum /usr/local/bin/runsc | awk '{print $1}')" = "$runsc_sha" ]
 (cd / && sha256sum -c /opt/hivra/gvisor-adapter/gvisor-bin.sha256 >/dev/null)
-docker info --format '{{json .Runtimes}}' | grep -q '"runsc"'
+# No early-exit reader in a pipe under pipefail: grep -q would exit at its
+# first match and a later write by docker would die of SIGPIPE.
+[[ "$(docker info --format '{{json .Runtimes}}')" == *'"runsc"'* ]] || exit 1
 [ "$(readlink -f "$(docker info --format '{{(index .Runtimes "runsc").Path}}')")" = /usr/local/bin/runsc ]
 cpu="$(getconf _NPROCESSORS_ONLN)"
 memory="$(awk '$1=="MemTotal:" {printf "%.0f",$2/1024}' /proc/meminfo)"
