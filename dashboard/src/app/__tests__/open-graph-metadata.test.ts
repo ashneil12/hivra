@@ -48,7 +48,6 @@ describe('route Open Graph metadata', () => {
     // so it is asserted separately below — these routes still use the shared default.
     for (const pageMetadata of [
       roadmapMetadata,
-      tokenMetadata,
       blogIndexMetadata,
       featuresIndexMetadata,
       compareIndexMetadata,
@@ -58,6 +57,20 @@ describe('route Open Graph metadata', () => {
       expect(getOpenGraphValue(pageMetadata.openGraph, 'locale')).toBe('en_US');
       expect(getTwitterValue(pageMetadata.twitter, 'card')).toBe('summary_large_image');
       expect(getTwitterValue(pageMetadata.twitter, 'images')).toContain('https://hivra.cloud/opengraph-image');
+    }
+  });
+
+  it('gives /token and /tokenomics their own share cards on the real page metadata', () => {
+    for (const [pageMetadata, card] of [
+      [tokenMetadata, 'https://hivra.cloud/token/opengraph-image'],
+      [tokenomicsMetadata, 'https://hivra.cloud/tokenomics/opengraph-image'],
+    ] as const) {
+      expect(getOpenGraphValue(pageMetadata.openGraph, 'type')).toBe('website');
+      expect(getOpenGraphValue(pageMetadata.openGraph, 'siteName')).toBe('Hivra');
+      const images = getOpenGraphValue(pageMetadata.openGraph, 'images') as Array<{ url: string }>;
+      expect(images.map((image) => image.url)).toEqual([card]);
+      expect(getTwitterValue(pageMetadata.twitter, 'card')).toBe('summary_large_image');
+      expect(getTwitterValue(pageMetadata.twitter, 'images')).toEqual([card]);
     }
   });
 
