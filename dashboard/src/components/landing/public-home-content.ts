@@ -5,7 +5,7 @@ export const COMPUTER_LAUNCH_HREF = "/dashboard/launch?kind=computer&start=1";
 
 export const HOMEPAGE_FAQ = [
   { q: "What is Hivra?", a: "Hivra gives you a separate computer for your work. Start with an agent, or choose an operating system and use the computer yourself. Keep your files, apps and sessions in that workspace, with the access you choose." },
-  { q: "Do I have to use an agent?", a: "No. Launch Ubuntu, install your apps, browse, write code or run services. Windows and Omarchy are in private preview. You can use it as your own computer without attaching an agent." },
+  { q: "Do I have to use an agent?", a: "No. Launch Ubuntu, install your apps, browse, write code or run services. Windows and Omarchy are in private preview. A computer runs fine without an agent, and every agent you launch gets a computer of its own." },
   { q: "Which agents can I use?", a: "Claude Code, Codex, Hermes, Agent Zero, OpenClaw and Aeon are available now. DeepSeek is in preview. Open the agent catalog to choose a runtime and see its setup options." },
   { q: "Do I have to work in a terminal?", a: "It's up to you. Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it." },
   { q: "Can I bring my own model key or account?", a: "Yes. Connect the API key or supported account your agent uses. Your model connection is separate from where the computer runs, so choosing Hivra Cloud doesn't take that choice away." },

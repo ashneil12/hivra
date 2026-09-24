@@ -1862,6 +1862,56 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  it("admits a browser-off Codex envelope on Free with the legacy welcome provisioning", async () => {
+    const provisionerArgs = (script: string) => script.match(/hivra-provision-on-host\.sh "\$VMID" "\$OCTET" "[^\n>]*/)?.[0];
+    // The legacy welcome form sends a pinned request with no maxima.
+    const legacy = await POST(makeRequest({
+      type: "codex", name: "FREE_CODEX", browser: false, cpu: 0.5, ram: 1,
+    }) as never);
+    expect(legacy.status).toBe(201);
+    const legacyKickoff = String(mockRunProxmoxHostScript.mock.calls[0][0]);
+    expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "codex", cpu: 0.5, ram: 1, cpu_max: 0.5, ram_max: 1,
+    }));
+
+    // The unified Launch journey sends the same fields plus its explicit envelope.
+    mockRunProxmoxHostScript.mockReset()
+      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_RESOURCE_MAXIMUM_FITS 16 65536\n" })
+      .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":201,"ip":"10.250.21.51"}\n' })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+    const unified = await POST(makeRequest({
+      type: "codex", name: "FREE_CODEX", browser: false,
+      cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1,
+    }) as never);
+
+    expect(unified.status).toBe(201);
+    expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "codex", cpu: 0.5, ram: 1, cpu_max: 0.5, ram_max: 1,
+    }));
+    const unifiedKickoff = String(mockRunProxmoxHostScript.mock.calls[1][0]);
+    expect(provisionerArgs(unifiedKickoff)).toBeDefined();
+    expect(provisionerArgs(unifiedKickoff)).toBe(provisionerArgs(legacyKickoff));
+    expect(unifiedKickoff).toContain("HIVRA_WANT_BROWSER='0'");
+    expect(legacyKickoff).toContain("HIVRA_WANT_BROWSER='0'");
+  });
+
+  it("still refuses a browser-on Codex envelope below the browser floor", async () => {
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    const response = await POST(makeRequest({
+      type: "codex", name: "SMALL_BROWSER_CODEX", browser: true,
+      cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1,
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/profile floor/i) });
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
   it("provisions a paid Codex box with the browser stack enabled", async () => {
     mockSubscriptionRow = {
       plan: "operator",

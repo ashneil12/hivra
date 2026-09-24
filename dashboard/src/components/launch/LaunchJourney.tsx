@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -21,9 +21,11 @@ import {
   DeploymentDestinationControl,
   measuredTargetCapacity,
   useLaunchDestination,
+  type LaunchDestinationChoice,
+  type LaunchDestinationState,
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
-import { isProxmoxDeploymentTarget } from "@/lib/infrastructure/contracts";
+import { isProxmoxDeploymentTarget, type DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
 import {
   fetchPlanStrict,
@@ -34,6 +36,7 @@ import {
 import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import {
   PROFILE_DETAILS,
+  type LaunchCapacityChoice,
   type LaunchDraft,
   type LaunchProfileId,
   type LaunchResourceKind,
@@ -46,6 +49,7 @@ import {
   writeLaunchDraft,
 } from "@/lib/launch/draft-store";
 import { launchResultHref, submitLaunchDraft } from "@/lib/launch/launch-adapter";
+import { launchResourcePolicy } from "@/lib/launch/resource-envelope";
 
 import styles from "./LaunchJourney.module.css";
 
@@ -57,14 +61,178 @@ function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"]):
     && plan.poolRam - plan.usage.usedRam >= resources.ram;
 }
 
-function recommendedForPlan(profileId: LaunchProfileId, plan: PlanInfo | null) {
-  const preferred = PROFILE_DETAILS[profileId].recommended;
-  if (planCanFit(plan, preferred)) return { ...preferred };
+function recommendedForPlan(profileId: LaunchProfileId, plan: PlanInfo | null, browser: boolean) {
+  const preferred = { ...launchResourcePolicy(profileId, { browser }).recommended, source: "recommended" as const };
+  if (planCanFit(plan, preferred)) return preferred;
   const pinnedFloor = { cpu: preferred.cpu, ram: preferred.ram, maximumCpu: preferred.cpu, maximumRam: preferred.ram, source: "recommended" as const };
   if (planCanFit(plan, pinnedFloor)) {
     return pinnedFloor;
   }
-  return { ...preferred };
+  return preferred;
+}
+
+const CODEX_BROWSER_FLOOR = launchResourcePolicy("codex", { browser: true }).floor;
+const CODEX_BASE_FLOOR = launchResourcePolicy("codex", { browser: false }).floor;
+
+function paidPlan(plan: PlanInfo | null): boolean {
+  return Boolean(plan?.subscribed && plan.key !== "free");
+}
+
+/** Mirrors the legacy welcome default: Codex's browser starts on only when a
+ * paid plan can hold its floor. Hivra Cloud refuses browser automation on Free. */
+function planFitsCodexBrowser(plan: PlanInfo | null): boolean {
+  const floor = CODEX_BROWSER_FLOOR;
+  return paidPlan(plan)
+    && planCanFit(plan, { ...floor, maximumCpu: floor.cpu, maximumRam: floor.ram, source: "recommended" });
+}
+
+function sameResources(a: LaunchDraft["resources"], b: LaunchDraft["resources"]): boolean {
+  return a.source === b.source
+    && a.cpu === b.cpu
+    && a.ram === b.ram
+    && (a.maximumCpu ?? a.cpu) === (b.maximumCpu ?? b.cpu)
+    && (a.maximumRam ?? a.ram) === (b.maximumRam ?? b.ram);
+}
+
+function meetsCodexFloor(resources: LaunchDraft["resources"], browser: boolean): boolean {
+  const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
+  return resources.cpu >= floor.cpu && resources.ram >= floor.ram;
+}
+
+function isWholeProviderComputer(target: DeploymentTargetDto | null): boolean {
+  return target !== null && (target.capabilities as unknown as { kind?: string }).kind === "provider-vm";
+}
+
+/** Codex's browser default for the chosen destination. Hivra Cloud follows the
+ * plan; the owner's own capacity mirrors the welcome form's host check, so the
+ * browser starts on whenever the selected host's measured capacity holds its
+ * floor. Null while the plan or the selected host is not known yet. */
+function recommendedCodexBrowser(
+  mode: LaunchDestinationState["mode"],
+  selectedTarget: DeploymentTargetDto | null,
+  plan: PlanInfo | null,
+): boolean | null {
+  if (mode === "hivra-managed") return plan ? planFitsCodexBrowser(plan) : null;
+  if (!selectedTarget) return null;
+  const capacity = measuredTargetCapacity(selectedTarget);
+  return capacity.cpu >= CODEX_BROWSER_FLOOR.cpu && capacity.ramGb >= CODEX_BROWSER_FLOOR.ram;
+}
+
+/** Whether the chosen destination can hold this size. Unknown capacity counts
+ * as holding it, so missing evidence never forces a smaller size. */
+function destinationHolds(
+  mode: LaunchDestinationState["mode"],
+  selectedTarget: DeploymentTargetDto | null,
+  plan: PlanInfo | null,
+  resources: LaunchDraft["resources"],
+): boolean {
+  if (mode === "hivra-managed") return !plan?.usage || planCanFit(plan, resources);
+  // A provider computer is used whole; the requested size is not a slice of it.
+  if (!selectedTarget || isWholeProviderComputer(selectedTarget)) return true;
+  const capacity = measuredTargetCapacity(selectedTarget);
+  return capacity.cpu >= resources.cpu && capacity.ramGb >= resources.ram;
+}
+
+/** Codex resources for a browser choice. Turning the browser off never shrinks
+ * a size that meets the base floor and still fits, and turning it on raises
+ * only what is below the browser floor. A recommended size the destination can
+ * no longer hold falls back to the recommendation for that choice. */
+function codexResourcesFor(
+  resources: LaunchDraft["resources"],
+  browser: boolean,
+  plan: PlanInfo | null,
+  holds: (resources: LaunchDraft["resources"]) => boolean,
+): LaunchDraft["resources"] {
+  const floor = browser ? CODEX_BROWSER_FLOOR : CODEX_BASE_FLOOR;
+  const meetsFloor = meetsCodexFloor(resources, browser);
+  if (resources.source === "custom") {
+    if (meetsFloor) return resources;
+    const cpu = Math.max(resources.cpu, floor.cpu);
+    const ram = Math.max(resources.ram, floor.ram);
+    return {
+      ...resources,
+      cpu,
+      ram,
+      maximumCpu: Math.max(resources.maximumCpu ?? cpu, cpu),
+      maximumRam: Math.max(resources.maximumRam ?? ram, ram),
+    };
+  }
+  if (meetsFloor && (browser || holds(resources))) return resources;
+  return recommendedForPlan("codex", plan, browser);
+}
+
+type CodexBrowserDefaultContext = {
+  /** The draft whose saved destination has been restored, if any. */
+  restoredFor: string | null;
+  browserDefault: boolean | null;
+  mode: LaunchDestinationState["mode"];
+  selectedTarget: DeploymentTargetDto | null;
+  plan: PlanInfo | null;
+};
+
+/** The draft with Codex's browser default applied. A pure function of the
+ * draft and its destination: applying it twice changes nothing, and it
+ * returns the same draft when nothing changes. Until the owner chooses, the
+ * browser follows the destination's default, but only a size that holds the
+ * browser floor holds it: a custom size below the floor keeps the browser off
+ * and is never raised, while a recommended size follows the default. */
+function withCodexBrowserDefault(current: LaunchDraft, context: CodexBrowserDefaultContext): LaunchDraft {
+  if (current.profileId !== "codex" || current.submittedDeployment) return current;
+  // Until a resumed draft's saved destination is restored, the hook still
+  // reports its initial Hivra Cloud choice; a default derived from it would
+  // be for a destination the owner did not pick.
+  if (current.launchRequestId !== context.restoredFor) return current;
+  const custom = current.resources.source === "custom";
+  const browser = current.browserSource === "recommended" && context.browserDefault !== null
+    ? context.browserDefault && (!custom || meetsCodexFloor(current.resources, true))
+    : current.browser;
+  const resources = custom ? current.resources : codexResourcesFor(
+    current.resources,
+    browser,
+    context.plan,
+    next => destinationHolds(context.mode, context.selectedTarget, context.plan, next),
+  );
+  if (
+    browser === current.browser
+    && resources.cpu === current.resources.cpu
+    && resources.ram === current.resources.ram
+  ) return current;
+  return { ...current, browser, resources };
+}
+
+/** The capacity a fresh draft records. The owner's destination stays selected
+ * when they change kind or profile, and the draft must say so: a reload
+ * restores the draft's capacity, so recording Hivra Cloud here would silently
+ * move the launch, and Codex's browser default with it. It records the owner's
+ * own choice, not a placement the previous runtime forced. */
+function freshDraftCapacity(choice: LaunchDestinationChoice): LaunchCapacityChoice {
+  return choice.mode === "self-managed"
+    ? { mode: "self-managed", targetId: choice.targetId }
+    : { mode: "hivra-managed", targetId: null };
+}
+
+function formatSize(cpu: number, ram: number): string {
+  // Round down so a fractional remainder is never overstated.
+  const tenth = (value: number) => Math.floor(value * 10 + 1e-9) / 10;
+  return `${tenth(cpu)} CPU / ${tenth(ram)} GB`;
+}
+
+/** States what this launch needs next to what the plan can still hold for it. */
+function managedCapacityShortfall(
+  label: string,
+  resourceKind: LaunchResourceKind,
+  resources: LaunchDraft["resources"],
+  plan: PlanInfo & { usage: NonNullable<PlanInfo["usage"]> },
+): string {
+  const { usedCpu, usedRam } = plan.usage;
+  const cpu = Math.max(0, Math.min(plan.maxCpuPerAgent, plan.poolCpu - usedCpu));
+  const ram = Math.max(0, Math.min(plan.maxRamPerAgent, plan.poolRam - usedRam));
+  if (resources.cpu > cpu || resources.ram > ram) {
+    return usedCpu === 0 && usedRam === 0
+      ? `${label} needs ${formatSize(resources.cpu, resources.ram)}. Your ${plan.name} plan includes ${formatSize(cpu, ram)}.`
+      : `${label} needs ${formatSize(resources.cpu, resources.ram)}. Your ${plan.name} plan has ${formatSize(cpu, ram)} left.`;
+  }
+  return `${label} is set to use up to ${formatSize(resources.maximumCpu ?? resources.cpu, resources.maximumRam ?? resources.ram)}. Your ${plan.name} plan allows up to ${formatSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for each ${resourceKind}.`;
 }
 
 function displayIsolation(destination: ReturnType<typeof useLaunchDestination>): string {
@@ -182,6 +350,7 @@ export function LaunchJourney() {
   const [draft, setDraft] = useState<LaunchDraft | null>(null);
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [planChecked, setPlanChecked] = useState(false);
+  const [planCheckRevision, setPlanCheckRevision] = useState(0);
   const [windowsImages, setWindowsImages] = useState<Array<{ volume: string; name: string; sizeBytes: number; modifiedAtSeconds: number; fileIdentitySha256: string; source: "unknown" | "windows-11" | "windows-server-evaluation" }>>([]);
   const [windowsIsoStorages, setWindowsIsoStorages] = useState<Array<{ id: string; label: string }>>([]);
   const [windowsImagesLoading, setWindowsImagesLoading] = useState(false);
@@ -192,7 +361,10 @@ export function LaunchJourney() {
   const [windowsDownloadStorage, setWindowsDownloadStorage] = useState("");
   const [windowsDownloadTask, setWindowsDownloadTask] = useState<{ taskId: string; state: "queued" | "running" | "succeeded" | "failed"; bytesDownloaded: number; message: string | null } | null>(null);
   const [windowsDownloadStarting, setWindowsDownloadStarting] = useState(false);
-  const restoredDestinationRef = useRef<string | null>(null);
+  // The draft whose saved destination has been restored into the destination
+  // hook. State, not a ref: the Codex browser default waits on it and must
+  // re-run once it lands.
+  const [restoredDestinationFor, setRestoredDestinationFor] = useState<string | null>(null);
   const journeyRef = useRef<HTMLElement | null>(null);
   // Phones and touch tablets start with Resources collapsed: the recommended
   // size is already selected, and four open pickers pushed "Review launch"
@@ -224,6 +396,9 @@ export function LaunchJourney() {
   const profile = draft?.profileId ? PROFILE_DETAILS[draft.profileId] : null;
   const destination = useLaunchDestination(profile?.placementRuntimeId ?? null, {
     handoff,
+    // A self-managed-only profile opens on the owner's infrastructure even
+    // before a compatible host exists; Hivra Cloud is never its selection.
+    managedAvailable: profile?.managedCapacity !== "self-managed-only",
     targetKind: profile?.placementRuntimeId === "linux-terminal" ? "gvisor" : "any",
   });
 
@@ -384,10 +559,12 @@ export function LaunchJourney() {
         setDraft(current => {
           if (
             !current?.profileId
+            // Codex also depends on the destination; the effect below owns it.
+            || current.profileId === "codex"
             || current.resources.source !== "recommended"
             || current.submittedDeployment
           ) return current;
-          const resources = recommendedForPlan(current.profileId, nextPlan);
+          const resources = recommendedForPlan(current.profileId, nextPlan, current.browser);
           if (resources.cpu === current.resources.cpu && resources.ram === current.resources.ram) return current;
           return { ...current, resources };
         });
@@ -398,15 +575,43 @@ export function LaunchJourney() {
         setPlanChecked(true);
       });
     return () => { active = false; };
-  }, []);
+  }, [planCheckRevision]);
+
+  // Until the owner chooses, Codex's browser follows the plan on Hivra Cloud
+  // and the selected host's measured capacity on their own infrastructure.
+  // It is re-evaluated on every draft change as well as destination changes,
+  // so a size the owner raises past the browser floor turns the default on at
+  // once, in view, and no later unrelated re-run (a reload, a host refresh, a
+  // retried review) can flip a choice the owner was never shown. A submitted
+  // launch never changes. Applied before paint so a stale default is never
+  // shown or submitted.
+  const destinationMode = destination.mode;
+  const selectedTarget = destination.selectedTarget;
+  const codexBrowserDefault = recommendedCodexBrowser(destinationMode, selectedTarget, plan);
+  useLayoutEffect(() => {
+    const context: CodexBrowserDefaultContext = {
+      restoredFor: restoredDestinationFor,
+      browserDefault: codexBrowserDefault,
+      mode: destinationMode,
+      selectedTarget,
+      plan,
+    };
+    // Most draft edits (a name, a stage) leave the default as it is; skip the
+    // state update for those.
+    if (!draft || withCodexBrowserDefault(draft, context) === draft) return;
+    setDraft(current => current ? withCodexBrowserDefault(current, context) : current);
+  }, [codexBrowserDefault, destinationMode, draft, plan, restoredDestinationFor, selectedTarget]);
 
   useEffect(() => {
     if (draft) writeLaunchDraft(draft);
   }, [draft]);
 
-  useEffect(() => {
-    if (!draft || destination.loading || restoredDestinationRef.current === draft.launchRequestId) return;
-    restoredDestinationRef.current = draft.launchRequestId;
+  // A layout effect, like the browser default that waits on it: the saved
+  // destination and its browser default both land before paint, so a host
+  // that finishes loading never paints a frame without its default applied.
+  useLayoutEffect(() => {
+    if (!draft || destination.loading || restoredDestinationFor === draft.launchRequestId) return;
+    setRestoredDestinationFor(draft.launchRequestId);
     if (handoff) return;
     if (draft.capacity.mode === "self-managed" && draft.capacity.targetId) {
       // Restore the selected authority even if the target disappeared. The
@@ -418,7 +623,7 @@ export function LaunchJourney() {
         destination.setSelectedTargetId(savedTarget.id);
       }
     }
-  }, [destination, draft, handoff]);
+  }, [destination, draft, handoff, restoredDestinationFor]);
 
   useEffect(() => {
     if (draft?.launchState !== "accepted" || !draft.result) return;
@@ -434,14 +639,14 @@ export function LaunchJourney() {
   const managedEntitlementRequired = currentProfile?.managedCapacity === "entitlement-required";
   const selfManagedOnly = currentProfile?.managedCapacity === "self-managed-only";
   const gvisorComputer = draft.profileId === "linux-terminal";
+  const codexBrowser = draft.profileId === "codex" && draft.browser;
+  const resourceFloor = draft.profileId ? launchResourcePolicy(draft.profileId, { browser: draft.browser }).floor : null;
   const targetCapacity = measuredTargetCapacity(destination.selectedTarget);
-  const wholeProviderComputer = destination.mode === "self-managed"
-    && destination.selectedTarget !== null
-    && (destination.selectedTarget.capabilities as unknown as { kind?: string }).kind === "provider-vm";
+  const wholeProviderComputer = destination.mode === "self-managed" && isWholeProviderComputer(destination.selectedTarget);
   // A provider VM is exclusive, not a requested slice of its free memory.
   // Match the runtime headroom check; the server still re-inspects at launch.
   const requiredCapacity = wholeProviderComputer && currentProfile
-    ? providerComputerResourceFloor(currentProfile.runtimeId, draft.profileId === "codex")
+    ? providerComputerResourceFloor(currentProfile.runtimeId, codexBrowser)
     : draft.resources;
   const selectedTargetFits = Boolean(
     destination.deployment?.mode === "self-managed"
@@ -451,7 +656,27 @@ export function LaunchJourney() {
   const managedPaidRequired = draft.profileId === "ubuntu-desktop";
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
   const managedFits = planCanFit(plan, draft.resources);
-  const managedPlanAllowed = !managedPaidRequired || Boolean(plan?.subscribed && plan.key !== "free");
+  const managedPlanAllowed = !managedPaidRequired || paidPlan(plan);
+  // Codex resources after a browser change, sized against the chosen destination.
+  const holdsHere = (resources: LaunchDraft["resources"]) => destinationHolds(destination.mode, destination.selectedTarget, plan, resources);
+  const resourcesWithBrowser = (browser: boolean): LaunchDraft["resources"] => {
+    const raisedFrom = draft.browserRaisedFrom;
+    // Turning off a browser the owner turned on undoes the raise it made, as
+    // long as the owner has not changed the size since.
+    if (!browser && raisedFrom && sameResources(draft.resources, codexResourcesFor(raisedFrom, true, plan, holdsHere))) {
+      return raisedFrom;
+    }
+    return codexResourcesFor(draft.resources, browser, plan, holdsHere);
+  };
+  const sizeWithoutBrowser = wholeProviderComputer && currentProfile
+    ? providerComputerResourceFloor(currentProfile.runtimeId, false)
+    : resourcesWithBrowser(false);
+  const targetFitsWithoutBrowser = destination.deployment?.mode === "self-managed"
+    && targetCapacity.cpu >= sizeWithoutBrowser.cpu
+    && targetCapacity.ramGb >= sizeWithoutBrowser.ram;
+  const capacitySetupHref = currentProfile
+    ? buildInfrastructureSetupHref(currentProfile.placementRuntimeId === "windows-installer" ? "windows" : currentProfile.placementRuntimeId, { unified: true })
+    : "/dashboard/infrastructure";
   const reservedCpuLimit = destination.mode === "hivra-managed"
     ? plan?.usage ? Math.min(plan.maxCpuPerAgent, Math.max(0, plan.poolCpu - plan.usage.usedCpu)) : Infinity
     : targetCapacity.cpu;
@@ -467,16 +692,29 @@ export function LaunchJourney() {
   const maximumRamLimit = destination.mode === "hivra-managed" ? plan?.maxRamPerAgent ?? Infinity : selectedTargetMaximumRam;
 
   let capacityBlocker: string | null = null;
+  // The real next steps a managed blocker can offer.
+  let blockerRemedy: "check-plan" | "managed-plan" | null = null;
+  let offerBrowserOff = false;
   const selectedWindowsImage = windowsImages.find(image => image.volume === draft.windowsIsoVolume
     && image.sizeBytes === draft.windowsIsoEvidence?.sizeBytes
     && image.modifiedAtSeconds === draft.windowsIsoEvidence?.modifiedAtSeconds
     && image.fileIdentitySha256 === draft.windowsIsoEvidence?.fileIdentitySha256
     && image.source === draft.windowsIsoSource);
   if (destination.loading) capacityBlocker = "Checking compatible capacity…";
-  else if (gvisorComputer && destination.mode !== "self-managed") capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
+  else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "This prepared Canary computer currently runs on Hivra Cloud.";
   else if (destination.mode === "self-managed" && !destination.deployment) capacityBlocker = "No compatible capacity is ready for this profile.";
-  else if (destination.mode === "self-managed" && !selectedTargetFits) capacityBlocker = "The selected host does not have enough measured capacity for this size.";
+  else if (destination.mode === "self-managed" && !selectedTargetFits) {
+    // A size the owner chose is never lowered for them, so say how to get out
+    // when a smaller size would fit this host.
+    const smallerSizeFits = !wholeProviderComputer && resourceFloor !== null
+      && targetCapacity.cpu >= resourceFloor.cpu
+      && targetCapacity.ramGb >= resourceFloor.ram;
+    capacityBlocker = smallerSizeFits
+      ? "The selected host does not have enough measured capacity for this size. Lower the size under Resources, or choose another host."
+      : "The selected host does not have enough measured capacity for this size.";
+    offerBrowserOff = codexBrowser && targetFitsWithoutBrowser;
+  }
   else if (destination.mode === "hivra-managed" && managedEntitlementRequired) capacityBlocker = "Hivra Cloud is unavailable for Windows. Choose compatible customer-owned or self-hosted capacity.";
   else if (draft.profileId === "windows" && windowsImagesLoading) capacityBlocker = "Checking customer-owned ISO images on this host…";
   else if (draft.profileId === "windows" && windowsImagesError) capacityBlocker = windowsImagesError;
@@ -485,36 +723,74 @@ export function LaunchJourney() {
   else if (draft.profileId === "windows" && (!draft.windowsIsoEvidence || !selectedWindowsImage)) capacityBlocker = "Refresh and choose the exact host-observed Windows ISO again.";
   else if (draft.profileId === "windows" && !draft.windowsRightsAttested) capacityBlocker = "Confirm your Windows installation and use rights before review.";
   else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !planChecked) capacityBlocker = "Checking your managed plan…";
-  else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !plan) capacityBlocker = "Managed capacity could not be verified. Refresh before launching.";
-  else if (destination.mode === "hivra-managed" && !managedPlanAllowed) capacityBlocker = "Ubuntu Desktop needs a paid managed plan or compatible self-managed capacity.";
-  else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && atSlotLimit) capacityBlocker = "Your current plan has no open agent slots.";
-  else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !managedFits) capacityBlocker = "Your managed plan does not have enough remaining capacity for this size.";
+  else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !plan?.usage) {
+    capacityBlocker = "Managed capacity could not be verified.";
+    blockerRemedy = "check-plan";
+  } else if (destination.mode === "hivra-managed" && !managedPlanAllowed) {
+    capacityBlocker = "Ubuntu Desktop needs a paid managed plan or compatible self-managed capacity.";
+    blockerRemedy = "managed-plan";
+  } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && atSlotLimit) {
+    capacityBlocker = "Your current plan has no open agent slots.";
+    blockerRemedy = "managed-plan";
+  } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !managedFits && plan?.usage) {
+    capacityBlocker = managedCapacityShortfall(
+      codexBrowser ? "Codex with a browser" : currentProfile?.name ?? "This launch",
+      draft.resourceKind ?? "agent",
+      draft.resources,
+      { ...plan, usage: plan.usage },
+    );
+    blockerRemedy = "managed-plan";
+    offerBrowserOff = codexBrowser && planCanFit(plan, resourcesWithBrowser(false));
+  } else if (destination.mode === "hivra-managed" && codexBrowser && !paidPlan(plan)) {
+    capacityBlocker = "Codex with a browser needs a paid plan on Hivra Cloud.";
+    blockerRemedy = "managed-plan";
+    offerBrowserOff = true;
+  }
 
   const updateDraft = (change: Partial<LaunchDraft>) => setDraft(current => current ? { ...current, ...change } : current);
+  const chooseCodexBrowser = (browser: boolean) => {
+    const resources = resourcesWithBrowser(browser);
+    const raised = browser && draft.resources.source === "custom" && !sameResources(resources, draft.resources);
+    updateDraft({
+      browser,
+      browserSource: "custom",
+      resources,
+      browserRaisedFrom: raised ? draft.resources : null,
+    });
+  };
+  const recheckPlan = () => {
+    setPlanChecked(false);
+    setPlanCheckRevision(value => value + 1);
+  };
   const chooseKind = (kind: LaunchResourceKind) => {
     if (draft.resourceKind === kind) return;
     const fresh = createLaunchDraft();
-    setDraft({ ...fresh, resourceKind: kind, stage: "type" });
-    restoredDestinationRef.current = null;
+    setDraft({ ...fresh, resourceKind: kind, stage: "type", capacity: freshDraftCapacity(destination.choice) });
+    setRestoredDestinationFor(null);
   };
   const chooseProfile = (profileId: LaunchProfileId) => {
     if (draft.profileId === profileId) return;
     const details = PROFILE_DETAILS[profileId];
     const fresh = createLaunchDraft();
+    const browser = profileId === "codex"
+      && (recommendedCodexBrowser(destination.mode, destination.selectedTarget, plan) ?? false);
     setDraft({
       ...fresh,
+      capacity: freshDraftCapacity(destination.choice),
       stage: "profile",
       resourceKind: details.resourceKind,
       profileId,
       name: details.defaultName,
-      resources: recommendedForPlan(profileId, plan),
+      browser,
+      browserSource: "recommended",
+      resources: recommendedForPlan(profileId, plan, browser),
       windowsIsoVolume: null,
       windowsIsoEvidence: null,
       windowsIsoSource: "unknown",
       windowsIsoDownload: null,
       windowsRightsAttested: false,
     });
-    restoredDestinationRef.current = null;
+    setRestoredDestinationFor(null);
   };
   const chooseDestinationMode = (mode: "hivra-managed" | "self-managed") => {
     destination.setMode(mode);
@@ -597,7 +873,7 @@ export function LaunchJourney() {
     const next = createLaunchDraft();
     clearLaunchDraft();
     writeLaunchDraft(next);
-    restoredDestinationRef.current = null;
+    setRestoredDestinationFor(null);
     destination.setMode("hivra-managed");
     setDraft(next);
     writeStageHistory(next.stage, "replace");
@@ -674,6 +950,18 @@ export function LaunchJourney() {
     }
   };
 
+  const blockerActions = offerBrowserOff || destination.mode === "self-managed" || blockerRemedy ? (
+    <span className={styles.blockerActions}>
+      {offerBrowserOff ? <button type="button" onClick={() => chooseCodexBrowser(false)}>Turn off the browser</button> : null}
+      {destination.mode === "self-managed" ? <Link href={capacitySetupHref}>Set up capacity</Link>
+        : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
+        : blockerRemedy === "managed-plan" ? <>
+          <Link href="/dashboard/billing?from=launch">Review plans</Link>
+          <Link href={capacitySetupHref}>Set up your own capacity</Link>
+        </> : null}
+    </span>
+  ) : null;
+
   const primary = (label: string, onClick: () => void, disabled = false) => (
     <button
       type="button"
@@ -716,7 +1004,7 @@ export function LaunchJourney() {
           <div className={styles.stageIntro}>
             <span className={styles.eyebrow}>Start something new</span>
             <h1 id="launch-type-heading">What do you want to launch?</h1>
-            <p>Start with an agent, or open a computer with no agent attached.</p>
+            <p>An agent gets its own computer. A computer runs on its own, without an agent.</p>
           </div>
           <div className={styles.choiceGrid} role="group" aria-label="Resource type">
             <button type="button" className={styles.choice} data-selected={draft.resourceKind === "agent"} aria-pressed={draft.resourceKind === "agent"} onClick={() => chooseKind("agent")}>
@@ -726,7 +1014,7 @@ export function LaunchJourney() {
             </button>
             <button type="button" className={styles.choice} data-selected={draft.resourceKind === "computer"} aria-pressed={draft.resourceKind === "computer"} onClick={() => chooseKind("computer")}>
               <Monitor size={24} aria-hidden />
-              <span><strong>Computer</strong><small>Launch a desktop, terminal, and files without attaching an agent.</small></span>
+              <span><strong>Computer</strong><small>Launch a desktop, terminal, and files. It runs without an agent.</small></span>
               {draft.resourceKind === "computer" ? <Check size={16} aria-hidden /> : null}
             </button>
           </div>
@@ -758,7 +1046,7 @@ export function LaunchJourney() {
           <div className={styles.stageIntro}>
             <span className={styles.eyebrow}>Computer profile</span>
             <h1 id="launch-profile-heading">Choose an operating system</h1>
-            <p>The operating system defines this computer. No agent is attached by this launch.</p>
+            <p>The operating system defines this computer. A computer runs without an agent. To use an agent, launch an Agent — it gets its own computer.</p>
           </div>
           <div className={styles.profileList}>
             <button type="button" className={styles.profileChoice} data-selected={draft.profileId === "ubuntu-desktop"} aria-pressed={draft.profileId === "ubuntu-desktop"} onClick={() => chooseProfile("ubuntu-desktop")}>
@@ -939,9 +1227,22 @@ export function LaunchJourney() {
               managedAvailable={!selfManagedOnly}
               runtimeName={currentProfile.name}
               resourceLabel={draft.resourceKind ?? "agent"}
-              capacitySetupHref={buildInfrastructureSetupHref(currentProfile.placementRuntimeId === "windows-installer" ? "windows" : currentProfile.placementRuntimeId, { unified: true })}
+              capacitySetupHref={capacitySetupHref}
             />
           )}
+          {draft.profileId === "codex" ? (
+            <label className={styles.browserToggle}>
+              <input type="checkbox" checked={draft.browser} onChange={event => chooseCodexBrowser(event.target.checked)} />
+              <span>
+                <strong>Browser for Codex</strong>
+                <small>
+                  Lets Codex open and use a web browser on its computer. Needs at least {formatSize(CODEX_BROWSER_FLOOR.cpu, CODEX_BROWSER_FLOOR.ram)} with
+                  the browser, or {formatSize(CODEX_BASE_FLOOR.cpu, CODEX_BASE_FLOOR.ram)} without it.
+                  {destination.mode === "hivra-managed" && plan && !paidPlan(plan) ? " On Hivra Cloud, the browser needs a paid plan." : null}
+                </small>
+              </span>
+            </label>
+          ) : null}
           {wholeProviderComputer ? <div className={styles.recommendation}>
             <ShieldCheck size={17} aria-hidden />
             <span><strong>Entire prepared provider computer</strong>
@@ -962,7 +1263,7 @@ export function LaunchJourney() {
             <div className={styles.advancedBody}>
               <fieldset aria-label="Reserved CPU">
                 <legend>Reserved CPU</legend>
-                <div>{currentProfile.cpuOptions.map(cpu => (
+                <div>{currentProfile.cpuOptions.filter(cpu => cpu >= (resourceFloor?.cpu ?? 0)).map(cpu => (
                   <button key={cpu} type="button" disabled={cpu > reservedCpuLimit} aria-pressed={draft.resources.cpu === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, cpu, maximumCpu: gvisorComputer ? cpu : Math.max(cpu, draft.resources.maximumCpu ?? draft.resources.cpu), source: "custom" } })}>{cpu} CPU</button>
                 ))}</div>
               </fieldset>
@@ -974,7 +1275,7 @@ export function LaunchJourney() {
               </fieldset> : null}
               <fieldset aria-label="Reserved memory">
                 <legend>Reserved memory</legend>
-                <div>{currentProfile.ramOptions.map(ram => (
+                <div>{currentProfile.ramOptions.filter(ram => ram >= (resourceFloor?.ram ?? 0)).map(ram => (
                   <button key={ram} type="button" disabled={ram > reservedRamLimit} aria-pressed={draft.resources.ram === ram} onClick={() => updateDraft({ resources: { ...draft.resources, ram, maximumRam: gvisorComputer ? ram : Math.max(ram, draft.resources.maximumRam ?? draft.resources.ram), source: "custom" } })}>{ram} GB</button>
                 ))}</div>
               </fieldset>
@@ -989,11 +1290,7 @@ export function LaunchJourney() {
           {capacityBlocker ? (
             <div className={styles.blocker} role={destination.loading || !planChecked ? "status" : "alert"}>
               <AlertTriangle size={16} aria-hidden />
-              <span><strong>{capacityBlocker}</strong>{destination.mode === "self-managed" ? (
-                <Link href={buildInfrastructureSetupHref(currentProfile.placementRuntimeId === "windows-installer" ? "windows" : currentProfile.placementRuntimeId, { unified: true })}>Set up capacity</Link>
-              ) : managedEntitlementRequired ? null : !managedPlanAllowed || atSlotLimit || !managedFits ? (
-                <Link href="/dashboard/billing?from=launch">Review plans</Link>
-              ) : null}</span>
+              <span><strong>{capacityBlocker}</strong>{blockerActions}</span>
             </div>
           ) : null}
           {footer(primary("Review launch", () => advanceTo("review", {
@@ -1015,6 +1312,7 @@ export function LaunchJourney() {
             <div><dt>Resource</dt><dd>{currentProfile.name}<small>{draft.resourceKind === "agent" ? "Agent runtime" : "Computer operating system"}</small></dd></div>
             <div><dt>Name</dt><dd>{draft.name}</dd></div>
             <div><dt>Runs on</dt><dd>{destination.mode === "hivra-managed" ? "Hivra Cloud" : destination.selectedTarget?.displayName ?? "Unavailable target"}</dd></div>
+            {draft.profileId === "codex" ? <div><dt>Browser</dt><dd>{draft.browser ? "On · Codex can use a web browser on its computer" : "Off · Codex runs without a browser"}</dd></div> : null}
             <div><dt>Resources</dt><dd>{wholeProviderComputer ? "Entire prepared provider computer · existing CPU and RAM unchanged" : gvisorComputer ? `${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved and enforced maximum` : `${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved · up to ${draft.resources.maximumCpu ?? draft.resources.cpu} CPU / ${draft.resources.maximumRam ?? draft.resources.ram} GB`}</dd></div>
             <div><dt>Isolation</dt><dd>{displayIsolation(destination)}</dd></div>
             <div><dt>Cost</dt><dd>{destination.mode === "hivra-managed" ? `Uses the included ${plan?.name ?? "managed"} plan allowance.` : "Uses capacity you already connected. No server purchase."}</dd></div>
@@ -1025,7 +1323,7 @@ export function LaunchJourney() {
             </> : null}
             <div><dt>Sign-in</dt><dd>{draft.profileId === "codex" ? "ChatGPT sign-in happens inside Codex after it opens." : "No agent or model credential is collected for this computer."}</dd></div>
           </dl>
-          {capacityBlocker ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><strong>{capacityBlocker}</strong></div> : null}
+          {capacityBlocker ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{capacityBlocker}</strong>{blockerActions}</span></div> : null}
           {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><strong>{draft.error}</strong></div> : null}
           {draft.result?.status === "error" ? <div className={styles.blocker}>
             <AlertTriangle size={16} aria-hidden />

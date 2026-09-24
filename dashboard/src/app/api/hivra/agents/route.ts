@@ -966,13 +966,15 @@ async function launchAgent(request: NextRequest) {
       return apiError("Resource guarantees and maxima are supported only for Codex and Ubuntu Desktop launches.", 400);
     }
     const profileId = type === "linux-desktop" ? "ubuntu-desktop" : "codex";
+    // Codex's floor depends on the browser sidecar actually being provisioned:
+    // browser-off Codex keeps the same base floor as the legacy pinned launch.
     const envelopeResult = hasExplicitEnvelope
       ? validateResourceEnvelope(profileId, {
           cpu,
           ram,
           maximumCpu: clampCpu(body.maximumCpu, cpu, 0.5, 8),
           maximumRam: clampInt(body.maximumRam, ram, 1, 16),
-        })
+        }, undefined, { browser: wantBrowser })
       : { ok: true as const, envelope: { cpu, ram, maximumCpu: cpu, maximumRam: ram } };
     if (!envelopeResult.ok) return apiError("Choose a resource maximum at or above the profile floor and reserved allocation.", 400);
     const maximumCpu = envelopeResult.envelope.maximumCpu;

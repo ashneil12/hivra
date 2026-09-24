@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import { DeployingState } from "../DeployingState";
@@ -27,14 +27,14 @@ describe("DeployingState", () => {
     expect(shellMarkup).not.toContain("linear-gradient");
     expect(shellMarkup).not.toContain("backdrop-filter");
 
-    expect(screen.getByText("What's happening")).toBeInTheDocument();
+    expect(screen.getByText("What's included")).toBeInTheDocument();
     expect(screen.getByText("Secure by default")).toBeInTheDocument();
     expect(screen.getByText("Computer")).toBeInTheDocument();
     expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(screen.getByText("Skills")).toBeInTheDocument();
     expect(screen.getByText("Elapsed")).toBeInTheDocument();
     expect(screen.getAllByText("2-4 min")).toHaveLength(2);
-    expect(screen.getAllByTestId("deploying-step")).toHaveLength(4);
+    expect(screen.getAllByTestId("deploying-included-item")).toHaveLength(4);
     expect(screen.queryByText(/live setup feed/i)).not.toBeInTheDocument();
   });
 
@@ -45,11 +45,10 @@ describe("DeployingState", () => {
 
     // Name-personalized copy.
     expect(screen.getByText(/Getting Bea ready/i)).toBeInTheDocument();
-    expect(screen.getByText(/Setting up Bea's computer/i)).toBeInTheDocument();
-    expect(screen.getByText(/Installing Bea's skills/i)).toBeInTheDocument();
-    expect(screen.getByText(/Waking Bea up/i)).toBeInTheDocument();
+    expect(screen.getByText(/A private computer for Bea/i)).toBeInTheDocument();
+    expect(screen.getByText(/Bea's skills/i)).toBeInTheDocument();
+    expect(screen.getByText(/A first hello from Bea/i)).toBeInTheDocument();
     expect(screen.getByText(/A private computer just for Bea/i)).toBeInTheDocument();
-    expect(screen.getByText(/Encrypted end to end/i)).toBeInTheDocument();
     expect(screen.getByText(/typically takes 2-4 minutes/i)).toBeInTheDocument();
 
     // The old jargon must be gone.
@@ -78,8 +77,53 @@ describe("DeployingState", () => {
     render(<DeployingState />);
 
     expect(screen.getByText(/Getting your agent ready/i)).toBeInTheDocument();
-    expect(screen.getByText(/Setting up your agent's computer/i)).toBeInTheDocument();
-    expect(screen.getByText(/Installing your agent's skills/i)).toBeInTheDocument();
+    expect(screen.getByText(/A private computer for your agent/i)).toBeInTheDocument();
+    expect(screen.getByText(/your agent's skills/i)).toBeInTheDocument();
+  });
+
+  // F7 regression: the provision POST is one opaque call, so this screen used
+  // to advance its steps on 13s/31s/49s timers and caption them "Each step
+  // happens live while you wait." It must show an honest pending state instead.
+  describe("honest pending state", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("says the request is pending, not installation progress", () => {
+      render(<DeployingState agentName="Bea" />);
+
+      const status = screen.getByRole("status", { name: /setting up your agent/i });
+      expect(status).toHaveTextContent(/Hivra is creating Bea's computer/i);
+      expect(status).toHaveTextContent(/pending request, not installation progress/i);
+      expect(status).toHaveTextContent(/Nothing is shown as done until Hivra confirms it/i);
+      expect(status).not.toHaveTextContent(/happens live/i);
+    });
+
+    it("never marks a part active or done, however long the request takes", () => {
+      jest.useFakeTimers();
+      const { container } = render(<DeployingState agentName="Bea" />);
+      const itemsMarkup = () =>
+        screen.getAllByTestId("deploying-included-item").map((item) => item.outerHTML);
+      const before = itemsMarkup();
+
+      // Past every old step deadline (13s, 31s, 49s) and then some.
+      act(() => {
+        jest.advanceTimersByTime(90_000);
+      });
+
+      expect(itemsMarkup()).toEqual(before);
+      expect(container.querySelector("[data-step-status]")).toBeNull();
+      // The elapsed clock is real observed time and still ticks.
+      expect(screen.getByText("01:30")).toBeInTheDocument();
+    });
+
+    it("drops the unsubstantiated end-to-end encryption claim", () => {
+      render(<DeployingState agentName="Bea" />);
+
+      const markup = screen.getByRole("status", { name: /setting up your agent/i }).textContent ?? "";
+      expect(markup).not.toMatch(/encrypt/i);
+      expect(markup).not.toMatch(/end to end/i);
+    });
   });
 
   it("no longer shows the deploy-card personalization form (onboarding is conversational now)", () => {
