@@ -609,6 +609,28 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("tab", { name: "Desktop" })).not.toBeInTheDocument();
   });
 
+  it("says Agent once in a chat agent's bar: the group button, not the switcher's caption as well", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
+    render(<AgentPage />);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(nav.textContent?.match(/Agent/g)).toEqual(["Agent"]);
+    const switcher = within(nav).getByRole("button", { name: "Switch agent or computer: Codex 1" });
+    expect(switcher).toHaveTextContent(/^Codex 1running$/);
+    expect(switcher).toHaveAccessibleDescription("running");
+  });
+
+  it("keeps the kind in the switcher's caption where no group button already names it", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    const { unmount } = render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: OPENCLAW_AGENT" })).toHaveTextContent("Agent · running");
+    unmount();
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    render(<AgentPage />);
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: UBUNTU" })).toHaveTextContent("Computer · running");
+  });
+
   it("gives a dashboard agent's single-surface groups no second row, with Export data still in reach", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
