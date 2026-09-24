@@ -382,11 +382,14 @@ async function main() {
     const fail = (user, id, run, failure) => call("fail_server_enrollment_replacement", [user, id, run, failure]);
     // A bound agent makes the key-only path record a rebind.
     const target = randomUUID(), agentId = randomUUID();
+    const gvisorCapabilities = { kind: "gvisor", launchReady: true,
+      adapter: { version: "2026.09.15.1", sha256: "a".repeat(64) }, runtime: { sha256: "b".repeat(64) } };
     await db.exec("set session_replication_role = replica");
-    await db.query("insert into public.deployment_targets (id, user_id, connection_id, evidence_connection_revision, external_id, display_name, status, capacity, capabilities, supported_isolation_drivers, isolation_class) values ($1, 'owner', $2, 1, 'gvisor-x', 'web-1 / gvisor-x', 'ready', '{}', '{\"kind\":\"gvisor\",\"launchReady\":true}', '{gvisor-runsc}', 'application-kernel')", [target, web1]);
+    await db.query("insert into public.deployment_targets (id, user_id, connection_id, evidence_connection_revision, external_id, display_name, status, capacity, capabilities, supported_isolation_drivers, isolation_class) values ($1, 'owner', $2, 1, 'gvisor-x', 'web-1 / gvisor-x', 'ready', '{}', $3, '{gvisor-runsc}', 'application-kernel')", [target, web1, JSON.stringify(gvisorCapabilities)]);
     await db.exec("alter table public.hivra_agents disable trigger user");
-    await db.query("alter table public.hivra_agents drop constraint if exists hivra_agents_deployment_authority_matrix_check");
-    await db.query("insert into public.hivra_agents (id, user_id, type, name, status, deployment_mode, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, computer_substrate) values ($1, 'owner', 'codex', 'Codex', 'running', 'self-managed', $2, $3, 1, 'proxmox-kvm')", [agentId, web1, target]);
+    // A real gVisor computer row (every table constraint holds); only the
+    // authority trigger is bypassed, because web-1 isn't ready at insert.
+    await db.query("insert into public.hivra_agents (id, user_id, type, name, status, deployment_mode, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, infrastructure_binding_token_enforced, proxmox_host, computer_substrate, computer_profile, gvisor_sandbox_id, gvisor_adapter_version, gvisor_adapter_sha256, gvisor_runtime_sha256, cpu, cpu_max, ram, ram_max) values ($1, 'owner', 'linux-terminal', 'Linux Sandbox', 'running', 'self-managed', $2, $3, 1, true, '__hivra_self_managed_no_ambient_authority__', 'gvisor', 'linux-terminal', $4, '2026.09.15.1', $5, $6, 1, 1, 1024, 1024)", [agentId, web1, target, randomUUID(), "a".repeat(64), "b".repeat(64)]);
     await db.exec("alter table public.hivra_agents enable trigger user");
     await db.exec("set session_replication_role = origin");
     const oldSecret = await secret(web1);
@@ -445,6 +448,18 @@ async function main() {
     // Both enrollments stay receipts for web-1.
     assert.equal(await count("select count(*) n from public.infrastructure_server_enrollments where connection_id = $1", [web1]), 2);
     assert.deepEqual((await events(fresh.enrollmentId)).slice(-3).map((e) => e.kind), ["replacement_verified", "confirmed", "access_replaced"]);
+    // T46: preflight at the new revision rebinds every bound agent in one
+    // transaction, through the same credential-recovery path.
+    assert.equal(Number((await one("select infrastructure_connection_revision r from public.hivra_agents where id = $1", [agentId])).r), 1);
+    const preflightRun = randomUUID();
+    assert.equal((await one("select public.begin_infrastructure_connection_preflight('owner', $1, 2, $2, now()) r", [web1, preflightRun])).r, true);
+    assert.equal((await one("select public.complete_infrastructure_connection_preflight('owner', $1, 2, $2, 'ready', now(), null, $3) r",
+      [web1, preflightRun, JSON.stringify({ externalId: "gvisor-x", status: "ready", capacity: {}, capabilities: gvisorCapabilities,
+        supportedIsolationDrivers: ["gvisor-runsc"], isolationClass: "application-kernel", lastErrorCode: null })])).r, true);
+    assert.equal(Number((await one("select infrastructure_connection_revision r from public.hivra_agents where id = $1", [agentId])).r), 2);
+    const rebound = await one("select status, pending_binding_rebind_from_revision p from public.infrastructure_connections where id = $1", [web1]);
+    assert.deepEqual({ status: rebound.status, pending: rebound.p }, { status: "ready", pending: null });
+    assert.equal(Number((await one("select evidence_connection_revision r from public.deployment_targets where id = $1", [target])).r), 2);
     // Switch: a root login connection no agent uses moves to hivra with sudo.
     const root = ed25519();
     const rootConnection = (await one("select id from public.create_host_infrastructure_connection('owner', 'db-1', '198.51.100.7', 22, 'root', $1, 'sealed-root-bundle-fixture-0000000000000000', 1::smallint)", [root.hex])).id;
@@ -463,7 +478,7 @@ async function main() {
     const busyRoot = ed25519();
     const busyConnection = (await one("select id from public.create_host_infrastructure_connection('owner', 'db-2', '198.51.100.9', 22, 'root', $1, 'sealed-root-bundle-fixture-0000000000000000', 1::smallint)", [busyRoot.hex])).id;
     await db.exec("set session_replication_role = replica");
-    await db.query("insert into public.hivra_agents (id, user_id, type, name, status, deployment_mode, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, computer_substrate) values ($1, 'owner', 'codex', 'Codex 2', 'running', 'self-managed', $2, $3, 1, 'proxmox-kvm')", [randomUUID(), busyConnection, target]);
+    await db.query("insert into public.hivra_agents (id, user_id, type, name, status, deployment_mode, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, infrastructure_binding_token_enforced, proxmox_host, computer_substrate) values ($1, 'owner', 'codex', 'Codex 2', 'running', 'self-managed', $2, $3, 1, true, '__hivra_self_managed_no_ambient_authority__', 'proxmox-kvm')", [randomUUID(), busyConnection, target]);
     await db.exec("set session_replication_role = origin");
     const busySwitch = await issue("owner");
     await report(busySwitch.code, { host: busyRoot });
