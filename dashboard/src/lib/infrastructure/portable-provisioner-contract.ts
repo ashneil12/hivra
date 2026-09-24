@@ -69,6 +69,16 @@ export function isCompatibleProxmoxProvisionerVersion(version: unknown): version
 export const PORTABLE_HIVRA_RUNTIME_COMPATIBILITY_CONTRACT_VERSION = 1 as const;
 
 /**
+ * Guest disk hivra-provision-on-host.sh creates (HIVRA_DISK_GB, default 40).
+ * Launch passes it explicitly and admits host storage against it, so the
+ * size Hivra admits is the size the provisioner allocates. This is not the
+ * Hermes-lane DEFAULT_PROXMOX_VM_DISK_GB.
+ */
+export const HIVRA_AGENT_VM_DISK_GB = 40;
+/** Free thin-pool space required beyond the guest disk at launch. */
+export const HIVRA_AGENT_VM_STORAGE_HEADROOM_GB = 5;
+
+/**
  * Catalog runtimes the vendored provisioner accepts and installs today.
  *
  * This list is an evidence contract, not a product preference. Keep it aligned
