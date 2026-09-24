@@ -104,12 +104,21 @@ function capabilitiesFor(type?: string | null): string {
   return "write and run code, and use a full terminal";
 }
 
+// Name, emoji and personality each fill one line of the templates below. A
+// line break or control character in them could open a heading or a new
+// instruction in the agent's always-loaded prompt, so they are folded onto
+// one line; the words themselves are kept.
+function oneLine(value?: string | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.normalize("NFC").replace(/[\p{Cc}\u2028\u2029]/gu, " ").replace(/\s+/gu, " ").trim() || undefined;
+}
+
 function resolve(agent: BootstrapAgent): Resolved {
   const goal = getGoal(agent.goal);
   const identity = deriveIdentity(agent.goal, {
-    name: agent.name ?? undefined,
-    emoji: agent.emoji ?? undefined,
-    personality: agent.personality ?? undefined,
+    name: oneLine(agent.name),
+    emoji: oneLine(agent.emoji),
+    personality: oneLine(agent.personality),
   });
   const context = (agent.context || "").trim().slice(0, MAX_CONTEXT_LEN);
   const sharedMemory = (agent.sharedMemory || "").trim().slice(0, MAX_SHARED_MEMORY_FOLD_LEN);
