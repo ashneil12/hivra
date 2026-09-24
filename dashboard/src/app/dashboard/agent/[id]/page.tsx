@@ -43,6 +43,7 @@ import { HivraRemoteDesktop } from "@/components/hivra/HivraRemoteDesktop";
 import { HivraConsoleDesktop } from "@/components/hivra/HivraConsoleDesktop";
 import { HivraOmarchyDesktop } from "@/components/hivra/HivraOmarchyDesktop";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
+import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
   SurfaceActionProvider,
   useSurfaceAction,
@@ -794,8 +795,12 @@ export default function AgentPage() {
     });
   }, [id, tab]);
 
-  // Read-only capability refresh once per computer id/session.
-  // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).
+  // Read-only capability refresh once per computer id/session, started as
+  // soon as the computer is known so Desktop rarely waits on it. It is the
+  // same in-flight proof the Linux desktop joins when its first session
+  // request finds the proof expired: one guest inspection, one of the
+  // computer's refreshes per 15 minutes, and no second proof racing the
+  // first. Nothing aborts it, since the desktop may be waiting on it.
   // Never prepare — Omarchy autoPrepare stays prepare=1 only.
   useEffect(() => {
     if (!agent || agent.status !== "running" || agent.id !== id) return;
@@ -803,16 +808,7 @@ export default function AgentPage() {
     if (agent.computer_substrate === "gvisor") return;
     if (capabilityPrefetchRef.current === agent.id) return;
     capabilityPrefetchRef.current = agent.id;
-    const controller = new AbortController();
-    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/remote-desktop`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "refresh" }),
-      signal: controller.signal,
-      keepalive: true,
-    }).catch(() => {});
-    return () => controller.abort();
+    void refreshDesktopCapability(agent.id).catch(() => {});
   }, [agent, id]);
 
   if (flagOn === null) {

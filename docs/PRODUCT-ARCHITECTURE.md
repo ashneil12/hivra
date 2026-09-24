@@ -46,11 +46,24 @@ decoder/input session. This does not yet prove optical latency, a native client,
 Sunshine/Moonlight, Omarchy capture or regional daily-driver performance.
 An owner preparation checkpoint
 adds the missing in-product install action for current identity-bound Proxmox
-computers. The Desktop surface first attempts one owner-scoped, read-only
-capability refresh and issues a fresh session when the guest is already ready;
-only an explicit owner action may install missing capability. Legacy unbound
-computers fail closed with a current-launch message; the path does not silently
-rebind or mutate them. An exchanged Selkies controller now uses rolling
+computers. The Desktop surface asks for a session first. When the eight-minute
+capability proof has lapsed, it gets one owner-scoped, read-only refresh and
+asks again. A tab never runs two refreshes of one computer at once: Desktop
+joins the agent page's refresh while that is still running, or uses its result
+when it succeeded while the session request was on its way; otherwise it runs
+its own (Desktop opened minutes after the page loaded, or the workspace
+desktop surface, which starts no refresh of its own). Current behaviour: an
+open that is not a reconnect of a desktop already shown runs desktop
+preparation on its own, once per page, when its refresh still cannot verify
+the desktop or when it ends unavailable (on the workspace desktop surface, for
+any unavailable outcome), and preparation can install or repair the desktop;
+Retry after a failed preparation runs it again without asking. Reconnect after
+a stream drop, the automatic reconnect and Try again after it never install
+anything, and Update runtime, Update desktop and Repair desktop ask first.
+Target behaviour, pending the owner's decision on automatic preparation: only
+an explicit owner action installs missing capability. Legacy unbound computers
+fail closed with a current-launch message; the path does not silently rebind
+or mutate them. An exchanged Selkies controller now uses rolling
 server-side leases: the guest-held bearer is renewed in four-minute increments,
 the browser keeps the owner/capability proof current, and every renewal rechecks
 the exact owner, computer, capability generation, transport and controller

@@ -3,6 +3,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SURFACE_NATIVE_START_LIMIT_MS } from "@/components/hivra/useSurfaceBootstrap";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
+import { refreshDesktopCapability, resetDesktopSessionLaneForTests } from "@/lib/remote-computers/desktop-session-lane";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -173,6 +174,8 @@ describe("AgentPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Desktop proofs are shared per tab; each test is a new tab.
+    resetDesktopSessionLaneForTests();
     window.history.replaceState(null, "", "/dashboard/agent/agent_123");
     mockAgentId = "agent_123";
     requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => undefined);
@@ -1654,6 +1657,28 @@ describe("AgentPage", () => {
       }),
     ));
     expect(fetchMock.mock.calls.some(([, init]) => String(init?.body || "").includes('"prepare"'))).toBe(false);
+  });
+
+  it("starts the one runtime proof the Linux desktop joins, so a first open never inspects the computer twice", async () => {
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    let landProof!: () => void;
+    const proofGate = new Promise<void>(resolve => { landProof = resolve; });
+    const fetchMock = global.fetch as unknown as jest.Mock;
+    fetchMock.mockImplementation((input: unknown) => String(input) === "/api/hivra/agents/agent_123/remote-desktop"
+      ? proofGate.then(() => ({ ok: true, status: 200, json: async () => ({ success: true, data: { prepared: true } }) }))
+      : Promise.resolve({ ok: true, json: async () => ({ success: true, agentKind: "claude", surfaceAuth: "post-cookie-v1" }) }));
+    const proofRequests = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/hivra/agents/agent_123/remote-desktop");
+
+    render(<AgentPage />);
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
+    await waitFor(() => expect(proofRequests()).toHaveLength(1));
+    // The desktop's first session request found the proof expired and asks
+    // for one while the page's is still running: it gets the page's.
+    const joined = refreshDesktopCapability("agent_123");
+    expect(proofRequests()).toHaveLength(1);
+    landProof();
+    await expect(joined).resolves.toEqual({ ok: true, status: 200, payload: { success: true, data: { prepared: true } } });
+    expect(proofRequests()).toHaveLength(1);
   });
 
   it("shows a gVisor Linux terminal computer only on Manage", async () => {
