@@ -13,6 +13,7 @@ import {
 import { findBannedClaims } from "../copy-rules";
 import { agentDeployHref, getAgentSeoEntry, unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 // componentKey -> the client component file the /tools/[slug] template maps it
 // to (src/app/tools/[slug]/page.tsx). Keep both maps in sync.
@@ -120,10 +121,11 @@ describe("tools catalog", () => {
     }
   });
 
-  it("sends the calls to action to the $9.99 checkout plan and to pricing", () => {
+  it("sends the calls to action to sign-up, the $9.99 plan button to that plan, and to pricing", () => {
     expect(TOOLS_CTA).toEqual({
-      primaryHref: "/get-started?plan=operator",
-      claudeCodeHref: "/get-started?plan=operator&agentType=claude-code",
+      primaryHref: PUBLIC_START_HREF,
+      claudeCodeHref: `${PUBLIC_START_HREF}?agentType=claude-code`,
+      entryPlanHref: "/get-started?plan=operator",
       secondaryHref: "/pricing",
     });
     // "Run Claude Code on Hivra" buttons preselect the runtime exactly the way

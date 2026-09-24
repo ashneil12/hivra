@@ -47,7 +47,7 @@ describe("/tools hub", () => {
       expect(links).toHaveLength(1);
       expect(links[0]).toHaveTextContent(entry.name);
     }
-    expect(container.querySelector('a[href="/get-started?plan=operator"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/sign-up"]')).not.toBeNull();
     expect(container.querySelector('a[href="/pricing"]')).not.toBeNull();
     expect(container).toHaveTextContent("Hivra is independent and is not affiliated with Anthropic or OpenAI.");
     expect(findBannedClaims(container.textContent ?? "")).toEqual([]);
@@ -85,7 +85,7 @@ describe("/tools/[slug]", () => {
     for (const faq of entry.faqs) expect(container).toHaveTextContent(faq.q);
 
     // Both calls to action, and the vendor line.
-    expect(container.querySelector('a[href="/get-started?plan=operator"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/sign-up"]')).not.toBeNull();
     expect(container.querySelector('a[href="/pricing"]')).not.toBeNull();
     expect(container).toHaveTextContent("Hivra is independent and is not affiliated with");
 

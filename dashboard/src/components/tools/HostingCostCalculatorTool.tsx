@@ -291,7 +291,7 @@ export default function HostingCostCalculatorTool() {
           monthly price, not paused for inactivity, your own model login: $9.99 a month for 2 vCPU and 4 GB, or
           $19.99 a month for 4 vCPU and 8 GB.
         </p>
-        <Link href={TOOLS_CTA.primaryHref} className={styles.bridgeLink}>
+        <Link href={TOOLS_CTA.entryPlanHref} className={styles.bridgeLink}>
           Start on the $9.99 plan
           <ArrowUpRight size={18} aria-hidden="true" />
         </Link>

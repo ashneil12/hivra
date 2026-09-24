@@ -104,6 +104,20 @@ describe("ActivatePage", () => {
     expect(screen.getByText(/setting up your/i)).toBeInTheDocument();
   });
 
+  // FTUE-16: a second progress model ("Account Created → Setting Up") sat
+  // between sign-up and Launch's own Choose / Plan / Review steps.
+  it("shows no step strip of its own while checkout starts", async () => {
+    fetchMock.mockResolvedValue({
+      json: async () => ({ success: true, data: { url: "https://checkout.stripe.test/session" } }),
+    } as Response);
+
+    render(<ActivatePage />);
+
+    expect(await screen.findByText(/setting up your/i)).toBeInTheDocument();
+    expect(screen.queryByText(/account created/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^setting up$/i)).not.toBeInTheDocument();
+  });
+
   it("passes yearly cadence from the URL through to the subscribe request", async () => {
     mockGet.mockImplementation((key: string) => {
       if (key === "plan") return "operator";

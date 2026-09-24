@@ -18,7 +18,8 @@ const VaultReferenceSchema = z.object({
 export type SavedVaultKeyRow = { provider: string; encrypted_key: string | null };
 export type VaultKeyReader = (userId: string, vaultKeyId: string) => Promise<SavedVaultKeyRow | null>;
 
-async function readOwnerVaultKey(userId: string, vaultKeyId: string): Promise<SavedVaultKeyRow | null> {
+/** One saved Vault row, read for this owner only. Null when it isn't theirs. */
+export async function readOwnerVaultKey(userId: string, vaultKeyId: string): Promise<SavedVaultKeyRow | null> {
   if (!supabaseAdmin) throw new Error("Database not configured");
   const { data, error } = await supabaseAdmin
     .from("user_api_keys")

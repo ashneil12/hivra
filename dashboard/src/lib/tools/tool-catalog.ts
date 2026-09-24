@@ -19,6 +19,8 @@
 // dashes, no trial or card claims, no unmeasured speed claims, short sentences,
 // real numbers, honest tradeoffs including when DIY wins.
 
+import { PUBLIC_START_HREF } from "@/lib/public-start";
+
 export type ToolComponentKey =
   | "plan-calculator"
   | "agent-survival-check"
@@ -69,14 +71,17 @@ export const TOOLS_HUB = {
 } as const;
 
 /**
- * The calls to action on every tools page. claudeCodeHref is for buttons that
- * promise Claude Code: it preselects the runtime in /get-started, and equals
- * agentDeployHref for the claude-code entry in lib/hivra/agent-seo-catalog (the
- * catalog test pins the two together).
+ * The calls to action on every tools page. primaryHref is the public start
+ * link (sign-up, then Launch). claudeCodeHref is for buttons that promise
+ * Claude Code: it opens Launch on Claude Code, and equals agentDeployHref for
+ * the claude-code entry in lib/hivra/agent-seo-catalog (the catalog test pins
+ * the two together).
  */
 export const TOOLS_CTA = {
-  primaryHref: "/get-started?plan=operator",
-  claudeCodeHref: "/get-started?plan=operator&agentType=claude-code",
+  primaryHref: PUBLIC_START_HREF,
+  claudeCodeHref: `${PUBLIC_START_HREF}?agentType=claude-code`,
+  /** A button that names the $9.99 plan carries that plan into checkout. */
+  entryPlanHref: "/get-started?plan=operator",
   secondaryHref: "/pricing",
 } as const;
 

@@ -93,7 +93,7 @@ describe("PlanCalculatorTool", () => {
     // The button promises Claude Code, so it preselects the runtime.
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
-      "/get-started?plan=operator&agentType=claude-code",
+      "/sign-up?agentType=claude-code",
     );
     expect(screen.getByText(/start long runs inside tmux or from Telegram/)).toBeInTheDocument();
     expectKeepRunningClaimsQualified(container);
@@ -222,7 +222,7 @@ describe("LimitResetCalculatorTool", () => {
     expect(screen.getByText(/Facts\s+last verified 2026-09-24/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
-      "/get-started?plan=operator&agentType=claude-code",
+      "/sign-up?agentType=claude-code",
     );
     // A tmux session in the Terminal tab outlives the tab on every computer; the
     // copy says nothing either way about browser chat runs.

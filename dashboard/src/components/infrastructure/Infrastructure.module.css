@@ -2732,6 +2732,20 @@
   position: relative;
 }
 
+/* Opened from the connection wizard, setup keeps the wizard's width and its
+   Connect → Ready progress bar, so connecting a host reads as one journey. */
+.confirmDialog.prepareDialog.prepareContinues {
+  width: min(920px, 100%);
+}
+
+.prepareDialog > .prepareProgress {
+  margin: -32px -32px 26px;
+}
+
+.prepareContinues > .prepareCloseButton {
+  top: 69px;
+}
+
 .prepareDialog > .prepareIcon,
 .prepareDialog > .successIcon,
 .prepareDialog > .dangerIcon {
@@ -4354,6 +4368,19 @@
     justify-content: flex-start;
     justify-content: safe center;
     padding: 28px 22px;
+  }
+
+  /* The carried-on progress bar stays at the top, as in the wizard. */
+  .confirmDialog.prepareContinues {
+    justify-content: flex-start;
+  }
+
+  .prepareDialog > .prepareProgress {
+    margin: -28px -22px 22px;
+  }
+
+  .prepareContinues > .prepareCloseButton {
+    top: 76px;
   }
 }
 

@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 
 import { BillingDialog, billingDialogStyles as styles } from "@/components/billing/BillingDialog";
 import { DEFAULT_CARD_REQUIRED_MESSAGE } from "@/lib/billing/card-required";
+import { isCryptoBillingUiEnabled } from "@/lib/billing/format";
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
 const stripePromise = publishableKey ? loadStripe(publishableKey) : null;
@@ -225,8 +226,8 @@ function FreeTierCardVerificationForm({
           <CheckCircle2 size={14} aria-hidden="true" />
           <span>
             {retryReady
-              ? "Card verification is saved. If provisioning did not resume, retry deployment now."
-              : "Card verification accepted. Retrying deployment..."}
+              ? "Your card is verified. If the launch didn't start again, launch it now."
+              : "Card verified. Launching again…"}
           </span>
         </div>
       )}
@@ -239,12 +240,13 @@ function FreeTierCardVerificationForm({
         className={`${styles.button} ${styles.primary} ${styles.block}`}
       >
         {submitting && <Loader2 size={14} className={styles.spin} aria-hidden="true" />}
-        {retryReady ? "Retry Deployment" : submitting ? "Verifying..." : "Verify Card"}
+        {retryReady ? "Launch again" : submitting ? "Verifying..." : "Verify Card"}
       </button>
 
       <p className={styles.fineprint}>
-        This is a fraud-prevention card-on-file check for Free plan access. Crypto/token access does not
-        require this card flow.
+        This is a fraud-prevention card-on-file check for Free plan access.
+        {/* Token access is a way round the card only where it is on offer. */}
+        {isCryptoBillingUiEnabled() ? " Crypto/token access does not require this card flow." : null}
       </p>
     </form>
   );

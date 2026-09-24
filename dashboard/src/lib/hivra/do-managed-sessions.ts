@@ -50,6 +50,8 @@ import {
   type DigitalOceanTargetEvidence,
 } from "@/lib/infrastructure/digitalocean-store";
 import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
+import { decryptApiKey } from "@/lib/crypto";
+import { readOwnerVaultKey } from "@/lib/hivra/launch-llm-vault-key";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { digitalOceanSetupMessage } from "@/lib/agent-computers/computer-contract";
@@ -64,7 +66,9 @@ import {
   type ManagedSessionEvent,
 } from "@/lib/hivra/managed-session-transcript";
 import {
+  DIGITALOCEAN_HARNESS_LABELS,
   MANAGED_WORKSPACE_ROOT,
+  ManagedSessionModelSchema,
   digitalOceanSandboxResources,
   normalizeManagedWorkspacePath,
   type ManagedSessionDto,
@@ -138,9 +142,14 @@ const AGENT_SELECT = [
   "do_session_observation",
 ].join(",");
 
+/** A key the owner saved in their Vault, decrypted, or null when that id
+ * isn't one of theirs. Throws when the Vault can't be read. */
+type SavedModelKeyReader = (userId: string, vaultKeyId: string) => Promise<{ provider: string; apiKey: string | null } | null>;
+
 type Dependencies = {
   client(apiToken: string): DigitalOceanManagedAgentsClient;
   inferenceModels(apiToken: string): Promise<string[]>;
+  readSavedModelKey: SavedModelKeyReader;
   now(): Date;
   sleep(ms: number): Promise<void>;
   fetch: typeof fetch;
@@ -149,6 +158,11 @@ type Dependencies = {
 const defaultDependencies: Dependencies = {
   client: (apiToken) => createDigitalOceanManagedAgentsClient(apiToken),
   inferenceModels: (apiToken) => listDigitalOceanInferenceModels(apiToken),
+  readSavedModelKey: async (userId, vaultKeyId) => {
+    const row = await readOwnerVaultKey(userId, vaultKeyId);
+    if (!row) return null;
+    return { provider: row.provider, apiKey: row.encrypted_key ? decryptApiKey(row.encrypted_key) : null };
+  },
   now: () => new Date(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   fetch: (...args) => fetch(...args),
@@ -419,7 +433,51 @@ async function connectionRevision(userId: string, connectionId: string): Promise
   return Number((data as { revision: unknown }).revision);
 }
 
-function manifestFor(agent: { sessionName: string; name: string; harness: DigitalOceanHarness; size: DigitalOceanSizeSlug }, model: ManagedSessionLaunchInput["model"]) {
+/** The model a launch sends DigitalOcean, with the key itself in hand. */
+type LaunchModel =
+  | { mode: "vendor"; apiKey: string }
+  | { mode: "digitalocean-inference"; apiKey: string; model: string };
+
+/**
+ * The key this launch sends: the one pasted for it, or the owner's own saved
+ * Vault key it names, read now for this owner only. The Vault reference never
+ * reaches DigitalOcean or the agent row; DigitalOcean gets the key as a
+ * write-only session secret, exactly as it would a pasted one.
+ */
+async function launchModelKey(
+  userId: string,
+  harness: DigitalOceanHarness,
+  model: ManagedSessionLaunchInput["model"],
+): Promise<LaunchModel> {
+  if (model.mode === "digitalocean-inference") return model;
+  if (model.apiKey !== undefined) return { mode: "vendor", apiKey: model.apiKey };
+  const { vendorKey, vaultProvider } = DIGITALOCEAN_HARNESS_LABELS[harness];
+  const label = vendorKey ?? "model key";
+  if (!model.vaultKeyId || !vaultProvider) {
+    throw new ManagedSessionError("invalid_request", "Paste a model key for this launch.");
+  }
+  let saved: Awaited<ReturnType<SavedModelKeyReader>>;
+  try {
+    saved = await deps.readSavedModelKey(userId, model.vaultKeyId);
+  } catch (error) {
+    log.warn("saved model key could not be read for a DigitalOcean launch", {
+      source: LOG_SOURCE, failureType: "do_launch_vault_read_failed", harness,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    throw new ManagedSessionError("database_failed", "Your saved key couldn't be read right now. Nothing was launched; try again.");
+  }
+  if (!saved || saved.provider.trim().toLowerCase() !== vaultProvider || !saved.apiKey) {
+    throw new ManagedSessionError("not_found", `That saved ${label} is no longer in your Vault. Paste the key, or choose another option.`);
+  }
+  // The same shape rules a pasted key meets before DigitalOcean sees it.
+  const checked = ManagedSessionModelSchema.safeParse({ mode: "vendor", apiKey: saved.apiKey });
+  if (!checked.success || checked.data.mode !== "vendor" || !checked.data.apiKey) {
+    throw new ManagedSessionError("invalid_request", `Your saved ${label} isn't a complete key. Paste the key for this launch instead.`);
+  }
+  return { mode: "vendor", apiKey: checked.data.apiKey };
+}
+
+function manifestFor(agent: { sessionName: string; name: string; harness: DigitalOceanHarness; size: DigitalOceanSizeSlug }, model: LaunchModel) {
   const secrets: Record<string, string> = {};
   const env: Record<string, string> = {};
   if (model.mode === "digitalocean-inference") {
@@ -452,7 +510,7 @@ function manifestFor(agent: { sessionName: string; name: string; harness: Digita
  * vendor cannot be reached to check is allowed through: DigitalOcean still
  * reports the failure on the first run.
  */
-async function validateVendorModelKey(harness: DigitalOceanHarness, model: ManagedSessionLaunchInput["model"]) {
+async function validateVendorModelKey(harness: DigitalOceanHarness, model: LaunchModel) {
   if (model.mode !== "vendor") return;
   const request: { url: string; headers: Record<string, string> } = harness === "claude-code"
     ? { url: "https://api.anthropic.com/v1/models?limit=1", headers: { "x-api-key": model.apiKey, "anthropic-version": "2023-06-01" } }
@@ -684,7 +742,8 @@ export async function launchDigitalOceanSession(userId: string, input: ManagedSe
   if (input.harness === "hermes" && input.model.mode !== "digitalocean-inference") {
     throw new ManagedSessionError("invalid_request", "Hermes on DigitalOcean uses DigitalOcean Inference. Enter a model access key and model.");
   }
-  await validateVendorModelKey(input.harness, input.model);
+  const model = await launchModelKey(userId, input.harness, input.model);
+  await validateVendorModelKey(input.harness, model);
 
   const agentId = randomUUID();
   const sessionName = digitalOceanSessionName(agentId);
@@ -712,7 +771,7 @@ export async function launchDigitalOceanSession(userId: string, input: ManagedSe
 
   let created: DigitalOceanSession;
   try {
-    created = await client.createSessionFromManifest(manifestFor({ sessionName, name: input.name, harness: input.harness, size: input.size }, input.model));
+    created = await client.createSessionFromManifest(manifestFor({ sessionName, name: input.name, harness: input.harness, size: input.size }, model));
   } catch (error) {
     if (isDefinitiveRejection(error)) {
       // Nothing billable exists. Close the reservation with its receipt so the

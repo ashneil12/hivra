@@ -122,7 +122,9 @@ function expectInternalLinksResolve(main: HTMLElement) {
     }
     const segments = pathname.split("/").filter(Boolean);
     if (segments.length === 0) continue;
-    expect(fs.existsSync(path.join(APP_DIR, ...segments, "page.tsx"))).toBe(true);
+    // Clerk's pages live in an optional catch-all route (sign-up/[[...sign-up]]).
+    const catchAll = path.join(APP_DIR, ...segments, `[[...${segments[segments.length - 1]}]]`, "page.tsx");
+    expect(fs.existsSync(path.join(APP_DIR, ...segments, "page.tsx")) || fs.existsSync(catchAll)).toBe(true);
   }
 }
 
@@ -152,7 +154,7 @@ describe("/agents hub", () => {
     const main = container.querySelector("main")!;
     const hrefs = [...main.querySelectorAll("a[href]")].map((a) => a.getAttribute("href"));
     for (const entry of AGENT_SEO_ENTRIES) expect(hrefs).toContain(`/agents/${entry.slug}`);
-    expect(hrefs).toContain("/get-started?plan=operator");
+    expect(hrefs).toContain("/sign-up");
     expect(hrefs).toContain("/pricing");
     expect(hrefs.some((href) => href?.startsWith("/dashboard"))).toBe(false);
     expectInternalLinksResolve(main);

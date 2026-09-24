@@ -17,6 +17,7 @@
 import type { AgentId } from "@/lib/hivra/agent-catalog";
 import type { WelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import { CLI_RUN_FALSE_CLAIMS } from "@/lib/blog/runtime-facts";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 /** Subset of the ops catalog that gets a public landing page. */
 export type AgentSeoSlug = Extract<
@@ -68,8 +69,11 @@ export const AGENT_PAGES_LAST_MODIFIED = "2026-09-24";
  */
 export const AGENT_OFFER_PRICE_USD = "9.99";
 
-/** Primary CTA on the hub: sign-up with the $9.99 plan preselected. */
-export const AGENTS_HUB_DEPLOY_HREF = "/get-started?plan=operator";
+/**
+ * Primary CTA on the hub: the public start link (sign-up, then Launch), so a
+ * visitor chooses where the agent runs before any plan or checkout.
+ */
+export const AGENTS_HUB_DEPLOY_HREF = PUBLIC_START_HREF;
 
 /** Secondary CTA everywhere. */
 export const PRICING_HREF = "/pricing";
@@ -525,12 +529,11 @@ export function getAgentSeoEntry(slug: string): AgentSeoEntry | undefined {
 }
 
 /**
- * Primary CTA for an agent page: the signed-out sign-up funnel with the $9.99
- * plan and this runtime preselected. Every agent launches on that plan, so one
- * plan value serves all of them.
+ * Primary CTA for an agent page: sign-up with this agent named, which opens
+ * Launch on that agent (see buildAgentLaunchHref).
  */
 export function agentDeployHref(entry: Pick<AgentSeoEntry, "agentType">): string {
-  return `${AGENTS_HUB_DEPLOY_HREF}&agentType=${encodeURIComponent(entry.agentType)}`;
+  return `${PUBLIC_START_HREF}?agentType=${encodeURIComponent(entry.agentType)}`;
 }
 
 /**

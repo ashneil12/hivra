@@ -16,8 +16,10 @@ import { AGENTS, BROWSER_ADD, getAgent, isPoolExempt, resizeFloor } from "../age
 import { BLOG_ARTICLES } from "@/lib/blog-data";
 import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 import { resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
-import { ACTIVE_PLAN_KEYS, PLANS } from "@/lib/subscription";
+import { PLANS } from "@/lib/subscription";
 import { HOSTED_MACHINES } from "@/lib/subscription/hosted-ladder";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
 
 // Every user-facing string in an entry, walked recursively.
 function collectStrings(value: unknown, out: string[] = []): string[] {
@@ -115,14 +117,14 @@ describe("agent SEO catalog", () => {
     }
   });
 
-  it.each(AGENT_SEO_ENTRIES)("$slug: deploy CTA is the signed-out sign-up funnel with an accepted plan and agentType", (entry) => {
+  it.each(AGENT_SEO_ENTRIES)("$slug: deploy CTA is sign-up with an accepted agentType and no plan", (entry) => {
     const href = agentDeployHref(entry);
-    expect(href.startsWith("/get-started?")).toBe(true);
+    expect(href.startsWith(`${PUBLIC_START_HREF}?`)).toBe(true);
     const query = new URLSearchParams(href.split("?")[1]);
-    expect((ACTIVE_PLAN_KEYS as readonly string[]).includes(query.get("plan") ?? "")).toBe(true);
-    expect(query.get("plan")).toBe("operator");
-    // /get-started drops unknown agentType keys silently, so an unaccepted key
-    // would lose the runtime preselection.
+    // A plan here would send a new account to checkout before Launch (FTUE-16).
+    expect(query.has("plan")).toBe(false);
+    // An agentType sign-up does not know opens a generic Launch, losing the
+    // agent this page is about.
     expect(resolveWelcomeAgentTypeKey(query.get("agentType"))).toBe(entry.agentType);
   });
 
@@ -130,7 +132,15 @@ describe("agent SEO catalog", () => {
     for (const entry of AGENT_SEO_ENTRIES) {
       expect(entry.agentType).toBe(entry.slug === "hermes" ? "general" : entry.slug);
     }
-    expect(AGENTS_HUB_DEPLOY_HREF).toBe("/get-started?plan=operator");
+    expect(AGENTS_HUB_DEPLOY_HREF).toBe(PUBLIC_START_HREF);
+  });
+
+  it("sends every agent page's deploy button to sign-up, which opens Launch on that agent", () => {
+    for (const entry of AGENT_SEO_ENTRIES) {
+      const href = new URL(agentDeployHref(entry), "https://hivra.test");
+      expect(href.pathname).toBe(PUBLIC_START_HREF);
+      expect(launchProfileForAgentType(href.searchParams.get("agentType"))).toBe(entry.slug);
+    }
   });
 
   it("prices the offer at checkout's $9.99 plan, which is also the public ladder's entry price", () => {

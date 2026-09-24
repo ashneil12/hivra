@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Loader2, CheckCircle, Zap, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { ACTIVE_PLAN_KEYS, PLANS, type Cadence, type PlanKey } from "@/lib/subscription";
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
@@ -391,26 +391,7 @@ function ActivatePageContent() {
           {/* ── LOADING / SUBSCRIBING STATE ── */}
           {(status === "loading" || status === "subscribing") && (
             <>
-              {/* Step progress */}
-              <div style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                gap: 8, marginBottom: "2rem",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#16a34a" }}>
-                  <CheckCircle size={14} />
-                  <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-                    Account Created
-                  </span>
-                </div>
-                <div style={{ width: 24, height: 1, background: "var(--etched-border)" }} />
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--gold-leaf)" }}>
-                  <Zap size={14} />
-                  <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-                    Setting Up
-                  </span>
-                </div>
-              </div>
-
+              {/* No step strip: Launch, which opens next, has the only step counter. */}
               {/* Loading animation */}
               <div style={{
                 width: 56, height: 56, margin: "0 auto 1.5rem",

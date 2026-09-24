@@ -110,7 +110,7 @@ describe("/why-hivra page", () => {
     expect(screen.getByText("Make launching and operating AI agents as easy as launching a website.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /launch your first agent/i })).toHaveAttribute(
       "href",
-      "/get-started?plan=free",
+      "/sign-up",
     );
   });
 
