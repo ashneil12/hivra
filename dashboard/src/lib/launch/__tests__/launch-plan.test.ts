@@ -24,6 +24,7 @@ import {
   matchingSizePreset,
   parseLaunchArrival,
   parseLaunchDraftParam,
+  planForLaunch,
   recommendedLaunchSize,
   sizeLabel,
   sizePresets,
@@ -84,7 +85,36 @@ function evidence(plan: PlanInfo | null, targets: DeploymentTargetDto[] = [], ov
   return { plan, planChecked: true, targets, targetsLoading: false, targetsError: false, selfHosted: false, ...overrides };
 }
 
+/** What fetchPlanStrict reads for an account with no plan yet. */
+const NO_PLAN: PlanInfo = {
+  subscribed: false, name: "Free", key: "free", maxAgents: 1,
+  maxCpuPerAgent: 0.5, maxRamPerAgent: 1, poolCpu: 0.5, poolRam: 1, needsActivation: true,
+};
+
+describe("planForLaunch", () => {
+  it("plans an account with no plan yet as the Free plan it can turn on, with nothing running", () => {
+    expect(planForLaunch(NO_PLAN)).toEqual({ ...NO_PLAN, usage: { agentCount: 0, usedCpu: 0, usedRam: 0 } });
+    // It still needs Free turned on before anything launches on Hivra Cloud.
+    expect(planForLaunch(NO_PLAN)?.needsActivation).toBe(true);
+  });
+
+  it("leaves an active plan, and a plan whose usage couldn't be read, as they are", () => {
+    expect(planForLaunch(FREE)).toBe(FREE);
+    expect(planForLaunch(PRO)).toBe(PRO);
+    const unread: PlanInfo = { ...PRO, usage: undefined };
+    expect(planForLaunch(unread)).toBe(unread);
+    expect(planForLaunch(null)).toBeNull();
+  });
+});
+
 describe("launchFit", () => {
+  it("says what fits Free before the Free plan is turned on, without calling it the owner's plan", () => {
+    const noPlan = evidence(planForLaunch(NO_PLAN));
+    expect(launchFit(launchProfileFitSubject("hermes"), noPlan)).toEqual({ label: "Fits Free", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("codex"), noPlan)).toEqual({ label: "Fits Free without a browser", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), noPlan)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
+  });
+
   it("labels each tile on Free from the same floors the launch gates use", () => {
     const free = evidence(FREE);
     expect(launchFit(launchProfileFitSubject("codex"), free)).toEqual({ label: "Fits Free without a browser", tone: "fits" });
@@ -292,6 +322,10 @@ describe("plan rows", () => {
 
   it("states cost and changes without claiming a purchase", () => {
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free" })).toBe("No extra charge. Uses your Free plan allowance.");
+    // Before the Free plan is turned on it isn't "your" plan yet.
+    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", planPending: true }))
+      .toBe("No charge. It runs on the Free plan, which you turn on before launching.");
+    expect(costSummary({ profileId: "codex", substrate: "proxmox", planName: "Free", planPending: true })).toMatch(/your server's own capacity/);
     expect(costSummary({ profileId: "codex", substrate: "provider-vm", planName: "Free" })).toMatch(/cloud provider keeps billing/);
     expect(launchChangesSummary({ profileId: "codex", substrate: "hivra-cloud", targetName: null }))
       .toBe("Creates one computer and installs Codex. Nothing is bought.");

@@ -7,6 +7,7 @@ import {
   profileHasBrowser,
   type LaunchCapacityChoice,
   type LaunchDraft,
+  type LaunchDraftTemplate,
   type LaunchDeploymentSnapshot,
   type LaunchErrorAction,
   type LaunchModelAccess,
@@ -16,6 +17,7 @@ import {
   type LaunchStage,
   type LaunchState,
 } from "./contracts";
+import { launchProfileForTemplate, safeTemplateRef } from "./launch-template";
 
 /** Drafts live in this browser's localStorage under this prefix plus the
  * signed-in owner's id, so a draft survives a closed tab, a second tab and
@@ -70,6 +72,7 @@ export function createLaunchDraft(): LaunchDraft {
     capacity: { mode: "hivra-managed", targetId: null },
     modelAccess: { ...DEFAULT_MODEL_ACCESS },
     sendMemoryKey: false,
+    template: null,
     submittedDeployment: null,
     submittedAt: null,
     launchState: "idle",
@@ -129,6 +132,16 @@ function safeErrorAction(value: unknown): LaunchErrorAction | null {
     return { kind: "open", label: input.label.trim(), href: input.href };
   }
   return null;
+}
+
+/** A template id and name, and only for a profile a template can start. */
+function safeTemplate(value: unknown, profileId: LaunchProfileId | null): LaunchDraftTemplate | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const id = safeTemplateRef(input.id);
+  if (!id || !profileId || launchProfileForTemplate(profileId) !== profileId) return null;
+  const name = typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, LAUNCH_NAME_MAX_LENGTH) : null;
+  return { id, name };
 }
 
 function safeTimestamp(value: unknown): string | null {
@@ -285,6 +298,7 @@ function safeDraft(value: unknown): LaunchDraft | null {
     modelAccess: safeModelAccess(input.modelAccess),
     // Consent to send a saved memory key is Hermes' only, and only ever true.
     sendMemoryKey: profileId === "hermes" && input.sendMemoryKey === true,
+    template: safeTemplate(input.template, profileId),
     submittedDeployment: safeSubmittedDeployment(input.submittedDeployment),
     submittedAt: safeTimestamp(input.submittedAt),
     launchState,

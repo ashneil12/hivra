@@ -493,6 +493,23 @@ describe("fetchPlanStrict managed usage", () => {
     await expect(fetchPlanStrict()).resolves.toMatchObject({ key: "free", subscribed: false, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
   });
 
+  it("marks an account billing reports no plan for as needing the Free plan turned on", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: {
+      subscribed: false, plan: null, usage: null,
+    } }) });
+    const plan = await fetchPlanStrict();
+    expect(plan).toMatchObject({ key: "free", subscribed: false, needsActivation: true });
+    // No usage is invented for it here; Launch decides how to plan it.
+    expect(plan?.usage).toBeUndefined();
+  });
+
+  it("never marks an active plan, Free included, as needing activation", async () => {
+    response({ agentCount: 0, usedCpu: 0, usedRam: 0 }, "free");
+    expect((await fetchPlanStrict())?.needsActivation).toBeUndefined();
+    response({ agentCount: 0, usedCpu: 0, usedRam: 0 }, "operator");
+    expect((await fetchPlanStrict())?.needsActivation).toBeUndefined();
+  });
+
   it.each([null, {}, { agentCount: 0 }, { agentCount: -1, usedCpu: 0, usedRam: 0 }, { agentCount: 1, usedCpu: "2", usedRam: 4096 }, { agentCount: 1, usedCpu: 2, usedRam: -1 }])("does not invent empty capacity from invalid usage: %j", async (usage) => {
     response(usage);
     expect((await fetchPlanStrict())?.usage).toBeUndefined();

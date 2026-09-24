@@ -147,6 +147,9 @@ export interface CreateAgentInput {
   /** Stable owner-generated receipt key for native Codex and Ubuntu launches.
    * Reuse this exact UUID after an uncertain response; never mint one per retry. */
   launchRequestId?: string;
+  /** A saved template to start from (id or slug). The server checks the owner
+   * may use it and applies its identity and skills; fields sent here win. */
+  templateId?: string;
 }
 
 export class HivraLaunchInProgressError extends Error {
@@ -377,6 +380,9 @@ export interface PlanInfo {
   poolRam: number;
   /** Account-wide managed usage from billing, including Hermes. RAM is GB here. */
   usage?: { agentCount: number; usedCpu: number; usedRam: number };
+  /** Billing reports no plan at all yet: a new account before the Free plan
+   * is turned on. Hivra Cloud launches need a plan first. */
+  needsActivation?: boolean;
 }
 
 const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxAgents: 1, maxCpuPerAgent: 0.5, maxRamPerAgent: 1, poolCpu: 0.5, poolRam: 1 };
@@ -438,7 +444,10 @@ export async function fetchPlanStrict(): Promise<PlanInfo | null> {
       ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
       : undefined;
     const usageFields = usage ? { usage } : {};
-    if (!d.subscribed || !d.plan) return { ...FREE_PLAN, ...usageFields };
+    // No plan at all (billing answers subscribed: false only then). The
+    // Free plan is what activating would give, so its size is shown.
+    if (!d.subscribed) return { ...FREE_PLAN, ...usageFields, needsActivation: true };
+    if (!d.plan) return { ...FREE_PLAN, ...usageFields };
     const key = d.plan.key || "paid";
     if (key === "free") return { ...FREE_PLAN, ...usageFields }; // the free row is subscribed:true but is NOT paid
     const ramGb = Math.max(1, Math.round((Number(d.plan.maxRamPerAgent) || 8192) / 1024)); // plan RAM is MB

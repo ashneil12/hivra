@@ -112,6 +112,17 @@ export type LaunchFitEvidence = {
 const PLAN_UNCHECKED: LaunchFit = { label: "Couldn't check your plan", tone: "neutral" };
 const SERVERS_UNCHECKED: LaunchFit = { label: "Couldn't check your servers", tone: "neutral" };
 
+const NOTHING_RUNNING = { agentCount: 0, usedCpu: 0, usedRam: 0 } as const;
+
+/** The plan Launch plans against. An account with no plan yet is planned as
+ * the Free plan turning it on would give, with nothing running on it; it
+ * keeps `needsActivation`, so the launch still waits for the owner to turn
+ * Free on. A plan whose usage couldn't be read stays unknown. */
+export function planForLaunch(plan: PlanInfo | null): PlanInfo | null {
+  if (!plan?.needsActivation || plan.usage) return plan;
+  return { ...plan, usage: { ...NOTHING_RUNNING } };
+}
+
 export function isPaidPlan(plan: PlanInfo | null): boolean {
   return Boolean(plan?.subscribed && plan.key !== "free");
 }
@@ -220,7 +231,8 @@ export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence
     if (!evidence.planChecked) return null;
     const cloud = hivraCloudFit(subject, evidence.plan);
     const planName = evidence.plan?.name ?? "";
-    if (cloud === "full") return { label: `Fits your ${planName} plan`, tone: "fits" };
+    // A plan not turned on yet isn't the owner's plan: "Fits Free".
+    if (cloud === "full") return { label: evidence.plan?.needsActivation ? `Fits ${planName}` : `Fits your ${planName} plan`, tone: "fits" };
     if (cloud === "without-browser") return { label: `Fits ${planName} without a browser`, tone: "fits" };
     if (subject.ownServer && evidence.targetsLoading) return null;
     if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
@@ -509,15 +521,21 @@ export function costSummary({
   substrate,
   planName,
   modelNote = null,
+  planPending = false,
 }: {
   profileId: LaunchProfileId;
   substrate: LaunchSubstrate;
   planName: string | null;
   /** How model usage is paid, when it isn't set up inside the agent. */
   modelNote?: string | null;
+  /** The account has no plan yet; the Free plan is turned on before launch. */
+  planPending?: boolean;
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
   if (profileId === "omarchy") return "Nothing is bought. It uses a prepared preview computer.";
+  if (substrate === "hivra-cloud" && planPending) {
+    return withModel("No charge. It runs on the Free plan, which you turn on before launching.");
+  }
   if (substrate === "hivra-cloud" && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);
   }

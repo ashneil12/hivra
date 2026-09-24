@@ -148,3 +148,32 @@ export function legacyDashboardAgentBody(input: {
     deployment: input.deployment,
   }));
 }
+
+/** The Codex model launch the welcome form sent through its model-launch
+ * client (useModelLaunch → createAgentModelLaunch): the saved intent, the
+ * key checked and trimmed, and the saved request ID as the receipt. */
+export function legacyCodexModelBody(input: {
+  agentName: string;
+  cpu: number;
+  ram: number;
+  browser: boolean;
+  deployment: AgentDeploymentDestination;
+  llm:
+    | { mode: "byok"; model: string; apiKey: string }
+    | { mode: "managed"; model: string; walletType: "card" | "hermesos" };
+  requestId: string;
+}): Record<string, unknown> {
+  const llm = input.llm.mode === "byok"
+    ? { provider: "venice", mode: "byok", apiKey: input.llm.apiKey.trim(), model: input.llm.model }
+    : { provider: "venice", mode: "managed", model: input.llm.model, walletType: input.llm.walletType };
+  return JSON.parse(JSON.stringify({
+    type: "codex",
+    name: input.agentName.trim(),
+    cpu: input.cpu,
+    ram: input.ram,
+    browser: input.browser,
+    deployment: input.deployment,
+    llm,
+    launchRequestId: input.requestId,
+  }));
+}
