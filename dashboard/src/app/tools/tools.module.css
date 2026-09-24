@@ -1,0 +1,119 @@
+/* Free tools (/tools and /tools/<slug>) on the public editorial shell.
+   Uses only the public-site tokens that PublicSite maps for its scope, so light
+   and dark themes follow the rest of the public site. The calculators under
+   components/tools/ import this module too. */
+
+/* Page layout */
+.intro { max-width:760px; color:var(--text-secondary); font-size:clamp(17px,1.5vw,19px); line-height:1.8; margin-bottom:56px; }
+.intro p+p { margin-top:20px; }
+.toolSection { max-width:1040px; margin-bottom:24px; scroll-margin-top:110px; }
+.narrow { max-width:820px; }
+.actions { display:flex; flex-wrap:wrap; gap:12px; flex-shrink:0; }
+.secondaryButton { min-height:48px; display:inline-flex; align-items:center; justify-content:space-between; gap:24px; padding:15px 20px; border:1px solid var(--etched-border); color:var(--ink-black)!important; text-decoration:none!important; font:12px var(--public-mono,monospace); white-space:nowrap; transition:border-color .2s,color .2s; }
+.secondaryButton:hover { border-color:var(--gold-leaf); color:var(--gold-leaf)!important; }
+.disclaimer { max-width:820px; margin-top:-32px; font:12px/1.7 var(--public-mono,monospace); color:var(--text-muted); }
+.cardMeta { display:inline-flex; gap:12px; align-items:center; font:11px/1.7 var(--public-mono,monospace); color:var(--text-muted); margin-bottom:12px; }
+
+/* Tool panel */
+.tool { border:1px solid var(--etched-border); background:var(--public-surface,var(--vellum-bg)); padding:clamp(20px,4vw,40px); color:var(--text-secondary); }
+.inputs { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:24px 32px; margin-bottom:32px; }
+.inputs + .inputs { margin-top:-8px; }
+.label,.legend { display:block; font:11px/1.6 var(--public-mono,monospace); letter-spacing:.04em; color:var(--text-secondary); margin-bottom:10px; padding:0; }
+.range { width:100%; min-height:32px; accent-color:var(--gold-leaf); }
+.field { width:100%; min-height:44px; padding:10px 12px; font-size:15px; color:var(--ink-black); background:var(--vellum-bg); border:1px solid var(--etched-border); border-radius:0; accent-color:var(--gold-leaf); }
+.field:disabled { opacity:.45; }
+.check { display:flex; align-items:center; gap:10px; min-height:44px; font-size:15px; line-height:1.5; color:var(--text-secondary); cursor:pointer; }
+.check input,.radio input { accent-color:var(--gold-leaf); width:18px; height:18px; flex-shrink:0; margin:0; }
+.fieldset { border:0; margin:0; padding:0; min-width:0; }
+.radios { display:flex; flex-direction:column; gap:2px; }
+.radio { display:flex; align-items:center; gap:10px; min-height:40px; font-size:15px; line-height:1.45; color:var(--text-secondary); cursor:pointer; }
+.radio[data-checked="true"] { color:var(--ink-black); font-weight:600; }
+.hint { font-size:13px; line-height:1.6; color:var(--text-muted); margin-top:8px; }
+.smallButton { min-height:44px; margin-top:10px; padding:0 14px; font:11px var(--public-mono,monospace); color:var(--ink-black); background:transparent; border:1px solid var(--etched-border); cursor:pointer; transition:border-color .2s,color .2s; }
+.smallButton:hover { border-color:var(--gold-leaf); color:var(--gold-leaf); }
+.smallButton[data-active="true"] { background:var(--ink-black); color:var(--vellum-bg); border-color:var(--ink-black); }
+
+/* Results */
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr)); gap:1px; background:var(--etched-border); border:1px solid var(--etched-border); margin-bottom:24px; }
+.stat { background:var(--vellum-bg); padding:18px 20px; }
+.statLabel { display:block; font:11px/1.6 var(--public-mono,monospace); color:var(--text-muted); margin-bottom:6px; }
+.statValue { display:block; font-size:clamp(26px,3vw,34px); line-height:1.15; font-weight:500; letter-spacing:-.04em; color:var(--ink-black); }
+.panel { border:1px solid var(--etched-border); background:var(--vellum-bg); padding:20px 24px; margin-bottom:24px; }
+.panelTitle { display:block; font:11px/1.6 var(--public-mono,monospace); color:var(--text-muted); margin-bottom:12px; }
+.big { font-size:clamp(28px,4vw,44px); line-height:1.12; font-weight:400; letter-spacing:-.045em; color:var(--ink-black); margin:0 0 10px; }
+.big strong { font-weight:600; }
+.list { border-top:1px solid var(--etched-border); margin-bottom:24px; }
+.listRow { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:6px 20px; padding:16px 0; border-bottom:1px solid var(--etched-border); }
+.listName { font-size:18px; font-weight:600; letter-spacing:-.02em; color:var(--ink-black); }
+.listPrice { font:12px var(--public-mono,monospace); color:var(--text-muted); margin-left:10px; }
+.listDetail { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px; font-size:14px; color:var(--text-muted); }
+.badge { font:11px var(--public-mono,monospace); letter-spacing:.04em; white-space:nowrap; }
+.toneGood { color:var(--ink-black); }
+.toneWarn { color:var(--text-secondary); }
+.toneBad { color:var(--gold-leaf); }
+.verdict { font-size:clamp(17px,1.6vw,20px); line-height:1.7; color:var(--ink-black); border-left:2px solid var(--gold-leaf); padding:4px 0 4px 20px; margin:0 0 24px; }
+.note { font-size:13px; line-height:1.75; color:var(--text-muted); margin:0 0 32px; }
+.countdown { font-size:17px; font-weight:600; margin:0; }
+
+/* Bars and gauges */
+.gauge { height:10px; background:var(--etched-border); margin-top:4px; }
+.gaugeFill { height:100%; transition:width .3s ease; }
+.barRow { margin-bottom:16px; }
+.barHead { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:4px 16px; margin-bottom:6px; font-size:14px; color:var(--text-secondary); }
+.barHead strong { font-size:18px; font-weight:600; color:var(--ink-black); }
+.bar { display:flex; height:22px; min-width:4px; overflow:hidden; }
+.bar > span { display:block; min-width:3px; height:100%; }
+.legend2 { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:12px; font-size:12px; color:var(--text-muted); }
+.legend2 span { display:inline-flex; align-items:center; gap:6px; }
+.swatch { width:10px; height:10px; display:inline-block; }
+.segInk { background:var(--ink-black); }
+.segAccent { background:var(--gold-leaf); }
+.segMid { background:var(--text-secondary); }
+.segLight { background:color-mix(in srgb,var(--text-muted) 45%,transparent); }
+.segFaint { background:color-mix(in srgb,var(--text-muted) 20%,transparent); }
+
+/* Tables and code */
+.tableWrap { overflow-x:auto; border:1px solid var(--etched-border); margin-bottom:24px; background:var(--vellum-bg); }
+.tableWrap:focus-visible { outline:2px solid var(--gold-leaf); outline-offset:4px; }
+.table { width:100%; min-width:480px; border-collapse:collapse; font-size:14px; }
+.table th { text-align:left; font:11px/1.6 var(--public-mono,monospace); font-weight:400; color:var(--text-muted); padding:12px 16px; border-bottom:1px solid var(--etched-border); }
+.table td { padding:12px 16px; border-bottom:1px solid var(--etched-border); color:var(--text-secondary); vertical-align:top; }
+.table tr:last-child td { border-bottom:0; }
+.table .num { text-align:right; white-space:nowrap; }
+.table .total td { color:var(--ink-black); font-weight:600; }
+.table .hivra td { color:var(--gold-leaf); font-weight:600; }
+.pre { font:13px/1.6 var(--public-mono,monospace); padding:14px 16px; margin:12px 0 0; background:var(--vellum-bg); color:var(--ink-black); border:1px solid var(--etched-border); overflow-x:auto; white-space:pre; }
+.preWrap { white-space:pre-wrap; margin:0; }
+.modes { border-top:1px solid var(--etched-border); margin-bottom:24px; }
+.mode { padding:20px 0; border-bottom:1px solid var(--etched-border); }
+.modeHead { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:6px 16px; }
+.modeTitle { font-size:18px; font-weight:600; letter-spacing:-.02em; color:var(--ink-black); margin:0; }
+.mode p { font-size:15px; line-height:1.75; margin:10px 0 0; }
+.modeFix { color:var(--ink-black); }
+.h3 { font-size:22px; font-weight:500; letter-spacing:-.03em; color:var(--ink-black); margin:0 0 16px; }
+.inlineRow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:15px; line-height:1.9; margin:0; }
+.inlineNumber { width:76px; min-height:40px; padding:6px 8px; font-size:15px; color:var(--ink-black); background:var(--vellum-bg); border:1px solid var(--etched-border); border-radius:0; }
+.panelHead { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }
+.panelHead .smallButton { margin-top:0; }
+
+/* The tool's own bridge to Hivra */
+.bridge { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:20px 40px; border-top:1px solid var(--etched-border); padding-top:28px; }
+.bridge p { max-width:640px; font-size:15px; line-height:1.75; margin:0; }
+.bridge a:not(.bridgeLink) { color:var(--ink-black); text-decoration:underline; text-decoration-color:var(--gold-leaf); text-underline-offset:4px; }
+.bridgeLink,.primaryButton { min-height:48px; display:inline-flex; align-items:center; justify-content:space-between; gap:24px; white-space:nowrap; padding:15px 20px; background:var(--gold-leaf); color:var(--public-accent-ink,#fff)!important; text-decoration:none!important; font:12px var(--public-mono,monospace); transition:filter .2s; }
+.bridgeLink:hover,.primaryButton:hover { filter:brightness(1.12); }
+
+@media(max-width:700px) {
+  .intro { margin-bottom:40px; }
+  .tool { padding:20px 16px; }
+  .panel { padding:16px; }
+  .disclaimer { margin-top:-24px; }
+  .bridgeLink,.primaryButton,.secondaryButton { width:100%; }
+  .actions { width:100%; margin-top:24px; }
+}
+@media(prefers-reduced-motion:reduce) { .gaugeFill { transition:none; } }
+
+/* The editorial directory spans every fourth card; with an even count the last
+   card would sit alone in a half row, so it spans the row like the first. */
+.directoryBalanced>a:last-child:nth-child(even) { grid-column:1 / -1; display:grid; grid-template-columns:100px minmax(0,.85fr) minmax(0,1fr); gap:40px; align-items:start; }
+@media(max-width:700px) { .directoryBalanced>a:last-child:nth-child(even) { display:block; } }

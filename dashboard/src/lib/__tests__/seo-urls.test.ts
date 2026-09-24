@@ -1,4 +1,4 @@
-import { getSiteUrls, SITE_URL } from "../seo-urls";
+import { CUTOVER_LAST_MODIFIED, getSiteUrls, SITE_URL } from "../seo-urls";
 
 describe("seo urls", () => {
   it("includes the token verification page in the sitemap", () => {
@@ -49,6 +49,17 @@ describe("seo urls", () => {
     }
   });
 
+  // Crawlers refetch on a newer lastmod, so pages rewritten for the cutover
+  // must carry at least the cutover date.
+  it("dates the pages the cutover rewrote no earlier than the cutover", () => {
+    const urls = getSiteUrls();
+    for (const path of ["", "/blog", "/privacy", "/features", "/compare", "/pricing", "/agents", "/tools"]) {
+      const entry = urls.find((u) => u.url === `${SITE_URL}${path}`);
+      expect({ path, defined: Boolean(entry) }).toEqual({ path, defined: true });
+      expect(new Date(entry!.lastModified as Date).getTime()).toBeGreaterThanOrEqual(CUTOVER_LAST_MODIFIED.getTime());
+    }
+  });
+
   it("keeps the changelog HTML page distinct from its RSS feed entry", () => {
     const urls = getSiteUrls();
     const htmlPage = urls.find((u) => u.url === `${SITE_URL}/changelog`);
@@ -57,5 +68,53 @@ describe("seo urls", () => {
     // Both must be present and remain separate sitemap entries.
     expect(htmlPage).toBeDefined();
     expect(rssFeed).toBeDefined();
+  });
+  it("dates the rewritten /features and /compare pages to the 2026-09-24 truth pass so crawlers refetch them", () => {
+    const urls = getSiteUrls();
+    const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
+    // 2 hubs + 6 feature pages + 5 comparison pages.
+    expect(rewritten.map((u) => u.url.slice(SITE_URL.length)).sort()).toEqual(
+      [
+        "/compare",
+        "/compare/ai-agent-hosting-alternatives",
+        "/compare/openclaw-to-hermes",
+        "/compare/vs-railway",
+        "/compare/vs-render",
+        "/compare/vs-self-hosted",
+        "/features",
+        "/features/browser-automation",
+        "/features/multi-agent",
+        "/features/no-docker-hosting",
+        "/features/openclaw-alternative",
+        "/features/persistent-memory",
+        "/features/scheduled-tasks",
+      ].sort(),
+    );
+    for (const entry of rewritten) {
+      expect([entry.url, new Date(entry.lastModified as Date).toISOString().slice(0, 10)]).toEqual([entry.url, "2026-09-24"]);
+    }
+  });
+
+  it("keeps every page the retired site had indexed: /pricing, /agents and /tools with their children", () => {
+    const urls = new Set(getSiteUrls().map((entry) => entry.url));
+    for (const path of [
+      "/pricing",
+      "/agents",
+      "/agents/claude-code",
+      "/agents/codex",
+      "/agents/hermes",
+      "/agents/openclaw",
+      "/agents/agent-zero",
+      "/agents/aeon",
+      "/tools",
+      "/tools/agent-survival-check",
+      "/tools/ai-agent-hosting-cost-calculator",
+      "/tools/claude-code-limit-reset-calculator",
+      "/tools/claude-code-plan-calculator",
+      "/blog/keep-claude-code-running-24-7",
+      "/blog/run-codex-24-7-in-the-cloud",
+    ]) {
+      expect(urls.has(`${SITE_URL}${path}`)).toBe(true);
+    }
   });
 });

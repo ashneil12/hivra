@@ -1,5 +1,7 @@
 import type { MetadataRoute } from "next";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
+import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
 export const SITE_URL = "https://hivra.cloud";
@@ -9,30 +11,42 @@ export const SITE_URL = "https://hivra.cloud";
 // carry their own real per-article dates below and are NOT tied to this.
 const CORE_PAGES_LAST_MODIFIED = new Date("2026-07-07");
 
+// The /features and /compare pages (hubs and details) were rewritten in the
+// 2026-09-24 truth pass: speed, backup, import and price claims removed, FAQs
+// changed. Crawlers only recrawl on a newer lastmod, so these must carry the
+// rewrite date. If the cutover ships well after this date, move it to the
+// Promote date: Google compares lastmod with its last crawl of production.
+const FEATURE_COMPARE_LAST_MODIFIED = new Date("2026-09-24");
+
+// Pages whose content changed for the cutover: the homepage (title, copy and
+// JSON-LD), the blog index (restored articles) and the privacy policy (Google
+// Analytics as a processor). Same rule: move to the Promote date if it slips.
+export const CUTOVER_LAST_MODIFIED = new Date("2026-09-24");
+
 export function getSiteUrls(): MetadataRoute.Sitemap {
   // Core public pages
   const corePages: MetadataRoute.Sitemap = [
     {
       url: SITE_URL,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: CUTOVER_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 1.0,
     },
     {
       url: `${SITE_URL}/blog`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: CUTOVER_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 0.9,
     },
     {
       url: `${SITE_URL}/features`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: FEATURE_COMPARE_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 0.9,
     },
     {
       url: `${SITE_URL}/compare`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: FEATURE_COMPARE_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 0.8,
     },
@@ -85,7 +99,7 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     },
     {
       url: `${SITE_URL}/privacy`,
-      lastModified: new Date("2026-03-01"),
+      lastModified: CUTOVER_LAST_MODIFIED,
       changeFrequency: "monthly",
       priority: 0.3,
     },
@@ -109,7 +123,7 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
 
   const featurePages: MetadataRoute.Sitemap = featureSlugs.map((slug) => ({
     url: `${SITE_URL}/features/${slug}`,
-    lastModified: new Date("2026-04-01"),
+    lastModified: FEATURE_COMPARE_LAST_MODIFIED,
     changeFrequency: "monthly" as const,
     priority: 0.8,
   }));
@@ -125,7 +139,7 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
 
   const comparePages: MetadataRoute.Sitemap = compareSlugs.map((slug) => ({
     url: `${SITE_URL}/compare/${slug}`,
-    lastModified: new Date("2026-04-01"),
+    lastModified: FEATURE_COMPARE_LAST_MODIFIED,
     changeFrequency: "monthly" as const,
     priority: 0.75,
   }));
@@ -138,5 +152,33 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
-  return [...corePages, ...featurePages, ...comparePages, ...blogPages];
+  // Pricing, agent and tool pages were indexed on the retired site and were
+  // restored on 2026-09-24 so the cutover does not drop them.
+  const restoredPagesLastModified = new Date("2026-09-24");
+  const pricingPage: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/pricing`, lastModified: restoredPagesLastModified, changeFrequency: "weekly", priority: 0.9 },
+  ];
+
+  const agentPagesLastModified = new Date(AGENT_PAGES_LAST_MODIFIED);
+  const agentPages: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/agents`, lastModified: agentPagesLastModified, changeFrequency: "weekly", priority: 0.9 },
+    ...AGENT_SEO_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/agents/${slug}`,
+      lastModified: agentPagesLastModified,
+      changeFrequency: "weekly" as const,
+      priority: 0.85,
+    })),
+  ];
+
+  const toolPages: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/tools`, lastModified: restoredPagesLastModified, changeFrequency: "monthly", priority: 0.8 },
+    ...TOOL_ENTRIES.map((entry) => ({
+      url: `${SITE_URL}/tools/${entry.slug}`,
+      lastModified: restoredPagesLastModified,
+      changeFrequency: "monthly" as const,
+      priority: 0.8,
+    })),
+  ];
+
+  return [...corePages, ...pricingPage, ...agentPages, ...toolPages, ...featurePages, ...comparePages, ...blogPages];
 }
