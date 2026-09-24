@@ -2,7 +2,22 @@ import PublicSite from "@/components/public-site/PublicSite";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import { CookiePreferencesButton } from "@/components/consent/CookiePreferencesButton";
 
-const LAST_UPDATED = "September 23, 2026";
+import { buildWebsiteMetadata } from "@/lib/metadata";
+
+// Self-referencing canonical: without this the page inherits the root
+// layout's canonical (the homepage) and search engines treat it as a
+// duplicate of /.
+export const metadata = {
+  title: "Privacy Policy",
+  description: "How Hivra collects, uses, and protects your data.",
+  ...buildWebsiteMetadata({
+    path: "/privacy",
+    title: "Privacy Policy",
+    description: "How Hivra collects, uses, and protects your data.",
+  }),
+};
+
+const LAST_UPDATED = "September 24, 2026";
 
 export default function PrivacyPage() {
   return (<PublicSite className={styles.page} data-page="privacy">
@@ -39,6 +54,7 @@ export default function PrivacyPage() {
             <li><strong>Vercel:</strong> hosting and delivery of this dashboard (United States and global edge).</li>
             <li><strong>Cloudflare:</strong> DNS, network routing, and secure tunneling.</li>
             <li><strong>PostHog:</strong> product analytics and session replay (United States).</li>
+            <li><strong>Google (Google Analytics and Google Tag Manager):</strong> website traffic analytics (United States). They follow your analytics cookie choice: where the law requires consent they load only after you accept, and you can turn them off at any time.</li>
             <li><strong>Stripe:</strong> payment processing; Stripe handles card numbers directly and we receive only limited metadata.</li>
             <li><strong>FingerprintJS:</strong> device signals used only for fraud and abuse prevention.</li>
             <li><strong>Managed inference and wallet partners:</strong> if you opt into managed AI inference or token and wallet features, Venice (inference) and Bankr (wallet and on-chain payments) process the data needed for those features.</li>
@@ -70,7 +86,7 @@ export default function PrivacyPage() {
           <p>Depending on where you live (including the UK and EU), you have the right to access, correct, delete, or export your personal data, and to restrict or object to certain processing or withdraw consent. To exercise any of these rights, contact us using the details below; we will respond within the timeframe required by applicable law. You also have the right to complain to your local data-protection authority, such as the Information Commissioner&apos;s Office (ICO) in the UK.</p>
 
           <h2 className="serif">9. Cookies, Analytics, and Session Replay</h2>
-          <p>We use cookies and similar technologies for essential functionality and, with your consent where the law requires it, for product analytics and session replay. Session replay masks input fields by default and is disabled on sensitive pages, including sign-in, billing, wallet, settings, and your agent chat. You can change your choice at any time: <CookiePreferencesButton />. Strictly necessary cookies cannot be turned off. You can also control non-essential cookies through your browser settings.</p>
+          <p>We use cookies and similar technologies for essential functionality and, with your consent where the law requires it, for product analytics, website traffic analytics (Google Analytics), and session replay. Session replay masks input fields by default and is disabled on sensitive pages, including sign-in, billing, wallet, settings, and your agent chat. You can change your choice at any time: <CookiePreferencesButton />. Strictly necessary cookies cannot be turned off. You can also control non-essential cookies through your browser settings.</p>
 
           <h2 className="serif">10. Data Security</h2>
           <p>All sensitive data, including your Third-Party LLM API keys, is encrypted in transit and at rest. Your agent environments are isolated. While we employ rigorous security hardening to protect your data, no method of transmission over the Internet is 100% secure.</p>
