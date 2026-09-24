@@ -144,7 +144,7 @@ describe("preflightGvisorTarget", () => {
       writeFileSync(join(stubs, "runsc"), "#!/bin/bash\nprintf 'runsc version release-20250101.0\\n'\nsleep 0.3\nprintf 'spec: 1.1.0\\n'\n");
       chmodSync(join(stubs, "runsc"), 0o755);
       const run = spawnSync("bash", ["--noprofile", "--norc", "-c", `set -euo pipefail\n${versionLine}\nprintf '%s' "$runsc_version"`],
-        { encoding: "utf8", timeout: 10_000, env: { PATH: `${stubs}:/usr/bin:/bin`, LC_ALL: "C" } });
+        { encoding: "utf8", timeout: 10_000, env: { PATH: `${stubs}:/usr/bin:/bin`, LC_ALL: "C", NODE_ENV: "test" } });
       expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
       expect(Buffer.from(run.stdout, "base64").toString("utf8")).toBe("runsc version release-20250101.0\n");
     } finally {
