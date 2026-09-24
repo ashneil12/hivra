@@ -30,6 +30,11 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
   runProxmoxHostScript: (...args: unknown[]) => mockRunScript(...args),
 }));
 
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { hasHostAdministratorAuthority, hasRuntimeHostAuthority } from "../host-authority";
 import type { HostDiscoverySnapshot } from "../host-discovery-contracts";
 import { preflightGvisorTarget } from "../gvisor-target";
@@ -120,6 +125,31 @@ describe("preflightGvisorTarget", () => {
       .rejects.toMatchObject({ code: "unsupported", message: expect.stringContaining("root or passwordless sudo") });
     expect(mockBeginPreflight).not.toHaveBeenCalled();
     expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
+  // runsc prints its version in two writes. The check read only the first
+  // line with `head -n 1`, which exits as soon as it has it; if runsc's second
+  // write came after that, runsc died of SIGPIPE and, under pipefail, the
+  // whole strict check failed. Seen on disposable servers as a check that
+  // failed right after Prepare and passed when run again.
+  it("reads runsc's version without failing when runsc writes after the first line", async () => {
+    mockLoadConnection.mockResolvedValue(connectionAs("root"));
+    mockLoadSnapshot.mockResolvedValue(snapshot(1));
+    await expect(preflightGvisorTarget(USER, CONNECTION, BUNDLE)).rejects.toMatchObject({ code: "remote_failed" });
+    const script = String(mockRunScript.mock.calls[0][0]);
+    const versionLine = script.split("\n").find(line => line.startsWith("runsc_version="));
+    expect(versionLine).toBeDefined();
+    const stubs = mkdtempSync(join(tmpdir(), "hivra-runsc-"));
+    try {
+      writeFileSync(join(stubs, "runsc"), "#!/bin/bash\nprintf 'runsc version release-20250101.0\\n'\nsleep 0.3\nprintf 'spec: 1.1.0\\n'\n");
+      chmodSync(join(stubs, "runsc"), 0o755);
+      const run = spawnSync("bash", ["--noprofile", "--norc", "-c", `set -euo pipefail\n${versionLine}\nprintf '%s' "$runsc_version"`],
+        { encoding: "utf8", timeout: 10_000, env: { PATH: `${stubs}:/usr/bin:/bin`, LC_ALL: "C" } });
+      expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
+      expect(Buffer.from(run.stdout, "base64").toString("utf8")).toBe("runsc version release-20250101.0\n");
+    } finally {
+      rmSync(stubs, { recursive: true, force: true });
+    }
   });
 
   it("asks for a new inspection when there is no current one", async () => {

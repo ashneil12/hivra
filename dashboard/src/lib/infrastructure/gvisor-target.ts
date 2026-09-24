@@ -68,7 +68,9 @@ cpu="$(getconf _NPROCESSORS_ONLN)"
 memory="$(awk '$1=="MemTotal:" {printf "%.0f",$2/1024}' /proc/meminfo)"
 memory_available="$(awk '$1=="MemAvailable:" {printf "%.0f",$2/1024}' /proc/meminfo)"
 storage="$(df -B1 -P /var/lib/docker | awk 'NR==2 {print $2" "$4}')"
-runsc_version="$(runsc --version | head -n 1 | base64 | tr -d '\\r\\n')"
+# sed reads to the end: head -n 1 would exit after the first line, and
+# runsc's later write would then die of SIGPIPE and fail this check.
+runsc_version="$(runsc --version | sed -n 1p | base64 | tr -d '\\r\\n')"
 printf '${MARKER}{"adapterVersion":"${HIVRA_GVISOR_ADAPTER_VERSION}","adapterSha256":"${expectedAdapterSha}","bundleSha256":"${expectedBundleSha}","runscSha256":"%s","cpu":%s,"memoryMb":%s,"memoryAvailableMb":%s,"storageTotalBytes":%s,"storageAvailableBytes":%s,"runscVersionBase64":"%s","image":"${HIVRA_GVISOR_IMAGE}"}\\n' "$runsc_sha" "$cpu" "$memory" "$memory_available" \
   "$(printf '%s' "$storage" | awk '{print $1}')" "$(printf '%s' "$storage" | awk '{print $2}')" "$runsc_version"
 `;
