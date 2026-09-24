@@ -43,12 +43,12 @@ import { formatDigitalOceanBalance, listManagedSessions } from "@/lib/hivra/mana
 import { useDigitalOceanBalance } from "@/components/infrastructure/useDigitalOceanBalance";
 import {
   digitalOceanHarnessFor,
+  digitalOceanLaunchVaultKeyId,
   digitalOceanModelProblem,
+  digitalOceanModelSummary,
   digitalOceanSizeFor,
   digitalOceanSizeLabel,
   digitalOceanTargetRuns,
-  digitalOceanVendorKey,
-  effectiveDigitalOceanModelMode,
 } from "@/lib/launch/digitalocean-launch";
 import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
 import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
@@ -1558,7 +1558,7 @@ export function LaunchJourney() {
     && draft.modelAccess.source === "recommended"
     && recommendedModelAccessMode(draft.profileId, creditsBalance, selfHosted) === null);
   const modelProblem = digitalOceanLane
-    ? digitalOceanHarness ? digitalOceanModelProblem(digitalOceanHarness, draft.digitalOcean, currentPastedKey) : null
+    ? digitalOceanHarness ? digitalOceanModelProblem(digitalOceanHarness, draft.digitalOcean, currentPastedKey, savedKeys) : null
     : !draft.profileId || !modelAccessShown
     ? null
     : modelDefaultPending || (draft.modelAccess.mode === "credits" && creditsBalance.state === "loading")
@@ -1571,9 +1571,7 @@ export function LaunchJourney() {
       });
   const keyProviders = draft.profileId ? apiKeyProviders(draft.profileId, savedKeys) : [];
   const modelSummary = digitalOceanLane && digitalOceanHarness
-    ? effectiveDigitalOceanModelMode(digitalOceanHarness, draft.digitalOcean) === "vendor"
-      ? `Your ${digitalOceanVendorKey(digitalOceanHarness)}, sent to DigitalOcean for this sandbox`
-      : `DigitalOcean Inference · ${draft.digitalOcean.model || "no model chosen"}, billed to your team`
+    ? digitalOceanModelSummary(digitalOceanHarness, draft.digitalOcean, savedKeys)
     : draft.profileId
     ? modelAccessSummary(draft.profileId, draft.modelAccess, { name: draft.name, balance: creditsBalance, savedKeys })
     : null;
@@ -1583,8 +1581,11 @@ export function LaunchJourney() {
   const hermesMemoryKey = hermes ? savedMemoryKey(savedKeys) : null;
   const resumeMode = launchResumeModeFor(draft);
   // A resend that needs the pasted key again (it isn't kept across a reload).
-  const resendNeedsKey = draft.launchState === "uncertain" && resumeMode === "resend"
-    && draft.modelAccess.mode === "api-key" && draft.modelAccess.keySource === "paste" && !currentPastedKey.trim();
+  // A DigitalOcean launch always sends a key: the confirmed saved one, or this.
+  const resendNeedsKey = draft.launchState === "uncertain" && resumeMode === "resend" && !currentPastedKey.trim()
+    && (digitalOceanLane
+      ? !digitalOceanLaunchVaultKeyId(draft)
+      : draft.modelAccess.mode === "api-key" && draft.modelAccess.keySource === "paste");
 
   const updateDraft = (change: Partial<LaunchDraft>) => setDraft(current => current ? { ...current, ...change } : current);
   const updateModelAccess = (change: Partial<LaunchModelAccess>) => setDraft(current => current
@@ -1914,9 +1915,10 @@ export function LaunchJourney() {
     // A pasted key the owner saved is referred to from then on, so a resumed
     // or corrected launch never needs it typed again.
     let savedKeyId: string | null = null;
-    const withSavedKey = <T extends LaunchDraft>(next: T): T => savedKeyId
-      ? { ...next, modelAccess: { ...next.modelAccess, keySource: "saved", vaultKeyId: savedKeyId, sendSavedKey: true } }
-      : next;
+    const withSavedKey = <T extends LaunchDraft>(next: T): T => !savedKeyId ? next
+      : next.capacity.mode === "digitalocean"
+        ? { ...next, digitalOcean: { ...next.digitalOcean, keySource: "saved", vaultKeyId: savedKeyId, sendSavedKey: true, saveKey: false } }
+        : { ...next, modelAccess: { ...next.modelAccess, keySource: "saved", vaultKeyId: savedKeyId, sendSavedKey: true } };
     try {
       const created = await submitLaunchDraft(submitting, submissionDeployment, {
         apiKey: currentPastedKey,
@@ -2424,6 +2426,7 @@ export function LaunchJourney() {
                 onChange={updateDigitalOcean}
                 pastedKey={currentPastedKey}
                 onPastedKeyChange={setCurrentPastedKey}
+                savedKeys={savedKeys}
                 problem={modelProblem}
                 balance={digitalOceanBalance}
               />

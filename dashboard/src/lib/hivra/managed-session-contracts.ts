@@ -17,15 +17,28 @@ const ModelKeySchema = z
   .refine((value) => !/[\s\u0000-\u001f\u007f]/.test(value), { message: "The model API key cannot contain spaces" });
 
 export const ManagedSessionModelSchema = z.discriminatedUnion("mode", [
-  // The vendor key for the harness: Anthropic for Claude Code, OpenAI for Codex.
-  z.object({ mode: z.literal("vendor"), apiKey: ModelKeySchema }).strict(),
+  // The vendor key for the harness: Anthropic for Claude Code, OpenAI for
+  // Codex. Either pasted for this launch, or a key the owner saved in their
+  // Vault, named by id: the server reads that one for the owner only.
+  z.object({
+    mode: z.literal("vendor"),
+    apiKey: ModelKeySchema.optional(),
+    vaultKeyId: z.string().uuid("Choose a key saved in your Vault").optional(),
+  }).strict(),
   // DigitalOcean Serverless Inference, billed to the same DigitalOcean team.
   z.object({
     mode: z.literal("digitalocean-inference"),
     apiKey: ModelKeySchema,
     model: z.string().trim().regex(/^[A-Za-z0-9._:/-]{1,128}$/, "Enter a DigitalOcean model slug"),
   }).strict(),
-]);
+]).superRefine((model, context) => {
+  if (model.mode === "vendor" && (model.apiKey === undefined) === (model.vaultKeyId === undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Choose either a saved Vault key or a pasted key for this launch.",
+    });
+  }
+});
 
 export const ManagedSessionLaunchSchema = z.object({
   launchRequestId: z.string().uuid(),
@@ -117,10 +130,16 @@ export function digitalOceanSandboxResources(size: string): { cpu: number; ram: 
   return match ? { cpu: Number(match[1]), ram: Number(match[2]) } : null;
 }
 
-export const DIGITALOCEAN_HARNESS_LABELS: Record<DigitalOceanHarness, { name: string; vendorKey: string | null }> = {
-  "claude-code": { name: "Claude Code", vendorKey: "Anthropic API key" },
-  codex: { name: "Codex", vendorKey: "OpenAI API key" },
-  hermes: { name: "Hermes", vendorKey: null },
+/** Each harness's name, the provider key it signs in with, and the Vault
+ * provider that key is saved under (Hermes takes DigitalOcean Inference only). */
+export const DIGITALOCEAN_HARNESS_LABELS: Record<DigitalOceanHarness, {
+  name: string;
+  vendorKey: string | null;
+  vaultProvider: "anthropic" | "openai" | null;
+}> = {
+  "claude-code": { name: "Claude Code", vendorKey: "Anthropic API key", vaultProvider: "anthropic" },
+  codex: { name: "Codex", vendorKey: "OpenAI API key", vaultProvider: "openai" },
+  hermes: { name: "Hermes", vendorKey: null, vaultProvider: null },
 };
 
 export function managedSessionPauseCopy(reason: string | null): string {
