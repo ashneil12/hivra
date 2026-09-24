@@ -8,6 +8,7 @@ import {
   shouldPauseInteractiveBackground,
 } from './interactive-background-config';
 import { clientLog } from '@/lib/client/logger';
+import { isDesktopShell } from '@/lib/desktop-shell';
 
 interface InteractiveBackgroundProps {
   densityMultiplier?: number;
@@ -130,7 +131,8 @@ function InteractiveBackground({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    // A desktop app hides the canvas (globals.css); do not animate it unseen.
+    if (!canvas || isDesktopShell()) return;
 
     const ctx = getCanvasRenderingContext(canvas);
     if (!ctx) return;
@@ -310,6 +312,7 @@ function InteractiveBackground({
         zIndex: 0
       }}
       aria-hidden="true"
+      data-web-chrome
     />
   );
 }

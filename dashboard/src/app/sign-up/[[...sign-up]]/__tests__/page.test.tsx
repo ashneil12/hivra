@@ -137,5 +137,10 @@ describe("SignUpPage", () => {
     expect(variables).toMatchObject({ colorBackground: "var(--bg-surface)", colorPrimaryForeground: "var(--vellum-bg)" });
     expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
   });
+
+  it("marks the funnel bar as web chrome that a desktop app replaces", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole("link", { name: "Hivra home" }).closest("header")).toHaveAttribute("data-web-chrome");
+  });
 });
 

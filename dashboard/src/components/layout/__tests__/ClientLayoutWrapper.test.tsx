@@ -77,12 +77,15 @@ describe('ClientLayoutWrapper', () => {
     delete host.webkit;
   });
 
-  it('uses native chrome only when both injected capabilities are present, with one metadata source', () => {
+  it('leaves web chrome to any desktop app, but opens the metadata bridge only with both injected capabilities', () => {
     const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown; webkit?: unknown };
     host.__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };
     const view = render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
-    expect(screen.getByTestId('dashboard-sidebar-chrome')).toBeInTheDocument();
-    expect(screen.getByTestId('dashboard-mobile-header')).toBeInTheDocument();
+    // The marker alone is a presentation signal: the app draws its own chrome...
+    expect(screen.queryByTestId('dashboard-sidebar-chrome')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
+    // ...but it never enables the bridge or loads inventory for it.
+    expect(useDashboardResources).not.toHaveBeenCalled();
 
     const postMessage = jest.fn();
     host.webkit = { messageHandlers: { hivraWorkspace: { postMessage } } };
@@ -119,6 +122,47 @@ describe('ClientLayoutWrapper', () => {
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agents');
     view.rerender(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
     expect(screen.queryByRole('region', { name: 'Account' })).not.toBeInTheDocument();
+  });
+
+  it('leaves the sidebar, phone chrome and environment banner to a desktop app identified only by user agent', () => {
+    process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV = 'canary';
+    Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 Chrome/140.0 HivraDesktop/0.1.0', configurable: true });
+    try {
+      render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.queryByTestId('dashboard-sidebar-chrome')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('pwa-bottom-navigation')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('environment-banner')).not.toBeInTheDocument();
+      expect(screen.getByRole('main')).not.toHaveClass('hermes-pwa-bottom-nav-offset');
+      expect(screen.getByTestId('test-content')).toBeInTheDocument();
+      // A user agent is not a capability: no bridge, no inventory for it.
+      expect(useDashboardResources).not.toHaveBeenCalled();
+    } finally {
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    }
+  });
+
+  it('keeps account and sign-out reachable on Settings in a desktop app without the web sidebar', () => {
+    (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+    Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 AppleWebKit/605.1.15 HivraMac/0.2.1', configurable: true });
+    try {
+      render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
+      const account = within(screen.getByRole('region', { name: 'Account' }));
+      expect(account.getByTestId('mock-user-button')).toBeInTheDocument();
+      expect(screen.getAllByTestId('mock-user-button')).toHaveLength(1);
+    } finally {
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    }
+  });
+
+  it('marks every piece of server-rendered web chrome so a desktop app can hide it before hydration', () => {
+    process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV = 'canary';
+    render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+    for (const testId of ['dashboard-sidebar-chrome', 'dashboard-mobile-header', 'pwa-bottom-navigation', 'environment-banner']) {
+      expect(screen.getByTestId(testId)).toHaveAttribute('data-web-chrome');
+    }
+    expect(screen.getByRole('main')).not.toHaveAttribute('data-web-chrome');
+    expect(screen.getByTestId('test-content').closest('[data-web-chrome]')).toBeNull();
   });
 
   it('renders children and sidebar correctly', () => {

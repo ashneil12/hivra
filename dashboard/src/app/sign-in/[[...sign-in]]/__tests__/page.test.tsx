@@ -163,4 +163,10 @@ describe("SignInPage", () => {
     expect(elements.formButtonPrimary).toMatch(/text-\[var\(--vellum-bg\)\].*text-center flex justify-center/);
   });
 
+  it("marks the funnel bar as web chrome that a desktop app replaces", async () => {
+    render(await SignInPage({ searchParams: Promise.resolve({}) }));
+    const bar = screen.getByRole("link", { name: "Hivra home" }).closest("header");
+    expect(bar).toHaveAttribute("data-web-chrome");
+  });
+
 });

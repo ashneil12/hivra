@@ -125,4 +125,26 @@ describe('InteractiveBackground', () => {
     window.dispatchEvent(new Event('resize'));
     expect(random.mock.calls.length).toBeGreaterThan(seeded);
   });
+
+  it('is web chrome a desktop app hides, and does not animate there unseen', () => {
+    mockCanvasContext();
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: jest.fn(() => ({ matches: false })),
+    });
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) HivraMac/0.2.1',
+    });
+    const addListener = jest.spyOn(window, 'addEventListener');
+    try {
+      const { container } = render(<InteractiveBackground />);
+      expect(container.querySelector('canvas')).toHaveAttribute('data-web-chrome');
+      expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
+      expect(window.requestAnimationFrame).not.toHaveBeenCalled();
+      expect(addListener).not.toHaveBeenCalledWith('mousemove', expect.any(Function));
+    } finally {
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    }
+  });
 });

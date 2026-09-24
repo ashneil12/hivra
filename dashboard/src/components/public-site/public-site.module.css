@@ -79,4 +79,7 @@
 .funnelTools{display:flex;align-items:center;gap:8px;min-width:0}
 .funnelTools>div>button{min-height:44px}
 .funnelPage{min-height:calc(100dvh - 56px - env(safe-area-inset-top,0px))}
+/* Desktop app: the brand and bar are hidden (FunnelHeader), so only the tools row remains and the page takes the full height. */
+:global(:root[data-shell="desktop"]) .funnelBar{min-height:0;padding-top:8px;justify-content:flex-end;border-bottom:0;background:transparent}
+:global(:root[data-shell="desktop"]) .funnelPage{min-height:100dvh}
 @media(max-width:480px){.funnelPage{padding:16px!important}.funnelCard{padding:20px!important}}

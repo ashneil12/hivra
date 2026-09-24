@@ -11,6 +11,7 @@ import { PostHogProvider } from "./providers/PostHogProvider";
 import { CookieConsentBanner } from "@/components/consent/CookieConsentBanner";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
 import { HERMES_RUNTIME_CONFIG_BOOTSTRAP } from "@/lib/client/runtime-config-bootstrap";
+import { DESKTOP_SHELL_BOOTSTRAP } from "@/lib/desktop-shell";
 import { LOCALE_COOKIE_NAME, localeToHtmlLang, resolveRequestLocale } from "@/lib/i18n";
 import { SITE_URL } from "@/lib/seo-urls";
 import { OG_IMAGE } from "@/lib/og-meta";
@@ -159,6 +160,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={localeToHtmlLang(locale)} data-scroll-behavior="smooth" suppressHydrationWarning className={`${outfit.variable} ${playfair.variable} ${spaceMono.variable} ${spaceGrotesk.variable}`}>
       <head>
+        {/* First in <head>: marks a desktop app's web view before anything paints. */}
+        <script id="hivra-desktop-shell" dangerouslySetInnerHTML={{ __html: DESKTOP_SHELL_BOOTSTRAP }} />
         {!selfHosted ? (
           <>
             <link rel="preconnect" href="https://clerk.hermesos.cloud" crossOrigin="anonymous" />
@@ -178,7 +181,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ServiceWorkerRegistration />
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <PreloadHandler />
-          <div className="vellum-texture"></div>
+          <div className="vellum-texture" data-web-chrome></div>
           {selfHosted ? children : (
             <PostHogProvider>
               <OpsTelemetryProvider releaseFingerprint={CLIENT_RELEASE_FINGERPRINT}>

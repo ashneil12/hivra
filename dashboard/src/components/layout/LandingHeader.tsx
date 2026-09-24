@@ -68,11 +68,13 @@ export function HomeOrDashboardLink({ className, style }: { className?: string; 
  */
 export function FunnelHeader({ trailing, homeHref }: { trailing?: ReactNode; homeHref?: string }) {
   const brand = <><HivraMark size={28} /><span>Hivra</span></>;
+  // A desktop app already shows the brand and owns the way home, so there the
+  // bar is web chrome. Tools such as the language switcher stay usable.
   return (
-    <header className={styles.funnelBar}>
+    <header className={styles.funnelBar} data-web-chrome={trailing ? undefined : ""}>
       {homeHref
-        ? <Link href={homeHref} aria-label="Hivra home" className={styles.brand}>{brand}</Link>
-        : <span className={styles.brand}>{brand}</span>}
+        ? <Link href={homeHref} aria-label="Hivra home" className={styles.brand} data-web-chrome>{brand}</Link>
+        : <span className={styles.brand} data-web-chrome>{brand}</span>}
       {trailing ? <div className={styles.funnelTools}>{trailing}</div> : null}
     </header>
   );

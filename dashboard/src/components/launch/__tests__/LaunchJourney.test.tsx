@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { LaunchJourney } from "../LaunchJourney";
 
@@ -96,6 +96,13 @@ describe("LaunchJourney", () => {
     expect(customize).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Reserved CPU")).toBeVisible();
     expect(screen.getByLabelText("Maximum memory")).toBeVisible();
+  });
+
+  it("marks its Launch label as web chrome, since a desktop app's toolbar already names Launch", async () => {
+    renderAtCapacity();
+    await screen.findByRole("heading", { name: "Ubuntu Desktop — here's the plan" });
+    const label = within(screen.getByTestId("launch-journey").querySelector("header")!).getByText("Launch");
+    expect(label).toHaveAttribute("data-web-chrome");
   });
 
   it("describes reserved memory without VM jargon", async () => {

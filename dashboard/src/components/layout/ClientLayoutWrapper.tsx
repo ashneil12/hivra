@@ -12,6 +12,7 @@ import { WorkspaceModalLayerProvider } from '@/components/workspace/WorkspaceMod
 import InteractiveBackground from '@/components/InteractiveBackground';
 import { useWorkspaceViewport } from './useWorkspaceViewport';
 import { NativeWorkspaceProvider, useNativeWorkspace, useNativeWorkspaceEnabled } from './NativeWorkspaceBridge';
+import { useDesktopShell } from './useDesktopShell';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -60,6 +61,9 @@ export function ClientLayoutWrapper({
   const [attention, setAttention] = useState<{ owner: string; count: number } | null>(null);
   const pathname = usePathname();
   const nativeWorkspace = useNativeWorkspaceEnabled();
+  // A desktop app draws its own sidebar, navigation and environment badge.
+  // Presentation only: the metadata bridge keeps its own capability check.
+  const desktopShell = useDesktopShell();
   const { keyboardOpen } = useWorkspaceViewport();
   const owner = resourceOwnerKey ?? userEmail;
   const handleActiveResourceKindChange = useCallback((kind: 'agent' | 'computer' | null) => {
@@ -76,12 +80,12 @@ export function ClientLayoutWrapper({
   const isInstancePage = pathname?.startsWith('/dashboard/instances/');
   const isWorkspacePage = pathname === '/dashboard/workspace' || /^\/dashboard\/agent\/[^/]+$/.test(pathname ?? '');
   // Runtime pages carry identity and back in their own resource bar.
-  const showMobileHeader = !nativeWorkspace && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
-  const showPwaBottomNavigation = !nativeWorkspace && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
+  const showMobileHeader = !desktopShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
+  const showPwaBottomNavigation = !desktopShell && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
   // The canvas loop runs behind opaque runtime surfaces for no visible gain.
   const showInteractiveBackground = !pathname?.includes('/chat') && !isWorkspacePage && !isInstancePage;
   const deployEnv = process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV?.trim();
-  const showEnvironmentBanner = Boolean(deployEnv && deployEnv.toLowerCase() !== 'production');
+  const showEnvironmentBanner = !desktopShell && Boolean(deployEnv && deployEnv.toLowerCase() !== 'production');
   const environmentLabel = deployEnv?.toUpperCase();
 
   return (
@@ -97,7 +101,7 @@ export function ClientLayoutWrapper({
         {/* First in source order so screen readers and Tab reach it before the
             page; it is absolutely positioned, so layout is unchanged. */}
         {showMobileHeader && (
-          <header data-testid="dashboard-mobile-header" className={styles.mobileHeader}>
+          <header data-testid="dashboard-mobile-header" data-web-chrome className={styles.mobileHeader}>
             <Link href="/dashboard" aria-label="Hivra home" className={styles.brand}>
               <span className={styles.brandMark} aria-hidden="true">H.</span>
               <span className={styles.brandName}>Hivra</span>
@@ -117,8 +121,9 @@ export function ClientLayoutWrapper({
         )}
 
         {/* Sidebar */}
-        {!nativeWorkspace && <div
+        {!desktopShell && <div
           data-testid="dashboard-sidebar-chrome"
+          data-web-chrome
           aria-hidden={workspaceModalOpen ? "true" : undefined}
           className={workspaceModalOpen ? "hidden" : "contents"}
         >
@@ -146,6 +151,7 @@ export function ClientLayoutWrapper({
           {showEnvironmentBanner && !workspaceModalOpen && (
             <div
               data-testid="environment-banner"
+              data-web-chrome
               style={{ color: "var(--ink-black)" }}
               className="static md:sticky top-0 z-[70] overflow-hidden text-ellipsis whitespace-nowrap md:overflow-visible border-b border-amber-500/40 bg-amber-500/15 px-4 py-1 text-center text-[11px] font-semibold uppercase tracking-[0.12em] shadow-[0_4px_20px_rgba(0,0,0,0.16)] backdrop-blur md:whitespace-normal md:py-2 md:text-xs md:tracking-[0.24em]"
             >
@@ -153,7 +159,7 @@ export function ClientLayoutWrapper({
               <span className="hidden md:inline">{environmentLabel} — non-production test environment</span>
             </div>
           )}
-          {nativeWorkspace && pathname === '/dashboard/settings' && <NativeAccountHeader userName={userName} />}
+          {desktopShell && pathname === '/dashboard/settings' && <NativeAccountHeader userName={userName} />}
           {children}
         </main>
 

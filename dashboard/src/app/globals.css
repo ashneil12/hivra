@@ -160,7 +160,8 @@ input,
 textarea,
 select,
 [class*="badge-"] {
-    transition: background-color 0.5s ease, border-color 0.5s ease, color 0.5s ease, box-shadow 0.5s ease;
+    /* --chrome-fade shortens inside a desktop app (see "Desktop shell" below). */
+    transition: background-color var(--chrome-fade, 0.5s) ease, border-color var(--chrome-fade, 0.5s) ease, color var(--chrome-fade, 0.5s) ease, box-shadow var(--chrome-fade, 0.5s) ease;
 }
 
 /* Touch: tabs and buttons need instant press feedback. Theme switches still
@@ -258,11 +259,36 @@ select,
     background: var(--ink-black);
 }
 
-/* Scrollbars */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--etched-border); }
-::-webkit-scrollbar-thumb:hover { background: rgba(26,26,26,0.2); }
+/* Scrollbars. Any ::-webkit-scrollbar rule replaces the platform's overlay
+   scrollbars, so a desktop app's web view is left out entirely. :where() keeps
+   the specificity these rules had before the scope was added. */
+:where(:root:not([data-shell="desktop"]))::-webkit-scrollbar,
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar { width: 4px; height: 4px; }
+:where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-track,
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-track { background: transparent; }
+:where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-thumb,
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-thumb { background: var(--etched-border); }
+:where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-thumb:hover,
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-thumb:hover { background: rgba(26,26,26,0.2); }
+
+/* ── Desktop shell ───────────────────────────────────────────────────
+   html[data-shell="desktop"] is set before first paint by the root layout's
+   head script (lib/desktop-shell.ts) inside a Hivra desktop app, which draws
+   its own sidebar, toolbar and account menu. Presentation only: ordinary
+   browsers never get the attribute, so none of this applies to them.
+
+   [data-web-chrome] marks web-only chrome and decoration the app replaces.
+   !important because some of it sets display inline (the phone bottom bar).
+   React also drops the stateful pieces after hydration (useDesktopShell);
+   this rule is what keeps them from flashing before it. */
+:root[data-shell="desktop"] {
+    /* Native controls answer a hover at once; a half-second fade feels slow. */
+    --chrome-fade: 0.12s;
+}
+:root[data-shell="desktop"] [data-web-chrome] { display: none !important; }
+/* The phone bottom bar's content offset and fixed-UI clearance go with it. */
+:root[data-shell="desktop"] .hermes-pwa-bottom-nav-offset { padding-bottom: 0; }
+:root[data-shell="desktop"]:has(.hermes-pwa-bottom-nav) { --hivra-bottom-chrome: 0px; }
 
 /* Selection */
 ::selection { background: var(--hivra-red); color: #fff; }

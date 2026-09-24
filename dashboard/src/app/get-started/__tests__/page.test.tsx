@@ -460,5 +460,16 @@ describe("GetStartedPage", () => {
     expect(variables).toMatchObject({ colorBackground: "var(--bg-surface)", colorPrimaryForeground: "var(--vellum-bg)" });
     expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
   });
+
+  it("keeps the language switcher when a desktop app hides the funnel brand", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+    render(<GetStartedPage />);
+
+    const brand = screen.getByRole("link", { name: "Hivra home" });
+    expect(brand).toHaveAttribute("data-web-chrome");
+    // The bar still carries a tool (the language switcher), so only the brand goes.
+    expect(brand.closest("header")).not.toHaveAttribute("data-web-chrome");
+  });
 });
 

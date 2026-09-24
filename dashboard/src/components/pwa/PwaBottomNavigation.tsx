@@ -136,6 +136,7 @@ export function PwaBottomNavigation({
       aria-label="App navigation"
       className="hermes-pwa-bottom-nav"
       data-testid="pwa-bottom-navigation"
+      data-web-chrome
       style={{
         position: 'fixed',
         left: 0,

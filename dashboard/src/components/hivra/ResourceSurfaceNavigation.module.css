@@ -61,6 +61,9 @@
   padding: 4px 12px;
   border-bottom: 1px solid var(--etched-border);
 }
+/* SurfaceActions renders nothing when the surface lifted no action, and only
+   Hivra agents offer an export: no strip then, not an empty bordered band. */
+.nativeActions:empty { display: none; }
 
 @container (max-width: 900px) {
   .navigation { flex-wrap: wrap; row-gap: 8px; }
