@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # Native terminal entrypoint. Its systemd unit supplies the agent's HOME/PATH.
 # Never replace a missing or unconfigured runtime with a different agent.
+#
+#   hivra-agent-shell --agent-terminal [SLOT]   the agent Terminal (ttyd :7681)
+#   hivra-agent-shell --box-terminal [SLOT]     the Box Terminal (ttyd :7682)
+#   hivra-agent-shell                           same as --agent-terminal 1
+#   hivra-agent-shell ARG...                    runs the agent CLI with ARG...
+#
+# SLOT (1-8) names one of the dashboard's terminal session tabs; ttyd passes it
+# from the tab's ?arg=N. Nothing else is accepted from the URL.
 set -euo pipefail
 
 # Interactive terminals run inside a persistent tmux session: closing the tab
-# or losing the connection detaches instead of ending the work, and the next
-# tab re-attaches to the same session. Each terminal has a private socket and
-# inline options (-f /dev/null), so the owner's own tmux setup is untouched.
+# or losing the connection detaches instead of ending the work, and reopening
+# the tab re-attaches to the same session. Each terminal has a private socket
+# and inline options (-f /dev/null), so the owner's own tmux setup is untouched.
 # Mouse mode lets the wheel scroll the session history; Shift+drag still
-# selects. Only an interactive terminal (what ttyd starts) is wrapped; otherwise
-# persist returns and the caller runs its command directly, as before.
+# selects. Only an interactive terminal (what ttyd starts) is wrapped;
+# otherwise persist returns and the caller runs its command directly.
 persist() {
   local socket="$1" session="$2" command="$3"
   if [ -t 0 ] && command -v tmux >/dev/null 2>&1; then
@@ -30,9 +38,27 @@ persist() {
   fi
 }
 
+surface=""
+slot=1
+case "${1:-}" in
+  --box-terminal|--agent-terminal)
+    surface="${1#--}"; surface="${surface%-terminal}"
+    shift
+    if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && ! [[ "$1" =~ ^[1-8]$ ]]; }; then
+      printf '%s\n' 'This terminal session is not valid. Open a new session from the dashboard.' >&2
+      exit 64
+    fi
+    [ "$#" -eq 1 ] && slot="$1"
+    set --
+    ;;
+  "")
+    surface=agent
+    ;;
+esac
+
 # The Box Terminal: the owner's general shell, kept alive the same way.
-if [ "$#" -eq 1 ] && [ "$1" = "--box-terminal" ]; then
-  persist hivra-box box ""
+if [ "$surface" = box ]; then
+  persist hivra-box "box-$slot" ""
   exec /bin/bash -l
 fi
 
@@ -48,20 +74,20 @@ case "$kind" in
       exit 127
     fi
     # With arguments the CLI runs directly with them, never through a shell.
-    if [ "$#" -eq 0 ]; then persist hivra-agent "$kind" "$kind"; fi
+    if [ "$surface" = agent ]; then persist hivra-agent "agent-$slot" "$kind"; fi
     exec "$kind" "$@"
     ;;
   aeon|openclaw|agent-zero|linux-desktop)
     # Dashboard runtimes and Linux computers do not impersonate a coding-agent
     # CLI. Their agent terminal is an ordinary owner shell.
-    persist hivra-agent shell ""
+    persist hivra-agent "agent-$slot" ""
     exec /bin/bash -l
     ;;
   deepseek-harness)
     # The native web profile owns the active session. Opening a second CLI
     # owner of its private state is not an attach operation.
     notice='Use the DeepSeek native desktop for sessions. This is your computer shell.'
-    persist hivra-agent shell "printf '%s\\n' '$notice'; exec /bin/bash -l"
+    persist hivra-agent "agent-$slot" "printf '%s\\n' '$notice'; exec /bin/bash -l"
     printf '%s\n' "$notice"
     exec /bin/bash -l
     ;;

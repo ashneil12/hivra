@@ -638,7 +638,7 @@ describe("AgentPage", () => {
     expect(frame).not.toHaveAttribute("src");
     expect(form).toHaveAttribute("action", "https://box.example.com/auth/bootstrap");
     expect(form).toHaveAttribute("method", "POST");
-    expect(form?.querySelector('input[name="destination"]')).toHaveValue("/terminal/");
+    expect(form?.querySelector('input[name="destination"]')).toHaveValue("/terminal/?arg=1");
     expect(form?.querySelector('input[name="token"]')).toHaveValue("box-token");
     expect(screen.getByRole("button", { name: /open in new tab/i })).toBeInTheDocument();
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
@@ -839,6 +839,36 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: "Close session 1" })).not.toBeInTheDocument();
   });
 
+  it("reopens a tab for every terminal session still running on the computer", async () => {
+    const defaultFetch = (global.fetch as jest.Mock).getMockImplementation();
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => String(url).includes("/api/terminal/sessions")
+      ? Promise.resolve({ ok: true, json: async () => ({ surface: "box", sessions: [{ slot: 1 }, { slot: 3 }] }) })
+      : defaultFetch!(url, init));
+    render(<AgentPage />);
+    await findSurfaceButton(/claude code session/i);
+    fireEvent.click(getSurfaceButton("Terminal"));
+    await screen.findByTitle("Terminal");
+    expect(await screen.findByRole("tab", { name: "Session 3" })).toBeInTheDocument();
+    const sessionsCall = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).includes("/api/terminal/sessions"));
+    expect(sessionsCall![0]).toBe("https://box.example.com/api/terminal/sessions?surface=box");
+    expect(sessionsCall![1]).toMatchObject({ credentials: "omit", headers: { Authorization: "Bearer box-token" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Session 3" }));
+    const third = await screen.findByTitle("Terminal · 3");
+    expect(third.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/box-terminal/?arg=3");
+  });
+
+  it("ends the session on the computer when its tab is closed", async () => {
+    render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    await screen.findByTitle("Claude Code session");
+    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    await screen.findByTitle("Claude Code session · 2");
+    fireEvent.click(screen.getByRole("button", { name: "Close session 2" }));
+    const closeCall = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith("/api/terminal/sessions/close"));
+    expect(closeCall![1]).toMatchObject({ method: "POST", credentials: "omit", headers: { Authorization: "Bearer box-token" } });
+    expect(JSON.parse(String(closeCall![1].body))).toEqual({ surface: "agent", slot: 2 });
+  });
+
   it("caps parallel terminal sessions per surface", async () => {
     render(<AgentPage />);
     await findSurfaceButton(/claude code session/i);
@@ -945,8 +975,8 @@ describe("AgentPage", () => {
   });
 
   it.each([
-    { tab: "terminal", title: "Claude Code session", destination: "/terminal/" },
-    { tab: "box", title: "Terminal", destination: "/box-terminal/" },
+    { tab: "terminal", title: "Claude Code session", destination: "/terminal/?arg=1" },
+    { tab: "box", title: "Terminal", destination: "/box-terminal/?arg=1" },
     { tab: "browser", title: "Live browser", destination: "/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true" },
   ])("keeps the $tab bootstrap destination local and clean", async ({ tab, title, destination }) => {
     mockSearchGet.mockImplementation((key: string) => key === "tab" ? tab : null);

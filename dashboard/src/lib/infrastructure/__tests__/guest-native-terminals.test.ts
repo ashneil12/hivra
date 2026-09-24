@@ -58,7 +58,7 @@ describe("portable native terminal setup", () => {
   });
   // ttyd starts the shell on a pseudo-terminal with no arguments. Drive it the
   // same way (python's pty) with only fixture commands on PATH.
-  function runInTerminal(kind: string, commands: string[]) {
+  function runInTerminal(kind: string, commands: string[], args: string[] = []) {
     writeFileSync(path.join(root, ".hivra/agent-kind"), kind + "\n");
     for (const name of commands) {
       const file = path.join(root, "bin", name);
@@ -79,22 +79,43 @@ describe("portable native terminal setup", () => {
       "sys.stdout.write(out.decode())",
       "sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))",
     ].join("\n");
-    const result = spawnSync(python, ["-c", driver, "/bin/bash", "--noprofile", "--norc", "-c", shell(), "hivra-agent-shell"], {
+    const result = spawnSync(python, ["-c", driver, "/bin/bash", "--noprofile", "--norc", "-c", shell(), "hivra-agent-shell", ...args], {
       encoding: "utf8", timeout: 5_000, env: { HOME: root, PATH: path.join(root, "bin"), NODE_ENV: "test" },
     });
     return { status: result.status, lines: result.stdout.replace(/\r/g, "").split("\n").filter(Boolean) };
   }
+  const tmuxArgv = (lines: string[]) => lines.slice(1).map(line => line.slice(1, -1));
   it.each(["claude", "codex"])("keeps the interactive %s terminal in a persistent tmux session that a closed tab only detaches", kind => {
-    const { status, lines } = runInTerminal(kind, ["claude", "codex", "tmux"]);
-    expect(status).toBe(0);
-    expect(lines[0]).toBe("TMUX");
-    const argv = lines.slice(1).map(line => line.slice(1, -1));
-    // Private socket, no user config, and attach-or-create the one agent session.
-    expect(argv.slice(0, 5)).toEqual(["-L", "hivra-agent", "-f", "/dev/null", "start-server"]);
-    expect(argv.slice(-5)).toEqual(["new-session", "-A", "-s", kind, kind]);
-    for (const option of [["status", "off"], ["mouse", "on"], ["escape-time", "10"]]) {
-      expect(argv.join(" ")).toContain(`set-option -g ${option.join(" ")} ;`);
+    for (const [args, session] of [[[], "agent-1"], [["--agent-terminal"], "agent-1"], [["--agent-terminal", "4"], "agent-4"]] as const) {
+      const { status, lines } = runInTerminal(kind, ["claude", "codex", "tmux"], [...args]);
+      expect(status).toBe(0);
+      expect(lines[0]).toBe("TMUX");
+      const argv = tmuxArgv(lines);
+      // Private socket, no user config, and attach-or-create the tab's session.
+      expect(argv.slice(0, 5)).toEqual(["-L", "hivra-agent", "-f", "/dev/null", "start-server"]);
+      expect(argv.slice(-5)).toEqual(["new-session", "-A", "-s", session, kind]);
+      for (const option of [["status", "off"], ["mouse", "on"], ["escape-time", "10"]]) {
+        expect(argv.join(" ")).toContain(`set-option -g ${option.join(" ")} ;`);
+      }
     }
+  });
+  it.each(["claude", "aeon", "openclaw", "agent-zero", "linux-desktop"])("keeps every Box Terminal tab on %s computers in its own persistent login shell", kind => {
+    const { status, lines } = runInTerminal(kind, ["claude", "codex", "tmux"], ["--box-terminal", "3"]);
+    expect(status).toBe(0);
+    const argv = tmuxArgv(lines);
+    expect(argv.slice(0, 5)).toEqual(["-L", "hivra-box", "-f", "/dev/null", "start-server"]);
+    // No command: tmux starts the owner's login shell.
+    expect(argv.slice(-4)).toEqual(["new-session", "-A", "-s", "box-3"]);
+  });
+  it.each(["aeon", "openclaw", "agent-zero", "linux-desktop"])("keeps the %s agent terminal shell in a persistent session too", kind => {
+    const argv = tmuxArgv(runInTerminal(kind, ["tmux"], ["--agent-terminal", "2"]).lines);
+    expect(argv.slice(0, 2)).toEqual(["-L", "hivra-agent"]);
+    expect(argv.slice(-4)).toEqual(["new-session", "-A", "-s", "agent-2"]);
+  });
+  it.each([["--box-terminal", "9"], ["--box-terminal", "1;id"], ["--agent-terminal", "--x"], ["--box-terminal", "1", "2"]])("refuses a terminal session slot the dashboard cannot send: %s %s", (...args) => {
+    const { status, lines } = runInTerminal("claude", ["claude", "codex", "tmux"], args);
+    expect(status).toBe(64);
+    expect(lines.join("\n")).not.toContain("TMUX");
   });
   it("runs the CLI directly when tmux is not installed", () => {
     const { status, lines } = runInTerminal("claude", ["claude", "codex"]);
@@ -119,7 +140,9 @@ describe("portable native terminal setup", () => {
       expect(unit).toContain("WorkingDirectory=/home/bux\n");
       expect(unit).toContain("Environment=HOME=/home/bux\n");
       expect(unit).toContain("Environment=PATH=/home/bux/.npm-global/bin:/home/bux/.bun/bin:/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin\n");
-      expect(unit).toContain(`ExecStart=/usr/local/bin/ttyd -i lo -p ${port} -b ${base} -W `);
+      expect(unit).toContain(`ExecStart=/usr/local/bin/ttyd -i lo -p ${port} -b ${base} -a -W /usr/local/bin/hivra-agent-shell --${port === "7682" ? "box" : "agent"}-terminal\n`);
+      // A ttyd restart must leave the persistent sessions running.
+      expect(unit).toContain("KillMode=process\n");
     }
   });
   it("moves only the Linux Desktop terminal profile into the shared Hivra workspace", () => {

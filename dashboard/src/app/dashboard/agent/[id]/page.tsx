@@ -149,6 +149,7 @@ function AuthenticatedSurface({
   onManage,
   surfaceId,
   active = true,
+  onAccessReady,
 }: {
   url: string;
   token: string;
@@ -160,6 +161,8 @@ function AuthenticatedSurface({
   /** Slot this surface publishes under, and whether it is the visible one. */
   surfaceId?: string;
   active?: boolean;
+  /** Called once the runtime is verified and the surface is being opened. */
+  onAccessReady?: () => void;
 }) {
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const formRef = useRef<HTMLFormElement>(null);
@@ -237,7 +240,8 @@ function AuthenticatedSurface({
   useEffect(() => {
     if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
     formRef.current?.requestSubmit();
-  }, [accessStatus, bootstrapUrl, destination, token]);
+    onAccessReady?.();
+  }, [accessStatus, bootstrapUrl, destination, token, onAccessReady]);
 
   const openInNewTab = useCallback(() => {
     const form = newTabFormRef.current;
@@ -338,36 +342,93 @@ function AuthenticatedSurface({
   );
 }
 
-function TerminalView({ url, token, label, onManage, surfaceId, active = true }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} />;
+function TerminalView({ url, token, label, onManage, surfaceId, active = true, onAccessReady }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; onAccessReady?: () => void }) {
+  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} onAccessReady={onAccessReady} />;
 }
 
-// Each ttyd websocket spawns its own process on the box, so every extra frame
-// is an independent shell (or agent CLI) running alongside the others. The cap
-// bounds how many CLIs one page can start on a small box.
+// Each terminal tab is one persistent session on the computer: the tab's slot
+// (?arg=N) names a tmux session that keeps running when the tab closes, the
+// page refreshes or the connection drops. The cap bounds how many sessions one
+// terminal can hold on a small computer.
 const MAX_TERMINAL_SESSIONS = 8;
+
+function terminalSurfaceOf(url: string): "agent" | "box" | null {
+  try {
+    const { pathname } = new URL(url);
+    if (pathname === "/box-terminal" || pathname.startsWith("/box-terminal/")) return "box";
+    if (pathname === "/terminal" || pathname.startsWith("/terminal/")) return "agent";
+  } catch { /* malformed surface URL: no session management */ }
+  return null;
+}
+
+function terminalSessionUrl(url: string, slot: number): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("arg", String(slot));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
 
 function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
   const [opened, setOpened] = useState(active);
   const [sessions, setSessions] = useState<number[]>([1]);
   const [current, setCurrent] = useState(1);
-  const nextSessionRef = useRef(2);
+  const terminalSurface = terminalSurfaceOf(surface.url);
+  // The session list carries the bearer, so ask only after a frame has verified
+  // this runtime's secure surface protocol (the same gate as its bootstrap).
+  // Verification belongs to this exact endpoint and credential; a rotated token
+  // is verified again before it is sent anywhere.
+  const accessKey = `${surface.url}\n${surface.token}`;
+  const [verifiedKey, setVerifiedKey] = useState<string | null>(null);
+  const runtimeVerified = verifiedKey === accessKey;
+  const onAccessReady = useCallback(() => setVerifiedKey(accessKey), [accessKey]);
   // Lazily open once, then preserve this browsing context between tab changes.
   // Navigating an active ttyd frame can be cancelled by its beforeunload guard;
   // reusing it would show one shell under the other terminal's heading.
   if (active && !opened) setOpened(true);
+  // Sessions outlive the page: reopen a tab for each one still running.
+  useEffect(() => {
+    if (!runtimeVerified || !terminalSurface || !surface.token) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const origin = new URL(surface.url).origin;
+        const response = await fetch(`${origin}/api/terminal/sessions?surface=${terminalSurface}`, {
+          cache: "no-store", credentials: "omit", headers: { Authorization: `Bearer ${surface.token}` }, signal: controller.signal,
+        });
+        // Older computers have no session list; they keep one fresh tab.
+        if (!response.ok) return;
+        const body = (await response.json()) as { sessions?: Array<{ slot?: unknown }> };
+        const live = (body.sessions ?? []).map((session) => Number(session.slot))
+          .filter((slot) => Number.isInteger(slot) && slot >= 1 && slot <= MAX_TERMINAL_SESSIONS);
+        if (live.length) setSessions((prev) => [...new Set([...prev, ...live])].sort((a, b) => a - b));
+      } catch { /* the first tab still works without the list */ }
+    })();
+    return () => controller.abort();
+  }, [runtimeVerified, terminalSurface, surface.url, surface.token]);
   if (!opened && !active) return null;
   const addSession = () => {
-    if (sessions.length >= MAX_TERMINAL_SESSIONS) return;
-    const n = nextSessionRef.current++;
-    setSessions((prev) => [...prev, n]);
-    setCurrent(n);
+    const free = Array.from({ length: MAX_TERMINAL_SESSIONS }, (_, i) => i + 1).find((slot) => !sessions.includes(slot));
+    if (free === undefined) return;
+    setSessions((prev) => [...prev, free].sort((a, b) => a - b));
+    setCurrent(free);
   };
-  // Removing a frame closes its websocket, which ends that session's process.
+  // Closing a tab only detaches its frame, so end the session on the computer.
   const closeSession = (n: number) => {
     const index = sessions.indexOf(n);
     const next = sessions.filter((s) => s !== n);
     if (!next.length) return;
+    if (runtimeVerified && terminalSurface && surface.token) {
+      try {
+        void fetch(`${new URL(surface.url).origin}/api/terminal/sessions/close`, {
+          method: "POST", credentials: "omit", keepalive: true,
+          headers: { Authorization: `Bearer ${surface.token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ surface: terminalSurface, slot: n }),
+        }).catch(() => undefined);
+      } catch { /* malformed surface URL */ }
+    }
     setSessions(next);
     if (n === current) setCurrent(next[Math.max(0, index - 1)]);
   };
@@ -392,7 +453,7 @@ function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: bo
       </div>
       {sessions.map((n) => (
         <div key={n} id={`${surfaceId || "terminal"}-session-${n}`} role="tabpanel" hidden={n !== current} className={styles.sessionPanel}>
-          <TerminalView {...surface} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} />
+          <TerminalView {...surface} url={terminalSessionUrl(surface.url, n)} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} onAccessReady={onAccessReady} />
         </div>
       ))}
     </div>

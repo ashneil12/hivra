@@ -38,9 +38,12 @@ for asset in "${ASSETS[@]}"; do
   [ -f "$source" ] && [ ! -L "$source" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
 done
-[ -f "$SRC_DIR/hivra-agent-shell" ] && [ ! -L "$SRC_DIR/hivra-agent-shell" ] \
-  || { echo "runtime source asset is missing or unsafe: hivra-agent-shell" >&2; exit 1; }
-tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" hivra-agent-shell
+TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service)
+for asset in "${TERMINAL_ASSETS[@]}"; do
+  [ -f "$SRC_DIR/$asset" ] && [ ! -L "$SRC_DIR/$asset" ] \
+    || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
+done
+tar -czf "$ARCHIVE" -C "$SRC_DIR/hivra-chat" "${ASSETS[@]}" -C "$SRC_DIR" "${TERMINAL_ASSETS[@]}"
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 
 GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
@@ -67,6 +70,10 @@ AGENT_SHELL=/usr/local/bin/hivra-agent-shell
 # Chat turns run in detached runners; a gateway restart must leave them alone.
 DROPIN_DIR=/etc/systemd/system/bux-hivra-chat.service.d
 DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
+# Terminal tabs run in persistent tmux sessions; the ttyd units pass the tab's
+# session slot and leave those sessions alone when ttyd restarts.
+AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf
+BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service
 ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
 WORK="$(mktemp -d /opt/bux/.hivra-runtime-update.XXXXXX)"
 ROOT_ARCHIVE="$WORK/runtime.tar.gz"
@@ -113,6 +120,29 @@ if [ -f "$AGENT_SHELL" ] && [ ! -L "$AGENT_SHELL" ]; then install -o root -g roo
 else : > "$BACKUP/hivra-agent-shell.absent"; fi
 if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
 else : > "$BACKUP/detached-runs.conf.absent"; fi
+for asset in bux-ttyd-base-path.conf bux-box-ttyd.service; do
+  [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
+    || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+done
+# Linux computers keep their terminals in the shared Hivra workspace.
+if [ "$KIND_BEFORE" = linux-desktop ]; then
+  sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' "$WORK/bux-ttyd-base-path.conf" "$WORK/bux-box-ttyd.service"
+fi
+if [ -f "$AGENT_TTYD_CONF" ] && [ ! -L "$AGENT_TTYD_CONF" ]; then install -o root -g root -m 0600 "$AGENT_TTYD_CONF" "$BACKUP/bux-ttyd-base-path.conf"
+else : > "$BACKUP/bux-ttyd-base-path.conf.absent"; fi
+if [ -f "$BOX_TTYD_UNIT" ] && [ ! -L "$BOX_TTYD_UNIT" ]; then install -o root -g root -m 0600 "$BOX_TTYD_UNIT" "$BACKUP/bux-box-ttyd.service"
+else : > "$BACKUP/bux-box-ttyd.service.absent"; fi
+# A ttyd restart ends every plain shell it serves, so restart a terminal only
+# when nobody is connected to it; otherwise its new settings apply on its next
+# start. Decide before the gateway restart below drops proxied connections.
+terminal_idle() {
+  local out
+  out="$(ss -Htn state established "( sport = :$1 )" 2>/dev/null)" || return 1
+  [ -z "$out" ]
+}
+RESTART_AGENT_TTYD=0; RESTART_BOX_TTYD=0; TTYD_RESTARTED=0
+terminal_idle 7681 && RESTART_AGENT_TTYD=1
+terminal_idle 7682 && RESTART_BOX_TTYD=1
 
 node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null
@@ -137,7 +167,13 @@ rollback() {
   elif [ -f "$BACKUP/hivra-agent-shell.absent" ]; then rm -f -- "$AGENT_SHELL"; fi
   if [ -f "$BACKUP/detached-runs.conf" ]; then install -o root -g root -m 0644 "$BACKUP/detached-runs.conf" "$DROPIN"
   elif [ -f "$BACKUP/detached-runs.conf.absent" ]; then rm -f -- "$DROPIN"; fi
+  rm -f -- "$AGENT_TTYD_CONF.next" "$BOX_TTYD_UNIT.next"
+  if [ -f "$BACKUP/bux-ttyd-base-path.conf" ]; then install -o root -g root -m 0644 "$BACKUP/bux-ttyd-base-path.conf" "$AGENT_TTYD_CONF"
+  elif [ -f "$BACKUP/bux-ttyd-base-path.conf.absent" ]; then rm -f -- "$AGENT_TTYD_CONF"; fi
+  if [ -f "$BACKUP/bux-box-ttyd.service" ]; then install -o root -g root -m 0644 "$BACKUP/bux-box-ttyd.service" "$BOX_TTYD_UNIT"
+  elif [ -f "$BACKUP/bux-box-ttyd.service.absent" ]; then rm -f -- "$BOX_TTYD_UNIT"; fi
   systemctl daemon-reload >/dev/null 2>&1 || true
+  if [ "$TTYD_RESTARTED" = 1 ]; then systemctl try-restart bux-ttyd.service bux-box-ttyd.service >/dev/null 2>&1 || true; fi
   systemctl restart bux-hivra-chat.service >/dev/null 2>&1 || true
 }
 
@@ -156,6 +192,11 @@ case "$KIND_BEFORE" in
     mv -f -- "$DROPIN.next" "$DROPIN"
     ;;
 esac
+install -d -o root -g root -m 0755 "$(dirname "$AGENT_TTYD_CONF")"
+install -o root -g root -m 0644 "$WORK/bux-ttyd-base-path.conf" "$AGENT_TTYD_CONF.next"
+install -o root -g root -m 0644 "$WORK/bux-box-ttyd.service" "$BOX_TTYD_UNIT.next"
+mv -f -- "$AGENT_TTYD_CONF.next" "$AGENT_TTYD_CONF"
+mv -f -- "$BOX_TTYD_UNIT.next" "$BOX_TTYD_UNIT"
 if ! systemctl daemon-reload; then rollback; exit 1; fi
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
@@ -179,6 +220,17 @@ case "$KIND_BEFORE" in
     fi
     ;;
 esac
+for unit in bux-ttyd.service bux-box-ttyd.service; do
+  if [ "$(systemctl show -p KillMode --value "$unit")" != process ] \
+    || ! systemctl show -p ExecStart --value "$unit" | grep -Fq '/usr/local/bin/hivra-agent-shell --'; then
+    rollback; echo "terminal $unit would not keep its sessions" >&2; exit 1
+  fi
+done
+TTYD_RESTARTED=1
+if [ "$RESTART_AGENT_TTYD" = 1 ] && ! systemctl try-restart bux-ttyd.service; then rollback; exit 1; fi
+if [ "$RESTART_BOX_TTYD" = 1 ] && ! systemctl try-restart bux-box-ttyd.service; then rollback; exit 1; fi
+[ "$RESTART_AGENT_TTYD" = 1 ] || printf 'HIVRA_TERMINAL_RESTART_DEFERRED bux-ttyd.service\n'
+[ "$RESTART_BOX_TTYD" = 1 ] || printf 'HIVRA_TERMINAL_RESTART_DEFERRED bux-box-ttyd.service\n'
 
 TOKEN_HASH_AFTER="$(sha256sum "$TOKEN" | awk '{print $1}')"
 TOKEN_INODE_AFTER="$(stat -c '%d:%i:%u:%g:%a' "$TOKEN")"

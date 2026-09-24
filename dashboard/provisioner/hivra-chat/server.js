@@ -1363,6 +1363,43 @@ function handleChat(req, res) {
   });
 }
 
+// ---- persistent terminal sessions -------------------------------------------
+// Terminal tabs run in private tmux servers started by hivra-agent-shell:
+// "agent" is the agent Terminal, "box" the Box Terminal, and each tab's session
+// is "<surface>-<slot>". Closing a tab only detaches, so the dashboard lists live
+// sessions to restore its tabs after a refresh and ends one explicitly.
+const TERMINAL_SOCKETS = { agent: "hivra-agent", box: "hivra-box" };
+function listTerminalSessions(surface, cb) {
+  execFile("tmux", ["-L", TERMINAL_SOCKETS[surface], "list-sessions", "-F", "#{session_name} #{session_attached} #{session_created}"],
+    { env: AGENT_ENV, cwd: HOME, timeout: 5000 }, (err, stdout, stderr) => {
+      // Without a running tmux server there are simply no sessions.
+      if (err && !/no server running|error connecting|No such file/i.test(String(stderr || "") + String(err.message || ""))) {
+        console.error("hivra-chat: listing " + surface + " terminal sessions failed: " + String(stderr || err.message).slice(0, 200));
+      }
+      const pattern = new RegExp("^" + surface + "-([1-8]) (\\d+) (\\d+)$");
+      const sessions = [];
+      for (const line of String(stdout || "").split("\n")) {
+        const m = line.match(pattern);
+        if (m) sessions.push({ slot: Number(m[1]), attached: Number(m[2]) > 0, createdAt: new Date(Number(m[3]) * 1000).toISOString() });
+      }
+      cb(sessions.sort((a, b) => a.slot - b.slot));
+    });
+}
+function handleTerminalSessions(req, res, q) {
+  res.setHeader("Cache-Control", "no-store");
+  const surface = String(q.get("surface") || "");
+  if (!TERMINAL_SOCKETS[surface]) return jsonRes(res, 400, { error: "surface must be agent or box" });
+  listTerminalSessions(surface, (sessions) => jsonRes(res, 200, { surface, sessions }));
+}
+function handleTerminalSessionClose(res, body) {
+  let surface = "", slot = "";
+  try { const j = JSON.parse(body || "{}"); surface = String(j.surface || ""); slot = String(j.slot || ""); } catch {}
+  if (!TERMINAL_SOCKETS[surface] || !/^[1-8]$/.test(slot)) return jsonRes(res, 400, { error: "surface must be agent or box and slot 1-8" });
+  // "=" makes tmux match the exact session name, never a prefix.
+  execFile("tmux", ["-L", TERMINAL_SOCKETS[surface], "kill-session", "-t", "=" + surface + "-" + slot],
+    { env: AGENT_ENV, cwd: HOME, timeout: 5000 }, (err) => jsonRes(res, 200, { ok: true, closed: !err }));
+}
+
 // GET  /api/chat/runs                  recent runs, newest first
 // GET  /api/chat/runs/<id>             one run
 // GET  /api/chat/runs/<id>/events      the run's stream from ?offset= (bytes), live until it finishes
@@ -2180,6 +2217,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/chat") return authed(req)
     ? COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent chat is unavailable for this computer" }) : handleChat(req, res)
     : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/terminal/sessions") return authed(req) ? handleTerminalSessions(req, res, q) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/terminal/sessions/close") return authed(req) ? readBody(req, (b) => handleTerminalSessionClose(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (u === "/api/chat/runs" || u.startsWith("/api/chat/runs/")) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
     if (!CHAT_RUNS) return jsonRes(res, 409, { error: "agent chat is unavailable for this computer" });

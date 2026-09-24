@@ -403,6 +403,24 @@ describe("portable provisioner source contract", () => {
     expect(updater).not.toMatch(/\.codex|\.claude|\/home\/bux\/\.env|SOUL\.md|USER\.md/);
   });
 
+  it("delivers persistent terminal sessions to running computers without ending open shells", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    expect(updater).toContain("TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service)");
+    expect(updater).toContain('AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf');
+    expect(updater).toContain('BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service');
+    // Linux computers keep their terminals in the shared workspace.
+    expect(updater).toContain(`sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' "$WORK/bux-ttyd-base-path.conf" "$WORK/bux-box-ttyd.service"`);
+    // Units are backed up and restored on rollback.
+    expect(updater).toContain('"$BACKUP/bux-box-ttyd.service"');
+    expect(updater).toContain('"$BACKUP/bux-ttyd-base-path.conf"');
+    // A terminal is restarted only when idle, decided before the gateway restart drops proxied sockets.
+    expect(updater.indexOf("terminal_idle 7681 && RESTART_AGENT_TTYD=1")).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain("systemctl try-restart bux-box-ttyd.service; then rollback");
+    expect(updater).toContain("HIVRA_TERMINAL_RESTART_DEFERRED");
+    // The update fails unless systemd loaded the session-keeping terminal settings.
+    expect(updater).toContain(`systemctl show -p ExecStart --value "$unit" | grep -Fq '/usr/local/bin/hivra-agent-shell --'`);
+  });
+
   it("keeps in-flight chat runs alive across gateway restarts on new and updated guests", () => {
     const updater = source("hivra-update-guest-runtime.sh");
     const installer = source("provision-claude-code-box.sh");
