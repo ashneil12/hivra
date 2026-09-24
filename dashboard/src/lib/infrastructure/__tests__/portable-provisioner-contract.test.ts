@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  HIVRA_AGENT_VM_DISK_GB,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_DIRECTORY,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
@@ -250,6 +251,13 @@ describe("portable provisioner source contract", () => {
     expect(runtimeInstaller).toContain(
       'LOGIN_HINT="sudo -iu ${AGENT_USER} claude auth login"',
     );
+  });
+
+  it("admits the same guest disk size the host provisioner creates", () => {
+    const hostProvisioner = source("hivra-provision-on-host.sh");
+    const defaultDisk = hostProvisioner.match(/^DISK_GB="\$\{HIVRA_DISK_GB:-([0-9]+)\}"$/m)?.[1];
+    expect(Number(defaultDisk)).toBe(HIVRA_AGENT_VM_DISK_GB);
+    expect(hostProvisioner).toContain('qm disk resize "$VMID" scsi0 "${DISK_GB}G"');
   });
 
   it("rebases only provisioner-directory critical assets for Advanced mode", () => {

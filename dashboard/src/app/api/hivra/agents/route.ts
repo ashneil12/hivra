@@ -21,7 +21,6 @@ import { log } from "@/lib/logger";
 import { posthogClient } from "@/lib/posthog";
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
-  DEFAULT_PROXMOX_VM_DISK_GB,
   getReservedProxmoxVmidsForNode,
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
@@ -119,6 +118,8 @@ import {
   type ActivityCollectorCredential,
 } from "@/lib/activity-observability/collectors";
 import {
+  HIVRA_AGENT_VM_DISK_GB,
+  HIVRA_AGENT_VM_STORAGE_HEADROOM_GB,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   provisionerSupportsActivityTelemetry,
 } from "@/lib/infrastructure/portable-provisioner-contract";
@@ -318,6 +319,7 @@ fi`
   const hostEnvironment = [
     `HIVRA_PROV_DIR=${shellQuote(runtimePaths.provisionerDirectory)}`,
     `HIVRA_STORAGE=${shellQuote(runtimePaths.storage)}`,
+    `HIVRA_DISK_GB=${HIVRA_AGENT_VM_DISK_GB}`,
     `HIVRA_BRIDGE=${shellQuote(runtimePaths.bridge)}`,
     `HIVRA_UBUNTU_IMG=${shellQuote(runtimePaths.ubuntuImage)}`,
     `HIVRA_VM_SSH_KEY_PATH=${shellQuote(runtimePaths.vmSshKeyPath)}`,
@@ -336,7 +338,7 @@ fi`
     ? `STORAGE_AVAILABLE_KB="$(pvesm status --content images 2>/dev/null | awk -v target=${shellQuote(runtime.storage)} 'NR>1 && $1==target && $3=="active" {print $6; exit}')"
 [[ "$STORAGE_AVAILABLE_KB" =~ ^[0-9]+$ ]] \
   || { echo "could not measure live storage capacity" >&2; exit 1; }
-STORAGE_REQUIRED_KB=$(((${DEFAULT_PROXMOX_VM_DISK_GB} + 5) * 1024 * 1024))
+STORAGE_REQUIRED_KB=$(((${HIVRA_AGENT_VM_DISK_GB} + ${HIVRA_AGENT_VM_STORAGE_HEADROOM_GB}) * 1024 * 1024))
 if [ "$STORAGE_AVAILABLE_KB" -lt "$STORAGE_REQUIRED_KB" ]; then
   echo "insufficient live storage headroom for this launch" >&2
   exit 1
@@ -1220,7 +1222,7 @@ async function launchAgent(request: NextRequest) {
         }
 
         const requestedMemoryBytes = ram * 1024 * 1024 * 1024;
-        const requestedDiskBytes = DEFAULT_PROXMOX_VM_DISK_GB * 1024 * 1024 * 1024;
+        const requestedDiskBytes = (HIVRA_AGENT_VM_DISK_GB + HIVRA_AGENT_VM_STORAGE_HEADROOM_GB) * 1024 * 1024 * 1024;
         const capacity = context.target.capacity;
         if (
           (capacity.cpu.totalCores !== null && maximumCpu > capacity.cpu.totalCores) ||
@@ -1262,7 +1264,7 @@ async function launchAgent(request: NextRequest) {
         userId,
         neededCpu: cpu,
         neededRamMb: ram * 1024,
-        neededDiskGb: DEFAULT_PROXMOX_VM_DISK_GB,
+        neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
         skipTemplateAvailabilityCheck: true,
         readinessCheck: launchAdmission

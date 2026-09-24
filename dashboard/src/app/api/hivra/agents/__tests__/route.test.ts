@@ -1099,6 +1099,9 @@ describe("POST /api/hivra/agents", () => {
     const kickoff = mockRunProxmoxHostScript.mock.calls[1][0] as string;
     expect(kickoff).toContain("HIVRA_PROV_DIR='/root/hivra-provisioner'");
     expect(kickoff).toContain("HIVRA_STORAGE='local-lvm'");
+    // Admission and creation use one size: the provisioner is told exactly
+    // the disk that placement counted against the thin pool.
+    expect(kickoff).toContain("HIVRA_DISK_GB=40 ");
     expect(kickoff).toContain("HIVRA_BRIDGE='vmbr1'");
     expect(kickoff).toContain("HIVRA_UBUNTU_IMG='/root/jammy-server-cloudimg-amd64.img'");
     expect(kickoff).toContain("HIVRA_VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
@@ -1185,7 +1188,7 @@ describe("POST /api/hivra/agents", () => {
       hostConfig: null,
       neededCpu: 0.5,
       neededRamMb: 1024,
-      neededDiskGb: 30,
+      neededDiskGb: 40,
       userId: "user-free",
       skipTemplateAvailabilityCheck: true,
       readinessCheck: expect.any(Function),
@@ -1400,6 +1403,8 @@ describe("POST /api/hivra/agents", () => {
     );
     expect(kickoff).toContain("install -m 0600 /dev/null \"$LOG\"");
     expect(kickoff).toContain("HIVRA_PROV_DIR='/opt/hivra/provisioner'");
+    expect(kickoff).toContain("HIVRA_DISK_GB=40 ");
+    expect(kickoff).toContain("STORAGE_REQUIRED_KB=$(((40 + 5) * 1024 * 1024))");
     expect(kickoff).toContain("HIVRA_BRIDGE='hivra0'");
     expect(kickoff).toContain("HIVRA_VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
     expect(kickoff).toContain("/var/log/hivra");
@@ -1693,6 +1698,27 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(409);
     expect(mockCheckHostWakeCapacity).not.toHaveBeenCalled();
     expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a self-managed launch when saved storage fits the old 30 GB disk but not the 40 GB guest", async () => {
+    mockResolveSelfManagedProxmoxExecutionContext.mockResolvedValueOnce(
+      selfManagedExecutionContext({ availableStorageBytes: 38 * 1024 ** 3 }),
+    );
+
+    const response = await POST(makeRequest({
+      type: "codex",
+      name: "DISK_TIGHT",
+      cpu: 2,
+      ram: 4,
+      deployment: SELF_MANAGED_DEPLOYMENT,
+    }) as never);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/enough measured capacity/i),
+    }));
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
   it("fails closed before side effects when live self-managed memory cannot be measured", async () => {

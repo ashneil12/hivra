@@ -3595,6 +3595,83 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status");
   });
 
+  it("counts each Hivra agent at the 40 GB disk the Hivra provisioner creates", async () => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.PROXMOX_VM_DISK_GB;
+    delete env.HERMES_PROXMOX_TARGETS;
+    delete env.HERMES_PROXMOX_TARGET;
+
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({
+        data: [
+          {
+            id: "fixturenode11",
+            status: "active",
+            env_prefix: null,
+            total_cpu: 24,
+            total_ram_mb: 131072,
+            reserved_cpu: 2,
+            reserved_ram_mb: 4096,
+            wake_headroom_ram_mb: 8192,
+            max_tenant_instances: null,
+            // Thin-pool budget: 200 GB x 1.0.
+            thinpool_size_gb: 200,
+            thinpool_overcommit_ratio: 1,
+          },
+        ],
+        error: null,
+      }),
+    };
+    let allocationInCalls = 0;
+    const legacyAllocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
+    legacyAllocationQuery.in = jest.fn(() => {
+      allocationInCalls += 1;
+      if (allocationInCalls === 1) return legacyAllocationQuery;
+      return Promise.resolve({ data: [], error: null });
+    });
+    const hivraRows = Array.from({ length: 5 }, () => ({
+      proxmox_host: "fixturenode11", cpu: 1, ram: 1, status: "running",
+    }));
+    let hivraInCalls = 0;
+    const hivraAllocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
+    hivraAllocationQuery.in = jest.fn(() => {
+      hivraInCalls += 1;
+      if (hivraInCalls === 1) return hivraAllocationQuery;
+      return Promise.resolve({ data: hivraRows, error: null });
+    });
+
+    const fakeSupabase = {
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return hivraAllocationQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    // Five guests x 40 GB = 200 GB: the pool is full. At the old 30 GB per
+    // guest it looked 50 GB free and admitted another 40 GB launch.
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env,
+      hostConfig: null,
+      userId: "user_hivra_disk",
+      neededCpu: 1,
+      neededRamMb: 1024,
+      neededDiskGb: 40,
+    });
+
+    expect(selection).toEqual(expect.objectContaining({ ok: false, status: 503 }));
+    expect(log.warn).toHaveBeenCalledWith(
+      "no Proxmox host has enough placement capacity",
+      expect.objectContaining({
+        placementDiagnostics: expect.arrayContaining([
+          expect.objectContaining({ hostId: "fixturenode11", allocatedDiskGb: 200, neededDiskGb: 40 }),
+        ]),
+      })
+    );
+  });
+
   it("uses the configured VM disk size for placement instead of the template default", async () => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,

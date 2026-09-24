@@ -59,6 +59,7 @@ import {
   type ProxmoxHostLocalFailureClass,
 } from "@/lib/services/proxmox-host-guards";
 import { stripProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructure";
+import { HIVRA_AGENT_VM_DISK_GB } from "@/lib/infrastructure/portable-provisioner-contract";
 import { buildInstanceInsertPayload } from "@/lib/instance-record";
 import {
   SLOT_FREEING_LIFECYCLE_STATES,
@@ -829,7 +830,7 @@ async function rankProxmoxHostsForPlacement(params: {
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
     acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
     acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
-    acc.disk += DEFAULT_PROXMOX_VM_DISK_GB;
+    acc.disk += HIVRA_AGENT_VM_DISK_GB;
     allocByHost.set(node, acc);
   }
 
