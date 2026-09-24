@@ -22,6 +22,11 @@
  *   - no vmid at all ............................. probe tunnel healthz; healthy → flip,
  *                                                  else skip + warn (needs an operator)
  *
+ * Stale desktop_prepare leases have their own pass (recoverStaleDesktopPreparation):
+ * the lease guard admits release only with exact terminal evidence, so a guest
+ * that was powered off mid-preparation used to pin the row at `running` and
+ * return 409 to every power action forever.
+ *
  * Marking `error` only happens on DEFINITIVE evidence (orchestrator finished
  * without a tunnel, or the VM no longer exists). Anything ambiguous is left
  * alone for the next sweep so a slow-but-healthy provision is never killed.
@@ -72,11 +77,23 @@ import {
   shellQuote,
 } from "@/lib/hivra/proxmox-target";
 import { log } from "@/lib/logger";
+import {
+  abandonDesktopPrepare,
+  cancelUndispatchedDesktopPrepare,
+  completeDesktopPrepare,
+  DESKTOP_PREPARE_KIND,
+} from "@/lib/remote-computers/desktop-prepare-operation";
+import {
+  buildDesktopPrepareRecoveryScript,
+  parseDesktopPrepareRecoveryOutput,
+} from "@/lib/remote-computers/desktop-prepare-recovery";
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
+
+const STUCK_AGENT_COLUMNS = "id, user_id, type, computer_profile, computer_substrate, status, vmid, ip, proxmox_host, deployment_mode, managed_provisioner_channel, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, infrastructure_binding_token_hash, infrastructure_binding_token_enforced, cf_tunnel_id, cf_hostname, chat_url, api_token, provisioned_at, desired_state, operation_id, operation_kind, operation_started_at, operation_payload, allocation_operation_id, created_at";
 
 /**
  * Start observing after the normal provisioning window and the DB recovery
@@ -88,6 +105,15 @@ export const STUCK_PROVISIONING_THRESHOLD_MS = 10 * 60 * 1000;
 
 /** Per-run cap: each candidate costs an SSH round-trip (and maybe an HTTPS probe). */
 const MAX_CANDIDATES_PER_RUN = 12;
+
+/**
+ * Desktop preparation runs a guest installer bounded at 15 minutes. Its lease
+ * is observed only well past that bound, and the recovery claim renews the
+ * lease timestamp, so a preserved (still busy) preparation is re-examined at
+ * most once per threshold instead of every sweep.
+ */
+export const STALE_DESKTOP_PREPARE_THRESHOLD_MS = 30 * 60 * 1000;
+const MAX_DESKTOP_PREPARE_CANDIDATES_PER_RUN = 4;
 
 const HEALTHZ_TIMEOUT_MS = 8_000;
 // Reconciliation may wait up to 60s for the shared FD8 mutation lock and, for
@@ -140,6 +166,7 @@ type StuckRecoveryAction =
   | "recovered_via_tunnel"
   | "cancelled_delete"
   | "marked_error"
+  | "released_desktop_prepare"
   | "skipped";
 
 interface StuckRecoveryResult {
@@ -1483,6 +1510,148 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
   return { ...base, action: "skipped", reason: "VM exists, no marker, tunnel not healthy yet" };
 }
 
+/**
+ * Release a stale Ubuntu desktop preparation lease only on host evidence that
+ * no guest installer can still run, reconciling the row with the observed VM:
+ *   - prepare never dispatched (phase claimed) ... existing atomic cancel
+ *   - VM stopped ................................. fence + abandon; row -> stopped
+ *   - VM running, installer lock free ............ fence; exact terminal receipt
+ *                                                   completes, otherwise abandon
+ *   - installer running / guest unreachable ...... preserve the lease
+ *   - VM missing or ownership tag mismatch ....... preserve for an operator
+ * The fence is written under FD8 before evidence is reported, so a late retry
+ * of the same lease can never dispatch the installer after it is released.
+ */
+async function recoverStaleDesktopPreparation(row: StuckAgentRow, now: Date): Promise<StuckRecoveryResult> {
+  const base = { agentId: row.id, vmid: row.vmid };
+  if (!row.operation_id || !row.operation_started_at || row.operation_kind !== DESKTOP_PREPARE_KIND) {
+    return { ...base, action: "skipped", reason: "desktop preparation identity is incomplete" };
+  }
+  // Omarchy and Windows preparation run outside FD8 and do not honour the
+  // host fence, so their leases still need their own terminal receipt.
+  if (row.type !== "linux-desktop" || (row.computer_profile ?? "ubuntu-desktop") !== "ubuntu-desktop") {
+    return { ...base, action: "skipped", reason: "profile has no automatic desktop preparation recovery" };
+  }
+  if (!row.vmid || !row.ip || row.infrastructure_binding_token_enforced !== true) {
+    return { ...base, action: "skipped", reason: "desktop preparation lacks an identity-bound provider coordinate" };
+  }
+
+  let context: HivraAgentExecutionContext;
+  try {
+    context = await resolveHivraAgentTeardownExecutionContext(row.user_id, row);
+  } catch (error) {
+    log.warn("stale desktop preparation authority is unavailable", {
+      source: LOG_SOURCE,
+      failureType: "hivra_stale_desktop_prepare_context_unavailable",
+      agentId: row.id,
+      vmid: row.vmid,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return { ...base, action: "skipped", reason: "owner-bound recovery authority unavailable" };
+  }
+  if (!context.infrastructureBindingTagEnforced) {
+    return { ...base, action: "skipped", reason: "provider ownership tag is not enforced" };
+  }
+  const authorityCheck = await checkHivraAgentRecoveryAuthority(context);
+  if (!authorityCheck.ok) {
+    return { ...base, action: "skipped", reason: "owner-bound host authority unavailable" };
+  }
+  const claimed = await claimHivraAgentOperationRecovery({
+    userId: row.user_id,
+    agentId: row.id,
+    operationId: row.operation_id,
+    expectedOperationStartedAt: row.operation_started_at,
+    recoveredAt: now.toISOString(),
+  });
+  if (!claimed) {
+    return { ...base, action: "skipped", reason: "operation is fresh, superseded, or claimed by another reconciler" };
+  }
+
+  // A journal that never obtained dispatch authority has no provider work;
+  // the existing cancel wins or loses atomically against a late dispatch.
+  if (await cancelUndispatchedDesktopPrepare(row.user_id, row.operation_id)) {
+    return { ...base, action: "released_desktop_prepare", reason: "undispatched desktop preparation cancelled" };
+  }
+
+  const identity = {
+    operationId: row.operation_id,
+    computerId: row.id,
+    vmid: row.vmid,
+    guestIp: row.ip,
+    bindingTag: context.infrastructureBindingTag,
+  };
+  const probe = await runProxmoxHostScript(buildDesktopPrepareRecoveryScript(identity), context.env, {
+    timeoutMs: SSH_TIMEOUT_MS,
+  });
+  const observation = probe.ok ? parseDesktopPrepareRecoveryOutput(probe.stdout || "", identity) : null;
+  if (!observation) {
+    log.warn("stale desktop preparation host observation failed; will retry", {
+      source: LOG_SOURCE,
+      failureType: "hivra_stale_desktop_prepare_probe_failed",
+      agentId: row.id,
+      vmid: row.vmid,
+      proxmoxHost: row.proxmox_host,
+      errorMessage: probe.error ?? null,
+      stderr: probe.stderr?.slice(0, 300) ?? null,
+    });
+    return { ...base, action: "skipped", reason: "desktop preparation host observation failed" };
+  }
+  if (observation.kind === "missing" || observation.kind === "ownership_mismatch") {
+    log.error("stale desktop preparation targets a VM this computer does not own", new Error(observation.kind), {
+      source: LOG_SOURCE,
+      failureType: "hivra_stale_desktop_prepare_provider_identity",
+      agentId: row.id,
+      vmid: row.vmid,
+      proxmoxHost: row.proxmox_host,
+      observation: observation.kind,
+    });
+    return { ...base, action: "skipped", reason: `desktop preparation preserved: ${observation.kind.replace("_", " ")}` };
+  }
+  if (observation.kind === "busy") {
+    return { ...base, action: "skipped", reason: `desktop preparation preserved: ${observation.reason.replace(/_/g, " ")}` };
+  }
+  if (observation.kind === "terminal") {
+    const completed = await completeDesktopPrepare(row.user_id, observation.receipt);
+    return completed
+      ? { ...base, action: "released_desktop_prepare", reason: "exact guest terminal receipt completed the preparation" }
+      : { ...base, action: "skipped", reason: "desktop preparation completion was superseded" };
+  }
+  const abandoned = await abandonDesktopPrepare(row.user_id, {
+    version: 1,
+    operationId: row.operation_id,
+    computerId: row.id,
+    vmid: row.vmid,
+    bindingTag: context.infrastructureBindingTag,
+    ...(observation.vmStatus === "stopped"
+      ? { vmStatus: "stopped", guestInstaller: "powered_off" }
+      : { vmStatus: "running", guestInstaller: observation.guestInstaller }),
+  });
+  if (!abandoned) {
+    return { ...base, action: "skipped", reason: "desktop preparation release was superseded" };
+  }
+  await logHivraAgentEvent({
+    userId: row.user_id,
+    event: "failed",
+    agentId: row.id,
+    agentType: row.type,
+    detail: { vmid: row.vmid, reason: "desktop_prepare_abandoned", vmStatus: observation.vmStatus },
+  });
+  log.warn("stale desktop preparation released from quiescent provider state", {
+    source: LOG_SOURCE,
+    failureType: "hivra_stale_desktop_prepare_released",
+    agentId: row.id,
+    vmid: row.vmid,
+    proxmoxHost: row.proxmox_host,
+    vmStatus: observation.vmStatus,
+    guestInstaller: observation.guestInstaller,
+  });
+  return {
+    ...base,
+    action: "released_desktop_prepare",
+    reason: `guest installer quiescent (${observation.guestInstaller}); row reconciled to ${observation.vmStatus}`,
+  };
+}
+
 export async function runRecoverStuckHivraProvisioningSweep(
   options: RecoverStuckHivraProvisioningOptions = {},
 ): Promise<RecoverStuckHivraProvisioningSummary> {
@@ -1507,10 +1676,10 @@ export async function runRecoverStuckHivraProvisioningSweep(
 
   let query = supabaseAdmin
     .from("hivra_agents")
-    .select("id, user_id, type, computer_profile, computer_substrate, status, vmid, ip, proxmox_host, deployment_mode, managed_provisioner_channel, infrastructure_connection_id, deployment_target_id, infrastructure_connection_revision, infrastructure_binding_token_hash, infrastructure_binding_token_enforced, cf_tunnel_id, cf_hostname, chat_url, api_token, provisioned_at, desired_state, operation_id, operation_kind, operation_started_at, operation_payload, allocation_operation_id, created_at")
+    .select(STUCK_AGENT_COLUMNS)
     .not("operation_id", "is", null)
-    // Preparation resumes only from its exact guest terminal receipt; a
-    // missing receipt must not be cleared or starve this limited sweep.
+    // Desktop preparation has its own evidence rules and candidate cap below;
+    // its long-lived leases must not starve this limited lifecycle sweep.
     .neq("operation_kind", "desktop_prepare")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
@@ -1527,15 +1696,39 @@ export async function runRecoverStuckHivraProvisioningSweep(
   }
 
   const rows = (Array.isArray(data) ? data : []) as StuckAgentRow[];
-  summary.scanned = rows.length;
+
+  let prepareQuery = supabaseAdmin
+    .from("hivra_agents")
+    .select(STUCK_AGENT_COLUMNS)
+    .eq("operation_kind", DESKTOP_PREPARE_KIND)
+    .eq("type", "linux-desktop")
+    .or("computer_profile.is.null,computer_profile.eq.ubuntu-desktop")
+    .lt("operation_started_at", new Date(now.getTime() - STALE_DESKTOP_PREPARE_THRESHOLD_MS).toISOString())
+    .order("operation_started_at", { ascending: true })
+    .limit(MAX_DESKTOP_PREPARE_CANDIDATES_PER_RUN);
+  if (options.agentId) prepareQuery = prepareQuery.eq("id", options.agentId);
+  const { data: prepareData, error: prepareError } = await prepareQuery;
+  if (prepareError) {
+    throw new Error(`stale desktop preparation candidate query failed: ${prepareError.message}`);
+  }
+  const prepareRows = (Array.isArray(prepareData) ? prepareData : []) as StuckAgentRow[];
+  summary.scanned = rows.length + prepareRows.length;
 
   // Sequential on purpose: each probe is an SSH session against a prod Proxmox
   // host; a stampede of parallel sessions is worse than a slightly longer cron.
-  for (const row of rows) {
+  const candidates = [
+    ...rows.map(row => ({ row, recover: recoverOne })),
+    ...prepareRows.map(row => ({ row, recover: recoverStaleDesktopPreparation })),
+  ];
+  for (const { row, recover } of candidates) {
     try {
-      const result = await recoverOne(row, now);
+      const result = await recover(row, now);
       summary.results.push(result);
-      if (result.action === "recovered_from_log" || result.action === "recovered_via_tunnel") {
+      if (
+        result.action === "recovered_from_log" ||
+        result.action === "recovered_via_tunnel" ||
+        result.action === "released_desktop_prepare"
+      ) {
         summary.recovered += 1;
       } else if (result.action === "marked_error") {
         summary.markedError += 1;
