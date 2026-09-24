@@ -5,6 +5,12 @@
 //
 // Kept separate from the route handler so the content is unit-testable in
 // isolation, mirroring lib/changelog-rss.ts + app/changelog/rss.xml/route.ts.
+//
+// The $HIVRA sentences follow the token phase (token-phase-copy.ts). Dormant,
+// the document is exactly what it was before the phase copy existed.
+
+import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
+import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 export interface LlmsTxtSection {
   heading: string;
@@ -16,60 +22,64 @@ export interface LlmsTxtSection {
 // GitHub URLs. Every link is a real public page.
 export const PUBLIC_REPOSITORY_URL = "https://github.com/ashneil12/hivra";
 
-export const LLMS_TXT_SECTIONS: readonly LlmsTxtSection[] = [
-  {
-    heading: "Product",
-    links: [
-      { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or launch a computer and use it yourself" },
-      { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own" },
-      { label: "Pricing", path: "/pricing", note: "Self-host free, or a Hivra Cloud computer from $9.99 a month" },
-      { label: "Free tools", path: "/tools", note: "Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator" },
-      { label: "Ecosystem", path: "/ecosystem", note: "What is available now, next, later and still research" },
-      { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks, multi-agent" },
-      { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on AI, accountability and why the limits should live outside the model" },
-      { label: "Compare", path: "/compare", note: "Hivra vs self-hosting and other agent-hosting options" },
-    ],
-  },
-  {
-    heading: "Papers",
-    links: [
-      { label: "Litepaper", path: "/LITEPAPER.md", note: "The short version of what Hivra is building and why" },
-      { label: "White paper", path: "/WHITEPAPER.md", note: "The long-form design and security paper" },
-      { label: "Tokenomics", path: "/TOKENOMICS.md", note: "The live $HermesOS access tier, and the proposed $HIVRA migration and treasury (proposals, not final terms)" },
-      { label: "Token", path: "/token", note: "The canonical contract page. Check token addresses here and nowhere else" },
-    ],
-  },
-  {
-    heading: "Source and self-hosting",
-    links: [
-      { label: "Source code", path: PUBLIC_REPOSITORY_URL, note: "The public repository, under the Apache-2.0 license" },
-      { label: "Self-host quickstart", path: `${PUBLIC_REPOSITORY_URL}/blob/main/docs/self-host/QUICKSTART.md`, note: "Run the platform on your own hardware with your own sign-in" },
-    ],
-  },
-  {
-    heading: "Updates",
-    links: [
-      { label: "Blog", path: "/blog", note: "Guides and explainers on AI agents, hosting, and memory" },
-      { label: "Changelog", path: "/changelog", note: "Dated entries for every notable ship" },
-      { label: "Changelog RSS feed", path: "/changelog/rss.xml", note: "Subscribe to product ships" },
-      { label: "Roadmap", path: "/roadmap", note: "What is being built next" },
-    ],
-  },
-  {
-    heading: "Status",
-    links: [
-      { label: "Status", path: "/status", note: "Live operational health of the public surfaces" },
-      { label: "Stats", path: "/stats", note: "Live deploy counter" },
-    ],
-  },
-  {
-    heading: "Legal",
-    links: [
-      { label: "Privacy", path: "/privacy" },
-      { label: "Terms", path: "/terms" },
-    ],
-  },
-];
+/** The curated sections for a $HIVRA phase (only the Tokenomics note differs). */
+export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): readonly LlmsTxtSection[] {
+  const { tokenomicsNote } = getTokenPhaseCopy(phase).llmsTxt;
+  return [
+    {
+      heading: "Product",
+      links: [
+        { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or launch a computer and use it yourself" },
+        { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own" },
+        { label: "Pricing", path: "/pricing", note: "Self-host free, or a Hivra Cloud computer from $9.99 a month" },
+        { label: "Free tools", path: "/tools", note: "Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator" },
+        { label: "Ecosystem", path: "/ecosystem", note: "What is available now, next, later and still research" },
+        { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks, multi-agent" },
+        { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on AI, accountability and why the limits should live outside the model" },
+        { label: "Compare", path: "/compare", note: "Hivra vs self-hosting and other agent-hosting options" },
+      ],
+    },
+    {
+      heading: "Papers",
+      links: [
+        { label: "Litepaper", path: "/LITEPAPER.md", note: "The short version of what Hivra is building and why" },
+        { label: "White paper", path: "/WHITEPAPER.md", note: "The long-form design and security paper" },
+        { label: "Tokenomics", path: "/TOKENOMICS.md", note: tokenomicsNote },
+        { label: "Token", path: "/token", note: "The canonical contract page. Check token addresses here and nowhere else" },
+      ],
+    },
+    {
+      heading: "Source and self-hosting",
+      links: [
+        { label: "Source code", path: PUBLIC_REPOSITORY_URL, note: "The public repository, under the Apache-2.0 license" },
+        { label: "Self-host quickstart", path: `${PUBLIC_REPOSITORY_URL}/blob/main/docs/self-host/QUICKSTART.md`, note: "Run the platform on your own hardware with your own sign-in" },
+      ],
+    },
+    {
+      heading: "Updates",
+      links: [
+        { label: "Blog", path: "/blog", note: "Guides and explainers on AI agents, hosting, and memory" },
+        { label: "Changelog", path: "/changelog", note: "Dated entries for every notable ship" },
+        { label: "Changelog RSS feed", path: "/changelog/rss.xml", note: "Subscribe to product ships" },
+        { label: "Roadmap", path: "/roadmap", note: "What is being built next" },
+      ],
+    },
+    {
+      heading: "Status",
+      links: [
+        { label: "Status", path: "/status", note: "Live operational health of the public surfaces" },
+        { label: "Stats", path: "/stats", note: "Live deploy counter" },
+      ],
+    },
+    {
+      heading: "Legal",
+      links: [
+        { label: "Privacy", path: "/privacy" },
+        { label: "Terms", path: "/terms" },
+      ],
+    },
+  ];
+}
 
 function absoluteUrl(siteUrl: string, path: string): string {
   if (path === "/") return siteUrl;
@@ -79,7 +89,13 @@ function absoluteUrl(siteUrl: string, path: string): string {
 
 // Serialises the curated sections into a well-formed llms.txt document:
 // an H1 product line, a short '> ' blurb, then Markdown link sections.
-export function buildLlmsTxt({ siteUrl }: { siteUrl: string }): string {
+export function buildLlmsTxt({
+  siteUrl,
+  phase = getHivraTokenPhase(),
+}: {
+  siteUrl: string;
+  phase?: HivraTokenPhase;
+}): string {
   const lines: string[] = [];
 
   lines.push("# Hivra");
@@ -89,11 +105,11 @@ export function buildLlmsTxt({ siteUrl }: { siteUrl: string }): string {
   );
   lines.push("");
   lines.push(
-    "In private preview: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet."
+    `In private preview: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
   );
   lines.push("");
 
-  for (const section of LLMS_TXT_SECTIONS) {
+  for (const section of llmsTxtSections(phase)) {
     lines.push(`## ${section.heading}`);
     lines.push("");
     for (const link of section.links) {

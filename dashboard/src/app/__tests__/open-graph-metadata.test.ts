@@ -1,14 +1,18 @@
 import { metadata as homeMetadata } from '../page';
 import { metadata as downloadMetadata } from '../download/page';
-import { metadata as tokenomicsMetadata } from '../tokenomics/page';
+import { generateMetadata as generateTokenomicsMetadata } from '../tokenomics/page';
 import { metadata as roadmapMetadata } from '../roadmap/page';
-import { metadata as tokenMetadata } from '../token/page';
+import { generateMetadata as generateTokenMetadata } from '../token/page';
 import { metadata as blogIndexMetadata } from '../blog/page';
 import { metadata as featuresIndexMetadata } from '../features/page';
 import { metadata as compareIndexMetadata } from '../compare/page';
 import { buildBlogArticleMetadata } from '@/lib/blog/metadata';
 import { generateMetadata as generateFeatureMetadata } from '../features/[slug]/page';
 import { generateMetadata as generateCompareMetadata } from '../compare/[slug]/page';
+
+// Both token pages generate their metadata from the $HIVRA phase; dormant here.
+const tokenomicsMetadata = generateTokenomicsMetadata();
+const tokenMetadata = generateTokenMetadata();
 
 function getObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') return null;
