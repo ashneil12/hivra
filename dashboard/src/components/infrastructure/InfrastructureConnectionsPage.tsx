@@ -591,19 +591,19 @@ export function InfrastructureConnectionsPage() {
       <div className={styles.pageGlow} aria-hidden="true" />
       <main className={styles.pageInner}>
         <nav className={styles.breadcrumb} aria-label="Breadcrumb">
-          <Link href="/dashboard">Command Center</Link>
+          <Link href="/dashboard">Home</Link>
           <ArrowRight size={12} aria-hidden="true" />
-          <span aria-current="page">Infrastructure</span>
+          <span aria-current="page">Capacity</span>
         </nav>
 
         <header className={styles.pageHeader}>
           <div className={styles.pageHeading}>
-            <span className={styles.eyebrow}>Infrastructure</span>
-            <h1>Your infrastructure.</h1>
+            <span className={styles.eyebrow}>Capacity</span>
+            <h1>Where your agents run.</h1>
             <p>
               {selfHosted
                 ? "Connect a cloud project or bring a computer you control."
-                : "Manage your plan and the machines that power your agents and computers."}
+                : "Hivra Cloud, your cloud accounts, and your own servers: the places your agents and computers run."}
             </p>
           </div>
           {!showingFirstConnection ? (
@@ -618,7 +618,7 @@ export function InfrastructureConnectionsPage() {
               {entryChooserOpen
                 ? <X size={16} aria-hidden="true" />
                 : <Plus size={16} aria-hidden="true" />}
-              {entryChooserOpen ? "Close options" : "Add infrastructure"}
+              {entryChooserOpen ? "Close options" : "Add capacity"}
             </button>
           ) : null}
         </header>

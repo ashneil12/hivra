@@ -170,7 +170,7 @@ function providerError(error: unknown, action: string, agentId?: string): Manage
   if (error instanceof DigitalOceanApiError) {
     switch (error.code) {
       case "unauthorized":
-        return new ManagedSessionError("invalid_credentials", "DigitalOcean rejected the saved token. Replace the token on this connection's Infrastructure card.", agentId);
+        return new ManagedSessionError("invalid_credentials", "DigitalOcean rejected the saved token. Replace the token on this connection's card in Capacity.", agentId);
       case "forbidden":
         return new ManagedSessionError("provider_forbidden", "This DigitalOcean token cannot manage Managed Agents. Use a token with write access to a team enrolled in the Managed Agents preview.", agentId);
       case "payment_required":
