@@ -125,11 +125,11 @@ function ResourceSwitcherTrigger({
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={name ? `Switch agent or computer: ${name}` : "Switch runtime"}
+        aria-label={name ? `Switch agent or computer: ${name}` : "Switch agent or computer"}
         // The label replaces the visible copy, so the status rides along as
         // the description; narrow hosts also hide its word.
         aria-describedby={name && status ? statusId : undefined}
-        title={name ? `Switch from ${name}` : "Switch runtime"}
+        title={name ? `Switch from ${name}` : "Switch agent or computer"}
         onClick={toggle}
         className={styles.switcher}
       >

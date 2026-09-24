@@ -119,9 +119,9 @@ describe('Vault Page', () => {
     expect(screen.queryByText(/API Key Vault/i)).not.toBeInTheDocument();
   });
 
-  it('renders the Bind Keys to Active Instances header', async () => {
+  it('renders the key assignment header in agent language', async () => {
     render(<VaultPage />);
-    const heading = await screen.findByText(/Bind Keys to Core Instance/i);
+    const heading = await screen.findByText(/Choose keys for your agent/i);
     expect(heading).toBeInTheDocument();
   });
 
@@ -142,8 +142,8 @@ describe('Vault Page', () => {
     fireEvent.click(await screen.findByRole('button', { name: /add new key/i }));
     fireEvent.click(screen.getByLabelText(/automated device auth/i));
 
-    fireEvent.click(screen.getByRole('button', { name: /host instance to run auth flow/i }));
-    const hostDialog = await screen.findByRole('dialog', { name: /choose host instance/i });
+    fireEvent.click(screen.getByRole('button', { name: /agent that runs the sign-in/i }));
+    const hostDialog = await screen.findByRole('dialog', { name: /choose an agent/i });
     expect(within(hostDialog).getByRole('button', { name: /agent one/i })).toBeInTheDocument();
     fireEvent.click(within(hostDialog).getByRole('button', { name: /agent one/i }));
 
@@ -534,7 +534,7 @@ describe('Vault Page', () => {
 
     fireEvent.change(mobileProviderSelect, { target: { value: '' } });
     expect(screen.queryByText('Unsaved — tap Apply to update this agent')).not.toBeInTheDocument();
-    const mobileSync = screen.getByRole('button', { name: /sync instance/i });
+    const mobileSync = screen.getByRole('button', { name: /sync agent/i });
     expect(mobileSync).toBeDisabled();
   });
 

@@ -21,6 +21,8 @@ export class FakeDigitalOcean {
   execs: Array<{ sessionId: string; argv: string[] }> = [];
   execResult: { exitCode: number; stdout?: string; stderr?: string } | null = null;
   downloads: Array<{ sessionId: string; path: string; asArchive: boolean }> = [];
+  /** Prepayment wallet; null means the token has no billing permission. */
+  prepayment: { balance: string | null; blocked: boolean; autoPrepay: boolean } | null = { balance: "25.00", blocked: false, autoPrepay: false };
   /** Next create call throws this error (after optionally creating anyway). */
   failNextCreate: { error: DigitalOceanApiError; createAnyway?: boolean } | null = null;
   readyAfterPolls = 0;
@@ -87,6 +89,10 @@ export class FakeDigitalOcean {
       },
       resolveHitl: async (sessionId, requestId, outcome) => { this.decisions.push({ sessionId, requestId, outcome }); },
       streamEvents: () => this.replayEvents(),
+      getPrepaymentStatus: async () => {
+        guard();
+        return this.prepayment ? { ...this.prepayment } : null;
+      },
       execInSandbox: async (sessionId, input) => {
         guard();
         this.execs.push({ sessionId, argv: input.argv });
