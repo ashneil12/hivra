@@ -78,6 +78,27 @@ describe("DeferredGTM", () => {
     expect(screen.queryByTestId("ga4-tag")).not.toBeInTheDocument();
   });
 
+  it("grants analytics storage again when a visitor who withdrew accepts again", () => {
+    writeStoredConsent("accepted");
+    const gtag = jest.fn();
+    (window as W).gtag = gtag;
+    render(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" />);
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    act(() => {
+      writeStoredConsent("rejected");
+    });
+    act(() => {
+      writeStoredConsent("accepted");
+    });
+    // GA's init script does not run a second time, so without this update GA
+    // would stay in the denied state until the page reloads.
+    expect(gtag).toHaveBeenLastCalledWith("consent", "update", { analytics_storage: "granted" });
+    expect((window as W)["ga-disable-G-ML3NFRHMYF"]).toBeUndefined();
+    expect(screen.getByTestId("ga4-tag")).toBeInTheDocument();
+  });
+
   it("does not emit a direct GA4 tag when no measurement ID is configured", () => {
     writeStoredConsent("accepted");
     render(<DeferredGTM gtmId="GTM-T6GPHP4N" />);

@@ -38,7 +38,13 @@ export function DeferredGTM({ gtmId, gaId }: { gtmId: string; gaId?: string }) {
     const onConsent = (event: Event) => {
       const choice = (event as CustomEvent<ConsentChoice>).detail;
       if (choice === "accepted") {
-        if (gaId) delete (window as GoogleTagWindow)[`ga-disable-${gaId}`];
+        const w = window as GoogleTagWindow;
+        if (gaId) delete w[`ga-disable-${gaId}`];
+        // Accepted again after a withdrawal in this page's life: GA's init
+        // script does not run twice, so grant analytics storage explicitly or
+        // GA stays in the denied state set below until a reload. Ad storage
+        // stays denied; the site uses no ads.
+        if (typeof w.gtag === "function") w.gtag("consent", "update", { analytics_storage: "granted" });
         setConsented(true);
         return;
       }
