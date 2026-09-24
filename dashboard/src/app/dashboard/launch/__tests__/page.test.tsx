@@ -630,10 +630,8 @@ describe("LaunchPage", () => {
     expect(whereButton(/Hivra Cloud/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /^My server/ })).toBeDisabled();
     expect(screen.queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Infrastructure" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=windows&returnTo=unified-launch",
-    );
+    // Capacity opens in a sheet over the launch (slice 10), not on another page.
+    expect(screen.getByRole("button", { name: "Add capacity" })).toBeInTheDocument();
     expect(screen.queryByText(/private|test|evaluation|licen[cs]e|legal/i)).not.toBeInTheDocument();
   });
 
@@ -955,10 +953,7 @@ describe("LaunchPage", () => {
       "href",
       `/dashboard/billing?from=launch&returnTo=${encodeURIComponent(`/dashboard/launch?draft=${storedDraftJson().launchRequestId}`)}`,
     );
-    expect(within(blocker).getByRole("link", { name: "Set up your own capacity" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
-    );
+    expect(within(blocker).getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
     expect(screen.queryByText(/does not have enough remaining capacity/)).not.toBeInTheDocument();
 
     fireEvent.click(within(blocker).getByRole("button", { name: "Turn off the browser" }));
@@ -1114,10 +1109,7 @@ describe("LaunchPage", () => {
     expect(browser).toBeChecked();
     const blocker = screen.getByRole("alert");
     expect(blocker).toHaveTextContent("The selected host does not have enough measured capacity for this size.");
-    expect(within(blocker).getByRole("link", { name: "Set up capacity" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
-    );
+    expect(within(blocker).getByRole("button", { name: "Set up capacity" })).toBeInTheDocument();
     expect(within(blocker).queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
 
@@ -1525,10 +1517,7 @@ describe("LaunchPage", () => {
     expect(whereButton(/My infrastructure/i)).toHaveAttribute("aria-pressed", "true");
     const blocker = await screen.findByRole("alert");
     expect(blocker).toHaveTextContent("Linux Sandbox requires a compatible gVisor host you connected.");
-    expect(within(blocker).getByRole("link", { name: "Set up capacity" })).toHaveAttribute(
-      "href",
-      "/dashboard/infrastructure?launch=linux-terminal&returnTo=unified-launch",
-    );
+    expect(within(blocker).getByRole("button", { name: "Set up capacity" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
   });
@@ -1577,10 +1566,7 @@ describe("LaunchPage", () => {
 
       expect(await screen.findByText(/No compatible capacity is ready/i)).toBeInTheDocument();
       expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
-      expect(screen.getByRole("link", { name: /Set up capacity/i })).toHaveAttribute(
-        "href",
-        "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
-      );
+      expect(screen.getByRole("button", { name: /Set up capacity/i })).toBeInTheDocument();
 
       view.unmount();
       process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "hosted";

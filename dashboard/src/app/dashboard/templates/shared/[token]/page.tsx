@@ -11,6 +11,7 @@ import { Loader2, Rocket, ArrowLeft } from "lucide-react";
 
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { clientLog } from "@/lib/client/logger";
+import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 
 interface SharedTemplate {
   id: string;
@@ -55,10 +56,10 @@ export default function SharedTemplatePage({ params }: { params: Promise<{ token
 
   const useTemplate = useCallback(() => {
     if (!template) return;
-    // Fork on launch: the welcome/deploy flow reads templateId and the launch
-    // POST resolves it (visibility-checked, context already stripped here).
-    // The token lets the welcome flow show this template to a non-owner.
-    router.push(`/dashboard/welcome?step=agent-type&templateId=${encodeURIComponent(template.id)}&templateToken=${encodeURIComponent(token)}`);
+    // Fork on launch: Launch reads the template and the launch request names
+    // it (the server checks it may be used; context is already stripped).
+    // The token lets Launch show this shared template to a non-owner.
+    router.push(buildLaunchHref({ start: true, template: template.id, templateToken: token }));
   }, [router, template, token]);
 
   return (

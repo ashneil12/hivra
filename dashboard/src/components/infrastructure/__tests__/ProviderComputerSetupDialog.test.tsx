@@ -45,7 +45,7 @@ it("advances the original selected computer only after a click and does not clai
   expect(advanceProviderComputerSetup).toHaveBeenCalledWith(connection.id, { orderId: view.orderId, expectedConnectionRevision: 7 });
   expect(changed).toHaveBeenCalledTimes(1);
 });
-it("returns a prepared computer to the originally selected agent launch", async () => {
+it("opens a new launch of the selected agent on the prepared computer", async () => {
   const ready = {
     ...view,
     stage: "environment_prepared" as const,
@@ -62,7 +62,7 @@ it("returns a prepared computer to the originally selected agent launch", async 
   />);
   expect(await screen.findByRole("link", { name: "Continue launch" })).toHaveAttribute(
     "href",
-    "/dashboard/welcome?step=deploy&agentType=codex&targetId=33333333-3333-4333-8333-333333333333",
+    "/dashboard/launch?kind=agent&start=1&profile=codex&targetId=33333333-3333-4333-8333-333333333333",
   );
 });
 it("returns unified setup to the saved launch journey when requested", async () => {
@@ -83,7 +83,7 @@ it("returns unified setup to the saved launch journey when requested", async () 
   />);
   expect(await screen.findByRole("link", { name: "Continue launch" })).toHaveAttribute(
     "href",
-    "/dashboard/launch?kind=agent&targetId=33333333-3333-4333-8333-333333333333",
+    "/dashboard/launch?kind=agent&profile=codex&targetId=33333333-3333-4333-8333-333333333333",
   );
 });
 it("keeps published but unadmitted setup explicitly resumable without a launch link", async () => {
@@ -104,8 +104,8 @@ it.each([false, true])("returns Ubuntu to launch for fresh compatibility checks 
   expect(screen.queryByText(/Nothing has been launched yet/)).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Continue launch" })).toHaveAttribute("href",
-    unifiedLaunchReturn ? "/dashboard/launch?kind=computer&targetId=33333333-3333-4333-8333-333333333333"
-      : "/dashboard/computers?launch=1&targetId=33333333-3333-4333-8333-333333333333");
+    unifiedLaunchReturn ? "/dashboard/launch?kind=computer&profile=ubuntu-desktop&targetId=33333333-3333-4333-8333-333333333333"
+      : "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop&targetId=33333333-3333-4333-8333-333333333333");
   expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
 });
 it("does not start or offer desktop launch before setup is prepared", async () => {

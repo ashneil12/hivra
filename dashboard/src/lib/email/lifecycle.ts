@@ -88,7 +88,8 @@ export type LifecycleEmailSendResult =
 
 const LOG_SOURCE = "lifecycle-email";
 const DASHBOARD_URL = `${SITE_URL}/dashboard`;
-const WELCOME_URL = `${SITE_URL}/dashboard/welcome`;
+/** A new launch in the one place agents and computers start from. */
+const LAUNCH_URL = `${SITE_URL}/dashboard/launch?kind=agent&start=1`;
 const BILLING_URL = `${SITE_URL}/dashboard/billing`;
 
 function greeting(firstName?: string | null): string {
@@ -228,7 +229,7 @@ function shellHtml(opts: {
 
 function buildDay1Idle(params: LifecycleEmailContentParams): LifecycleEmailContent {
   const subject = "your agent is still waiting";
-  const ctaUrl = WELCOME_URL;
+  const ctaUrl = LAUNCH_URL;
   const asks = [
     `"Watch Hacker News for anything about my industry and summarize the good posts each morning."`,
     `"Take this messy CSV and turn it into a clean summary table."`,

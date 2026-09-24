@@ -47,7 +47,6 @@ function card(connection: Partial<DigitalOceanConnectionDto>, onExpiryChanged = 
       target={target}
       sessions={[]}
       refreshing={false}
-      onLaunch={jest.fn()}
       onRefresh={jest.fn()}
       onReplaceToken={jest.fn()}
       onDelete={jest.fn()}

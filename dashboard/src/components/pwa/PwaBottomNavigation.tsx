@@ -157,9 +157,8 @@ export function PwaBottomNavigation({
         const Icon = item.icon;
         const active = isDashboardNavigationItemActive(item, pathname, resourceKind, workspaceShellEnabled);
         const launch = item.id === 'launch';
-        // /dashboard can resume the last runtime, and that follows the server
-        // shell flag, which self-host builds hide from the client. The tab
-        // always lands on the list; the legacy page ignores ?runtimes=1.
+        // The tab always asks for the list explicitly; the legacy page
+        // ignores ?runtimes=1.
         const href = item.id === 'home' ? DASHBOARD_RUNTIME_LIST_HREF : item.href;
 
         return (

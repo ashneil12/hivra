@@ -8,6 +8,7 @@ import { captureClient } from "@/lib/telemetry/posthog-client";
 import { ACTIVE_PLAN_KEYS, PLANS, type Cadence, type PlanKey } from "@/lib/subscription";
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import funnelStyles from "@/components/public-site/public-site.module.css";
@@ -68,7 +69,6 @@ function ActivatePageContent() {
     searchParams?.get("cadence") === "yearly" && planKey !== "free" ? "yearly" : "monthly";
   const agentTypeKey = resolveWelcomeAgentTypeKey(searchParams?.get("agentType"));
   const agentTypeQuery = buildAgentTypeQuery(agentTypeKey);
-  const firstAgentDestination = `/dashboard/welcome?step=agent-type${agentTypeQuery}`;
   const plan = PLANS[planKey];
 
   // When Stripe cancel_url brings us back, ?canceled=true is set
@@ -111,7 +111,8 @@ function ActivatePageContent() {
 
     if (result.ok) {
       if (result.activated) {
-        const destination = firstAgentDestination;
+        // Launch, with the agent the visitor picked on the way in, if any.
+        const destination = buildAgentLaunchHref(resolveWelcomeAgentTypeKey(searchParams?.get("agentType")));
         captureActivationEvent("activation_dashboard_reached", {
           plan: planKey,
           destination,
@@ -166,7 +167,7 @@ function ActivatePageContent() {
     });
     setError(result.message);
     setStatus("error");
-  }, [cadence, firstAgentDestination, isSignedIn, planKey, router, wasCanceled]);
+  }, [cadence, isSignedIn, planKey, router, searchParams, wasCanceled]);
 
   useEffect(() => {
     if (wasCanceled) {
@@ -424,27 +425,9 @@ function ActivatePageContent() {
 
               <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
                 {planKey === "free"
-                  ? "Activating your Free plan. You'll be ready to deploy in a moment."
-                  : "Preparing your account. You'll be redirected to secure checkout in a moment."}
+                  ? "Turning on your Free plan. Launch opens next, where you choose your first agent or computer."
+                  : "Preparing secure checkout. You'll choose what to launch once your plan is active."}
               </p>
-
-              {/* Animated steps */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", alignItems: "center" }}>
-                {(planKey === "free"
-                  ? ["Creating your account", "Activating Free plan", "Opening deployment"]
-                  : ["Creating your account", "Configuring your plan", "Preparing checkout"]
-                ).map((step, i) => (
-                  <div key={step} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    opacity: 0.6,
-                  }}>
-                    <Loader2 size={10} style={{ animation: `spin ${1 + i * 0.3}s linear infinite` }} />
-                    <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                      {step}
-                    </span>
-                  </div>
-                ))}
-              </div>
             </>
           )}
         </div>

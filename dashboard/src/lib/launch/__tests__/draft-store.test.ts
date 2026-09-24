@@ -21,6 +21,34 @@ describe("launch draft storage", () => {
     window.sessionStorage.clear();
   });
 
+  it("keeps a template's id and name for a profile a template can start, and nothing else", () => {
+    const TEMPLATE_ID = "77777777-7777-4777-8777-777777777777";
+    write({
+      ...createLaunchDraft(),
+      stage: "plan",
+      resourceKind: "agent",
+      profileId: "claude-code",
+      name: "Research Bot",
+      template: { id: TEMPLATE_ID, name: "Research Bot", context: "private notes" } as never,
+    });
+    expect(read()?.template).toEqual({ id: TEMPLATE_ID, name: "Research Bot" });
+
+    // A template never rides along with a profile it can't start, and a
+    // malformed reference is dropped.
+    write({ ...createLaunchDraft(), stage: "plan", resourceKind: "agent", profileId: "hermes", name: "Hermes 1", template: { id: TEMPLATE_ID, name: "x" } });
+    expect(read()?.template).toBeNull();
+    write({ ...createLaunchDraft(), stage: "plan", resourceKind: "agent", profileId: "codex", name: "Codex 1", template: { id: "../../etc", name: "x" } });
+    expect(read()?.template).toBeNull();
+  });
+
+  it("restores drafts saved before templates existed without one", () => {
+    const draft = { ...createLaunchDraft(), stage: "plan" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
+    const legacy: Record<string, unknown> = { ...draft };
+    delete legacy.template;
+    window.localStorage.setItem(KEY, JSON.stringify(legacy));
+    expect(read()).toMatchObject({ profileId: "codex", template: null });
+  });
+
   it("round-trips only the bounded non-secret launch intent", () => {
     const draft = {
       ...createLaunchDraft(),

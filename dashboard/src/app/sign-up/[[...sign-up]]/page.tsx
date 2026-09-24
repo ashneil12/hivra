@@ -1,24 +1,14 @@
 import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Shield, Zap } from "lucide-react";
 import { FunnelHeader } from "@/components/layout/LandingHeader";
 import funnelStyles from "@/components/public-site/public-site.module.css";
-import {
-  HACKATHON_PROMO_END_LABEL,
-  HACKATHON_PROMO_NAME,
-  HACKATHON_PROMO_TRIAL_DAYS,
-  isHackathonPromoActive,
-} from "@/lib/subscription";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
-// Sign-up plan badges. Internal keys (operator/fleet) match the
-// PLANS map; user-facing names (Pro/Power) match the new launch
-// pricing. Kept in sync with src/lib/subscription/plans.ts.
-const PLAN_META: Record<string, { name: string; price: string; highlight: string }> = {
-  operator: { name: "Pro",   price: "$9.99/mo",  highlight: "3 agents · 7-day money-back guarantee" },
-  fleet:    { name: "Power", price: "$19.99/mo", highlight: "5 agents · 7-day money-back guarantee" },
-};
+// Paid sign-ups start on /get-started, which carries the plan through
+// checkout. Internal keys (operator/fleet) match the PLANS map.
+const PAID_SIGNUP_PLANS = new Set(["operator", "fleet"]);
 
 export default async function SignUpPage({
   searchParams,
@@ -30,10 +20,9 @@ export default async function SignUpPage({
     return null;
   }
 
-  const hackathonActive = isHackathonPromoActive();
   const resolvedParams = await searchParams;
   const rawPlan = typeof resolvedParams?.plan === "string" ? resolvedParams.plan : undefined;
-  const plan = rawPlan && PLAN_META[rawPlan] ? rawPlan : undefined;
+  const plan = rawPlan && PAID_SIGNUP_PLANS.has(rawPlan) ? rawPlan : undefined;
   const fromReserve = resolvedParams?.from === "reserve";
 
   if (plan) {
@@ -44,19 +33,11 @@ export default async function SignUpPage({
     redirect("/get-started?plan=free");
   }
 
-  const redirectUrl = plan
-    ? `/dashboard/welcome?plan=${plan}`
-    : "/dashboard/welcome";
-  const planMeta =
-    plan && PLAN_META[plan]
-      ? {
-          ...PLAN_META[plan],
-          highlight:
-            plan === "operator" && hackathonActive
-              ? `${HACKATHON_PROMO_NAME} · ${HACKATHON_PROMO_TRIAL_DAYS} days free before ${HACKATHON_PROMO_END_LABEL}`
-              : PLAN_META[plan].highlight,
-        }
-      : null;
+  // A new account goes straight to Launch, where the Free plan is turned on
+  // with its own button and every agent and computer is on offer. An agent a
+  // link asked for opens its plan there.
+  const agentType = typeof resolvedParams?.agentType === "string" ? resolvedParams.agentType : null;
+  const redirectUrl = buildAgentLaunchHref(agentType);
 
   return (
     <>
@@ -68,37 +49,6 @@ export default async function SignUpPage({
         position: "relative"
       }}>
         <div style={{ position: "relative", zIndex: 10, width: "100%", maxWidth: "420px" }}>
-          {/* Same three steps as /get-started; a plain sign-up picks its plan after the account. */}
-          <div className="font-mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.55, fontWeight: 700, marginBottom: "1rem", textAlign: "center" }}>
-            Step 1 of 3 — Create Account
-          </div>
-
-          {plan && planMeta && (
-            <div style={{
-              marginBottom: "1rem",
-              padding: "12px 16px",
-              border: "1px solid var(--gold-leaf)",
-              background: "rgba(255, 44, 45, 0.06)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Zap size={12} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
-                <div>
-                  <span className="font-mono" style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--ink-black)" }}>
-                    {planMeta.name} Plan · {planMeta.price}
-                  </span>
-                  <div className="font-mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--gold-leaf)", marginTop: 2 }}>
-                    {planMeta.highlight}
-                  </div>
-                </div>
-              </div>
-              <Shield size={12} style={{ color: "var(--gold-leaf)", opacity: 0.7, flexShrink: 0 }} />
-            </div>
-          )}
-
           <SignUp
             fallbackRedirectUrl={redirectUrl}
             appearance={{

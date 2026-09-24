@@ -50,7 +50,7 @@ describe("SharedTemplatePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /use this template/i }));
 
     expect(pushMock).toHaveBeenCalledWith(
-      "/dashboard/welcome?step=agent-type&templateId=11111111-1111-4111-8111-111111111111&templateToken=abc123",
+      "/dashboard/launch?start=1&template=11111111-1111-4111-8111-111111111111&templateToken=abc123",
     );
   });
 });

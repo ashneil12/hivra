@@ -425,7 +425,8 @@ test('Operator OS is not a new-launch or private-build path in the public source
   assert.equal(existsSync(path.join(root, '.github/workflows/operatoros-box-publish.yml')), false);
   assert.equal(existsSync(path.join(root, '.github/workflows/operatoros-save-images.yml')), false);
   assert.doesNotMatch(read('dashboard/src/lib/welcome-agent-catalog.ts'), /key:\s*["']operatoros["']/);
-  assert.doesNotMatch(read('dashboard/src/components/dashboard/welcome/DeployForm.tsx'), /Agent Runtime|Operator OS/);
+  assert.equal(existsSync(path.join(root, 'dashboard/src/components/dashboard/welcome/DeployForm.tsx')), false);
+  assert.doesNotMatch(read('dashboard/src/components/launch/LaunchJourney.tsx'), /Agent Runtime|Operator OS/);
   assert.match(read('dashboard/src/lib/services/instance-service.ts'), /agentFlavor:\s*z\.literal\(["']vanilla["']\)/);
   assert.match(read('docs/release/RUNTIME-DISTRIBUTION.md'), /Compatibility only; no new launch or default image/);
 

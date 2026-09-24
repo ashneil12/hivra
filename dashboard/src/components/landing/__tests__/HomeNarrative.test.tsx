@@ -10,15 +10,15 @@ import { HOMEPAGE_FAQ } from "../public-home-content";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { COMPUTER_TEMPLATES } from "@/lib/hivra/computer-catalog";
 
-test("all named agents retain working catalog destinations without false waitlists", () => {
+test("every named agent opens its own plan in Launch, without false waitlists", () => {
   render(<ChooseAgentSection />);
   const expected = [
-    ["Claude Code", "/dashboard/welcome?step=deploy&agentType=claude-code"],
-    ["Codex", "/dashboard/welcome?step=deploy&agentType=codex"],
-    ["Hermes", "/dashboard/welcome?step=deploy&agentType=general"],
-    ["Agent Zero", "/dashboard/welcome?step=deploy&agentType=agent-zero"],
-    ["OpenClaw", "/dashboard/welcome?step=deploy&agentType=openclaw"],
-    ["Aeon", "/dashboard/welcome?step=deploy&agentType=aeon"],
+    ["Claude Code", "/dashboard/launch?kind=agent&start=1&profile=claude-code"],
+    ["Codex", "/dashboard/launch?kind=agent&start=1&profile=codex"],
+    ["Hermes", "/dashboard/launch?kind=agent&start=1&profile=hermes"],
+    ["Agent Zero", "/dashboard/launch?kind=agent&start=1&profile=agent-zero"],
+    ["OpenClaw", "/dashboard/launch?kind=agent&start=1&profile=openclaw"],
+    ["Aeon", "/dashboard/launch?kind=agent&start=1&profile=aeon"],
   ];
   for (const [name, href] of expected) {
     const row = screen.getByRole("heading", { name }).closest("article")!;

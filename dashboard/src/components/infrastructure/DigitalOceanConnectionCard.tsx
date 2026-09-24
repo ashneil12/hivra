@@ -106,13 +106,17 @@ function ExpiryReminderEditor({
   );
 }
 
+/** Launch with this DigitalOcean team selected for the agent the owner picks. */
+export function digitalOceanLaunchHref(targetId: string): string {
+  return `/dashboard/launch?start=1&targetId=${encodeURIComponent(targetId)}`;
+}
+
 export function DigitalOceanConnectionCard({
   connection,
   target,
   sessions,
   refreshing,
   error,
-  onLaunch,
   onRefresh,
   onReplaceToken,
   onDelete,
@@ -123,7 +127,6 @@ export function DigitalOceanConnectionCard({
   sessions: ManagedSessionDto[];
   refreshing: boolean;
   error?: string | null;
-  onLaunch: () => void;
   onRefresh: () => void;
   onReplaceToken: () => void;
   onDelete: () => void;
@@ -262,9 +265,16 @@ export function DigitalOceanConnectionCard({
       )}
 
       <div className={styles.cardActions}>
-        <button type="button" className={styles.primaryButton} onClick={onLaunch} disabled={!ready}>
-          <Play size={14} aria-hidden="true" /> Launch agent
-        </button>
+        {ready && target ? (
+          // Launch picks the agent, size and model and reviews it like any other launch.
+          <Link className={styles.primaryButton} href={digitalOceanLaunchHref(target.id)}>
+            <Play size={14} aria-hidden="true" /> Launch agent
+          </Link>
+        ) : (
+          <button type="button" className={styles.primaryButton} disabled>
+            <Play size={14} aria-hidden="true" /> Launch agent
+          </button>
+        )}
         <button type="button" className={styles.secondaryButton} onClick={onRefresh} disabled={refreshing}>
           {refreshing ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
           {refreshing ? "Checking…" : "Re-check access"}

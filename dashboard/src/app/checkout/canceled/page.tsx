@@ -8,16 +8,24 @@ import { ArrowRight, CreditCard, Loader2 } from "lucide-react";
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
+import { LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { ACTIVE_PLAN_KEYS, PLANS, formatPrice, type PlanKey } from "@/lib/subscription";
 
 const PLAN_GUIDE: Record<PlanKey, string> = {
-  free: "Free is best for trying Hermes with one guarded agent before you need paid compute.",
+  free: "Free is best for trying one small agent before you need paid compute.",
   operator: "Pro is best for solo work, hackathon builds, and your first live agent.",
   fleet: "Power is best for multi-agent workflows, heavier browsing, and more shared compute.",
   command: "Command is best for the biggest jobs, faster scaling, and maximum compute headroom.",
 };
+
+/** Billing's Plans tab, keeping the way back to where checkout started. */
+function differentPlanHref(returnTo: string | null): string {
+  const query = new URLSearchParams({ tab: "plans" });
+  if (returnTo) query.set("returnTo", returnTo);
+  return `/dashboard/billing?${query.toString()}`;
+}
 
 function CheckoutCanceledFallback() {
   return (
@@ -52,7 +60,7 @@ function CheckoutCanceledContent() {
 
     if (result.ok) {
       if (result.activated) {
-        window.location.href = returnTo ? withReturnParams(returnTo, planReturnParams(planKey)) : "/dashboard/welcome?step=agent-type";
+        window.location.href = withReturnParams(returnTo ?? LAUNCH_ROUTE, planReturnParams(planKey));
         return;
       }
 
@@ -250,7 +258,7 @@ function CheckoutCanceledContent() {
               </a>
             ) : null}
             <a
-              href={`/dashboard/welcome?plan=${planKey}`}
+              href={differentPlanHref(returnTo)}
               style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
             >
               Choose a different plan →

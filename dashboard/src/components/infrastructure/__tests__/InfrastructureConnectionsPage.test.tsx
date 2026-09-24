@@ -46,8 +46,10 @@ import {
 
 const mockSearchParamsGet = jest.fn();
 
+const mockRouterPush = jest.fn();
 jest.mock("next/navigation", () => ({
   useSearchParams: () => ({ get: mockSearchParamsGet }),
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 
 jest.mock("@/lib/infrastructure/client", () => ({
@@ -669,7 +671,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
   });
 
-  it("preserves a selected agent through capacity setup and returns to its deploy form", async () => {
+  it("preserves a selected agent through capacity setup and opens its launch on the ready server", async () => {
     const target = providerVmTarget();
     target.connectionId = HETZNER_CONNECTION.id;
     target.status = "ready";
@@ -684,7 +686,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/welcome?step=deploy&agentType=codex&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&start=1&profile=codex&targetId=${target.id}`,
     );
     expect(screen.getByText(/Capacity is ready for Codex/i)).toBeInTheDocument();
   });
@@ -715,7 +717,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const banner = (await screen.findByText(/Capacity is ready for Linux Sandbox/i)).closest('[role="status"]') as HTMLElement;
     expect(within(banner).getByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/computers?launch=1&targetId=${READY_GVISOR_TARGET.id}`,
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
     // The ready host's own card continues the same launch, with a truthful badge.
     const card = screen.getByRole("heading", { name: "Linux host" }).closest("article") as HTMLElement;
@@ -723,7 +725,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(card).queryByText("Inspected")).not.toBeInTheDocument();
     expect(within(card).getByRole("link", { name: "Continue launch" })).toHaveAttribute(
       "href",
-      `/dashboard/computers?launch=1&targetId=${READY_GVISOR_TARGET.id}`,
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
   });
 
@@ -761,6 +763,69 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       "href",
       `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
     );
+  });
+
+  // Slice 10: inside Launch's capacity sheet, a ready server goes back to the
+  // launch that opened it instead of opening Launch again.
+  it("inside Launch, hands the ready server back to the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    expect(await screen.findByRole("heading", { name: "Add capacity for your launch" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    const launch = await within(card).findByRole("link", { name: /^(Launch on this server|Continue launch)$/ });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    launch.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it("inside Launch, names the ready server and uses it for the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    const banner = (await screen.findByText(`${READY_GVISOR_TARGET.displayName} is ready for Linux Sandbox.`)).closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(banner).getByRole("button", { name: "Use it for this launch" }));
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+  });
+
+  // Live test of slice 10: the sheet said "Capacity is ready" for the Hivra
+  // Cloud plan the launch had just outgrown, and its "Continue launch" link
+  // (no server in it) left the sheet open over the launch.
+  it("inside Launch, returns to the launch from any Launch link and doesn't offer Hivra Cloud back as news", async () => {
+    (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
+    const onLaunchTarget = jest.fn();
+    const onClose = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "codex", onLaunchTarget, onClose }} />);
+
+    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    screen.getByRole("link", { name: /Launch an agent/i }).dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onLaunchTarget).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   // Review of slice 5: an owner who set up Linux Sandbox and came back an
@@ -1084,7 +1149,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/launch?kind=agent&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&profile=codex&targetId=${target.id}`,
     );
   });
 
@@ -1510,7 +1575,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(await within(dialog).findByRole("button", { name: "Start setup" }));
 
     expect(await within(dialog).findByRole("link", { name: "Continue launch" })).toHaveAttribute(
-      "href", "/dashboard/welcome?step=deploy&agentType=codex&targetId=00000000-0000-4000-8000-000000001099",
+      "href", "/dashboard/launch?kind=agent&start=1&profile=codex&targetId=00000000-0000-4000-8000-000000001099",
     );
     expect(advanceProviderComputerSetup).toHaveBeenCalledWith(HETZNER_CONNECTION.id, {
       orderId: "00000000-0000-4000-8000-000000001016", expectedConnectionRevision: 1,
