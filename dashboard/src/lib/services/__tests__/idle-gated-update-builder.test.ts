@@ -1,7 +1,6 @@
 import { gunzipSync } from "zlib";
 import { spawnSync } from "child_process";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +13,18 @@ import {
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
-import { TURN_MARKER_FRESH_SECONDS } from "@/lib/services/agent-activity-probe";
+import {
+  TURN_MARKER_FRESH_SECONDS,
+  buildAgentActivityProbeShell,
+} from "@/lib/services/agent-activity-probe";
+import {
+  createActivityBox,
+  nowS,
+  runningSince,
+  stoppedSince,
+  type ActivityBox,
+  type FakeDockerEnv,
+} from "./agent-activity-fixture";
 
 /**
  * Decode every base64(+gzip) embedded-file payload in a provisioning snippet,
@@ -143,12 +153,13 @@ describe("buildIdleGatedUpdateProvisioningScript", () => {
       const refresh = files[`/usr/local/bin/hermes-refresh-${INST}`];
 
       expect(sampler).toContain(`INST="${INST}"`);
-      expect(sampler).toContain('G="agent-${INST}-gateway"');
-      // The fail-safe heredoc must survive verbatim (no TS interpolation).
-      expect(sampler).toContain("<<'PY'");
       expect(sampler).toContain(
-        'print("BUSY" if (busy > 0 or stale > 0 or live > 0 or unreadable > 0) else "IDLE")'
+        'hivra_agent_activity "agent-${INST}-gateway" "agent-${INST}-official-dashboard"'
       );
+      // The shared probe, heredoc and all, must survive verbatim (no TS
+      // interpolation), and it is the same probe the in-flight update gate runs.
+      expect(sampler).toContain(buildAgentActivityProbeShell());
+      expect(sampler).toContain("<<'HIVRA_AGENT_ACTIVITY_PY'");
 
       expect(roll).toContain(`INST="${INST}"`);
       expect(roll).toContain(
@@ -178,18 +189,6 @@ describe("buildIdleGatedUpdateProvisioningScript", () => {
       expect(sampler).toContain('elif [ ! -e "$MARK" ]; then');
       expect(sampler).toContain(
         '# No prior BUSY sample exists: start the 45-minute proof window now.'
-      );
-    });
-
-    it("ignores orphaned legacy sub-profile state in single-gateway mode", () => {
-      const files = decodeEmbeddedFiles(script);
-      const sampler = files[`/usr/local/bin/hermes-idle-sampler-${INST}`];
-
-      expect(sampler).toContain(
-        'files = glob.glob("/home/hermes/.hermes/gateway_state.json")'
-      );
-      expect(sampler).not.toContain(
-        'glob.glob("/home/hermes/.hermes/profiles/*/gateway_state.json")'
       );
     });
 
@@ -665,170 +664,153 @@ describe("buildIdleGatedUpdateProvisioningScript", () => {
     });
   });
 
-  // Web-chat turns run inside official-dashboard, invisible to the gateway's
-  // gateway_state.json. The sampler must see them through the agent's turn
-  // markers, or the hourly roll recreates official-dashboard mid-turn. These run
-  // the real sampler (bash + its embedded Python) against fixture state with a
-  // stand-in `docker` on PATH.
-  describe("idle sampler counts web-chat turns", () => {
-    const python = process.env.HERMES_CONFIG_TEST_PYTHON || "python3";
+  // The sampler runs the shared agent activity probe (agent-activity-probe.ts):
+  // gateway turns (messaging, cron, scheduled tasks) from gateway_state.json and
+  // web-chat turns, which run inside official-dashboard and are invisible to
+  // gateway_state.json, from the agent's turn markers. Miss either and the hourly
+  // roll recreates both containers mid-turn. These run the real sampler (bash +
+  // the embedded Python) against fixture state with a stand-in `docker` and
+  // `timeout` on PATH (agent-activity-fixture.ts).
+  describe("idle sampler sees every kind of turn", () => {
     const sampler = decodeEmbeddedFiles(buildProdGatewayScript())[
       `/usr/local/bin/hermes-idle-sampler-${INST}`
     ];
-    let dir: string;
-    let root: string;
+    let box: ActivityBox;
     let mark: string;
-    let fakeBin: string;
 
     beforeEach(() => {
-      dir = mkdtempSync(join(tmpdir(), "hermes-idle-sampler-"));
-      root = join(dir, "hermes-home");
-      mark = join(dir, "last-active");
-      fakeBin = join(dir, "bin");
-      mkdirSync(root, { recursive: true });
-      mkdirSync(fakeBin, { recursive: true });
-      // docker inspect <dashboard> -> $FAKE_DASH_STATE (fails when unset);
-      // docker exec -i <gateway> <python> - <args> -> local python, with the
-      // container's HERMES_HOME mapped onto the fixture directory.
-      writeFileSync(
-        join(fakeBin, "docker"),
-        [
-          "#!/bin/sh",
-          'case "$1" in',
-          '  inspect) [ -n "${FAKE_DASH_STATE:-}" ] || exit 1; printf "%s\\n" "$FAKE_DASH_STATE" ;;',
-          '  exec) shift 4; sed "s#/home/hermes/.hermes#$FAKE_ROOT#g" | "$FAKE_PYTHON" "$@" ;;',
-          "  *) exit 1 ;;",
-          "esac",
-          "",
-        ].join("\n"),
-      );
-      chmodSync(join(fakeBin, "docker"), 0o755);
+      box = createActivityBox("hermes-idle-sampler-", INST);
+      mark = join(box.dir, "last-active");
     });
 
     afterEach(() => {
-      rmSync(dir, { recursive: true, force: true });
+      box.cleanup();
     });
 
-    const iso = (epochSeconds: number) => new Date(epochSeconds * 1000).toISOString();
-    const nowS = () => Math.floor(Date.now() / 1000);
+    const up = (): FakeDockerEnv => ({
+      gateway: runningSince(nowS() - 3600),
+      dashboard: runningSince(nowS() - 3600),
+    });
 
-    function gatewayState(activeAgents = 0) {
-      writeFileSync(
-        join(root, "gateway_state.json"),
-        JSON.stringify({
-          updated_at: new Date().toISOString().replace("Z", "+00:00"),
-          active_agents: activeAgents,
-        }),
-      );
-    }
-
-    function marker(relativeDir: string, startedAt: number, body?: string) {
-      const path = join(root, relativeDir, "desktop", "interrupted_turns.json");
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(
-        path,
-        body ??
-          JSON.stringify({
-            "agent:web:session-1": { attempts: 0, prompt: "do the long task", started_at: startedAt },
-          }),
-      );
-      return path;
-    }
-
-    function sample(dashState: string | null) {
-      const scriptPath = join(dir, "sampler.sh");
-      writeFileSync(
-        scriptPath,
-        sampler.replace(/^MARK=.*$/m, `MARK="${mark}"`),
-      );
-      const result = spawnSync("bash", [scriptPath], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${fakeBin}:${process.env.PATH}`,
-          FAKE_ROOT: root,
-          FAKE_PYTHON: python,
-          ...(dashState === null ? {} : { FAKE_DASH_STATE: dashState }),
-        },
-      });
+    function sample(env: FakeDockerEnv) {
+      const result = box.run(sampler.replace(/^MARK=.*$/m, `MARK="${mark}"`), env);
       expect(result.status).toBe(0);
       return result;
     }
 
     // The sampler stamps MARK on BUSY. Seed an old MARK so a stamp is visible.
-    function busyAfter(dashState: string | null): boolean {
+    function busyAfter(env: FakeDockerEnv): boolean {
       writeFileSync(mark, "0\n");
       utimesSync(mark, 1_000_000, 1_000_000);
-      sample(dashState);
+      sample(env);
       return statSync(mark).mtimeMs > 1_000_000 * 1000 + 1;
     }
 
-    const dashboardUpSince = (epochSeconds: number) => `true ${iso(epochSeconds)}`;
-
     it("stays IDLE with no turn markers and an idle gateway", () => {
-      gatewayState(0);
-      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(false);
+      box.writeGatewayState({ activeAgents: 0 });
+      expect(busyAfter(up())).toBe(false);
+    });
+
+    it("goes BUSY for an active messaging, cron or scheduled-task turn in the gateway", () => {
+      box.writeGatewayState({ activeAgents: 1 });
+      expect(busyAfter(up())).toBe(true);
     });
 
     it("goes BUSY while a web-chat turn marker is fresh", () => {
-      gatewayState(0);
-      marker("", nowS() - 120);
-      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+      box.writeGatewayState({ activeAgents: 0 });
+      box.writeTurnMarker("", nowS() - 120);
+      expect(busyAfter(up())).toBe(true);
     });
 
     it("goes BUSY for a profile's web-chat turn too", () => {
-      gatewayState(0);
-      marker(join("profiles", "research"), nowS() - 120);
-      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+      box.writeGatewayState({ activeAgents: 0 });
+      box.writeTurnMarker(join("profiles", "research"), nowS() - 120);
+      expect(busyAfter(up())).toBe(true);
+    });
+
+    it.each([
+      ["stale", { updatedAt: nowS() - 600 }],
+      ["unreadable", { raw: "{not json" }],
+    ])("goes BUSY on a %s gateway state (fail safe)", (_label, state) => {
+      box.writeGatewayState(state);
+      expect(busyAfter(up())).toBe(true);
+    });
+
+    it("goes BUSY when the gateway state file is missing", () => {
+      expect(busyAfter(up())).toBe(true);
+    });
+
+    it("goes BUSY while the gateway is not running: it never calls a box it cannot see idle", () => {
+      box.writeGatewayState({ activeAgents: 0 });
+      expect(busyAfter({ gateway: stoppedSince(nowS() - 3600), dashboard: runningSince(nowS() - 3600) })).toBe(true);
+      expect(busyAfter({ gateway: "absent", dashboard: runningSince(nowS() - 3600) })).toBe(true);
+    });
+
+    it("goes BUSY when Docker does not answer", () => {
+      box.writeGatewayState({ activeAgents: 0 });
+      expect(busyAfter({ ...up(), dockerDown: true })).toBe(true);
     });
 
     it("ignores a marker older than the freshness bound (crash-left)", () => {
-      gatewayState(0);
+      box.writeGatewayState({ activeAgents: 0 });
       const old = nowS() - TURN_MARKER_FRESH_SECONDS - 600;
-      const path = marker("", old);
-      utimesSync(path, old, old);
-      expect(busyAfter(dashboardUpSince(nowS() - 30 * 3600))).toBe(false);
+      utimesSync(box.writeTurnMarker("", old), old, old);
+      expect(busyAfter({ gateway: runningSince(nowS() - 3600), dashboard: runningSince(nowS() - 30 * 3600) })).toBe(
+        false
+      );
     });
 
     it("ignores a marker from before the dashboard process started (the turn died with it)", () => {
-      gatewayState(0);
-      marker("", nowS() - 1800);
-      expect(busyAfter(dashboardUpSince(nowS() - 60))).toBe(false);
+      box.writeGatewayState({ activeAgents: 0 });
+      box.writeTurnMarker("", nowS() - 1800);
+      expect(busyAfter({ gateway: runningSince(nowS() - 3600), dashboard: runningSince(nowS() - 60) })).toBe(false);
     });
 
     it("ignores markers while the dashboard is not running", () => {
-      gatewayState(0);
-      marker("", nowS() - 60);
-      expect(busyAfter("false 0001-01-01T00:00:00Z")).toBe(false);
+      box.writeGatewayState({ activeAgents: 0 });
+      box.writeTurnMarker("", nowS() - 60);
+      expect(busyAfter({ gateway: runningSince(nowS() - 3600), dashboard: stoppedSince(nowS() - 3600) })).toBe(false);
     });
 
     it("counts every fresh marker when the dashboard state is unknown (fail safe)", () => {
-      gatewayState(0);
-      marker("", nowS() - 1800);
-      expect(busyAfter(null)).toBe(true);
+      box.writeGatewayState({ activeAgents: 0 });
+      box.writeTurnMarker("", nowS() - 1800);
+      expect(busyAfter({ ...up(), inspectFails: true })).toBe(true);
     });
 
     it("treats a fresh unreadable marker file as BUSY, but not a stale one", () => {
-      gatewayState(0);
-      const path = marker("", 0, "{not json");
-      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+      box.writeGatewayState({ activeAgents: 0 });
+      const path = box.writeTurnMarker("", 0, "{not json");
+      expect(busyAfter(up())).toBe(true);
 
       const old = nowS() - TURN_MARKER_FRESH_SECONDS - 600;
       utimesSync(path, old, old);
-      expect(busyAfter(dashboardUpSince(nowS() - 30 * 3600))).toBe(false);
+      box.writeGatewayState({ activeAgents: 0 });
+      expect(busyAfter({ gateway: runningSince(nowS() - 3600), dashboard: runningSince(nowS() - 30 * 3600) })).toBe(
+        false
+      );
     });
 
-    it("still goes BUSY for an active messaging agent in the gateway", () => {
-      gatewayState(1);
-      expect(busyAfter(dashboardUpSince(nowS() - 3600))).toBe(true);
+    it("ignores orphaned legacy sub-profile gateway state in single-gateway mode", () => {
+      box.writeGatewayState({ activeAgents: 0 });
+      const legacy = join(box.root, "profiles", "old", "gateway_state.json");
+      mkdirSync(dirname(legacy), { recursive: true });
+      writeFileSync(legacy, JSON.stringify({ updated_at: "2026-01-01T00:00:00+00:00", active_agents: 2 }));
+      expect(busyAfter(up())).toBe(false);
+    });
+
+    it("starts the idle clock on its first sample", () => {
+      box.writeGatewayState({ activeAgents: 0 });
+      rmSync(mark, { force: true });
+      sample(up());
+      expect(existsSync(mark)).toBe(true);
     });
 
     it("never prints the marker's prompt", () => {
-      gatewayState(0);
-      marker("", nowS() - 120);
-      const result = sample(dashboardUpSince(nowS() - 3600));
-      expect(`${result.stdout}${result.stderr}`).not.toContain("do the long task");
-      expect(existsSync(mark)).toBe(true);
+      box.writeGatewayState({ activeAgents: 0 });
+      box.writeTurnMarker("", nowS() - 120);
+      const result = sample(up());
+      expect(`${result.stdout}${result.stderr}`).not.toContain("secret task text");
     });
   });
 

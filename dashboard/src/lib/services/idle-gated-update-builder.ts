@@ -1,12 +1,7 @@
 import { gzipSync } from "zlib";
 import { deploymentScopedDefault } from "@/lib/deployment-channel";
 import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime-env";
-import {
-  DASHBOARD_STATE_INSPECT_FORMAT,
-  TURN_MARKER_FRESH_SECONDS,
-  TURN_MARKER_PROBE_PYTHON_FUNCTIONS,
-  WEBFREE_HERMES_HOME,
-} from "@/lib/services/agent-activity-probe";
+import { buildAgentActivityProbeShell } from "@/lib/services/agent-activity-probe";
 
 /**
  * Idle-gated update stack provisioner.
@@ -18,9 +13,11 @@ import {
  *
  * Three units (all proven in production):
  *   1. idle-sampler (every 3 min): stamps /run/hermes-last-active-<INST> whenever
- *      the agent is processing a turn: a messaging turn (gateway_state.json
- *      active_agents) or a web-chat turn running in official-dashboard (a fresh
- *      turn marker, see agent-activity-probe.ts). Fail-safe: unknown/stale => BUSY.
+ *      the agent is processing a turn: a gateway turn (messaging, cron, scheduled
+ *      tasks: gateway_state.json active_agents) or a web-chat turn running in
+ *      official-dashboard (a fresh turn marker). It runs the same probe as the
+ *      in-flight update gate (agent-activity-probe.ts). Fail-safe: unknown/stale
+ *      => BUSY.
  *   2. roll (hourly): idle-gated recreate of gateway+official-dashboard onto the
  *      latest :stable — only when idle >= 45 min and a new image exists. A
  *      20-hour cooldown suppresses repeat work for the same image, but never
@@ -153,60 +150,31 @@ export function buildIdleGatedUpdateProvisioningScript(params: {
   // agent is processing a turn. Fail-safe: stale/unreadable => ACTIVE so the
   // roller never rolls into an in-flight turn.
   //
-  // Two sources of "a turn is running": the gateway's messaging agents
-  // (gateway_state.json active_agents) and web-chat turns, which run inside the
-  // official-dashboard container and are invisible to gateway_state.json. The
-  // latter come from the agent's durable turn markers on the shared webui-state
-  // volume, read from the gateway container (same volume) with the dashboard's
-  // docker-inspect state passed in, so a marker left by a dashboard process that
-  // has since restarted does not count (agent-activity-probe.ts).
+  // "A turn is running" comes from the shared agent activity probe
+  // (agent-activity-probe.ts), the same code the in-flight update gate runs, so
+  // the roll and system updates can never disagree about what busy means. It
+  // sees gateway turns (messaging, cron, scheduled tasks: gateway_state.json
+  // active_agents) and web-chat turns, which run inside official-dashboard and
+  // are invisible to gateway_state.json (the agent's durable turn markers).
   const samplerScript = `#!/usr/bin/env bash
 # hermes-idle-sampler — stamp the "last active" marker whenever the agent is
-# processing a turn (messaging agents in the gateway, or a web-chat turn in
-# official-dashboard). Fail-safe: stale/unreadable => ACTIVE so the roller never
-# rolls into an in-flight turn.
+# processing a turn (a gateway turn: messaging, cron, scheduled tasks; or a
+# web-chat turn in official-dashboard). Fail-safe: stale/unreadable => ACTIVE so
+# the roller never rolls into an in-flight turn.
 set -uo pipefail
 INST="${INST}"
-G="agent-\${INST}-gateway"
-D="agent-\${INST}-official-dashboard"
 MARK="/run/hermes-last-active-\${INST}"
-PYV="/home/hermes/.hermes/hermes-agent/.venv/bin/python3"
-DASH_STATE="$(docker inspect "$D" -f '${DASHBOARD_STATE_INSPECT_FORMAT}' 2>/dev/null || true)"
-verdict="$(docker exec -i "$G" "$PYV" - "$DASH_STATE" <<'PY' 2>/dev/null
-import json, glob, sys
-from datetime import datetime, timezone
-${TURN_MARKER_PROBE_PYTHON_FUNCTIONS}
-now = datetime.now(timezone.utc).timestamp()
-busy = 0
-stale = 0
-# Single-gateway mode runs only the default gateway. Legacy sub-profile state
-# files have no live owner and become stale permanently, so they cannot be
-# treated as activity evidence.
-files = glob.glob("/home/hermes/.hermes/gateway_state.json")
-if not files:
-    print("BUSY"); sys.exit(0)
-for f in files:
-    try:
-        d = json.load(open(f))
-        ts = datetime.fromisoformat(d["updated_at"]).timestamp()
-        if now - ts > 150:
-            stale += 1
-        busy += int(d.get("active_agents", 0) or 0)
-    except Exception:
-        stale += 1
-# Web-chat turns: a fresh marker newer than the running dashboard process, or a
-# fresh marker file that cannot be read, counts as BUSY. Bounded by
-# TURN_MARKER_FRESH_SECONDS so a crash-left marker cannot pin BUSY forever.
-live, unreadable = hivra_live_turn_markers(
-    "${WEBFREE_HERMES_HOME}",
-    now,
-    ${TURN_MARKER_FRESH_SECONDS},
-    hivra_dashboard_not_before(sys.argv[1] if len(sys.argv) > 1 else ""),
-)
-print("BUSY" if (busy > 0 or stale > 0 or live > 0 or unreadable > 0) else "IDLE")
-PY
-)" || verdict="BUSY"
-if [ "$verdict" != "IDLE" ]; then
+${buildAgentActivityProbeShell()}
+hivra_agent_activity "agent-\${INST}-gateway" "agent-\${INST}-official-dashboard"
+# Only a proven-idle probe with the gateway running counts as idle. A gateway
+# that is not running is never proof of idle: the roll recreates both
+# containers, and this sampler has always refused to call a box it cannot see
+# running idle.
+case "$HIVRA_GATEWAY_STATE" in
+  "true "*) gateway_up=1 ;;
+  *) gateway_up=0 ;;
+esac
+if [ "$HIVRA_ACTIVITY_VERDICT" != idle ] || [ "$gateway_up" != 1 ]; then
   date +%s > "$MARK"
 elif [ ! -e "$MARK" ]; then
   # No prior BUSY sample exists: start the 45-minute proof window now.

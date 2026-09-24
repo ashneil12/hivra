@@ -14,8 +14,8 @@
  * Two callers: the instant wallet-unlock flow (a user's own instances, which
  * recreates immediately because the user just asked for the compute) and the
  * apply-pending-resizes cron (background sweep, a system update: while an agent
- * turn is running it is deferred, keeps its flag and is retried next tick, up to
- * the in-flight gate's cap).
+ * turn is running it is deferred, keeps its flag and is retried next tick, for
+ * at most six hours or 24 deferrals, per the in-flight gate's policy).
  */
 
 import "server-only";

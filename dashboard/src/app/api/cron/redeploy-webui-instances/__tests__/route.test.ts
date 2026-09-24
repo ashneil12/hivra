@@ -43,8 +43,11 @@ function busyGate(deferrals: number): InFlightUpdateGateReport {
     action: "defer",
     verdict: "busy",
     reason: "in_flight_turn",
+    trigger: "fleet_sync",
     liveTurns: 1,
     unreadableMarkers: 0,
+    gatewayActive: 0,
+    gatewayUnknown: 0,
     deferrals,
     streakSeconds: 60,
   };

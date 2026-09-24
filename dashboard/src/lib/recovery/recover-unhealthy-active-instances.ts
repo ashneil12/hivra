@@ -33,9 +33,12 @@
  *
  * In-flight turns: the repair is a system update, so it passes the in-flight
  * gate first. A gateway can be down while official-dashboard keeps running a
- * web-chat turn; that repair is deferred (not counted as an attempt, no
- * cooldown stamp) and retried next tick, until the turn ends or the gate's
- * deferral cap is reached.
+ * web-chat turn; a repair that finds a positively running turn is deferred
+ * (not counted as an attempt, no cooldown stamp) and retried next tick, for at
+ * most one hour or four deferrals, so a hung turn cannot hold a repair for long.
+ * When the box cannot tell whether a turn is running, which is often part of
+ * the breakage, the repair goes ahead (SYSTEM_UPDATE_DEFERRAL_POLICY
+ * .unhealthy_recovery in inflight-update-gate.ts).
  *
  * Scope:
  *   - webfree backends only (backend in WEBFREE_BACKENDS) — matches the

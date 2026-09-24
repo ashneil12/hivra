@@ -438,8 +438,9 @@ export async function POST(req: NextRequest) {
  * stamped for the whole batch before any work ran; left there, a deferred box
  * would wait a full fleet cycle (days) instead of being retried by the next
  * tick. Clearing it sorts the row first (NULLS FIRST). A box that stays busy
- * cannot camp the head: the in-flight gate proceeds once its deferral streak
- * reaches the cap, which the next daily visit always exceeds.
+ * cannot camp the head: the in-flight gate defers a busy box on at most two
+ * consecutive daily visits and updates it on the third
+ * (SYSTEM_UPDATE_DEFERRAL_POLICY.fleet_sync in inflight-update-gate.ts).
  */
 async function requeueDeferredRows(ids: string[]): Promise<void> {
   if (ids.length === 0) return;

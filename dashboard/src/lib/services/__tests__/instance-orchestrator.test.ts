@@ -24,7 +24,11 @@ import {
   USER_LIVE_UPDATE,
   systemLiveUpdate,
 } from "@/lib/services/live-update-initiator";
-import { buildInFlightUpdateGateScript } from "@/lib/services/inflight-update-gate";
+import {
+  INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
+  INFLIGHT_UPDATE_GATE_SLACK_SECONDS,
+  buildInFlightUpdateGateScript,
+} from "@/lib/services/inflight-update-gate";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 import { spawnSync } from "child_process";
 
@@ -1628,7 +1632,10 @@ describe("applyLiveUpdate in-flight turn gate", () => {
   it("checks the box for an in-flight turn before a system update writes or launches anything", async () => {
     (sshExec as jest.Mock).mockResolvedValue({
       ok: true,
-      stdout: gateReport("action=proceed verdict=idle reason=no_turn_in_flight live=0 unreadable=0 deferrals=0 streak_s=0") + "4242\n",
+      stdout:
+        gateReport(
+          "action=proceed verdict=idle reason=no_turn_in_flight trigger=fleet_sync live=0 unreadable=0 gateway_active=0 gateway_unknown=0 deferrals=0 streak_s=0"
+        ) + "4242\n",
       stderr: "",
     });
     const { supabase } = supabaseCapturing();
@@ -1638,15 +1645,112 @@ describe("applyLiveUpdate in-flight turn gate", () => {
     expect(result).toMatchObject({ applied: true, initiator: FLEET_SYNC });
     const inner = launchedInnerScript();
     const gateScript = extractEmbeddedScript(inner, "/tmp/hermes-update-gate-inst-gate-order.sh");
-    expect(gateScript).toBe(buildInFlightUpdateGateScript({ instanceId: "inst-gate-order" }));
+    expect(gateScript).toBe(
+      buildInFlightUpdateGateScript({
+        instanceId: "inst-gate-order",
+        trigger: "fleet_sync",
+        budgetSeconds: INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
+      })
+    );
     const gateIdx = inner.indexOf('hermes_update_gate_report="$(bash /tmp/hermes-update-gate-inst-gate-order.sh');
     const deferExitIdx = inner.indexOf('*"action=defer"*) exit 0');
+    const clearIdx = inner.indexOf("rm -f '/var/lib/hermes-update-deferrals-inst-gate-order.'*");
     const writeIdx = inner.indexOf("> /tmp/hermes-update-inst-gate-order.sh");
     const launchIdx = inner.indexOf("nohup bash /tmp/hermes-update-wrapper-inst-gate-order.sh");
     expect(gateIdx).toBeGreaterThan(-1);
     expect(deferExitIdx).toBeGreaterThan(gateIdx);
-    expect(writeIdx).toBeGreaterThan(deferExitIdx);
+    // A launched update ends every caller's streak, after the gate let it through.
+    expect(clearIdx).toBeGreaterThan(deferExitIdx);
+    expect(writeIdx).toBeGreaterThan(clearIdx);
     expect(launchIdx).toBeGreaterThan(writeIdx);
+  });
+
+  it.each([
+    ["pending-resize sweep", "pending_resize_sweep" as const],
+    ["unhealthy-box recovery", "unhealthy_recovery" as const],
+  ])("runs the gate with the %s's own policy", async (_label, trigger) => {
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const { supabase } = supabaseCapturing();
+
+    await applyLiveUpdate(row("inst-gate-trigger"), "127.0.0.1", {}, supabase, {
+      initiator: systemLiveUpdate(trigger),
+    });
+
+    const gateScript = extractEmbeddedScript(launchedInnerScript(), "/tmp/hermes-update-gate-inst-gate-trigger.sh");
+    expect(gateScript).toBe(
+      buildInFlightUpdateGateScript({
+        instanceId: "inst-gate-trigger",
+        trigger,
+        budgetSeconds: INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
+      })
+    );
+    expect(gateScript).toContain(`TRIGGER='${trigger}'`);
+  });
+
+  // The gate runs inside the launch's SSH session. Its worst case (the probe's
+  // budget plus slack, bounded in inflight-update-gate.test.ts) must come on top
+  // of the lane's own launch time, or a slow Docker on the box would turn a
+  // system update into a failed launch.
+  it("gives a gated Hetzner launch its 30 s plus the gate's worst case", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const { supabase } = supabaseCapturing();
+
+    await applyLiveUpdate(row("inst-gate-hetzner"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+
+    const [, , options] = (sshExec as jest.Mock).mock.calls[0];
+    expect(options.timeoutMs).toBeGreaterThanOrEqual(
+      30_000 + (INFLIGHT_UPDATE_GATE_BUDGET_SECONDS + INFLIGHT_UPDATE_GATE_SLACK_SECONDS) * 1000
+    );
+    expect(options.timeoutMs).toBe(48_000);
+  });
+
+  it("gives a gated Proxmox launch its 90 s plus the gate's worst case", async () => {
+    (getProxmoxInfrastructure as jest.Mock).mockReturnValue({
+      provider: "proxmox",
+      vmid: 201,
+      privateIpv4: "10.250.20.51",
+      gatewayHost: "agent-proxmox.example.com",
+    });
+    (runProxmoxHostScript as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const { supabase } = supabaseCapturing();
+
+    await applyLiveUpdate(
+      {
+        ...row("inst-gate-proxmox"),
+        hetzner_server_id: null,
+        host_id: null,
+        config: {
+          infrastructure: {
+            provider: "proxmox",
+            vmid: 201,
+            privateIpv4: "10.250.20.51",
+            gatewayHost: "agent-proxmox.example.com",
+          },
+        },
+      },
+      "",
+      {},
+      supabase,
+      { initiator: FLEET_SYNC }
+    );
+
+    expect(runProxmoxHostScript).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      90_000 + (INFLIGHT_UPDATE_GATE_BUDGET_SECONDS + INFLIGHT_UPDATE_GATE_SLACK_SECONDS) * 1000
+    );
+  });
+
+  it.each([
+    ["user", USER_LIVE_UPDATE],
+    ["operator", OPERATOR_LIVE_UPDATE],
+  ])("keeps the lane's own launch timeout when the %s asked for the update (no gate to wait for)", async (_label, initiator) => {
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    const { supabase } = supabaseCapturing();
+
+    await applyLiveUpdate(row("inst-ungated"), "127.0.0.1", {}, supabase, { initiator });
+
+    expect((sshExec as jest.Mock).mock.calls[0][2].timeoutMs).toBe(30_000);
   });
 
   it.each([
@@ -1661,7 +1765,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       const { supabase } = supabaseCapturing();
       await applyLiveUpdate(row(id), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
       const inner = launchedInnerScript();
-      const stub = `#!/usr/bin/env bash\necho "HERMES_INFLIGHT_GATE action=${action} verdict=busy reason=in_flight_turn live=1 unreadable=0 deferrals=1 streak_s=0"\n`;
+      const stub = `#!/usr/bin/env bash\necho "HERMES_INFLIGHT_GATE action=${action} verdict=busy reason=in_flight_turn trigger=fleet_sync live=1 unreadable=0 gateway_active=0 gateway_unknown=0 deferrals=1 streak_s=0"\n`;
       const writeIdx = inner.indexOf(`printf '%s' '`, inner.indexOf("esac"));
       const gatePortion = inner
         .slice(0, writeIdx)
@@ -1676,7 +1780,9 @@ describe("applyLiveUpdate in-flight turn gate", () => {
   it("reports deferred_busy and leaves the row untouched when a turn is in flight", async () => {
     (sshExec as jest.Mock).mockResolvedValue({
       ok: true,
-      stdout: gateReport("action=defer verdict=busy reason=in_flight_turn live=1 unreadable=0 deferrals=2 streak_s=900"),
+      stdout: gateReport(
+        "action=defer verdict=busy reason=in_flight_turn trigger=fleet_sync live=1 unreadable=0 gateway_active=0 gateway_unknown=0 deferrals=2 streak_s=900"
+      ),
       stderr: "",
     });
     const info = jest.spyOn(log, "info");
@@ -1694,8 +1800,11 @@ describe("applyLiveUpdate in-flight turn gate", () => {
         action: "defer",
         verdict: "busy",
         reason: "in_flight_turn",
+        trigger: "fleet_sync",
         liveTurns: 1,
         unreadableMarkers: 0,
+        gatewayActive: 0,
+        gatewayUnknown: 0,
         deferrals: 2,
         streakSeconds: 900,
       },
@@ -1712,7 +1821,10 @@ describe("applyLiveUpdate in-flight turn gate", () => {
   it("proceeds loudly once the deferral cap is reached", async () => {
     (sshExec as jest.Mock).mockResolvedValue({
       ok: true,
-      stdout: gateReport("action=proceed verdict=busy reason=deferral_cap live=1 unreadable=0 deferrals=24 streak_s=21700") + "4242\n",
+      stdout:
+        gateReport(
+          "action=proceed verdict=busy reason=deferral_cap trigger=fleet_sync live=1 unreadable=0 gateway_active=0 gateway_unknown=0 deferrals=2 streak_s=172900"
+        ) + "4242\n",
       stderr: "",
     });
     const warn = jest.spyOn(log, "warn");
@@ -1723,12 +1835,62 @@ describe("applyLiveUpdate in-flight turn gate", () => {
     expect(result).toMatchObject({
       applied: true,
       initiator: FLEET_SYNC,
-      inFlightGate: { action: "proceed", reason: "deferral_cap", deferrals: 24 },
+      inFlightGate: { action: "proceed", reason: "deferral_cap", deferrals: 2 },
     });
     expect(patches[0]).toMatchObject({ status: "redeploying", last_synced_at: expect.any(String) });
     expect(warn).toHaveBeenCalledWith(
       "system live update proceeding past the in-flight gate",
       expect.objectContaining({ instanceId: "inst-capped", gateReason: "deferral_cap" })
+    );
+    warn.mockRestore();
+  });
+
+  it("says a deferral on an unknown verdict could not confirm the box was idle", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout: gateReport(
+        "action=defer verdict=unknown reason=turn_state_unknown trigger=fleet_sync live=0 unreadable=0 gateway_active=0 gateway_unknown=1 deferrals=1 streak_s=0"
+      ),
+      stderr: "",
+    });
+    const { supabase, patches } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-unknown"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
+
+    expect(result).toMatchObject({
+      applied: false,
+      deferred: true,
+      error: expect.stringContaining("could not confirm that no agent turn is running"),
+      inFlightGate: { verdict: "unknown", gatewayUnknown: 1 },
+    });
+    expect(patches).toEqual([]);
+  });
+
+  it("warns when unhealthy-box recovery proceeds on an unknown verdict", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout:
+        gateReport(
+          "action=proceed verdict=unknown reason=turn_state_unknown trigger=unhealthy_recovery live=- unreadable=- gateway_active=- gateway_unknown=- deferrals=0 streak_s=0"
+        ) + "4242\n",
+      stderr: "",
+    });
+    const warn = jest.spyOn(log, "warn");
+    const { supabase, patches } = supabaseCapturing();
+
+    const result = await applyLiveUpdate(row("inst-recover-unknown"), "127.0.0.1", {}, supabase, {
+      initiator: systemLiveUpdate("unhealthy_recovery"),
+    });
+
+    expect(result).toMatchObject({ applied: true, inFlightGate: { action: "proceed", verdict: "unknown" } });
+    expect(patches[0]).toMatchObject({ status: "redeploying" });
+    expect(warn).toHaveBeenCalledWith(
+      "system live update proceeding past the in-flight gate",
+      expect.objectContaining({
+        instanceId: "inst-recover-unknown",
+        trigger: "unhealthy_recovery",
+        failureType: "live_update_gate_unverified",
+      })
     );
     warn.mockRestore();
   });
@@ -1763,7 +1925,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
     expect(result).toEqual({ applied: true, initiator, inFlightGate: null });
     const inner = launchedInnerScript();
     expect(inner).not.toContain("hermes-update-gate-");
-    expect(inner.split("\n")[0]).toBe("rm -f '/var/lib/hermes-update-deferrals-inst-user'");
+    expect(inner.split("\n")[0]).toBe("rm -f '/var/lib/hermes-update-deferrals-inst-user.'*");
   });
 
   it("refreshes the idle-gated update stack only where the box already runs it", async () => {

@@ -69,10 +69,12 @@ import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { log } from "@/lib/logger";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 import {
+  INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
+  buildClearUpdateDeferralsCommand,
   buildInFlightUpdateGateScript,
+  gatedLaunchTimeoutMs,
   missingInFlightUpdateGateReport,
   parseInFlightUpdateGateReport,
-  updateDeferralStatePath,
   type InFlightUpdateGateReport,
 } from "@/lib/services/inflight-update-gate";
 import {
@@ -737,24 +739,38 @@ fi
 `;
 
   // In-flight turn gate. A system-initiated update (nobody asked for this
-  // restart) first checks the box for a running web-chat turn and, while one is
-  // running, prints a defer report and exits before anything is written or
-  // launched; the gate caps how long that can go on (inflight-update-gate.ts).
-  // User and operator updates skip the check. Every launched update ends the
-  // box's deferral streak.
+  // restart) first asks the box whether an agent turn is running (a web-chat
+  // turn in official-dashboard, or a messaging/cron/scheduled-task turn in the
+  // gateway) and, while one is, prints a defer report and exits before anything
+  // is written or launched; the gate caps how long that can go on per caller
+  // (inflight-update-gate.ts). User and operator updates skip the check. Every
+  // launched update ends every caller's deferral streak for the box.
+  //
+  // The gate's probe is bounded by gateBudgetSeconds, and the lane's launch
+  // timeout grows by that budget (plus slack) below, so a slow Docker on the box
+  // cannot push a system update past its SSH timeout into a failed launch.
   const gatePath = `/tmp/hermes-update-gate-${instance.id}.sh`;
-  const deferralStatePath = updateDeferralStatePath(instance.id);
+  const gateBudgetSeconds = INFLIGHT_UPDATE_GATE_BUDGET_SECONDS;
   const gateLines = isSystemLiveUpdate(initiator)
     ? [
-        `printf '%s' '${Buffer.from(buildInFlightUpdateGateScript({ instanceId: instance.id })).toString("base64")}' | base64 -d > ${gatePath}`,
+        `printf '%s' '${Buffer.from(
+          buildInFlightUpdateGateScript({
+            instanceId: instance.id,
+            trigger: initiator.trigger,
+            budgetSeconds: gateBudgetSeconds,
+          })
+        ).toString("base64")}' | base64 -d > ${gatePath}`,
         `hermes_update_gate_report="$(bash ${gatePath} </dev/null 2>/dev/null)" || true`,
         `rm -f ${gatePath}`,
         `printf '%s\\n' "$hermes_update_gate_report"`,
         `case "$hermes_update_gate_report" in *"action=defer"*) exit 0 ;; esac`,
       ]
-    : [`rm -f ${shQuote(deferralStatePath)}`];
+    : [];
+  const launchTimeoutMs = (baseTimeoutMs: number) =>
+    isSystemLiveUpdate(initiator) ? gatedLaunchTimeoutMs(baseTimeoutMs, gateBudgetSeconds) : baseTimeoutMs;
   const innerScript = [
     ...gateLines,
+    buildClearUpdateDeferralsCommand(instance.id),
     `printf '%s' '${Buffer.from(agentScript).toString("base64")}' | base64 -d > ${scriptPath}`,
     `chmod +x ${scriptPath}`,
     `printf '%s' '${Buffer.from(wrapperScript).toString("base64")}' | base64 -d > ${wrapperPath}`,
@@ -847,10 +863,10 @@ fi
           `printf '%s' '${Buffer.from(innerScript).toString("base64")}' | base64 -d | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -s"`,
         ].join("\n"),
         proxmoxScriptEnv,
-        90_000
+        launchTimeoutMs(90_000)
       )
     : await sshExec(ipv4, "bash -s", {
-      timeoutMs: 30_000,
+      timeoutMs: launchTimeoutMs(30_000),
       stdin: innerScript,
     });
 
@@ -895,14 +911,20 @@ fi
         gateReason: inFlightGate.reason,
         liveTurns: inFlightGate.liveTurns,
         unreadableMarkers: inFlightGate.unreadableMarkers,
+        gatewayActive: inFlightGate.gatewayActive,
+        gatewayUnknown: inFlightGate.gatewayUnknown,
         deferrals: inFlightGate.deferrals,
         streakSeconds: inFlightGate.streakSeconds,
       });
+      const why =
+        inFlightGate.verdict === "busy"
+          ? "an agent turn is in flight"
+          : "the box could not confirm that no agent turn is running";
       return {
         applied: false as const,
         deferred: true as const,
         reason: "deferred_busy" as const,
-        error: `Deferred: an agent turn is in flight (deferral ${inFlightGate.deferrals}); the next run retries`,
+        error: `Deferred: ${why} (deferral ${inFlightGate.deferrals}); the next run retries`,
         initiator,
         inFlightGate,
       };
@@ -919,12 +941,13 @@ fi
         trigger: initiator.trigger,
       });
     } else if (inFlightGate.verdict !== "idle") {
-      // Proceeding while a turn may be running: the deferral cap was reached
-      // (or the streak could not be recorded). Loud, because it can interrupt
-      // a turn.
+      // Proceeding while a turn may be running: the caller's deferral cap was
+      // reached, the streak could not be recorded, or unhealthy-box recovery
+      // went ahead on an unknown verdict. Loud, because it can interrupt a turn.
       log.warn("system live update proceeding past the in-flight gate", {
         source: LOG_SOURCE,
-        failureType: "live_update_gate_cap_reached",
+        failureType:
+          inFlightGate.reason === "deferral_cap" ? "live_update_gate_cap_reached" : "live_update_gate_unverified",
         instanceId: instance.id,
         userId: instance.user_id,
         trigger: initiator.trigger,
