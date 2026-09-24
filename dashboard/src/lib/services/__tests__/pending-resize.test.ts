@@ -2,6 +2,7 @@ import { redeployPendingResizes } from "../pending-resize";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "../instance-orchestrator";
 import { USER_LIVE_UPDATE, systemLiveUpdate } from "../live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 
 jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn().mockResolvedValue({
@@ -87,14 +88,66 @@ describe("redeployPendingResizes", () => {
       },
     });
 
+    const info = jest.spyOn(log, "info");
+
     const summary = await redeployPendingResizes([row()], sweep);
 
-    expect(summary).toMatchObject({ redeployed: 0, failed: 0, skipped: 0, deferred: 1 });
+    expect(summary).toMatchObject({ redeployed: 0, failed: 0, skipped: 0, deferred: 1, deferredUnverified: 0 });
     expect(summary.results).toEqual([
       { id: "i1", redeployed: false, deferred: true, error: "deferred_busy" },
     ]);
+    expect(info).toHaveBeenCalledWith(
+      "pending resize deferred: agent turn in flight",
+      expect.objectContaining({ failureType: "pending_resize_deferred_busy", verdict: "busy" }),
+    );
+    info.mockRestore();
     // tier_change_pending stays set: the next sweep retries this box.
     expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a deferral the gate could not verify as unverified, not as a turn in flight", async () => {
+    mockApply.mockResolvedValueOnce({
+      applied: false,
+      deferred: true,
+      reason: "deferred_unverified",
+      error: "Deferred: the computer could not confirm that no agent turn is running (deferral 3); the next run retries",
+      initiator: SWEEP,
+      inFlightGate: {
+        action: "defer",
+        verdict: "unknown",
+        reason: "turn_state_unknown",
+        trigger: "pending_resize_sweep",
+        liveTurns: 0,
+        unreadableMarkers: 0,
+        gatewayActive: 0,
+        gatewayUnknown: 1,
+        deferrals: 3,
+        streakSeconds: 1800,
+      },
+    });
+    const info = jest.spyOn(log, "info");
+
+    const summary = await redeployPendingResizes([row()], sweep);
+
+    expect(summary).toMatchObject({ redeployed: 0, failed: 0, deferred: 1, deferredUnverified: 1 });
+    expect(summary.results).toEqual([
+      { id: "i1", redeployed: false, deferred: true, error: "deferred_unverified" },
+    ]);
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(
+      "pending resize deferred: could not confirm no agent turn is running",
+      expect.objectContaining({
+        instanceId: "i1",
+        failureType: "pending_resize_deferred_unverified",
+        verdict: "unknown",
+        gateReason: "turn_state_unknown",
+        gatewayUnknown: 1,
+        deferrals: 3,
+        streakSeconds: 1800,
+      }),
+    );
+    expect(info).not.toHaveBeenCalledWith("pending resize deferred: agent turn in flight", expect.anything());
+    info.mockRestore();
   });
 
   it("skips non-webui instances without redeploying", async () => {

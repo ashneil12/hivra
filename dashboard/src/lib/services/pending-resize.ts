@@ -14,8 +14,9 @@
  * Two callers: the instant wallet-unlock flow (a user's own instances, which
  * recreates immediately because the user just asked for the compute) and the
  * apply-pending-resizes cron (background sweep, a system update: while an agent
- * turn is running it is deferred, keeps its flag and is retried next tick, for
- * at most six hours or 24 deferrals, per the in-flight gate's policy).
+ * turn is running, or the box cannot confirm that none is, it is deferred, keeps
+ * its flag and is retried next tick, for at most six hours or 24 deferrals, per
+ * the in-flight gate's policy).
  */
 
 import "server-only";
@@ -23,6 +24,11 @@ import "server-only";
 import { clerkClient } from "@clerk/nextjs/server";
 
 import { extractGlobalHermesSettings } from "@/lib/instance-settings";
+import {
+  describeInFlightDeferral,
+  inFlightGateLogFields,
+  type InFlightDeferralReason,
+} from "@/lib/services/inflight-update-gate";
 import {
   applyLiveUpdate,
   resolveInstanceIpv4,
@@ -67,9 +73,13 @@ interface PendingResizeResult {
   id: string;
   redeployed: boolean;
   skipped?: boolean;
-  /** A system sweep found an agent turn in flight; the flag stays set for the next tick. */
+  /**
+   * A system sweep deferred the box: an agent turn in flight ("deferred_busy")
+   * or no confirmation that none is running ("deferred_unverified"). The flag
+   * stays set for the next tick.
+   */
   deferred?: boolean;
-  error?: string;
+  error?: InFlightDeferralReason | string;
 }
 
 export interface PendingResizeSummary {
@@ -77,6 +87,8 @@ export interface PendingResizeSummary {
   failed: number;
   skipped: number;
   deferred: number;
+  /** Of `deferred`, the boxes that could not confirm no agent turn was running. */
+  deferredUnverified: number;
   results: PendingResizeResult[];
 }
 
@@ -130,16 +142,19 @@ async function redeployOne(
   const settings = await getSettings(row.user_id);
   const update = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin, { initiator });
   if (update.deferred) {
-    // An agent turn is running. The new caps wait for it (bounded by the gate's
-    // cap); tier_change_pending stays set so the next tick retries.
-    log.info("pending resize deferred: agent turn in flight", {
+    // An agent turn is running, or the box could not confirm that none is
+    // (which may be a failing gateway: worded apart, never as a turn). The new
+    // caps wait (bounded by the gate's cap); tier_change_pending stays set so
+    // the next tick retries.
+    const deferral = describeInFlightDeferral(update.inFlightGate);
+    log.info(`pending resize deferred: ${deferral.summary}`, {
       source: LOG_SOURCE,
       instanceId: row.id,
       userId: row.user_id,
-      failureType: "pending_resize_deferred_busy",
-      deferrals: update.inFlightGate.deferrals,
+      failureType: `pending_resize_${deferral.reason}`,
+      ...inFlightGateLogFields(update.inFlightGate),
     });
-    return { id: row.id, redeployed: false, deferred: true, error: "deferred_busy" };
+    return { id: row.id, redeployed: false, deferred: true, error: deferral.reason };
   }
   if (!update.applied) {
     log.warn("pending resize redeploy failed", {
@@ -225,6 +240,7 @@ export async function redeployPendingResizes(
     failed: results.filter((r) => !r.redeployed && !r.skipped && !r.deferred).length,
     skipped: results.filter((r) => r.skipped).length,
     deferred: results.filter((r) => r.deferred).length,
+    deferredUnverified: results.filter((r) => r.deferred && r.error === "deferred_unverified").length,
     results,
   };
 }

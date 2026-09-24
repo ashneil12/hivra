@@ -14,6 +14,11 @@ import { extractGlobalHermesSettings } from "@/lib/instance-settings";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
+  describeInFlightDeferral,
+  inFlightGateLogFields,
+  type InFlightDeferralReason,
+} from "@/lib/services/inflight-update-gate";
+import {
   applyLiveUpdate,
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
@@ -67,14 +72,15 @@ type RedeployResult = {
   status?: "redeploying";
   skipped?: boolean;
   /**
-   * The scheduled sweep found an agent turn in flight and did not update the
-   * box (error "deferred_busy"). Neither launched nor failed; retried first on
-   * the next tick.
+   * The scheduled sweep did not update the box because an agent turn is in
+   * flight (error "deferred_busy") or the box could not confirm that none is
+   * running (error "deferred_unverified"). Neither launched nor failed;
+   * retried first on the next tick.
    */
   deferred?: boolean;
   /** Deferrals in the box's current streak (the gate proceeds at its cap). */
   deferrals?: number;
-  error?: string;
+  error?: InFlightDeferralReason | string;
 };
 
 export const dynamic = "force-dynamic";
@@ -313,14 +319,16 @@ async function redeployOne(
   const globalSettings = await getGlobalSettings(instance.user_id);
   const update = await applyLiveUpdate(instance, ipv4, globalSettings, supabaseAdmin!, { initiator });
   if (update.deferred) {
-    log.info("webui redeploy deferred: agent turn in flight", {
+    // Worded from the gate's verdict: an unverified deferral (the box could not
+    // confirm it is idle) may be a failing gateway, not a running turn.
+    const deferral = describeInFlightDeferral(update.inFlightGate);
+    log.info(`webui redeploy deferred: ${deferral.summary}`, {
       source: SOURCE,
       route: ROUTE,
       instanceId: instance.id,
       userId: instance.user_id,
-      failureType: "webui_redeploy_deferred_busy",
-      deferrals: update.inFlightGate.deferrals,
-      streakSeconds: update.inFlightGate.streakSeconds,
+      failureType: `webui_redeploy_${deferral.reason}`,
+      ...inFlightGateLogFields(update.inFlightGate),
     });
     return {
       id: instance.id,
@@ -328,7 +336,7 @@ async function redeployOne(
       success: false,
       deferred: true,
       deferrals: update.inFlightGate.deferrals,
-      error: "deferred_busy",
+      error: deferral.reason,
     };
   }
   if (!update.applied) {
@@ -638,8 +646,9 @@ export async function GET(req: NextRequest) {
     // skip every remaining wave AND the dead-man heartbeat below, so a crash
     // would also silence the watchdog that is supposed to notice the crash.
     // Turn a rejection into a normal failed result and keep sweeping.
-    // Scheduled sweep = system-initiated: a box with an agent turn in flight
-    // is deferred (bounded by the in-flight gate's cap) instead of recreated.
+    // Scheduled sweep = system-initiated: a box with an agent turn in flight,
+    // or one that cannot confirm it is idle, is deferred (bounded by the
+    // in-flight gate's cap) instead of recreated.
     const settled = await Promise.allSettled(
       wave.map((row) => redeployOne(row, getGlobalSettings, systemLiveUpdate("fleet_sync")))
     );
@@ -670,6 +679,9 @@ export async function GET(req: NextRequest) {
   const skipped = results.filter((result) => result.skipped).length;
   const deferredIds = results.filter((result) => result.deferred).map((result) => result.id);
   const deferred = deferredIds.length;
+  const deferredUnverified = results.filter(
+    (result) => result.deferred && result.error === "deferred_unverified",
+  ).length;
   const failed = results.filter(
     (result) => !result.success && !result.skipped && !result.deferred,
   ).length;
@@ -685,6 +697,7 @@ export async function GET(req: NextRequest) {
     failed,
     skipped,
     deferred,
+    deferredUnverified,
   });
 
   // Surface failures: previously a mostly-failed fleet sync returned HTTP 200
@@ -699,7 +712,8 @@ export async function GET(req: NextRequest) {
       title: `redeploy-webui fleet-sync: ${failed} of ${rows.length} failed`,
       message:
         `redeploy-webui-instances fleet-sync launched ${launched}, skipped ${skipped}, deferred ${deferred} ` +
-        `(agent turn in flight), and FAILED ${failed} ` +
+        `(${deferred - deferredUnverified} with an agent turn in flight, ${deferredUnverified} that could not ` +
+        `confirm none was running), and FAILED ${failed} ` +
         `of ${rows.length} attempted VM(s). Failed rows keep their old last_synced_at (so they still read as ` +
         `stale) but DID bump last_sync_attempt_at, so they rotate to the back and are retried next cycle ` +
         `rather than camping the head of the queue. A row failing every cycle is a real broken box, not a ` +
@@ -711,6 +725,7 @@ export async function GET(req: NextRequest) {
         failed,
         skipped,
         deferred,
+        deferred_unverified: deferredUnverified,
         failed_instances: results
           .filter((r) => !r.success && !r.skipped && !r.deferred)
           .map((r) => ({ id: r.id, error: r.error })),
@@ -728,8 +743,10 @@ export async function GET(req: NextRequest) {
     launched,
     failed,
     skipped,
-    // Boxes left untouched because an agent turn was running; requeued first.
+    // Boxes left untouched because an agent turn was running or the box could
+    // not confirm none was (deferredUnverified of them); requeued first.
     deferred,
+    deferredUnverified,
     // Total boxes the sweep should cover; launched < eligibleTotal => run more
     // ticks. Never read coverage off failed=0 alone.
     eligibleTotal,

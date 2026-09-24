@@ -13,9 +13,11 @@
  *   - idle -> proceed, and end the caller's deferral streak;
  *   - busy (a live turn) -> defer: the update is not launched, applyLiveUpdate
  *     reports `deferred_busy`, and the caller's next run retries;
- *   - unknown (the probe could not tell) -> defer too, except for unhealthy-box
- *     recovery: there a probe that cannot answer is part of the breakage being
- *     repaired, not evidence of a turn, so recovery proceeds;
+ *   - unknown (the probe could not tell) -> defer too (`deferred_unverified`,
+ *     reported apart from a turn in flight: it can mean a failing gateway),
+ *     except for unhealthy-box recovery: there a probe that cannot answer is
+ *     part of the breakage being repaired, not evidence of a turn, so recovery
+ *     proceeds;
  *   - but never forever: each caller has its own deferral cap
  *     (SYSTEM_UPDATE_DEFERRAL_POLICY). Once a streak reaches it, the update
  *     proceeds and the report says so (`deferral_cap`).
@@ -150,6 +152,59 @@ export interface InFlightUpdateGateReport {
   deferrals: number;
   /** Seconds since the streak's first deferral (0 when there was no streak). */
   streakSeconds: number;
+}
+
+/** Why a system update was deferred, as LiveUpdateResult and its callers report it. */
+export type InFlightDeferralReason = "deferred_busy" | "deferred_unverified";
+
+export interface InFlightDeferral {
+  /**
+   * "busy": the probe saw a turn in flight. "unverified": the computer could
+   * not confirm that none was running (gateway state stale, missing or
+   * unreadable while it runs, unreadable turn markers, a probe that ran out of
+   * time), which can mean a gateway that is failing rather than working.
+   */
+  kind: "busy" | "unverified";
+  reason: InFlightDeferralReason;
+  /** Tail for a log message ("<caller> deferred: <summary>"). */
+  summary: string;
+  /** The same as a clause for a readable error ("Deferred: <clause> ..."). */
+  clause: string;
+}
+
+/**
+ * How to report a deferral. Every caller words it from the gate's verdict, so a
+ * deferral on an unknown verdict is never logged as a turn in flight.
+ */
+export function describeInFlightDeferral(report: Pick<InFlightUpdateGateReport, "verdict">): InFlightDeferral {
+  if (report.verdict === "busy") {
+    return {
+      kind: "busy",
+      reason: "deferred_busy",
+      summary: "agent turn in flight",
+      clause: "an agent turn is in flight",
+    };
+  }
+  return {
+    kind: "unverified",
+    reason: "deferred_unverified",
+    summary: "could not confirm no agent turn is running",
+    clause: "the computer could not confirm that no agent turn is running",
+  };
+}
+
+/** The gate's findings for a caller's deferral log line. */
+export function inFlightGateLogFields(report: InFlightUpdateGateReport) {
+  return {
+    verdict: report.verdict,
+    gateReason: report.reason,
+    liveTurns: report.liveTurns,
+    unreadableMarkers: report.unreadableMarkers,
+    gatewayActive: report.gatewayActive,
+    gatewayUnknown: report.gatewayUnknown,
+    deferrals: report.deferrals,
+    streakSeconds: report.streakSeconds,
+  };
 }
 
 const STATE_DIRECTORY_PREFIX = "/var/lib/hermes-update-deferrals-";

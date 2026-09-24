@@ -1853,6 +1853,8 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       ),
       stderr: "",
     });
+    const info = jest.spyOn(log, "info");
+    const warn = jest.spyOn(log, "warn");
     const { supabase, patches } = supabaseCapturing();
 
     const result = await applyLiveUpdate(row("inst-unknown"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
@@ -1860,10 +1862,24 @@ describe("applyLiveUpdate in-flight turn gate", () => {
     expect(result).toMatchObject({
       applied: false,
       deferred: true,
+      reason: "deferred_unverified",
       error: expect.stringContaining("could not confirm that no agent turn is running"),
       inFlightGate: { verdict: "unknown", gatewayUnknown: 1 },
     });
     expect(patches).toEqual([]);
+    // Not a turn in flight: possibly a gateway that is failing, so it is loud.
+    expect(warn).toHaveBeenCalledWith(
+      "system live update deferred: could not confirm no agent turn is running",
+      expect.objectContaining({
+        instanceId: "inst-unknown",
+        failureType: "live_update_deferred_unverified",
+        verdict: "unknown",
+        gatewayUnknown: 1,
+      })
+    );
+    expect(info).not.toHaveBeenCalledWith("system live update deferred: agent turn in flight", expect.anything());
+    info.mockRestore();
+    warn.mockRestore();
   });
 
   it("warns when unhealthy-box recovery proceeds on an unknown verdict", async () => {

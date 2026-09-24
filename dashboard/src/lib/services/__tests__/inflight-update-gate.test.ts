@@ -15,7 +15,9 @@ import {
   SYSTEM_UPDATE_DEFERRAL_POLICY,
   buildClearUpdateDeferralsCommand,
   buildInFlightUpdateGateScript,
+  describeInFlightDeferral,
   gatedLaunchTimeoutMs,
+  inFlightGateLogFields,
   parseInFlightUpdateGateReport,
   updateDeferralStatePath,
   type SystemUpdateDeferralPolicy,
@@ -553,6 +555,45 @@ describe("clearing deferral streaks", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("describeInFlightDeferral", () => {
+  it("reports a turn in flight only for a busy verdict", () => {
+    expect(describeInFlightDeferral({ verdict: "busy" })).toEqual({
+      kind: "busy",
+      reason: "deferred_busy",
+      summary: "agent turn in flight",
+      clause: "an agent turn is in flight",
+    });
+  });
+
+  it("reports an unknown verdict (e.g. stale gateway state) as unverified, never as a turn", () => {
+    const deferral = describeInFlightDeferral({ verdict: "unknown" });
+    expect(deferral).toEqual({
+      kind: "unverified",
+      reason: "deferred_unverified",
+      summary: "could not confirm no agent turn is running",
+      clause: "the computer could not confirm that no agent turn is running",
+    });
+    expect(`${deferral.summary} ${deferral.clause}`).not.toMatch(/in flight|\bbox\b|runtime/);
+  });
+
+  it("carries the gate's findings into a caller's log line", () => {
+    const report = parseInFlightUpdateGateReport(
+      `${INFLIGHT_UPDATE_GATE_MARKER} action=defer verdict=unknown reason=turn_state_unknown trigger=fleet_sync live=0 unreadable=0 gateway_active=0 gateway_unknown=1 deferrals=1 streak_s=0\n`,
+    );
+    expect(report).not.toBeNull();
+    expect(inFlightGateLogFields(report!)).toEqual({
+      verdict: "unknown",
+      gateReason: "turn_state_unknown",
+      liveTurns: 0,
+      unreadableMarkers: 0,
+      gatewayActive: 0,
+      gatewayUnknown: 1,
+      deferrals: 1,
+      streakSeconds: 0,
+    });
   });
 });
 

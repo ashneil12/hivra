@@ -68,6 +68,7 @@ import {
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
+import { describeInFlightDeferral, inFlightGateLogFields } from "@/lib/services/inflight-update-gate";
 import { systemLiveUpdate } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { WEBFREE_BACKENDS } from "@/lib/types/instance";
@@ -496,14 +497,17 @@ async function attemptRepair(
   });
 
   if (result.deferred) {
-    // The box is running an agent turn. Nothing was touched, so this is not an
-    // attempt: no counter bump and no cooldown stamp, and the next tick retries.
-    log.info("recover-unhealthy-active repair deferred: agent turn in flight", {
+    // The box is running an agent turn (recovery proceeds on an unknown
+    // verdict, so today only "busy" defers; worded from the verdict anyway).
+    // Nothing was touched, so this is not an attempt: no counter bump and no
+    // cooldown stamp, and the next tick retries.
+    const deferral = describeInFlightDeferral(result.inFlightGate);
+    log.info(`recover-unhealthy-active repair deferred: ${deferral.summary}`, {
       source: SOURCE,
-      failureType: "recover_unhealthy_repair_deferred_busy",
+      failureType: `recover_unhealthy_repair_${deferral.reason}`,
       instanceId: row.id,
       userId: row.user_id,
-      deferrals: result.inFlightGate.deferrals,
+      ...inFlightGateLogFields(result.inFlightGate),
       firstUnhealthyAt,
     });
     return "deferred";

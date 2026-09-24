@@ -72,9 +72,12 @@ import {
   INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
   buildClearUpdateDeferralsCommand,
   buildInFlightUpdateGateScript,
+  describeInFlightDeferral,
   gatedLaunchTimeoutMs,
+  inFlightGateLogFields,
   missingInFlightUpdateGateReport,
   parseInFlightUpdateGateReport,
+  type InFlightDeferralReason,
   type InFlightUpdateGateReport,
 } from "@/lib/services/inflight-update-gate";
 import {
@@ -319,9 +322,11 @@ export interface LiveUpdateOptions {
 /**
  * - applied: the update was launched on the box. `inFlightGate` is the gate's
  *   report for a system update (null for user/operator updates, which skip it).
- * - deferred: a system update found a web-chat turn in flight and did NOT
- *   launch; nothing on the box or in the row changed. The caller retries on its
- *   next tick. `error` carries a readable reason for callers that only log it.
+ * - deferred: a system update did NOT launch because an agent turn is in flight
+ *   (`deferred_busy`) or the box could not confirm that none is running
+ *   (`deferred_unverified`); nothing on the box or in the row changed. The
+ *   caller retries on its next tick. `error` carries a readable reason for
+ *   callers that only log it.
  * - otherwise: the launch failed (`error`).
  */
 export type LiveUpdateResult =
@@ -334,7 +339,7 @@ export type LiveUpdateResult =
   | {
       applied: false;
       deferred: true;
-      reason: "deferred_busy";
+      reason: InFlightDeferralReason;
       error: string;
       initiator: LiveUpdateInitiator;
       inFlightGate: InFlightUpdateGateReport;
@@ -900,31 +905,29 @@ fi
     inFlightGate = parseInFlightUpdateGateReport(launchResult.stdout);
     if (inFlightGate?.action === "defer") {
       // Nothing was written or launched on the box, so the row keeps its
-      // status and last_synced_at; the caller's next tick retries.
-      log.info("system live update deferred: agent turn in flight", {
+      // status and last_synced_at; the caller's next tick retries. A turn in
+      // flight is routine; a box that cannot confirm it is idle (gateway state
+      // stale or unreadable while it runs) may have a failing gateway, so that
+      // one is loud.
+      const deferral = describeInFlightDeferral(inFlightGate);
+      const context = {
         source: LOG_SOURCE,
-        failureType: "live_update_deferred_busy",
+        failureType: `live_update_${deferral.reason}`,
         instanceId: instance.id,
         userId: instance.user_id,
         trigger: initiator.trigger,
-        verdict: inFlightGate.verdict,
-        gateReason: inFlightGate.reason,
-        liveTurns: inFlightGate.liveTurns,
-        unreadableMarkers: inFlightGate.unreadableMarkers,
-        gatewayActive: inFlightGate.gatewayActive,
-        gatewayUnknown: inFlightGate.gatewayUnknown,
-        deferrals: inFlightGate.deferrals,
-        streakSeconds: inFlightGate.streakSeconds,
-      });
-      const why =
-        inFlightGate.verdict === "busy"
-          ? "an agent turn is in flight"
-          : "the box could not confirm that no agent turn is running";
+        ...inFlightGateLogFields(inFlightGate),
+      };
+      if (deferral.kind === "busy") {
+        log.info(`system live update deferred: ${deferral.summary}`, context);
+      } else {
+        log.warn(`system live update deferred: ${deferral.summary}`, context);
+      }
       return {
         applied: false as const,
         deferred: true as const,
-        reason: "deferred_busy" as const,
-        error: `Deferred: ${why} (deferral ${inFlightGate.deferrals}); the next run retries`,
+        reason: deferral.reason,
+        error: `Deferred: ${deferral.clause} (deferral ${inFlightGate.deferrals}); the next run retries`,
         initiator,
         inFlightGate,
       };

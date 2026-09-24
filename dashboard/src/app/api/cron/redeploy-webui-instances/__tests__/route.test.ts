@@ -11,6 +11,7 @@ import {
 } from "@/lib/services/live-update-initiator";
 import { FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 
 // The DB CHECK vocabulary for hermes_instances.lifecycle_state
 // (supabase/migrations/20260516123000_cold_storage_lifecycle.sql). Filtering on
@@ -50,6 +51,23 @@ function busyGate(deferrals: number): InFlightUpdateGateReport {
     gatewayUnknown: 0,
     deferrals,
     streakSeconds: 60,
+  };
+}
+
+// The gate could not tell (stale or unreadable gateway state while it runs):
+// fleet sync defers on it, but nothing says a turn is running.
+function unverifiedGate(deferrals: number): InFlightUpdateGateReport {
+  return {
+    action: "defer",
+    verdict: "unknown",
+    reason: "turn_state_unknown",
+    trigger: "fleet_sync",
+    liveTurns: 0,
+    unreadableMarkers: 0,
+    gatewayActive: 0,
+    gatewayUnknown: 1,
+    deferrals,
+    streakSeconds: 0,
   };
 }
 
@@ -532,6 +550,71 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     expect(query.stampInMock).toHaveBeenLastCalledWith("id", ["inst-busy"]);
     // A deferral is routine, not a failure: no failure ops event.
     expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("webui redeploy launch failed");
+  });
+
+  it("reports a deferral the gate could not verify as unverified, not as a turn in flight", async () => {
+    const query = fleetSelectQuery([
+      { id: "inst-busy", user_id: "user_a", name: "busy", backend: "gateway", gateway_url: "https://a.example" },
+      { id: "inst-unverified", user_id: "user_b", name: "unverified", backend: "gateway", gateway_url: "https://b.example" },
+    ]);
+    mockedSupabaseAdmin.from.mockReturnValue(query);
+    mockedApplyLiveUpdate.mockImplementation(async (row) =>
+      row.id === "inst-busy"
+        ? {
+            applied: false,
+            deferred: true,
+            reason: "deferred_busy",
+            error: "Deferred: an agent turn is in flight (deferral 1); the next run retries",
+            initiator: FLEET_SYNC,
+            inFlightGate: busyGate(1),
+          }
+        : {
+            applied: false,
+            deferred: true,
+            reason: "deferred_unverified",
+            error: "Deferred: the computer could not confirm that no agent turn is running (deferral 1); the next run retries",
+            initiator: FLEET_SYNC,
+            inFlightGate: unverifiedGate(1),
+          },
+    );
+    const info = jest.spyOn(log, "info");
+
+    const response = await GET(getRequest());
+    const body = await response.json();
+
+    // Both are deferrals (requeued, not failed), counted apart.
+    expect(body.data).toMatchObject({ requested: 2, launched: 0, failed: 0, deferred: 2, deferredUnverified: 1 });
+    expect(body.data.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "inst-busy", deferred: true, error: "deferred_busy" }),
+        expect.objectContaining({ id: "inst-unverified", deferred: true, error: "deferred_unverified" }),
+      ]),
+    );
+    expect(query.stampInMock).toHaveBeenLastCalledWith("id", ["inst-busy", "inst-unverified"]);
+    expect(info).toHaveBeenCalledWith(
+      "webui redeploy deferred: agent turn in flight",
+      expect.objectContaining({
+        instanceId: "inst-busy",
+        failureType: "webui_redeploy_deferred_busy",
+        verdict: "busy",
+        gateReason: "in_flight_turn",
+      }),
+    );
+    expect(info).toHaveBeenCalledWith(
+      "webui redeploy deferred: could not confirm no agent turn is running",
+      expect.objectContaining({
+        instanceId: "inst-unverified",
+        failureType: "webui_redeploy_deferred_unverified",
+        verdict: "unknown",
+        gateReason: "turn_state_unknown",
+        gatewayUnknown: 1,
+      }),
+    );
+    expect(info).not.toHaveBeenCalledWith(
+      "webui redeploy deferred: agent turn in flight",
+      expect.objectContaining({ instanceId: "inst-unverified" }),
+    );
+    info.mockRestore();
   });
 
   it("does not requeue anything when no box was deferred", async () => {

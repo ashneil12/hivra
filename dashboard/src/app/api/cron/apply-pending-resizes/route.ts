@@ -96,6 +96,7 @@ async function handle(req: NextRequest) {
     failed: summary.failed,
     skipped: summary.skipped,
     deferred: summary.deferred,
+    deferredUnverified: summary.deferredUnverified,
   });
 
   // Backlog + failure observability. BATCH_LIMIT=20/tick is a deliberate
@@ -132,6 +133,7 @@ async function handle(req: NextRequest) {
         failed: summary.failed,
         skipped: summary.skipped,
         deferred: summary.deferred,
+        deferred_unverified: summary.deferredUnverified,
         total_pending: totalPending,
       },
     });
