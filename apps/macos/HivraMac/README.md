@@ -93,12 +93,12 @@ Embedded pages follow browser rules for windows, links, downloads and dialogs:
   a connector authorization, a blank window the page fills in later) gets a
   real popup window. The page keeps its handle, so `window.opener`,
   `postMessage` and `window.close()` work. The popup is sized from the page's
-  request within the screen, opens over the window that asked for it, names the
-  page's origin in its title, and is never restored at launch. It closes when the
-  page closes it, when you close it, or when the tab, window or account that
-  opened it goes away. Popups are ordinary web content: they never receive the
-  workspace or desktop hand-off bridges. Windows opened without a user gesture
-  are blocked, as in a browser.
+  request within the screen, opens over the window that asked for it, and is
+  never restored at launch. Popups have no address bar, so the title starts with
+  the page's origin. A popup closes when the page closes it, when you close it,
+  or when the tab, window or account that opened it goes away. Popups are
+  ordinary web content: they never receive the workspace or desktop hand-off
+  bridges. Windows opened without a user gesture are blocked, as in a browser.
 - **Links.** A link you click that opens another site in a new window (for
   example a link in agent chat) opens in your default browser; links that stay
   in the pane load there as before. Sign-in providers stay in the app so they can

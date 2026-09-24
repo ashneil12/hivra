@@ -171,16 +171,28 @@ struct HivraWebPresentationTests {
         #expect(HivraWebOriginLabel.make(scheme: "file", host: "", port: 0) == "This page")
     }
 
-    @Test("popup titles always carry the origin")
+    @Test("popup titles lead with the origin, which the page cannot push out of view")
     func popupTitles() {
         let google = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         #expect(HivraPopupTitle.make(pageTitle: "Sign in – Google accounts", url: google)
-            == "Sign in – Google accounts — accounts.google.com")
+            == "accounts.google.com — Sign in – Google accounts")
         #expect(HivraPopupTitle.make(pageTitle: "  ", url: google) == "accounts.google.com")
+        #expect(HivraPopupTitle.make(pageTitle: "accounts.google.com", url: google) == "accounts.google.com")
         #expect(HivraPopupTitle.make(pageTitle: nil, url: URL(string: "about:blank")) == HivraPopupTitle.placeholder)
+        // A spoofed title cannot hide the real origin behind it.
+        let spoof = HivraPopupTitle.make(pageTitle: "Sign in – Google Accounts — accounts.google.com" + String(repeating: " ", count: 40),
+                                         url: URL(string: "https://evil.example/login"))
+        #expect(spoof.hasPrefix("evil.example — "))
         let long = HivraPopupTitle.make(pageTitle: String(repeating: "a", count: 200), url: google)
-        #expect(long.hasSuffix(" — accounts.google.com"))
+        #expect(long.hasPrefix("accounts.google.com — "))
         #expect(long.count < 120)
+        // A long host keeps the end that names the site.
+        let host = String(repeating: "accounts-google-com-", count: 5) + "evil.example"
+        let longHost = HivraPopupTitle.make(pageTitle: "Sign in", url: URL(string: "https://\(host)/"))
+        #expect(longHost.hasPrefix("…"))
+        #expect(longHost.hasSuffix("evil.example — Sign in"))
+        // A page with no web origin, such as one a script wrote, names its scheme.
+        #expect(HivraPopupTitle.make(pageTitle: "Sign in – Google", url: URL(string: "about:blank")) == "about: — Sign in – Google")
     }
 
     @Test("popup size follows window features within the screen")

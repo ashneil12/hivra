@@ -3,10 +3,13 @@ import Foundation
 
 /// How a page's origin is named in native chrome: JavaScript dialogs and popup titles.
 public enum HivraWebOriginLabel {
-    /// `canary.hermesos.cloud`, `http://127.0.0.1:3000`; opaque origins become "This page".
+    /// The label for an opaque origin, which has no host to name.
+    public static let opaque = "This page"
+
+    /// `canary.hermesos.cloud`, `http://127.0.0.1:3000`; opaque origins become `opaque`.
     public static func make(scheme: String, host: String, port: Int) -> String {
         let scheme = scheme.lowercased()
-        guard !host.isEmpty, scheme == "http" || scheme == "https" else { return "This page" }
+        guard !host.isEmpty, scheme == "http" || scheme == "https" else { return opaque }
         let displayHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
         let defaultPort = scheme == "https" ? 443 : 80
         let authority = port == 0 || port == defaultPort ? displayHost : "\(displayHost):\(port)"
@@ -20,19 +23,27 @@ public enum HivraWebOriginLabel {
     }
 }
 
-/// Popup windows have no address bar, so the title always names the page's origin.
+/// Popup windows have no address bar, so the title names the page's origin first, where
+/// the page cannot push it out of view: AppKit cuts long titles off at the end.
 public enum HivraPopupTitle {
     public static let placeholder = "Hivra"
     static let maximumPageTitleLength = 80
+    static let maximumOriginLength = 60
 
     public static func make(pageTitle: String?, url: URL?) -> String {
-        let origin = HivraWebOriginLabel.make(url: url)
+        let origin = HivraWebOriginLabel.make(url: url).map(boundedOrigin)
         let title = (pageTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return origin ?? placeholder }
         let bounded = title.count > maximumPageTitleLength
             ? String(title.prefix(maximumPageTitleLength - 1)) + "…" : title
-        guard let origin, bounded != origin else { return bounded }
-        return "\(bounded) — \(origin)"
+        // A script can give an about: or data: page any title, so its scheme leads instead.
+        guard let label = origin ?? url?.scheme.map({ "\($0.lowercased()):" }) else { return bounded }
+        return bounded == label ? label : "\(label) — \(bounded)"
+    }
+
+    /// A long host keeps its end, where the site's own domain is.
+    static func boundedOrigin(_ label: String) -> String {
+        label.count > maximumOriginLength ? "…" + String(label.suffix(maximumOriginLength - 1)) : label
     }
 }
 
