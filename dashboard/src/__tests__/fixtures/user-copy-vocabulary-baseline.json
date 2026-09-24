@@ -5,8 +5,6 @@
     "runtime": 1
   },
   "app/dashboard/agent/[id]/page.tsx": {
-    "Box Terminal": 1,
-    "the box": 10,
     "runtime": 5
   },
   "app/dashboard/instances/[id]/console/tabs/ConfigurationDangerZone.tsx": {
@@ -99,9 +97,6 @@
   "components/hivra/BuzzConnectionsPage.tsx": {
     "runtime": 2
   },
-  "components/hivra/ComputerFolderRecovery.tsx": {
-    "Box Terminal": 1
-  },
   "components/hivra/HivraChat.tsx": {
     "the box": 1
   },
@@ -112,12 +107,7 @@
     "the box": 1
   },
   "components/hivra/HivraManage.tsx": {
-    "Box Terminal": 1,
-    "the box": 11,
     "balloon floor": 1
-  },
-  "components/hivra/HivraProviderWorkspace.tsx": {
-    "Box Terminal": 1
   },
   "components/hivra/HivraRemoteDesktop.tsx": {
     "the box": 1,
@@ -141,9 +131,6 @@
   "components/hivra/ToolInstallPicker.tsx": {
     "the box": 2
   },
-  "components/infrastructure/InfrastructureConnectionCard.tsx": {
-    "self-managed": 1
-  },
   "components/infrastructure/InfrastructureConnectionWizard.tsx": {
     "runtime": 1
   },
@@ -154,9 +141,6 @@
   },
   "components/infrastructure/InfrastructureEntryChooser.tsx": {
     "instance": 1
-  },
-  "components/infrastructure/InfrastructureHostDiscoveryResult.tsx": {
-    "runtime": 4
   },
   "components/instances/AgentSwitcher.tsx": {
     "instance": 3
