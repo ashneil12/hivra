@@ -32,13 +32,17 @@ import {
 } from "@/lib/infrastructure/formatters";
 import { gvisorAdapterOutdated, hasReadyEvidence } from "@/lib/infrastructure/launch-on-server";
 import { canPrepareFromSavedTarget } from "@/lib/infrastructure/preparation-eligibility";
+import type { ServerEnrollmentDto } from "@/lib/infrastructure/server-enrollment-contracts";
 
 import styles from "./Infrastructure.module.css";
+import enrollmentStyles from "./ServerEnrollment.module.css";
 import { LaunchOnServerLink, useTargetLaunchAction } from "./LaunchOnServer";
 
 
 type InfrastructureConnectionCardProps = {
   connection: SshInfrastructureConnectionDto;
+  /** Setup-command receipts for this connection, oldest first or any order. */
+  receipts?: ServerEnrollmentDto[];
   savedTarget?: DeploymentTargetDto;
   latestPreflight?: ProxmoxPreflightResult;
   checking?: boolean;
@@ -50,8 +54,34 @@ type InfrastructureConnectionCardProps = {
   onDelete: () => void;
 };
 
+/** "24 Sep at 12:04" */
+function receiptTime(iso: string): string {
+  const date = new Date(iso);
+  return `${date.toLocaleDateString([], { day: "numeric", month: "short" })} at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function shortFingerprint(fingerprint: string): string {
+  return fingerprint.length > 16 ? `${fingerprint.slice(0, 9)}…${fingerprint.slice(-2)}` : fingerprint;
+}
+
+/** One line per enrollment that connected this server or replaced its access. */
+export function connectionReceiptLines(receipts: ServerEnrollmentDto[]): string[] {
+  return [...receipts]
+    .filter((receipt) => receipt.phase === "confirmed" && receipt.report && receipt.decidedAt)
+    .sort((left, right) => Date.parse(left.decidedAt!) - Date.parse(right.decidedAt!))
+    .map((receipt) => {
+      const report = receipt.report!;
+      const from = report.observedAddress ? ` from ${report.observedAddress}` : "";
+      const identity = report.hostFingerprintSha256 ? ` · identity ${shortFingerprint(report.hostFingerprintSha256)}` : "";
+      return receipt.outcome === "replaced_access"
+        ? `Access replaced with the setup command on ${receiptTime(report.reportedAt)}${from}${identity} · confirmed by you at ${receiptTime(receipt.decidedAt!)}.`
+        : `Connected with the setup command on ${receiptTime(report.reportedAt)}${from}${identity} · confirmed by you at ${receiptTime(receipt.decidedAt!)}.`;
+    });
+}
+
 export function InfrastructureConnectionCard({
   connection,
+  receipts = [],
   savedTarget,
   latestPreflight,
   checking = false,
@@ -163,7 +193,7 @@ export function InfrastructureConnectionCard({
       <div className={styles.connectionMeta}>
         <div>
           <span>SSH endpoint</span>
-          <strong>{connection.endpoint.sshUser}@{host}</strong>
+          <strong>{connection.endpoint.sshUser}@{host}{connection.endpoint.sshPrivilege === "sudo" ? " · sudo" : ""}</strong>
         </div>
         <div>
           <span>Setup</span>
@@ -204,6 +234,12 @@ export function InfrastructureConnectionCard({
           </span>
         </div>
       </div>
+
+      {receipts.length > 0 ? (
+        <ul className={enrollmentStyles.receipts} aria-label="Setup command receipts">
+          {connectionReceiptLines(receipts).map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      ) : null}
 
       {trustedSavedTarget ? (
         <div className={styles.savedTargetEvidence}>

@@ -5030,3 +5030,204 @@
     justify-content: center;
   }
 }
+
+/* Copy button and host identity comparison (server enrollment, INF-14). */
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--infra-line);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.copyButton:hover {
+  border-color: color-mix(in srgb, var(--ink-black) 34%, transparent);
+  background: var(--bg-elevated);
+}
+
+.copyButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+@media (pointer: coarse) {
+  .copyButton {
+    min-height: 44px;
+  }
+}
+
+.hostKeyComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 16px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-line);
+}
+
+.hostKeyComparison > div {
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--infra-panel-strong);
+}
+
+.hostKeyComparison dt {
+  margin-bottom: 6px;
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.hostKeyComparison dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.hostKeyComparison code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .hostKeyComparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Advanced SSH wizard: sudo user, fingerprint help and key capture. */
+.checkField {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-panel);
+  cursor: pointer;
+}
+
+.checkField input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--hivra-red);
+}
+
+.checkField strong,
+.checkField small {
+  display: block;
+}
+
+.checkField strong {
+  font-size: 12px;
+}
+
+.checkField small {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.checkField code,
+.fingerprintHelp code {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.fingerprintHelp {
+  display: grid;
+  gap: 8px;
+  margin-top: -4px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.fingerprintCommand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fingerprintCommand .commandHint {
+  flex: 1 1 260px;
+  margin-top: 0;
+}
+
+.inlineLinkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-black);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.inlineLinkButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.fingerprintSources summary {
+  cursor: pointer;
+  color: var(--ink-black);
+  font-weight: 700;
+}
+
+.fingerprintSources ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.fingerprintSources a {
+  color: var(--ink-black);
+}
+
+.hostKeyCapture {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hostKeyCaptureResult {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--infra-line));
+  background: color-mix(in srgb, var(--yellow) 7%, var(--infra-panel));
+  color: var(--ink-black);
+}
+
+.hostKeyCaptureResult p {
+  margin: 0;
+  color: var(--text-secondary);
+}

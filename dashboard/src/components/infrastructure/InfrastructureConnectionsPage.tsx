@@ -30,8 +30,14 @@ import {
   listProviderComputerSetupEvidence,
   preflightInfrastructureConnection,
   refreshHetznerCloudInventory,
+  updateInfrastructureConnection,
   type InfrastructurePreparation,
 } from "@/lib/infrastructure/client";
+import {
+  cancelServerEnrollment,
+  listServerEnrollments,
+} from "@/lib/infrastructure/server-enrollment-client";
+import type { ServerEnrollmentDto } from "@/lib/infrastructure/server-enrollment-contracts";
 import {
   listManagedSessions,
   refreshDigitalOceanAccount,
@@ -94,6 +100,10 @@ import { HetznerCloudConnectionCard, type HetznerSetupEvidenceStatus } from "./H
 import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
 import { DigitalOceanConnectionCard, digitalOceanLaunchHref } from "./DigitalOceanConnectionCard";
 import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
+import { ServerEnrollmentDialog } from "./ServerEnrollmentDialog";
+import { ServerEnrollmentCard, useNow } from "./ServerEnrollmentCard";
+import { CopyButton } from "./CopyButton";
+import enrollmentStyles from "./ServerEnrollment.module.css";
 import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
@@ -138,6 +148,39 @@ function isSshConnection(
   connection: InfrastructureConnectionDto,
 ): connection is SshInfrastructureConnectionDto {
   return connection.provider === "proxmox" || connection.provider === "host";
+}
+
+/** A connection the setup command created: user hivra through sudo. */
+function isEnrolledConnection(connection: InfrastructureConnectionDto): boolean {
+  return isSshConnection(connection)
+    && connection.endpoint.sshUser === "hivra" && connection.endpoint.sshPrivilege === "sudo";
+}
+
+/** Open setup commands and answers the page shows, newest first. */
+export function openEnrollments(
+  enrollments: ServerEnrollmentDto[],
+  dismissed: Set<string>,
+  now: number,
+  declinedHere: ReadonlyMap<string, ServerEnrollmentDto> = new Map(),
+) {
+  const shown = enrollments.filter((item) => {
+    if (dismissed.has(item.id)) return false;
+    if (item.phase === "reported") return true;
+    // Every open command: closing the panel doesn't cancel one, so a copied
+    // command can still be run, and a download may mean a run is under way.
+    if (item.phase === "issued") return Date.parse(item.expiresAt) > now;
+    // No, cancel: "Cancelled." and its uninstall command stay until the owner
+    // dismisses them, even after a refresh reads the command as rejected; after
+    // a reload, like "A server used your setup command…", for an hour.
+    const recent = item.decidedAt !== null && now - Date.parse(item.decidedAt) < 60 * 60_000;
+    if (item.phase === "rejected") return declinedHere.has(item.id) || recent;
+    return item.phase === "unsupported" && recent;
+  });
+  // A command declined on this page that the list no longer returns.
+  for (const [id, item] of declinedHere) {
+    if (!dismissed.has(id) && !shown.some((other) => other.id === id)) shown.push(item);
+  }
+  return shown.sort((a, b) => Date.parse(b.issuedAt) - Date.parse(a.issuedAt));
 }
 
 function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | null {
@@ -216,6 +259,18 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
   const [hetznerSlot, setHetznerSlot] = useState<HetznerCloudCapacitySlotDto | null>(null);
   const [wizardPrefill, setWizardPrefill] = useState<{ name: string; sshHost: string } | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [enrollmentDialogOpen, setEnrollmentDialogOpen] = useState(false);
+  const [enrollments, setEnrollments] = useState<ServerEnrollmentDto[]>([]);
+  const [uninstallCommand, setUninstallCommand] = useState<string | null>(null);
+  const [dismissedEnrollments, setDismissedEnrollments] = useState<Set<string>>(() => new Set());
+  // Commands the owner answered No to while this page is open, as the answer
+  // left them: they stay listed, with the uninstall command, until dismissed.
+  const [declinedEnrollments, setDeclinedEnrollments] = useState<ReadonlyMap<string, ServerEnrollmentDto>>(() => new Map());
+  const rememberDeclined = useCallback((item: ServerEnrollmentDto) => {
+    setDeclinedEnrollments((current) => new Map(current).set(item.id, { ...item, phase: "rejected" }));
+  }, []);
+  // Coarse clock for which setup commands the page still shows.
+  const enrollmentNow = useNow(30_000);
   const [editingConnection, setEditingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
   const [deletingConnection, setDeletingConnection] = useState<InfrastructureConnectionDto | null>(null);
   const [forceForgetConnection, setForceForgetConnection] = useState<HetznerCloudConnectionDto | null>(null);
@@ -238,6 +293,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     setupConnection ? `setup:${setupConnection.id}` : "",
     capacityConnection ? `capacity:${capacityConnection.id}` : "",
     wizardOpen ? `wizard:${editingConnection?.id ?? "new"}` : "",
+    enrollmentDialogOpen ? "server-enrollment" : "",
     deletingConnection ? `delete:${deletingConnection.id}` : "",
     forceForgetConnection ? `forget:${forceForgetConnection.id}` : "",
     preparingConnection ? `prepare:${preparingConnection.id}` : "",
@@ -431,6 +487,36 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     return () => controller.abort();
   }, [loadConnections]);
 
+  // Setup commands: open ones, answers still to give, and each connection's
+  // receipts. Observed state only; never a code.
+  const loadEnrollments = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const list = await listServerEnrollments(signal);
+      if (signal?.aborted) return;
+      setEnrollments(list.enrollments);
+      setUninstallCommand(list.uninstallCommand);
+    } catch {
+      // The rest of the page doesn't depend on this list.
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadEnrollments(controller.signal);
+    return () => controller.abort();
+  }, [loadEnrollments]);
+
+  // While any command is open (a server may still run it and report) or an
+  // answer is waiting, keep the list fresh, so "Is this your server?" appears
+  // here after the panel was closed. The dialog polls its own command.
+  const waitingEnrollment = enrollments.some((item) => item.phase === "reported"
+    || (item.phase === "issued" && Date.parse(item.expiresAt) > enrollmentNow));
+  useEffect(() => {
+    if (!waitingEnrollment || enrollmentDialogOpen) return;
+    const timer = window.setInterval(() => void loadEnrollments(), 5_000);
+    return () => window.clearInterval(timer);
+  }, [waitingEnrollment, enrollmentDialogOpen, loadEnrollments]);
+
   // A server Hivra set up can be newer than the last inventory sync: Start
   // setup powers it on after that sync. Sync once per setup step so its card
   // doesn't say "Off" beside "Ready for agents".
@@ -509,6 +595,44 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     setWizardOpen(true);
     setActionError(null);
     setActionNotice(null);
+  }
+
+  /** My server, command first. The SSH details wizard is its advanced path. */
+  function openServerEnrollment() {
+    setEntryChooserOpen(true);
+    setWizardOpen(false);
+    setEditingConnection(null);
+    setWizardPrefill(null);
+    setCheckDialog(null);
+    setEnrollmentDialogOpen(true);
+    setActionError(null);
+    setActionNotice(null);
+  }
+
+  /** After Yes or Replace: show the connection and start the normal
+   * inspection, then prepare and launch. */
+  function inspectEnrolledConnection(connection: InfrastructureConnectionDto, notice: string | null) {
+    upsertConnection(connection);
+    setEnrollmentDialogOpen(false);
+    void loadEnrollments();
+    if (notice) setActionNotice(notice);
+    if (isSshConnection(connection)) void runDiscovery(connection);
+  }
+
+  /** "Use sudo for setup": an operational change (revision + 1), then a new
+   * inspection. Refused while agents use the connection. */
+  async function switchToSudoForSetup(connection: SshInfrastructureConnectionDto) {
+    setActionError(null);
+    try {
+      const updated = await updateInfrastructureConnection(connection.id, {
+        endpoint: { ...connection.endpoint, sshPrivilege: "sudo" },
+      });
+      upsertConnection(updated);
+      if (isSshConnection(updated)) await runDiscovery(updated);
+    } catch (error) {
+      setCheckDialog(null);
+      setActionError(error instanceof Error ? error.message : "Hivra couldn't switch this connection to sudo.");
+    }
   }
 
   function openHivraCloudDialog() {
@@ -892,6 +1016,30 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
           </div>
         ) : null}
 
+        {/* Answers waiting (Is this your server?, open commands) come first:
+            they are the owner's next step, above the ways to add more. */}
+        <ServerEnrollmentAnswers
+          enrollments={openEnrollments(enrollments, dismissedEnrollments, enrollmentNow, declinedEnrollments)}
+          uninstallCommand={uninstallCommand}
+          onConfirmed={(connection) => inspectEnrolledConnection(connection, `${connection.name} is connected. Hivra is inspecting it now.`)}
+          onReplaced={(connection) => inspectEnrolledConnection(connection, `${connection.name}'s access was replaced. Hivra is checking it again.`)}
+          onDeclined={(item) => {
+            rememberDeclined(item);
+            void loadEnrollments();
+          }}
+          onCancel={async (id) => {
+            // A failed cancel is shown beside the command; the list is read
+            // again either way, since the command may have been used meanwhile.
+            try {
+              await cancelServerEnrollment(id);
+            } finally {
+              void loadEnrollments();
+            }
+          }}
+          onDismiss={(id) => setDismissedEnrollments((current) => new Set(current).add(id))}
+          onNewCommand={openServerEnrollment}
+        />
+
         {showingEntryChooser ? (
           <InfrastructureEntryChooser
             firstConnection={showingFirstConnection}
@@ -900,7 +1048,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
             onChooseHivraCloud={openHivraCloudDialog}
             onConnectHetzner={openHetznerDialog}
             onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
-            onConnectExisting={openCreateWizard}
+            onConnectExisting={openServerEnrollment}
           />
         ) : null}
 
@@ -1009,6 +1157,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                     <InfrastructureConnectionCard
                       key={connection.id}
                       connection={connection}
+                      receipts={enrollments.filter((item) => item.connectionId === connection.id && item.phase === "confirmed")}
                       savedTarget={targetsByConnection.get(connection.id)}
                       latestPreflight={latestPreflight[connection.id]}
                       checking={checkingIds.has(connection.id)}
@@ -1167,6 +1316,22 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
             />
           ) : null}
 
+          {enrollmentDialogOpen ? (
+            <ServerEnrollmentDialog
+              returnFocusRef={addCapacityButtonRef}
+              onClose={() => {
+                setEnrollmentDialogOpen(false);
+                void loadEnrollments();
+              }}
+              onUseSshDetails={openCreateWizard}
+              onConnected={(connection) => inspectEnrolledConnection(connection, `${connection.name} is connected. Hivra is inspecting it now.`)}
+              onAccessReplaced={(connection) => inspectEnrolledConnection(connection, `${connection.name}'s access was replaced. Hivra is checking it again.`)}
+              onChanged={() => void loadEnrollments()}
+              onDeclined={rememberDeclined}
+              onConnectionsChanged={() => void loadConnections()}
+            />
+          ) : null}
+
           {wizardOpen ? (
             <InfrastructureConnectionWizard
               // A new key when the wizard switches to editing a saved host,
@@ -1193,6 +1358,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
               }}
               onGvisorSetupRequested={(saved, mode) => requestGvisorSetup(saved, mode, { continuesHostSetup: true })}
               onEditRequested={requestConnectionEdit}
+              onSetupCommandRequested={openServerEnrollment}
               onGvisorReady={() => void loadConnections()}
             />
           ) : null}
@@ -1200,6 +1366,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
           {deletingConnection ? (
             <DeleteConnectionDialog
               connection={deletingConnection}
+              uninstallCommand={isEnrolledConnection(deletingConnection) ? uninstallCommand : null}
               deleting={deleting}
               onCancel={() => setDeletingConnection(null)}
               onConfirm={() => void confirmDelete()}
@@ -1256,6 +1423,8 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
               }}
               onGvisorSetupRequested={(mode) => requestGvisorSetup(checkDialog.connection, mode)}
               onEditRequested={() => requestConnectionEdit(checkDialog.connection)}
+              onUseSudoRequested={() => void switchToSudoForSetup(checkDialog.connection)}
+              onSetupCommandRequested={openServerEnrollment}
               onGvisorReady={() => void loadConnections()}
             />
           ) : null}
@@ -1293,11 +1462,14 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 
 function DeleteConnectionDialog({
   connection,
+  uninstallCommand = null,
   deleting,
   onCancel,
   onConfirm,
 }: {
   connection: InfrastructureConnectionDto;
+  /** For a server the setup command connected: how to remove the hivra user. */
+  uninstallCommand?: string | null;
   deleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -1348,6 +1520,15 @@ function DeleteConnectionDialog({
             </>
           )}
         </p>
+        {uninstallCommand ? (
+          <div className={enrollmentStyles.fine}>
+            <p>Disconnecting deletes Hivra&apos;s key for this server, so Hivra can&apos;t sign in again. To remove the hivra user from the server too, run there:</p>
+            <div className={enrollmentStyles.commandRow}>
+              <code className={enrollmentStyles.command}>{uninstallCommand}</code>
+              <CopyButton value={uninstallCommand} label="Copy the uninstall command" />
+            </div>
+          </div>
+        ) : null}
         <div className={styles.resultActions}>
           <button
             ref={cancelRef}
@@ -1504,6 +1685,8 @@ function ConnectionCheckDialog({
   onPrepareRequested,
   onGvisorSetupRequested,
   onEditRequested,
+  onUseSudoRequested,
+  onSetupCommandRequested,
   onGvisorReady,
 }: {
   state: CheckDialogState;
@@ -1515,6 +1698,8 @@ function ConnectionCheckDialog({
   onPrepareRequested: () => void;
   onGvisorSetupRequested: (mode: "prepare" | "repair") => void;
   onEditRequested: () => void;
+  onUseSudoRequested?: () => void;
+  onSetupCommandRequested?: () => void;
   onGvisorReady: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -1588,7 +1773,9 @@ function ConnectionCheckDialog({
                 ? () => onStrictPreflight(state.discovery as HostDiscoveryResult)
                 : undefined}
               onGvisorSetupRequested={onGvisorSetupRequested}
-              onConnectAsRootRequested={onEditRequested}
+              onChangeSshUserRequested={onEditRequested}
+              onUseSudoRequested={onUseSudoRequested}
+              onSetupCommandRequested={onSetupCommandRequested}
               onGvisorReady={onGvisorReady}
               checkGvisorReadiness={state.checkGvisorReadiness}
               retrying={checking}
@@ -1646,5 +1833,111 @@ function ConnectionCheckDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Answers still to give: "Is this your server?", every open command (used
+ * or not), recent unsupported results, and a No given on this page. Each
+ * stays until it is answered, cancelled, expires or is dismissed. */
+function ServerEnrollmentAnswers({
+  enrollments,
+  uninstallCommand,
+  onConfirmed,
+  onReplaced,
+  onDeclined,
+  onCancel,
+  onDismiss,
+  onNewCommand,
+}: {
+  enrollments: ServerEnrollmentDto[];
+  uninstallCommand: string | null;
+  onConfirmed: (connection: InfrastructureConnectionDto) => void;
+  onReplaced: (connection: InfrastructureConnectionDto) => void;
+  onDeclined: (enrollment: ServerEnrollmentDto) => void;
+  /** Rejects when Hivra couldn't cancel the command. */
+  onCancel: (id: string) => Promise<void>;
+  onDismiss: (id: string) => void;
+  onNewCommand: () => void;
+}) {
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({});
+  if (enrollments.length === 0) return null;
+
+  async function cancel(id: string) {
+    setCancelling(id);
+    setCancelErrors((current) => {
+      const rest = { ...current };
+      delete rest[id];
+      return rest;
+    });
+    try {
+      await onCancel(id);
+    } catch (error) {
+      // 404/409: the command ended another way (used, expired); the refreshed
+      // list shows how. Anything else: it was not cancelled and still works.
+      const ended = error instanceof InfrastructureApiError && (error.status === 404 || error.status === 409);
+      const message = error instanceof Error && error.message ? error.message : "Hivra couldn't cancel this command.";
+      setCancelErrors((current) => ({
+        ...current,
+        [id]: ended ? message : `${message} It wasn't cancelled and still works until it expires. Try again.`,
+      }));
+    } finally {
+      setCancelling(null);
+    }
+  }
+
+  return (
+    <section className={enrollmentStyles.section} aria-labelledby="server-enrollment-answers-heading">
+      <div className={styles.sectionHeader}>
+        <div>
+          <span className={styles.eyebrow}>My server</span>
+          <h2 id="server-enrollment-answers-heading">Setup commands</h2>
+        </div>
+      </div>
+      {enrollments.map((item) => item.phase === "issued" ? (
+        <div key={item.id} className={enrollmentStyles.pendingLine} role="status">
+          <span>
+            {item.scriptFetches > 0 ? (
+              <>
+                The setup script was downloaded with your command at {clockTime(item.lastFetchedAt ?? item.issuedAt)}.
+                {" "}No report yet.
+              </>
+            ) : (
+              <>
+                The setup command you made at {clockTime(item.issuedAt)} hasn&apos;t been used yet. It works until
+                {" "}{clockTime(item.expiresAt)}.
+              </>
+            )}
+          </span>
+          <button type="button" className={styles.tertiaryButton} onClick={() => void cancel(item.id)} disabled={cancelling === item.id}>
+            {cancelling === item.id ? "Cancelling…" : "Cancel this command"}
+          </button>
+          {cancelErrors[item.id] ? (
+            <div className={styles.formError} role="alert">
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>{cancelErrors[item.id]}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div key={item.id}>
+          <ServerEnrollmentCard
+            enrollment={item}
+            uninstallCommand={uninstallCommand}
+            onConfirmed={onConfirmed}
+            onReplaced={onReplaced}
+            onDeclined={() => onDeclined(item)}
+            onNewCommand={onNewCommand}
+          />
+          {item.phase === "unsupported" || item.phase === "rejected" ? (
+            <button type="button" className={styles.tertiaryButton} onClick={() => onDismiss(item.id)}>Dismiss</button>
+          ) : null}
+        </div>
+      ))}
+    </section>
   );
 }

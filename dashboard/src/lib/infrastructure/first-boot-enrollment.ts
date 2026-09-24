@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { canonicalEd25519HostKey } from "./ssh-host-key";
 
 /** Servers created before 2026-09-24. Their guest and Hivra both enforce 15
  * minutes from creation; Hivra keeps that rule for them unchanged. */
@@ -136,19 +137,11 @@ export function createFirstBootChallenge(binding: FirstBootBinding, now = new Da
 export function canonicalFirstBootHostKey(raw: string): {
   publicKey: string; fingerprintSha256: string;
 } {
-  if (typeof raw !== "string" || raw.length > 256) reject("invalid_proof");
-  const match = /^ssh-ed25519 ([A-Za-z0-9+/]{68})(?: [\x21-\x7e]{1,128})?$/.exec(raw);
-  if (!match) reject("invalid_proof");
-  const blob = Buffer.from(match[1], "base64");
-  const prefix = Buffer.from("0000000b7373682d6564323535313900000020", "hex");
-  if (blob.length !== 51 || blob.toString("base64") !== match[1]
-    || !blob.subarray(0, 19).equals(prefix)
-    || blob.subarray(19).every(byte => byte === 0)) reject("invalid_proof");
-  return {
-    publicKey: "ssh-ed25519 " + match[1],
-    fingerprintSha256: "SHA256:" + createHash("sha256").update(blob)
-      .digest("base64").replace(/=+$/, ""),
-  };
+  try {
+    return canonicalEd25519HostKey(raw);
+  } catch {
+    return reject("invalid_proof");
+  }
 }
 
 function checkedChallenge(input: { challenge: unknown; currentBinding: FirstBootBinding; token: string }): FirstBootChallenge {
