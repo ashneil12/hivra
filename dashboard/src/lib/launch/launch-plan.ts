@@ -15,6 +15,7 @@ import { measuredTargetCapacity } from "@/lib/infrastructure/measured-target-cap
 import { ACTIVE_PLAN_KEYS, PLAN_ORDER, PLANS, type PlanKey } from "@/lib/subscription/plans";
 
 import {
+  HERMES_NAME_MAX_LENGTH,
   LAUNCH_NAME_MAX_LENGTH,
   PROFILE_DETAILS,
   type LaunchDraft,
@@ -66,7 +67,6 @@ function catalogSubject(id: AgentId, overrides: Partial<LaunchFitSubject> = {}):
 export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSubject {
   const profile = PROFILE_DETAILS[profileId];
   const floor = launchResourcePolicy(profileId, { browser: false }).floor;
-  if (profileId === "codex") return catalogSubject("codex");
   if (profileId === "ubuntu-desktop") return catalogSubject("linux-desktop", { floor });
   if (profileId === "linux-terminal") {
     return catalogSubject("linux-terminal", { hivraCloud: "unavailable", floor, targetKind: "gvisor" });
@@ -74,22 +74,21 @@ export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSu
   if (profileId === "omarchy") {
     return { ...catalogSubject("linux-desktop", { floor }), hivraCloud: "prepared", ownServer: false };
   }
-  return {
-    placementRuntimeId: profile.placementRuntimeId,
-    hivraCloud: "unavailable",
-    minPlan: "free",
-    floor,
-    browserFloor: null,
-    poolExempt: false,
-    ownServer: true,
-    targetKind: "any",
-  };
-}
-
-/** Agents that still launch from their own setup page. Hermes runs only on
- * Hivra Cloud; the others can also use a server the owner connected. */
-export function catalogAgentFitSubject(id: "claude-code" | "hermes" | "openclaw" | "agent-zero" | "aeon"): LaunchFitSubject {
-  return catalogSubject(id, id === "hermes" ? { ownServer: false } : {});
+  if (profileId === "windows") {
+    return {
+      placementRuntimeId: profile.placementRuntimeId,
+      hivraCloud: "unavailable",
+      minPlan: "free",
+      floor,
+      browserFloor: null,
+      poolExempt: false,
+      ownServer: true,
+      targetKind: "any",
+    };
+  }
+  // Every agent reads its floors, plan tier and pool use from the catalog.
+  // Hermes runs on Hivra Cloud only.
+  return catalogSubject(profileId, { ownServer: profile.ownServer });
 }
 
 export type LaunchFit = {
@@ -211,6 +210,7 @@ export function ownServerHolds(subject: LaunchFitSubject, targets: readonly Depl
  * the launch gates allow. */
 export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence): LaunchFit | null {
   if (subject.hivraCloud === "prepared") return { label: "Preview", tone: "neutral" };
+  if (evidence.selfHosted && !subject.ownServer) return { label: "Runs on Hivra Cloud only", tone: "needs" };
   if (evidence.selfHosted) {
     if (evidence.targetsLoading) return null;
     if (ownServerHolds(subject, evidence.targets)) return { label: "Ready on your server", tone: "fits" };
@@ -256,8 +256,11 @@ function presets(small: ResourceEnvelope, medium: ResourceEnvelope, large: Resou
 }
 
 /** Small / Medium / Large for a profile. Small is the recommended size, and
- * every preset holds the profile's floor. Fixed-size profiles have none. */
+ * every preset holds the profile's floor. Fixed-size profiles have none.
+ * Profiles that always keep their size have presets whose maximum is their
+ * reservation. */
 export function sizePresets(profileId: LaunchProfileId, { browser = false }: { browser?: boolean } = {}): SizePreset[] {
+  const pinned = (cpu: number, ram: number): ResourceEnvelope => ({ cpu, ram, maximumCpu: cpu, maximumRam: ram });
   if (profileId === "codex") {
     return browser
       ? presets(
@@ -271,6 +274,25 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
         { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
       );
   }
+  if (profileId === "claude-code") {
+    // The welcome form's 2 CPU / 4 GB is the smallest size it offered with
+    // the browser; without it, the catalog floor.
+    return browser
+      ? presets(pinned(2, 4), pinned(4, 8), pinned(8, 16))
+      : presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
+  }
+  if (profileId === "openclaw") {
+    return browser
+      ? presets(pinned(2, 4), pinned(4, 8), pinned(8, 16))
+      : presets(pinned(1, 2), pinned(2, 4), pinned(4, 8));
+  }
+  if (profileId === "agent-zero") {
+    // Small is Agent Zero's minimum; Medium is the size Hivra recommends.
+    return presets(pinned(1, 2), pinned(2, 4), pinned(4, 8));
+  }
+  if (profileId === "hermes") {
+    return presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
+  }
   if (profileId === "ubuntu-desktop") {
     return presets(
       { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
@@ -280,11 +302,7 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
   }
   if (profileId === "linux-terminal") {
     // gVisor enforces its reservation as the hard limit.
-    return presets(
-      { cpu: 1, ram: 1, maximumCpu: 1, maximumRam: 1 },
-      { cpu: 2, ram: 2, maximumCpu: 2, maximumRam: 2 },
-      { cpu: 4, ram: 4, maximumCpu: 4, maximumRam: 4 },
-    );
+    return presets(pinned(1, 1), pinned(2, 2), pinned(4, 4));
   }
   return [];
 }
@@ -419,8 +437,13 @@ export function recommendedLaunchSize(
   limits: SizeLimits | null,
   { browser }: { browser: boolean },
 ): LaunchResources {
-  const preferred = { ...launchResourcePolicy(profileId, { browser }).recommended, source: "recommended" as const };
-  if (!limits || sizeWithinLimits(preferred, limits)) return preferred;
+  const policy = launchResourcePolicy(profileId, { browser });
+  const preferred = { ...policy.recommended, source: "recommended" as const };
+  if (!limits) return preferred;
+  // Profiles with a list of sizes take the first one that runs here.
+  const candidate = policy.candidates?.find(size => sizeWithinLimits(size, limits));
+  if (candidate) return { ...candidate, source: "recommended" };
+  if (sizeWithinLimits(preferred, limits)) return preferred;
   const fitted = fitSizeToLimits(preferred, limits, PROFILE_DETAILS[profileId]);
   return fitted ? { ...fitted, source: "recommended" } : preferred;
 }
@@ -467,32 +490,40 @@ export function ownCapacityLabel(substrate: LaunchSubstrate): "My cloud" | "My s
 
 /** What the agent (or the owner, for a computer) can use once it runs. */
 export function capabilitySummary(profileId: LaunchProfileId, { browser }: { browser: boolean }): string {
-  if (profileId === "codex") {
-    return `Terminal, files and administrator access on its own computer. Browser: ${browser ? "on" : "off"}.`;
+  const browserNote = ` Browser: ${browser ? "on" : "off"}.`;
+  if (profileId === "codex" || profileId === "claude-code") {
+    return `Terminal, files and administrator access on its own computer.${browserNote}`;
   }
+  if (profileId === "hermes") return "Chat, a terminal, files and skills on its own computer.";
+  if (profileId === "openclaw") return `OpenClaw's Control UI, a terminal and files on its own computer.${browserNote}`;
+  if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
+  if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
   if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";
   if (profileId === "omarchy") return "The prepared Omarchy desktop, with a setup console in your browser.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
 }
 
-export function modelAccessSummary(profileId: LaunchProfileId): string | null {
-  return profileId === "codex" ? "Sign in to ChatGPT inside Codex after it opens." : null;
-}
-
 export function costSummary({
   profileId,
   substrate,
   planName,
+  modelNote = null,
 }: {
   profileId: LaunchProfileId;
   substrate: LaunchSubstrate;
   planName: string | null;
+  /** How model usage is paid, when it isn't set up inside the agent. */
+  modelNote?: string | null;
 }): string {
+  const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
   if (profileId === "omarchy") return "Nothing is bought. It uses a prepared preview computer.";
-  if (substrate === "hivra-cloud") return `No extra charge. Uses your ${planName ?? "Hivra Cloud"} plan allowance.`;
-  if (substrate === "provider-vm") return "Nothing new is bought. Your cloud provider keeps billing this server as usual.";
-  return "No charge from Hivra. It uses your server's own capacity.";
+  if (substrate === "hivra-cloud" && profileId === "aeon") {
+    return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);
+  }
+  if (substrate === "hivra-cloud") return withModel(`No extra charge. Uses your ${planName ?? "Hivra Cloud"} plan allowance.`);
+  if (substrate === "provider-vm") return withModel("Nothing new is bought. Your cloud provider keeps billing this server as usual.");
+  return withModel("No charge from Hivra. It uses your server's own capacity.");
 }
 
 /** Exactly what the launch changes. */
@@ -518,6 +549,7 @@ export function launchChangesSummary({
     return `Installs ${profile.name} on ${host} and uses the whole server. It doesn't buy or create another server.`;
   }
   const where = substrate === "hivra-cloud" ? "" : ` on ${host}`;
+  if (profileId === "aeon") return `Creates one small computer${where} for Aeon's dashboard. Nothing is bought.`;
   return profile.resourceKind === "computer"
     ? `Creates one computer${where} with ${profile.name}. Nothing is bought.`
     : `Creates one computer${where} and installs ${profile.name}. Nothing is bought.`;
@@ -549,8 +581,9 @@ export function defaultLaunchName(profileId: LaunchProfileId, existingNames: rea
 /** Why a name can't be used, or null when it can. */
 export function launchNameProblem(profileId: LaunchProfileId, name: string): string | null {
   const trimmed = name.trim();
+  const maximum = profileId === "hermes" ? HERMES_NAME_MAX_LENGTH : LAUNCH_NAME_MAX_LENGTH;
   if (!trimmed) return "Enter a name.";
-  if (trimmed.length > LAUNCH_NAME_MAX_LENGTH) return `Use ${LAUNCH_NAME_MAX_LENGTH} characters or fewer.`;
+  if (trimmed.length > maximum) return `Use ${maximum} characters or fewer.`;
   if (profileId === "windows" && !WINDOWS_NAME.test(trimmed)) {
     return "Windows names use letters, numbers, dots, dashes and underscores, and start with a letter or number.";
   }
