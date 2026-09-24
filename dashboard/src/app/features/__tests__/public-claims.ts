@@ -10,8 +10,8 @@ import type { Metadata } from "next";
 // 2026-09-24 review: every agent runs on its own computer (not one server);
 // the JSON export and account memory exist only for Claude Code and Codex
 // agents (api/hivra/agents/[id]/export reads hivra_agents only, and
-// account-memory.ts seeds only new Hivra boxes); /pricing shows a preview
-// ladder, so sizes are stated inline instead of sending readers there; no
+// account-memory.ts seeds only new Hivra boxes); sizes are stated inline
+// instead of sending readers to /pricing for them; no
 // proxy setting exists; the Tasks tab offers a frequency picker, not a
 // natural-language schedule, and delivers to Telegram, Discord or email; the
 // money-back guarantee covers card payments only.
@@ -60,6 +60,13 @@ export const BANNED_PUBLIC_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
   ["absolute privacy claim", /cannot read your|can't read your|never sees? your|no access to your/i],
   ["Hermes-only framing", /\bpurpose-built\b[^.!?]*\bfor Hermes\b|\b(?:hosting|infrastructure) for Hermes agents\b|only purpose-built/i],
   ["unverified hosting regions", /\bUS West\b|\bEU West\b/],
+  // Hermes runs on Hivra Cloud only (lib/launch/contracts.ts, ownServer false),
+  // so advice to pick a location on your own Hetzner project must name the
+  // agents it applies to.
+  [
+    "own-server location advice that includes Hermes",
+    /^(?![\s\S]*\b(?:OpenClaw|Claude Code|Codex|Agent Zero)\b)[\s\S]*\bown Hetzner Cloud project\b[\s\S]*\blocation\b/i,
+  ],
 ];
 
 export function sentences(text: string): string[] {
@@ -112,6 +119,7 @@ export function findBannedClaims(label: string, copy: string[]): string[] {
 // caught, so a loosened pattern cannot let the old claims back in unnoticed.
 export const KNOWN_FALSE_CLAIMS = [
   "Deploy in 5 Min",
+  "If location matters to you, you can connect your own Hetzner Cloud project (in preview) and pick the location there.",
   "Host a Hermes AI agent without Docker. Deploy in under 5 minutes. From $9.99/mo.",
   "Deployed in 5 minutes without touching a terminal.",
   "Hivra starts at $9.99/mo and takes 5 minutes.",
@@ -152,6 +160,7 @@ export const KNOWN_FALSE_CLAIMS = [
 
 // True copy the scanner must leave alone.
 export const KNOWN_TRUE_CLAIMS = [
+  "Other agents, such as OpenClaw, Claude Code and Codex, can run on your own Hetzner Cloud project (in preview), where you pick the location.",
   "Render's free tier spins down web services after 15 minutes without inbound traffic, and free services cannot use a persistent disk.",
   "Hosting starts at $9.99/month for 2 vCPU and 4 GB RAM.",
   "Backup coverage depends on the agent and provider and is not guaranteed.",

@@ -381,7 +381,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "What region is my server in?",
-        a: "Hivra chooses where hosted agents run; there is no region picker at signup today. If location matters to you, you can connect your own Hetzner Cloud project (in preview) and pick the location there.",
+        a: "Hivra chooses where hosted agents run; there is no region picker at signup today. Hermes runs on Hivra Cloud only. Other agents, such as OpenClaw, Claude Code and Codex, can run on your own Hetzner Cloud project (in preview), where you pick the location.",
       },
       {
         q: "What happens if Hermes releases an update that breaks my configuration?",

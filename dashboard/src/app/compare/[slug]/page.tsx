@@ -193,7 +193,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       },
       {
         q: "Does Hivra support multiple regions like Railway?",
-        a: "Not today. Hivra chooses where hosted agents run, and there is no region picker. If location matters, you can connect your own Hetzner Cloud project (in preview) and pick the location there.",
+        a: "Not today. Hivra chooses where hosted agents run, and there is no region picker. Hermes runs on Hivra Cloud only. Other agents, such as OpenClaw, Claude Code and Codex, can run on your own Hetzner Cloud project (in preview), where you pick the location.",
       },
       {
         q: "If I already use Railway for my app, does that affect my Hivra choice?",
