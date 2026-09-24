@@ -22,10 +22,12 @@ import {
   deleteInfrastructureConnection,
   discoverInfrastructureHost,
   forceForgetHetznerCloudConnection,
+  getHetznerCloudCapacitySlot,
   getHetznerCloudInventory,
   InfrastructureApiError,
   listInfrastructureConnections,
   listInfrastructureTargets,
+  listProviderComputerSetups,
   preflightInfrastructureConnection,
   refreshHetznerCloudInventory,
   type InfrastructurePreparation,
@@ -53,6 +55,8 @@ import {
   isProxmoxDeploymentTarget,
 } from "@/lib/infrastructure/contracts";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
+import type { HetznerCloudCapacitySlotDto } from "@/lib/infrastructure/hetzner-cloud-token-contracts";
+import type { ProviderComputerSetupView } from "@/lib/infrastructure/provider-computer-setup-contracts";
 import {
   getHivraCloudCapacity,
   type HivraCloudCapacityDto,
@@ -152,7 +156,12 @@ export function InfrastructureConnectionsPage() {
   const [digitalOceanErrors, setDigitalOceanErrors] = useState<Record<string, string>>({});
   const [capacityConnection, setCapacityConnection] = useState<HetznerCloudConnectionDto | null>(null);
   const [cleanupConnection, setCleanupConnection] = useState<HetznerCloudConnectionDto | null>(null);
-  const [setupConnection, setSetupConnection] = useState<HetznerCloudConnectionDto | null>(null);
+  const [setupTarget, setSetupTarget] = useState<{ connection: HetznerCloudConnectionDto; orderId: string | null } | null>(null);
+  const setupConnection = setupTarget?.connection ?? null;
+  const [replacingHetzner, setReplacingHetzner] = useState<HetznerCloudConnectionDto | null>(null);
+  const [hetznerSetups, setHetznerSetups] = useState<Record<string, ProviderComputerSetupView[]>>({});
+  const [hetznerSlot, setHetznerSlot] = useState<HetznerCloudCapacitySlotDto | null>(null);
+  const [wizardPrefill, setWizardPrefill] = useState<{ name: string; sshHost: string } | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingConnection, setEditingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
   const [deletingConnection, setDeletingConnection] = useState<InfrastructureConnectionDto | null>(null);
@@ -169,6 +178,7 @@ export function InfrastructureConnectionsPage() {
   const modalAnchorRef = useRef<HTMLDivElement>(null);
   const openDialogKey = [
     hetznerDialogOpen ? "hetzner" : "",
+    replacingHetzner ? `hetzner-token:${replacingHetzner.id}` : "",
     !selfHosted && hivraCloudDialogOpen ? "hivra-cloud" : "",
     cleanupConnection ? `cleanup:${cleanupConnection.id}` : "",
     setupConnection ? `setup:${setupConnection.id}` : "",
@@ -262,6 +272,28 @@ export function InfrastructureConnectionsPage() {
     }
   }, []);
 
+  // Saved setup state says which inventory servers Hivra created and how far
+  // their setup got. Read-only; it never advances setup.
+  const loadHetznerSetups = useCallback(async (connectionId: string, signal?: AbortSignal) => {
+    try {
+      const setups = await listProviderComputerSetups(connectionId);
+      if (signal?.aborted) return;
+      setHetznerSetups((current) => ({ ...current, [connectionId]: setups }));
+    } catch {
+      // Without setup evidence the card labels nothing as Hivra-created or ready.
+    }
+  }, []);
+
+  const loadHetznerSlot = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const slot = await getHetznerCloudCapacitySlot(signal);
+      if (!signal?.aborted) setHetznerSlot(slot);
+    } catch {
+      // The purchase-time claim stays authoritative; Create stays available.
+      if (!signal?.aborted) setHetznerSlot(null);
+    }
+  }, []);
+
   const loadConnections = useCallback(async (signal?: AbortSignal) => {
     try {
       const [connectionResult, targetResult, hivraCloudResult, managedResult] = await Promise.allSettled([
@@ -291,11 +323,15 @@ export function InfrastructureConnectionsPage() {
       }
       if (connectionResult.status === "rejected") throw connectionResult.reason;
       setConnections(connectionResult.value);
+      let hasHetzner = false;
       for (const connection of connectionResult.value) {
         if (connection.provider === "hetzner-cloud") {
+          hasHetzner = true;
           void loadHetznerInventory(connection.id, { signal });
+          void loadHetznerSetups(connection.id, signal);
         }
       }
+      if (hasHetzner) void loadHetznerSlot(signal);
       setLoadError(null);
       if (targetResult.status === "fulfilled") {
         setTargets(targetResult.value);
@@ -321,7 +357,7 @@ export function InfrastructureConnectionsPage() {
         setHivraCloudLoading(false);
       }
     }
-  }, [loadHetznerInventory, selfHosted]);
+  }, [loadHetznerInventory, loadHetznerSetups, loadHetznerSlot, selfHosted]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -376,6 +412,7 @@ export function InfrastructureConnectionsPage() {
   function openCreateWizard() {
     setEntryChooserOpen(true);
     setEditingConnection(null);
+    setWizardPrefill(null);
     setWizardOpen(true);
     setActionError(null);
     setActionNotice(null);
@@ -418,6 +455,18 @@ export function InfrastructureConnectionsPage() {
         return next;
       });
     }
+  }
+
+  /** A server Hivra didn't create connects the way any other server does,
+   * with its public address filled in. */
+  function connectExistingServer(server: HetznerCloudServerInventoryDto) {
+    const sshHost = server.publicNetwork.ipv4 ?? server.publicNetwork.ipv6?.split("/")[0] ?? "";
+    if (!sshHost) return;
+    setWizardPrefill({ name: server.name, sshHost });
+    setEditingConnection(null);
+    setWizardOpen(true);
+    setActionError(null);
+    setActionNotice(null);
   }
 
   function openHetznerDialog() {
@@ -758,12 +807,22 @@ export function InfrastructureConnectionsPage() {
                         key={connection.id}
                         connection={connection}
                         inventory={state.inventory}
+                        setups={hetznerSetups[connection.id] ?? []}
+                        slot={hetznerSlot}
                         loading={state.loading}
                         error={state.error}
+                        launchResourceId={requestedLaunchResource}
+                        unifiedLaunchReturn={unifiedLaunchReturn}
                         onCreateCapacity={() => setCapacityConnection(connection)}
                         onCleanup={() => setCleanupConnection(connection)}
-                        onSetup={() => setSetupConnection(connection)}
-                        onRefresh={() => void loadHetznerInventory(connection.id, { refresh: true })}
+                        onSetup={(orderId) => setSetupTarget({ connection, orderId: orderId ?? null })}
+                        onReplaceToken={() => setReplacingHetzner(connection)}
+                        onConnectExistingServer={(server) => connectExistingServer(server)}
+                        onRefresh={() => {
+                          void loadHetznerInventory(connection.id, { refresh: true });
+                          void loadHetznerSetups(connection.id);
+                          void loadHetznerSlot();
+                        }}
                         onDelete={() => setDeletingConnection(connection)}
                       />
                     );
@@ -822,6 +881,24 @@ export function InfrastructureConnectionsPage() {
                 }));
                 setHetznerDialogOpen(false);
                 setCapacityConnection(connection);
+              }}
+            />
+          ) : null}
+
+          {replacingHetzner ? (
+            <HetznerCloudConnectionDialog
+              replacing={replacingHetzner}
+              onClose={() => setReplacingHetzner(null)}
+              returnFocusRef={addCapacityButtonRef}
+              onConnected={(connection, inventory) => {
+                upsertConnection(connection);
+                setHetznerInventory((current) => ({
+                  ...current,
+                  [connection.id]: { inventory, loading: false, error: null },
+                }));
+                void loadHetznerSetups(connection.id);
+                setReplacingHetzner(null);
+                setActionNotice(`Token replaced for ${connection.name}. Its servers and setup carried over.`);
               }}
             />
           ) : null}
@@ -886,17 +963,31 @@ export function InfrastructureConnectionsPage() {
             onForgot={()=>{setActionNotice("Hivra access was erased. Provider cleanup was not completed; resources may still incur charges in Hetzner.");void loadConnections();}}
             onComplete={()=>void loadHetznerInventory(cleanupConnection.id,{refresh:true})}/>}
 
-          {setupConnection && <ProviderComputerSetupDialog connection={setupConnection}
+          {setupTarget && <ProviderComputerSetupDialog connection={setupTarget.connection}
+            orderId={setupTarget.orderId}
             launchResourceId={requestedLaunchResource}
             unifiedLaunchReturn={unifiedLaunchReturn}
-            onClose={() => setSetupConnection(null)} onChanged={() => { void loadConnections(); void loadHetznerInventory(setupConnection.id, { refresh: true }); }} />}
+            onClose={() => setSetupTarget(null)}
+            onChanged={() => {
+              void loadConnections();
+              void loadHetznerInventory(setupTarget.connection.id, { refresh: true });
+              void loadHetznerSetups(setupTarget.connection.id);
+            }} />}
 
           {capacityConnection ? (
             <HetznerCloudCapacityDialog
               connection={capacityConnection}
               returnFocusRef={addCapacityButtonRef}
               onClose={() => setCapacityConnection(null)}
-              onSetup={() => { setSetupConnection(capacityConnection); setCapacityConnection(null); }}
+              slot={hetznerSlot}
+              launchResourceId={requestedLaunchResource}
+              launchLabel={requestedLaunchLabel}
+              unifiedLaunchReturn={unifiedLaunchReturn}
+              onChanged={() => {
+                void loadHetznerSetups(capacityConnection.id);
+                void loadHetznerSlot();
+                void loadConnections();
+              }}
               onInventoryChanged={(inventory) => {
                 setHetznerInventory((current) => ({
                   ...current,
@@ -913,10 +1004,12 @@ export function InfrastructureConnectionsPage() {
           {wizardOpen ? (
             <InfrastructureConnectionWizard
               connection={editingConnection}
+              prefill={editingConnection ? null : wizardPrefill}
               returnFocusRef={addCapacityButtonRef}
               onClose={() => {
                 setWizardOpen(false);
                 setEditingConnection(null);
+                setWizardPrefill(null);
                 void loadConnections();
               }}
               onConnectionSaved={upsertConnection}
@@ -924,6 +1017,7 @@ export function InfrastructureConnectionsPage() {
               onPrepareRequested={(saved) => {
                 setWizardOpen(false);
                 setEditingConnection(null);
+                setWizardPrefill(null);
                 if (isSshConnection(saved)) setPreparingConnection(saved);
               }}
             />

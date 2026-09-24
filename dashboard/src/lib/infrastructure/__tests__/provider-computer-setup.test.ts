@@ -33,6 +33,22 @@ it("reads saved setup without provider actions, SSH, token decryption or automat
   expect(JSON.stringify(views)).not.toContain(h.enrollment.challenge.verifierSha256);
   expect(views[0]).not.toHaveProperty("hostPublicKey");
 });
+it("shows the setup key's deadline only until the server connects back", async () => {
+  const h = harness();
+  h.enrollment.phase = "awaiting_identity";
+  h.enrollment.challenge = { ...h.enrollment.challenge, issuedAt: "2026-08-28T00:55:00.000Z", expiresAt: "2026-08-28T01:10:00.000Z" };
+  h.deps.boot.mockResolvedValue(null as never);
+  const [waiting] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(waiting).toMatchObject({ stage: "awaiting_setup", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z" });
+
+  h.enrollment.phase = "enrolled";
+  const [enrolled] = await listProviderComputerSetups("owner", cleanupConnection, h.deps);
+  expect(enrolled).toMatchObject({ stage: "identity_enrolled", enrollmentExpiresAt: null });
+
+  h.enrollment.phase = "awaiting_identity";
+  const expired = await listProviderComputerSetups("owner", cleanupConnection, { ...h.deps, now: () => new Date("2026-08-28T01:10:00Z") });
+  expect(expired[0]).toMatchObject({ stage: "expired", enrollmentExpiresAt: "2026-08-28T01:10:00.000Z" });
+});
 it("prepares the original enrolled identity even after its one-time token expired", async () => {
   const h = harness();
   const result = await advanceProviderComputerSetup("owner", cleanupConnection, h.request, h.deps);

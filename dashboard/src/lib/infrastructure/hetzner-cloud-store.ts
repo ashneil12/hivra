@@ -27,6 +27,10 @@ import {
 } from "./hetzner-creation-receipt";
 import { HetznerCleanupStateSchema, type HetznerCleanupState, type HetznerCleanupAbsence } from "./hetzner-cleanup-contracts";
 import {
+  HetznerCloudCapacitySlotDtoSchema,
+  type HetznerCloudCapacitySlotDto,
+} from "./hetzner-cloud-token-contracts";
+import {
   parseHetznerCurrentServerShapeEvidence,
   type HetznerCurrentServerShape,
 } from "./hetzner-current-server-shape";
@@ -555,6 +559,141 @@ export async function loadHetznerCloudConnectionSecret(
     if (error instanceof InfrastructureConnectionStoreError) throw error;
     throw new InfrastructureConnectionStoreError("credential_error", row.revision);
   }
+}
+
+export type HetznerCloudTokenReplacementScope = {
+  revision: number;
+  /** Ciphertext only, compared byte-for-byte by the database swap. */
+  encryptedEnvelope: string;
+  /** Provider ids of resources Hivra created and still holds in this project. */
+  heldServerIds: string[];
+  heldSshKeyIds: string[];
+};
+
+const PROVIDER_RESOURCE_ID = /^[1-9][0-9]{0,15}$/;
+
+/**
+ * Reads what a Replace token needs without decrypting anything: the current
+ * revision, the exact envelope to compare-and-swap, and the provider ids of the
+ * servers and generated SSH keys Hivra created through this connection. The
+ * service proves a new token reaches at least one of those before swapping.
+ */
+export async function loadHetznerCloudTokenReplacementScope(
+  userId: string,
+  connectionId: string,
+): Promise<HetznerCloudTokenReplacementScope> {
+  const connection = await loadHetznerCloudConnectionMetadata(userId, connectionId);
+  const { data: rawSecret, error: secretError } = await database()
+    .from("infrastructure_connection_secrets")
+    .select("encrypted_bundle,key_version")
+    .eq("connection_id", connectionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (secretError) throw databaseError(secretError);
+  const envelope = (rawSecret as { encrypted_bundle?: unknown } | null)?.encrypted_bundle;
+  if (typeof envelope !== "string" || envelope.trim() === "") {
+    throw new InfrastructureConnectionStoreError("credential_error", connection.revision);
+  }
+  const { data: orders, error: ordersError } = await database()
+    .from("infrastructure_capacity_orders")
+    .select("id,status,provider_resource_id,provider_ssh_key_id")
+    .eq("user_id", userId)
+    .eq("provider", "hetzner-cloud")
+    .eq("active_connection_id", connectionId)
+    .neq("status", "deleted")
+    .is("external_cleanup_resolution_id", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (ordersError) throw databaseError(ordersError);
+  const heldServerIds = new Set<string>();
+  const heldSshKeyIds = new Set<string>();
+  for (const row of (orders ?? []) as Array<{ provider_resource_id?: unknown; provider_ssh_key_id?: unknown }>) {
+    if (typeof row.provider_resource_id === "string" && PROVIDER_RESOURCE_ID.test(row.provider_resource_id)) {
+      heldServerIds.add(row.provider_resource_id);
+    }
+    if (typeof row.provider_ssh_key_id === "string" && PROVIDER_RESOURCE_ID.test(row.provider_ssh_key_id)) {
+      heldSshKeyIds.add(row.provider_ssh_key_id);
+    }
+  }
+  return {
+    revision: connection.revision,
+    encryptedEnvelope: envelope,
+    heldServerIds: [...heldServerIds],
+    heldSshKeyIds: [...heldSshKeyIds],
+  };
+}
+
+/**
+ * Swap the stored token for the same connection revision. The database
+ * compares the exact envelope the caller validated against, keeps the
+ * revision (so every revision-bound record, generated SSH key and setup
+ * enrollment stays valid) and refuses while cleanup or a setup step holds the
+ * credential. Callers must prove the new token reaches the same project first.
+ */
+export async function replaceHetznerCloudConnectionToken(input: {
+  userId: string;
+  connectionId: string;
+  expectedRevision: number;
+  expectedEnvelope: string;
+  apiToken: string;
+}): Promise<void> {
+  const encryptedBundle = encryptSecret(JSON.stringify({
+    version: 2,
+    provider: "hetzner-cloud",
+    userId: input.userId,
+    connectionId: input.connectionId,
+    connectionRevision: input.expectedRevision,
+    apiToken: input.apiToken,
+  } satisfies z.infer<typeof HetznerSecretBundleV2Schema>));
+  const { data, error } = await database().rpc("replace_hetzner_cloud_connection_token", {
+    p_user_id: input.userId,
+    p_connection_id: input.connectionId,
+    p_expected_revision: input.expectedRevision,
+    p_expected_encrypted_bundle: input.expectedEnvelope,
+    p_encrypted_bundle: encryptedBundle,
+  });
+  if (isDatabaseCode(error, "55006")) throw new InfrastructureConnectionStoreError("capacity_busy");
+  if (error) throw databaseError(error);
+  switch (data) {
+    case "replaced":
+      return;
+    case "not_found":
+      throw new InfrastructureConnectionStoreError("not_found");
+    case "connection_changed":
+    case "envelope_changed":
+      throw new InfrastructureConnectionStoreError("conflict");
+    case "cleanup_in_progress":
+    case "setup_step_running":
+      throw new InfrastructureConnectionStoreError("capacity_busy");
+    default:
+      throw new InfrastructureConnectionStoreError("database_error");
+  }
+}
+
+/** Observe the account's one in-app Hetzner server slot. Read-only. */
+export async function loadHetznerCloudCapacitySlot(userId: string): Promise<HetznerCloudCapacitySlotDto> {
+  const { data, error } = await database()
+    .from("infrastructure_capacity_orders")
+    .select("id,active_connection_id,server_name,status")
+    .eq("user_id", userId)
+    .eq("provider", "hetzner-cloud")
+    .is("external_cleanup_resolution_id", null)
+    .neq("status", "deleted")
+    .or("status.in.(creating,ambiguous,created_off,cleaning),provider_ssh_key_id.not.is.null")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw databaseError(error);
+  const row = (data ?? [])[0] as { active_connection_id?: unknown; server_name?: unknown; status?: unknown } | undefined;
+  const parsed = HetznerCloudCapacitySlotDtoSchema.safeParse(row
+    ? {
+        held: true,
+        serverName: typeof row.server_name === "string" ? row.server_name : null,
+        connectionId: typeof row.active_connection_id === "string" ? row.active_connection_id : null,
+        status: row.status,
+      }
+    : { held: false, serverName: null, connectionId: null, status: null });
+  if (!parsed.success) throw new InfrastructureConnectionStoreError("database_error");
+  return parsed.data;
 }
 
 export async function listHetznerCloudInventory(

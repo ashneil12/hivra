@@ -12,11 +12,14 @@ import {
   createHetznerCloudCapacity,
   createPreparedHetznerCloudCapacity,
   generateHetznerBootstrapBundle,
+  generateHetznerWriteCheckKey,
   getHetznerCloudOfferCatalog,
   HetznerCloudConnectionError,
   HetznerCloudCapacityError,
+  HetznerCloudTokenCheckError,
   quoteHetznerCloudCapacity,
   refreshHetznerCloudInventory,
+  replaceHetznerCloudToken,
 } from "../hetzner-cloud";
 
 const NOW = new Date("2026-08-26T15:00:00.000Z");
@@ -95,12 +98,35 @@ function projectClient(overrides: Record<string, unknown> = {}) {
       server_types: [],
     }),
     createSshKey: jest.fn(),
+    deleteSshKey: jest.fn(),
     createServer: jest.fn(),
     getAction: jest.fn(),
     getServer: jest.fn(),
     changeServerType: jest.fn(),
     ...overrides,
   };
+}
+
+const WRITE_CHECK_PROBE = {
+  name: "hivra-check-0123456789ab",
+  publicKey: `ssh-ed25519 ${"A".repeat(68)} hivra-check`,
+};
+
+/** A fake project whose token can write: the probe key is created with id 901
+ * and can be deleted again. */
+function writeCheckClient(overrides: Record<string, unknown> = {}) {
+  return projectClient({
+    createSshKey: jest.fn().mockImplementation(async (input: { name: string; publicKey: string; labels: Record<string, string> }) => ({
+      id: 901,
+      name: input.name,
+      fingerprint: "00:11",
+      public_key: input.publicKey,
+      labels: input.labels,
+      created: NOW.toISOString(),
+    })),
+    deleteSshKey: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  });
 }
 
 type FixtureGuestImage = { osVersion: string | null; architecture: "x86" | "arm" };
@@ -742,7 +768,8 @@ describe("self-managed Hetzner Cloud connection service", () => {
       { userId: "user_a", name: "My Hetzner", apiToken: TOKEN },
       {
         now: () => NOW,
-        client: () => projectClient(),
+        client: () => writeCheckClient(),
+        writeCheckKey: () => WRITE_CHECK_PROBE,
         createRecord,
       },
     );
@@ -800,7 +827,8 @@ describe("self-managed Hetzner Cloud connection service", () => {
         { userId: "user_a", name: "My Hetzner", apiToken: TOKEN },
         {
           now: () => NOW,
-          client: () => projectClient(),
+          client: () => writeCheckClient(),
+          writeCheckKey: () => WRITE_CHECK_PROBE,
           createRecord: jest.fn().mockRejectedValue(storeError),
         },
       ),
@@ -3299,5 +3327,270 @@ describe("self-managed Hetzner Cloud connection service", () => {
       ...exactServer,
       placement_group: { id: 9 },
     }, "2026-08-26T15:16:00.000Z");
+  });
+});
+
+describe("disclosed connect-time write check", () => {
+  function connect(client: ReturnType<typeof projectClient>, createRecord = jest.fn().mockResolvedValue({
+    connection: { id: CONNECTION_ID },
+    inventory: [],
+  })) {
+    return {
+      createRecord,
+      result: connectHetznerCloudProject(
+        { userId: "user_a", name: "My Hetzner", apiToken: TOKEN },
+        { now: () => NOW, client: () => client, writeCheckKey: () => WRITE_CHECK_PROBE, createRecord },
+      ),
+    };
+  }
+
+  it("adds one labelled test key, deletes exactly that key, then saves the connection", async () => {
+    const client = writeCheckClient();
+    const { createRecord, result } = connect(client);
+    await expect(result).resolves.toEqual({
+      connection: { id: CONNECTION_ID },
+      inventory: [],
+      writeCheck: { strayKeyName: null },
+    });
+    expect(client.createSshKey).toHaveBeenCalledTimes(1);
+    expect(client.createSshKey).toHaveBeenCalledWith({
+      name: WRITE_CHECK_PROBE.name,
+      publicKey: WRITE_CHECK_PROBE.publicKey,
+      labels: { "hivra-check": "true" },
+    });
+    expect(client.deleteSshKey).toHaveBeenCalledWith(901);
+    const order = [client.listServers, client.createSshKey, client.deleteSshKey, createRecord]
+      .map((mock) => mock.mock.invocationCallOrder[0]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // Nothing else in the project is touched.
+    expect(client.createServer).not.toHaveBeenCalled();
+    expect(client.changeServerType).not.toHaveBeenCalled();
+  });
+
+  it("fails a read-only token at connect with a same-screen fix and saves nothing", async () => {
+    const client = writeCheckClient({
+      createSshKey: jest.fn().mockRejectedValue(
+        new HetznerCloudApiError(403, "POST", "/ssh_keys", "request_failed", "token_readonly"),
+      ),
+    });
+    const { createRecord, result } = connect(client);
+    const failure = await result.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HetznerCloudTokenCheckError);
+    expect(failure).toMatchObject({
+      code: "token_read_only",
+      message: "This token is read-only. Generate a Read & Write token in the same project and paste it here.",
+    });
+    expect(client.deleteSshKey).not.toHaveBeenCalled();
+    expect(createRecord).not.toHaveBeenCalled();
+  });
+
+  it("still connects when the test key cannot be deleted, and names the stray key", async () => {
+    const client = writeCheckClient({
+      deleteSshKey: jest.fn().mockRejectedValue(
+        new HetznerCloudApiError(503, "DELETE", "/ssh_keys/{id}", "request_failed", "unavailable"),
+      ),
+    });
+    const { createRecord, result } = connect(client);
+    await expect(result).resolves.toMatchObject({ writeCheck: { strayKeyName: WRITE_CHECK_PROBE.name } });
+    expect(createRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds and removes a key whose create response timed out", async () => {
+    const client = writeCheckClient({
+      createSshKey: jest.fn().mockRejectedValue(new HetznerCloudApiError(null, "POST", "/ssh_keys", "timeout")),
+      findSshKeysByName: jest.fn().mockResolvedValue([
+        { id: 902, name: WRITE_CHECK_PROBE.name, fingerprint: "x", public_key: WRITE_CHECK_PROBE.publicKey, labels: { "hivra-check": "true" }, created: NOW.toISOString() },
+      ]),
+    });
+    const { result } = connect(client);
+    await expect(result).resolves.toMatchObject({ writeCheck: { strayKeyName: null } });
+    expect(client.findSshKeysByName).toHaveBeenCalledWith(WRITE_CHECK_PROBE.name);
+    expect(client.deleteSshKey).toHaveBeenCalledWith(902);
+  });
+
+  it("does not claim write access when a timed-out create left nothing behind", async () => {
+    const client = writeCheckClient({
+      createSshKey: jest.fn().mockRejectedValue(new HetznerCloudApiError(null, "POST", "/ssh_keys", "timeout")),
+      findSshKeysByName: jest.fn().mockResolvedValue([]),
+    });
+    const { createRecord, result } = connect(client);
+    await expect(result).rejects.toMatchObject({ code: "write_check_unconfirmed" });
+    expect(client.deleteSshKey).not.toHaveBeenCalled();
+    expect(createRecord).not.toHaveBeenCalled();
+  });
+
+  it("names the possible stray key when an uncertain create cannot be looked up", async () => {
+    const client = writeCheckClient({
+      createSshKey: jest.fn().mockRejectedValue(new HetznerCloudApiError(201, "POST", "/ssh_keys", "response_invalid")),
+      findSshKeysByName: jest.fn().mockRejectedValue(new HetznerCloudApiError(null, "GET", "/ssh_keys", "timeout")),
+    });
+    const { createRecord, result } = connect(client);
+    const failure = await result.catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "write_check_unconfirmed", strayKeyName: WRITE_CHECK_PROBE.name });
+    expect(String((failure as Error).message)).toContain(WRITE_CHECK_PROBE.name);
+    expect(createRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new HetznerCloudApiError(403, "POST", "/ssh_keys", "request_failed", "resource_limit_exceeded"), "write_check_blocked"],
+    [new HetznerCloudApiError(401, "POST", "/ssh_keys", "request_failed", "unauthorized"), "invalid_credentials"],
+    [new HetznerCloudApiError(503, "POST", "/ssh_keys", "request_failed", "unavailable"), "provider_unavailable"],
+  ])("maps a refused test key (%s) without saving", async (error, code) => {
+    const client = writeCheckClient({ createSshKey: jest.fn().mockRejectedValue(error) });
+    const { createRecord, result } = connect(client);
+    await expect(result).rejects.toMatchObject({ code });
+    expect(createRecord).not.toHaveBeenCalled();
+  });
+
+  it("generates a parseable public-only Ed25519 test key with a random hivra-check name", () => {
+    const first = generateHetznerWriteCheckKey();
+    const second = generateHetznerWriteCheckKey();
+    expect(Object.keys(first).sort()).toEqual(["name", "publicKey"]);
+    expect(first.name).toMatch(/^hivra-check-[0-9a-f]{12}$/);
+    expect(first.name).not.toBe(second.name);
+    expect(first.publicKey).toMatch(/^ssh-ed25519 [A-Za-z0-9+/]{68} hivra-check$/);
+    const parsed = ssh2Utils.parseKey(first.publicKey);
+    expect(parsed).not.toBeInstanceOf(Error);
+    if (parsed instanceof Error) throw parsed;
+    expect(parsed.type).toBe("ssh-ed25519");
+    expect(parsed.isPrivateKey()).toBe(false);
+  });
+});
+
+describe("Hetzner token replacement", () => {
+  const scope = {
+    revision: 7,
+    encryptedEnvelope: "sealed-old-envelope",
+    heldServerIds: ["42"],
+    heldSshKeyIds: ["777"],
+  };
+  const NEW_TOKEN = "replacement-project-token-value";
+  const savedConnection = { id: CONNECTION_ID, status: "ready" };
+
+  function harness(client: ReturnType<typeof projectClient>, overrides: Record<string, unknown> = {}) {
+    const deps = {
+      now: () => NOW,
+      client: jest.fn(() => client),
+      writeCheckKey: () => WRITE_CHECK_PROBE,
+      loadTokenReplacementScope: jest.fn().mockResolvedValue(scope),
+      replaceToken: jest.fn().mockResolvedValue(undefined),
+      reconcileInventory: jest.fn().mockResolvedValue([{ id: "inventory-row" }]),
+      listInventory: jest.fn().mockResolvedValue([{ id: "saved-row" }]),
+      loadSecret: jest.fn().mockResolvedValue({ connection: savedConnection, revision: 7, apiToken: NEW_TOKEN }),
+      ...overrides,
+    };
+    return {
+      deps,
+      run: () => replaceHetznerCloudToken(
+        { userId: "user_a", connectionId: CONNECTION_ID, apiToken: NEW_TOKEN },
+        deps as never,
+      ),
+    };
+  }
+
+  it("swaps the envelope at the same revision after proving the same project and write access", async () => {
+    const client = writeCheckClient();
+    const { deps, run } = harness(client);
+    await expect(run()).resolves.toEqual({
+      connection: savedConnection,
+      inventory: [{ id: "inventory-row" }],
+      writeCheck: { strayKeyName: null },
+    });
+    expect(deps.client).toHaveBeenCalledWith(NEW_TOKEN);
+    expect(client.createSshKey).toHaveBeenCalledTimes(1);
+    expect(client.deleteSshKey).toHaveBeenCalledWith(901);
+    expect(deps.replaceToken).toHaveBeenCalledWith({
+      userId: "user_a",
+      connectionId: CONNECTION_ID,
+      expectedRevision: 7,
+      expectedEnvelope: "sealed-old-envelope",
+      apiToken: NEW_TOKEN,
+    });
+    expect(deps.reconcileInventory).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user_a", connectionId: CONNECTION_ID, expectedRevision: 7, discoveredAt: NOW.toISOString(),
+      inventory: [expect.objectContaining({ providerResourceId: "42" })],
+    }));
+    expect(deps.loadSecret).toHaveBeenCalledWith("user_a", CONNECTION_ID, { requireBoundToken: true });
+    // The swap happens only after every provider check.
+    expect(deps.replaceToken.mock.invocationCallOrder[0])
+      .toBeGreaterThan(client.deleteSshKey.mock.invocationCallOrder[0]);
+  });
+
+  it("refuses a token for another project before any write or swap", async () => {
+    const client = writeCheckClient({
+      listServers: jest.fn().mockResolvedValue([{ ...server, id: 4242 }]),
+      listSshKeys: jest.fn().mockResolvedValue([{ id: 888, name: "other", fingerprint: "x", public_key: "x", labels: {}, created: NOW.toISOString() }]),
+    });
+    const { deps, run } = harness(client);
+    await expect(run()).rejects.toMatchObject({ code: "token_project_mismatch" });
+    expect(client.createSshKey).not.toHaveBeenCalled();
+    expect(deps.replaceToken).not.toHaveBeenCalled();
+    expect(deps.reconcileInventory).not.toHaveBeenCalled();
+  });
+
+  it("accepts the same project when only the generated SSH key is still visible", async () => {
+    const client = writeCheckClient({
+      listServers: jest.fn().mockResolvedValue([]),
+      listSshKeys: jest.fn().mockResolvedValue([{ id: 777, name: "hivra-key-abc", fingerprint: "x", public_key: "x", labels: {}, created: NOW.toISOString() }]),
+    });
+    const { deps, run } = harness(client);
+    await run();
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not list keys or require overlap when Hivra holds nothing in the project", async () => {
+    const client = writeCheckClient({ listServers: jest.fn().mockResolvedValue([]) });
+    const { deps, run } = harness(client, {
+      loadTokenReplacementScope: jest.fn().mockResolvedValue({ ...scope, heldServerIds: [], heldSshKeyIds: [] }),
+    });
+    await run();
+    expect(client.listSshKeys).not.toHaveBeenCalled();
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the old token when the new one is read-only", async () => {
+    const client = writeCheckClient({
+      createSshKey: jest.fn().mockRejectedValue(
+        new HetznerCloudApiError(403, "POST", "/ssh_keys", "request_failed", "token_readonly"),
+      ),
+    });
+    const { deps, run } = harness(client);
+    await expect(run()).rejects.toMatchObject({ code: "token_read_only" });
+    expect(deps.replaceToken).not.toHaveBeenCalled();
+  });
+
+  it("keeps the old token when Hetzner rejects the new one", async () => {
+    const client = writeCheckClient({
+      listServers: jest.fn().mockRejectedValue(new HetznerCloudApiError(401, "GET", "/servers", "request_failed")),
+    });
+    const { deps, run } = harness(client);
+    await expect(run()).rejects.toMatchObject({ code: "invalid_credentials" });
+    expect(deps.replaceToken).not.toHaveBeenCalled();
+  });
+
+  it("shows the saved inventory when a newer sync won the write after the swap", async () => {
+    const client = writeCheckClient();
+    const { deps, run } = harness(client, {
+      reconcileInventory: jest.fn().mockRejectedValue(new InfrastructureConnectionStoreError("conflict")),
+    });
+    await expect(run()).resolves.toMatchObject({ inventory: [{ id: "saved-row" }] });
+    expect(deps.listInventory).toHaveBeenCalledWith("user_a", CONNECTION_ID);
+  });
+
+  it("fails closed when the saved envelope does not read back as the new token", async () => {
+    const client = writeCheckClient();
+    const { run } = harness(client, {
+      loadSecret: jest.fn().mockResolvedValue({ connection: savedConnection, revision: 7, apiToken: "someone-else" }),
+    });
+    await expect(run()).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("propagates a busy credential (cleanup or a running setup step) without retrying", async () => {
+    const client = writeCheckClient();
+    const busy = new InfrastructureConnectionStoreError("capacity_busy");
+    const { deps, run } = harness(client, { replaceToken: jest.fn().mockRejectedValue(busy) });
+    await expect(run()).rejects.toBe(busy);
+    expect(deps.replaceToken).toHaveBeenCalledTimes(1);
+    expect(deps.reconcileInventory).not.toHaveBeenCalled();
   });
 });

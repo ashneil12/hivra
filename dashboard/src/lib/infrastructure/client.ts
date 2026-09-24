@@ -34,6 +34,13 @@ import {
   HostDiscoveryResultSchema,
   type HostDiscoveryResult,
 } from "./host-discovery-contracts";
+import {
+  HetznerCloudCapacitySlotDtoSchema,
+  HetznerCloudConnectResultSchema,
+  HetznerCloudTokenReplaceRequestSchema,
+  type HetznerCloudCapacitySlotDto,
+  type HetznerCloudWriteCheck,
+} from "./hetzner-cloud-token-contracts";
 import { PreparedCapacityCreateRequestSchema, ProviderComputerSetupRequestSchema, ProviderComputerSetupViewSchema,
   type PreparedCapacityCreateRequest, type ProviderComputerSetupRequest } from "./provider-computer-setup-contracts";
 
@@ -61,14 +68,14 @@ const ConnectionResponseSchema = z
 const HetznerCloudConnectionResponseSchema = z
   .object({
     success: z.literal(true),
-    data: z
-      .object({
-        connection: InfrastructureConnectionDtoSchema.refine(
-          (connection) => connection.provider === "hetzner-cloud",
-        ),
-        inventory: z.array(HetznerCloudServerInventoryDtoSchema),
-      })
-      .strict(),
+    data: HetznerCloudConnectResultSchema,
+  })
+  .passthrough();
+
+const HetznerCloudCapacitySlotResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: z.object({ slot: HetznerCloudCapacitySlotDtoSchema }).strict(),
   })
   .passthrough();
 
@@ -272,12 +279,29 @@ export async function createInfrastructureConnection(
   return body.data.connection;
 }
 
-export async function connectHetznerCloudProject(
-  input: HetznerCloudConnectionCreate,
-): Promise<{
+type HetznerCloudConnectResult = {
   connection: HetznerCloudConnectionDto;
   inventory: HetznerCloudServerInventoryDto[];
-}> {
+  writeCheck: HetznerCloudWriteCheck;
+};
+
+function hetznerConnectResult(data: {
+  connection: InfrastructureConnectionDto;
+  inventory: HetznerCloudServerInventoryDto[];
+  writeCheck: HetznerCloudWriteCheck;
+}): HetznerCloudConnectResult {
+  if (data.connection.provider !== "hetzner-cloud") {
+    throw new InfrastructureApiError(
+      "The infrastructure service returned the wrong provider.",
+      0,
+    );
+  }
+  return { connection: data.connection, inventory: data.inventory, writeCheck: data.writeCheck };
+}
+
+export async function connectHetznerCloudProject(
+  input: HetznerCloudConnectionCreate,
+): Promise<HetznerCloudConnectResult> {
   const validated = InfrastructureConnectionCreateSchema.parse(input);
   if (validated.provider !== "hetzner-cloud") {
     throw new InfrastructureApiError("A Hetzner Cloud connection is required.", 0);
@@ -287,16 +311,31 @@ export async function connectHetznerCloudProject(
     { method: "POST", body: JSON.stringify(validated) },
     HetznerCloudConnectionResponseSchema,
   );
-  if (body.data.connection.provider !== "hetzner-cloud") {
-    throw new InfrastructureApiError(
-      "The infrastructure service returned the wrong provider.",
-      0,
-    );
-  }
-  return {
-    connection: body.data.connection,
-    inventory: body.data.inventory,
-  };
+  return hetznerConnectResult(body.data);
+}
+
+/** Swap a Hetzner project's token in place. The server proves the new token
+ * reaches the same project and can write before replacing anything. */
+export async function replaceHetznerCloudToken(
+  connectionId: string,
+  apiToken: string,
+): Promise<HetznerCloudConnectResult> {
+  const validated = HetznerCloudTokenReplaceRequestSchema.parse({ apiToken });
+  const body = await requestJson(
+    `/api/infrastructure/connections/${z.string().uuid().parse(connectionId)}/hetzner-cloud/token`,
+    { method: "POST", body: JSON.stringify(validated) },
+    HetznerCloudConnectionResponseSchema,
+  );
+  return hetznerConnectResult(body.data);
+}
+
+export async function getHetznerCloudCapacitySlot(signal?: AbortSignal): Promise<HetznerCloudCapacitySlotDto> {
+  const body = await requestJson(
+    "/api/infrastructure/hetzner-cloud/capacity-slot",
+    { method: "GET", signal },
+    HetznerCloudCapacitySlotResponseSchema,
+  );
+  return body.data.slot;
 }
 
 export async function getHetznerCloudInventory(

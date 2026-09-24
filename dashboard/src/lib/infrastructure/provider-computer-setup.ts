@@ -32,13 +32,17 @@ async function describe(userId: string, connectionId: string, order: StoredHetzn
   const view: ProviderComputerSetupView = {
     orderId: operation.id, connectionId, connectionRevision: order.connectionRevision,
     serverName: operation.quote.serverName, providerServerId: operation.providerServerId,
-    stage: "awaiting_setup", targetId: null, observedAt: null, launchReady: false,
+    stage: "awaiting_setup", targetId: null, observedAt: null, launchReady: false, enrollmentExpiresAt: null,
   };
   const creationScope = { binding: { userId, connectionId, connectionRevision: order.connectionRevision, orderId: operation.id,
     quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION }, capacityIdempotencyKey: operation.idempotencyKey };
   const enrollment = await deps.enrollment(creationScope);
   const scope = enrollment && operation.providerServerId
     ? { binding: enrollment.challenge.binding, providerServerId: operation.providerServerId } : null;
+  // The key is only a deadline until the server connects back with it.
+  if (enrollment && (enrollment.phase === "staged" || enrollment.phase === "awaiting_identity")) {
+    view.enrollmentExpiresAt = enrollment.challenge.expiresAt;
+  }
   if (["deleted", "cleaning"].includes(operation.status)) view.stage = "retired";
   else if (!enrollment) view.stage = "not_requested";
   else if (["revoked", "failed"].includes(enrollment.phase)) view.stage = "stopped";
