@@ -1316,6 +1316,42 @@ describe("AgentPage", () => {
     expect(screen.queryByTestId("channel-connect-nudge")).not.toBeInTheDocument();
   });
 
+  it("drops the one-shot welcome from the address once read, and keeps this visit's welcome", async () => {
+    window.history.replaceState(null, "", "/dashboard/agent/agent_123?welcome=1&tab=chat#model-settings");
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    mockTelegramStatus.mockResolvedValue({ connected: false, active: false, ownerId: null });
+    const initialHistoryLength = window.history.length;
+
+    render(<AgentPage />);
+
+    expect(await screen.findByTestId("channel-connect-nudge")).toBeInTheDocument();
+    // A reload, a copied link or a native shell sees the page's route, not its arrival.
+    await waitFor(() => expect(window.location.search).toBe("?tab=chat"));
+    expect(window.location.hash).toBe("#model-settings");
+    expect(window.history.length).toBe(initialHistoryLength);
+    // Renders after the address changed still belong to this arrival.
+    fireEvent.click(await findSurfaceButton("Terminal"));
+    expect(new URLSearchParams(window.location.search).get("tab")).not.toBe("chat");
+    expect(new URLSearchParams(window.location.search).get("welcome")).toBeNull();
+    expect(screen.getByTestId("channel-connect-nudge")).toBeInTheDocument();
+  });
+
+  it("keeps launch personalization after the welcome leaves the address", async () => {
+    window.history.replaceState(null, "", "/dashboard/agent/agent_123?welcome=1");
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT", status: "provisioning",
+      activity: "provision", cpu: 2, ram: 4, chat_url: null, api_token: null,
+    });
+
+    const view = render(<AgentPage />);
+
+    expect(await screen.findByText("While you wait")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe(""));
+    view.rerender(<AgentPage />);
+    expect(screen.getByText("While you wait")).toBeInTheDocument();
+  });
+
   it("does not show the nudge without the welcome param", async () => {
     mockTelegramStatus.mockResolvedValue({ connected: false, active: false, ownerId: null });
 
