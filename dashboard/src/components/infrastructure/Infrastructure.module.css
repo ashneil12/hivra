@@ -2036,6 +2036,36 @@
   background: var(--skills-danger-bg);
 }
 
+.providerInventoryError > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* An inline retry that keeps the alert's height but a full touch target. */
+.providerInventoryError > button {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  margin: -14px -8px -14px 0;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.providerInventoryError > button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
 .providerConnectionCard .cardActions a {
   text-decoration: none;
 }
@@ -4484,5 +4514,297 @@
   }
   .pageHeading h1 {
     font-size: 36px;
+  }
+}
+
+/* Hetzner create, setup and token flows (Connect redesign slices 1 and 11). */
+.providerStepsInline {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 18px;
+  padding: 0;
+}
+
+.providerStepsInline a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.providerConnectionCard .cardActions {
+  flex-wrap: wrap;
+}
+
+.providerServerReadiness {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--infra-line-soft);
+}
+
+.providerServerReadiness > span:not(.statusBadge) {
+  flex: 1 1 180px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.providerServerReadiness > .primaryButton,
+.providerServerReadiness > .secondaryButton {
+  min-height: 34px;
+}
+
+.providerCreateReason {
+  margin-top: 14px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.capacityQuoteHero > div > strong.capacityQuoteServer {
+  font-size: clamp(20px, 3.4vw, 28px);
+}
+
+.createTimelineSection {
+  margin-top: 20px;
+}
+
+.createTimeline {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--infra-line);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+}
+
+.createTimeline > li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--infra-line-soft);
+}
+
+.createTimeline > li:last-child {
+  border-bottom: 0;
+}
+
+.createTimeline > li > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--hivra-red);
+  border: 1px solid var(--hivra-red-line);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.createTimeline strong {
+  display: block;
+  font-size: 11.5px;
+}
+
+.createTimeline p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.createTimelineSkipped {
+  opacity: 0.55;
+}
+
+.capacityDisclosure {
+  margin-top: 14px;
+  border: 1px solid var(--infra-line-soft);
+  background: color-mix(in srgb, var(--bg-elevated) 48%, transparent);
+}
+
+.capacityDisclosure > summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.capacityDisclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.capacityDisclosure > summary::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--hivra-red);
+  font-size: 13px;
+}
+
+.capacityDisclosure[open] > summary::after {
+  content: "−";
+}
+
+.capacityDisclosure > summary:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.capacityDisclosureBody {
+  padding: 0 13px 14px;
+}
+
+.capacityDisclosureBody > .capacityPriceBreakdown {
+  margin-top: 0;
+}
+
+.capacityDetailList {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.capacityAdvancedOption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.capacityAdvancedOption input {
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: var(--hivra-red);
+}
+
+.capacityAdvancedOption strong,
+.capacityAdvancedOption > span > span {
+  display: block;
+}
+
+.capacityAdvancedOption strong {
+  font-size: 11px;
+}
+
+.capacityAdvancedOption > span > span {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.setupPanel {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.setupNote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--skills-success-text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.setupNote > svg {
+  flex: none;
+}
+
+.setupPanel > .resultActions {
+  margin-top: 4px;
+}
+
+.setupCountdown,
+.setupElapsed {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 11px 13px;
+  color: var(--text-secondary);
+  border: 1px solid var(--infra-line);
+  background: color-mix(in srgb, var(--bg-elevated) 64%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.setupCountdown > svg,
+.setupElapsed > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hivra-red);
+}
+
+.setupCountdown strong,
+.setupElapsed strong {
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.setupCountdownUrgent {
+  border-color: var(--hivra-red-line);
+  background: color-mix(in srgb, var(--hivra-red-soft) 45%, var(--infra-panel));
+}
+
+.setupProgress {
+  display: grid;
+  gap: 10px;
+}
+
+.setupObservedStages {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setupObservedStages > li {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.setupObservedStages > li > span {
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .providerStepsInline {
+    grid-template-columns: 1fr;
+  }
+
+  .providerServerReadiness > .primaryButton,
+  .providerServerReadiness > .secondaryButton {
+    width: 100%;
+    justify-content: center;
   }
 }

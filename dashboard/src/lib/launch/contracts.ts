@@ -2,7 +2,10 @@ import { recommendedResourceEnvelope } from "./resource-envelope";
 
 export const LAUNCH_DRAFT_SCHEMA_VERSION = 1 as const;
 
-export type LaunchStage = "type" | "profile" | "capacity" | "review" | "launch";
+/** Choose what to launch, review Hivra's plan for it, review the exact
+ * changes, then launch. Drafts saved before the Choose screen merged the
+ * type and profile screens are restored by the draft store. */
+export type LaunchStage = "choose" | "plan" | "review" | "launch";
 export type LaunchResourceKind = "agent" | "computer";
 export type LaunchProfileId = "codex" | "ubuntu-desktop" | "linux-terminal" | "omarchy" | "windows";
 export type LaunchState = "idle" | "submitting" | "uncertain" | "accepted" | "failed";
@@ -83,14 +86,6 @@ export type LaunchDraft = {
   error: string | null;
 };
 
-const LAUNCH_STAGES: readonly LaunchStage[] = [
-  "type",
-  "profile",
-  "capacity",
-  "review",
-  "launch",
-];
-
 export const PROFILE_DETAILS: Record<LaunchProfileId, {
   resourceKind: LaunchResourceKind;
   name: string;
@@ -100,7 +95,6 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
    * generic Linux desktop adapter is not evidence of Windows capability. */
   placementRuntimeId: "codex" | "linux-desktop" | "linux-terminal" | "windows-installer";
   managedCapacity: "plan" | "entitlement-required" | "self-managed-only";
-  defaultName: string;
   recommended: LaunchResources;
   /** Selectable sizes; the journey hides those below the active floor. */
   cpuOptions: readonly number[];
@@ -112,7 +106,6 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     runtimeId: "codex",
     placementRuntimeId: "codex",
     managedCapacity: "plan",
-    defaultName: "MY_CODEX_AGENT",
     recommended: { ...recommendedResourceEnvelope("codex"), source: "recommended" },
     // The lower sizes are reachable only with the browser sidecar off.
     cpuOptions: [0.5, 1, 1.5, 2, 4, 8],
@@ -124,7 +117,6 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     runtimeId: "linux-desktop",
     placementRuntimeId: "linux-desktop",
     managedCapacity: "plan",
-    defaultName: "MY_UBUNTU_DESKTOP",
     recommended: { ...recommendedResourceEnvelope("ubuntu-desktop"), source: "recommended" },
     cpuOptions: [2, 4, 8],
     ramOptions: [4, 8, 16],
@@ -135,7 +127,6 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     runtimeId: "linux-terminal",
     placementRuntimeId: "linux-terminal",
     managedCapacity: "self-managed-only",
-    defaultName: "MY_LINUX_SANDBOX",
     recommended: { ...recommendedResourceEnvelope("linux-terminal"), source: "recommended" },
     cpuOptions: [0.5, 1, 2, 4],
     ramOptions: [1, 2, 4, 8],
@@ -146,7 +137,6 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     runtimeId: "linux-desktop",
     placementRuntimeId: "linux-desktop",
     managedCapacity: "plan",
-    defaultName: "MY_OMARCHY_DESKTOP",
     recommended: { ...recommendedResourceEnvelope("omarchy"), source: "recommended" },
     cpuOptions: [4],
     ramOptions: [8],
@@ -159,13 +149,17 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     // A future managed provider adapter must replace this with a real,
     // account-bound entitlement check. UI acknowledgement is never authority.
     managedCapacity: "entitlement-required",
-    defaultName: "MY_WINDOWS_DESKTOP",
     recommended: { ...recommendedResourceEnvelope("windows"), source: "recommended" },
     cpuOptions: [4],
     ramOptions: [8],
   },
 };
 
-export function stageNumber(stage: LaunchStage): number {
-  return LAUNCH_STAGES.indexOf(stage) + 1;
+export const LAUNCH_PROFILE_IDS: readonly LaunchProfileId[] = ["codex", "ubuntu-desktop", "linux-terminal", "omarchy", "windows"];
+
+export function isLaunchProfileId(value: unknown): value is LaunchProfileId {
+  return typeof value === "string" && (LAUNCH_PROFILE_IDS as readonly string[]).includes(value);
 }
+
+/** Launch names are 1-60 characters on every launch route. */
+export const LAUNCH_NAME_MAX_LENGTH = 60;

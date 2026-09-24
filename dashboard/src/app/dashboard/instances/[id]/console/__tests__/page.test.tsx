@@ -311,7 +311,7 @@ describe("AdvancedConsolePage", () => {
     });
   });
 
-  it("offers runtime repair from the advanced console and posts the repair action", async () => {
+  it("offers agent repair from the advanced console and posts the repair action", async () => {
     global.fetch = createConsoleFetchMock({
       postResponse: { success: true },
     });
@@ -324,12 +324,12 @@ describe("AdvancedConsolePage", () => {
       jest.runOnlyPendingTimers();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /repair runtime/i }));
+    fireEvent.click(screen.getByRole("button", { name: /repair agent/i }));
 
     expect(screen.getByText(/repairs permissions, and recreates the agent stack/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /confirm runtime repair/i }));
+      fireEvent.click(screen.getByRole("button", { name: /confirm agent repair/i }));
     });
 
     await waitFor(() => {
@@ -341,7 +341,7 @@ describe("AdvancedConsolePage", () => {
     });
   });
 
-  it("offers runtime rebuild from the advanced console and posts the rebuild action", async () => {
+  it("offers agent rebuild from the advanced console and posts the rebuild action", async () => {
     global.fetch = createConsoleFetchMock({
       postResponse: { success: true },
     });
@@ -354,12 +354,12 @@ describe("AdvancedConsolePage", () => {
       jest.runOnlyPendingTimers();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /rebuild runtime/i }));
+    fireEvent.click(screen.getByRole("button", { name: /rebuild agent/i }));
 
-    expect(screen.getByText(/clears disposable runtime state like generated logs/i)).toBeInTheDocument();
+    expect(screen.getByText(/clears disposable state like generated logs/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /confirm runtime rebuild/i }));
+      fireEvent.click(screen.getByRole("button", { name: /confirm agent rebuild/i }));
     });
 
     await waitFor(() => {
@@ -520,7 +520,7 @@ describe("AdvancedConsolePage", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/update is already in progress\. hermes is safely refreshing the live agent runtime now\./i)
+        screen.getByText(/update is already in progress\. hermes is safely refreshing the agent now\./i)
       ).toBeInTheDocument();
     });
 
@@ -754,8 +754,8 @@ describe("AdvancedConsolePage", () => {
         "RESTART GATEWAY",
         "Auto-Update",
         "Connect Desktop",
-        "REPAIR RUNTIME",
-        "REBUILD RUNTIME",
+        "REPAIR AGENT",
+        "REBUILD AGENT",
       ]);
       expect(within(actions).getByText("Recovery")).toBeInTheDocument();
 

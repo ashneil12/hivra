@@ -10,6 +10,12 @@ function setup(selfHosted = false) {
 }
 
 describe("guided infrastructure paths", () => {
+  it("tells a new user what Free includes before any plan is chosen", () => {
+    setup();
+    expect(screen.getByText(/Start free: 0.5 CPU and 1 GB of Hivra Cloud, enough for one small agent/)).toBeInTheDocument();
+    expect(screen.getByText("Free needs no card. Paid plans show their price before payment.")).toBeInTheDocument();
+  });
+
   it("explains generic provider SSH support without invoking connection actions on navigation", () => {
     const callbacks = setup();
     fireEvent.click(screen.getByRole("button", { name: /Choose cloud provider/i }));
