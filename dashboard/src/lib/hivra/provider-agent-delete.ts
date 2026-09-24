@@ -5,7 +5,6 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { loadHetznerCloudCleanupOrder } from "@/lib/infrastructure/hetzner-cloud-store";
 import { loadFirstBootOperationForOrder } from "@/lib/infrastructure/first-boot-operations";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
 import { advanceHetznerCleanup } from "@/lib/infrastructure/hetzner-cleanup";
 import { hetznerCleanupManifest } from "@/lib/infrastructure/hetzner-cleanup-policy";
 import { HETZNER_FIRST_BOOT_CLEANUP_CONFIRMATION } from "@/lib/infrastructure/hetzner-cleanup-contracts";
@@ -236,7 +235,7 @@ export async function advanceProviderAgentDelete(input: OwnerInput, dependencies
     }
     const scope = { binding: { userId: owner.userId, connectionId: agent.infrastructure_connection_id,
       connectionRevision: agent.infrastructure_connection_revision, orderId: agent.provider_capacity_order_id,
-      quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION }, providerServerId: agent.provider_server_id };
+      quoteFingerprint: order.quoteFingerprintSha256 }, providerServerId: agent.provider_server_id };
     const boot = await deps.boot(scope);
     if (!boot || boot.binding.attemptId !== agent.provider_enrollment_attempt_id) throw new ProviderAgentDeleteError("receipts_unavailable");
     const manifest = hetznerCleanupManifest(order, boot);

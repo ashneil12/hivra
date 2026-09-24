@@ -150,7 +150,12 @@ function setupReadiness(setup: ProviderComputerSetupView): Readiness {
     case "not_requested":
       return { label: "No agent setup", tone: "pending", hint: "Created as a plain server. Hivra won't set it up for agents." };
     case "expired":
-      return { label: "Setup window expired", tone: "error", hint: "Its one-time setup key expired. Remove it with Remove created server before creating another." };
+      if (setup.enrollmentWindow === "since_start" && setup.providerServerId === null) {
+        return { label: "Request expired", tone: "error", hint: "Hivra didn't send this server request in time, so no server was created. Nothing to remove." };
+      }
+      return { label: "Setup window expired", tone: "error", hint: setup.enrollmentWindow === "since_start"
+        ? "It didn't connect back within 15 minutes of starting setup. Remove it with Remove created server before creating another."
+        : "Its one-time setup key expired. Remove it with Remove created server before creating another." };
     case "stopped":
       return { label: "Setup stopped", tone: "error", hint: "Setup was stopped. The server and its saved state are kept." };
     case "retired":

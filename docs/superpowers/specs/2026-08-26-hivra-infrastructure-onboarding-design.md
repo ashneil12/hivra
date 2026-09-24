@@ -107,12 +107,16 @@ API. The supported flow is therefore a guided project API token:
    and `start_after_create=false`. Success is shown only after the provider
    action succeeds and a subsequent provider read observes the server powered
    off. The node remains unprepared and blocked from agent launch until the
-   user selects **Start setup**, the only primary action on the result. The
-   result shows a countdown from the server's setup-key expiry
-   (`enrollmentExpiresAt`), the observed setup stages with elapsed time, and
-   ends with "Continue your launch" or "Launch on this server". Moving the
-   15-minute window to start at Start setup, or re-issuing a key, remains
-   deferred target behavior.
+   user selects **Start setup**, the only primary action on the result. For
+   servers created with first-boot recipe 2026.09.24.1 the 15-minute setup
+   window opens at Start setup: the result says "Setup must finish within 15
+   minutes of starting", shows no countdown before Start setup, and afterwards
+   counts down from the deadline the server reports (`enrollmentExpiresAt`,
+   15 minutes from Hivra's recorded power-on). Servers created with recipe
+   2026.08.27.1 keep their 15 minutes from creation and the original key
+   countdown. The result also shows the observed setup stages with elapsed
+   time, and ends with "Continue your launch" or "Launch on this server".
+   Re-issuing a key remains deferred target behavior.
 
 For this canary, durable spend control permits at most one non-rejected in-app
 Hetzner server claim (`creating`, `ambiguous`, or `created_off`) per Hivra

@@ -3,9 +3,30 @@ import "server-only";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
-export const FIRST_BOOT_RECIPE_VERSION = "2026.08.27.1" as const;
+/** Servers created before 2026-09-24. Their guest and Hivra both enforce 15
+ * minutes from creation; Hivra keeps that rule for them unchanged. */
+export const FIRST_BOOT_LEGACY_RECIPE_VERSION = "2026.08.27.1" as const;
+/** Every server Hivra creates now. The setup window opens only when Hivra
+ * powers the server on at Start setup, and the guest measures its 15 minutes
+ * from its own first boot. */
+export const FIRST_BOOT_RECIPE_VERSION = "2026.09.24.1" as const;
+export const FIRST_BOOT_RECIPE_VERSIONS = [FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION] as const;
+export type FirstBootRecipeVersion = (typeof FIRST_BOOT_RECIPE_VERSIONS)[number];
+/** Staging to server request. For the legacy recipe this is also the whole
+ * enrollment window; for the current recipe it only bounds delivery. */
 export const FIRST_BOOT_ENROLLMENT_TTL_MS = 15 * 60_000;
+/** How long setup may take once Hivra powers the server on. */
+export const FIRST_BOOT_SETUP_WINDOW_MS = 15 * 60_000;
+/** Extra server-side acceptance for the time Hetzner takes to boot the server;
+ * the guest's own 15 minutes start at its boot, after Hivra's power-on. */
+export const FIRST_BOOT_ARMED_SLACK_MS = 2 * 60_000;
+export const FIRST_BOOT_ARMED_WINDOW_MS = FIRST_BOOT_SETUP_WINDOW_MS + FIRST_BOOT_ARMED_SLACK_MS;
 export const FIRST_BOOT_ENROLLMENT_BODY_LIMIT = 2_048;
+
+/** True for recipes whose window opens at Start setup, not at creation. */
+export function firstBootWindowOpensAtStart(recipeVersion: FirstBootRecipeVersion): boolean {
+  return recipeVersion === FIRST_BOOT_RECIPE_VERSION;
+}
 const PURPOSE = "hivra/hetzner-first-boot/ssh-host-enrollment/v1";
 // Canonical, non-nil UUIDs agree with the guest and the durable record keys.
 const UUID = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -26,7 +47,7 @@ const BindingSchema = z.object({
   orderId: UUID,
   attemptId: UUID,
   quoteFingerprint: DIGEST,
-  recipeVersion: z.literal(FIRST_BOOT_RECIPE_VERSION),
+  recipeVersion: z.enum(FIRST_BOOT_RECIPE_VERSIONS),
 }).strict();
 
 const ChallengeSchema = z.object({
@@ -52,11 +73,15 @@ export type FirstBootEnrollmentRecord = {
   challenge: FirstBootChallenge;
   phase: "awaiting_identity" | "enrolled" | "revoked" | "failed";
   enrolledHostPublicKey: string | null;
+  /** When Hivra powered this server on for setup (current recipe only).
+   * Recorded by the database in the same step as that power-on. */
+  armedAt: string | null;
+  armedExpiresAt: string | null;
 };
 
 export class FirstBootEnrollmentError extends Error {
   constructor(public readonly code:
-    "invalid_binding" | "invalid_proof" | "expired" | "not_active" | "identity_changed") {
+    "invalid_binding" | "invalid_proof" | "expired" | "not_armed" | "not_active" | "identity_changed") {
     super("First-boot enrollment failed: " + code);
     this.name = "FirstBootEnrollmentError";
   }
@@ -126,27 +151,63 @@ export function canonicalFirstBootHostKey(raw: string): {
   };
 }
 
-/** Checks only the scoped bootstrap secret. No consumption, identity or
- * provider readiness is implied; those remain separate authority checks.
- */
-export function verifyFirstBootChallengeSecret(input: {
-  challenge: unknown; currentBinding: FirstBootBinding; token: string; now?: Date;
-}): FirstBootChallenge {
+function checkedChallenge(input: { challenge: unknown; currentBinding: FirstBootBinding; token: string }): FirstBootChallenge {
   const challenge = ChallengeSchema.safeParse(input.challenge);
   const current = BindingSchema.safeParse(input.currentBinding);
   if (!challenge.success || !current.success
     || typeof input.token !== "string" || !TOKEN.test(input.token)) reject("invalid_proof");
   const c = challenge.data;
   if (JSON.stringify(bindingTuple(c.binding)) !== JSON.stringify(bindingTuple(current.data))) reject("invalid_proof");
-  const now = (input.now ?? new Date()).getTime();
-  const issued = Date.parse(c.issuedAt);
-  const expires = Date.parse(c.expiresAt);
-  if (!Number.isFinite(now) || expires - issued !== FIRST_BOOT_ENROLLMENT_TTL_MS
-    || now < issued || now >= expires) reject("expired");
-  if (!timingSafeEqual(digestProof(c, input.token), Buffer.from(c.verifierSha256, "hex"))) {
-    reject("invalid_proof");
-  }
+  if (Date.parse(c.expiresAt) - Date.parse(c.issuedAt) !== FIRST_BOOT_ENROLLMENT_TTL_MS) reject("expired");
   return c;
+}
+
+function assertVerifier(c: FirstBootChallenge, token: string) {
+  if (!timingSafeEqual(digestProof(c, token), Buffer.from(c.verifierSha256, "hex"))) reject("invalid_proof");
+}
+
+/** Checks only the scoped bootstrap secret inside its delivery window (staging
+ * to the server request). No consumption, identity or provider readiness is
+ * implied; those remain separate authority checks. Enrollment itself is
+ * checked against firstBootEnrollmentWindow instead.
+ */
+export function verifyFirstBootChallengeSecret(input: {
+  challenge: unknown; currentBinding: FirstBootBinding; token: string; now?: Date;
+}): FirstBootChallenge {
+  const c = checkedChallenge(input);
+  const now = (input.now ?? new Date()).getTime();
+  if (!Number.isFinite(now) || now < Date.parse(c.issuedAt) || now >= Date.parse(c.expiresAt)) reject("expired");
+  assertVerifier(c, input.token);
+  return c;
+}
+
+/** The interval in which Hivra accepts this challenge's proof. The legacy
+ * recipe keeps its 15 minutes from creation. The current recipe has no window
+ * at all until Hivra records powering this server on for setup, which opens
+ * exactly one; null means "not armed", never "no limit".
+ */
+export function firstBootEnrollmentWindow(record: {
+  challenge: FirstBootChallenge; armedAt: string | null; armedExpiresAt: string | null;
+}): { opensAt: number; closesAt: number } | null {
+  const { challenge: c, armedAt, armedExpiresAt } = record;
+  const issued = Date.parse(c.issuedAt);
+  if (!firstBootWindowOpensAtStart(c.binding.recipeVersion)) {
+    if (armedAt !== null || armedExpiresAt !== null) reject("invalid_proof");
+    return { opensAt: issued, closesAt: Date.parse(c.expiresAt) };
+  }
+  if (armedAt === null && armedExpiresAt === null) return null;
+  if (!DATE.safeParse(armedAt).success || !DATE.safeParse(armedExpiresAt).success) reject("invalid_proof");
+  const opensAt = Date.parse(armedAt!), closesAt = Date.parse(armedExpiresAt!);
+  if (closesAt - opensAt !== FIRST_BOOT_ARMED_WINDOW_MS || opensAt < issued) reject("invalid_proof");
+  return { opensAt, closesAt };
+}
+
+/** When enrollment authority ends, or null while a current-recipe challenge
+ * waits for Start setup (it cannot enroll at all until then). */
+export function firstBootEnrollmentDeadline(record: {
+  challenge: FirstBootChallenge; armedAt: string | null; armedExpiresAt: string | null;
+}): number | null {
+  return firstBootEnrollmentWindow(record)?.closesAt ?? null;
 }
 
 /** Validate a candidate, NOT a successful enrollment or ready computer.
@@ -168,8 +229,16 @@ export function inspectFirstBootEnrollmentProof(input: {
   hostPublicKey: string;
   hostFingerprintSha256: string;
 } {
-  const c = verifyFirstBootChallengeSecret({ challenge: input.record?.challenge,
-    currentBinding: input.currentBinding, token: input.token, now: input.now });
+  const c = checkedChallenge({ challenge: input.record?.challenge,
+    currentBinding: input.currentBinding, token: input.token });
+  // Never accept a proof for a challenge Hivra has not armed by powering this
+  // server on for setup; the database repeats this decision at consumption.
+  const window = firstBootEnrollmentWindow({ challenge: c,
+    armedAt: input.record.armedAt ?? null, armedExpiresAt: input.record.armedExpiresAt ?? null });
+  if (!window) reject("not_armed");
+  const now = (input.now ?? new Date()).getTime();
+  if (!Number.isFinite(now) || now < window.opensAt || now >= window.closesAt) reject("expired");
+  assertVerifier(c, input.token);
   const registration = FirstBootRegistrationSchema.safeParse(input.registration);
   if (!registration.success || !PROVIDER_ID.safeParse(input.expectedProviderServerId).success) reject("invalid_proof");
   const r = registration.data;

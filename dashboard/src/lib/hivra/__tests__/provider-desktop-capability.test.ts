@@ -26,7 +26,8 @@ function row() { return { id: ref.agentId, user_id: ref.userId, type: "linux-des
   cf_hostname: access.hostname, chat_url: `https://${access.hostname}`, ip: context.ip, api_token: null }; }
 beforeEach(() => { jest.clearAllMocks(); mockRead.mockReset(); mockRpc.mockReset(); });
 it("loads only stable original running ownership without inventing a VM ID", async () => {
-  mockRead.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: h.f.binding.quoteFingerprint }, error: null });
+  mockRead.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: h.f.binding.quoteFingerprint }, error: null })
+    .mockResolvedValueOnce({ data: { recipe_version: h.f.binding.recipeVersion }, error: null });
   expect(await loadProviderDesktopCapabilityContext(ref)).toEqual(context);
   expect(mockQuery.is).toHaveBeenCalledWith("operation_id", null); expect(mockQuery.eq).toHaveBeenCalledWith("user_id", ref.userId);
 });
@@ -40,7 +41,8 @@ it.each(["owner", "operation", "vmid", "profile", "identity", "access", "scope",
   if (fault === "access") value.cf_hostname = "other.example.test";
   if (fault === "scope") value.provider_server_id = "43";
   if (fault === "token") value.api_token = "private-fixture";
-  mockRead.mockResolvedValueOnce({ data: value, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: h.f.binding.quoteFingerprint }, error: null });
+  mockRead.mockResolvedValueOnce({ data: value, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: h.f.binding.quoteFingerprint }, error: null })
+    .mockResolvedValueOnce({ data: { recipe_version: h.f.binding.recipeVersion }, error: null });
   await expect(loadProviderDesktopCapabilityContext(ref)).rejects.toThrow("Provider desktop capability could not be verified");
 });
 it("records only the checked original identity and capability through the stable SQL wrapper", async () => {
