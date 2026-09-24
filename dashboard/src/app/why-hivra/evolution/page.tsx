@@ -7,8 +7,10 @@ import PublicSite from "@/components/public-site/PublicSite";
 import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
+import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { buildAbsoluteSiteUrl, buildWebsiteMetadata } from "@/lib/metadata";
+import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 import styles from "../page.module.css";
 
@@ -18,6 +20,10 @@ const PAGE_URL = buildAbsoluteSiteUrl(PAGE_PATH);
 const PAGE_TITLE = "Why Hivra? The Evolution of HermesOS";
 const PAGE_DESCRIPTION =
   "HermesOS (Hermes Agent OS) is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
+
+// The $HIVRA copy changes at its activation instant: re-render at least every
+// minute rather than freezing the build-time phase into static HTML.
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: PAGE_TITLE,
@@ -152,6 +158,8 @@ async function renderForViewer() {
 }
 
 function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
+  // Dormant, every phase string is exactly the copy from before.
+  const tokenCopy = getTokenPhaseCopy(getHivraTokenPhase()).evolution;
   return (
     <PublicSite className={styles.page} data-page="why-hivra">
       <StructuredData schema={pageSchema} />
@@ -206,17 +214,17 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
               </>
             )}
             <div className={styles.sameTokenBox}>
-              <p>$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.</p>
+              <p>{tokenCopy.hivraStatus}</p>
               {geoNotice ? null : (
                 <>
-                  <p>Under the proposal, new users would use $HIVRA once it launches.</p>
-                  <p>Under the proposal, converting your $HermesOS would be optional, and the terms would be published before claims open.</p>
-                  <p>Under the proposal, paying in the token keeps its discount.</p>
+                  {tokenCopy.hivraDetails.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
                 </>
               )}
             </div>
             <p>
-              Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the{" "}
+              {tokenCopy.addressNote}{" "}
               <Link href="/token">token page</Link>.
             </p>
           </SectionShell>
@@ -273,7 +281,7 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
             <p>Simple version:</p>
             <div className={styles.relationshipBox}>
               <p>Hivra is the platform.</p>
-              <p>$HermesOS is the live token today. $HIVRA is the proposed next one.</p>
+              <p>{tokenCopy.relationship}</p>
             </div>
             <p>The platform became bigger than its original name.</p>
             <p>The vision expanded.</p>
