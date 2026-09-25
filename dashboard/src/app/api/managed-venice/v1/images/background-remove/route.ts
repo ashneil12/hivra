@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-bg-remove | Psalm 51:7 | Verse: Wash me, and I shall be whiter than snow.
 const VENICE_BG_REMOVE_URL = "https://api.venice.ai/api/v1/image/background-remove";
@@ -35,77 +35,67 @@ export async function POST(req: NextRequest) {
   }
 
   const referenceId = randomUUID();
-  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
-
   // Venice accepts either JSON `{ image_url }` or multipart with `image`.
   // Pass either through to upstream verbatim.
   const contentTypeIn = req.headers.get("content-type") || "";
   const isMultipart = contentTypeIn.toLowerCase().includes("multipart/form-data");
   const isJson = contentTypeIn.toLowerCase().includes("application/json");
-
-  let upstreamResponse: Response;
-  try {
-    if (isJson) {
-      const bodyText = await req.text();
-      upstreamResponse = await fetch(VENICE_BG_REMOVE_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${serverKey}`,
-          "Content-Type": "application/json",
-        },
-        body: bodyText,
-      });
-    } else if (isMultipart) {
-      const formData = await req.formData();
-      if (!formData.get("image")) {
-        return apiError("image is required.", 400);
-      }
-      upstreamResponse = await fetch(VENICE_BG_REMOVE_URL, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${serverKey}` },
-        body: formData,
-      });
-    } else {
-      return apiError("Expected application/json or multipart/form-data.", 415);
+  let upstreamBody: string | FormData;
+  if (isJson) {
+    upstreamBody = await req.text();
+  } else if (isMultipart) {
+    const formData = await req.formData();
+    if (!formData.get("image")) {
+      return apiError("image is required.", 400);
     }
-  } catch (error) {
-    return apiError(
-      "Venice upstream request failed.",
-      502,
-      { failureType: "managed_venice_bg_remove_upstream_fetch_failed" },
-      undefined,
-      { cause: error }
-    );
+    upstreamBody = formData;
+  } else {
+    return apiError("Expected application/json or multipart/form-data.", 415);
   }
 
-  if (upstreamResponse.ok) {
-    try {
-      await recordManagedVeniceMultimodalUsage({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        walletType,
-        referenceId,
-        endpoint: ENDPOINT_LABEL,
-        model: "venice-bg-remover",
-        upstreamStatus: upstreamResponse.status,
-        metadata: { inputShape: isJson ? "json" : "multipart" },
-      });
-    } catch (error) {
-      log.error("Managed Venice bg-remove usage record failed", error, {
-        source: "managed-venice-bg-remove",
-        route: ENDPOINT_LABEL,
+  const gate = await holdManagedVeniceMediaSpend({
+    key: verifiedKey,
+    operation: {
+      endpoint: ENDPOINT_LABEL,
+      model: "venice-bg-remover",
+      metadata: { inputShape: isJson ? "json" : "multipart" },
+    },
+    referenceId,
+    source: "managed-venice-bg-remove",
+  });
+  if (!gate.ok) return gate.response;
+
+  const sent = await sendManagedVeniceMediaRequest({
+    hold: gate.hold,
+    mode: "stream",
+    fetchFailureType: "managed_venice_bg_remove_upstream_fetch_failed",
+    send: () =>
+      fetch(VENICE_BG_REMOVE_URL, {
         method: "POST",
-        failureType: "managed_venice_bg_remove_usage_record_failed",
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        referenceId,
-      });
-    }
+        headers: isJson
+          ? { Authorization: `Bearer ${serverKey}`, "Content-Type": "application/json" }
+          : { Authorization: `Bearer ${serverKey}` },
+        body: upstreamBody,
+      }),
+  });
+  if (!sent.ok) return sent.response;
+
+  if (!sent.upstream.ok) {
+    log.warn("Managed Venice upstream returned non-2xx", {
+      source: "managed-venice-bg-remove",
+      route: ENDPOINT_LABEL,
+      method: "POST",
+      failureType: "managed_venice_bg_remove_upstream_non_2xx",
+      upstreamStatus: sent.upstream.status,
+      userId: verifiedKey.userId,
+      proxyKeyId: verifiedKey.id,
+      model: "venice-bg-remover",
+    });
   }
 
-  const contentType = upstreamResponse.headers.get("content-type") || "image/png";
-  return new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
+  const contentType = sent.upstream.headers.get("content-type") || "image/png";
+  return new Response(sent.upstream.body, {
+    status: sent.upstream.status,
     headers: { "Content-Type": contentType },
   });
 }
