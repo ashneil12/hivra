@@ -19,7 +19,7 @@ jest.mock("@/lib/services/profile-service", () => {
     ...actual,
     ProfileService: {
       ...actual.ProfileService,
-      getHostIpForInstance: jest.fn(),
+      getGuestSshForInstance: jest.fn(),
     },
   };
 });
@@ -28,12 +28,12 @@ describe("POST /api/instances/[id]/workspaces/upload", () => {
   const mockedAuth = auth as jest.MockedFunction<typeof auth>;
   const mockedSshExec = sshExec as jest.MockedFunction<typeof sshExec>;
   const mockedGetHostIpForInstance =
-    ProfileService.getHostIpForInstance as jest.MockedFunction<typeof ProfileService.getHostIpForInstance>;
+    ProfileService.getGuestSshForInstance as jest.MockedFunction<typeof ProfileService.getGuestSshForInstance>;
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockedAuth.mockResolvedValue({ userId: "user-123" } as Awaited<ReturnType<typeof auth>>);
-    mockedGetHostIpForInstance.mockResolvedValue("127.0.0.1");
+    mockedGetHostIpForInstance.mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     mockedSshExec.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
   });
 

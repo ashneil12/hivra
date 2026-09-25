@@ -637,7 +637,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-proxmox",
+        id: "66244f0e-e385-4c3d-88c2-c07e005cb2d2",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -682,7 +682,7 @@ describe("applyLiveUpdate", () => {
         fqdn: "localhost",
       })
     );
-    expect(updateEq).toHaveBeenCalledWith("id", "inst-proxmox");
+    expect(updateEq).toHaveBeenCalledWith("id", "66244f0e-e385-4c3d-88c2-c07e005cb2d2");
 
     // Single-tenant VM guard must be present in the wrapper that lands in the guest
     // VM, so a misrouted deploy aborts before it can drop a peer Caddyfile alongside
@@ -692,10 +692,10 @@ describe("applyLiveUpdate", () => {
     const innerScript = innerB64 ? Buffer.from(innerB64, "base64").toString("utf8") : "";
     const wrapperScript = extractEmbeddedScript(
       innerScript,
-      "/tmp/hermes-update-wrapper-inst-proxmox.sh"
+      "/tmp/hermes-update-wrapper-66244f0e-e385-4c3d-88c2-c07e005cb2d2.sh"
     );
     expect(wrapperScript).toContain("/opt/hermes/instances");
-    expect(wrapperScript).toContain("! -name \"inst-proxmox\"");
+    expect(wrapperScript).toContain("! -name \"66244f0e-e385-4c3d-88c2-c07e005cb2d2\"");
     expect(wrapperScript).toContain('ru "failed" "stray_tenant_dir_collision"');
   });
 
@@ -730,7 +730,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-proxmox",
+        id: "66244f0e-e385-4c3d-88c2-c07e005cb2d2",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -806,7 +806,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-fixturenode1",
+        id: "5b60dfb1-f09b-4b98-8eab-10a01afcd2f3",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -879,7 +879,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-fixturelegacy",
+        id: "19c931c4-4357-4d5e-827a-f64bfc2af973",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -985,7 +985,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-webui",
+        id: "9b1e5f90-fc42-4c55-8729-b24abdfbd952",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1026,8 +1026,8 @@ describe("applyLiveUpdate", () => {
     // Caddy to issue a 308 HTTPS redirect loop for /health.
     expect(buildWebUIProvisioningArtifacts).toHaveBeenCalledWith(
       expect.objectContaining({
-        instanceId: "inst-webui",
-        containerName: "agent-inst-webui",
+        instanceId: "9b1e5f90-fc42-4c55-8729-b24abdfbd952",
+        containerName: "agent-9b1e5f90-fc42-4c55-8729-b24abdfbd952",
         fqdn: "localhost",
         cpuLimit: 2,
         ramLimit: 4096,
@@ -1073,7 +1073,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-operatoros",
+        id: "eea9546a-ab95-46f5-8579-b5681305c1b7",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1127,7 +1127,7 @@ describe("applyLiveUpdate", () => {
 
     await expect(applyLiveUpdate(
       {
-        id: "inst-operatoros-noimage",
+        id: "eea9546a-ab95-46f5-8579-b5681305c1b7-noimage",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1226,7 +1226,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-gated",
+        id: "9b1e5f90-fc42-4c55-8729-b24abdfbd952-sidecar-gated",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1270,7 +1270,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-enabled",
+        id: "9b1e5f90-fc42-4c55-8729-b24abdfbd952-sidecar-enabled",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1319,7 +1319,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-tier-dropped",
+        id: "9b1e5f90-fc42-4c55-8729-b24abdfbd952-sidecar-tier-dropped",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1361,7 +1361,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-default",
+        id: "9b1e5f90-fc42-4c55-8729-b24abdfbd952-sidecar-default",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1399,7 +1399,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-optout",
+        id: "9b1e5f90-fc42-4c55-8729-b24abdfbd952-sidecar-optout",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1726,7 +1726,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
 
     await applyLiveUpdate(
       {
-        ...row("inst-gate-proxmox"),
+        ...row("5213dffa-deb5-45fe-8922-1550676d268d"),
         hetzner_server_id: null,
         host_id: null,
         config: {

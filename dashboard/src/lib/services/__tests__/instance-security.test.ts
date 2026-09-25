@@ -134,7 +134,7 @@ describe('getSecureUserInstance', () => {
     const token = 'a'.repeat(64);
     const single = jest.fn().mockResolvedValue({
       data: {
-        id: 'inst_123',
+        id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
         status: 'running',
         gateway_url: 'https://agent.example.com',
         api_server_key_encrypted: null,
@@ -164,7 +164,7 @@ describe('getSecureUserInstance', () => {
       .mockResolvedValueOnce({ ok: true, stdout: `${token}\n`, stderr: '' });
     (encryptApiKey as jest.Mock).mockReturnValue('encrypted-token');
 
-    const result = await getSecureUserInstance({ id: 'inst_123', userId: 'user_1' });
+    const result = await getSecureUserInstance({ id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1', userId: 'user_1' });
 
     expect(result.error).toBeNull();
     expect(result.apiServerKey).toBe(token);
@@ -172,7 +172,7 @@ describe('getSecureUserInstance', () => {
     expect(sshExec).toHaveBeenNthCalledWith(
       1,
       '10.250.20.56',
-      expect.stringContaining('docker inspect agent-inst_123-dashboard-sidecar'),
+      expect.stringContaining('docker inspect agent-2f3c8ca9-06ca-4a11-8998-0fa344416fe1-dashboard-sidecar'),
       expectProxmoxSshOptions,
     );
     expect(sshExec).not.toHaveBeenCalledWith(
@@ -183,7 +183,7 @@ describe('getSecureUserInstance', () => {
     expect(sshExec).toHaveBeenCalledTimes(1);
     expect(encryptApiKey).toHaveBeenCalledWith(token);
     expect(update).toHaveBeenCalledWith({ api_server_key_encrypted: 'encrypted-token' });
-    expect(updateEq).toHaveBeenCalledWith('id', 'inst_123');
+    expect(updateEq).toHaveBeenCalledWith('id', '2f3c8ca9-06ca-4a11-8998-0fa344416fe1');
   });
 
   it('only reads the target instance Caddyfile when container env recovery is unavailable', async () => {
@@ -424,7 +424,7 @@ describe('getSecureUserInstance', () => {
       .fn()
       .mockResolvedValueOnce({
         data: {
-          id: 'inst_123',
+          id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
           status: 'running',
           gateway_url: 'https://test.com',
           api_server_key_encrypted: 'encoded_blob',
@@ -461,7 +461,7 @@ describe('getSecureUserInstance', () => {
     (decryptApiKey as jest.Mock).mockReturnValue('decrypted_key_123');
     (getHetznerInstanceStatus as jest.Mock).mockResolvedValue({ status: 'running', ipv4: '192.0.2.122' });
 
-    const result = await getSecureUserInstance({ id: 'inst_123', userId: 'user_1' });
+    const result = await getSecureUserInstance({ id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1', userId: 'user_1' });
 
     expect(result.error).toBeNull();
     expect(result.apiServerKey).toBe('decrypted_key_123');
@@ -472,7 +472,7 @@ describe('getSecureUserInstance', () => {
   it('falls back to parsing sslip.io gateway URLs for instanceIpv4', async () => {
     ((supabaseAdmin!.from('hermes_instances').select() as unknown as SupabaseMockChain).eq().eq().neq().single as jest.Mock).mockResolvedValue({
       data: {
-        id: 'inst_123',
+        id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
         status: 'running',
         gateway_url: 'https://192-0-2-122.sslip.io',
         api_server_key_encrypted: 'encoded_blob',
@@ -484,7 +484,7 @@ describe('getSecureUserInstance', () => {
 
     (decryptApiKey as jest.Mock).mockReturnValue('decrypted_key_123');
 
-    const result = await getSecureUserInstance({ id: 'inst_123', userId: 'user_1' });
+    const result = await getSecureUserInstance({ id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1', userId: 'user_1' });
 
     expect(result.error).toBeNull();
     expect(result.instanceIpv4).toBe('192.0.2.122');
@@ -494,7 +494,7 @@ describe('getSecureUserInstance', () => {
   it('continues to prefer the stored public gateway url even when tailscale metadata exists', async () => {
     ((supabaseAdmin!.from('hermes_instances').select() as unknown as SupabaseMockChain).eq().eq().neq().single as jest.Mock).mockResolvedValue({
       data: {
-        id: 'inst_123',
+        id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
         status: 'running',
         gateway_url: 'https://192-0-2-122.sslip.io',
         api_server_key_encrypted: 'encoded_blob',
@@ -516,7 +516,7 @@ describe('getSecureUserInstance', () => {
 
     (decryptApiKey as jest.Mock).mockReturnValue('decrypted_key_123');
 
-    const result = await getSecureUserInstance({ id: 'inst_123', userId: 'user_1' });
+    const result = await getSecureUserInstance({ id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1', userId: 'user_1' });
 
     expect(result.error).toBeNull();
     expect(result.instance?.gateway_url).toBe('https://192-0-2-122.sslip.io');
@@ -533,7 +533,7 @@ describe('refreshManagedSidecarScript', () => {
 
   it('no longer ships or mounts the retired chat-stream worker module', async () => {
     const result = await refreshManagedSidecarScript({
-      id: 'inst_123',
+      id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
       instanceIpv4: '203.0.113.10',
     });
 
@@ -548,7 +548,7 @@ describe('refreshManagedSidecarScript', () => {
 
   it('refreshes the WebUI dashboard sidecar without requiring the chat worker mount', async () => {
     const result = await refreshManagedSidecarScript({
-      id: 'inst_123',
+      id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
       instanceIpv4: '203.0.113.10',
       composeService: 'dashboard-sidecar',
     });
@@ -556,14 +556,14 @@ describe('refreshManagedSidecarScript', () => {
     expect(result).toBe(true);
     expect(sshExec).toHaveBeenCalledTimes(1);
     const [, repairCommand] = (sshExec as jest.Mock).mock.calls[0];
-    expect(repairCommand).toContain('SIDECAR_CONTAINER=agent-inst_123-dashboard-sidecar');
+    expect(repairCommand).toContain('SIDECAR_CONTAINER=agent-2f3c8ca9-06ca-4a11-8998-0fa344416fe1-dashboard-sidecar');
     expect(repairCommand).toContain('docker compose up -d dashboard-sidecar');
     expect(repairCommand).not.toContain('Sidecar missing ./w mount');
   });
 
   it('preserves the WebUI handoff artifact and pins refresh SSH to the managing Proxmox host', async () => {
     const result = await refreshManagedSidecarScript({
-      id: 'inst_123',
+      id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
       instanceIpv4: '10.250.20.52',
       composeService: 'dashboard-sidecar',
       config: proxmoxInfraConfig('10.250.20.52', 'fixturenode13'),
@@ -591,13 +591,15 @@ describe('refreshManagedSidecarScript', () => {
         hostSlug: 'fixturenode13',
         envPrefix: null,
         failClosed: true,
+        vmid: 1000,
+        instanceId: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
       },
     });
   });
 
   it('fails closed instead of refreshing an ambiguous private guest IP', async () => {
     const result = await refreshManagedSidecarScript({
-      id: 'inst_123',
+      id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
       instanceIpv4: '10.250.20.52',
       composeService: 'dashboard-sidecar',
     });
@@ -607,7 +609,7 @@ describe('refreshManagedSidecarScript', () => {
     expect(log.warn).toHaveBeenCalledWith(
       'refused managed sidecar refresh for unroutable private guest IP',
       expect.objectContaining({
-        instanceId: 'inst_123',
+        instanceId: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
         failureType: 'managed_sidecar_refresh_unroutable_private_ip',
       }),
     );
@@ -641,7 +643,7 @@ describe('refreshManagedSidecarScript', () => {
 
   it('patches older WebUI dashboard sidecar compose files with the terminal upstream env', async () => {
     const result = await refreshManagedSidecarScript({
-      id: 'inst_123',
+      id: '2f3c8ca9-06ca-4a11-8998-0fa344416fe1',
       instanceIpv4: '203.0.113.10',
       composeService: 'dashboard-sidecar',
     });
@@ -649,7 +651,7 @@ describe('refreshManagedSidecarScript', () => {
     expect(result).toBe(true);
     const [, repairCommand] = (sshExec as jest.Mock).mock.calls[0];
     expect(repairCommand).toContain(
-      'DASHBOARD_TERMINAL_UPSTREAM_URL=http://agent-inst_123-official-dashboard:9119',
+      'DASHBOARD_TERMINAL_UPSTREAM_URL=http://agent-2f3c8ca9-06ca-4a11-8998-0fa344416fe1-official-dashboard:9119',
     );
     expect(repairCommand).toContain('WEBUI_TERMINAL_UPSTREAM_URL=$DASHBOARD_TERMINAL_UPSTREAM_URL');
     expect(repairCommand).toContain('grep -Fq -- "WEBUI_TERMINAL_UPSTREAM_URL=" "$COMPOSE_FILE"');
@@ -751,7 +753,7 @@ describe('recoverAndPersistApiServerKeyFromManagedHost (present-but-wrong drift)
     // what the nested SSH lands on, via the managing host.
     const result = await recoverAndPersistApiServerKeyFromManagedHost(
       {
-        id: 'inst_pmx',
+        id: 'ed6fc634-acf8-41a1-893c-36f0af43f16c',
         gateway_url: 'https://00000000000000000000.agents.canary.hermesos.cloud',
         host_id: null,
         hetzner_server_id: null,
@@ -776,7 +778,7 @@ describe('recoverAndPersistApiServerKeyFromManagedHost (present-but-wrong drift)
     expect(sshExec).toHaveBeenNthCalledWith(
       1,
       '10.250.20.50',
-      expect.stringContaining('docker inspect agent-inst_pmx-dashboard-sidecar'),
+      expect.stringContaining('docker inspect agent-ed6fc634-acf8-41a1-893c-36f0af43f16c-dashboard-sidecar'),
       {
         timeoutMs: 20_000,
         proxmoxHostConfig: {
@@ -784,6 +786,8 @@ describe('recoverAndPersistApiServerKeyFromManagedHost (present-but-wrong drift)
           hostSlug: 'fixturenode10',
           envPrefix: 'PROXMOX_FIXTURENODE10_',
           failClosed: true,
+          vmid: 1000,
+          instanceId: 'ed6fc634-acf8-41a1-893c-36f0af43f16c',
         },
       },
     );

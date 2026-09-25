@@ -1,4 +1,5 @@
 import {
+  getHermesGuestSshTarget,
   getProxmoxHostRoutingConfigFromInfrastructure,
   getProxmoxInfrastructure,
   getReleasedProxmoxInfrastructure,
@@ -250,5 +251,50 @@ describe("stripProxmoxInfrastructure / getReleasedProxmoxInfrastructure", () => 
     expect(getReleasedProxmoxInfrastructure({})).toBeNull();
     expect(getReleasedProxmoxInfrastructure(null)).toBeNull();
     expect(getReleasedProxmoxInfrastructure({ infrastructureReleased: null })).toBeNull();
+  });
+});
+
+describe("getHermesGuestSshTarget", () => {
+  const id = "5e0c7a1b-2f3d-4c5e-8a9b-0c1d2e3f4a5b";
+
+  it("carries the instance's host, stored VMID and id from config.infrastructure", () => {
+    expect(
+      getHermesGuestSshTarget({
+        id,
+        host_id: "host-12",
+        config: {
+          infrastructure: {
+            provider: "proxmox",
+            vmid: 1205,
+            privateIpv4: "10.70.20.55",
+            gatewayHost: "a.example.com",
+            hostSlug: "pve12",
+            hostEnvPrefix: "PROXMOX_PVE12_",
+          },
+        },
+      })
+    ).toEqual({ hostId: "host-12", hostSlug: "pve12", envPrefix: "PROXMOX_PVE12_", failClosed: true, vmid: 1205, instanceId: id });
+  });
+
+  it("falls back to the row's proxmox columns", () => {
+    expect(
+      getHermesGuestSshTarget({
+        id,
+        proxmox_vmid: 1205,
+        proxmox_node: "pve12",
+        ipv4_address: "10.70.20.55",
+        gateway_url: "https://a.example.com",
+      })
+    ).toMatchObject({ hostSlug: "pve12", vmid: 1205, instanceId: id });
+  });
+
+  it("is null for a row with no Proxmox handle (Hetzner) or no id", () => {
+    expect(getHermesGuestSshTarget({ id, ipv4_address: "203.0.113.10", config: {} })).toBeNull();
+    expect(getHermesGuestSshTarget(null)).toBeNull();
+    expect(
+      getHermesGuestSshTarget({
+        config: { infrastructure: { provider: "proxmox", vmid: 1205, privateIpv4: "10.70.20.55", gatewayHost: "a" } },
+      })
+    ).toBeNull();
   });
 });

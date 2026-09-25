@@ -172,6 +172,7 @@ describe("Hermes config Bankr wallet injection", () => {
       containerName: "agent-inst_123",
       hermesHomeDir: "/opt/data",
       ip: "203.0.113.10",
+      guestTarget: null,
     });
 
     expect(api.put).toHaveBeenCalledWith(

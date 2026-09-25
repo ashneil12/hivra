@@ -1,10 +1,9 @@
 import "server-only";
 
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { log } from "@/lib/logger";
 import { buildResolveAgentContainerScript } from "@/lib/services/agent-container";
-import type { ProxmoxHostRoutingConfig } from "@/lib/services/proxmox-infrastructure";
 import { sanitizeDockerName } from "@/lib/services/profile-service";
 import { normalizeWebUIProfileName } from "@/lib/webui/profiles";
 import { buildGuardedSoulWriteExecSh, classifySoulWriteStdout } from "@/lib/webui/soul-guard";
@@ -28,7 +27,8 @@ export async function readWebUIProfileSystemPrompt(input: {
   hostIp: string;
   profileName?: string | null;
   timeoutMs?: number;
-  proxmoxHostConfig?: ProxmoxHostRoutingConfig | null;
+  /** The instance's `getHermesGuestSshTarget`. */
+  guestTarget: ProxmoxSshHostConfig | null;
 }): Promise<string | null> {
   const baseContainerName = `agent-${sanitizeDockerName(input.instanceId)}`;
   const profileName = normalizeWebUIProfileName(input.profileName);
@@ -46,7 +46,7 @@ export async function readWebUIProfileSystemPrompt(input: {
     ].join("\n"),
     {
       timeoutMs: input.timeoutMs ?? DEFAULT_SOUL_READ_TIMEOUT_MS,
-      ...(input.proxmoxHostConfig ? { proxmoxHostConfig: input.proxmoxHostConfig } : {}),
+      ...(input.guestTarget ? { proxmoxHostConfig: input.guestTarget } : {}),
     }
   );
 
@@ -91,6 +91,8 @@ export type WriteWebUIProfileSystemPromptResult =
 export async function writeWebUIProfileSystemPrompt(input: {
   instanceId: string;
   hostIp: string;
+  /** The instance's `getHermesGuestSshTarget`. */
+  guestTarget: ProxmoxSshHostConfig | null;
   profileName?: string | null;
   systemPrompt: string;
   /**
@@ -121,7 +123,8 @@ export async function writeWebUIProfileSystemPrompt(input: {
         profileHome,
         input.overwriteExistingIdentity === true,
       )}`,
-    ].join("\n")
+    ].join("\n"),
+    input.guestTarget ? { proxmoxHostConfig: input.guestTarget } : {}
   );
 
   if (!result.ok) {

@@ -11,7 +11,7 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supaba
 describe("ProfileService.syncProfiles failure handling", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
   });
 

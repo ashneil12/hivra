@@ -18,8 +18,10 @@
  *
  * Any failed check exits the host script before a connection is opened, with a
  * `VMID-bound SSH refused:` line naming the reason. Hermes VMs carry no owner
- * binding tag yet, so this binds the IP to a VM and the connection to that VM's
- * key; it does not prove the VMID still belongs to the same instance.
+ * binding tag yet; when the caller names the instance (`expectedInstanceId`),
+ * the VM's name must be that instance's (`hermes-<slug>-<id8>` or the full
+ * UUID, as `buildProxmoxVmOwnedByInstanceCheck`), which catches a recycled
+ * VMID. Without it the prelude binds the IP to a VM but not to an owner.
  *
  * Callers define PRIVATE_IP, VM_SSH_KEY_PATH and VMID (empty to resolve it from
  * the IP) before appending the prelude, and use the `GUEST_SSH` array it sets.
@@ -31,6 +33,10 @@ export { isValidGuestSshUser };
 
 /** Every refusal line starts with this, so callers and logs can tell it from a network fault. */
 export const GUEST_SSH_REFUSED_MARKER = "VMID-bound SSH refused:";
+
+/** What a user sees when a guest command was refused by the identity checks. */
+export const GUEST_IDENTITY_REFUSED_MESSAGE =
+  "We couldn't confirm which VM is your agent's, so nothing was sent to it. Try again in a minute; if it keeps happening, contact support.";
 
 /** Bound on one `qm guest cmd ping`. */
 export const HERMES_GUEST_AGENT_PING_TIMEOUT_SECONDS = 5;
@@ -49,10 +55,33 @@ export interface HermesGuestSshPreludeOptions {
   connectTimeoutSeconds?: number;
   quiet?: boolean;
   /**
+   * The instance the VM must belong to, checked against the VM name. Pass it
+   * whenever the caller knows the instance.
+   */
+  expectedInstanceId?: string;
+  /**
    * The caller's EXIT trap stays in place and must call
    * `cleanup_hivra_guest_ssh_identity` (see `buildVmidBoundGuestSshPrelude`).
    */
   callerOwnsExitTrap?: boolean;
+}
+
+const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isHermesInstanceId(value: string): boolean {
+  return INSTANCE_ID_PATTERN.test(value);
+}
+
+function buildOwnerCheck(expectedInstanceId: string | undefined): string {
+  if (expectedInstanceId === undefined) return "";
+  if (!isHermesInstanceId(expectedInstanceId)) throw new Error("Invalid instance id");
+  const id = expectedInstanceId.toLowerCase();
+  return `hermes_guest_name="$(printf '%s\n' "$hermes_guest_config" | awk '/^name:/ && !seen { seen = 1; line = $0; sub(/^name:[ \t]*/, "", line); print line }')"
+case "$hermes_guest_name" in
+  *-${id.slice(0, 8)}|*${id}*) ;;
+  *) vmid_bound_ssh_refuse "VM $VMID is named \${hermes_guest_name:-(none)}, not this instance's VM (hermes-*-${id.slice(0, 8)})" ;;
+esac
+`;
 }
 
 function boundedInteger(value: number, min: number, max: number, label: string): number {
@@ -81,6 +110,7 @@ const CONFIG_IP_MATCH_AWK = `
 export function buildHermesVmidBoundGuestSshPrelude(options: HermesGuestSshPreludeOptions): string {
   if (!isValidGuestSshUser(options.sshUser)) throw new Error("Invalid guest SSH user");
   const agentAttempts = boundedInteger(options.agentAttempts ?? 0, 0, 30, "guest agent attempts");
+  const ownerCheck = buildOwnerCheck(options.expectedInstanceId);
   const agentWait = agentAttempts > 0
     ? `HERMES_GUEST_AGENT_ATTEMPTS=${agentAttempts}
 hermes_guest_agent_up=0
@@ -154,7 +184,7 @@ hermes_guest_tags="$(printf '%s\\n' "$hermes_guest_config" | awk '/^tags:/ && !s
 case ";$hermes_guest_tags;" in
   *";hivra-bind-"*) vmid_bound_ssh_refuse "VM $VMID is a Hivra computer, not a Hermes instance VM" ;;
 esac
-hermes_guest_agent="$(printf '%s\\n' "$hermes_guest_config" | awk '/^agent:/ && !seen { seen = 1; line = $0; sub(/^agent:[ \\t]*/, "", line); print line }')"
+${ownerCheck}hermes_guest_agent="$(printf '%s\\n' "$hermes_guest_config" | awk '/^agent:/ && !seen { seen = 1; line = $0; sub(/^agent:[ \\t]*/, "", line); print line }')"
 case ",$hermes_guest_agent," in
   *,1,*|*,on,*|*,yes,*|*,true,*|*,enabled=1,*|*,enabled=on,*|*,enabled=yes,*|*,enabled=true,*) ;;
   *) vmid_bound_ssh_refuse "VM $VMID has no QEMU Guest Agent channel, so its SSH host key can't be attested" ;;

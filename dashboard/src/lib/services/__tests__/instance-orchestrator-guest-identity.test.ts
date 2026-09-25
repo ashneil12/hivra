@@ -74,7 +74,7 @@ const VMID = 201;
 const GUEST_IP = "10.250.20.51";
 
 const INSTANCE: InstanceRowForOrchestration = {
-  id: "inst-proxmox",
+  id: "66244f0e-e385-4c3d-88c2-c07e005cb2d2",
   user_id: "user-123",
   provider: "openai",
   hetzner_server_id: null,
@@ -104,7 +104,7 @@ async function liveUpdateHostScript(): Promise<string> {
 
 /** The agent deploy script carried inside the stream the guest received. */
 function deliveredAgentScript(delivered: string): string {
-  const b64 = delivered.match(/printf '%s' '([^']+)' \| base64 -d > \/tmp\/hermes-update-inst-proxmox\.sh/)?.[1];
+  const b64 = delivered.match(/printf '%s' '([^']+)' \| base64 -d > \/tmp\/hermes-update-66244f0e-e385-4c3d-88c2-c07e005cb2d2\.sh/)?.[1];
   return b64 ? Buffer.from(b64, "base64").toString("utf8") : "";
 }
 
@@ -136,7 +136,9 @@ describe("applyLiveUpdate guest identity (Proxmox lane)", () => {
     process.env = { ...savedEnv };
   });
 
-  const vm = (overrides: Partial<StubGuestVm> = {}): StubGuestVm[] => [{ vmid: VMID, ip: GUEST_IP, ...overrides }];
+  const vm = (overrides: Partial<StubGuestVm> = {}): StubGuestVm[] => [
+    { vmid: VMID, ip: GUEST_IP, name: `hermes-alice-${INSTANCE.id.slice(0, 8)}`, ...overrides },
+  ];
 
   /**
    * Regression (pre-launch review H4): the update removed its known_hosts file
@@ -182,6 +184,9 @@ describe("applyLiveUpdate guest identity (Proxmox lane)", () => {
     ["the guest agent attests a malformed key", { attestedHostKeyLine: "ssh-ed25519 not-base64 root@guest" }, /did not attest a valid Ed25519 SSH host key/],
     ["the guest agent attests a non-Ed25519 key", { attestedHostKeyLine: `ssh-rsa ${ed25519KeyBlob(7)} root@guest` }, /did not attest a valid Ed25519 SSH host key/],
     ["the VM at the stored VMID is a Hivra computer", { tags: "hivra;hivra-bind-0123456789abcdef0123456789abcdef" }, /VM 201 is a Hivra computer/],
+    // Regression: a deleted instance's VMID reused by another instance's VM
+    // passed every check above and received this instance's update and keys.
+    ["the VM at the stored VMID is another instance's (recycled VMID)", { name: "hermes-bob-9a8b7c6d" }, /VM 201 is named hermes-bob-9a8b7c6d, not this instance's VM/],
   ])("refuses and sends nothing when %s", async (_label, overrides, reason) => {
     const result = host.run(await liveUpdateHostScript(), { vms: vm(overrides), serverHostKey: GENUINE_GUEST_HOST_KEY });
 

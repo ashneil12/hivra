@@ -10,7 +10,13 @@ import { createHash } from "crypto";
 import * as fs from "fs";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isSshWarmupError } from "@/lib/ssh-warmup";
-import { buildHermesVmidBoundGuestSshPrelude, isValidGuestSshUser } from "@/lib/proxmox/hermes-guest-ssh";
+import { log } from "@/lib/logger";
+import {
+    GUEST_SSH_REFUSED_MARKER,
+    buildHermesVmidBoundGuestSshPrelude,
+    isHermesInstanceId,
+    isValidGuestSshUser,
+} from "@/lib/proxmox/hermes-guest-ssh";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -28,14 +34,24 @@ export function isProxmoxPrivateGuestIp(ip: string): boolean {
     const prefix = process.env.PROXMOX_PRIVATE_SUBNET_PREFIX?.trim() || "10.250.20";
     return (
         Boolean(process.env.PROXMOX_SSH_HOST?.trim()) && ip.startsWith(`${prefix}.`)
-    ) || Boolean(resolveProxmoxPrivateGuestHostConfig(ip));
+    ) || matchingProxmoxPrivateGuestTargets(ip).length > 0;
 }
 
-interface ProxmoxSshHostConfig {
+/**
+ * Where a Proxmox guest command goes. Pass the instance row's target
+ * (`getHermesGuestSshTarget`): the host it lives on, its stored VMID and its
+ * instance id. Hosts reuse the same private prefix and derive the guest IP from
+ * the VMID, so the IP alone names a VM on every host.
+ */
+export interface ProxmoxSshHostConfig {
     hostId?: string | null;
     hostSlug?: string | null;
     envPrefix?: string | null;
     failClosed?: boolean;
+    /** The instance's stored VMID. The host binds SSH to it instead of scanning for the IP. */
+    vmid?: number | null;
+    /** The instance the VM must belong to (its name is `hermes-<slug>-<id8>`). */
+    instanceId?: string | null;
 }
 
 function normalizeProxmoxTargetId(value: string | null | undefined): string | null {
@@ -60,22 +76,53 @@ function targetProxmoxEnvValue(
     return "";
 }
 
-function resolveProxmoxPrivateGuestHostConfig(
-    ip: string,
-    env: NodeJS.ProcessEnv = process.env
-): ProxmoxSshHostConfig | null {
+function matchingProxmoxPrivateGuestTargets(ip: string, env: NodeJS.ProcessEnv = process.env): string[] {
     const targetIds = (env.HERMES_PROXMOX_TARGETS || "")
         .split(",")
         .map(normalizeProxmoxTargetId)
         .filter((targetId): targetId is string => Boolean(targetId));
 
-    for (const targetId of targetIds) {
+    return [...new Set(targetIds)].filter((targetId) => {
         const privateSubnetPrefix = targetProxmoxEnvValue(env, targetId, "PRIVATE_SUBNET_PREFIX");
-        if (privateSubnetPrefix && ip.startsWith(`${privateSubnetPrefix}.`)) {
-            return { hostSlug: targetId, failClosed: true };
-        }
-    }
+        return Boolean(privateSubnetPrefix) && ip.startsWith(`${privateSubnetPrefix}.`);
+    });
+}
 
+/**
+ * The one Proxmox target whose private prefix holds the IP, for callers that
+ * pass no host. More than one match is refused rather than guessed: every host
+ * numbers guests from the same start, so the first match is usually a
+ * different tenant's VM.
+ */
+function resolveProxmoxPrivateGuestHostConfig(
+    ip: string,
+    env: NodeJS.ProcessEnv = process.env
+): { config: ProxmoxSshHostConfig | null; refusal?: string } {
+    const matches = matchingProxmoxPrivateGuestTargets(ip, env);
+    if (matches.length > 1) {
+        return {
+            config: null,
+            refusal: `${GUEST_SSH_REFUSED_MARKER} ${ip} is in the private subnet of more than one Proxmox target (${matches.join(", ")}), so the IP does not name one VM; pass the instance's host, VMID and id. Nothing was sent to the guest`,
+        };
+    }
+    return { config: matches[0] ? { hostSlug: matches[0], failClosed: true } : null };
+}
+
+function invalidGuestTarget(config: ProxmoxSshHostConfig | null | undefined): string | null {
+    if (!config) return null;
+    const hasVmid = config.vmid !== undefined && config.vmid !== null;
+    const hasInstanceId = config.instanceId !== undefined && config.instanceId !== null;
+    if (hasVmid && (!Number.isSafeInteger(config.vmid) || (config.vmid as number) < 100)) {
+        return "the stored vmid is not a Proxmox VMID";
+    }
+    if (hasInstanceId && !isHermesInstanceId(config.instanceId as string)) {
+        return "the instance id is not a UUID";
+    }
+    if (hasVmid !== hasInstanceId) {
+        // A VMID without an owner to check could be a recycled VMID; an owner
+        // without a VMID means the row lost its handle.
+        return hasVmid ? "a stored vmid was passed without its instance id" : "an instance id was passed without its stored vmid";
+    }
     return null;
 }
 
@@ -111,6 +158,15 @@ async function proxmoxGuestSshExec(
             };
         }
     }
+    const invalidTarget = invalidGuestTarget(proxmoxHostConfig);
+    if (invalidTarget) {
+        return {
+            ok: false,
+            stdout: "",
+            stderr: "",
+            error: `${GUEST_SSH_REFUSED_MARKER} ${invalidTarget}; nothing was sent to the guest`,
+        };
+    }
     const vmSshUser = proxmoxEnv.PROXMOX_VM_SSH_USER?.trim() || "hermes";
     const vmSshKeyPath = proxmoxEnv.PROXMOX_VM_SSH_KEY_PATH?.trim() || "/etc/hivra/keys/vm-orchestrator";
     if (!isValidGuestSshUser(vmSshUser) || !vmSshKeyPath.startsWith("/")) {
@@ -128,11 +184,15 @@ async function proxmoxGuestSshExec(
     // agent attests, so a neighbour answering ARP for the IP receives nothing.
     const hostScriptHead = `#!/usr/bin/env bash
 set -euo pipefail
-VMID=""
+VMID=${shellQuote(proxmoxHostConfig?.vmid ?? "")}
 PRIVATE_IP=${shellQuote(ip)}
 VM_SSH_KEY_PATH=${shellQuote(vmSshKeyPath)}
 COMMAND_B64=${shellQuote(commandB64)}`;
-    const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({ sshUser: vmSshUser, quiet: true });
+    const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+        sshUser: vmSshUser,
+        quiet: true,
+        ...(proxmoxHostConfig?.instanceId ? { expectedInstanceId: proxmoxHostConfig.instanceId } : {}),
+    });
 
     if (stdin !== undefined) {
         const stdinB64 = Buffer.isBuffer(stdin)
@@ -683,10 +743,28 @@ export async function sshExec(
 ): Promise<SshResult> {
     validateIp(ip);
 
-    const inferredProxmoxHostConfig =
-        proxmoxHostConfig ?? resolveProxmoxPrivateGuestHostConfig(ip);
+    let inferredProxmoxHostConfig = proxmoxHostConfig ?? null;
+    const namesHost = Boolean(
+        proxmoxHostConfig?.hostId?.trim() || proxmoxHostConfig?.hostSlug?.trim() || proxmoxHostConfig?.envPrefix?.trim()
+    );
+    if (!namesHost) {
+        // No host on the row (or no row): the private prefix picks the host,
+        // and only when exactly one target owns it.
+        const inferred = resolveProxmoxPrivateGuestHostConfig(ip);
+        if (inferred.refusal) {
+            log.warn("refused Proxmox guest ssh: ip matches more than one target", {
+                source: "hetzner-ssh",
+                failureType: "proxmox_guest_ip_ambiguous_target",
+                ip,
+            });
+            return { ok: false, stdout: "", stderr: "", error: inferred.refusal };
+        }
+        if (inferred.config) {
+            inferredProxmoxHostConfig = { ...proxmoxHostConfig, ...inferred.config };
+        }
+    }
 
-    if (proxmoxHostConfig || inferredProxmoxHostConfig || isProxmoxPrivateGuestIp(ip)) {
+    if (inferredProxmoxHostConfig || isProxmoxPrivateGuestIp(ip)) {
         return proxmoxGuestSshExec(
             ip,
             command,
