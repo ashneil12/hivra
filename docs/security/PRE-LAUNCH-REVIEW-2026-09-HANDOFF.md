@@ -22,7 +22,12 @@ Do these before promoting canary to hivra.cloud. None can be done from a Claude 
      can call on prod today (`record_cron_heartbeat` can fake cron health).
    - `20260922172439_enable_rls_remaining_public_tables.sql`
    - `20260925174500_hermes_instances_api_role_writes.sql` (#155) and
-     `20260926090000_public_tables_api_role_writes.sql` (#174) — also apply both to **canary**.
+     `20260926090000_public_tables_api_role_writes.sql` (#174) — also apply #174 to **canary**
+     (canary already has #155). Apply #174 as **one transaction** (SQL editor, or
+     `psql -1 -v ON_ERROR_STOP=1`) so a failed assertion rolls back; it prints each dropped
+     policy as a NOTICE — keep that output. A read-only preview on 2026-09-25 showed it drops
+     10 policies on canary and 19 on prod (all tables owned by `postgres`); each dropped
+     `FOR ALL` policy is re-created as a `FOR SELECT` policy, so own-row reads are unchanged.
 2. **Supabase auth settings, both projects:** in the Supabase dashboard confirm GoTrue
    **signup is off**, **anonymous sign-ins are off**, and **no Clerk third-party auth / JWT
    template** is configured. This removes the precondition for the RLS findings outright.
@@ -74,7 +79,10 @@ Ranked by risk. Each needs a regression test and a PR into canary.
 9. **CI secret scanning:** add a `gitleaks git` range scan on PRs, custom rules for `bk_`,
    `hven_live_`, `hvra_otlp_`, `sb_secret_`, and fail on stale `.gitleaksignore` entries
    (coordinate with any open PR touching `.gitleaksignore`).
-10. Hardening ideas in the report (enforced nonce CSP, split `CRON_SECRET`, revoke single-use
+10. **Disabling backups via PATCH leaves the Stripe add-on billing:** `PATCH backupsEnabled:false`
+    turns Hetzner backups off but keeps `backups_enabled` and the Stripe line item (pre-existing;
+    no UI sends it). Route disable through the add-on endpoint too.
+11. Hardening ideas in the report (enforced nonce CSP, split `CRON_SECRET`, revoke single-use
     Bankr keys after use, `ssrfSafeFetch` manual redirects, `command-output-redaction` for
     `bk_` keys).
 
