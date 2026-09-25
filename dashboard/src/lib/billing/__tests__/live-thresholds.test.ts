@@ -108,7 +108,7 @@ describe("getLiveActiveThresholds", () => {
     expect(stale.pro.amount).toBeGreaterThan(0n);
   });
 
-  it.each(["liquidity", "deviation", "pool_missing"] as const)(
+  it.each(["liquidity", "deviation", "history", "pool_missing"] as const)(
     "fails closed on a tripped %s gate instead of serving the cached price",
     async (gate) => {
       let calls = 0;

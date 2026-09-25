@@ -373,4 +373,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260925110000", name: "provider_release_admission_2026_09_24_4" },
   { version: "20260925160000", name: "hivra_attached_agent_program_remove_fix" },
   { version: "20260925174500", name: "hermes_instances_api_role_writes" },
+  { version: "20260925193000", name: "crypto_topup_reconcile_queue" },
+  { version: "20260925193100", name: "managed_venice_token_sweep_claim" },
 ];
