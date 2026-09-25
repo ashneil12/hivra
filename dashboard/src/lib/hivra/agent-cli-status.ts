@@ -242,6 +242,19 @@ export const AGENT_CLI_FINISHING_MS = 2 * 60_000;
 export const AGENT_CLI_DONE_RECENT_MS = 6 * 60 * 60_000;
 /** Box and server clocks may disagree by this much. */
 const CLOCK_SKEW_MS = 60_000;
+/**
+ * The longest each step of an update can last on the computer
+ * (hivra-agent-cli-update.sh: a 15-minute download, up to 6 hours waiting for
+ * a reply to finish, a 10-minute install), with some margin. A step reported
+ * for longer than this has ended, one way or another.
+ */
+export const AGENT_CLI_PHASE_LIMIT_MS: Readonly<Record<"downloading" | "waiting" | "installing", number>> = {
+  downloading: 20 * 60_000,
+  waiting: 6 * 60 * 60_000 + 15 * 60_000,
+  installing: 15 * 60_000,
+};
+/** Request results after which the computer may have changed. */
+const REQUEST_MAY_HAVE_RUN = new Set(["scheduled", "running", "unverified"]);
 
 function time(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -290,6 +303,7 @@ export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftw
 
   // An update Hivra asked for that the computer hasn't started reporting yet.
   const requestedAt = time(record?.requested_at);
+  const observedAt = time(record?.observed_at);
   const pending = record?.requested_target === tested && requestedAt !== null
     && now - requestedAt >= -CLOCK_SKEW_MS && now - requestedAt < AGENT_CLI_PENDING_REQUEST_MS
     && (!update || update.at === null || update.at < requestedAt - CLOCK_SKEW_MS);
@@ -300,14 +314,35 @@ export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftw
       return { kind: "updating", phase: "starting", target: tested, installed };
     }
   }
+  if (
+    record?.requested_target === tested && requestedAt !== null
+    && (record.request_result == null || REQUEST_MAY_HAVE_RUN.has(record.request_result))
+    && (observedAt === null || observedAt < requestedAt)
+  ) {
+    // An update was sent and the computer hasn't been read since: what it
+    // has now is unknown until it is read again (the last reading is older
+    // than the update, so it can't say "behind").
+    return { kind: "checking" };
+  }
 
   if (update) {
     const reachedTarget = installed === update.target;
     switch (update.state) {
       case "downloading":
       case "waiting":
-      case "installing":
-        return { kind: "updating", phase: update.state, target: update.target, installed };
+      case "installing": {
+        const limit = AGENT_CLI_PHASE_LIMIT_MS[update.state] + CLOCK_SKEW_MS;
+        const since = update.at ?? observedAt;
+        if (since === null || now - since <= limit) {
+          return { kind: "updating", phase: update.state, target: update.target, installed };
+        }
+        // This step has run past its limit. If the computer still reported it
+        // after it should have ended, its updater stopped: say what it has.
+        // Otherwise it may have finished since that reading: unknown until
+        // the computer is read again.
+        if (update.at !== null && observedAt !== null && observedAt - update.at > limit) break;
+        return { kind: "checking" };
+      }
       case "done":
         if (reachedTarget) {
           if (update.at !== null && now - update.at < AGENT_CLI_DONE_RECENT_MS) return { kind: "update_done", target: update.target, installed: update.target };

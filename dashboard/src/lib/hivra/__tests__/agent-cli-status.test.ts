@@ -153,6 +153,48 @@ describe("deriveAgentSoftware", () => {
   });
 });
 
+describe("readings that are too old to say what an update did", () => {
+  const H = 60 * MIN;
+  it.each([
+    ["downloading", 20 * MIN],
+    ["installing", 15 * MIN],
+    ["waiting", 6 * H + 15 * MIN],
+  ] as const)("doesn't keep saying %s past how long that step can take", (state, limit) => {
+    // Read while the step was running, never read again (the agents list never reads computers).
+    const lastRead = { update_state: state, update_target: TESTED, update_updated_at: ago(2 * 24 * H), observed_at: ago(2 * 24 * H) };
+    expect(view(reported("0.149.0", lastRead))).toEqual({ kind: "checking" });
+    expect(agentSoftwareBadge(view(reported("0.149.0", lastRead)))).toBeNull();
+    // Inside the limit it is still in progress.
+    const recent = { update_state: state, update_target: TESTED, update_updated_at: ago(limit - 2 * MIN), observed_at: ago(limit - 3 * MIN) };
+    expect(view(reported("0.149.0", recent))).toMatchObject({ kind: "updating", phase: state });
+  });
+  it("shows the installed version when the computer still reports a step long after it should have ended", () => {
+    // Read just now, and the updater's status is two days old: it stopped.
+    const stopped = { update_state: "downloading", update_target: TESTED, update_updated_at: ago(2 * 24 * H), observed_at: ago(MIN) };
+    expect(view(reported("0.149.0", stopped))).toEqual({ kind: "behind", installed: "0.149.0" });
+  });
+  it.each([
+    ["the owner's", "owner", "scheduled"],
+    ["an automatic", "auto", null],
+    ["an unconfirmed", "owner", "unverified"],
+  ] as const)("doesn't call an agent behind from a reading older than %s update", (_case, by, result) => {
+    const sent = { requested_at: ago(11 * MIN), requested_target: TESTED, requested_by: by, request_result: result, observed_at: ago(12 * MIN) };
+    expect(view(reported("0.149.0", sent))).toEqual({ kind: "checking" });
+    expect(summarizeAgentSoftware(view(reported("0.149.0", sent)), codex, TESTED).badge).toBeNull();
+  });
+  it("doesn't call an agent behind from a reading older than an unconfirmed update just sent", () => {
+    const sent = { requested_at: ago(2 * MIN), requested_target: TESTED, requested_by: "owner", request_result: "unverified", observed_at: ago(3 * MIN) };
+    expect(view(reported("0.149.0", sent))).toEqual({ kind: "checking" });
+  });
+  it("still calls it behind when the update never reached the computer, or it was read after", () => {
+    const sent = { requested_at: ago(11 * MIN), requested_target: TESTED, requested_by: "owner", observed_at: ago(12 * MIN) };
+    for (const result of ["host_not_ready", "busy", "refused", "failed"]) {
+      expect(view(reported("0.149.0", { ...sent, request_result: result }))).toEqual({ kind: "behind", installed: "0.149.0" });
+    }
+    expect(view(reported("0.149.0", { ...sent, request_result: "scheduled", observed_at: ago(MIN) }))).toEqual({ kind: "behind", installed: "0.149.0" });
+  });
+});
+
 describe("badges and summaries", () => {
   it("offers an update only when behind Hivra's tested version or the connection service is older", () => {
     expect(agentSoftwareBadge({ kind: "behind", installed: "1.0.0" })).toBe("update_available");
